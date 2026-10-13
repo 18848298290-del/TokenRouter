@@ -13,6 +13,15 @@ import (
 	mailtest "github.com/TokenFlux/TokenRouter/internal/notification/testkit"
 )
 
+// Summary template variables carry queried dashboard values, while detailed
+// reports hide that metric section and supply HTML through notification's
+// authorized raw field. These tests check formatting, localization, ordinary
+// delivery identities, and one legacy-template SMTP message using supplied
+// report data.
+
+// TestOpsScheduledReportDeliverySourceIDIncludesReportIdentity compares daily
+// and weekly report definitions and the nil fallback. It checks that their
+// ordinary identifiers include type, name, and schedule components.
 func TestOpsScheduledReportDeliverySourceIDIncludesReportIdentity(t *testing.T) {
 	report := &opsScheduledReport{Name: "日报", ReportType: "daily_summary", Schedule: "0 9 * * *"}
 	sourceID := opsScheduledReportDeliverySourceID(report)
@@ -23,6 +32,10 @@ func TestOpsScheduledReportDeliverySourceIDIncludesReportIdentity(t *testing.T) 
 	require.Equal(t, "scheduled_report", opsScheduledReportDeliverySourceID(nil))
 }
 
+// TestOpsSummaryReportEmailVariables supplies counts, fractions, latency
+// pointers, and rate measurements to summary formatting. It checks localized
+// names, interval strings, missing-overview display flags, and authorized
+// legacy HTML rendering.
 func TestOpsSummaryReportEmailVariables(t *testing.T) {
 	latencyP50 := 8231
 	latencyP99 := 151260
@@ -82,6 +95,9 @@ func TestOpsSummaryReportEmailVariables(t *testing.T) {
 	require.Equal(t, "block", emptyVariables["report_summary_display"])
 	require.Equal(t, "none", emptyVariables["report_detail_display"])
 
+	// Pass the generated HTML through notification's authorized raw
+	// variable map so the legacy placeholder renders markup alongside the
+	// escaped summary variables.
 	legacyTemplate, err := notification.RenderNotificationEmail(
 		notification.NotificationEmailEventOpsScheduledReport,
 		"Report",
@@ -93,6 +109,9 @@ func TestOpsSummaryReportEmailVariables(t *testing.T) {
 	require.Contains(t, legacyTemplate.HTML, `<h2>generated summary</h2>`)
 }
 
+// TestOpsScheduledReportVariablesDoNotUsePreviewMetrics prepares an error
+// digest without queried summary data. Every shared metric placeholder stays a
+// dash, the detail section is visible, and the summary section is hidden.
 func TestOpsScheduledReportVariablesDoNotUsePreviewMetrics(t *testing.T) {
 	now := time.Date(2026, time.July, 19, 1, 0, 26, 0, time.UTC)
 	report := &opsScheduledReport{
@@ -114,6 +133,10 @@ func TestOpsScheduledReportVariablesDoNotUsePreviewMetrics(t *testing.T) {
 	}
 }
 
+// TestOpsScheduledReportLegacyTemplateReceivesSummaryHTML sends a supplied
+// daily report through notification's editable template to a local SMTP
+// fixture. It checks one recipient attempt, one received message, and inclusion
+// of the generated summary HTML.
 func TestOpsScheduledReportLegacyTemplateReceivesSummaryHTML(t *testing.T) {
 	ctx := context.Background()
 	repo := mailtest.NewMemorySettings()
@@ -132,6 +155,9 @@ func TestOpsScheduledReportLegacyTemplateReceivesSummaryHTML(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// Forward the complete report request to notification, including raw
+	// HTML and reminder identity, so this SMTP fixture exercises the
+	// editable template's actual send path.
 	delivery := &EmailDelivery{TemplatesEnabled: true, SendEmail: emailService.SendEmail, RecipientName: notification.EmailRecipientName, ShouldFallback: notification.ShouldFallbackNotificationEmail, ResolveRecipientLocale: notificationService.ResolveRecipientLocale, SendTemplate: func(ctx context.Context, v Notification) error {
 		return notificationService.Send(ctx, notification.SendRequest{Event: v.Event, Locale: v.Locale, RecipientEmail: v.RecipientEmail, RecipientName: v.RecipientName, SourceType: v.SourceType, SourceID: v.SourceID, ReminderKey: v.ReminderKey, Variables: v.Variables, RawHTMLVariables: v.RawHTMLVariables})
 	}}
@@ -152,6 +178,9 @@ func TestOpsScheduledReportLegacyTemplateReceivesSummaryHTML(t *testing.T) {
 	require.Contains(t, messageBody, `<h2>日报</h2>`)
 }
 
+// TestFormatOpsReportIntegerGroupsDigits formats a positive four-digit count,
+// its negative counterpart, and a short count. Expected strings retain the sign
+// and insert separators for those larger values.
 func TestFormatOpsReportIntegerGroupsDigits(t *testing.T) {
 	require.Equal(t, "2,374", formatOpsReportInteger(2374))
 	require.Equal(t, "-1,234", formatOpsReportInteger(-1234))

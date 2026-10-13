@@ -11,6 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// TestOpsMetricsCollectorQueryErrorCountsExcludesCountTokens matches the
+// collector's half-open SQL range and is_count_tokens=false predicate against a
+// SQL fixture. It checks each supplied category count is returned in the
+// expected result position.
 func TestOpsMetricsCollectorQueryErrorCountsExcludesCountTokens(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -39,6 +43,8 @@ func TestOpsMetricsCollectorQueryErrorCountsExcludesCountTokens(t *testing.T) {
 	require.Equal(t, int64(1), upstream429)
 	require.Equal(t, int64(1), upstream529)
 	require.NoError(t, mock.ExpectationsWereMet())
+	// Expect the explicit final database closure after count assertions; this
+	// close has its own mock expectation and is checked separately.
 	mock.ExpectClose()
 	require.NoError(t, db.Close())
 	require.NoError(t, mock.ExpectationsWereMet())

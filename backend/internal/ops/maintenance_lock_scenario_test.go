@@ -1,7 +1,5 @@
 package ops
 
-// These scenarios cover leader-lock contention in cleanup and scheduled reports.
-
 import (
 	"context"
 	"errors"
@@ -11,12 +9,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// leaderCacheFixture tracks ownership while two instances compete for the same maintenance job.
+// leaderCacheFixture models sequential owner-specific lease claims for
+// maintenance leadership tests.
 type leaderCacheFixture struct {
-	owners map[string]string
-	err    error
+	// owners is allocated before use and updated without synchronization or TTL
+	// expiry. These scenarios invoke claims and releases sequentially.
+	owners map[string]string // held key owner map
+	// err overrides every Claim attempt when nonnil. Release continues comparing
+	// stored ownership regardless of this injected claim error.
+	err error // injected claim failure
 }
 
+// Claim records ownership for an unheld key or reports contention for an
+// existing owner. A configured error takes precedence; context and TTL are
+// ignored, so this fixture models no expiration.
 func (c *leaderCacheFixture) Claim(_ context.Context, key, owner string, _ time.Duration) (bool, error) {
 	if c.err != nil {
 		return false, c.err
@@ -28,6 +34,9 @@ func (c *leaderCacheFixture) Claim(_ context.Context, key, owner string, _ time.
 	return true, nil
 }
 
+// Release removes a held key when its stored owner matches the supplied owner.
+// Mismatched owners and absent keys succeed without changes; context is ignored
+// and fixture calls are sequential.
 func (c *leaderCacheFixture) Release(_ context.Context, key, owner string) error {
 	if c.owners[key] == owner {
 		delete(c.owners, key)
@@ -35,10 +44,18 @@ func (c *leaderCacheFixture) Release(_ context.Context, key, owner string) error
 	return nil
 }
 
-func (*leaderCacheFixture) Get(context.Context, string) (string, error)              { return "", nil }
+// Get returns an empty successful cache value for these leadership-only
+// fixtures.
+func (*leaderCacheFixture) Get(context.Context, string) (string, error) { return "", nil }
+
+// Put accepts cache writes without retaining values for these leadership-only
+// fixtures.
 func (*leaderCacheFixture) Put(context.Context, string, string, time.Duration) error { return nil }
 
-// TestMaintenanceLeaderLockCompetition checks that a losing contender cannot release another instance's lock.
+// TestMaintenanceLeaderLockCompetition runs sequential cleanup and report
+// contenders against one owner-tracking cache fixture. It checks a loser cannot
+// release ownership, a successor can claim after release, and Redis failure
+// with no database lock refuses execution.
 func TestMaintenanceLeaderLockCompetition(t *testing.T) {
 	for _, task := range []string{"cleanup", "report"} {
 		t.Run(task, func(t *testing.T) {
@@ -64,7 +81,8 @@ func TestMaintenanceLeaderLockCompetition(t *testing.T) {
 			require.NotNil(t, release)
 			release()
 			require.Empty(t, cache.owners)
-			// With Redis unavailable and no database lock, neither job can run.
+			// Inject a Redis claim error while both job fixtures lack database locking,
+			// exercising refusal rather than an unlocked fallback run.
 			cache.err = errors.New("cache unavailable")
 			release, ok = first(t.Context())
 			require.False(t, ok)

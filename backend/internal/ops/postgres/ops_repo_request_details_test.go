@@ -11,18 +11,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// TestListRequestDetailsSLAOnlyUsesSLAErrorScope requests error-only SLA
+// drilldown with ignored 401/403 and an empty SQL fixture. It checks both count
+// and page include status/upstream-context exclusion expressions, returning
+// zero and no items.
 func TestListRequestDetailsSLAOnlyUsesSLAErrorScope(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatalf("sqlmock.New error = %v", err)
 	}
+	// Close this SQL mock after all assertions or a fatal exit, keeping the
+	// expected statements focused on shared count/page SLA expressions.
 	defer func() { _ = db.Close() }()
 
 	repo := &Store{db: db}
 	start := time.Date(2026, 6, 18, 1, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
 
-	// SLA drilldown excludes configured client statuses to match the summary card.
+	// Check ignored-status membership and stored upstream context in the error
+	// branch of both count and page copies of the combined CTE.
 	slaScopePattern := regexp.QuoteMeta("COALESCE(o.status_code, 0) IN (401, 403)") +
 		`(?s).*` +
 		regexp.QuoteMeta("o.upstream_status_code IS NOT NULL")
@@ -61,6 +68,8 @@ func TestListRequestDetailsSLAOnlyUsesSLAErrorScope(t *testing.T) {
 	}
 }
 
+// emptyRequestDetailRows allocates an empty SQL fixture with the full
+// request-detail scan columns.
 func emptyRequestDetailRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"kind",

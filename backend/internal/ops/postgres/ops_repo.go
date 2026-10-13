@@ -16,6 +16,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Ops error lists can display an upstream status even when the final client
+// request recovered successfully. The final status still controls ordinary
+// request-error admission, with the cyber_policy exception retaining streamed
+// rejections and provider-health filters opting into recovered attempts. Model
+// filtering and ordering also differ: filtering uses the saved requested model
+// whenever it is nonnull, while ordering treats a blank requested model as
+// absent.
+//
+// Writes encode optional values according to their consumers. General numeric
+// encoders map zero to NULL, but the upstream status encoder preserves explicit
+// zero for credential acquisition failures. Error batches and system-log COPY
+// batches commit as transactions, returning attempted counts when later work
+// fails. Count and page reads run separately, so live writes can change their
+// totals. Correlation filters resolve request lookup candidates while an exact
+// local request record suppresses matches through external client IDs.
+
+// insertOpsErrorLogSQL fixes error-column and placeholder order for the shared
+// single-row and prepared transactional batch writes.
 const insertOpsErrorLogSQL = `
 INSERT INTO ops_error_logs (
   request_id,
@@ -60,16 +78,29 @@ INSERT INTO ops_error_logs (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38
 )`
 
+// likePatternReplacer makes fuzzy model names literal inside PostgreSQL LIKE
+// patterns while surrounding percent signs provide substring matching.
 var likePatternReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
+// Store executes Ops queries and transactional writes through the caller's SQL
+// pool.
 type Store struct {
+	// db is the borrowed connection pool. Constructors retain it, callers keep it
+	// usable for queries, and repository methods leave pool closure to its owner.
 	db *sql.DB
 }
 
+// NewOpsRepository retains db for Ops persistence and query methods. It accepts
+// a nil pool without validation; subsequent methods report an unavailable
+// repository, and callers own the pool's lifetime.
 func NewOpsRepository(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// InsertErrorLog inserts one prepared observation and returns its generated ID.
+// OpsService supplies defaults, timestamps, and sanitization before this call;
+// the repository performs nullable encoding and relies on database constraints
+// for validity.
 func (r *Store) InsertErrorLog(ctx context.Context, input *ops.OpsInsertErrorLogInput) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")
@@ -90,6 +121,17 @@ func (r *Store) InsertErrorLog(ctx context.Context, input *ops.OpsInsertErrorLog
 	return id, nil
 }
 
+// BatchInsertErrorLogs prepares one insert and executes each nonnil observation
+// in a transaction. Empty input returns zero without opening a transaction; nil
+// members are skipped. Inputs are expected to have passed OpsService
+// preparation, as the repository applies nullable encoding but supplies no
+// error timestamp or classification defaults.
+//
+// A failed execution rolls back the transaction even when the returned count
+// includes previously executed rows. That count represents attempts within the
+// transaction and is usable as a committed count only on success.
+// Prepared-statement close and rollback errors are suppressed; a commit error
+// is returned and leaves final persistence outcome dependent on the database.
 func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInsertErrorLogInput) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")
@@ -102,6 +144,9 @@ func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInser
 	if err != nil {
 		return 0, err
 	}
+	// Retain the transaction error through execution and commit so deferred
+	// rollback removes all uncommitted batch rows; rollback errors leave the
+	// primary failure authoritative.
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback()
@@ -112,6 +157,9 @@ func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInser
 	if err != nil {
 		return 0, err
 	}
+	// Close the prepared statement after execution or an early return. Close
+	// errors are suppressed because transaction execution and commit determine the
+	// reported write result.
 	defer func() {
 		_ = stmt.Close()
 	}()
@@ -127,14 +175,22 @@ func (r *Store) BatchInsertErrorLogs(ctx context.Context, inputs []*ops.OpsInser
 		inserted++
 	}
 
+	// Commit after every nonnil observation has executed. On error, inserted
+	// counts attempted rows and deferred rollback still runs, without proving the
+	// commit outcome.
 	if err = tx.Commit(); err != nil {
 		return inserted, err
 	}
 	return inserted, nil
 }
 
+// opsInsertErrorLogArgs encodes a nonnil prepared observation in the shared
+// insert's exact column order. Blank platforms become unknown; general
+// zero-valued optional integers become NULL, while an explicit upstream status
+// zero survives for provider credential failures.
 func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
-	// Persist unknown when no provider platform is available; queries use this snapshot.
+	// Store unknown when the observation lacks a platform. Queries retain this
+	// saved dimension even if current providers or group membership change later.
 	platform := strings.TrimSpace(input.Platform)
 	if platform == "" {
 		platform = "unknown"
@@ -181,8 +237,10 @@ func opsInsertErrorLogArgs(input *ops.OpsInsertErrorLogInput) []any {
 	}
 }
 
-// opsErrorLogsOrderBy builds an ORDER BY clause from allowed columns.
-// Unknown columns use created_at; e.id breaks ties for stable pagination.
+// opsErrorLogsOrderBy returns a validated sort expression with ID ordering in
+// the same direction to break ties. Unknown columns select creation time, only
+// asc selects ascending order, and model sorting falls back from blank
+// requested model to execution model.
 func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	sortBy := ""
 	sortOrder := ""
@@ -196,8 +254,8 @@ func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	case "model":
 		column = "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model)"
 	case "status_code":
-		// Display, status filters, and sorting use COALESCE(upstream_status_code, status_code, 0).
-		// Recovered requests therefore sort by the displayed upstream status.
+		// Match the displayed status when sorting recovered attempts: a present
+		// upstream code wins over the final client code, including a stored zero.
 		column = "COALESCE(e.upstream_status_code, e.status_code, 0)"
 	default:
 		column = "e.created_at"
@@ -210,6 +268,18 @@ func opsErrorLogsOrderBy(filter *ops.OpsErrorLogFilter) string {
 	return fmt.Sprintf("%s %s, e.id %s", column, dir, dir)
 }
 
+// ListErrorLogs returns error observations and current joined display names
+// after applying normalized page limits. A nil filter becomes an empty filter;
+// nonpositive page and size become one and twenty, and size is capped at five
+// hundred. Filters are read without mutation, and error ordering adds an ID tie
+// breaker.
+//
+// Count and page are separate statements and can observe different writes.
+// Displayed status prefers a nonnull upstream status over final client status,
+// even when zero; stored account_auth phases are returned as provider_auth.
+// Optional IDs and timestamps receive independent scalar pointers, while
+// integer status and request type conversions are unchecked. Query, scan, and
+// iteration failures reject the list.
 func (r *Store) ListErrorLogs(ctx context.Context, filter *ops.OpsErrorLogFilter) (*ops.OpsErrorLogList, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -226,6 +296,8 @@ func (r *Store) ListErrorLogs(ctx context.Context, filter *ops.OpsErrorLogFilter
 	if pageSize <= 0 {
 		pageSize = 20
 	}
+	// Limit the returned page while its separate count still covers every matching
+	// observation, so pagination does not redefine the reported total.
 	if pageSize > 500 {
 		pageSize = 500
 	}
@@ -291,6 +363,8 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	if err != nil {
 		return nil, err
 	}
+	// Close the result cursor on success or early scan failure. Cleanup errors are
+	// suppressed, while rows.Err still reports iteration failures.
 	defer func() { _ = rows.Close() }()
 
 	out := make([]*ops.OpsErrorLog, 0, pageSize)
@@ -350,6 +424,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		); err != nil {
 			return nil, err
 		}
+		// Allocate scalars for valid nullable observations, preserving zero values
+		// separately from missing SQL data; status and request-type narrowing have no
+		// range checks.
 		if resolvedAt.Valid {
 			t := resolvedAt.Time
 			item.ResolvedAt = &t
@@ -389,6 +466,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		}
 		item.APIKeyName = apiKeyName
 		item.APIKeyDeleted = apiKeyDeletedAt.Valid
+		// Return the provider_auth vocabulary while retaining stored legacy rows. The
+		// filter builder accepts both phase spellings so queries and displayed phases
+		// agree.
 		if item.Phase == "account_auth" {
 			item.Phase = "provider_auth"
 		}
@@ -406,6 +486,17 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	}, nil
 }
 
+// GetErrorLogByID loads one positive error identity with stored diagnostic data
+// and current joined names. Missing rows return the database's no-rows error
+// for OpsService to classify. The upstream status remains independently
+// nullable, while the displayed status prefers it over final client status,
+// including an explicit zero.
+//
+// Saved account_auth becomes provider_auth, and upstream JSON null becomes an
+// empty string for downstream parsing. Optional IDs, timestamps, timings, and
+// request type become scalar pointers; integer narrowing is unchecked. API-key
+// prefix comes from the saved observation and can remain available after joined
+// key metadata disappears.
 func (r *Store) GetErrorLogByID(ctx context.Context, id int64) (*ops.OpsErrorLogDetail, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -541,6 +632,9 @@ LIMIT 1`
 		return nil, err
 	}
 
+	// Restore valid SQL scalars into independent pointers while leaving absence
+	// nil. Display status and request type narrow integer widths unchecked after
+	// the database scan.
 	out.StatusCode = int(statusCode.Int64)
 	if resolvedAt.Valid {
 		t := resolvedAt.Time
@@ -601,7 +695,9 @@ LIMIT 1`
 	out.APIKeyName = detailAPIKeyName
 	out.APIKeyDeleted = detailAPIKeyDeletedAt.Valid
 
-	// Normalize upstream_errors to empty string when stored as JSON null.
+	// Translate the legacy credential phase for current readers before normalizing
+	// attempt JSON. A stored JSON null becomes empty so ParseOpsUpstreamErrors
+	// sees no attempts.
 	if out.Phase == "account_auth" {
 		out.Phase = "provider_auth"
 	}
@@ -613,6 +709,16 @@ LIMIT 1`
 	return &out, nil
 }
 
+// UpdateErrorResolution writes resolution state, timestamp, and optional actor
+// for one positive error identity. A supplied nonzero timestamp is converted to
+// UTC and used even when resolved is false; otherwise true selects the current
+// UTC time and false selects NULL.
+//
+// The actor is encoded independently, including an explicit zero, so clearing
+// resolution does not itself clear a supplied actor. One UPDATE writes all
+// three values, but RowsAffected is not inspected: a missing row can return
+// success. OpsService performs a separate existence read before this call,
+// which can race with deletion.
 func (r *Store) UpdateErrorResolution(ctx context.Context, errorID int64, resolved bool, resolvedByUserID *int64, resolvedAt *time.Time) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -648,6 +754,18 @@ WHERE id = $1`
 	return err
 }
 
+// BatchInsertSystemLogs streams nonnil valid observations through PostgreSQL
+// COPY in one transaction. Empty input returns zero immediately; blank levels
+// or messages are skipped. Levels are lowercased, components default to app,
+// empty metadata defaults to an object, and timestamps are supplied when zero
+// and converted to UTC.
+//
+// After all rows are submitted, COPY is flushed and closed before commit.
+// Submission, flush, or close failure rolls back the transaction; cleanup
+// errors on those paths are suppressed. A returned count on error includes
+// earlier submitted rows and does not establish persistence. A commit failure
+// is returned with that attempted count, and caller-provided metadata is
+// validated by PostgreSQL rather than parsed here.
 func (r *Store) BatchInsertSystemLogs(ctx context.Context, inputs []*ops.OpsInsertSystemLogInput) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")
@@ -677,6 +795,8 @@ func (r *Store) BatchInsertSystemLogs(ctx context.Context, inputs []*ops.OpsInse
 		"extra",
 	))
 	if err != nil {
+		// COPY setup failed before submission. Roll back the open transaction and
+		// keep the setup error, suppressing cleanup failure.
 		_ = tx.Rollback()
 		return 0, err
 	}
@@ -719,6 +839,9 @@ func (r *Store) BatchInsertSystemLogs(ctx context.Context, inputs []*ops.OpsInse
 			opsNullString(input.Model),
 			extra,
 		); err != nil {
+			// Submission failed after earlier rows may have entered COPY buffers. Close
+			// the statement, then roll back the whole batch; neither cleanup error
+			// replaces the submission error.
 			_ = stmt.Close()
 			_ = tx.Rollback()
 			return inserted, err
@@ -726,6 +849,9 @@ func (r *Store) BatchInsertSystemLogs(ctx context.Context, inputs []*ops.OpsInse
 		inserted++
 	}
 
+	// Flush COPY buffers, close the statement, and then commit. Flush or close
+	// failure triggers rollback, and attempted counts remain separate from
+	// persisted rows.
 	if _, err := stmt.ExecContext(ctx); err != nil {
 		_ = stmt.Close()
 		_ = tx.Rollback()
@@ -741,6 +867,17 @@ func (r *Store) BatchInsertSystemLogs(ctx context.Context, inputs []*ops.OpsInse
 	return inserted, nil
 }
 
+// ListSystemLogs returns system observations ordered by descending timestamp
+// and ID with matching total count. A nil filter selects all observations;
+// nonpositive page and size become one and fifty, and size is capped at two
+// hundred. The filter's recognized conditions are applied identically to
+// separate count and page statements.
+//
+// Concurrent writes can change data between those reads. Nullable identity
+// values become independent scalar pointers, while empty, null, empty-object,
+// or undecodable metadata leaves Extra absent. Metadata decode failure is
+// deliberately suppressed so one unusable extra object does not discard the log
+// row; query, scan, and cursor errors reject the response.
 func (r *Store) ListSystemLogs(ctx context.Context, filter *ops.OpsSystemLogFilter) (*ops.OpsSystemLogList, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -757,6 +894,8 @@ func (r *Store) ListSystemLogs(ctx context.Context, filter *ops.OpsSystemLogFilt
 	if pageSize <= 0 {
 		pageSize = 50
 	}
+	// Bound returned system observations while the independent count retains the
+	// complete matching set for pagination metadata.
 	if pageSize > 200 {
 		pageSize = 200
 	}
@@ -795,6 +934,8 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	if err != nil {
 		return nil, err
 	}
+	// Close the result cursor on success or early scan failure. Cleanup errors are
+	// suppressed, while rows.Err still reports iteration failures.
 	defer func() { _ = rows.Close() }()
 
 	logs := make([]*ops.OpsSystemLog, 0, pageSize)
@@ -834,6 +975,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			v := providerID.Int64
 			item.ProviderID = &v
 		}
+		// Metadata is supplementary to the indexed log fields. Empty or invalid
+		// object JSON leaves Extra absent, so malformed metadata does not reject the
+		// row.
 		extraRaw = strings.TrimSpace(extraRaw)
 		if extraRaw != "" && extraRaw != "null" && extraRaw != "{}" {
 			extra := make(map[string]any)
@@ -855,6 +999,11 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	}, nil
 }
 
+// DeleteSystemLogs removes observations matching the combined effective filter
+// and returns RowsAffected. At least one condition is required; blank text, zero
+// times, and nonpositive
+// IDs do not constrain deletion; audit insertion is a separate OpsService
+// operation after this statement succeeds.
 func (r *Store) DeleteSystemLogs(ctx context.Context, filter *ops.OpsSystemLogCleanupFilter) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")
@@ -876,6 +1025,9 @@ func (r *Store) DeleteSystemLogs(ctx context.Context, filter *ops.OpsSystemLogCl
 	return res.RowsAffected()
 }
 
+// InsertSystemLogCleanupAudit writes the supplied cleanup record with a current
+// UTC timestamp when CreatedAt is zero. The delete has already run
+// independently, so failure here cannot undo removed system observations.
 func (r *Store) InsertSystemLogCleanupAudit(ctx context.Context, input *ops.OpsSystemLogCleanupAudit) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -898,12 +1050,29 @@ INSERT INTO ops_system_log_cleanup_audits (
 	return err
 }
 
-// escapeLikePattern escapes backslashes, percent signs, and underscores for LIKE/ILIKE.
-// PostgreSQL uses backslash as the default escape character.
+// escapeLikePattern escapes PostgreSQL's default backslash, percent, and
+// underscore pattern characters. Fuzzy model filtering adds its own outer
+// percent signs afterward, while free-text and user-email filters retain caller
+// wildcard characters.
 func escapeLikePattern(s string) string {
 	return likePatternReplacer.Replace(s)
 }
 
+// buildOpsErrorLogsWhere builds bound SQL predicates for a nonnil filter
+// supplied by ListErrorLogs. Ordinary admission requires final client status of
+// at least four hundred or cyber_policy; qualifying provider-health filters can
+// include recovered rows. Default and unknown views use SLA-countable rules,
+// excluded uses business-limit rules, and all adds neither classification
+// restriction.
+//
+// Positive identity values add conjunctive restrictions. Explicit phase
+// matching accepts stored account_auth for provider_auth, while phase/type
+// arrays remain caller-supplied except that legacy addition. Display-status
+// filtering prefers upstream status; explicit status lists take precedence over
+// the Other category. Model filtering prefers any nonnull requested model,
+// including blank, unlike model ordering's blank fallback. Fuzzy model text is
+// escaped, but free text and user-email searches retain LIKE wildcards. Request
+// correlation uses lookup candidates with exact-local precedence.
 func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	clauses := make([]string, 0, 12)
 	args := make([]any, 0, 12)
@@ -913,15 +1082,13 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	if filter != nil {
 		phaseFilter = strings.TrimSpace(strings.ToLower(filter.Phase))
 	}
-	// ops_error_logs stores client-visible error requests (status>=400),
-	// but we also persist "recovered" upstream errors (status<400) for upstream health visibility.
-	// A nil Resolved filter includes both resolved and unresolved rows.
 	resolvedFilter := (*bool)(nil)
 	if filter != nil {
 		resolvedFilter = filter.Resolved
 	}
-	// Provider health queries may include recovered upstream/provider_auth attempts.
-	// Streaming cyber_policy rejections can have status 200 and remain visible to clients.
+	// Provider-health opt-in admits recovered attempts only for eligible phases.
+	// Keep cyber_policy rows under ordinary admission because streamed policy
+	// rejections can retain final status 200.
 	if !opsFilterIncludesRecoveredProviderRows(filter, phaseFilter) {
 		clauses = append(clauses, "(COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy')")
 	}
@@ -932,7 +1099,8 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	}
 	if filter.EndTime != nil && !filter.EndTime.IsZero() {
 		args = append(args, filter.EndTime.UTC())
-		// Keep time-window semantics consistent with other ops queries: [start, end)
+		// Use an exclusive end so adjacent requested windows partition observations
+		// without double counting records exactly at the next window's start.
 		clauses = append(clauses, "e.created_at < $"+itoa(len(args)))
 	}
 	if p := strings.TrimSpace(filter.Platform); p != "" {
@@ -950,7 +1118,9 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		condition := "e.error_phase = $" + itoa(len(args))
-		// Match the legacy phase through the existing index, avoiding a large-table backfill.
+		// Include account_auth alongside provider_auth using direct phase predicates.
+		// This reads retained legacy rows while the response exposes the current
+		// credential-phase spelling.
 		if phase == "provider_auth" {
 			args = append(args, "account_auth")
 			condition = "(" + condition + " OR e.error_phase = $" + itoa(len(args)) + ")"
@@ -972,9 +1142,9 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "COALESCE(e.resolved,false) = $"+itoa(len(args)))
 	}
 
-	// View filter: errors vs excluded vs all.
-	// SLA counts exclude business limits and configured client-side statuses.
-	// Upstream 429/529 are included in errors view to match SLA calculation.
+	// Apply shared business-limit and SLA rules independently of displayed
+	// upstream status. Upstream 429/529 remains countable when an ignored client
+	// status does not classify it as excluded.
 	ignoredStatusCodes := []int(nil)
 	if filter != nil {
 		ignoredStatusCodes = filter.IgnoredStatusCodes
@@ -993,19 +1163,24 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	case "all":
 		// no-op
 	default:
-		// treat unknown as default 'errors'
+		// Unknown view names select SLA-countable errors, matching empty-view
+		// behavior so malformed selectors do not expose every excluded observation.
 		clauses = append(clauses, slaCountableSQL)
 	}
 	if len(filter.StatusCodes) > 0 {
 		args = append(args, pq.Array(filter.StatusCodes))
 		clauses = append(clauses, "COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+")")
 	} else if filter.StatusCodesOther {
-		// "Other" means: status codes not in the common list.
+		// Other excludes the dashboard's common displayed-status list. A nonempty
+		// explicit status list takes precedence and never reaches this inverse
+		// category.
 		known := []int{400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
 		args = append(args, pq.Array(known))
 		clauses = append(clauses, "NOT (COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+"))")
 	}
-	// Exact correlation keys (preferred for request↔upstream linkage).
+	// Correlate internal and external IDs through request_lookup_ids with
+	// exact-local precedence. A supplied ClientRequestID adds its own conjunctive
+	// saved-column restriction afterward.
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {
 		args = append(args, rid)
 		clauses = append(clauses, opsRequestIDCondition("e", len(args)))
@@ -1039,6 +1214,9 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "e.api_key_id = $"+itoa(len(args)))
 	}
 	if m := strings.TrimSpace(filter.Model); m != "" {
+		// Escape caller model wildcards before adding substring markers. COALESCE
+		// treats a nonnull blank requested model as present, unlike ordering's
+		// blank-model fallback.
 		if filter.ModelFuzzy {
 			args = append(args, "%"+escapeLikePattern(m)+"%")
 			clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') ILIKE $"+itoa(len(args)))
@@ -1052,6 +1230,8 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	}
 	if len(filter.ErrorPhasesAny) > 0 {
 		phases := append([]string(nil), filter.ErrorPhasesAny...)
+		// Copy the supplied phase slice before adding the legacy credential spelling,
+		// so compatibility expansion leaves caller slice contents unchanged.
 		if slices.Contains(filter.ErrorPhasesAny, "provider_auth") {
 			phases = append(phases, "account_auth")
 		}
@@ -1066,10 +1246,23 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
+// opsFilterIncludesRecoveredProviderRows reports whether
+// IncludeRecoveredUpstream can remove final-client-status admission for
+// provider health. Nil filters and a false opt-in retain ordinary request-error
+// visibility. A nonempty normalized explicit phase takes precedence over phase
+// arrays and must be upstream or provider_auth.
+//
+// When that explicit phase is empty, a nonempty array must contain only those
+// eligible normalized phases. Any other entry keeps the status guard, so a
+// mixed provider/request selection cannot expose recovered successes through
+// the provider option. Predicate generation still applies its own exact phase
+// values afterward; this helper determines admission alone.
 func opsFilterIncludesRecoveredProviderRows(filter *ops.OpsErrorLogFilter, phaseFilter string) bool {
 	if filter == nil || !filter.IncludeRecoveredUpstream {
 		return false
 	}
+	// An explicit phase wins over the category array. Eligibility here cannot
+	// widen mixed categories when that phase selects a non-provider request.
 	if phaseFilter != "" {
 		return phaseFilter == "upstream" || phaseFilter == "provider_auth"
 	}
@@ -1077,6 +1270,9 @@ func opsFilterIncludesRecoveredProviderRows(filter *ops.OpsErrorLogFilter, phase
 		return false
 	}
 	sawProviderPhase := false
+	// Require every requested category to describe provider work before lifting
+	// final-status admission. Rejecting one other phase retains visibility rules
+	// for the whole mixed selection.
 	for _, rawPhase := range filter.ErrorPhasesAny {
 		switch strings.TrimSpace(strings.ToLower(rawPhase)) {
 		case "upstream", "provider_auth":
@@ -1088,14 +1284,38 @@ func opsFilterIncludesRecoveredProviderRows(filter *ops.OpsErrorLogFilter, phase
 	return sawProviderPhase
 }
 
-// opsRequestIDCondition matches candidate IDs against both columns; exact local IDs suppress external alias matching.
+// opsRequestIDCondition builds a correlation predicate using a trusted SQL
+// alias and positive placeholder number. request_lookup_ids supplies candidate
+// IDs; when the searched value names an exact local request record,
+// client_request_id candidates are suppressed.
+//
+// Stored request_id matches remain available, so an external alias collision
+// does not broaden an exact local lookup through the client-ID column. The
+// caller binds the searched value once even though the generated expression
+// references that placeholder repeatedly. Database lookup rules determine
+// candidate expansion rather than string manipulation here.
 func opsRequestIDCondition(alias string, parameter int) string {
+	// Use database candidate expansion together with a separate exact-local
+	// existence guard. Repeated placeholders read one bound value while preventing
+	// client-alias collision expansion.
 	lookup := fmt.Sprintf("ARRAY(SELECT id FROM request_lookup_ids($%d))", parameter)
 	return fmt.Sprintf("(%s.request_id = ANY(%s) OR (%s.client_request_id = ANY(%s)"+
 		" AND NOT EXISTS (SELECT 1 FROM request_records exact_request WHERE exact_request.request_id=$%d)))",
 		alias, lookup, alias, lookup, parameter)
 }
 
+// buildOpsSystemLogsWhere returns SQL, ordered arguments, and whether at least
+// one effective condition was added. Nil and empty filters produce an
+// unrestricted predicate with false. Only nonzero time endpoints, positive
+// identities, and nonblank trimmed text count as constraints; level matching
+// folds case while other exact text fields keep it.
+//
+// RequestID resolves lookup candidates with exact-local precedence, while
+// ClientRequestID independently matches its saved column and combines
+// conjunctively. Free text searches messages, both correlation columns, and
+// serialized metadata with caller LIKE wildcards intact. DeleteSystemLogs uses
+// the constraint flag to reject an unrestricted delete; listing may
+// intentionally use the same unrestricted predicate.
 func buildOpsSystemLogsWhere(filter *ops.OpsSystemLogFilter) (string, []any, bool) {
 	clauses := make([]string, 0, 10)
 	args := make([]any, 0, 10)
@@ -1175,6 +1395,10 @@ func buildOpsSystemLogsWhere(filter *ops.OpsSystemLogFilter) (string, []any, boo
 	return "WHERE " + strings.Join(clauses, " AND "), args, hasConstraint
 }
 
+// buildOpsSystemLogsCleanupWhere maps cleanup dimensions into the shared
+// system-log predicate builder. Nil input becomes empty, pointer values are
+// read as supplied, and only recognized effective conditions satisfy the
+// deletion guard.
 func buildOpsSystemLogsCleanupWhere(filter *ops.OpsSystemLogCleanupFilter) (string, []any, bool) {
 	if filter == nil {
 		filter = &ops.OpsSystemLogCleanupFilter{}
@@ -1197,7 +1421,10 @@ func buildOpsSystemLogsCleanupWhere(filter *ops.OpsSystemLogCleanupFilter) (stri
 	return buildOpsSystemLogsWhere(listFilter)
 }
 
-// opsNullString converts nonempty strings to valid SQL values and other inputs to NULL.
+// opsNullString trims concrete string or string-pointer values and returns
+// nullable SQL text. Nil, blank, and unsupported types become NULL; this
+// generic encoder does not accept separately defined string types through
+// reflection.
 func opsNullString(v any) any {
 	switch s := v.(type) {
 	case nil:
@@ -1217,6 +1444,9 @@ func opsNullString(v any) any {
 	}
 }
 
+// opsNullInt64 encodes an optional integer for IDs, timings, and other
+// zero-as-missing fields. Nil and zero become NULL, negative values remain
+// valid, and callers choose another encoder when zero is meaningful.
 func opsNullInt64(v *int64) any {
 	if v == nil || *v == 0 {
 		return sql.NullInt64{}
@@ -1224,6 +1454,10 @@ func opsNullInt64(v *int64) any {
 	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
+// opsNullInt encodes concrete int, int-pointer, and int64-pointer values for
+// zero-as-missing fields. Nil, zero, and unsupported types become NULL;
+// negative values survive, and supplied supported integers are converted to SQL
+// int64.
 func opsNullInt(v any) any {
 	switch n := v.(type) {
 	case nil:
@@ -1248,8 +1482,9 @@ func opsNullInt(v any) any {
 	}
 }
 
-// opsNullableIntPointer distinguishes missing values from zero for statuses and pool counts.
-// Credential failures can store an upstream status of zero when inference was never attempted.
+// opsNullableIntPointer encodes a status or pool count while preserving an
+// explicit zero. Nil means unavailable; provider credential failures use zero
+// upstream status to distinguish absent inference from a missing observation.
 func opsNullableIntPointer(v *int) any {
 	if v == nil {
 		return sql.NullInt64{}
@@ -1257,6 +1492,9 @@ func opsNullableIntPointer(v *int) any {
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
 }
 
+// opsNullInt16 encodes optional request type as a SQL integer, preserving zero
+// and negative supplied values. Only nil becomes NULL; validation of the
+// request-type enumeration belongs to the caller.
 func opsNullInt16(v *int16) any {
 	if v == nil {
 		return sql.NullInt64{}
@@ -1264,8 +1502,10 @@ func opsNullInt16(v *int16) any {
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
 }
 
-// itoa formats a SQL parameter index.
+// itoa returns decimal text for repository SQL parameter indexes.
 func itoa(v int) string { return strconv.Itoa(v) }
 
-// nullInt64 converts an optional integer to a nullable SQL integer.
+// nullInt64 encodes a supplied integer as nullable SQL data. Nil becomes NULL,
+// while zero and negative values remain present for resolution actor fields
+// through infra.NullableInt64.
 func nullInt64(v *int64) sql.NullInt64 { return infra.NullableInt64(v) }

@@ -12,20 +12,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestHistoricalIngressCleanupDryRunAndExecute checks classification-only dry runs and deletion with time and auth filters.
+// TestHistoricalIngressCleanupDryRunAndExecute commits local-key, quota,
+// other-phase, and newer fixture rows before scanning one-row pages. It checks
+// dry-run classifications retain all rows, then execution removes only the two
+// matched older auth fixtures.
 func TestHistoricalIngressCleanupDryRunAndExecute(t *testing.T) {
 	ctx := context.Background()
+	// Clear the shared error-log fixture table after this test so dry-run and
+	// execution cases do not leave their committed rows behind.
 	t.Cleanup(func() { _, err := integrationDB.ExecContext(ctx, "TRUNCATE ops_error_logs"); require.NoError(t, err) })
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Attempt rollback on any early assertion exit; the committed fixture remains
+	// available for subsequent repository connections after this defer becomes
+	// harmless.
 	defer func() { _ = tx.Rollback() }()
-	// Commit the fixture atomically so repository queries can read it from other connections.
+	// Truncate and insert all fixture rows inside this transaction, then commit
+	// before repository scanning can read them through other pooled connections.
 	_, err = tx.ExecContext(ctx, "TRUNCATE ops_error_logs")
 	require.NoError(t, err)
 	before := time.Now().UTC()
 	for _, v := range []struct {
+		// code: embedded rejection identity. phase: stored error phase.
 		code, phase string
-		at          time.Time
+		at          time.Time // stored fixture creation instant
 	}{{"INVALID_API_KEY", "auth", before.Add(-time.Minute)}, {"API_KEY_REQUIRED", "auth", before.Add(-time.Minute)}, {"API_KEY_QUOTA_EXHAUSTED", "auth", before.Add(-time.Minute)}, {"INVALID_API_KEY", "upstream", before.Add(-time.Minute)}, {"INVALID_API_KEY", "auth", before.Add(time.Minute)}} {
 		_, err = tx.ExecContext(ctx, `INSERT INTO ops_error_logs(error_phase,error_type,severity,status_code,error_message,error_body,created_at) VALUES($1,'authentication_error','warn',401,'',$2,$3)`, v.phase, `{"code":"`+v.code+`"}`, v.at)
 		require.NoError(t, err)

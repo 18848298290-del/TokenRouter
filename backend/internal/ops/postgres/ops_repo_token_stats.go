@@ -9,6 +9,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Model rankings count saved usage rows by execution model while token-rate and
+// first-token measurements use different sample sets. A row with no positive
+// output or duration still contributes to request count and output totals, but
+// contributes no token-rate sample. First-token averages include every nonnull
+// recorded value, including zero.
+//
+// The grouped statistics CTE supplies both the ranked selection and the model
+// total in one statement. A left join keeps that total available when
+// pagination selects no model, with has_item distinguishing the synthetic row
+// from actual items. Nullable rate and first-token averages remain absent in
+// the response, so callers can distinguish missing measurements from recorded
+// zero. Repository calls expect pagination already normalized by OpsService.
+
+// GetTokenStats returns raw usage statistics grouped by saved execution model,
+// ordered by descending request count and then ascending model. Nonzero ordered
+// endpoints are required, equality is accepted, and platform is trimmed and
+// lowercased. OpsService supplies positive pagination values or a positive
+// TopN; direct repository calls receive no limit normalization. GroupID is
+// retained in the response, while only a positive value adds a SQL predicate.
+// Callers treat that pointed-to identity as read-only while sharing the result.
+//
+// The total counts all grouped models before limiting. A synthetic row
+// preserves that total for an empty page and is excluded from Items, whose
+// empty slice remains available. Token rate averages positive output divided by
+// positive full duration, latency averages nonnull first-token values, and
+// nullable averages become nil pointers. Query and scan failures reject the
+// response; the supplied filter is read without mutation.
 func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilter) (*ops.OpsTokenStatsResponse, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -33,6 +60,10 @@ func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilt
 
 	join, where, baseArgs, next := buildUsageWhere(dashboardFilter, dashboardFilter.StartTime, dashboardFilter.EndTime, 1)
 
+	// Multiplying output tokens by 1000 converts recorded milliseconds to seconds;
+	// positive output and duration select rate samples independently of other
+	// averages. SQL rounds rates and first-token averages to two decimals and
+	// duration averages to whole milliseconds.
 	baseCTE := `
 WITH stats AS (
   SELECT
@@ -83,7 +114,8 @@ ORDER BY request_count DESC, model ASC`
 		args = append(args, filter.PageSize, offset)
 	}
 
-	// Compute aggregates once; LEFT JOIN retains the model total even for an empty page.
+	// Read the complete model count from the same statistics as the page. LEFT
+	// JOIN supplies one sentinel row when the page contains no model.
 	querySQL += `
 )
 SELECT
@@ -104,6 +136,8 @@ ORDER BY p.request_count DESC NULLS LAST, p.model ASC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after scanning or an early failure; cleanup errors are
+	// suppressed, while query, scan, and iteration errors determine the response.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]*ops.OpsTokenStatsItem, 0, 32)
@@ -132,6 +166,8 @@ ORDER BY p.request_count DESC NULLS LAST, p.model ASC`
 			return nil, err
 		}
 		total = rowTotal
+		// The left-join sentinel carries the total for an empty page. Its nullable
+		// item columns are discarded before constructing a model entry.
 		if !hasItem {
 			continue
 		}

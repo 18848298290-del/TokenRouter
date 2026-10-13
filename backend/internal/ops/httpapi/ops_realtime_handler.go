@@ -14,7 +14,17 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// GetConcurrencyStats returns real-time concurrency usage aggregated by platform/group/provider.
+// Realtime endpoints expose optional sampling while overall monitoring remains
+// enabled. Concurrency and availability return successful empty maps before
+// validating filters when realtime is disabled; traffic summary first validates
+// its window and filters so the disabled result still carries the requested
+// range. Recognized cancellation failures return without writing an error
+// response.
+
+// GetConcurrencyStats returns sampled platform, group, and provider concurrency
+// after the overall monitoring check. Disabled realtime returns empty maps
+// before filter parsing; enabled requests trim platform, require positive group
+// IDs, and include a collected timestamp when available.
 // GET /api/v1/admin/ops/concurrency
 func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 	if h.opsService == nil {
@@ -26,6 +36,8 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 		return
 	}
 
+	// Disabled realtime returns empty platform, group, and provider maps with
+	// current UTC time, leaving the supplied group filter unparsed.
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		response.Success(c, gin.H{
 			"enabled":   false,
@@ -50,6 +62,9 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 
 	platform, group, provider, collectedAt, err := h.opsService.GetConcurrencyStats(c.Request.Context(), platformFilter, groupID)
 	if err != nil {
+		// Omit an error response for recognized cancellation failures; the helper
+		// accepts driver text or request cancellation even without a wrapped
+		// cancellation error.
 		if isOpsRealtimeRequestCanceled(c, err) {
 			return
 		}
@@ -69,7 +84,10 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetUserConcurrencyStats returns active users with running or waiting requests.
+// GetUserConcurrencyStats returns sampled users with running or waiting
+// requests after the monitoring check. Disabled realtime reports an empty map
+// and current timestamp; enabled results include the service's collected
+// timestamp when available.
 // GET /api/v1/admin/ops/user-concurrency
 func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 	if h.opsService == nil {
@@ -81,6 +99,8 @@ func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 		return
 	}
 
+	// Return an empty user map and current timestamp when sampling is disabled;
+	// the active-user query is skipped for this response.
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		response.Success(c, gin.H{
 			"enabled":   false,
@@ -92,6 +112,9 @@ func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 
 	users, collectedAt, err := h.opsService.GetUserConcurrencyStats(c.Request.Context())
 	if err != nil {
+		// Omit an error response for recognized cancellation failures; the helper
+		// accepts driver text or request cancellation even without a wrapped
+		// cancellation error.
 		if isOpsRealtimeRequestCanceled(c, err) {
 			return
 		}
@@ -109,12 +132,11 @@ func (h *OpsHandler) GetUserConcurrencyStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetProviderAvailability returns provider availability statistics.
+// GetProviderAvailability returns sampled availability grouped by platform,
+// group, and provider. Disabled realtime succeeds with empty maps before filter
+// validation, while enabled requests pass trimmed platform and positive
+// optional group IDs to the service.
 // GET /api/v1/admin/ops/provider-availability
-//
-// Query params:
-// - platform: optional
-// - group_id: optional.
 func (h *OpsHandler) GetProviderAvailability(c *gin.Context) {
 	if h.opsService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
@@ -125,6 +147,8 @@ func (h *OpsHandler) GetProviderAvailability(c *gin.Context) {
 		return
 	}
 
+	// The disabled availability response leaves group_id unparsed and uses current
+	// UTC time instead of a timestamp returned by provider sampling.
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		response.Success(c, gin.H{
 			"enabled":   false,
@@ -149,6 +173,9 @@ func (h *OpsHandler) GetProviderAvailability(c *gin.Context) {
 
 	platformStats, groupStats, providerStats, collectedAt, err := h.opsService.GetProviderAvailabilityStats(c.Request.Context(), platform, groupID)
 	if err != nil {
+		// Omit an error response for recognized cancellation failures; the helper
+		// accepts driver text or request cancellation even without a wrapped
+		// cancellation error.
 		if isOpsRealtimeRequestCanceled(c, err) {
 			return
 		}
@@ -168,7 +195,10 @@ func (h *OpsHandler) GetProviderAvailability(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// isOpsRealtimeRequestCanceled reports whether cancellation of the HTTP request caused the query failure.
+// isOpsRealtimeRequestCanceled recognizes nonnil failures matching
+// context.Canceled, a canceled request context, or the SQL cancellation-message
+// substring. It returns false for nil errors, and a deadline error alone is not
+// recognized; this heuristic does not establish the failure's cause.
 func isOpsRealtimeRequestCanceled(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
@@ -179,9 +209,14 @@ func isOpsRealtimeRequestCanceled(c *gin.Context, err error) bool {
 	if c != nil && c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
 		return true
 	}
+	// Recognize this database-driver diagnostic even when cancellation wrapping is
+	// lost; text matching can classify an error from an uncanceled request.
 	return strings.Contains(err.Error(), "canceling statement due to user request")
 }
 
+// parseOpsRealtimeWindow recognizes trimmed, case-folded minute and hour
+// aliases and returns a duration with its canonical display label. Blank input
+// selects one minute; unknown values return zero, an empty label, and false.
 func parseOpsRealtimeWindow(v string) (time.Duration, string, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "1min", "1m":
@@ -197,13 +232,11 @@ func parseOpsRealtimeWindow(v string) (time.Duration, string, bool) {
 	}
 }
 
-// GetRealtimeTrafficSummary returns QPS/TPS current/peak/avg for the selected window.
+// GetRealtimeTrafficSummary returns current, peak, and average QPS/TPS for a
+// preset window ending at one sampled UTC time. It validates the window and
+// positive optional group before checking realtime; disabled results retain
+// that range with zero rates, while enabled queries force raw mode.
 // GET /api/v1/admin/ops/realtime-traffic
-//
-// Query params:
-// - window: 1min|5min|30min|1h (default: 1min)
-// - platform: optional
-// - group_id: optional.
 func (h *OpsHandler) GetRealtimeTrafficSummary(c *gin.Context) {
 	if h.opsService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
@@ -231,9 +264,13 @@ func (h *OpsHandler) GetRealtimeTrafficSummary(c *gin.Context) {
 		groupID = &id
 	}
 
+	// Use one UTC sample for both range endpoints so the requested elapsed window
+	// also matches the disabled response's timestamp.
 	endTime := time.Now().UTC()
 	startTime := endTime.Add(-windowDur)
 
+	// Keep the already validated window and filters in the disabled summary,
+	// letting clients display the selected range with zero rates.
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		disabledSummary := &ops.OpsRealtimeTrafficSummary{
 			Window:    windowLabel,
@@ -262,6 +299,8 @@ func (h *OpsHandler) GetRealtimeTrafficSummary(c *gin.Context) {
 
 	summary, err := h.opsService.GetRealtimeTrafficSummary(c.Request.Context(), filter)
 	if err != nil {
+		// Skip error response writing for the cancellation heuristic, matching the
+		// other realtime endpoints when clients abandon a query.
 		if isOpsRealtimeRequestCanceled(c, err) {
 			return
 		}

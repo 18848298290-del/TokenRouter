@@ -1,4 +1,8 @@
-// Package postgres stores Ops logs, system metrics, and alerts, and removes historical data.
+// Package postgres stores operational observations and answers monitoring
+// queries through the application SQL pool. Dashboard overviews can combine
+// covered hourly buckets with raw request fragments, while the other query
+// adapters read original rows; cleanup and alert storage use their own
+// statement and transaction rules.
 //
 // Start reading at:
 //   - ops_repo.go: Store construction and error and system log queries.

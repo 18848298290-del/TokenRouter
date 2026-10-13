@@ -20,52 +20,94 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops/maintenance"
 )
 
+// systemHandlerUpdateServiceStub records synchronous maintenance calls and
+// returns configured update outcomes.
 type systemHandlerUpdateServiceStub struct {
-	performErr            error
-	updateInfo            *ops.UpdateInfo
-	checkErr              error
-	checkForces           []bool
-	performCall           int
-	performCtxErr         error
-	performHasDeadline    bool
-	rollbackCall          int
-	rollbackToCall        int
-	rollbackToCtxErr      error
-	rollbackToHasDeadline bool
-	rollbackToVersions    []string
-	rollbackToErr         error
-	rollbackVersions      []ops.RollbackVersion
-	rollbackVersionsErr   error
-	rollbackVersionsCall  int
+	// performErr controls Operations.Update. ErrNoUpdateAvailable selects a
+	// successful display query, while other errors select the failed maintenance
+	// path.
+	performErr error // configured update operation result
+	// updateInfo is returned directly by CheckUpdate, including nil. Tests
+	// populate it for the no-update display branch and retain the object.
+	updateInfo *ops.UpdateInfo // borrowed update display fixture
+	checkErr   error           // configured update query failure
+	// checkForces appends each CheckUpdate argument without synchronization. Tests
+	// read it after the synchronous HTTP call returns.
+	checkForces []bool // recorded force argument history
+	// performCall counts invocations that populate performCtxErr and
+	// performHasDeadline from the supplied context. Tests check the count before
+	// interpreting nil error or a true deadline observation.
+	performCall        int   // update method call count
+	performCtxErr      error // observed update context error
+	performHasDeadline bool  // update context deadline presence
+	rollbackCall       int   // local rollback call count
+	// rollbackToCall counts selected rollbacks that populate rollbackToCtxErr,
+	// rollbackToHasDeadline, and rollbackToVersions together. Tests read these
+	// unsynchronized observations after the synchronous request returns.
+	rollbackToCall        int   // selected rollback call count
+	rollbackToCtxErr      error // observed selected-rollback context error
+	rollbackToHasDeadline bool  // selected-rollback context deadline presence
+	// rollbackToVersions appends selected targets without synchronization. Tests
+	// read these entries after the request completes to verify path selection.
+	rollbackToVersions []string // recorded selected target history
+	rollbackToErr      error    // configured selected rollback failure
+	// rollbackVersions is returned directly and remains owned by the fixture. The
+	// HTTP query uses it without an independent slice clone.
+	rollbackVersions     []ops.RollbackVersion // borrowed candidate response slice
+	rollbackVersionsErr  error                 // configured candidate query failure
+	rollbackVersionsCall int                   // candidate query call count
 }
 
+// systemUpdateResponseEnvelope decodes maintenance success fields asserted by
+// the system HTTP fixtures.
 type systemUpdateResponseEnvelope struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		Message         string `json:"message"`
-		AlreadyUpToDate bool   `json:"already_up_to_date"`
-		CurrentVersion  string `json:"current_version"`
-		LatestVersion   string `json:"latest_version"`
-		OperationID     string `json:"operation_id"`
+	Code    int    `json:"code"`    // application response status code
+	Message string `json:"message"` // application response message text
+	// Data contains the command result inside the common HTTP envelope. Each
+	// fixture asserts the result members relevant to its selected maintenance
+	// path.
+	Data struct {
+		Message string `json:"message"` // maintenance result display message
+		// AlreadyUpToDate, CurrentVersion, and LatestVersion are populated by the
+		// already-current update result. Other command payloads can omit them,
+		// leaving the decoder's false and empty-string values.
+		AlreadyUpToDate bool   `json:"already_up_to_date"` // no-update result marker
+		CurrentVersion  string `json:"current_version"`    // displayed running version text
+		LatestVersion   string `json:"latest_version"`     // displayed newest version text
+		OperationID     string `json:"operation_id"`       // returned maintenance identity text
 	} `json:"data"`
 }
 
+// systemUpdateErrorEnvelope decodes application failure fields for update error
+// assertions.
 type systemUpdateErrorEnvelope struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int    `json:"code"`    // application response status code
+	Message string `json:"message"` // application error display message
 }
 
-// restartRecorder counts restart requests.
-type restartRecorder struct{ calls int }
+// restartRecorder records synchronous restart requests made by the maintenance
+// fixture.
+type restartRecorder struct {
+	calls int /* restart request call count */
+}
 
-// systemOperationFixture models owner-specific maintenance leases for HTTP tests.
+// systemOperationFixture models owner-checked maintenance leases in a
+// mutex-protected record map.
 type systemOperationFixture struct {
-	mu     sync.Mutex
-	nextID int64
-	data   map[string]*idempotency.IdempotencyRecord
+	// mu serializes claims, renewals, finishing, and status inspection while
+	// nextID and data change together. Existing records retain their IDs when an
+	// expired lease is replaced.
+	mu     sync.Mutex // lease fixture state mutex
+	nextID int64      // next new record identity
+	// data stores live record pointers; returned record values are shallow copies
+	// and retain their optional pointers. Tests inspect stored status under mu.
+	data map[string]*idempotency.IdempotencyRecord // retained lease record pointers
 }
 
+// TestSystemHandlerPerformUpdateAlreadyUpToDateReturnsOK injects the no-update
+// sentinel and display versions through a lease fixture. It checks a successful
+// already-current response, the follow-up nonforced read, and a succeeded lease
+// record.
 func TestSystemHandlerPerformUpdateAlreadyUpToDateReturnsOK(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{
 		performErr: maintenance.ErrNoUpdateAvailable,
@@ -99,6 +141,9 @@ func TestSystemHandlerPerformUpdateAlreadyUpToDateReturnsOK(t *testing.T) {
 	require.NotEmpty(t, body.Data.OperationID)
 }
 
+// TestSystemHandlerPerformUpdateFailureStillReturnsInternalError injects a
+// download failure into the update callback. It checks HTTP internal error, no
+// display-query call, and a failed-retryable maintenance record.
 func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{
 		performErr: errors.New("download failed"),
@@ -122,8 +167,10 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.Equal(t, "internal error", body.Message)
 }
 
-// TestSystemHandlerPerformUpdateSurvivesClientDisconnect covers #4504: downloads continue
-// under an independent deadline after the browser or reverse proxy cancels the request.
+// TestSystemHandlerPerformUpdateSurvivesClientDisconnect supplies a canceled
+// request for the #4504 accepted-work scenario using a lease store that ignores
+// its context. It checks the update callback receives a live, deadline-bearing
+// context and a succeeded record.
 func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -131,6 +178,9 @@ func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	// Cancel before serving through the context-ignoring lease fixture, then
+	// inspect the accepted work context; this setup is not a live-database claim
+	// test.
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	req = req.WithContext(canceledCtx)
@@ -145,6 +195,10 @@ func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 	requireSystemLockStatus(t, repo, idempotency.IdempotencyStatusSucceeded)
 }
 
+// TestSystemHandlerRollbackToVersionSurvivesClientDisconnect supplies a
+// canceled request through a context-ignoring lease fixture. It checks selected
+// rollback executes under a live context with a deadline and finishes the
+// stored operation successfully.
 func TestSystemHandlerRollbackToVersionSurvivesClientDisconnect(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -154,6 +208,8 @@ func TestSystemHandlerRollbackToVersionSurvivesClientDisconnect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/rollback",
 		strings.NewReader(`{"version":"0.1.146"}`))
 	req.Header.Set("Content-Type", "application/json")
+	// Use an already canceled request with fixture claims that ignore context,
+	// isolating the downloaded rollback context established after acceptance.
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	req = req.WithContext(canceledCtx)
@@ -168,6 +224,9 @@ func TestSystemHandlerRollbackToVersionSurvivesClientDisconnect(t *testing.T) {
 	requireSystemLockStatus(t, repo, idempotency.IdempotencyStatusSucceeded)
 }
 
+// TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup sends rollback with an
+// omitted body to the maintenance fixture. It checks the local method runs
+// once, selected rollback is unused, and the lease record succeeds.
 func TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -184,6 +243,10 @@ func TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup(t *testing.T) {
 	requireSystemLockStatus(t, repo, idempotency.IdempotencyStatusSucceeded)
 }
 
+// TestSystemHandlerRollbackWithVersionCallsRollbackToVersion submits a named
+// target through the handler. It checks that the supplied target reaches selected
+// rollback, the local method stays unused, and the success response and lease
+// state match.
 func TestSystemHandlerRollbackWithVersionCallsRollbackToVersion(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -208,6 +271,9 @@ func TestSystemHandlerRollbackWithVersionCallsRollbackToVersion(t *testing.T) {
 	require.Equal(t, "Rollback completed. Please restart the service.", body.Data.Message)
 }
 
+// TestSystemHandlerRollbackWithChunkedVersionBody marks a target body with
+// unknown length and chunked transfer encoding. It checks the handler still
+// binds the target and chooses selected rollback successfully.
 func TestSystemHandlerRollbackWithChunkedVersionBody(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
 	repo := newSystemOperationFixture()
@@ -216,6 +282,8 @@ func TestSystemHandlerRollbackWithChunkedVersionBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/rollback",
 		strings.NewReader(`{"version":"0.1.146"}`))
+	// Model unknown body length instead of zero so rollback binding cannot treat
+	// this supplied target as an omitted body.
 	req.ContentLength = -1
 	req.TransferEncoding = []string{"chunked"}
 	req.Header.Set("Content-Type", "application/json")
@@ -227,6 +295,9 @@ func TestSystemHandlerRollbackWithChunkedVersionBody(t *testing.T) {
 	require.Equal(t, []string{"0.1.146"}, updateSvc.rollbackToVersions)
 }
 
+// TestSystemHandlerRollbackWithDisallowedVersionReturnsBadRequest injects the
+// not-allowed sentinel from selected rollback. It checks the callback is
+// invoked and HTTP mapping returns bad request for that supplied target.
 func TestSystemHandlerRollbackWithDisallowedVersionReturnsBadRequest(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{
 		rollbackToErr: maintenance.ErrRollbackVersionNotAllowed,
@@ -245,6 +316,9 @@ func TestSystemHandlerRollbackWithDisallowedVersionReturnsBadRequest(t *testing.
 	require.Equal(t, 1, updateSvc.rollbackToCall)
 }
 
+// TestSystemHandlerGetRollbackVersions supplies two candidate entries in a
+// successful update-service response. It checks one query call and the decoded
+// HTTP candidate list has two entries with the expected first version.
 func TestSystemHandlerGetRollbackVersions(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{
 		rollbackVersions: []ops.RollbackVersion{
@@ -263,9 +337,9 @@ func TestSystemHandlerGetRollbackVersions(t *testing.T) {
 	require.Equal(t, 1, updateSvc.rollbackVersionsCall)
 
 	var body struct {
-		Code int `json:"code"`
-		Data struct {
-			Versions []ops.RollbackVersion `json:"versions"`
+		Code int      `json:"code"` // application response status code
+		Data struct { // candidate response payload
+			Versions []ops.RollbackVersion `json:"versions"` // returned rollback candidate entries
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -274,6 +348,9 @@ func TestSystemHandlerGetRollbackVersions(t *testing.T) {
 	require.Equal(t, "0.1.146", body.Data.Versions[0].Version)
 }
 
+// TestSystemHandlerGetRollbackVersionsError injects a candidate-query failure
+// through the retained service. It checks the list endpoint returns
+// internal-server error rather than a success versions payload.
 func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{
 		rollbackVersionsErr: errors.New("github unavailable"),
@@ -288,6 +365,10 @@ func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
+// TestSystemHandlerRestartPreservesResponse submits a restart through a
+// persistent-lease fixture and a recording requester. It checks one restart
+// call, operation identity in the successful response, and a succeeded lease
+// record.
 func TestSystemHandlerRestartPreservesResponse(t *testing.T) {
 	repo := newSystemOperationFixture()
 	lock := maintenance.NewSystemOperationLockService(repo, maintenance.Options{Log: logging.LegacyPrintf, ProcessingTimeout: time.Hour, SystemOperationTTL: time.Hour})
@@ -305,11 +386,17 @@ func TestSystemHandlerRestartPreservesResponse(t *testing.T) {
 	requireSystemLockStatus(t, repo, idempotency.IdempotencyStatusSucceeded)
 }
 
+// CheckUpdate appends the force argument and returns the configured pointer and
+// error directly. It ignores context, allowing fixtures to control display data
+// independently from the queried version path.
 func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bool) (*ops.UpdateInfo, error) {
 	s.checkForces = append(s.checkForces, force)
 	return s.updateInfo, s.checkErr
 }
 
+// PerformUpdate records its invocation and the supplied context's error and
+// deadline presence. It returns the configured failure without performing
+// installation, so disconnect tests inspect the accepted context.
 func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) error {
 	s.performCall++
 	s.performCtxErr = ctx.Err()
@@ -317,16 +404,24 @@ func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) erro
 	return s.performErr
 }
 
+// Rollback records a local restoration call and returns success without
+// installing files.
 func (s *systemHandlerUpdateServiceStub) Rollback() error {
 	s.rollbackCall++
 	return nil
 }
 
+// ListRollbackVersions records a candidate-query call and returns the
+// configured slice and error directly. It ignores context, leaving response
+// ownership and error selection to the fixture.
 func (s *systemHandlerUpdateServiceStub) ListRollbackVersions(context.Context) ([]ops.RollbackVersion, error) {
 	s.rollbackVersionsCall++
 	return s.rollbackVersions, s.rollbackVersionsErr
 }
 
+// RollbackToVersion records its target and the context's current error and
+// deadline presence. It returns the configured result without downloading or
+// installing any executable.
 func (s *systemHandlerUpdateServiceStub) RollbackToVersion(ctx context.Context, version string) error {
 	s.rollbackToCall++
 	s.rollbackToCtxErr = ctx.Err()
@@ -335,6 +430,10 @@ func (s *systemHandlerUpdateServiceStub) RollbackToVersion(ctx context.Context, 
 	return s.rollbackToErr
 }
 
+// newSystemHandlerTestRouter builds Operations around the fixture lease store
+// and registers update, rollback, and candidate routes. It leaves the HTTP
+// Executor unbound, so tests exercise direct callbacks plus maintenance leases
+// rather than stored HTTP replays.
 func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServiceStub, repo *systemOperationFixture) *gin.Engine {
 	t.Helper()
 
@@ -352,8 +451,13 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	return router
 }
 
+// requireSystemLockStatus checks whether any stored fixture record has the
+// expected status while holding its mutex. It stops the test when none matches,
+// without asserting a particular key or operation identity.
 func requireSystemLockStatus(t *testing.T, repo *systemOperationFixture, wantStatus string) {
 	t.Helper()
+	// Read fixture statuses under the mutation mutex so asynchronous renewal or
+	// finish callbacks cannot change those records during the assertion's scan.
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
@@ -365,10 +469,22 @@ func requireSystemLockStatus(t *testing.T, repo *systemOperationFixture, wantSta
 	t.Fatalf("system lock status %q not found in records: %#v", wantStatus, repo.data)
 }
 
+// RequestRestart increments the fixture's restart count and returns success
+// immediately.
 func (r *restartRecorder) RequestRestart() error { r.calls++; return nil }
 
-// ClaimOperation checks lease expiration and records the new owner token.
+// ClaimOperation admits an unheld or expired fixture lease and returns a
+// shallow record copy with its ownership flag. It ignores context and uses the
+// claim's Now value rather than sampling a separate clock.
+//
+// A future LockedUntil blocks replacement regardless of the record's other
+// fields. Reclaimed records retain their IDs; new keys consume nextID. Accepted
+// replacement stores processing state, operation identity, and the supplied
+// ownership pointer under the mutex. Returned optional pointers still share
+// values with that record, so callers treat them as immutable observations.
 func (r *systemOperationFixture) ClaimOperation(ctx context.Context, c idempotency.OperationClaim) (*idempotency.IdempotencyRecord, bool, error) {
+	// Serialize fixture ownership inspection and record mutation so claims,
+	// renewal callbacks, and finalization observe complete state transitions.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := r.key(c.Scope, c.KeyHash)
@@ -389,7 +505,18 @@ func (r *systemOperationFixture) ClaimOperation(ctx context.Context, c idempoten
 	return &copy, true, nil
 }
 
+// RenewOperation updates fixture lease times only for matching record ID,
+// processing state, operation identity, and owner token. It ignores context and
+// returns false successfully when no stored record satisfies all conditions.
+//
+// The mutex keeps matching and replacement of deadline pointers together.
+// Replacing a pointer does not mutate an older pointed-to time retained by a
+// shallow ClaimOperation result, while ExpiresAt updates the live record. The
+// fixture scans all stored records and returns nil error, keeping ownership
+// refusal distinct from a store failure for optional renewal callbacks.
 func (r *systemOperationFixture) RenewOperation(ctx context.Context, id int64, operation, ownership string, until, expires time.Time) (bool, error) {
+	// Serialize fixture ownership inspection and record mutation so claims,
+	// renewal callbacks, and finalization observe complete state transitions.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range r.data {
@@ -402,7 +529,19 @@ func (r *systemOperationFixture) RenewOperation(ctx context.Context, id int64, o
 	return false, nil
 }
 
+// FinishOperation finalizes a matching processing fixture record as succeeded
+// or failed_retryable and removes its lock deadline. It ignores context and
+// reason, returning false successfully when ID, operation, state, or owner does
+// not match.
+//
+// The mutex covers ownership checks and all status/expiry changes so another
+// claim or renewal cannot interleave with that transition. ResponseBody retains
+// the owner-token value after finishing; a later claim can replace the record
+// when its LockedUntil is absent. The fixture models lease state, with no
+// separate persisted HTTP response or failure diagnostic.
 func (r *systemOperationFixture) FinishOperation(ctx context.Context, id int64, operation, ownership string, success bool, reason string, expires time.Time) (bool, error) {
+	// Serialize fixture ownership inspection and record mutation so claims,
+	// renewal callbacks, and finalization observe complete state transitions.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range r.data {
@@ -419,8 +558,11 @@ func (r *systemOperationFixture) FinishOperation(ctx context.Context, id int64, 
 	return false, nil
 }
 
+// newSystemOperationFixture allocates an empty lease map with record IDs
+// beginning at one.
 func newSystemOperationFixture() *systemOperationFixture {
 	return &systemOperationFixture{nextID: 1, data: make(map[string]*idempotency.IdempotencyRecord)}
 }
 
+// key joins fixture scope and key hash with a literal separator.
 func (r *systemOperationFixture) key(scope, keyHash string) string { return scope + "|" + keyHash }

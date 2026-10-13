@@ -7,20 +7,67 @@ import (
 	"time"
 )
 
+// Historical ingress cleanup selects a fixed set of local rejection codes and
+// message patterns from stored error observations. The store determines
+// candidate eligibility and provides increasing primary-key pages; the
+// classifier ignores the saved status number and retains rows whose text does
+// not match its listed rules.
+//
+// A dry run counts matches without deletion. Execute mode deletes one matched
+// ID batch at a time and rechecks the time cutoff in storage. Successful prior
+// batches remain deleted when a later query fails, while the returned progress
+// can omit work from a failing deletion. JSON extraction distinguishes
+// top-level string identity from nested numeric codes and uses separately
+// stored text when decoding fails.
+
+// HistoricalIngressClassifierVersion supplies the fixed rule-set label hashed
+// by the maintenance command for its classifier digest in run diagnostics.
 const HistoricalIngressClassifierVersion = "ingress-reject-v1"
 
+// HistoricalIngressCandidate carries saved error text and identity for
+// historical ingress classification.
 type HistoricalIngressCandidate struct {
-	ID            int64
-	StatusCode    int
+	// ID is the historical row identity. CleanupHistoricalIngress uses the final
+	// ID in each ordered batch as its next exclusive cursor.
+	ID int64
+	// StatusCode is supplied from the historical row but is not consulted by
+	// historicalIngressRejectReason. Candidate eligibility is restricted by the
+	// store query.
+	StatusCode int
+	// Message and Body provide stored fallback text and captured JSON.
+	// parseErrorIdentity prefers decoded top-level or nested message text, and
+	// uses Message when JSON decoding fails or no message is present.
+	//
+	// Message: stored error description text. Body: stored error response JSON.
 	Message, Body string
 }
+
+// HistoricalIngressStore supplies ordered candidates and per-batch deletion for
+// the maintenance cleanup.
 type HistoricalIngressStore interface {
+	// ListCandidates returns eligible rows after the supplied cursor and before
+	// the cutoff, bounded by batch size. Rows need strictly increasing IDs so
+	// CleanupHistoricalIngress can advance using the final row, and an empty page
+	// ends scanning.
 	ListCandidates(context.Context, int64, time.Time, int) ([]HistoricalIngressCandidate, error)
+	// DeleteCandidates deletes the selected identities still older than the cutoff
+	// and returns its affected-row count. PostgreSQL performs each call
+	// independently; callers account for earlier successful batches when a later
+	// call fails.
 	DeleteCandidates(context.Context, []int64, time.Time) (int64, error)
 }
 
-// CleanupHistoricalIngress classifies historical candidates and deletes matches when execute is true.
-// It returns counts by reason, rows scanned, rows matched, and rows deleted; execute=false is a dry run.
+// CleanupHistoricalIngress scans ordered historical candidates and returns
+// reason counts, scanned rows, matches, and deletions. A false execute flag is
+// a dry run. Callers supply a nonnil store and positive batch size; the cutoff
+// and batch size are forwarded unchanged, and the final candidate ID advances
+// each page.
+//
+// Execution deletes matching IDs separately for each batch, with the store
+// checking the cutoff again. On query or deletion failure, the reason map is
+// nil and numeric progress is returned. Earlier successful deletions remain
+// committed, and work from a failing deletion may be absent from deleted
+// because its error is returned before accumulation.
 func CleanupHistoricalIngress(ctx context.Context, store HistoricalIngressStore, before time.Time, batchSize int, execute bool) (map[string]int64, int64, int64, int64, error) {
 	counts := make(map[string]int64)
 	var cursor, scanned, matched, deleted int64
@@ -32,6 +79,8 @@ func CleanupHistoricalIngress(ctx context.Context, store HistoricalIngressStore,
 		if len(batch) == 0 {
 			break
 		}
+		// Advance from the final scanned identity, including unmatched rows, so the
+		// next page does not repeat candidates that are intentionally retained.
 		cursor = batch[len(batch)-1].ID
 		ids := make([]int64, 0, len(batch))
 		for _, item := range batch {
@@ -42,6 +91,9 @@ func CleanupHistoricalIngress(ctx context.Context, store HistoricalIngressStore,
 				ids = append(ids, item.ID)
 			}
 		}
+		// Dry runs accumulate the same classification counts. Execute mode sends each
+		// matched ID batch to storage independently, so later failures cannot undo
+		// earlier completed deletions.
 		if execute && len(ids) > 0 {
 			n, err := store.DeleteCandidates(ctx, ids, before)
 			if err != nil {
@@ -53,15 +105,32 @@ func CleanupHistoricalIngress(ctx context.Context, store HistoricalIngressStore,
 	return counts, scanned, matched, deleted, nil
 }
 
+// parseErrorIdentity returns the trimmed top-level string code and preferred
+// message from captured JSON. A decoding error yields an empty code and the
+// supplied stored message, discarding any partially decoded fields.
+//
+// A nonempty top-level message wins, followed by error.message and then the
+// stored message. Nested error.code accepts raw JSON for response formats using
+// numeric status codes, but it is not used as the returned identity. Message
+// text is returned unchanged; historical matching trims it separately.
 func parseErrorIdentity(body, fallbackMessage string) (string, string) {
 	var payload struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		// Code and Message read top-level response metadata, while Error supplies a
+		// nested message for other response shapes. Only the top-level string Code is
+		// returned as the error identity.
+		Code    string `json:"code"`    // top-level string error code
+		Message string `json:"message"` // top-level error description text
 		Error   struct {
-			Code    json.RawMessage `json:"code"`
-			Message string          `json:"message"`
-		} `json:"error"`
+			// Code accepts arbitrary nested JSON, including numeric status values, so
+			// those formats can still expose Error.Message. This nested code is decoded
+			// but not classified.
+			Code    json.RawMessage `json:"code"`    // nested raw code payload
+			Message string          `json:"message"` // nested error description text
+		} `json:"error"` // nested error response envelope
 	}
+	// Malformed JSON or an incompatible typed field can prevent reliable body
+	// extraction. Use the separately stored message, leaving code-based
+	// classification unavailable for that candidate.
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		return "", fallbackMessage
 	}
@@ -75,6 +144,16 @@ func parseErrorIdentity(body, fallbackMessage string) (string, string) {
 	return strings.TrimSpace(payload.Code), message
 }
 
+// historicalIngressRejectReason returns a cleanup reason for the listed local
+// ingress rejections. A recognized top-level code selects its reason before
+// message comparison, and an absent or unrecognized code allows exact
+// stored-message matches or the IP-denial prefix.
+//
+// Message comparisons are case sensitive after trimming. StatusCode does not
+// gate a match, and nested numeric codes contribute no code identity through
+// parseErrorIdentity. Unmatched quota, user-not-found, or infrastructure
+// wording remains outside this rule set unless its message independently
+// matches a listed ingress rejection.
 func historicalIngressRejectReason(item HistoricalIngressCandidate) (string, bool) {
 	code, message := parseErrorIdentity(item.Body, item.Message)
 	switch code {

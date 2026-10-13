@@ -13,7 +13,23 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// GetDashboardOverview returns the monitoring overview using the configured data source.
+// Historical dashboard charts share a requested time window and optional
+// platform and group filters. Most endpoints use the common Ops time parser
+// with a one-hour default, while model token statistics accept a finite preset
+// list and derive their own UTC range ending at the current time.
+//
+// Throughput and error trends select one of three bucket widths from the
+// requested span. Histogram requests validate five ordered millisecond cutoffs
+// before storage. Token rankings choose either a leading-model limit or
+// pagination, and the presence of top_n together with either pagination
+// parameter is rejected before those values are parsed. These HTTP rules
+// determine the query inputs; the Ops service chooses raw or aggregated storage
+// where supported.
+
+// GetDashboardOverview returns window counts, rates, and available system
+// observations after the monitoring check. It defaults the time range to one
+// hour, trims platform, and requires a positive supplied group ID before
+// querying the service.
 // GET /api/v1/admin/ops/dashboard/overview
 func (h *OpsHandler) GetDashboardOverview(c *gin.Context) {
 	if h.opsService == nil {
@@ -53,7 +69,10 @@ func (h *OpsHandler) GetDashboardOverview(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardThroughputTrend returns the throughput time series.
+// GetDashboardThroughputTrend returns request and token rates in buckets
+// selected from the requested window length. It checks monitoring first, uses a
+// one-hour default, and forwards trimmed platform and positive optional group
+// filters.
 // GET /api/v1/admin/ops/dashboard/throughput-trend
 func (h *OpsHandler) GetDashboardThroughputTrend(c *gin.Context) {
 	if h.opsService == nil {
@@ -94,7 +113,10 @@ func (h *OpsHandler) GetDashboardThroughputTrend(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardLatencyHistogram returns successful-request duration buckets.
+// GetDashboardLatencyHistogram returns duration counts from saved usage rows
+// using validated millisecond cutoffs. Monitoring and time/group validation precede
+// cutoff parsing; an omitted cutoff list uses the shared defaults, and invalid
+// values return bad request.
 // GET /api/v1/admin/ops/dashboard/latency-histogram
 func (h *OpsHandler) GetDashboardLatencyHistogram(c *gin.Context) {
 	if h.opsService == nil {
@@ -140,6 +162,10 @@ func (h *OpsHandler) GetDashboardLatencyHistogram(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// parseOpsLatencyBucketBoundaries parses a comma-separated decimal millisecond
+// list and delegates ordered-cutoff validation to Ops. Blank input returns
+// copied defaults; supplied input must contain five increasing positive values
+// no larger than one day.
 func parseOpsLatencyBucketBoundaries(raw string) ([]int64, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -163,7 +189,10 @@ func parseOpsLatencyBucketBoundaries(raw string) ([]int64, error) {
 	return normalized, nil
 }
 
-// GetDashboardErrorTrend returns error counts over time.
+// GetDashboardErrorTrend returns windowed final-client, SLA, business-limit,
+// and upstream error series. It uses the same span-based bucket selection as
+// throughput and checks monitoring and positive optional group IDs before
+// requesting the trend.
 // GET /api/v1/admin/ops/dashboard/error-trend
 func (h *OpsHandler) GetDashboardErrorTrend(c *gin.Context) {
 	if h.opsService == nil {
@@ -204,7 +233,10 @@ func (h *OpsHandler) GetDashboardErrorTrend(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardErrorDistribution returns error counts grouped by status code.
+// GetDashboardErrorDistribution returns the service's error classification and
+// status distributions for the selected window. It checks monitoring, defaults
+// to one hour, and rejects nonpositive group filters before the repository
+// query.
 // GET /api/v1/admin/ops/dashboard/error-distribution
 func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 	if h.opsService == nil {
@@ -244,7 +276,9 @@ func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// GetDashboardTokenStats returns request token statistics grouped by model.
+// GetDashboardTokenStats returns model-grouped usage statistics with either a
+// leading-model limit or pagination. It checks monitoring before parsing the
+// preset range and ranking parameters, and maps parsing errors to bad request.
 // GET /api/v1/admin/ops/dashboard/token-stats
 func (h *OpsHandler) GetDashboardTokenStats(c *gin.Context) {
 	if h.opsService == nil {
@@ -270,6 +304,16 @@ func (h *OpsHandler) GetDashboardTokenStats(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// parseOpsTokenStatsFilter builds a UTC model-statistics window ending at the
+// current time from a supported preset. A nil context is invalid, blank
+// time_range selects thirty days, and platform is trimmed while a supplied
+// group ID must be positive.
+//
+// A nonblank top_n selects the leading-model mode and conflicts with either
+// nonblank pagination parameter, even if that parameter would parse as a
+// default. Otherwise pagination defaults to page one and size twenty. TopN and
+// page size each accept one through one hundred; explicit start_time and
+// end_time parameters do not participate in this parser.
 func parseOpsTokenStatsFilter(c *gin.Context) (*ops.OpsTokenStatsFilter, error) {
 	if c == nil {
 		return nil, fmt.Errorf("invalid request")
@@ -283,6 +327,8 @@ func parseOpsTokenStatsFilter(c *gin.Context) (*ops.OpsTokenStatsFilter, error) 
 	if !ok {
 		return nil, fmt.Errorf("invalid time_range")
 	}
+	// Derive both endpoints from one UTC timestamp so the preset duration stays
+	// fixed even when parameter parsing takes time.
 	end := time.Now().UTC()
 	start := end.Add(-dur)
 
@@ -304,12 +350,15 @@ func parseOpsTokenStatsFilter(c *gin.Context) (*ops.OpsTokenStatsFilter, error) 
 	topNRaw := strings.TrimSpace(c.Query("top_n"))
 	pageRaw := strings.TrimSpace(c.Query("page"))
 	pageSizeRaw := strings.TrimSpace(c.Query("page_size"))
+	// Use parameter presence to choose one ranking mode, preventing a top limit
+	// from being combined with offset-based pagination.
 	if topNRaw != "" && (pageRaw != "" || pageSizeRaw != "") {
 		return nil, fmt.Errorf("invalid query: top_n cannot be used with page/page_size")
 	}
 
 	if topNRaw != "" {
 		topN, err := strconv.Atoi(topNRaw)
+		// Bound the leading-model response to one hundred grouped rows.
 		if err != nil || topN < 1 || topN > 100 {
 			return nil, fmt.Errorf("invalid top_n")
 		}
@@ -328,6 +377,7 @@ func parseOpsTokenStatsFilter(c *gin.Context) (*ops.OpsTokenStatsFilter, error) 
 	}
 	if pageSizeRaw != "" {
 		pageSize, err := strconv.Atoi(pageSizeRaw)
+		// Bound paginated responses to one hundred grouped model rows.
 		if err != nil || pageSize < 1 || pageSize > 100 {
 			return nil, fmt.Errorf("invalid page_size")
 		}
@@ -336,7 +386,12 @@ func parseOpsTokenStatsFilter(c *gin.Context) (*ops.OpsTokenStatsFilter, error) 
 	return filter, nil
 }
 
+// parseOpsTokenStatsDuration recognizes the trimmed, case-sensitive
+// model-statistics presets thirty minutes, one hour, one day, fifteen days, and
+// thirty days. Unknown input returns zero and false; day presets use elapsed
+// twenty-four-hour durations.
 func parseOpsTokenStatsDuration(v string) (time.Duration, bool) {
+	// Day presets represent elapsed hours, independent of calendar timezones.
 	switch strings.TrimSpace(v) {
 	case "30m":
 		return 30 * time.Minute, true
@@ -353,8 +408,13 @@ func parseOpsTokenStatsDuration(v string) (time.Duration, bool) {
 	}
 }
 
+// pickThroughputBucketSeconds returns sixty-second buckets through two hours,
+// three hundred seconds through one day, and one hour afterward. Nonpositive
+// windows select the shortest bucket; caller validation determines whether such
+// a range is queried.
 func pickThroughputBucketSeconds(window time.Duration) int {
-	// Keep buckets predictable and avoid huge responses.
+	// Use coarser buckets for longer windows to bound the number of returned trend
+	// points.
 	switch {
 	case window <= 2*time.Hour:
 		return 60

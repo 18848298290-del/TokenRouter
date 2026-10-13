@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// TestOpsRepositoryGetTokenStats_PaginationMode supplies two ranked model rows
+// with a larger model total. It protects normalized platform arguments, page
+// offset, nullable measurements, and returned pagination metadata.
 func TestOpsRepositoryGetTokenStats_PaginationMode(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}
@@ -67,6 +70,9 @@ func TestOpsRepositoryGetTokenStats_PaginationMode(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestOpsRepositoryGetTokenStats_TopNMode supplies a leading-model limit and
+// missing rate and latency measurements. It protects limit-only SQL, nil
+// averages, and absent pagination metadata in that mode.
 func TestOpsRepositoryGetTokenStats_TopNMode(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}
@@ -111,6 +117,9 @@ func TestOpsRepositoryGetTokenStats_TopNMode(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestOpsRepositoryGetTokenStats_EmptyResult supplies the left join's synthetic
+// row for an empty model selection. It protects zero total, an empty Items
+// slice, and retained page metadata.
 func TestOpsRepositoryGetTokenStats_EmptyResult(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}

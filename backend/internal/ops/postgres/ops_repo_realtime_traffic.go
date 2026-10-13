@@ -9,6 +9,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Realtime traffic combines usage rows and final-client errors into minute
+// buckets, retaining minutes that occur in either source through a full outer
+// join. Average rates divide total observed counts by the complete requested
+// duration, while peaks divide the largest filtered minute bucket by sixty
+// seconds even when a boundary minute is partial.
+//
+// Current rates are fetched separately for the minute ending at EndTime, which
+// can reach earlier than StartTime for a shorter direct request. Those
+// additional statements can observe different committed data from the summary
+// query. Valid windows are positive and at most one hour, QueryMode is ignored,
+// and all reported rates are rounded to one decimal place before the response
+// is built.
+
+// GetRealtimeTrafficSummary returns raw current, peak, and average
+// request/token rates for a positive UTC window of at most one hour. A required
+// store and filter supply nonzero ordered endpoints; equal endpoints are
+// rejected by the positive-window check.
+//
+// The aggregate query joins source minute buckets before selecting peaks,
+// including every final-client status at least 400 under the base error filters.
+// Average denominators include the whole requested duration. Peaks use sixty
+// seconds even for partial boundary buckets; current rates use an independent
+// prior-minute read ending at EndTime. Any required query failure rejects the
+// result, QueryMode is ignored, and GroupID retains the caller pointer.
 func (r *Store) GetRealtimeTrafficSummary(ctx context.Context, filter *ops.OpsDashboardFilter) (*ops.OpsRealtimeTrafficSummary, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -30,6 +54,7 @@ func (r *Store) GetRealtimeTrafficSummary(ctx context.Context, filter *ops.OpsDa
 	if window <= 0 {
 		return nil, fmt.Errorf("invalid time window")
 	}
+	// Bound raw realtime summaries to one elapsed hour.
 	if window > time.Hour {
 		return nil, fmt.Errorf("window too large")
 	}
@@ -37,6 +62,8 @@ func (r *Store) GetRealtimeTrafficSummary(ctx context.Context, filter *ops.OpsDa
 	usageJoin, usageWhere, usageArgs, next := buildUsageWhere(filter, start, end, 1)
 	errorWhere, errorArgs, _ := buildErrorWhere(filter, start, end, next)
 
+	// Join success/token and final-error buckets by their minute so an error-only
+	// or usage-only minute still contributes to totals and peak selection.
 	q := `
 WITH usage_buckets AS (
   SELECT
@@ -91,7 +118,10 @@ FROM combined`
 		return nil, err
 	}
 
+	// Average rates use elapsed requested seconds including idle time, whereas
+	// minute peaks below retain their fixed sixty-second denominator.
 	windowSeconds := window.Seconds()
+	// Use a one-second denominator if the converted window is unusable.
 	if windowSeconds <= 0 {
 		windowSeconds = 1
 	}
@@ -100,12 +130,15 @@ FROM combined`
 	qpsAvg := roundTo1DP(float64(requestCountTotal) / windowSeconds)
 	tpsAvg := roundTo1DP(float64(tokenConsumed) / windowSeconds)
 
-	// Current rates cover the minute ending at the selected window end, as in the dashboard.
+	// Fetch current rates with separate statements for EndTime's prior minute;
+	// direct windows shorter than a minute can include earlier observations here.
 	qpsCurrent, tpsCurrent, err := r.queryCurrentRates(ctx, filter, end)
 	if err != nil {
 		return nil, err
 	}
 
+	// Convert each largest minute count to a per-second peak using a full sixty
+	// seconds, including filtered partial-minute buckets.
 	qpsPeak := roundTo1DP(float64(peakRequestsPerMin) / 60.0)
 	tpsPeak := roundTo1DP(float64(peakTokensPerMin) / 60.0)
 

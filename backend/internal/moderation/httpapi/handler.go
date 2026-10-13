@@ -35,13 +35,10 @@ type contentModerationConfigRequest struct {
 	// pointers are present. Omitted or JSON-null fields remain nil and leave the
 	// corresponding saved values unchanged.
 	// ordinary audit enablement switch
-	Enabled *bool `json:"enabled"`
-	// ordinary audit execution mode
-	Mode *string `json:"mode"`
-	// external moderation endpoint base
-	BaseURL *string `json:"base_url"`
-	// external moderation model name
-	Model *string `json:"model"`
+	Enabled *bool   `json:"enabled"`
+	Mode    *string `json:"mode"`     // ordinary audit execution mode
+	BaseURL *string `json:"base_url"` // external moderation endpoint base
+	Model   *string `json:"model"`    // external moderation model name
 	// ProxyID leaves selection unchanged when nil. A positive value selects that
 	// stored proxy; a present nonpositive value clears selection and uses direct
 	// audit transport.
@@ -53,9 +50,8 @@ type contentModerationConfigRequest struct {
 	// hash deletion, and supplied entry attributes override metadata updates for
 	// the same retained key.
 	// single legacy credential input
-	APIKey *string `json:"api_key"`
-	// ordered credential list input
-	APIKeys *[]string `json:"api_keys"`
+	APIKey  *string   `json:"api_key"`
+	APIKeys *[]string `json:"api_keys"` // ordered credential list input
 	// credential and metadata additions
 	APIKeyEntries *[]moderation.ContentModerationAPIKeyEntryInput `json:"api_key_entries"`
 	// metadata updates by hash
@@ -70,9 +66,8 @@ type contentModerationConfigRequest struct {
 	// Present values pass through the core normalization rules before
 	// configuration persistence.
 	// milliseconds
-	TimeoutMS *int `json:"timeout_ms"`
-	// percent
-	SampleRate *int `json:"sample_rate"`
+	TimeoutMS  *int `json:"timeout_ms"`
+	SampleRate *int `json:"sample_rate"` // percent
 	// AllGroups, GroupIDs, RecordNonHits, and Thresholds contribute writes when
 	// supplied. Missing pointers retain saved values; the core normalizes IDs and
 	// overlays recognized thresholds on its default category set.
@@ -90,9 +85,8 @@ type contentModerationConfigRequest struct {
 	// configured admitted worker count
 	WorkerCount *int `json:"worker_count"`
 	// configured queue admission limit
-	QueueSize *int `json:"queue_size"`
-	// blocked request HTTP status
-	BlockStatus *int `json:"block_status"`
+	QueueSize   *int `json:"queue_size"`
+	BlockStatus *int `json:"block_status"` // blocked request HTTP status
 	// blocked request client message
 	BlockMessage *string `json:"block_message"`
 	// EmailOnHit, AutoBanEnabled, BanThreshold, ViolationWindowHours, RetryCount,
@@ -104,15 +98,12 @@ type contentModerationConfigRequest struct {
 	// ordinary automatic ban switch
 	AutoBanEnabled *bool `json:"auto_ban_enabled"`
 	// ordinary counted-hit ban threshold
-	BanThreshold *int `json:"ban_threshold"`
-	// hours
-	ViolationWindowHours *int `json:"violation_window_hours"`
+	BanThreshold         *int `json:"ban_threshold"`
+	ViolationWindowHours *int `json:"violation_window_hours"` // hours
 	// retries after initial attempt
-	RetryCount *int `json:"retry_count"`
-	// days
-	HitRetentionDays *int `json:"hit_retention_days"`
-	// days
-	NonHitRetentionDays *int `json:"non_hit_retention_days"`
+	RetryCount          *int `json:"retry_count"`
+	HitRetentionDays    *int `json:"hit_retention_days"`     // days
+	NonHitRetentionDays *int `json:"non_hit_retention_days"` // days
 	// PreHashCheckEnabled, CyberWarningEnabled, CyberAutoBanEnabled,
 	// CyberBanThreshold, and CyberWindowHours retain saved values when absent.
 	// Their supplied values govern hash admission and the separately counted Cyber
@@ -125,8 +116,7 @@ type contentModerationConfigRequest struct {
 	CyberAutoBanEnabled *bool `json:"cyber_auto_ban_enabled"`
 	// Cyber warning ban threshold
 	CyberBanThreshold *int `json:"cyber_ban_threshold"`
-	// hours
-	CyberWindowHours *int `json:"cyber_violation_window_hours"`
+	CyberWindowHours  *int `json:"cyber_violation_window_hours"` // hours
 	// BlockedKeywords, KeywordBlockingMode, and ModelFilter retain saved values
 	// when absent. The core normalizes supplied lists and applies keyword mode
 	// before hash checking on the pre-block request path.
@@ -490,8 +480,8 @@ func parseCyberWarningFilter(c *gin.Context, withPagination bool) (moderation.Co
 }
 
 // UnbanUser requests active status for a positive decimal user path ID. Invalid
-// IDs fail before service access; successful responses follow status
-// persistence and authentication invalidation performed by the service.
+// IDs fail before service access; successful responses follow any needed
+// status write and authentication invalidation performed by the service.
 func (h *ContentModerationHandler) UnbanUser(c *gin.Context) {
 	userID, err := strconv.ParseInt(strings.TrimSpace(c.Param("user_id")), 10, 64)
 	if err != nil || userID <= 0 {

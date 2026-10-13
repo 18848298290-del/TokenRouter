@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestComputeDashboardHealthScore_IdleReturns100 supplies an empty traffic
+// overview with no optional diagnostics. It protects the fully scored idle
+// result selected before ordinary component calculation.
 func TestComputeDashboardHealthScore_IdleReturns100(t *testing.T) {
 	t.Parallel()
 
@@ -14,6 +17,10 @@ func TestComputeDashboardHealthScore_IdleReturns100(t *testing.T) {
 	require.Equal(t, 100, score)
 }
 
+// TestComputeDashboardHealthScore_DegradesOnBadSignals combines traffic errors,
+// slow first-token latency, failed storage probes, resource pressure, and a
+// failed job. It checks the resulting score is below eighty and remains
+// nonnegative.
 func TestComputeDashboardHealthScore_DegradesOnBadSignals(t *testing.T) {
 	t.Parallel()
 
@@ -53,14 +60,21 @@ func TestComputeDashboardHealthScore_DegradesOnBadSignals(t *testing.T) {
 	require.GreaterOrEqual(t, score, 0)
 }
 
+// TestComputeDashboardHealthScore_Comprehensive supplies nil, healthy,
+// traffic-degraded, and infrastructure-degraded overview fixtures. It checks
+// their listed score intervals and the overall integer range from zero through
+// one hundred.
 func TestComputeDashboardHealthScore_Comprehensive(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		overview *OpsDashboardOverview
-		wantMin  int
-		wantMax  int
+		name     string                // score case display name
+		overview *OpsDashboardOverview // submitted score observation fixture
+		// wantMin and wantMax give inclusive score limits checked against each
+		// result. Equal limits require an exact score; different limits accept a
+		// value inside their listed interval.
+		wantMin int // expected minimum integer score
+		wantMax int // expected maximum integer score
 	}{
 		{
 			name:     "nil overview returns 0",
@@ -236,14 +250,21 @@ func TestComputeDashboardHealthScore_Comprehensive(t *testing.T) {
 	}
 }
 
+// TestComputeBusinessHealth varies client/provider error rates and first-token
+// latency alongside SLA and full-duration fixture fields. It checks score
+// intervals that distinguish the active error/TTFT inputs and their
+// missing-measurement defaults.
 func TestComputeBusinessHealth(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		overview *OpsDashboardOverview
-		wantMin  float64
-		wantMax  float64
+		name     string                // score case display name
+		overview *OpsDashboardOverview // submitted score observation fixture
+		// wantMin and wantMax give inclusive component-score limits for each
+		// observation fixture. Equal limits require an exact score; wider intervals
+		// permit values within the stated range.
+		wantMin float64 // expected minimum component score
+		wantMax float64 // expected maximum component score
 	}{
 		{
 			name: "perfect metrics",
@@ -335,16 +356,23 @@ func TestComputeBusinessHealth(t *testing.T) {
 	}
 }
 
+// TestComputeInfraHealth supplies healthy infrastructure, individual storage
+// failures, CPU pressure, and a failed heartbeat. It checks their expected
+// score intervals and keeps every listed result within zero through one
+// hundred.
 func TestComputeInfraHealth(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
 
 	tests := []struct {
-		name     string
-		overview *OpsDashboardOverview
-		wantMin  float64
-		wantMax  float64
+		name     string                // score case display name
+		overview *OpsDashboardOverview // submitted score observation fixture
+		// wantMin and wantMax give inclusive component-score limits for each
+		// observation fixture. Equal limits require an exact score; wider intervals
+		// permit values within the stated range.
+		wantMin float64 // expected minimum component score
+		wantMax float64 // expected maximum component score
 	}{
 		{
 			name: "all infrastructure healthy",
@@ -435,4 +463,5 @@ func TestComputeInfraHealth(t *testing.T) {
 	}
 }
 
+// stringPtr returns a pointer to the supplied string fixture value.
 func stringPtr(v string) *string { return &v }

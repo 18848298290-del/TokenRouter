@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-// makeOverlayService constructs a cleanup service with stored settings and deployment defaults.
+// makeOverlayService constructs an exclusively owned unstarted cleanup fixture
+// with deployment values and a supplied settings reader. No cron or backend is
+// installed; tests invoke effective computation directly before any concurrent
+// use.
 func makeOverlayService(repo Settings, base CleanupOptions) *OpsCleanupService {
 	cfg := &Options{}
 	cfg.Ops.Cleanup = base
@@ -17,6 +20,10 @@ func makeOverlayService(repo Settings, base CleanupOptions) *OpsCleanupService {
 	}
 }
 
+// writeAdvancedSettings serializes supplied retention fields into the
+// advanced-settings fixture record and fatals on encoding or write failure. It
+// leaves unspecified advanced fields zero so cleanup tests exercise that
+// reader's own overlay rules.
 func writeAdvancedSettings(t *testing.T, repo *runtimeSettingRepoStub, dr OpsDataRetentionSettings) {
 	t.Helper()
 	adv := OpsAdvancedSettings{DataRetention: dr}
@@ -29,6 +36,9 @@ func writeAdvancedSettings(t *testing.T, repo *runtimeSettingRepoStub, dr OpsDat
 	}
 }
 
+// TestComputeEffective_FallbackToCfgWhenSettingsAbsent supplies complete
+// deployment cleanup values with no saved record. It protects retention,
+// pacing, enabled, and schedule remaining equal to the supplied base.
 func TestComputeEffective_FallbackToCfgWhenSettingsAbsent(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	base := CleanupOptions{
@@ -49,6 +59,10 @@ func TestComputeEffective_FallbackToCfgWhenSettingsAbsent(t *testing.T) {
 	}
 }
 
+// TestComputeEffective_SettingsOverridesAll stores enabled cleanup with
+// zero/seven/fourteen-day retention and new schedule text. It protects saved
+// overrides while omitted pacing retains the deployment defaults in this
+// fixture.
 func TestComputeEffective_SettingsOverridesAll(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
@@ -85,6 +99,10 @@ func TestComputeEffective_SettingsOverridesAll(t *testing.T) {
 	}
 }
 
+// TestComputeEffective_SystemLogRetentionUsesRuntimeConfig stores advanced
+// retention plus a positive independent logger override. It protects separate
+// seven-day error retention and one-day system-log retention in effective
+// values.
 func TestComputeEffective_SystemLogRetentionUsesRuntimeConfig(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
@@ -125,6 +143,9 @@ func TestComputeEffective_SystemLogRetentionUsesRuntimeConfig(t *testing.T) {
 	}
 }
 
+// TestComputeEffective_EmptyScheduleFallbackToCfg supplies a whitespace-only
+// saved schedule and positive retention. It protects retained deployment
+// schedule alongside accepted saved enablement and five-day error retention.
 func TestComputeEffective_EmptyScheduleFallbackToCfg(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
@@ -156,6 +177,10 @@ func TestComputeEffective_EmptyScheduleFallbackToCfg(t *testing.T) {
 	}
 }
 
+// TestComputeEffective_NegativeRetentionFallsBackToCfg supplies negative
+// advanced retention fields and distinct deployment day values. It protects
+// each deployment retention remaining selected rather than treating negative
+// values as zero clearing.
 func TestComputeEffective_NegativeRetentionFallsBackToCfg(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
@@ -183,6 +208,9 @@ func TestComputeEffective_NegativeRetentionFallsBackToCfg(t *testing.T) {
 	}
 }
 
+// TestComputeEffective_BadJSONFallsBackToCfg supplies malformed advanced text
+// over a complete deployment base. It protects effective equality with that
+// base, including enabled state and already supplied pacing values.
 func TestComputeEffective_BadJSONFallsBackToCfg(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	if err := repo.Set(context.Background(), SettingKeyOpsAdvancedSettings, "{not json"); err != nil {
@@ -206,6 +234,9 @@ func TestComputeEffective_BadJSONFallsBackToCfg(t *testing.T) {
 	}
 }
 
+// TestReload_BeforeStart_IsNoop invokes Reload on an unstarted zero-value
+// fixture. It protects successful no-work return before scheduling or
+// dependency reads are required for a running cleanup service.
 func TestReload_BeforeStart_IsNoop(t *testing.T) {
 	svc := &OpsCleanupService{}
 	if err := svc.Reload(context.Background()); err != nil {
@@ -213,6 +244,9 @@ func TestReload_BeforeStart_IsNoop(t *testing.T) {
 	}
 }
 
+// TestReload_AfterStop_IsNoop supplies both started and stopped flags before
+// Reload. It protects successful no-work return for a lifecycle already
+// permanently closed to schedule replacement.
 func TestReload_AfterStop_IsNoop(t *testing.T) {
 	svc := &OpsCleanupService{started: true, stopped: true}
 	if err := svc.Reload(context.Background()); err != nil {
@@ -220,11 +254,19 @@ func TestReload_AfterStop_IsNoop(t *testing.T) {
 	}
 }
 
+// TestStart_IdempotentSecondCall supplies started true but no
+// persistence/backend dependencies before calling Start. It protects return
+// through the missing-dependency guard; this fixture does not exercise a
+// successfully registered second-start check.
 func TestStart_IdempotentSecondCall(t *testing.T) {
 	svc := &OpsCleanupService{started: true}
-	svc.Start() // second call should be noop, not panic
+	svc.Start() // missing dependencies stop this fixture first
 }
 
+// TestRefreshEffectiveBeforeRun_UpdatesSnapshot replaces saved retention after
+// computing a deployment-only fixture. It protects the refreshed seven-day
+// value in a copied effective snapshot, with no cron timing or target deletion
+// exercised.
 func TestRefreshEffectiveBeforeRun_UpdatesSnapshot(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	base := CleanupOptions{
@@ -239,7 +281,9 @@ func TestRefreshEffectiveBeforeRun_UpdatesSnapshot(t *testing.T) {
 		t.Fatalf("initial retention should be 30, got %d", svc.effective.ErrorLogRetentionDays)
 	}
 
-	// simulate UI change
+	// Replace persisted retention in this exclusively owned fixture before the
+	// next refresh, separating current effective values from the subsequent stored
+	// override.
 	writeAdvancedSettings(t, repo, OpsDataRetentionSettings{
 		CleanupEnabled:        true,
 		CleanupSchedule:       "0 * * * *",

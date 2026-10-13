@@ -238,9 +238,8 @@ type ContentModerationConfig struct {
 	// admits absent group context; selected-group scope requires a supplied
 	// identifier in the normalized list.
 	// all-group audit scope switch
-	AllGroups bool `json:"all_groups"`
-	// selected group scope identifiers
-	GroupIDs []int64 `json:"group_ids"`
+	AllGroups bool    `json:"all_groups"`
+	GroupIDs  []int64 `json:"group_ids"` // selected group scope identifiers
 	// RecordNonHits enables successful non-hit logs. Flagged or incomplete audit
 	// results are recorded regardless of this switch in checkSync.
 	// successful non-hit logging switch
@@ -255,8 +254,7 @@ type ContentModerationConfig struct {
 	// and senders sample the configured queue limit.
 	// configured admitted worker count
 	WorkerCount int `json:"worker_count"`
-	// configured queue admission limit
-	QueueSize int `json:"queue_size"`
+	QueueSize   int `json:"queue_size"` // configured queue admission limit
 	// BlockStatus and BlockMessage describe blocked decisions. Hash matches append
 	// their input hash to a nonempty message, while keyword and API blocks use the
 	// configured message directly.
@@ -272,15 +270,12 @@ type ContentModerationConfig struct {
 	// ordinary automatic ban switch
 	AutoBanEnabled bool `json:"auto_ban_enabled"`
 	// ordinary counted-hit ban threshold
-	BanThreshold int `json:"ban_threshold"`
-	// hours
-	ViolationWindowHours int `json:"violation_window_hours"`
+	BanThreshold         int `json:"ban_threshold"`
+	ViolationWindowHours int `json:"violation_window_hours"` // hours
 	// retries after initial attempt
-	RetryCount int `json:"retry_count"`
-	// days
-	HitRetentionDays int `json:"hit_retention_days"`
-	// days
-	NonHitRetentionDays int `json:"non_hit_retention_days"`
+	RetryCount          int `json:"retry_count"`
+	HitRetentionDays    int `json:"hit_retention_days"`     // days
+	NonHitRetentionDays int `json:"non_hit_retention_days"` // days
 	// recorded hash lookup switch
 	PreHashCheckEnabled bool `json:"pre_hash_check_enabled"`
 	// Cyber evidence recording switch
@@ -292,8 +287,7 @@ type ContentModerationConfig struct {
 	CyberAutoBanEnabled bool `json:"cyber_auto_ban_enabled"`
 	// Cyber warning ban threshold
 	CyberBanThreshold int `json:"cyber_ban_threshold"`
-	// hours
-	CyberWindowHours int `json:"cyber_violation_window_hours"`
+	CyberWindowHours  int `json:"cyber_violation_window_hours"` // hours
 	// ordered substring block keywords
 	BlockedKeywords []string `json:"blocked_keywords"`
 	// keyword and API selection
@@ -317,16 +311,11 @@ type ContentModerationConfig struct {
 // ContentModerationConfigView is the administrator policy view with credential
 // masks and process-local health observations.
 type ContentModerationConfigView struct {
-	// ordinary audit enablement switch
-	Enabled bool `json:"enabled"`
-	// ordinary audit execution mode
-	Mode string `json:"mode"`
-	// external moderation endpoint base
-	BaseURL string `json:"base_url"`
-	// external moderation model name
-	Model string `json:"model"`
-	// selected outbound proxy identifier
-	ProxyID *int64 `json:"proxy_id"`
+	Enabled bool   `json:"enabled"`  // ordinary audit enablement switch
+	Mode    string `json:"mode"`     // ordinary audit execution mode
+	BaseURL string `json:"base_url"` // external moderation endpoint base
+	Model   string `json:"model"`    // external moderation model name
+	ProxyID *int64 `json:"proxy_id"` // selected outbound proxy identifier
 	// APIKeyConfigured, APIKeyMasked, APIKeyCount, APIKeyMasks, and APIKeyStatuses
 	// describe the normalized saved pool. Masks and statuses follow its order,
 	// while each health entry is sampled independently by configView.
@@ -341,11 +330,9 @@ type ContentModerationConfigView struct {
 	// sampled configured credential health
 	APIKeyStatuses []ContentModerationAPIKeyStatus `json:"api_key_statuses"`
 	// milliseconds
-	TimeoutMS int `json:"timeout_ms"`
-	// percent
-	SampleRate int `json:"sample_rate"`
-	// all-group audit scope switch
-	AllGroups bool `json:"all_groups"`
+	TimeoutMS  int  `json:"timeout_ms"`
+	SampleRate int  `json:"sample_rate"` // percent
+	AllGroups  bool `json:"all_groups"`  // all-group audit scope switch
 	// selected group scope identifiers
 	GroupIDs []int64 `json:"group_ids"`
 	// successful non-hit logging switch
@@ -355,9 +342,8 @@ type ContentModerationConfigView struct {
 	// configured admitted worker count
 	WorkerCount int `json:"worker_count"`
 	// configured queue admission limit
-	QueueSize int `json:"queue_size"`
-	// blocked request HTTP status
-	BlockStatus int `json:"block_status"`
+	QueueSize   int `json:"queue_size"`
+	BlockStatus int `json:"block_status"` // blocked request HTTP status
 	// blocked request client message
 	BlockMessage string `json:"block_message"`
 	// ordinary violation notice switch
@@ -365,15 +351,12 @@ type ContentModerationConfigView struct {
 	// ordinary automatic ban switch
 	AutoBanEnabled bool `json:"auto_ban_enabled"`
 	// ordinary counted-hit ban threshold
-	BanThreshold int `json:"ban_threshold"`
-	// hours
-	ViolationWindowHours int `json:"violation_window_hours"`
+	BanThreshold         int `json:"ban_threshold"`
+	ViolationWindowHours int `json:"violation_window_hours"` // hours
 	// retries after initial attempt
-	RetryCount int `json:"retry_count"`
-	// days
-	HitRetentionDays int `json:"hit_retention_days"`
-	// days
-	NonHitRetentionDays int `json:"non_hit_retention_days"`
+	RetryCount          int `json:"retry_count"`
+	HitRetentionDays    int `json:"hit_retention_days"`     // days
+	NonHitRetentionDays int `json:"non_hit_retention_days"` // days
 	// recorded hash lookup switch
 	PreHashCheckEnabled bool `json:"pre_hash_check_enabled"`
 	// Cyber evidence recording switch
@@ -382,8 +365,7 @@ type ContentModerationConfigView struct {
 	CyberAutoBanEnabled bool `json:"cyber_auto_ban_enabled"`
 	// Cyber warning ban threshold
 	CyberBanThreshold int `json:"cyber_ban_threshold"`
-	// hours
-	CyberWindowHours int `json:"cyber_violation_window_hours"`
+	CyberWindowHours  int `json:"cyber_violation_window_hours"` // hours
 	// ordered substring block keywords
 	BlockedKeywords []string `json:"blocked_keywords"`
 	// keyword and API selection
@@ -422,8 +404,7 @@ type ContentModerationAPIKeyEntryInput struct {
 // ContentModerationAPIKeyStatus is one sampled credential-health observation
 // with administrator scheduling metadata.
 type ContentModerationAPIKeyStatus struct {
-	// zero-based supplied credential position
-	Index int `json:"index"`
+	Index int `json:"index"` // zero-based supplied credential position
 	// hexadecimal normalized credential digest
 	KeyHash string `json:"key_hash"`
 	Masked  string `json:"masked"` // display credential tail mask
@@ -520,8 +501,7 @@ type TestContentModerationAPIKeysResult struct {
 // ContentModerationTestAuditResult records locally evaluated scores and
 // effective thresholds for administrator probe display.
 type ContentModerationTestAuditResult struct {
-	// local known-threshold hit
-	Flagged bool `json:"flagged"`
+	Flagged bool `json:"flagged"` // local known-threshold hit
 	// displayed maximum score category
 	HighestCategory string `json:"highest_category"`
 	// HighestScore and CompositeScore hold the same displayed maximum. Unknown
@@ -558,9 +538,8 @@ type UpdateContentModerationConfigInput struct {
 	// hash deletion, and supplied entry attributes override metadata updates for
 	// the same retained key.
 	// single legacy credential input
-	APIKey *string `json:"api_key"`
-	// ordered credential list input
-	APIKeys *[]string `json:"api_keys"`
+	APIKey  *string   `json:"api_key"`
+	APIKeys *[]string `json:"api_keys"` // ordered credential list input
 	// credential and metadata additions
 	APIKeyEntries *[]ContentModerationAPIKeyEntryInput `json:"api_key_entries"`
 	// metadata updates by hash
@@ -575,9 +554,8 @@ type UpdateContentModerationConfigInput struct {
 	// Present values pass through the core normalization rules before
 	// configuration persistence.
 	// milliseconds
-	TimeoutMS *int `json:"timeout_ms"`
-	// percent
-	SampleRate *int `json:"sample_rate"`
+	TimeoutMS  *int `json:"timeout_ms"`
+	SampleRate *int `json:"sample_rate"` // percent
 	// AllGroups, GroupIDs, RecordNonHits, and Thresholds contribute writes when
 	// supplied. Missing pointers retain saved values; the core normalizes IDs and
 	// overlays recognized thresholds on its default category set.
@@ -595,9 +573,8 @@ type UpdateContentModerationConfigInput struct {
 	// configured admitted worker count
 	WorkerCount *int `json:"worker_count"`
 	// configured queue admission limit
-	QueueSize *int `json:"queue_size"`
-	// blocked request HTTP status
-	BlockStatus *int `json:"block_status"`
+	QueueSize   *int `json:"queue_size"`
+	BlockStatus *int `json:"block_status"` // blocked request HTTP status
 	// blocked request client message
 	BlockMessage *string `json:"block_message"`
 	// EmailOnHit, AutoBanEnabled, BanThreshold, ViolationWindowHours, RetryCount,
@@ -609,15 +586,12 @@ type UpdateContentModerationConfigInput struct {
 	// ordinary automatic ban switch
 	AutoBanEnabled *bool `json:"auto_ban_enabled"`
 	// ordinary counted-hit ban threshold
-	BanThreshold *int `json:"ban_threshold"`
-	// hours
-	ViolationWindowHours *int `json:"violation_window_hours"`
+	BanThreshold         *int `json:"ban_threshold"`
+	ViolationWindowHours *int `json:"violation_window_hours"` // hours
 	// retries after initial attempt
-	RetryCount *int `json:"retry_count"`
-	// days
-	HitRetentionDays *int `json:"hit_retention_days"`
-	// days
-	NonHitRetentionDays *int `json:"non_hit_retention_days"`
+	RetryCount          *int `json:"retry_count"`
+	HitRetentionDays    *int `json:"hit_retention_days"`     // days
+	NonHitRetentionDays *int `json:"non_hit_retention_days"` // days
 	// PreHashCheckEnabled, CyberWarningEnabled, CyberAutoBanEnabled,
 	// CyberBanThreshold, and CyberWindowHours retain saved values when absent.
 	// Their supplied values govern hash admission and the separately counted Cyber
@@ -630,8 +604,7 @@ type UpdateContentModerationConfigInput struct {
 	CyberAutoBanEnabled *bool `json:"cyber_auto_ban_enabled"`
 	// Cyber warning ban threshold
 	CyberBanThreshold *int `json:"cyber_ban_threshold"`
-	// hours
-	CyberWindowHours *int `json:"cyber_violation_window_hours"`
+	CyberWindowHours  *int `json:"cyber_violation_window_hours"` // hours
 	// BlockedKeywords, KeywordBlockingMode, and ModelFilter retain saved values
 	// when absent. The core normalizes supplied lists and applies keyword mode
 	// before hash checking on the pre-block request path.
@@ -737,8 +710,8 @@ type ContentModerationInput struct {
 	Images     []string                     // ordered unique image references
 	Items      []ContentModerationInputItem // positioned review input units
 	ImageItems []ContentModerationImage     // image to review-position associations
-	// Source is derived from normalized item sources when initially blank. A
-	// supplied nonblank aggregate label survives Normalize, so callers keep it
+	// Source is derived from normalized item sources when initially empty. A
+	// supplied nonempty aggregate label survives Normalize, so callers keep it
 	// consistent with their item representation.
 	Source string // aggregate user, tool, or mixed
 }
@@ -750,15 +723,11 @@ type ContentModerationDecision struct {
 	// auditing and observe queue admission can return allow without confirmed
 	// safety; a synchronous allowed result can still carry Flagged.
 	// request admission is permitted
-	Allowed bool `json:"allowed"`
-	// local rejection is selected
-	Blocked bool `json:"blocked"`
-	// local risk-hit observation
-	Flagged bool `json:"flagged"`
-	// selected client rejection text
-	Message string `json:"message"`
-	// selected rejection HTTP status
-	StatusCode int `json:"status_code"`
+	Allowed    bool   `json:"allowed"`
+	Blocked    bool   `json:"blocked"`     // local rejection is selected
+	Flagged    bool   `json:"flagged"`     // local risk-hit observation
+	Message    string `json:"message"`     // selected client rejection text
+	StatusCode int    `json:"status_code"` // selected rejection HTTP status
 	// InputHash is populated by the recorded-hash block path. Ordinary API and
 	// keyword blocks return their own observations without populating this hash
 	// field.
@@ -789,17 +758,17 @@ type ContentModerationFailedUnit struct {
 // ContentModerationLog retains ordinary decision, audit completeness, review
 // content, and separately attributed account identities.
 type ContentModerationLog struct {
-	// stored audit row identifier
-	ID int64 `json:"id"`
+	// ID can be assigned before media writes and commit. A persistence error can
+	// leave this generated identity populated without establishing a saved row.
+	ID int64 `json:"id"` // stored audit row identifier
 	// platform request correlation identifier
 	RequestID string `json:"request_id"`
 	// UserID, UserEmail, BillingUserID, and TeamID separate the acting account
 	// from payment ownership. Ordinary and Cyber risk actions target UserID;
 	// billing and team values provide retained accounting context.
 	// risk actor account identifier
-	UserID *int64 `json:"user_id,omitempty"`
-	// risk actor recipient address
-	UserEmail string `json:"user_email"`
+	UserID    *int64 `json:"user_id,omitempty"`
+	UserEmail string `json:"user_email"` // risk actor recipient address
 	// paying owner account identifier
 	BillingUserID *int64 `json:"billing_user_id,omitempty"`
 	// optional accounting team identifier
@@ -809,21 +778,14 @@ type ContentModerationLog struct {
 	// triggering gateway key display name
 	APIKeyName string `json:"api_key_name"`
 	// optional selected group identifier
-	GroupID *int64 `json:"group_id,omitempty"`
-	// selected group display name
-	GroupName string `json:"group_name"`
-	// observed gateway endpoint path
-	Endpoint string `json:"endpoint"`
-	// gateway provider platform label
-	Provider string `json:"provider"`
-	// requested model scope name
-	Model string `json:"model"`
-	// ordinary audit policy mode
-	Mode string `json:"mode"`
-	// stored decision action label
-	Action string `json:"action"`
-	// local risk-hit observation
-	Flagged bool `json:"flagged"`
+	GroupID   *int64 `json:"group_id,omitempty"`
+	GroupName string `json:"group_name"` // selected group display name
+	Endpoint  string `json:"endpoint"`   // observed gateway endpoint path
+	Provider  string `json:"provider"`   // gateway provider platform label
+	Model     string `json:"model"`      // requested model scope name
+	Mode      string `json:"mode"`       // ordinary audit policy mode
+	Action    string `json:"action"`     // stored decision action label
+	Flagged   bool   `json:"flagged"`    // local risk-hit observation
 	// displayed maximum score category
 	HighestCategory string `json:"highest_category"`
 	// displayed maximum category score
@@ -839,8 +801,7 @@ type ContentModerationLog struct {
 	// false, and prevents hit-image snapshot attachment.
 	// redacted short aggregate text
 	InputExcerpt string `json:"input_excerpt"`
-	// aggregate user or tool origin
-	Source string `json:"source"`
+	Source       string `json:"source"` // aggregate user or tool origin
 	// full retained review input units
 	InputItems []ContentModerationInputItem `json:"input_items,omitempty"`
 	// retained review content completeness
@@ -852,8 +813,7 @@ type ContentModerationLog struct {
 	// retain those initial counts even though external units were not called.
 	// stored unit audit completion
 	AuditComplete bool `json:"audit_complete"`
-	// recorded text unit count
-	TextUnitCount int `json:"text_unit_count"`
+	TextUnitCount int  `json:"text_unit_count"` // recorded text unit count
 	// recorded image unit count
 	ImageUnitCount int `json:"image_unit_count"`
 	// recorded failed audit unit count
@@ -866,22 +826,22 @@ type ContentModerationLog struct {
 	// log construction. Callers keep those values immutable until queued or
 	// synchronous persistence has finished reading them.
 	// milliseconds
-	UpstreamLatencyMS *int `json:"upstream_latency_ms,omitempty"`
-	// public audit failure summary
-	Error string `json:"error"`
+	UpstreamLatencyMS *int   `json:"upstream_latency_ms,omitempty"`
+	Error             string `json:"error"` // public audit failure summary
 	// ordinary counted-hit total
 	ViolationCount int `json:"violation_count"`
 	// ordinary threshold-ban observation
 	AutoBanned bool `json:"auto_banned"`
-	// at least one successful notice
-	EmailSent bool `json:"email_sent"`
+	// EmailSent records at least one nil ordinary-notice result. Notification can
+	// suppress a send and return nil, so this flag alone does not confirm new
+	// transport delivery.
+	EmailSent bool `json:"email_sent"` // at least one nil notice result
 	// current joined identity status
-	UserStatus string `json:"user_status"`
-	// milliseconds
-	QueueDelayMS *int `json:"queue_delay_ms,omitempty"`
-	// CreatedAt and ID are assigned by CreateLog before media writes and commit. A
-	// returned persistence failure can leave those in-memory values populated even
-	// when its transaction rolls back.
+	UserStatus   string `json:"user_status"`
+	QueueDelayMS *int   `json:"queue_delay_ms,omitempty"` // milliseconds
+	// CreatedAt is assigned by CreateLog before media writes and commit. A returned
+	// persistence failure can leave this time populated even when the transaction
+	// rolls back.
 	// database row creation time
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -889,17 +849,18 @@ type ContentModerationLog struct {
 // ContentModerationCyberWarning retains upstream Cyber evidence and the
 // independently counted account-policy outcome.
 type ContentModerationCyberWarning struct {
-	// stored Cyber warning identifier
-	ID int64 `json:"id"`
+	// ID is assigned during warning insertion before the Cyber transaction
+	// commits. Caller storage can retain it after rollback or an uncertain commit
+	// result.
+	ID int64 `json:"id"` // stored Cyber warning identifier
 	// platform request correlation identifier
 	RequestID string `json:"request_id"`
 	// UserID, UserEmail, BillingUserID, and TeamID separate the acting account
 	// from payment ownership. Ordinary and Cyber risk actions target UserID;
 	// billing and team values provide retained accounting context.
 	// risk actor account identifier
-	UserID *int64 `json:"user_id,omitempty"`
-	// risk actor recipient address
-	UserEmail string `json:"user_email"`
+	UserID    *int64 `json:"user_id,omitempty"`
+	UserEmail string `json:"user_email"` // risk actor recipient address
 	// paying owner account identifier
 	BillingUserID *int64 `json:"billing_user_id,omitempty"`
 	// optional accounting team identifier
@@ -909,17 +870,14 @@ type ContentModerationCyberWarning struct {
 	// triggering gateway key display name
 	APIKeyName string `json:"api_key_name"`
 	// optional selected group identifier
-	GroupID *int64 `json:"group_id,omitempty"`
-	// selected group display name
-	GroupName string `json:"group_name"`
+	GroupID   *int64 `json:"group_id,omitempty"`
+	GroupName string `json:"group_name"` // selected group display name
 	// upstream provider record identifier
 	ProviderID *int64 `json:"provider_id,omitempty"`
 	// upstream provider display name
 	ProviderName string `json:"provider_name"`
-	// observed gateway endpoint path
-	Endpoint string `json:"endpoint"`
-	// requested model scope name
-	Model string `json:"model"`
+	Endpoint     string `json:"endpoint"` // observed gateway endpoint path
+	Model        string `json:"model"`    // requested model scope name
 	// observed upstream HTTP status
 	UpstreamStatus int `json:"upstream_status"`
 	// WarningText and PromptExcerpt are raw length-capped administrator review
@@ -929,8 +887,7 @@ type ContentModerationCyberWarning struct {
 	WarningText string `json:"warning_text"`
 	// raw capped prompt excerpt
 	PromptExcerpt string `json:"prompt_excerpt"`
-	// aggregate user or tool origin
-	Source string `json:"source"`
+	Source        string `json:"source"` // aggregate user or tool origin
 	// InputItems and Media retain normalized Cyber input and its image references.
 	// This warning builder has no NoMediaRetention flag; callers choose the
 	// material supplied to Cyber recording.
@@ -940,8 +897,7 @@ type ContentModerationCyberWarning struct {
 	ContentComplete bool `json:"content_complete"`
 	// warning evidence completion label
 	AuditComplete bool `json:"audit_complete"`
-	// retained text chunk count
-	TextUnitCount int `json:"text_unit_count"`
+	TextUnitCount int  `json:"text_unit_count"` // retained text chunk count
 	// retained image item count
 	ImageUnitCount int `json:"image_unit_count"`
 	// recorded failed unit count
@@ -954,13 +910,14 @@ type ContentModerationCyberWarning struct {
 	ViolationCount int `json:"violation_count"`
 	// Cyber threshold-ban observation
 	AutoBanned bool `json:"auto_banned"`
-	// successful Cyber ban notice
-	EmailSent bool `json:"email_sent"`
-	// current joined identity status
-	UserStatus string `json:"user_status"`
-	// CreatedAt and ID can be filled before the Cyber transaction commits. Caller
-	// values retain earlier assignments after failed steps or attempted rollback,
-	// and an error from commit can leave the database outcome uncertain.
+	// EmailSent records a nil Cyber-notice result in the post-commit path. An
+	// existing notification marker can yield that result without a new transport
+	// send, and the later warning-marker write can still fail.
+	EmailSent  bool   `json:"email_sent"`  // nil Cyber ban notice result
+	UserStatus string `json:"user_status"` // current joined identity status
+	// CreatedAt can be filled before the Cyber transaction commits. Caller storage
+	// retains this time after failed steps or attempted rollback, while a commit
+	// error can leave the database outcome uncertain.
 	// database row creation time
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -1043,13 +1000,13 @@ type ContentModerationCyberWarningFilter struct {
 type ContentModerationCyberSummary struct {
 	// Events, Requests, Users, and Providers come from one totals query. ByUser and
 	// ByProvider come from later separate queries, so concurrent warning changes
-	// can separate their observations; each grouped list retains at most one hundred rows.
+	// can separate their observations; each grouped list retains at most
+	// one hundred rows.
 	// total matching warning rows
 	Events int64 `json:"events"`
 	// distinct nonblank request identifiers
 	Requests int64 `json:"requests"`
-	// distinct nonnull actor identifiers
-	Users int64 `json:"users"`
+	Users    int64 `json:"users"` // distinct nonnull actor identifiers
 	// distinct nonnull provider identifiers
 	Providers int64 `json:"providers"`
 	// largest matching actor groups
@@ -1063,10 +1020,14 @@ type ContentModerationCyberSummary struct {
 type ContentModerationCyberUserSummary struct {
 	Count int64 `json:"count"` // matching actor warning count
 	// optional grouped actor identifier
-	UserID    *int64 `json:"user_id,omitempty"`
-	UserEmail string `json:"user_email"` // maximum recorded actor email
-	APIKeys   string `json:"api_keys"`   // distinct recorded key display labels
-	LastSeen  string `json:"last_seen"`  // Shanghai local latest-time text
+	UserID *int64 `json:"user_id,omitempty"`
+	// UserEmail displays the maximum stored address for this actor group. An
+	// absent or empty maximum uses the repository's unassociated-user label.
+	UserEmail string `json:"user_email"` // grouped actor email display
+	// APIKeys joins distinct recorded IDs and names. Missing names use the
+	// repository's unnamed label, and no nonnull key identity yields a dash.
+	APIKeys  string `json:"api_keys"`  // grouped key identity display
+	LastSeen string `json:"last_seen"` // Shanghai local latest-time text
 }
 
 // ContentModerationCyberProviderSummary is one grouped upstream observation
@@ -1075,10 +1036,11 @@ type ContentModerationCyberProviderSummary struct {
 	Count int64 `json:"count"` // matching provider warning count
 	// optional grouped provider identifier
 	ProviderID *int64 `json:"provider_id,omitempty"`
-	// maximum recorded provider display name
-	ProviderName string `json:"provider_name"`
-	Users        int64  `json:"users"`     // distinct nonnull actor count
-	LastSeen     string `json:"last_seen"` // Shanghai local latest-time text
+	// ProviderName displays the maximum saved name for this group, using unknown
+	// when that maximum is empty or absent.
+	ProviderName string `json:"provider_name"` // grouped provider name display
+	Users        int64  `json:"users"`         // distinct nonnull actor count
+	LastSeen     string `json:"last_seen"`     // Shanghai local latest-time text
 }
 
 // ContentModerationCleanupResult reports successful retention-delete counts and
@@ -1100,16 +1062,13 @@ type ContentModerationCleanupResult struct {
 // ContentModerationRuntimeStatus combines configured policy with independently
 // sampled queue, audit, credential, and cleanup observations.
 type ContentModerationRuntimeStatus struct {
-	// ordinary audit enablement switch
-	Enabled bool `json:"enabled"`
+	Enabled bool `json:"enabled"` // ordinary audit enablement switch
 	// separately read risk center switch
-	RiskControlEnabled bool `json:"risk_control_enabled"`
-	// ordinary audit policy mode
-	Mode string `json:"mode"`
+	RiskControlEnabled bool   `json:"risk_control_enabled"`
+	Mode               string `json:"mode"` // ordinary audit policy mode
 	// configured admitted worker count
 	WorkerCount int `json:"worker_count"`
-	// fixed maximum worker population
-	MaxWorkers int `json:"max_workers"`
+	MaxWorkers  int `json:"max_workers"` // fixed maximum worker population
 	// ActiveWorkers and IdleWorkers use current WorkerCount and sampled active
 	// tasks. GetStatus clamps activity to configured count, so reducing worker
 	// configuration can hide larger work still finishing.
@@ -1118,9 +1077,8 @@ type ContentModerationRuntimeStatus struct {
 	// configured count minus activity
 	IdleWorkers int `json:"idle_workers"`
 	// configured queue admission limit
-	QueueSize int `json:"queue_size"`
-	// sampled buffered task count
-	QueueLength int `json:"queue_length"`
+	QueueSize   int `json:"queue_size"`
+	QueueLength int `json:"queue_length"` // sampled buffered task count
 	// QueueUsagePercent divides sampled queue length by configured QueueSize.
 	// Queue length checks are concurrent samples, and the configured limit can
 	// also shrink after tasks were queued, allowing values above one hundred.
@@ -1128,12 +1086,10 @@ type ContentModerationRuntimeStatus struct {
 	QueueUsagePercent float64 `json:"queue_usage_percent"`
 	// cumulative accepted queue sends
 	Enqueued int64 `json:"enqueued"`
-	// cumulative capacity rejection count
-	Dropped int64 `json:"dropped"`
+	Dropped  int64 `json:"dropped"` // cumulative capacity rejection count
 	// counted record or checkSync completions
 	Processed int64 `json:"processed"`
-	// asynchronous all-unit failure count
-	Errors int64 `json:"errors"`
+	Errors    int64 `json:"errors"` // asynchronous all-unit failure count
 	// sampled active synchronous audits
 	PreBlockActive int `json:"pre_block_active"`
 	// counted synchronous decision outcomes
@@ -1238,8 +1194,8 @@ type ContentModerationRepository interface {
 	// with a one-hundred-row cap on each grouped list, so callers do not assume
 	// one consistent read moment.
 	GetCyberSummary(ctx context.Context, filter ContentModerationCyberWarningFilter) (*ContentModerationCyberSummary, error)
-	// MarkCyberWarningEmailSent marks a previously stored warning after successful
-	// notice delivery. PostgreSQL ignores nonpositive IDs and does not inspect
+	// MarkCyberWarningEmailSent marks a previously stored warning after a nil
+	// notice callback result. PostgreSQL ignores nonpositive IDs and does not inspect
 	// affected rows; an execution success can therefore return nil even if the row
 	// was deleted concurrently.
 	MarkCyberWarningEmailSent(ctx context.Context, id int64) error
@@ -1271,7 +1227,7 @@ type ContentModerationReviewRepository interface {
 	// GetMediaContent loads one stored image snapshot by media ID for an
 	// authorized administrator. The service accepts only ready nonempty bytes,
 	// while the PostgreSQL query itself returns the stored retrieval status with
-	// content.
+	// content. A successful read supplies nonnil media for service validation.
 	GetMediaContent(ctx context.Context, id int64) (*ContentModerationMedia, error)
 }
 
@@ -1284,8 +1240,8 @@ type ContentModerationHashCache interface {
 	// even when the returned command result is uncertain.
 	RecordFlaggedInputHash(ctx context.Context, inputHash string) error
 	// HasFlaggedInputHash reports the cache membership observation and any read
-	// error. Check logs failures and continues its remaining audit path; a
-	// confirmed match selects a block before sampling and external API work.
+	// error. Check logs an error and still uses the returned membership value:
+	// true selects a block before sampling and external API work.
 	HasFlaggedInputHash(ctx context.Context, inputHash string) (bool, error)
 	// DeleteFlaggedInputHash returns an observed member-removal reply after the
 	// service validates administrator input. Production Redis retries can observe
@@ -1324,11 +1280,10 @@ type ContentModerationService struct {
 	runtimeWG      sync.WaitGroup    // registered worker cleanup completion
 	settingRepo    SettingRepository // moderation policy setting storage
 	// audit and Cyber persistence
-	repo ContentModerationRepository
-	// shared flagged-input set adapter
-	hashCache ContentModerationHashCache
-	groupRepo GroupRepository // configured group validation reader
-	userRepo  UserCommands    // ordinary account action commands
+	repo      ContentModerationRepository
+	hashCache ContentModerationHashCache // shared flagged-input set adapter
+	groupRepo GroupRepository            // configured group validation reader
+	userRepo  UserCommands               // ordinary account action commands
 	// proxyRepo is assigned by SetProxyRepository before concurrent request work
 	// begins. Cache entry publication is atomic, but assignment of this repository
 	// field has no separate synchronization.
@@ -1379,8 +1334,10 @@ type ContentModerationService struct {
 	// immutable hot-path policy entry
 	runtimeSnapshot  atomic.Pointer[contentModerationRuntimeSnapshot]
 	runtimeRefreshMu sync.Mutex // snapshot reload and replace lock
-	// optional positive snapshot lifetime override
-	runtimeCacheTTL time.Duration
+	// runtimeCacheTTL overrides the one-second snapshot lifetime only when
+	// positive. Bind it before concurrent reads because this duration has no
+	// separate synchronization.
+	runtimeCacheTTL time.Duration // optional snapshot lifetime override
 	// Unix nanoseconds, retry admission instant
 	runtimeRefreshRetryAt atomic.Int64
 	// keyHealthMu protects keyHealth and keySchedule together. Selection observes
@@ -1388,9 +1345,8 @@ type ContentModerationService struct {
 	// return or mutate entries only through that shared synchronization.
 	keyHealthMu sync.Mutex // credential state and scheduling lock
 	// mutable state by credential hash
-	keyHealth map[string]*contentModerationKeyHealth
-	// accumulated scheduling weight by hash
-	keySchedule map[string]int64
+	keyHealth   map[string]*contentModerationKeyHealth
+	keySchedule map[string]int64 // accumulated scheduling weight by hash
 }
 
 // contentModerationRuntimeSnapshot is an immutable policy and keyword index
@@ -1518,9 +1474,8 @@ type moderationAPIInputPart struct {
 	// Type selects the serialized part form. Text is used for text parts and
 	// ImageURL for image parts; omitted companions use omitempty in the request
 	// encoding.
-	Type string `json:"type"` // text or image_url label
-	// selected audit text value
-	Text string `json:"text,omitempty"`
+	Type string `json:"type"`           // text or image_url label
+	Text string `json:"text,omitempty"` // selected audit text value
 	// nested audit image reference
 	ImageURL *moderationAPIImageURLRef `json:"image_url,omitempty"`
 }
@@ -1576,7 +1531,7 @@ func ContentModerationDefaultThresholds() map[string]float64 {
 // association remains the caller-supplied representation.
 //
 // When Items is empty, text receives the first position and normalized images
-// receive subsequent item indexes with user source. A blank Source is derived
+// receive subsequent item indexes with user source. An empty Source is derived
 // from resulting items, while an existing Source is kept. Callers provide
 // consistent supplied Items and ImageItems before downstream audit filtering.
 func (in *ContentModerationInput) Normalize() {
@@ -1885,6 +1840,9 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	if input.Thresholds != nil {
 		cfg.Thresholds = mergeContentModerationThresholds(ContentModerationDefaultThresholds(), *input.Thresholds)
 	}
+	// Clear or replacement removes prior metadata with the old pool. Append
+	// retains existing order; later metadata alignment discards attributes for
+	// removed keys so they cannot attach by an obsolete list position.
 	if input.ClearAPIKey {
 		cfg.APIKey = ""
 		cfg.APIKeys = []string{}
@@ -1921,7 +1879,8 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 				return nil, err
 			}
 		}
-		// Supplied entry attributes override saved key metadata so an existing key can receive a new
+		// Supplied entry attributes override saved key metadata so an
+		// existing key can receive a new
 		// weight or note.
 		applyContentModerationAPIKeyEntryMetadata(cfg, entries)
 	}
@@ -2043,11 +2002,11 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 // returns before hash checking, sampling, or external auditing.
 //
 // An enabled flagged-hash match blocks even in observe mode and adds its hash
-// to a nonempty block message. Hash read errors continue the remaining audit
-// path. Observe otherwise queues work and immediately allows; queue rejection
-// attempts an incomplete log synchronously. Pre-block API decisions allow when
-// every unit fails, and a confirmed threshold hit can block even if another
-// unit is incomplete.
+// to a nonempty block message. Hash read errors are logged; returned membership
+// still decides the match. Observe otherwise queues work and immediately
+// allows; queue rejection attempts an incomplete log synchronously. Pre-block
+// API decisions allow when every unit fails, and a confirmed threshold hit can
+// block even if another unit is incomplete.
 // @project-doc docs/domains/content_moderation.md#content_moderation_decision_pipeline
 func (s *ContentModerationService) Check(ctx context.Context, input ContentModerationCheckInput) (*ContentModerationDecision, error) {
 	allow := &ContentModerationDecision{Allowed: true, Action: ContentModerationActionAllow}
@@ -2170,7 +2129,8 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"text_runes", len([]rune(content.Text)),
 		"image_count", len(content.Images))
 	// Hash full extracted text and ordered image references before selecting audit
-	// limits, keeping local membership and sampling independent of later unit exclusion.
+	// limits, keeping local membership and sampling independent of later
+	// unit exclusion.
 	hashText := content.Hash()
 	if cfg.Mode == ContentModerationModePreBlock {
 		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
@@ -2244,7 +2204,8 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			scores := map[string]float64{"hash": 1.0}
 			log := s.buildStructuredLog(input, cfg, ContentModerationActionHashBlock, true, "hash", 1.0, scores, content, nil, nil, "", nil)
 			// Queue rejection records the repeated hash inline; ordinary violation side
-			// effects stay disabled because this recorded identity already selected the local block.
+			// effects stay disabled because this recorded identity
+			// already selected the local block.
 			if !s.enqueueRecord(input, cfg, log, hashText, false, false) {
 				s.persistContentModerationLog(ctx, cfg, log, hashText, false, false)
 			}
@@ -2291,7 +2252,8 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"protocol", input.Protocol,
 			"queue_len", len(s.asyncQueue))
 		// A rejected observe task leaves the admission decision allowed. Attempt an
-		// incomplete request record inline so queue loss remains visible to administrator review.
+		// incomplete request record inline so queue loss remains
+		// visible to administrator review.
 		if !s.enqueueAsync(input, cfg, content, hashText) {
 			queueErr := errors.New("content moderation queue capacity exceeded")
 			auditInput := contentModerationAuditInput(content, cfg)
@@ -2415,7 +2377,8 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		}
 		if queueDelay == nil && cfg.Mode == ContentModerationModePreBlock {
 			// A decided synchronous audit prefers deferred recording; a rejected send
-			// persists inline so accepted queue capacity does not control its block decision.
+			// persists inline so accepted queue capacity does not
+			// control its block decision.
 			if !s.enqueueRecord(input, cfg, log, hashText, flagged, flagged) {
 				s.persistContentModerationLog(ctx, cfg, log, hashText, flagged, flagged)
 			}
@@ -2497,7 +2460,8 @@ func (s *ContentModerationService) auditContentModerationInput(ctx context.Conte
 	})
 
 	// Image workers publish individual outcomes to one merger after text completes;
-	// draining every result keeps cancellation failures associated with their accepted jobs.
+	// draining every result keeps cancellation failures associated with
+	// their accepted jobs.
 	if len(content.ImageItems) > 0 {
 		workerCount := min(contentModerationImageConcurrency, len(content.ImageItems))
 		results := make(chan contentModerationUnitResult, workerCount)
@@ -2621,7 +2585,8 @@ func mergeContentModerationUnitResult(target *contentModerationAuditResult, unit
 		return
 	}
 	// Store public failure classes instead of bounded provider diagnostics here,
-	// keeping echoed request or credential text out of the retained failed-unit message.
+	// keeping echoed request or credential text out of the retained
+	// failed-unit message.
 	if unit.err != nil || unit.result == nil {
 		errText := "moderation api returned no result"
 		if unit.err != nil {
@@ -2664,6 +2629,11 @@ func publicContentModerationError(err error) string {
 // overlap smaller than it. Nonpositive sizes use the audit default, negative
 // overlap becomes zero, and excessive overlap clamps below size so every chunk
 // advances.
+//
+// Both the chunk counter and iterator use these values, so they agree on the
+// same positive step. An overlap at least as large as the normalized size
+// becomes size minus one; changing only one consumer would make reported unit
+// counts diverge from emitted chunks.
 func normalizeContentModerationChunkOptions(chunkSize int, overlap int) (int, int) {
 	if chunkSize <= 0 {
 		chunkSize = maxModerationInputRunes
@@ -2762,7 +2732,8 @@ func forEachContentModerationTextBatch(text string, chunkSize int, overlap int, 
 			break
 		}
 		// Retain the previous chunk tail before reading new runes, preserving the
-		// configured shared overlap while the iterator avoids retaining a full-input rune slice.
+		// configured shared overlap while the iterator avoids retaining
+		// a full-input rune slice.
 		carry = append(carry[:0], chunkRunes[len(chunkRunes)-overlap:]...)
 	}
 	if len(batch) > 0 {
@@ -2776,7 +2747,7 @@ func forEachContentModerationTextBatch(text string, chunkSize int, overlap int, 
 // keeps the selected image reference, source label, and original review-item
 // SourceIndex.
 //
-// CheckSync passes the filtered audit input with the result indexes, because
+// checkSync passes the filtered audit input with the result indexes, because
 // source exclusions can make selected image positions differ from full review
 // positions. Indexes select the audit collection; SourceIndex carries the
 // review identity into snapshot metadata. Using the full unfiltered collection
@@ -2996,7 +2967,8 @@ func (s *ContentModerationService) worker(id int) {
 			continue
 		}
 		// Release task resources on every return. A recovered panic ends this task
-		// and records diagnostics; independent side effects already completed are not replayed here.
+		// and records diagnostics; independent side effects already
+		// completed are not replayed here.
 		func() {
 			defer cancel()
 			defer s.releaseContentModerationBufferedBytes(task.bufferedBytes)
@@ -3080,7 +3052,8 @@ func contentModerationTextFromItems(items []ContentModerationInputItem) string {
 // reconstruction, while other fields and standalone content.Text are not
 // comprehensively measured.
 func estimateContentModerationTaskBytes(task contentModerationTask) int64 {
-	// Fixed structural allowances approximate selected retained costs, rather than measuring
+	// Fixed structural allowances approximate selected retained costs,
+	// rather than measuring
 	// all object, slice-capacity, or shared-string heap storage for a queued task.
 	size := int64(1024 + len(task.input.Endpoint) + len(task.input.Provider) + len(task.input.Model) + len(task.input.Body))
 	if task.log != nil {
@@ -3099,7 +3072,8 @@ func estimateContentModerationTaskBytes(task contentModerationTask) int64 {
 		size += int64(len(item.Text) + len(item.ImageRef) + 64)
 	}
 	// Charge item text again for aggregate reconstruction during worker execution;
-	// standalone content.Text and other omitted fields keep this a selected-cost estimate.
+	// standalone content.Text and other omitted fields keep this a
+	// selected-cost estimate.
 	return size + textBytes
 }
 
@@ -3118,7 +3092,8 @@ func (s *ContentModerationService) reserveContentModerationBufferedBytes(size in
 	}
 	for {
 		// A competing sender can claim remaining bytes after this read; retry a
-		// lost CAS against the updated total before accepting or rejecting the reservation.
+		// lost CAS against the updated total before accepting or
+		// rejecting the reservation.
 		current := s.asyncBufferedBytes.Load()
 		if current > maxContentModerationBufferedBytes-size {
 			return false
@@ -3144,6 +3119,11 @@ func (s *ContentModerationService) releaseContentModerationBufferedBytes(size in
 // timeout and reports whether a task was received. Nonpositive idleWait selects
 // one second. When several cases are ready, select chooses among them; the
 // caller owns byte release for a received task.
+//
+// A closed, empty queue returns no task; a buffered receive can still precede
+// closure detection. The timer stops on return. Canceled or idle waits leave
+// queued reservations intact, and this helper releases no costs for values it
+// did not receive.
 func (s *ContentModerationService) dequeueAsyncTask(ctx context.Context, idleWait time.Duration) (contentModerationTask, bool) {
 	var zero contentModerationTask
 	if s == nil || s.asyncQueue == nil {
@@ -3456,7 +3436,8 @@ func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) 
 			return nil, fmt.Errorf("update content moderation unban user: %w", err)
 		}
 	}
-	// Refresh authentication after successful reactivation, including an already-active
+	// Refresh authentication after successful reactivation, including an
+	// already-active
 	// account whose cached state may still describe an earlier disabled observation.
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
@@ -3548,7 +3529,8 @@ func (s *ContentModerationService) GetStatus(ctx context.Context) (*ContentModer
 	var flaggedHashCount int64
 	if s.hashCache != nil {
 		// Hash availability is a separate diagnostic read; its failure leaves the
-		// displayed count zero and does not discard the other sampled runtime observations.
+		// displayed count zero and does not discard the other sampled
+		// runtime observations.
 		if n, err := s.hashCache.CountFlaggedInputHashes(ctx); err == nil {
 			flaggedHashCount = n
 		} else {
@@ -3598,6 +3580,10 @@ func (s *ContentModerationService) GetStatus(ctx context.Context) (*ContentModer
 // repeats every day. runtimeDone stops future rounds; a cleanup already
 // underway uses its own background deadline and remains joined by runtimeWG
 // before Stop finishes.
+//
+// The timer resets after each completed round, so work duration extends the
+// interval between round starts. When timer and stop are ready together,
+// select can admit another round before the next loop observes shutdown.
 func (s *ContentModerationService) cleanupWorker() {
 	timer := time.NewTimer(contentModerationCleanupDelay)
 	defer timer.Stop()
@@ -3636,6 +3622,8 @@ func (s *ContentModerationService) runCleanupOnce() {
 		return
 	}
 	now := time.Now()
+	// Compute both cutoffs from one local calendar instant, preserving calendar
+	// days across timezone offset changes.
 	hitBefore := now.AddDate(0, 0, -cfg.HitRetentionDays)
 	nonHitBefore := now.AddDate(0, 0, -cfg.NonHitRetentionDays)
 	result, err := s.repo.CleanupExpiredLogs(ctx, hitBefore, nonHitBefore)
@@ -3665,7 +3653,8 @@ func (s *ContentModerationService) loadConfig(ctx context.Context) (*ContentMode
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyContentModerationConfig)
 	if err != nil {
 		// A missing stored policy selects defaults; other read errors remain visible
-		// to dedicated management callers instead of producing a newly defaulted configuration.
+		// to dedicated management callers instead of producing a newly
+		// defaulted configuration.
 		if errors.Is(err, ErrSettingNotFound) {
 			return parseContentModerationConfig("")
 		}
@@ -3826,7 +3815,8 @@ func (s *ContentModerationService) refreshRuntimeSnapshot(ctx context.Context) (
 		loadedAt:           time.Now(),
 	}
 	// Publish only after parsing and matcher construction complete; failed loads
-	// leave any earlier immutable entry available to request checks during retry deferral.
+	// leave any earlier immutable entry available to request checks during
+	// retry deferral.
 	s.runtimeSnapshot.Store(snapshot)
 	s.runtimeRefreshRetryAt.Store(0)
 	return snapshot, nil
@@ -3866,7 +3856,8 @@ func (s *ContentModerationService) replaceRuntimeConfig(cfg *ContentModerationCo
 		return
 	}
 	// Replace saved policy under the refresh lock, retaining the latest published
-	// master switch so a dedicated config update does not overwrite that separate observation.
+	// master switch so a dedicated config update does not overwrite that
+	// separate observation.
 	s.runtimeSnapshot.Store(&contentModerationRuntimeSnapshot{
 		riskControlEnabled: current.riskControlEnabled,
 		config:             config,
@@ -3899,7 +3890,8 @@ func (s *contentModerationRuntimeSnapshot) matchBlockedKeyword(text string) (str
 func (s *ContentModerationService) isRiskControlEnabled(ctx context.Context) bool {
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyRiskControlEnabled)
 	// A failed direct master-switch read disables this Cyber/status check, while
-	// ordinary request checks can still be using their separately published stale snapshot.
+	// ordinary request checks can still be using their separately published
+	// stale snapshot.
 	if err != nil {
 		return false
 	}
@@ -3931,6 +3923,7 @@ func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *Cont
 			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", fmt.Sprintf("代理服务器不存在: %d", *cfg.ProxyID))
 		}
 	}
+	// Require an error response class for locally rejected requests.
 	if cfg.BlockStatus < 400 || cfg.BlockStatus > 599 {
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BLOCK_STATUS", "拦截 HTTP 状态码必须在 400-599 之间")
 	}
@@ -4012,7 +4005,8 @@ func (s *ContentModerationService) callModerationBatch(ctx context.Context, cfg 
 		s.markAPIKeyError(key, err.Error(), latency, httpStatus)
 		lastErr = err
 		// A request-shape rejection is retained for batch compatibility handling;
-		// retrying other credentials here would resend the same invalid shape immediately.
+		// retrying other credentials here would resend the same invalid
+		// shape immediately.
 		if httpStatus == 400 {
 			break
 		}
@@ -4020,7 +4014,8 @@ func (s *ContentModerationService) callModerationBatch(ctx context.Context, cfg 
 			break
 		}
 		// Delay subsequent attempts while still selecting their key afresh; the
-		// shared caller context can end this wait before another provider exchange begins.
+		// shared caller context can end this wait before another
+		// provider exchange begins.
 		wait := time.Duration(100*(attempt+1)) * time.Millisecond
 		select {
 		case <-ctx.Done():
@@ -4111,7 +4106,8 @@ func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context
 	proxyURL := proxy.URL
 	if previous == nil || previous.proxyID != proxyID || previous.url != proxyURL {
 		// Log the adapter-provided address label because the dial URL can include
-		// authentication; the display label is constructed separately by app proxy lookup.
+		// authentication; the display label is constructed separately
+		// by app proxy lookup.
 		slog.Info("content_moderation.proxy_enabled",
 			"proxy_id", proxyID,
 			"proxy_name", proxy.Name,
@@ -4206,8 +4202,9 @@ func (s *ContentModerationService) buildStructuredLog(input ContentModerationChe
 // persistContentModerationLog attempts hash recording, ordinary risk actions,
 // notification, media snapshots, and final log insertion in that order. Nil
 // services or logs do nothing. These operations are separate: a later failure
-// does not undo a completed hash write, user status command, or delivered
-// notice.
+// does not undo a completed hash write, user status command, or notice
+// callback. A nil notice result permits email markers without confirming a
+// new transport send.
 //
 // Ordinary side effects count earlier persisted hits before this new log is
 // inserted. Notification therefore sees its current ID, commonly zero for a
@@ -4220,7 +4217,8 @@ func (s *ContentModerationService) persistContentModerationLog(ctx context.Conte
 		return
 	}
 	// Hash storage precedes ordinary actions and final log insertion. Its errors
-	// are logged while already selected admission and later independent effects continue.
+	// are logged while already selected admission and later independent
+	// effects continue.
 	if recordHash && s.hashCache != nil {
 		if err := s.hashCache.RecordFlaggedInputHash(ctx, hashText); err != nil {
 			slog.Warn("content_moderation.record_hash_failed", "user_id", contentModerationEmailUserID(log), "endpoint", log.Endpoint, "error", err)
@@ -4308,10 +4306,11 @@ func (s *ContentModerationService) applyFlaggedProviderSideEffects(ctx context.C
 // log are required; error diagnostics dereference UserID, so callers supply a
 // valid actor pointer for delivery paths.
 //
-// Each successful send contributes to EmailSent, while either failure is logged
-// and does not prevent attempting the other notice. This function precedes
-// CreateLog in ordinary persistence, so the notification source ID can still be
-// zero. Completed account changes remain applied when email delivery fails.
+// Each nil callback result contributes to EmailSent, while either error is
+// logged and does not prevent attempting the other notice. A notification
+// suppression result can also be nil. This function precedes CreateLog in
+// ordinary persistence, so the source ID can still be zero. Completed account
+// changes remain applied when a notice returns an error.
 func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
 	if s == nil || cfg == nil || log == nil || !log.Flagged {
 		return
@@ -4320,7 +4319,7 @@ func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx contex
 		return
 	}
 	// Keep one success flag across independent sends; a failed later ban notice
-	// must not erase evidence that the earlier violation notice was delivered.
+	// must not erase the earlier violation callback's nil result.
 	emailSent := false
 	if cfg.EmailOnHit {
 		if err := s.sendViolationEmail(ctx, cfg, log); err != nil {
@@ -4417,11 +4416,12 @@ func (s *ContentModerationService) buildCyberWarning(input ContentModerationCybe
 // new-ban result skips these effects. A missing email service or recipient
 // still leaves invalidation applied.
 //
-// Successful delivery marks the in-memory warning and then attempts the stored
-// email-sent flag for its positive ID. Delivery failure prevents that flag
-// attempt; a flag failure is logged after mail has been sent. The committed
-// warning and account action are retained in both failure cases, and
-// notification source identity comes from the stored warning.
+// A nil notice result marks the in-memory warning and then attempts the stored
+// flag for a positive ID. Notification can return nil for an existing delivery
+// marker, so this does not establish a new SMTP send. A notice error prevents
+// the flag attempt; marker-write failure is logged after the callback finishes.
+// Warning and account changes stay committed, and the stored warning ID
+// supplies notification source coordination.
 func (s *ContentModerationService) applyCyberWarningPostCommitSideEffects(ctx context.Context, cfg *ContentModerationConfig, warning *ContentModerationCyberWarning, autoBanJustApplied bool) {
 	if s == nil || cfg == nil || warning == nil || warning.UserID == nil || *warning.UserID <= 0 || !autoBanJustApplied {
 		return
@@ -4435,8 +4435,9 @@ func (s *ContentModerationService) applyCyberWarningPostCommitSideEffects(ctx co
 	if s.emailService == nil || strings.TrimSpace(warning.UserEmail) == "" {
 		return
 	}
-	// Deliver against the stored warning identity before marking success. A mark
-	// failure cannot withdraw delivered mail or undo the committed Cyber account action.
+	// Call against stored source identity before marking its nil result. If a
+	// transport send occurred, later marker failure cannot undo it or the
+	// committed Cyber account action.
 	if err := s.sendCyberAccountDisabledEmail(ctx, cfg, warning); err != nil {
 		slog.Warn("content_moderation.cyber_ban_email_failed", "user_id", *warning.UserID, "email", warning.UserEmail, "error", err)
 		return
@@ -4717,10 +4718,12 @@ func (cfg *ContentModerationConfig) shouldSample(hashText string) bool {
 	}
 	raw, err := hex.DecodeString(hashText)
 	// An unparseable intermediate-rate identity is admitted so malformed hash input
-	// does not silently discard the API audit selected by this otherwise enabled policy.
+	// does not silently discard the API audit selected by this otherwise
+	// enabled policy.
 	if err != nil || len(raw) < 2 {
 		return true
 	}
+	// The two-byte prefix fixes one deterministic percentage bucket for this digest.
 	return int(binary.BigEndian.Uint16(raw[:2])%100) < cfg.SampleRate
 }
 
@@ -4739,6 +4742,11 @@ func (cfg *ContentModerationConfig) apiKeys() []string {
 // each credential hash. Missing metadata uses default priority and note values;
 // nil configs return nil, and the returned slice can be modified independently
 // of policy collections.
+//
+// Metadata follows credential digests rather than list positions, so reordered
+// credentials keep their saved attributes. Each returned entry contains copied
+// scalar values and strings, with no mutable map or slice reference into the
+// source policy.
 func (cfg *ContentModerationConfig) apiKeyEntries() []contentModerationAPIKeyRuntimeEntry {
 	if cfg == nil {
 		return nil
@@ -4787,7 +4795,8 @@ func (s *ContentModerationService) nextUsableAPIKey(cfg *ContentModerationConfig
 		s.keySchedule = make(map[string]int64)
 	}
 	// Add weights only for currently unfrozen entries, then subtract their total
-	// from the chosen key so subsequent selections spread the configured eligible weight.
+	// from the chosen key so subsequent selections spread the configured
+	// eligible weight.
 	var selected *contentModerationAPIKeyRuntimeEntry
 	var selectedWeight int64
 	var totalWeight int64
@@ -4899,6 +4908,12 @@ func (s *ContentModerationService) markAPIKeySuccess(key string, latencyMS int, 
 // keyHealthMu. Freezable statuses increment failures and set a new freeze;
 // status zero and 400 retain any earlier freeze instead of extending it. Blank
 // credentials and nil services are ignored.
+//
+// Each freezable result replaces the deadline using a new clock sample, even
+// when an earlier freeze ends later. A throttling result can therefore shorten
+// an authentication freeze. Nonfreezable errors still replace LastError and
+// attempt fields, so the displayed error can coexist with an older active
+// freeze.
 func (s *ContentModerationService) markAPIKeyError(key string, errText string, latencyMS int, httpStatus int) {
 	hash := moderationAPIKeyHash(key)
 	if hash == "" || s == nil {
@@ -4917,7 +4932,8 @@ func (s *ContentModerationService) markAPIKeyError(key string, errText string, l
 	state.LastHTTPStatus = httpStatus
 	state.LastTested = true
 	// Publish status-based exclusion with health diagnostics under one lock; zero
-	// and request-shape failures leave any existing freeze instant as previously observed.
+	// and request-shape failures leave any existing freeze instant as
+	// previously observed.
 	if freezeDuration := contentModerationFreezeDurationForHTTPStatus(httpStatus); freezeDuration > 0 {
 		state.FrozenUntil = time.Now().Add(freezeDuration)
 	}
@@ -5205,7 +5221,8 @@ func buildModerationTestInput(prompt string, images []string) (any, int, error) 
 		normalizedImages = append(normalizedImages, image)
 	}
 	// With no audit content, use a harmless fixed probe to observe credential
-	// health; TestAPIKeys treats this intent differently from a supplied content audit.
+	// health; TestAPIKeys treats this intent differently from a supplied
+	// content audit.
 	if prompt == "" && len(normalizedImages) == 0 {
 		return "hello", 0, nil
 	}
@@ -5272,6 +5289,11 @@ func validateModerationTestImageDataURL(value string) error {
 // known-category thresholds for administrator display. Nil results return nil.
 // It ignores the provider Flagged bit, applies local threshold evaluation, and
 // reports the highest score again as CompositeScore.
+//
+// Unknown category scores remain in display data and can win its maximum while
+// only known thresholds decide Flagged. Returned score and threshold maps can
+// be mutated without changing the supplied maps; comparisons still use ordinary
+// floating-point semantics.
 func buildContentModerationTestAuditResult(result *moderationAPIResult, thresholds map[string]float64) *ContentModerationTestAuditResult {
 	if result == nil {
 		return nil
@@ -5319,7 +5341,8 @@ func evaluateModerationScores(scores map[string]float64, thresholds map[string]f
 		}
 	}
 	// Include unknown scores in display maxima after flagging decisions; a larger
-	// unknown value can change the displayed category while leaving flagging unchanged.
+	// unknown value can change the displayed category while leaving
+	// flagging unchanged.
 	for category, score := range scores {
 		if score > highestScore || highestCategory == "" {
 			highestScore = score
@@ -5367,7 +5390,8 @@ func mergeContentModerationThresholds(base map[string]float64, override map[stri
 // later.
 func ExtractCyberWarningText(body []byte) string {
 	// Try supported nested response error fields after the common extractor, then
-	// retain raw body text when no structured message supplies the Cyber review evidence.
+	// retain raw body text when no structured message supplies the Cyber
+	// review evidence.
 	text := strings.TrimSpace(upstream.ExtractErrorMessage(body))
 	if text == "" {
 		text = strings.TrimSpace(gjson.GetBytes(body, "response.error.message").String())
@@ -5408,6 +5432,11 @@ func normalizeInt64IDs(ids []int64) []int64 {
 // deduplicates entries in their first configured order. It retains the first
 // spelling and the supported prefix of the list, because match priority follows
 // retained configuration position.
+//
+// Deduplication compares capped text, so entries differing only beyond the rune
+// budget collapse into the first prefix. The list limit counts retained unique
+// entries, leaving skipped blanks and duplicates outside that count. Matcher
+// results use the retained spelling and order.
 func normalizeBlockedKeywords(in []string) []string {
 	if len(in) == 0 {
 		return []string{}
@@ -5456,6 +5485,12 @@ func normalizeKeywordBlockingMode(mode string) string {
 // newly normalized model names. All-model scope clears the names list; include
 // or exclude can retain an empty list until configuration validation applies
 // its own requirement.
+//
+// Type normalization precedes the all-model decision, so an unknown stored type
+// discards supplied names. Include and exclude preserve the normalized list,
+// even when empty. Stored-policy membership interprets those empty lists,
+// while administrator validation separately requires at least one retained
+// model name.
 func normalizeContentModerationModelFilter(filter ContentModerationModelFilter) ContentModerationModelFilter {
 	out := ContentModerationModelFilter{
 		Type:   normalizeContentModerationModelFilterType(filter.Type),
@@ -5497,6 +5532,11 @@ func normalizeContentModerationModelFilterType(filterType string) string {
 // spellings in first-occurrence order. Case-insensitive duplicates keep the
 // first spelling; only the supported list prefix survives and empty input
 // yields an empty slice.
+//
+// Duplicate detection uses capped names, so entries differing only beyond the
+// rune budget collapse. Membership compares requested names without this
+// truncation, so a longer requested name need not match its retained prefix.
+// The list limit counts retained unique names rather than skipped entries.
 func normalizeContentModerationModelNames(models []string) []string {
 	if len(models) == 0 {
 		return []string{}
@@ -5679,6 +5719,11 @@ func normalizeContentModerationAPIKeyEntryInputs(input *[]ContentModerationAPIKe
 // credential entries after existing metadata is normalized. Nil config or no
 // entries does nothing; supplied attributes win by hash, and final
 // normalization restores current key order while removing deleted keys.
+//
+// UpdateConfig applies these entries after its update-by-hash phase, so their
+// priority and note win for an existing key. Map traversal does not decide
+// display order: final normalization follows cfg.APIKeys and retains only
+// attributes associated with that current list.
 func applyContentModerationAPIKeyEntryMetadata(cfg *ContentModerationConfig, entries []ContentModerationAPIKeyEntryInput) {
 	if cfg == nil || len(entries) == 0 {
 		return
@@ -5695,6 +5740,8 @@ func applyContentModerationAPIKeyEntryMetadata(cfg *ContentModerationConfig, ent
 	for _, item := range metadata {
 		items = append(items, item)
 	}
+	// Rebuild from credential order after map collection, so unordered traversal
+	// cannot decide displayed metadata positions or associate attributes by index.
 	cfg.APIKeyMetadata = normalizeContentModerationAPIKeyMetadata(cfg.APIKeys, items)
 }
 
@@ -5739,6 +5786,8 @@ func applyContentModerationAPIKeyMetadataUpdates(cfg *ContentModerationConfig, u
 	for _, item := range metadata {
 		items = append(items, item)
 	}
+	// Rebuild from credential order after map collection, so unordered traversal
+	// cannot decide displayed metadata positions or associate attributes by index.
 	cfg.APIKeyMetadata = normalizeContentModerationAPIKeyMetadata(cfg.APIKeys, items)
 	return nil
 }
@@ -5763,6 +5812,9 @@ func (cfg *ContentModerationConfig) apiKeyMetadataForHash(hash string) ContentMo
 // defaulting, while metadata updates require a positive supported priority and
 // a valid complete hash; nil lists are accepted.
 func validateContentModerationAPIKeyInputs(entries *[]ContentModerationAPIKeyEntryInput, updates *[]ContentModerationAPIKeyMetadata) error {
+	// Trimmed notes use the same rune budget as stored display metadata. New
+	// entries permit the default-weight sentinel; hash updates require an
+	// explicit positive weight.
 	if entries != nil {
 		for _, item := range *entries {
 			if item.Priority < 0 || item.Priority > maxContentModerationAPIKeyPriority {
@@ -5797,6 +5849,7 @@ func validateContentModerationAuditTextLimit(limit *int, label string) error {
 	if limit == nil {
 		return nil
 	}
+	// Require a positive budget before normalization can substitute its fallback.
 	if *limit <= 0 || *limit > maxContentModerationAuditTextChars {
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_AUDIT_TEXT_LIMIT", fmt.Sprintf("%s审核字符数必须在 1-%d 之间", label, maxContentModerationAuditTextChars))
 	}
@@ -5886,7 +5939,8 @@ func cloneInt64Ptr(in *int64) *int64 {
 // and retention rules.
 func sanitizeContentModerationExcerpt(text string, max int) string {
 	// Redaction precedes truncation so a recognized credential value crossing the
-	// excerpt cutoff is replaced from the complete input before summary length is selected.
+	// excerpt cutoff is replaced from the complete input before summary
+	// length is selected.
 	return trimRunes(redactContentModerationSecrets(text), max)
 }
 
@@ -5998,10 +6052,12 @@ func (s *ContentModerationService) Stop() error {
 // cleanup contexts. Its error includes separately sampled queued and active
 // counts, which can change during collection. A ready result and a canceled
 // context can compete in select, and timing out does not reopen queue admission
-// or cancel the drain worker.
+// or cancel the drain worker. Starting the goroutine does not wait for queue
+// closure before entering the caller's select, so a timeout can precede
+// admission sealing under runtimeMu.
 func (s *ContentModerationService) StopContext(ctx context.Context) error {
-	// Publish one eventual drain result to all waiters; an individual timeout
-	// does not cancel that shared goroutine or reopen its already stopped queue.
+	// Publish one eventual drain result to all waiters. A caller timeout leaves
+	// this goroutine running; Stop seals admission when it acquires runtimeMu.
 	s.stopWaitOnce.Do(func() {
 		s.stopWaitDone = make(chan struct{})
 		go func() { s.stopWaitErr = s.Stop(); close(s.stopWaitDone) }()

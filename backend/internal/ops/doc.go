@@ -1,4 +1,8 @@
-// Package ops collects operational metrics and errors, serves monitoring queries, and runs alerts, reports, and historical cleanup.
+// Package ops records request failures, ingress rejections, system logs, and
+// sampled health so administrators can diagnose traffic and background jobs.
+// Its services apply monitoring settings, query stored observations, evaluate
+// alerts, send scheduled summaries, and plan historical cleanup; app binds
+// dependencies and starts the owned runtimes.
 //
 // Reading entry points:
 //   - service.go: error persistence, queries, and runtime settings snapshots.

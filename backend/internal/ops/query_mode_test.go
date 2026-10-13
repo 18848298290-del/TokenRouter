@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestShouldFallbackOpsPreagg combines automatic and raw modes with coverage,
+// ordinary, wrapped, and absent errors. It protects the broad error-based retry
+// decision and nil-filter handling.
 func TestShouldFallbackOpsPreagg(t *testing.T) {
 	preaggErr := ErrOpsPreaggregatedNotPopulated
 	otherErr := errors.New("some other error")
@@ -16,10 +19,10 @@ func TestShouldFallbackOpsPreagg(t *testing.T) {
 	rawFilter := &OpsDashboardFilter{QueryMode: OpsQueryModeRaw}
 
 	tests := []struct {
-		name   string
-		filter *OpsDashboardFilter
-		err    error
-		want   bool
+		name   string              // subtest scenario display name
+		filter *OpsDashboardFilter // query mode input filter
+		err    error               // repository query failure input
+		want   bool                // expected raw retry decision
 	}{
 		{"auto mode + preagg error => fallback", autoFilter, preaggErr, true},
 		{"auto mode + other error => fallback", autoFilter, otherErr, true},
@@ -37,6 +40,9 @@ func TestShouldFallbackOpsPreagg(t *testing.T) {
 	}
 }
 
+// TestCloneOpsFilterWithMode supplies nil and populated dashboard filters to
+// the mode-copy helper. It protects mode isolation and equality of the retained
+// start-time, platform, and group values.
 func TestCloneOpsFilterWithMode(t *testing.T) {
 	t.Run("nil filter returns nil", func(t *testing.T) {
 		require.Nil(t, CloneOpsFilterWithMode(nil, OpsQueryModeRaw))

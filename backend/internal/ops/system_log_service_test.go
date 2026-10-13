@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// TestOpsServiceListSystemLogs_DefaultClampAndSuccess supplies page zero and an
+// oversized page size to a repository hook. It checks the filter becomes page
+// one and size two hundred, with one returned row and matching total.
 func TestOpsServiceListSystemLogs_DefaultClampAndSuccess(t *testing.T) {
 	var gotFilter *OpsSystemLogFilter
 	repo := &opsRepoMock{
@@ -41,6 +44,9 @@ func TestOpsServiceListSystemLogs_DefaultClampAndSuccess(t *testing.T) {
 	}
 }
 
+// TestOpsServiceListSystemLogs_MonitoringDisabled uses a hard-disabled Ops
+// service with a repository fixture. It checks this disabled configuration
+// makes the service return a listing error.
 func TestOpsServiceListSystemLogs_MonitoringDisabled(t *testing.T) {
 	svc := newLegacyShapeOpsService(
 		&opsRepoMock{},
@@ -54,6 +60,9 @@ func TestOpsServiceListSystemLogs_MonitoringDisabled(t *testing.T) {
 	}
 }
 
+// TestOpsServiceListSystemLogs_NilRepoReturnsEmpty requests logs with no
+// repository and no filter. It checks an allocated empty result with zero total
+// and fixed page-one, size-fifty metadata.
 func TestOpsServiceListSystemLogs_NilRepoReturnsEmpty(t *testing.T) {
 	svc := newLegacyShapeOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	out, err := svc.ListSystemLogs(context.Background(), nil)
@@ -65,6 +74,9 @@ func TestOpsServiceListSystemLogs_NilRepoReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestOpsServiceListSystemLogs_RepoErrorMapped injects a database read failure
+// through the listing hook. It checks the service returns an error containing
+// the system-log list failure identifier.
 func TestOpsServiceListSystemLogs_RepoErrorMapped(t *testing.T) {
 	repo := &opsRepoMock{
 		ListSystemLogsFn: func(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error) {
@@ -81,6 +93,9 @@ func TestOpsServiceListSystemLogs_RepoErrorMapped(t *testing.T) {
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_SuccessAndAudit injects a three-row deletion
+// result and captures the audit input. It checks the count and retained host,
+// client request, user, and Key conditions reach that audit.
 func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	var audit *OpsSystemLogCleanupAudit
 	repo := &opsRepoMock{
@@ -131,6 +146,9 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_RepoUnavailableAndInvalidOperator exercises
+// absent storage and a nonpositive operator on separate fixtures. It checks
+// both conditions reject cleanup before a deletion result is accepted.
 func TestOpsServiceCleanupSystemLogs_RepoUnavailableAndInvalidOperator(t *testing.T) {
 	svc := newLegacyShapeOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if _, err := svc.CleanupSystemLogs(context.Background(), &OpsSystemLogCleanupFilter{RequestID: "r"}, 1); err == nil {
@@ -143,6 +161,10 @@ func TestOpsServiceCleanupSystemLogs_RepoUnavailableAndInvalidOperator(t *testin
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_FilterRequired injects the repository's
+// missing-filter diagnostic for an empty filter. It checks the service returns
+// a filter-related error through its diagnostic-based application-error
+// mapping.
 func TestOpsServiceCleanupSystemLogs_FilterRequired(t *testing.T) {
 	repo := &opsRepoMock{
 		DeleteSystemLogsFn: func(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error) {
@@ -159,6 +181,9 @@ func TestOpsServiceCleanupSystemLogs_FilterRequired(t *testing.T) {
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_InvalidRange supplies an end time one hour
+// before the start. It checks the service rejects that ordered-range violation
+// for the supplied reversed endpoints in this deletion fixture.
 func TestOpsServiceCleanupSystemLogs_InvalidRange(t *testing.T) {
 	repo := &opsRepoMock{}
 	svc := newLegacyShapeOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
@@ -173,6 +198,9 @@ func TestOpsServiceCleanupSystemLogs_InvalidRange(t *testing.T) {
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_NoRowsAndInternalError first injects a
+// classified missing-row failure, then a generic failure. It checks the former
+// becomes successful zero and the latter remains an error.
 func TestOpsServiceCleanupSystemLogs_NoRowsAndInternalError(t *testing.T) {
 	repo := &opsRepoMock{
 		DeleteSystemLogsFn: func(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error) {
@@ -197,6 +225,9 @@ func TestOpsServiceCleanupSystemLogs_NoRowsAndInternalError(t *testing.T) {
 	}
 }
 
+// TestOpsServiceCleanupSystemLogs_AuditFailureIgnored supplies a successful
+// five-row deletion followed by audit failure. It checks cleanup still returns
+// five and no error, protecting the separately attempted audit outcome.
 func TestOpsServiceCleanupSystemLogs_AuditFailureIgnored(t *testing.T) {
 	repo := &opsRepoMock{
 		DeleteSystemLogsFn: func(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error) {
@@ -215,6 +246,10 @@ func TestOpsServiceCleanupSystemLogs_AuditFailureIgnored(t *testing.T) {
 	}
 }
 
+// TestMarshalSystemLogCleanupConditions_NilAndMarshalError checks a nil filter
+// and ordinary timestamp/user conditions. Its values are serializable, so
+// despite the name the test exercises empty-input and successful encoding
+// cases.
 func TestMarshalSystemLogCleanupConditions_NilAndMarshalError(t *testing.T) {
 	if got := marshalSystemLogCleanupConditions(nil); got != "{}" {
 		t.Fatalf("nil filter should return {}, got %s", got)
@@ -233,6 +268,9 @@ func TestMarshalSystemLogCleanupConditions_NilAndMarshalError(t *testing.T) {
 	}
 }
 
+// TestOpsServiceGetSystemLogSinkHealth reads an unbound sink and a constructed
+// sink fixture. It checks zero health for absence and configured capacity for
+// construction, without asserting successful ingestion.
 func TestOpsServiceGetSystemLogSinkHealth(t *testing.T) {
 	svc := newLegacyShapeOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	health := svc.GetSystemLogSinkHealth()

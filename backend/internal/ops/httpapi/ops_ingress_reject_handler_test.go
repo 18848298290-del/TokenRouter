@@ -12,10 +12,17 @@ import (
 	opsprovider "github.com/TokenFlux/TokenRouter/internal/ops/provider"
 )
 
+// newIngressRejectHandlerForTest constructs an Ops handler with default
+// monitoring enabled and no ingress repository or aggregator. Valid health
+// reads therefore expose capacity alone, while malformed filters fail during
+// HTTP validation.
 func newIngressRejectHandlerForTest() *OpsHandler {
 	return NewOpsHandler(ops.NewOpsService(nil, nil, nil, nil, nil, nil, nil, opsprovider.LogControl{}))
 }
 
+// TestListIngressRejectsValidatesFilters supplies an unknown reason, an invalid
+// address, and nonpositive caller identities to the aggregate endpoint. Each
+// case must return bad request before repository availability matters.
 func TestListIngressRejectsValidatesFilters(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/admin/ops/ingress-rejections?reason=not-valid",
@@ -32,6 +39,9 @@ func TestListIngressRejectsValidatesFilters(t *testing.T) {
 	}
 }
 
+// TestGetIngressRejectHealthAvailable reads health from an Ops service with no
+// aggregator bound. It checks HTTP success and the configured capacity so an
+// idle fixture still exposes the aggregation limit.
 func TestGetIngressRejectHealthAvailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)

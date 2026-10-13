@@ -11,12 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// TestBatchUpsertIngressRejectsUsesFixedMultiRowChunks supplies one more row
+// than the fixed input-segment limit. It checks two INSERT attempts occur
+// between one BEGIN and COMMIT using SQL expectations, without validating live
+// conflict behavior.
 func TestBatchUpsertIngressRejectsUsesFixedMultiRowChunks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close the mock database after the test, keeping its resource lifetime
+	// separate from the transaction expectations being asserted.
 	t.Cleanup(func() { _ = db.Close() })
 	repo := &Store{db: db}
 	now := time.Now().UTC().Truncate(time.Minute)
+	// Cross the fixed segment limit by one fixture row.
 	items := make([]*ops.OpsIngressRejectAggregate, ingressRejectUpsertChunkSize+1)
 	for i := range items {
 		items[i] = &ops.OpsIngressRejectAggregate{

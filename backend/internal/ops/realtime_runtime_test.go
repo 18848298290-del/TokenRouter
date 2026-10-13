@@ -7,13 +7,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpsWSShutdownCancelsIdleTimer checks that the idle timer cannot delay shutdown or restart sampling afterward.
+// TestOpsWSShutdownCancelsIdleTimer schedules the default idle stop before
+// final runtime shutdown with no active sample loop. It checks Stop returns
+// within one second, later idle scheduling keeps its timer nil, and repeated
+// Stop completes.
 func TestOpsWSShutdownCancelsIdleTimer(t *testing.T) {
 	rt := NewRealtimeRuntime()
 
 	rt.scheduleQPSWSIdleStop()
 	finished := make(chan struct{})
+	// Close finished only after runtime Stop returns. The select observes
+	// completed shutdown rather than a state flag published before timer or
+	// sampler work joined.
 	go func() { rt.Stop(); close(finished) }()
+	// A one-second observation budget exposes waiting for the uncancelled
+	// thirty-second idle delay. Completion proceeds to the separate assertion that
+	// later idle scheduling stays closed.
 	select {
 	case <-finished:
 	case <-time.After(time.Second):
@@ -26,7 +35,9 @@ func TestOpsWSShutdownCancelsIdleTimer(t *testing.T) {
 	rt.Stop()
 }
 
-// TestRealtimePayloadRequestIsolation checks that returned payloads are copies that callers can modify independently.
+// TestRealtimePayloadRequestIsolation publishes nonempty cached JSON and
+// mutates the first Payload result. It checks another read retains the original
+// first byte, protecting separate returned byte storage for readers.
 func TestRealtimePayloadRequestIsolation(t *testing.T) {
 	r := NewRealtimeRuntime()
 	r.cache.payload.Store([]byte(`{"type":"qps_update"}`))

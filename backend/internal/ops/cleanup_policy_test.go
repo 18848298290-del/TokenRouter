@@ -5,15 +5,21 @@ import (
 	"time"
 )
 
+// TestOpsCleanupPlan applies negative, zero, and positive retention days to a
+// fixed reference time. It checks the skip decision, whole-table action, and
+// calendar-day cutoff returned for those distinct policies.
 func TestOpsCleanupPlan(t *testing.T) {
 	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name         string
-		days         int
-		wantOK       bool
-		wantTruncate bool
-		wantCutoff   time.Time
+		name string // retention case display name
+		days int    // configured retention day input
+		// wantOK controls whether an action is expected. When true, wantTruncate
+		// selects the whole-table assertion, and wantCutoff is compared only for
+		// positive-retention deletion plans.
+		wantOK       bool      // expected executable cleanup plan
+		wantTruncate bool      // expected whole-table cleanup action
+		wantCutoff   time.Time // expected calendar retention cutoff
 	}{
 		{name: "negative skips", days: -1, wantOK: false},
 		{name: "zero truncates", days: 0, wantOK: true, wantTruncate: true},

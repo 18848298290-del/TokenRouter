@@ -6,7 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderHistoryReadsLegacyUpstreamEvents checks that current fields take precedence over legacy fields.
+// TestProviderHistoryReadsLegacyUpstreamEvents decodes an array containing
+// legacy identity keys, a current-key override, and a null element. It checks
+// migrated provider values, current-field precedence, and preservation of the
+// null array position.
 func TestProviderHistoryReadsLegacyUpstreamEvents(t *testing.T) {
 	events, err := ParseOpsUpstreamErrors(`[{"account_id":7,"account_name":"legacy"},{"account_id":8,"provider_id":9,"provider_name":"current"},null]`)
 	require.NoError(t, err)

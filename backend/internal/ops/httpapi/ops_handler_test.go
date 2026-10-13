@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseOpsViewParam supplies excluded, all, and unknown selector text
+// through Gin requests, then a nil context. It checks retained named views,
+// unknown-to-errors selection, and the distinct empty result for nil input.
 func TestParseOpsViewParam(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -27,6 +30,9 @@ func TestParseOpsViewParam(t *testing.T) {
 	require.Equal(t, "", parseOpsViewParam(nil))
 }
 
+// TestParseOpsDuration supplies the recognized one-hour preset and an
+// unsupported string to the shared duration parser. It checks the hour
+// value/success flag and rejection flag for unknown text.
 func TestParseOpsDuration(t *testing.T) {
 	dur, ok := parseOpsDuration("1h")
 	require.True(t, ok)
@@ -36,6 +42,9 @@ func TestParseOpsDuration(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestParseOpsTimeRange supplies two valid RFC3339 endpoints one hour apart and
+// then malformed start text through Gin requests. It checks ordered successful
+// endpoints and an error for the malformed timestamp.
 func TestParseOpsTimeRange(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

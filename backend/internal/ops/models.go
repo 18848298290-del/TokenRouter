@@ -6,191 +6,315 @@ import (
 	"time"
 )
 
+// An error query combines captured request facts with current user, provider,
+// group, and API-key display metadata. Display status prefers a nonnull
+// upstream value, while client-status guards and query-time SLA policy decide
+// which observations are selected. Manual resolution is separate from those
+// classifications, and user conversion reads this query view rather than the
+// original wire response.
+//
+// Access-log timing has different units and presence rules: body length is
+// bytes, event offsets are milliseconds, and transport counts are integers.
+// Numeric zero remains present; parsing or converted-integer rejection leaves
+// the numeric pointer absent.
+// Bool false cannot retain a separate absence marker. Extraction reads a fixed
+// key allowlist across decoded numeric representations, and error-list
+// selectors preserve their distinct wildcard, model, status, and identity rules
+// for the repository.
+
+// OpsSystemLog carries a persisted structured observation and optional request
+// correlation metadata.
 type OpsSystemLog struct {
-	ID              int64          `json:"id"`
-	CreatedAt       time.Time      `json:"created_at"`
-	Host            string         `json:"host"`
-	Level           string         `json:"level"`
-	Component       string         `json:"component"`
-	Message         string         `json:"message"`
-	RequestID       string         `json:"request_id"`
-	ClientRequestID string         `json:"client_request_id"`
-	UserID          *int64         `json:"user_id"`
-	APIKeyID        *int64         `json:"api_key_id"`
-	ProviderID      *int64         `json:"provider_id"`
-	Platform        string         `json:"platform"`
-	Model           string         `json:"model"`
-	Extra           map[string]any `json:"extra,omitempty"`
+	ID              int64     `json:"id"`                // persisted system-log row identity
+	CreatedAt       time.Time `json:"created_at"`        // stored observation creation time
+	Host            string    `json:"host"`              // recorded instance host label
+	Level           string    `json:"level"`             // recorded logging severity label
+	Component       string    `json:"component"`         // recorded logging component name
+	Message         string    `json:"message"`           // captured display message text
+	RequestID       string    `json:"request_id"`        // stored platform request identifier
+	ClientRequestID string    `json:"client_request_id"` // stored external client identifier
+	UserID          *int64    `json:"user_id"`           // optional recorded user identity
+	APIKeyID        *int64    `json:"api_key_id"`        // optional recorded API-key identity
+	ProviderID      *int64    `json:"provider_id"`       // optional recorded provider identity
+	Platform        string    `json:"platform"`          // recorded execution platform snapshot
+	Model           string    `json:"model"`             // recorded request model label
+	// Extra contains decoded structured fields returned by PostgreSQL queries.
+	// Consumers own that map result; nested values follow its decoded JSON types,
+	// and timing extraction reads an allowlist of keys.
+	Extra map[string]any `json:"extra,omitempty"` // decoded structured event fields
 }
 
-// OpsRequestTiming contains request timing and connection metadata from http.access logs.
-// Timing fields are milliseconds since ingress; absent numeric fields remain nil.
+// OpsRequestTiming carries access-log body length, stage offsets, and transport
+// observations.
 type OpsRequestTiming struct {
-	RequestContentLength           *int64 `json:"request_content_length,omitempty"`
-	ProviderSlotAcquiredMs         *int64 `json:"provider_slot_acquired_ms,omitempty"`
-	UpstreamGetConnMs              *int64 `json:"upstream_get_conn_ms,omitempty"`
-	UpstreamGotConnMs              *int64 `json:"upstream_got_conn_ms,omitempty"`
-	UpstreamWroteRequestMs         *int64 `json:"upstream_wrote_request_ms,omitempty"`
-	UpstreamFirstResponseByteMs    *int64 `json:"upstream_first_response_byte_ms,omitempty"`
-	UpstreamFirstSSEDataMs         *int64 `json:"upstream_first_sse_data_ms,omitempty"`
-	FirstVisibleOutputMs           *int64 `json:"first_visible_output_ms,omitempty"`
-	FirstDownstreamFlushMs         *int64 `json:"first_downstream_flush_ms,omitempty"`
-	UpstreamGetConnCount           *int64 `json:"upstream_get_conn_count,omitempty"`
-	UpstreamGotConnCount           *int64 `json:"upstream_got_conn_count,omitempty"`
-	UpstreamAttemptCount           *int64 `json:"upstream_attempt_count,omitempty"`
+	// RequestContentLength records incoming body length in bytes when numeric
+	// extraction succeeds. Zero remains a present measurement; absent,
+	// unsupported, or negative converted integer values become nil.
+	RequestContentLength *int64 `json:"request_content_length,omitempty"` // bytes
+	// ProviderSlotAcquiredMs, UpstreamGetConnMs, UpstreamGotConnMs,
+	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstSSEDataMs,
+	// FirstVisibleOutputMs, and FirstDownstreamFlushMs are elapsed milliseconds
+	// from ingress to their events. Nil means no accepted numeric value; zero
+	// remains present.
+	ProviderSlotAcquiredMs *int64 `json:"provider_slot_acquired_ms,omitempty"` // milliseconds
+	UpstreamGetConnMs      *int64 `json:"upstream_get_conn_ms,omitempty"`      // milliseconds
+	UpstreamGotConnMs      *int64 `json:"upstream_got_conn_ms,omitempty"`      // milliseconds
+	UpstreamWroteRequestMs *int64 `json:"upstream_wrote_request_ms,omitempty"` // milliseconds
+	// milliseconds
+	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"`
+	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"` // milliseconds
+	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`    // milliseconds
+	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`  // milliseconds
+	// UpstreamGetConnCount, UpstreamGotConnCount, UpstreamAttemptCount, and
+	// UpstreamFirstResponseByteCount report accepted nonnegative integer
+	// occurrence counts. Numeric zero remains distinguishable from a missing count
+	// through its nonnil pointer.
+	UpstreamGetConnCount *int64 `json:"upstream_get_conn_count,omitempty"` // occurrences
+	UpstreamGotConnCount *int64 `json:"upstream_got_conn_count,omitempty"` // occurrences
+	UpstreamAttemptCount *int64 `json:"upstream_attempt_count,omitempty"`  // occurrences
+	// occurrences
 	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"`
-	UpstreamConnectionReused       bool   `json:"upstream_connection_reused,omitempty"`
-	UpstreamWroteRequestError      bool   `json:"upstream_wrote_request_error,omitempty"`
+	// UpstreamConnectionReused and UpstreamWroteRequestError copy bool values from
+	// access-log fields. Missing or non-bool values remain false; false alone does
+	// not make an otherwise absent timing result present.
+	// observed connection reuse flag
+	UpstreamConnectionReused bool `json:"upstream_connection_reused,omitempty"`
+	// observed request write-error flag
+	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"`
 }
 
+// OpsErrorLog carries query display metadata for one saved error observation.
 type OpsErrorLog struct {
-	ID        int64     `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64     `json:"id"`         // persisted error observation identity
+	CreatedAt time.Time `json:"created_at"` // stored error creation time
 
-	// Standardized classification
-	// - phase: request|auth|provider_auth|routing|upstream|network|internal
-	// - owner: client|provider|platform
-	// - source: client_request|upstream_http|gateway
-	Phase string `json:"phase"`
-	Type  string `json:"type"`
+	// Phase uses the stored classification, with account_auth translated to
+	// provider_auth by PostgreSQL list and detail readers. Other values are
+	// returned as saved.
+	Phase string `json:"phase"` // reported error execution phase
+	Type  string `json:"type"`  // stored error-type classification label
 
-	Owner  string `json:"error_owner"`
-	Source string `json:"error_source"`
+	Owner  string `json:"error_owner"`  // client/provider/platform
+	Source string `json:"error_source"` // client_request/upstream_http/gateway
 
-	Severity string `json:"severity"`
+	Severity string `json:"severity"` // recorded P0-P3 severity label
 
-	StatusCode int    `json:"status_code"`
-	Platform   string `json:"platform"`
-	Model      string `json:"model"`
+	// StatusCode is the query display value, preferring nonnull
+	// upstream_status_code, then client status_code, then zero. It can differ from
+	// the final client response status.
+	StatusCode int    `json:"status_code"` // effective query display status
+	Platform   string `json:"platform"`    // recorded execution platform snapshot
+	Model      string `json:"model"`       // recorded execution model label
 
-	Resolved           bool       `json:"resolved"`
-	ResolvedAt         *time.Time `json:"resolved_at"`
-	ResolvedByUserID   *int64     `json:"resolved_by_user_id"`
-	ResolvedByUserName string     `json:"resolved_by_user_name"`
-	ResolvedStatusRaw  string     `json:"-"`
+	// Resolved, ResolvedAt, ResolvedByUserID, and ResolvedByUserName describe
+	// manual resolution separately from the error classification. PostgreSQL joins
+	// the resolving user email for list rows; detail reads can leave that display
+	// name empty.
+	Resolved           bool       `json:"resolved"`              // stored manual resolution flag
+	ResolvedAt         *time.Time `json:"resolved_at"`           // optional resolution recording time
+	ResolvedByUserID   *int64     `json:"resolved_by_user_id"`   // optional resolving user identity
+	ResolvedByUserName string     `json:"resolved_by_user_name"` // joined resolving user email
+	// ResolvedStatusRaw is excluded from JSON and remains unpopulated by current
+	// repository readers. No backend field consumer is present; normal query
+	// results leave this internal value empty.
+	ResolvedStatusRaw string `json:"-"` // unused internal status text
 
-	ClientRequestID string `json:"client_request_id"`
-	RequestID       string `json:"request_id"`
-	Message         string `json:"message"`
+	ClientRequestID string `json:"client_request_id"` // stored external client identifier
+	RequestID       string `json:"request_id"`        // stored platform request identifier
+	Message         string `json:"message"`           // captured error description text
 
-	UserID       *int64 `json:"user_id"`
-	UserEmail    string `json:"user_email"`
-	APIKeyID     *int64 `json:"api_key_id"`
-	ProviderID   *int64 `json:"provider_id"`
-	ProviderName string `json:"provider_name"`
-	GroupID      *int64 `json:"group_id"`
-	GroupName    string `json:"group_name"`
+	UserID       *int64 `json:"user_id"`       // optional recorded user identity
+	UserEmail    string `json:"user_email"`    // current joined user email
+	APIKeyID     *int64 `json:"api_key_id"`    // optional recorded API-key identity
+	ProviderID   *int64 `json:"provider_id"`   // optional recorded provider identity
+	ProviderName string `json:"provider_name"` // current joined provider name
+	GroupID      *int64 `json:"group_id"`      // optional recorded group identity
+	GroupName    string `json:"group_name"`    // current joined group name
 
-	ClientIP    *string `json:"client_ip"`
-	RequestPath string  `json:"request_path"`
-	Stream      bool    `json:"stream"`
+	ClientIP    *string `json:"client_ip"`    // optional recorded client address
+	RequestPath string  `json:"request_path"` // captured incoming request path
+	Stream      bool    `json:"stream"`       // observed streaming request flag
 
-	InboundEndpoint  string `json:"inbound_endpoint"`
-	UpstreamEndpoint string `json:"upstream_endpoint"`
-	RequestedModel   string `json:"requested_model"`
-	UpstreamModel    string `json:"upstream_model"`
-	RequestType      *int16 `json:"request_type"`
-	UserAgent        string `json:"user_agent"`
+	InboundEndpoint  string `json:"inbound_endpoint"`  // captured incoming endpoint label
+	UpstreamEndpoint string `json:"upstream_endpoint"` // captured upstream endpoint label
+	RequestedModel   string `json:"requested_model"`   // captured caller model label
+	UpstreamModel    string `json:"upstream_model"`    // captured upstream model label
+	RequestType      *int16 `json:"request_type"`      // optional request protocol code
+	UserAgent        string `json:"user_agent"`        // captured request user agent
 
-	// APIKeyName is joined from api_keys; soft deletion retains the name after replacing the key.
-	APIKeyName    string `json:"api_key_name,omitempty"`
-	APIKeyDeleted bool   `json:"api_key_deleted,omitempty"`
+	// APIKeyName and APIKeyDeleted come from the current api_keys join, including
+	// soft-deleted rows. The retained name can remain visible after key
+	// replacement, while a missing joined row supplies an empty name.
+	APIKeyName string `json:"api_key_name,omitempty"` // current joined API-key name
+	// APIKeyDeleted is true when the joined api_keys.deleted_at is nonnull. False
+	// covers active keys and missing joined key rows, so it does not establish
+	// current key existence.
+	APIKeyDeleted bool `json:"api_key_deleted,omitempty"` // joined API-key soft-deletion flag
 }
 
+// OpsErrorLogDetail adds captured response and latency evidence to an error
+// observation.
 type OpsErrorLogDetail struct {
-	OpsErrorLog
+	OpsErrorLog // base error query display fields
 
-	ErrorBody string `json:"error_body"`
+	// ErrorBody returns previously captured response text. Reading this detail
+	// does not apply another redactor; supported JSON sanitation and plain-text
+	// truncation follow the earlier capture and preparation paths.
+	ErrorBody string `json:"error_body"` // stored captured error body
 
-	// Upstream context (optional)
-	UpstreamStatusCode   *int   `json:"upstream_status_code,omitempty"`
+	// optional stored upstream status
+	UpstreamStatusCode *int `json:"upstream_status_code,omitempty"`
+	// stored upstream error description
 	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
-	UpstreamErrorDetail  string `json:"upstream_error_detail,omitempty"`
-	UpstreamErrors       string `json:"upstream_errors,omitempty"` // JSON array (string) for display/parsing
+	// stored upstream diagnostic text
+	UpstreamErrorDetail string `json:"upstream_error_detail,omitempty"`
+	// UpstreamErrors contains saved attempt JSON text for display and
+	// ParseOpsUpstreamErrors. PostgreSQL trims the text and converts serialized
+	// JSON null to an empty string.
+	UpstreamErrors string `json:"upstream_errors,omitempty"` // serialized attempt JSON array
 
-	// Timings (optional)
-	AuthLatencyMs      *int64 `json:"auth_latency_ms"`
-	RoutingLatencyMs   *int64 `json:"routing_latency_ms"`
-	UpstreamLatencyMs  *int64 `json:"upstream_latency_ms"`
-	ResponseLatencyMs  *int64 `json:"response_latency_ms"`
-	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms"`
+	// AuthLatencyMs, RoutingLatencyMs, UpstreamLatencyMs, ResponseLatencyMs, and
+	// TimeToFirstTokenMs contain captured phase durations or first-token latency
+	// in milliseconds. Nil means absent evidence; these phase measurements differ
+	// from the access-log event offsets in OpsRequestTiming.
+	AuthLatencyMs      *int64 `json:"auth_latency_ms"`        // milliseconds
+	RoutingLatencyMs   *int64 `json:"routing_latency_ms"`     // milliseconds
+	UpstreamLatencyMs  *int64 `json:"upstream_latency_ms"`    // milliseconds
+	ResponseLatencyMs  *int64 `json:"response_latency_ms"`    // milliseconds
+	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms"` // milliseconds
 
-	// Whether a business limit caused the error.
-	IsBusinessLimited bool `json:"is_business_limited"`
+	// IsBusinessLimited is the stored capture decision. Query-time ignored-status
+	// policy can exclude additional client-side failures, so false alone does not
+	// establish SLA eligibility.
+	IsBusinessLimited bool `json:"is_business_limited"` // stored local SLA-exclusion flag
 
-	// Snapshot of the bound, undeleted API key prefix when the error occurred.
-	APIKeyPrefix string `json:"api_key_prefix,omitempty"`
+	// APIKeyPrefix is captured before asynchronous persistence and can remain
+	// after key deletion. Gateway producers select the first eight bytes of the
+	// bound key, rather than eight Unicode characters.
+	APIKeyPrefix string `json:"api_key_prefix,omitempty"` // captured API-key byte prefix
 }
 
+// OpsErrorLogFilter selects saved error observations with query-time category
+// and display rules.
 type OpsErrorLogFilter struct {
-	StartTime *time.Time
-	EndTime   *time.Time
+	// StartTime and EndTime apply independent timestamp comparisons when nonnil
+	// and nonzero. PostgreSQL converts them to UTC and uses inclusive
+	// start/exclusive end; absent endpoints impose no corresponding time
+	// condition.
+	StartTime *time.Time // optional inclusive observation start
+	EndTime   *time.Time // optional exclusive observation end
 
-	Platform   string
-	GroupID    *int64
-	ProviderID *int64
+	Platform string // exact recorded platform selector
+	// GroupID and ProviderID filter saved row identities when positive. Nil or
+	// nonpositive values omit their individual condition; provider/group names are
+	// read from current joins.
+	GroupID    *int64 // optional positive group selection
+	ProviderID *int64 // optional positive provider selection
 
-	StatusCodes      []int
-	StatusCodesOther bool
-	Phase            string // Recovered provider rows bypass status>=400 only with the explicit opt-in below.
-	Owner            string
-	Source           string
-	Resolved         *bool
-	Query            string
-	UserQuery        string // Search by user email
+	// StatusCodes selects effective upstream-first display statuses when nonempty
+	// and takes precedence over StatusCodesOther. The latter excludes the fixed
+	// common-status set only when no explicit list is supplied.
+	StatusCodes      []int // requested effective status values
+	StatusCodesOther bool  // exclude common effective statuses
+	// Phase is trimmed and lowercased for equality matching. provider_auth also
+	// includes legacy account_auth rows; this selection participates in
+	// recovered-row eligibility when its explicit opt-in is set.
+	Phase  string // requested stored phase selector
+	Owner  string // requested error owner selector
+	Source string // requested error source selector
+	// Resolved compares the saved resolution bool when supplied, including false.
+	// Nil retains both resolved and unresolved rows independently of the category
+	// View.
+	Resolved *bool // optional saved resolution selector
+	// Query performs case-insensitive substring matching across stored request
+	// IDs, client IDs, and error message text. Caller percent and underscore
+	// wildcard characters remain active.
+	Query string // request-ID/message wildcard search
+	// UserQuery searches the currently joined users.email using a
+	// surrounding-wildcard ILIKE pattern. Caller wildcard characters remain
+	// active, and a matching user row is required.
+	UserQuery string // joined user-email wildcard search
 
-	// Optional correlation keys for exact matching.
-	RequestID       string
-	ClientRequestID string
+	// RequestID invokes request_lookup_ids and matches candidate platform
+	// identifiers. Client-ID candidates are also matched when the supplied text is
+	// not an exact local request_records identity.
+	RequestID string // request correlation lookup identifier
+	// ClientRequestID matches trimmed nonempty text against the stored
+	// client_request_id exactly. It adds its own AND condition when RequestID is
+	// also supplied.
+	ClientRequestID string // exact external client identifier
 
-	// User-scoped filters (used by the user-facing error requests endpoint and
-	// by admin drill-down from the usage page).
-	UserID   *int64
-	APIKeyID *int64
+	// UserID and APIKeyID filter saved identities when positive, adding separate
+	// AND conditions. The user-facing service supplies its authenticated owner
+	// UserID while retaining a requested APIKeyID.
+	UserID   *int64 // optional positive user selection
+	APIKeyID *int64 // optional positive API-key selection
 
-	// Model matches against requested_model first, then model.
-	Model string
-	// ModelFuzzy enables ILIKE matching for user queries.
-	// The default false value gives admin queries exact matching.
-	ModelFuzzy bool
+	// Model matches COALESCE(requested_model, model, empty text) after trimming
+	// input, so a stored nonnull empty requested_model wins. ModelFuzzy uses an
+	// escaped ILIKE substring; false uses equality. Display sorting separately
+	// handles blank requested names.
+	Model      string // requested-model SQL selector
+	ModelFuzzy bool   // escaped model substring selector
 
-	// ExcludeCountTokens drops count_tokens probe errors (is_count_tokens=true).
-	ExcludeCountTokens bool
+	ExcludeCountTokens bool // exclude captured token-count probes
 
-	// IncludeRecoveredUpstream lets provider health queries include recovered
-	// upstream/provider_auth rows with a client status below 400.
-	// The default false value filters by the final client status.
-	IncludeRecoveredUpstream bool
+	// IncludeRecoveredUpstream removes the client-status guard only for a specific
+	// upstream/provider_auth phase, or an otherwise empty phase with an ANY list
+	// containing only those phases. Other scopes retain the status-at-least-400 or
+	// cyber_policy guard.
+	IncludeRecoveredUpstream bool // qualified recovered-provider row opt-in
 
-	// ErrorPhasesAny and ErrorTypesAny add ANY conditions independently of Phase.
-	// With IncludeRecoveredUpstream, a phase list containing only upstream/provider_auth also bypasses the status guard.
-	// Other ANY conditions retain the status guard. These lists represent UI error categories.
-	ErrorPhasesAny []string
-	ErrorTypesAny  []string
+	// ErrorPhasesAny and ErrorTypesAny add separate AND/ANY conditions alongside
+	// Phase. A literal provider_auth phase-list entry adds account_auth
+	// compatibility; these lists do not by themselves remove the default
+	// client-status guard.
+	ErrorPhasesAny []string // additional phase ANY selector
+	ErrorTypesAny  []string // additional type ANY selector
 
-	// View selects actionable errors (errors), excluded errors (excluded), or all errors (all).
-	View string
+	// View uses errors for empty or unknown input, applying the SLA-countable
+	// predicate. excluded selects business exclusions and all omits that
+	// predicate; independent status, identity, and probe conditions still apply.
+	View string // errors/excluded/all
 
-	// IgnoredStatusCodes lists ignored client statuses; nil uses defaults, and an empty slice ignores none.
-	IgnoredStatusCodes []int
+	// IgnoredStatusCodes uses repository defaults when nil and no exclusions when
+	// empty. Service reads replace nil with runtime policy; upstream context can
+	// keep an otherwise ignored client status countable.
+	IgnoredStatusCodes []int // query-time client exclusion policy
 
-	Page     int
-	PageSize int
+	// Page and PageSize default to one and twenty in ListErrorLogs when
+	// nonpositive, with page size capped at five hundred. The repository returns
+	// normalized pagination separately from these caller values.
+	Page     int // one-based requested observation page
+	PageSize int // requested observations per page
 
-	// SortBy and SortOrder select server-side sorting, as on the usage list.
-	// Allowed columns are created_at, model, and status_code; unknown columns use created_at. Order defaults to descending.
-	SortBy    string
-	SortOrder string
+	// SortBy and SortOrder are trimmed and lowercased by storage. Supported
+	// columns are created_at, model, and upstream-first status_code; unknown
+	// columns use created_at, and only asc selects ascending order. Row ID breaks
+	// ties in that same direction.
+	SortBy    string // requested display sort column
+	SortOrder string // requested display sort direction
 }
 
+// OpsErrorLogList carries normalized pagination and returned error query
+// display rows.
 type OpsErrorLogList struct {
-	Errors   []*OpsErrorLog `json:"errors"`
-	Total    int            `json:"total"`
-	Page     int            `json:"page"`
-	PageSize int            `json:"page_size"`
+	Errors   []*OpsErrorLog `json:"errors"`    // returned error display observations
+	Total    int            `json:"total"`     // matching stored observation count
+	Page     int            `json:"page"`      // one-based returned observation page
+	PageSize int            `json:"page_size"` // returned observations per page
 }
 
-// OpsRequestTimingFromExtra extracts timing and connection metadata from system log fields.
+// OpsRequestTimingFromExtra returns allowlisted access-log timing and transport
+// observations, or nil when none is accepted. Numeric extraction retains zero
+// through a nonnil pointer while absent, unsupported, or rejected values remain
+// nil.
+//
+// Bool fields accept bool values and keep false otherwise. A false bool alone
+// cannot distinguish a logged false value from missing data, so all-nil
+// numerics with both flags false returns nil. Each recognized numeric value is
+// converted into a new integer pointer, and unrelated structured fields remain
+// outside the result.
 func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	if len(extra) == 0 {
 		return nil
@@ -216,6 +340,9 @@ func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	if value, ok := extra["upstream_wrote_request_error"].(bool); ok {
 		timing.UpstreamWroteRequestError = value
 	}
+	// Presence depends on accepted numerics or a true flag. Keep measured zero
+	// pointers so a zero-time event remains distinguishable from an entirely
+	// absent timing observation.
 	if timing.RequestContentLength == nil && timing.ProviderSlotAcquiredMs == nil && timing.UpstreamGetConnMs == nil &&
 		timing.UpstreamGotConnMs == nil && timing.UpstreamWroteRequestMs == nil && timing.UpstreamFirstResponseByteMs == nil &&
 		timing.UpstreamFirstSSEDataMs == nil && timing.FirstVisibleOutputMs == nil && timing.FirstDownstreamFlushMs == nil &&
@@ -226,7 +353,16 @@ func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	return timing
 }
 
-// timingInt64Ptr parses numeric JSON values, retaining zero as a valid measurement.
+// timingInt64Ptr returns a new pointer to an accepted numeric observation,
+// retaining integer zero and rejecting a negative converted integer. It accepts
+// int, int64, float64, json.Number, and trimmed string values; unsupported
+// types return nil.
+//
+// Float64 uses Go integer conversion before the negative check, truncating
+// representable fractional values toward zero. json.Number and string use
+// integer parsing, so fractional or exponent text fails. No finite/range
+// validation precedes float conversion; callers using nonrepresentable floats
+// follow the conversion behavior of the Go implementation.
 func timingInt64Ptr(value any) *int64 {
 	var parsed int64
 	switch v := value.(type) {
@@ -234,15 +370,23 @@ func timingInt64Ptr(value any) *int64 {
 		parsed = int64(v)
 	case int64:
 		parsed = v
+	// JSON-decoded numbers commonly arrive as float64. Convert before testing
+	// negativity, so a representable negative fraction between minus one and zero
+	// becomes retained zero.
 	case float64:
 		parsed = int64(v)
 	case json.Number:
+		// Integer-form json.Number parsing distinguishes accepted measurements from
+		// malformed, fractional, or overflowing text; rejected metadata leaves that
+		// observation absent.
 		if n, err := v.Int64(); err == nil {
 			parsed = n
 		} else {
 			return nil
 		}
 	case string:
+		// String metadata uses trimmed integer text. A parse error produces absence
+		// for that field rather than manufacturing a zero measurement.
 		if n, err := json.Number(strings.TrimSpace(v)).Int64(); err == nil {
 			parsed = n
 		} else {
@@ -251,13 +395,18 @@ func timingInt64Ptr(value any) *int64 {
 	default:
 		return nil
 	}
+	// Apply negativity to the converted integer, leaving accepted zero as a
+	// present observation.
 	if parsed < 0 {
 		return nil
 	}
 	return &parsed
 }
 
-// SetSort normalizes sort parameters for admin and user error lists.
+// SetSort trims and stores requested sort text in a nonnil filter, retaining
+// its case and other supplied content. Column allowlisting, case folding,
+// direction defaults, and tie ordering are applied later by the PostgreSQL
+// reader.
 func (f *OpsErrorLogFilter) SetSort(sortBy, sortOrder string) {
 	f.SortBy = strings.TrimSpace(sortBy)
 	f.SortOrder = strings.TrimSpace(sortOrder)

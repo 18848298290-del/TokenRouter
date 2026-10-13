@@ -17,26 +17,46 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Alert rule writes require name, metric, operator, and threshold members for
+// both creation and replacement. The raw-member decoder supplies defaults for
+// optional controls, and both handlers copy those values into a second,
+// complete rule decode. Replacing a rule therefore applies defaults to omitted
+// controls rather than preserving their saved values; body description and
+// filters come from the complete decode.
+//
+// Event listing combines optional dimensions with a paired time-and-ID cursor,
+// applying a time range only when the client supplies a nonblank time
+// parameter. Resolution writes accept the two resolved states and attach the
+// current UTC time. Silence creation passes group and region through to the
+// service and records a context subject when present; it does not enforce a
+// future deadline or positive creator identity here.
+
+// These metric, comparison, and severity lists define rule payload validation
+// and the supported-value text returned in validation errors.
 var (
+	// validOpsAlertMetricTypes lists the evaluator indicators selectable in rule
+	// payloads and retains their validation-error display order.
 	validOpsAlertMetricTypes = []string{
-		"success_rate",
-		"error_rate",
-		"upstream_error_rate",
-		"cpu_usage_percent",
-		"memory_usage_percent",
-		"disk_usage_percent",
-		"concurrency_queue_depth",
-		"group_available_providers",
-		"group_available_ratio",
-		"group_rate_limit_ratio",
-		"provider_rate_limited_count",
-		"provider_error_count",
-		"provider_error_ratio",
-		"overload_provider_count",
-		"proxy_expired_count",
-		"proxy_expiring_soon_count",
+		"success_rate",                // raw dashboard SLA percentage
+		"error_rate",                  // raw dashboard error-rate percentage
+		"upstream_error_rate",         // raw dashboard upstream-error percentage
+		"cpu_usage_percent",           // system-snapshot CPU percentage
+		"memory_usage_percent",        // system-snapshot memory percentage
+		"disk_usage_percent",          // system-snapshot disk percentage
+		"concurrency_queue_depth",     // system-snapshot queued request count
+		"group_available_providers",   // selected group available provider count
+		"group_available_ratio",       // selected group availability percentage
+		"group_rate_limit_ratio",      // selected group rate-limited percentage
+		"provider_rate_limited_count", // rate-limited providers in scope
+		"provider_error_count",        // HasError providers with no temporary deadline
+		"provider_error_ratio",        // qualifying provider errors percentage
+		"overload_provider_count",     // overloaded providers in scope
+		"proxy_expired_count",         // expired proxy repository count
+		"proxy_expiring_soon_count",   // proxy repository near-expiry count
 	}
 
+	// validOpsAlertMetricTypeSet is built once from the indicator list for exact
+	// case-sensitive membership checks during payload validation.
 	validOpsAlertMetricTypeSet = func() map[string]struct{} {
 		set := make(map[string]struct{}, len(validOpsAlertMetricTypes))
 		for _, v := range validOpsAlertMetricTypes {
@@ -45,8 +65,12 @@ var (
 		return set
 	}()
 
+	// validOpsAlertOperators lists numeric comparison operators accepted by
+	// validation and displayed when an unsupported operator is supplied.
 	validOpsAlertOperators = []string{">", "<", ">=", "<=", "==", "!="}
 
+	// validOpsAlertOperatorSet is built once from the operator list and checks
+	// trimmed operator text without changing its spelling.
 	validOpsAlertOperatorSet = func() map[string]struct{} {
 		set := make(map[string]struct{}, len(validOpsAlertOperators))
 		for _, v := range validOpsAlertOperators {
@@ -55,8 +79,13 @@ var (
 		return set
 	}()
 
+	// validOpsAlertSeverities permits P0 through P3 after text normalization.
+	// Evaluator email classification maps P0 to critical, P1 to warning, and P2/P3
+	// to info; blank HTTP severity defaults to P2.
 	validOpsAlertSeverities = []string{"P0", "P1", "P2", "P3"}
 
+	// validOpsAlertSeveritySet is built once from the severity list for membership
+	// checks after the payload's case normalization.
 	validOpsAlertSeveritySet = func() map[string]struct{} {
 		set := make(map[string]struct{}, len(validOpsAlertSeverities))
 		for _, v := range validOpsAlertSeverities {
@@ -66,29 +95,49 @@ var (
 	}()
 )
 
+// opsAlertRuleValidatedInput holds decoded rule values and raw member-presence
+// observations.
 type opsAlertRuleValidatedInput struct {
-	Name       string
-	MetricType string
-	Operator   string
-	Threshold  float64
+	// Name, MetricType, Operator, and Threshold come from required raw members.
+	// The handlers use these values to override the same fields in their complete
+	// typed rule decode.
+	Name       string  // trimmed rule display name
+	MetricType string  // validated evaluator indicator label
+	Operator   string  // validated numeric comparison operator
+	Threshold  float64 // validated comparison cutoff value
 
-	Severity string
+	// Severity uses uppercased trimmed text and defaults to P2 when its member is
+	// absent, blank, or JSON null.
+	Severity string // normalized alert severity label
 
-	WindowMinutes    int
-	SustainedMinutes int
-	CooldownMinutes  int
+	// WindowMinutes accepts 1, 5, or 60; SustainedMinutes accepts 1 through 1440;
+	// CooldownMinutes accepts 0 through 1440. Missing members default to 1, 1, and
+	// 0 respectively for both create and update.
+	WindowMinutes    int // minutes
+	SustainedMinutes int // minutes
+	CooldownMinutes  int // minutes
 
-	Enabled     bool
-	NotifyEmail bool
+	// Enabled and NotifyEmail default true when their raw members are absent. A
+	// present false or JSON null produces false, and both handlers apply that
+	// decoded value.
+	Enabled     bool // rule evaluation enable flag
+	NotifyEmail bool // firing email request flag
 
-	WindowProvided    bool
-	SustainedProvided bool
-	CooldownProvided  bool
-	SeverityProvided  bool
-	EnabledProvided   bool
-	NotifyProvided    bool
+	// WindowProvided, SustainedProvided, CooldownProvided, SeverityProvided,
+	// EnabledProvided, and NotifyProvided record member presence. CreateAlertRule
+	// and UpdateAlertRule read the decoded values but do not read these flags.
+	WindowProvided    bool // window member presence
+	SustainedProvided bool // sustained member presence
+	CooldownProvided  bool // cooldown member presence
+	SeverityProvided  bool // severity member presence
+	EnabledProvided   bool // enabled member presence
+	NotifyProvided    bool // notification member presence
 }
 
+// isPercentOrRateMetric reports whether an exact metric label uses the
+// zero-to-one-hundred range in HTTP validation. Unknown labels return false;
+// validateOpsAlertRulePayload rejects them separately before selecting the
+// threshold rule.
 func isPercentOrRateMetric(metricType string) bool {
 	switch metricType {
 	case "success_rate",
@@ -106,6 +155,17 @@ func isPercentOrRateMetric(metricType string) bool {
 	}
 }
 
+// validateOpsAlertRulePayload decodes required rule members and optional
+// controls from a nonnil raw map. Name, metric, and operator are trimmed and
+// checked; thresholds use a finite nonnegative range, with percentage
+// indicators capped at one hundred. JSON null threshold decodes as zero.
+//
+// Missing optional controls select window one, sustained one, cooldown zero, P2
+// severity, and enabled/email true. Present null booleans decode as false,
+// while null severity selects P2. Presence flags are recorded alongside values,
+// but both handlers apply the values without consulting those flags. Unknown
+// raw members are ignored here and remain available to the complete typed rule
+// decode.
 func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleValidatedInput, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("invalid request body")
@@ -149,6 +209,8 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	if math.IsNaN(threshold) || math.IsInf(threshold, 0) {
 		return nil, fmt.Errorf("threshold must be a finite number")
 	}
+	// Percentage indicators use the evaluator's percentage unit; HTTP bounds their
+	// configured threshold while count metrics have no upper cutoff.
 	if isPercentOrRateMetric(metricType) {
 		if threshold < 0 || threshold > 100 {
 			return nil, fmt.Errorf("threshold must be between 0 and 100 for metric_type %s", metricType)
@@ -182,6 +244,9 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 		validated.Severity = "P2"
 	}
 
+	// Use raw member presence to distinguish omitted true defaults from explicit
+	// false or null values; the typed rule decode alone cannot make that
+	// distinction.
 	if v, ok := raw["enabled"]; ok {
 		validated.EnabledProvided = true
 		if err := json.Unmarshal(v, &validated.Enabled); err != nil {
@@ -205,6 +270,8 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 		if err := json.Unmarshal(v, &validated.WindowMinutes); err != nil {
 			return nil, fmt.Errorf("window_minutes must be an integer")
 		}
+		// Restrict request-metric windows to the supported one, five, and sixty
+		// minute selections.
 		switch validated.WindowMinutes {
 		case 1, 5, 60:
 		default:
@@ -219,6 +286,7 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 		if err := json.Unmarshal(v, &validated.SustainedMinutes); err != nil {
 			return nil, fmt.Errorf("sustained_minutes must be an integer")
 		}
+		// Limit the configured sustained duration to one day expressed in minutes.
 		if validated.SustainedMinutes < 1 || validated.SustainedMinutes > 1440 {
 			return nil, fmt.Errorf("sustained_minutes must be between 1 and 1440")
 		}
@@ -231,6 +299,7 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 		if err := json.Unmarshal(v, &validated.CooldownMinutes); err != nil {
 			return nil, fmt.Errorf("cooldown_minutes must be an integer")
 		}
+		// Allow zero cooldown and at most one day in minutes.
 		if validated.CooldownMinutes < 0 || validated.CooldownMinutes > 1440 {
 			return nil, fmt.Errorf("cooldown_minutes must be between 0 and 1440")
 		}
@@ -241,7 +310,9 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	return validated, nil
 }
 
-// ListAlertRules returns all ops alert rules.
+// ListAlertRules returns the service's saved rule list after checking
+// monitoring. A missing service is unavailable; the service can return an
+// allocated empty list when its repository is absent.
 // GET /api/v1/admin/ops/alert-rules
 func (h *OpsHandler) ListAlertRules(c *gin.Context) {
 	if h.opsService == nil {
@@ -261,7 +332,17 @@ func (h *OpsHandler) ListAlertRules(c *gin.Context) {
 	response.Success(c, rules)
 }
 
-// CreateAlertRule creates an ops alert rule.
+// CreateAlertRule validates raw rule members, decodes a complete rule, and
+// sends it to the service after monitoring checks. The raw validation requires
+// name, metric, operator, and threshold, and supplies defaults for optional
+// controls.
+//
+// Gin caches the body during the first decode so the second decode can retain
+// description and filters alongside typed rule fields. Validated values then
+// replace the corresponding fields, including omitted-control defaults.
+// Member-presence flags do not affect this mapping. JSON or validation errors
+// return bad request before creation, while service failures use the shared
+// application-error response.
 // POST /api/v1/admin/ops/alert-rules
 func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 	if h.opsService == nil {
@@ -273,6 +354,9 @@ func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 		return
 	}
 
+	// Cache the request body while inspecting raw member presence, then decode the
+	// same bytes into the complete rule so description and filters remain
+	// available.
 	var raw map[string]json.RawMessage
 	if err := c.ShouldBindBodyWith(&raw, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request body")
@@ -290,6 +374,9 @@ func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 		return
 	}
 
+	// Apply the normalized values and defaults after the complete decode; raw
+	// presence flags do not preserve omitted controls during either write
+	// operation.
 	rule.Name = validated.Name
 	rule.MetricType = validated.MetricType
 	rule.Operator = validated.Operator
@@ -309,7 +396,16 @@ func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 	response.Success(c, created)
 }
 
-// UpdateAlertRule updates an existing ops alert rule.
+// UpdateAlertRule replaces the positive route-selected rule with a validated
+// complete request after checking monitoring. The route ID overrides any body
+// ID, and the same four core members required for creation are required here.
+//
+// The cached body is decoded as raw members and a full typed rule. Validated
+// controls overwrite decoded values, so missing enabled, notification, timing,
+// or severity members apply their defaults rather than retaining existing
+// storage. Presence flags are ignored. Description and filters use the second
+// decode; service lookup and write errors are mapped through the shared
+// response helper.
 // PUT /api/v1/admin/ops/alert-rules/:id
 func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 	if h.opsService == nil {
@@ -327,6 +423,9 @@ func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 		return
 	}
 
+	// Cache the request body while inspecting raw member presence, then decode the
+	// same bytes into the complete rule so description and filters remain
+	// available.
 	var raw map[string]json.RawMessage
 	if err := c.ShouldBindBodyWith(&raw, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request body")
@@ -345,6 +444,9 @@ func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 	}
 
 	rule.ID = id
+	// Apply the normalized values and defaults after the complete decode; raw
+	// presence flags do not preserve omitted controls during either write
+	// operation.
 	rule.Name = validated.Name
 	rule.MetricType = validated.MetricType
 	rule.Operator = validated.Operator
@@ -364,7 +466,9 @@ func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 	response.Success(c, updated)
 }
 
-// DeleteAlertRule deletes an ops alert rule.
+// DeleteAlertRule deletes a positive decimal route identity after checking
+// monitoring. Invalid IDs return bad request; service failures use
+// application-error mapping, and a successful call returns deleted=true.
 // DELETE /api/v1/admin/ops/alert-rules/:id
 func (h *OpsHandler) DeleteAlertRule(c *gin.Context) {
 	if h.opsService == nil {
@@ -389,7 +493,9 @@ func (h *OpsHandler) DeleteAlertRule(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": true})
 }
 
-// GetAlertEvent returns a single ops alert event.
+// GetAlertEvent loads a positive decimal event identity after checking
+// monitoring. Invalid route IDs return bad request, and missing-event or
+// storage errors are mapped by the service and shared response helper.
 // GET /api/v1/admin/ops/alert-events/:id
 func (h *OpsHandler) GetAlertEvent(c *gin.Context) {
 	if h.opsService == nil {
@@ -415,7 +521,10 @@ func (h *OpsHandler) GetAlertEvent(c *gin.Context) {
 	response.Success(c, ev)
 }
 
-// UpdateAlertEventStatus updates an ops alert event status.
+// UpdateAlertEventStatus accepts resolved or manual_resolved for a positive
+// event ID after checking monitoring. It trims but does not fold status case,
+// assigns current UTC resolution time, and returns service errors through the
+// shared response helper.
 // PUT /api/v1/admin/ops/alert-events/:id/status
 func (h *OpsHandler) UpdateAlertEventStatus(c *gin.Context) {
 	if h.opsService == nil {
@@ -434,7 +543,7 @@ func (h *OpsHandler) UpdateAlertEventStatus(c *gin.Context) {
 	}
 
 	var payload struct {
-		Status string `json:"status"`
+		Status string `json:"status"` // requested resolution state
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		response.BadRequest(c, "Invalid request body")
@@ -462,7 +571,11 @@ func (h *OpsHandler) UpdateAlertEventStatus(c *gin.Context) {
 	response.Success(c, gin.H{"updated": true})
 }
 
-// CreateAlertSilence creates a silence for the specified scope.
+// CreateAlertSilence parses a trimmed RFC3339 deadline and forwards rule,
+// platform, group, region, and reason after checking monitoring. A context
+// subject supplies CreatedBy without a positivity check here; service
+// validation requires a positive rule and nonblank platform but no
+// future-deadline check.
 // POST /api/v1/admin/ops/alert-silences
 func (h *OpsHandler) CreateAlertSilence(c *gin.Context) {
 	if h.opsService == nil {
@@ -475,12 +588,16 @@ func (h *OpsHandler) CreateAlertSilence(c *gin.Context) {
 	}
 
 	var payload struct {
-		RuleID   int64   `json:"rule_id"`
-		Platform string  `json:"platform"`
-		GroupID  *int64  `json:"group_id"`
-		Region   *string `json:"region"`
-		Until    string  `json:"until"`
-		Reason   string  `json:"reason"`
+		RuleID   int64  `json:"rule_id"`  // target alert rule identity
+		Platform string `json:"platform"` // requested silence platform scope
+		// GroupID is passed directly to the saved scope; nil leaves that scope's
+		// group identity absent rather than selecting every group.
+		GroupID *int64 `json:"group_id"` // optional silence group identity
+		// Region is passed through without HTTP trimming; PostgreSQL later normalizes
+		// its optional string when storing the exact silence scope.
+		Region *string `json:"region"` // optional silence region text
+		Until  string  `json:"until"`  // RFC3339
+		Reason string  `json:"reason"` // administrator silence reason text
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		response.BadRequest(c, "Invalid request body")
@@ -516,6 +633,16 @@ func (h *OpsHandler) CreateAlertSilence(c *gin.Context) {
 	response.Success(c, created)
 }
 
+// ListAlertEvents returns filtered alert events after checking monitoring,
+// using limit twenty when omitted and requiring a positive supplied limit.
+// PostgreSQL subsequently caps the requested limit at five hundred.
+//
+// The cursor requires before_fired_at and positive before_id together, and its
+// timestamp accepts the two RFC3339 layouts. email_sent accepts case-folded
+// true/1 or false/0. Status and severity are trimmed without local enum
+// validation. Optional time parameters use the shared twenty-four-hour parser,
+// but absent parameters leave both time fields unset; platform and a positive
+// optional group are independent filters.
 func (h *OpsHandler) ListAlertEvents(c *gin.Context) {
 	if h.opsService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
@@ -557,7 +684,8 @@ func (h *OpsHandler) ListAlertEvents(c *gin.Context) {
 		}
 	}
 
-	// Cursor pagination: both params must be provided together.
+	// Use firing time and row ID together to continue the repository's descending
+	// tie-broken order; either cursor component alone is rejected.
 	rawTS := strings.TrimSpace(c.Query("before_fired_at"))
 	rawID := strings.TrimSpace(c.Query("before_id"))
 	if (rawTS == "") != (rawID == "") {
@@ -567,6 +695,8 @@ func (h *OpsHandler) ListAlertEvents(c *gin.Context) {
 	if rawTS != "" {
 		ts, err := time.Parse(time.RFC3339Nano, rawTS)
 		if err != nil {
+			// Try the second RFC3339 layout before rejecting cursor text, matching the
+			// two-layout handling used by other Ops timestamp parameters.
 			if t2, err2 := time.Parse(time.RFC3339, rawTS); err2 == nil {
 				ts = t2
 			} else {
@@ -585,7 +715,6 @@ func (h *OpsHandler) ListAlertEvents(c *gin.Context) {
 		filter.BeforeID = &id
 	}
 
-	// Optional global filter support (platform/group/time range).
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
 		filter.Platform = platform
 	}
@@ -598,7 +727,8 @@ func (h *OpsHandler) ListAlertEvents(c *gin.Context) {
 		filter.GroupID = &id
 	}
 	if startTime, endTime, err := parseOpsTimeRange(c, "24h"); err == nil {
-		// Only apply when explicitly provided to avoid surprising default narrowing.
+		// Install parsed time bounds only when a time parameter is nonblank, keeping
+		// an omitted range from narrowing event history to the parser's default.
 		if strings.TrimSpace(c.Query("start_time")) != "" || strings.TrimSpace(c.Query("end_time")) != "" || strings.TrimSpace(c.Query("time_range")) != "" {
 			filter.StartTime = &startTime
 			filter.EndTime = &endTime

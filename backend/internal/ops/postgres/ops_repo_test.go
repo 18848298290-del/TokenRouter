@@ -13,6 +13,9 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// TestBuildOpsErrorLogsWhere_UserScopedFilters combines caller user, key,
+// model, probe exclusion, and category arrays. It protects conjunctive SQL
+// predicates and the expected five bound arguments for that supplied selection.
 func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	uid := int64(42)
 	kid := int64(7)
@@ -44,6 +47,9 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_ModelFuzzy compares default exact selection with
+// escaped substring matching. It protects SQL operator choice and literal
+// percent and underscore handling in caller model text.
 func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 	// ModelFuzzy defaults to exact matching.
 	exact := &ops.OpsErrorLogFilter{Model: "claude"}
@@ -62,7 +68,8 @@ func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 		t.Fatalf("expected arg \"%%claude%%\", got %v", args)
 	}
 
-	// Percent signs in user input match literal characters.
+	// Caller model percent signs remain literal before outer substring markers are
+	// added, preventing user model text from widening the pattern by itself.
 	esc := &ops.OpsErrorLogFilter{Model: "50%off", ModelFuzzy: true}
 	_, escArgs := buildOpsErrorLogsWhere(esc)
 	if len(escArgs) != 1 || escArgs[0] != `%50\%off%` {
@@ -76,7 +83,10 @@ func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 	}
 }
 
-// TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption keeps streamed policy rejections with status 200 visible.
+// TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption supplies ordinary and
+// provider-health phase selections. It protects the generated cyber_policy
+// status exemption and restricts recovered opt-in to upstream or provider_auth
+// phases, including eligible arrays.
 func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 	// The default filter exempts cyber_policy and checks other errors by status.
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{})
@@ -136,6 +146,9 @@ func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly supplies one user
+// identity to error filtering. It protects a direct user_id predicate and
+// prevents deleted-key attribution from broadening that SQL selection.
 func TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly(t *testing.T) {
 	uid := int64(42)
 	filter := &ops.OpsErrorLogFilter{UserID: &uid}
@@ -151,7 +164,9 @@ func TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly(t *testing.T) {
 	}
 }
 
-// TestProviderAuthFilterIncludesLegacyRows checks compatibility with stored legacy phase names.
+// TestProviderAuthFilterIncludesLegacyRows requests the current credential
+// phase against retained legacy data. It protects an OR predicate and an
+// account_auth argument alongside the requested provider_auth value.
 func TestProviderAuthFilterIncludesLegacyRows(t *testing.T) {
 	where, args := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{Phase: "provider_auth"})
 	if !strings.Contains(where, " OR e.error_phase = $") {
@@ -168,6 +183,9 @@ func TestProviderAuthFilterIncludesLegacyRows(t *testing.T) {
 	}
 }
 
+// TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus prepares a
+// credential observation carrying upstream status zero. It protects a valid
+// zero SQL integer in the shared insert's twenty-eighth argument slot.
 func TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus(t *testing.T) {
 	zero := 0
 	args := opsInsertErrorLogArgs(&ops.OpsInsertErrorLogInput{UpstreamStatusCode: &zero})
@@ -179,6 +197,9 @@ func TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus(t *testing.T) 
 	require.Zero(t, encoded.Int64)
 }
 
+// TestOpsNullableIntPointerDistinguishesNilZeroAndStatus supplies missing,
+// zero, and 503 status pointers. It protects SQL validity separately from
+// numeric value so zero remains available to credential diagnostics.
 func TestOpsNullableIntPointerDistinguishesNilZeroAndStatus(t *testing.T) {
 	missing := testassert.MustType[sql.NullInt64](opsNullableIntPointer(nil))
 	require.False(t, missing.Valid)
@@ -194,6 +215,9 @@ func TestOpsNullableIntPointerDistinguishesNilZeroAndStatus(t *testing.T) {
 	require.EqualValues(t, 503, status.Int64)
 }
 
+// TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns supplies free text for
+// joined error queries. It protects qualified request-ID, client-ID, and
+// message predicates with one shared bound search argument.
 func TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns(t *testing.T) {
 	filter := &ops.OpsErrorLogFilter{
 		Query: "ACCESS_DENIED",
@@ -217,6 +241,9 @@ func TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns(t *testing.T) {
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery supplies an email
+// substring to error filtering. It protects a correlated users existence
+// predicate and a single bound value for that criterion.
 func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 	filter := &ops.OpsErrorLogFilter{
 		UserQuery: "admin@",
@@ -234,6 +261,9 @@ func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_DefaultErrorsExcludesClientAuthStatuses uses the
+// default error view. It protects client 401/403 exclusion expressions while
+// retaining stored upstream status or provider ownership as upstream context.
 func TestBuildOpsErrorLogsWhere_DefaultErrorsExcludesClientAuthStatuses(t *testing.T) {
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{})
 
@@ -248,6 +278,9 @@ func TestBuildOpsErrorLogsWhere_DefaultErrorsExcludesClientAuthStatuses(t *testi
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_CustomIgnoredStatuses supplies duplicate and
+// unsorted ignored statuses. It protects normalized 401/418 membership in the
+// generated client-status exclusion expression for the default error view.
 func TestBuildOpsErrorLogsWhere_CustomIgnoredStatuses(t *testing.T) {
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{IgnoredStatusCodes: []int{418, 401, 418}})
 
@@ -256,6 +289,10 @@ func TestBuildOpsErrorLogsWhere_CustomIgnoredStatuses(t *testing.T) {
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_EmptyIgnoredStatusesDisablesStatusExclusion
+// supplies a present empty ignored-status list. It protects disabled status
+// exclusion while retaining the independent business-limit classification
+// branch in generated SQL.
 func TestBuildOpsErrorLogsWhere_EmptyIgnoredStatusesDisablesStatusExclusion(t *testing.T) {
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{IgnoredStatusCodes: []int{}})
 
@@ -267,6 +304,10 @@ func TestBuildOpsErrorLogsWhere_EmptyIgnoredStatusesDisablesStatusExclusion(t *t
 	}
 }
 
+// TestBuildOpsErrorLogsWhere_ExcludedIncludesClientAuthStatuses selects
+// excluded errors. It protects business-limit and client 401/403 expressions
+// with upstream-context handling, so those generated criteria remain distinct
+// from the ordinary errors view.
 func TestBuildOpsErrorLogsWhere_ExcludedIncludesClientAuthStatuses(t *testing.T) {
 	where, _ := buildOpsErrorLogsWhere(&ops.OpsErrorLogFilter{View: "excluded"})
 
@@ -281,6 +322,10 @@ func TestBuildOpsErrorLogsWhere_ExcludedIncludesClientAuthStatuses(t *testing.T)
 	}
 }
 
+// TestOpsErrorLogInsertDoesNotPersistRequestReplayFields inspects the shared
+// INSERT and input type for retired replay data. It protects omission of
+// request-body, header, retry, and replay-result fields from this persistence
+// API.
 func TestOpsErrorLogInsertDoesNotPersistRequestReplayFields(t *testing.T) {
 	disallowedColumns := []string{
 		"request_body",
@@ -316,6 +361,10 @@ func TestOpsErrorLogInsertDoesNotPersistRequestReplayFields(t *testing.T) {
 	}
 }
 
+// TestBuildOpsSystemLogsWhere_WithClientRequestIDAndUserID combines all
+// supported system-log dimensions in one supplied filter. It protects an
+// effective constraint flag, thirteen arguments, and host/client/user/key
+// predicates.
 func TestBuildOpsSystemLogsWhere_WithClientRequestIDAndUserID(t *testing.T) {
 	start := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)
@@ -363,6 +412,9 @@ func TestBuildOpsSystemLogsWhere_WithClientRequestIDAndUserID(t *testing.T) {
 	}
 }
 
+// TestBuildOpsSystemLogsCleanupWhere_RequireConstraint supplies an empty
+// cleanup filter. It protects false effective-constraint status and no
+// arguments, which the delete method uses to reject unrestricted deletion.
 func TestBuildOpsSystemLogsCleanupWhere_RequireConstraint(t *testing.T) {
 	where, args, hasConstraint := buildOpsSystemLogsCleanupWhere(&ops.OpsSystemLogCleanupFilter{})
 	if hasConstraint {
@@ -376,6 +428,9 @@ func TestBuildOpsSystemLogsCleanupWhere_RequireConstraint(t *testing.T) {
 	}
 }
 
+// TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID supplies
+// host, client correlation, user, and key restrictions. It protects their four
+// arguments and effective-constraint flag through the cleanup-to-list mapping.
 func TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID(t *testing.T) {
 	userID := int64(9)
 	apiKeyID := int64(10)
@@ -407,6 +462,8 @@ func TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID(t *testing.
 	}
 }
 
+// contains reports whether expected SQL text occurs within a supplied
+// predicate.
 func contains(s string, sub string) bool {
 	return strings.Contains(s, sub)
 }

@@ -9,7 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// TestDashboardQueryValidationOrder checks error precedence and filter state after validation failure.
+// TestDashboardQueryValidationOrder sends absent dependencies and invalid
+// ranges through six dashboard query facades. It checks
+// monitoring/repository/filter/time error precedence, leaves supplied filter
+// values unchanged on failure, and prevents access to the unconfigured embedded
+// repository.
 func TestDashboardQueryValidationOrder(t *testing.T) {
 	queries := map[string]func(*OpsService, *OpsDashboardFilter) error{
 		"overview": func(s *OpsService, f *OpsDashboardFilter) error {
@@ -40,13 +44,17 @@ func TestDashboardQueryValidationOrder(t *testing.T) {
 	now := time.Now()
 	for name, query := range queries {
 		t.Run(name, func(t *testing.T) {
-			// Calling the nil embedded repository would panic; validation must fail before any storage query.
-			repo := struct{ OpsRepository }{}
+			// The repository fixture deliberately leaves methods unconfigured. A storage
+			// call would panic, making early validation observable across each facade
+			// without a working database query.
+			repo := struct {
+				OpsRepository /* deliberately unconfigured repository methods */
+			}{}
 			for _, tc := range []struct {
-				name    string
-				service *OpsService
-				filter  *OpsDashboardFilter
-				reason  string
+				name    string              // validation case display name
+				service *OpsService         // service dependency configuration fixture
+				filter  *OpsDashboardFilter // submitted invalid range fixture
+				reason  string              // expected application error reason
 			}{
 				{name: "disabled", service: &OpsService{cfg: &Options{}}, reason: apperror.Reason(ErrOpsDisabled)},
 				{name: "repository", service: &OpsService{}, reason: "OPS_REPO_UNAVAILABLE"},

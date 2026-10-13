@@ -9,27 +9,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// opsProviderStatsRepoStub returns fixture observations and captures direct
+// statistics query selections.
 type opsProviderStatsRepoStub struct {
-	ProviderReader
-	providers      []ProviderObservation
-	platformFilter string
-	groupIDFilter  *int64
+	// ProviderReader leaves ordinary provider methods unset. The fixture
+	// implements ListOpsProvidersForStats directly, so the service can select that
+	// method while pagination remains unconfigured.
+	ProviderReader // unused embedded provider methods
+	// providers is returned as the configured fixture slice without copying its
+	// entries. Test callers retain the fixture while inspecting the resulting
+	// service view.
+	providers      []ProviderObservation // configured provider observation slice
+	platformFilter string                // last requested platform text
+	// groupIDFilter retains the pointer passed to the statistics query. The
+	// pointer identity assertion checks that the service forwards this selection
+	// directly.
+	groupIDFilter *int64 // last requested group pointer
 }
 
+// opsProviderStatsFallbackRepoStub captures selections for the paginated
+// provider-reader compatibility path.
 type opsProviderStatsFallbackRepoStub struct {
-	ProviderReader
-	platformFilter string
-	groupIDFilter  int64
+	// ProviderReader supplies remaining methods through its nil embedded
+	// interface. The fixture overrides ListPage for the compatibility path;
+	// another provider operation needs a configured implementation.
+	ProviderReader        // unused embedded provider methods
+	platformFilter string // last requested platform text
+	groupIDFilter  int64  // last requested group value
 }
 
-// ListOpsProvidersForStats records query filters to verify that the service uses the statistics query.
+// ListOpsProvidersForStats records platform text and the supplied group pointer
+// before returning the fixture provider slice. Context is ignored, and the
+// returned fixture entries remain shared with the test setup.
 func (r *opsProviderStatsRepoStub) ListOpsProvidersForStats(_ context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error) {
 	r.platformFilter = platformFilter
 	r.groupIDFilter = groupIDFilter
 	return r.providers, nil
 }
 
-// ListPage simulates a repository that supports only the paginated interface.
+// ListPage records the platform and group value and returns one provider with
+// matching pagination metadata. Its total stops service pagination after one
+// call, allowing the test to isolate group-value forwarding.
 func (r *opsProviderStatsFallbackRepoStub) ListPage(
 	_ context.Context,
 	params pagination.PaginationParams,
@@ -42,6 +62,10 @@ func (r *opsProviderStatsFallbackRepoStub) ListPage(
 	return providers, &pagination.PaginationResult{Page: params.Page, PageSize: params.PageSize, Total: 1}, nil
 }
 
+// TestListAllProvidersForOpsUsesLightweightRepository supplies a reader with
+// the optional statistics method. It checks fixture results, platform
+// forwarding, and retention of the exact group-filter pointer passed by the
+// caller.
 func TestListAllProvidersForOpsUsesLightweightRepository(t *testing.T) {
 	groupID := int64(42)
 	repo := &opsProviderStatsRepoStub{providers: []ProviderObservation{{ID: 1}}}
@@ -55,6 +79,10 @@ func TestListAllProvidersForOpsUsesLightweightRepository(t *testing.T) {
 	require.Same(t, &groupID, repo.groupIDFilter)
 }
 
+// TestListAllProvidersForOpsFallbackPassesGroupFilter supplies a reader
+// supporting the paginated path. It checks the returned provider and that the
+// dereferenced positive group selection reaches ListPage with the requested
+// platform.
 func TestListAllProvidersForOpsFallbackPassesGroupFilter(t *testing.T) {
 	groupID := int64(77)
 	repo := &opsProviderStatsFallbackRepoStub{}
@@ -68,6 +96,10 @@ func TestListAllProvidersForOpsFallbackPassesGroupFilter(t *testing.T) {
 	require.Equal(t, groupID, repo.groupIDFilter)
 }
 
+// TestGetProviderAvailabilityStatsOnlyAggregatesSelectedGroup returns one
+// provider whose first membership differs from the selected group. It checks
+// that the selected aggregate group and displayed identity use that
+// membership while the other group is absent.
 func TestGetProviderAvailabilityStatsOnlyAggregatesSelectedGroup(t *testing.T) {
 	targetGroupID := int64(7)
 	otherGroup := &GroupObservation{ID: 8, Name: "其他分组"}

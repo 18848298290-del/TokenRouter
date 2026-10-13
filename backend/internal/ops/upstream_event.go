@@ -1,43 +1,57 @@
 package ops
 
-// OpsUpstreamErrorEvent describes one upstream error attempt during a single gateway request.
-// It is stored in ops_error_logs.upstream_errors as a JSON array.
+// One gateway request can fail several upstream attempts before succeeding or
+// returning its final error. Attempt records keep provider identity, upstream
+// correlation, stage, and response diagnostics separate from the final client
+// status; request-local monitoring suppression is evaluated before the
+// persisted JSON drops that flag.
+
+// OpsUpstreamErrorEvent carries one observed upstream attempt for diagnostic
+// JSON stored with an Ops error.
 type OpsUpstreamErrorEvent struct {
+	// AtUnixMs records the attempt timestamp in milliseconds since the Unix epoch.
+	// Zero omits the JSON field, and Ops sanitation replaces negative values with
+	// zero.
 	AtUnixMs int64 `json:"at_unix_ms,omitempty"`
 
-	// Passthrough records whether the request used the branch that forwards the payload with replacement authentication.
-	// It is persisted in event JSON for diagnosis and rollout evaluation.
+	// Passthrough records a payload-forwarding branch using replacement
+	// authentication. Gateway producers set the flag for their chosen execution
+	// path, and it is retained in diagnostic attempt JSON.
 	Passthrough bool `json:"passthrough,omitempty"`
 
-	// Context
-	Platform     string `json:"platform,omitempty"`
-	ProviderID   int64  `json:"provider_id,omitempty"`
-	ProviderName string `json:"provider_name,omitempty"`
+	Platform     string `json:"platform,omitempty"`      // observed execution platform label
+	ProviderID   int64  `json:"provider_id,omitempty"`   // observed execution provider identity
+	ProviderName string `json:"provider_name,omitempty"` // observed provider display name
 
-	// Outcome
-	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
-	UpstreamRequestID  string `json:"upstream_request_id,omitempty"`
+	UpstreamStatusCode int `json:"upstream_status_code,omitempty"` // observed upstream HTTP status
+	// upstream request correlation alias
+	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
 
-	// UpstreamURL is the actual upstream URL that was called (host + path, query/fragment stripped).
-	// Helps debug 404/routing errors by showing which endpoint was targeted.
+	// UpstreamURL carries supplied endpoint diagnostic text. Append and
+	// preparation paths trim it and Ops bounds its bytes; producers use
+	// logredact.SafeUpstreamURL when query and fragment removal is required.
 	UpstreamURL string `json:"upstream_url,omitempty"`
 
-	// Best-effort upstream response capture (sanitized+trimmed).
+	// UpstreamResponseBody contains a captured upstream response supplied by the
+	// producer. Ops sanitation bounds it before queueing and redacts supported
+	// JSON credentials, while non-JSON text follows the byte-truncation path.
 	UpstreamResponseBody string `json:"upstream_response_body,omitempty"`
 
-	// Kind: http_error | request_error | retry_exhausted | failover
-	Kind string `json:"kind,omitempty"`
-	// Stage, Scope, and Reason distinguish credential acquisition from inference failures when no HTTP status exists.
-	Stage  string `json:"stage,omitempty"`
-	Scope  string `json:"scope,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Kind string `json:"kind,omitempty"` // attempt outcome category label
+	// Stage, Scope, and Reason distinguish credential acquisition failures from
+	// inference outcomes when no HTTP status is available. prepareErrorLogInput
+	// attributes the stored error to provider_auth when the last nonnil attempt
+	// event has that stage.
+	Stage  string `json:"stage,omitempty"`  // attempt execution stage label
+	Scope  string `json:"scope,omitempty"`  // credential failure scope label
+	Reason string `json:"reason,omitempty"` // credential failure reason label
 
-	Message string `json:"message,omitempty"`
-	Detail  string `json:"detail,omitempty"`
+	Message string `json:"message,omitempty"` // observed attempt message text
+	Detail  string `json:"detail,omitempty"`  // observed attempt diagnostic payload
 
-	// SkipMonitoring is request-local rule state. It is intentionally excluded
-	// from persisted attempt JSON. The logger consults it only when this event is
-	// the final client-visible failure; recovered attempts remain provider-health
-	// telemetry and do not count as failed requests.
+	// SkipMonitoring carries the attempt-local passthrough-rule decision and is
+	// omitted from persisted JSON. Final-failure checks consult the latest event
+	// when no request override wins, and recovered telemetry filters out flagged
+	// attempts.
 	SkipMonitoring bool `json:"-"`
 }

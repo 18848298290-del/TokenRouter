@@ -8,7 +8,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// SettingsParticipant owns Ops settings and accepts provider quota thresholds as a nested update.
+// A combined settings update may supply one Ops field while leaving the other
+// monitoring preferences absent. The JSON decoder represents absent switches as
+// false, so preparation tracks supplied field names and removes entries created
+// solely by zero-value decoding. Positive interval values are included; zero
+// and negative interval values produce no stored replacement.
+//
+// Quota thresholds share the advanced-settings key with retention and display
+// preferences. Preparation merges the supplied quota structure into the current
+// advanced-settings object before normalization and encoding. The settings
+// coordinator receives a prepared change and performs the writes after module
+// preparation has completed, while decoding failures stop this participant
+// before it supplies replacement values.
+
+// SettingsParticipant registers the Ops fields and prepares their stored
+// replacements for a combined settings update. An empty field map produces no
+// changes. Scalar switches are persisted only when supplied, and nonpositive
+// metrics intervals leave the stored interval untouched.
+//
+// Quota updates replace the nested quota object within the current
+// advanced-settings JSON and normalize the resulting configuration. An exactly
+// encoded null quota value is skipped. Preparation reports decoding errors and
+// leaves persistence to the settings coordinator, so callers can validate all
+// participating modules before applying their collected changes.
 func SettingsParticipant() settings.Participant {
 	keys := []string{"ops_monitoring_enabled", "ops_realtime_monitoring_enabled", "ops_metrics_interval_seconds", "ops_advanced_settings"}
 	fields := []string{"ops_monitoring_enabled", "ops_realtime_monitoring_enabled", "ops_metrics_interval_seconds", "openai_provider_quota_auto_pause"}
@@ -25,6 +47,9 @@ func SettingsParticipant() settings.Participant {
 			return settings.PreparedChange{}, err
 		}
 		values := PrepareMonitoringSettings(value)
+		// Decoding omitted booleans produces false values. Remove their prepared
+		// entries so a partial request does not disable switches that it never
+		// supplied.
 		for key := range values {
 			if _, ok := input[key]; !ok {
 				delete(values, key)

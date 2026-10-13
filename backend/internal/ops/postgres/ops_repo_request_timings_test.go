@@ -10,8 +10,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Store is checked against the complete OpsRepository interface so timing-query
+// fixtures retain the repository methods used by the service.
 var _ ops.OpsRepository = (*Store)(nil)
 
+// TestOpsRepositoryListRequestTimings returns one access-log timing object and
+// one row lacking recognized fields from a SQL fixture. It checks only the
+// recognized row remains and verifies the latest-row query shape.
 func TestOpsRepositoryListRequestTimings(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}
@@ -31,6 +36,9 @@ func TestOpsRepositoryListRequestTimings(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestOpsRepositoryListRequestTimingsEmptyInput supplies empty and
+// whitespace-only identifiers to a configured repository. It checks an empty
+// successful map is returned without any SQL query expectation.
 func TestOpsRepositoryListRequestTimingsEmptyInput(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}

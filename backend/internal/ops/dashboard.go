@@ -8,17 +8,29 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GetDashboardOverview selects a data source using pre-aggregation settings and retries raw data on aggregation failure.
+// Dashboard traffic totals can remain useful when system samples or
+// background-job diagnostics cannot be read. The service resolves the requested
+// query mode and SLA exclusions before storage runs, then attaches available
+// health observations and computes the displayed diagnostic score.
+
+// GetDashboardOverview returns traffic totals with available system and job
+// diagnostics after monitoring, storage, and time validation. It resolves
+// QueryMode and IgnoredStatusCodes in the supplied filter, and retries an
+// automatic-mode error with a shallow raw-mode copy. Optional diagnostic read
+// failures keep the traffic result; repository success requires a nonnil
+// overview and a nonnil sample when the metrics read succeeds.
 // @project-doc docs/operations/pre_aggregation.md#query_routing_and_fallback
 func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error) {
 	if err := s.validateDashboardQuery(ctx, filter); err != nil {
 		return nil, err
 	}
 
-	// The unified pre-aggregation settings control the dashboard's data source.
 	s.resolveOpsQueryModeWithIgnoredStatusCodes(ctx, filter)
 
 	overview, err := s.opsRepo.GetDashboardOverview(ctx, filter)
+	// An automatic-mode error starts another complete query. The raw copy keeps
+	// the same dimensions and SLA exclusions, and the failed first result is
+	// discarded.
 	if err != nil && ShouldFallbackOpsPreagg(filter, err) {
 		rawFilter := CloneOpsFilterWithMode(filter, OpsQueryModeRaw)
 		overview, err = s.opsRepo.GetDashboardOverview(ctx, rawFilter)
@@ -27,10 +39,12 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 		return nil, err
 	}
 
-	// Best-effort system health + jobs; dashboard metrics should still render if these are missing.
+	// Traffic totals have already been obtained. Treat a missing or failed
+	// system-sample lookup as absent diagnostics; the optional read cannot replace
+	// a successful traffic response.
 	if metrics, err := s.opsRepo.GetLatestSystemMetrics(ctx, 1); err == nil {
-		// Attach config-derived limits so the UI can show "current / max" for connection pools.
-		// These are best-effort and should never block the dashboard rendering.
+		// Positive deployment pool limits supplement the measured sample so the
+		// administrator view can pair current usage with configured capacity.
 		if s != nil && s.cfg != nil {
 			if s.cfg.Database.MaxOpenConns > 0 {
 				metrics.DBMaxOpenConns = intPtr(s.cfg.Database.MaxOpenConns)
@@ -44,6 +58,8 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 		log.Printf("[Ops] GetLatestSystemMetrics failed: %v", err)
 	}
 
+	// Job diagnostics can fail independently of the system sample. Health scoring
+	// keeps its default job component when the heartbeat read leaves no entries.
 	if heartbeats, err := s.opsRepo.ListJobHeartbeats(ctx); err == nil {
 		overview.JobHeartbeats = heartbeats
 	} else {
@@ -55,8 +71,13 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 	return overview, nil
 }
 
+// resolveOpsQueryMode returns the source preference allowed by the current
+// aggregation settings. A requested raw mode wins; an injected settings reader
+// controls other requests, otherwise disabled deployment capabilities select
+// raw and an absent configuration defaults to auto.
 func (s *OpsService) resolveOpsQueryMode(ctx context.Context, requested OpsQueryMode) OpsQueryMode {
-	// Internal callers use raw for realtime monitoring, alerts, and custom ignored status codes.
+	// Realtime and alert callers can request raw observations directly; this
+	// preference takes precedence over the injected aggregation settings reader.
 	if requested == OpsQueryModeRaw {
 		return OpsQueryModeRaw
 	}
@@ -72,7 +93,10 @@ func (s *OpsService) resolveOpsQueryMode(ctx context.Context, requested OpsQuery
 	return OpsQueryModeAuto
 }
 
-// validateDashboardQuery checks monitoring, storage availability, and the time range in that order.
+// validateDashboardQuery checks monitoring, repository availability, and
+// required time endpoints in that order. It rejects a nil filter, zero
+// endpoints, or a reversed range, while equal endpoints are accepted and fields
+// remain unchanged.
 func (s *OpsService) validateDashboardQuery(ctx context.Context, filter *OpsDashboardFilter) error {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return err

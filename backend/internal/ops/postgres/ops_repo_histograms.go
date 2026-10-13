@@ -8,6 +8,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Latency histograms map five ordered millisecond cutoffs to six displayed
+// buckets. SQL uses strictly-less-than comparisons, so a duration equal to a
+// cutoff enters the following bucket; nonnull negative durations also enter the
+// first bucket even though its label starts at zero. Missing groups in the SQL
+// result are restored as zero-count display buckets.
+//
+// The repository validates or defaults cutoffs before building parameter
+// placeholders and preserves their order in returned metadata. Counts come from
+// filtered usage rows with nonnull duration, using raw tables regardless of
+// QueryMode. Response boundary storage is copied by normalization, while
+// GroupID retains the filter's pointer. Invalid bucket indexes or cursor
+// failures reject the result before any response is returned.
+
+// GetLatencyHistogram returns six raw usage-duration buckets for a required
+// repository, filter, and nonzero endpoints. It normalizes five positive
+// ordered cutoffs, defaults an empty list, and converts time endpoints to UTC
+// without validating their relative order here.
+//
+// Cutoff equality belongs to the following bucket, and negative nonnull
+// durations count in the first bucket. Missing SQL buckets become zero, while
+// invalid indexes and query/scan/cursor errors reject the complete response.
+// Returned cutoffs have independent slice storage, GroupID remains shared with
+// the filter, and QueryMode is not consulted by this implementation.
 func (r *Store) GetLatencyHistogram(ctx context.Context, filter *ops.OpsDashboardFilter, bucketBoundariesMS []int64) (*ops.OpsLatencyHistogramResponse, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -27,6 +50,8 @@ func (r *Store) GetLatencyHistogram(ctx context.Context, filter *ops.OpsDashboar
 	end := filter.EndTime.UTC()
 
 	join, where, args, next := buildUsageWhere(filter, start, end, 1)
+	// Reserve one placeholder per normalized cutoff after the filter's arguments
+	// so SQL bucket indexes and returned labels use the same ordered boundaries.
 	bucketExpr := latencyHistogramBucketIndexCaseExpr("ul.duration_ms", next, len(boundaries))
 	for _, boundary := range boundaries {
 		args = append(args, boundary)
@@ -47,6 +72,8 @@ ORDER BY 1 ASC`
 	if err != nil {
 		return nil, err
 	}
+	// Release the grouping cursor after success or early error; close failure is
+	// ignored while scan and iteration errors prevent response assembly.
 	defer func() { _ = rows.Close() }()
 
 	labels := latencyHistogramBucketLabels(boundaries)
@@ -68,6 +95,8 @@ ORDER BY 1 ASC`
 		return nil, err
 	}
 
+	// Restore each configured display bucket even when SQL returns no row for it,
+	// retaining zero gaps rather than shortening the response's range list.
 	buckets := make([]*ops.OpsLatencyHistogramBucket, 0, len(labels))
 	for index, label := range labels {
 		buckets = append(buckets, &ops.OpsLatencyHistogramBucket{
@@ -87,7 +116,10 @@ ORDER BY 1 ASC`
 	}, nil
 }
 
-// latencyHistogramBucketIndexCaseExpr builds a bucket-index CASE expression with parameter placeholders.
+// latencyHistogramBucketIndexCaseExpr builds ordered less-than branches from
+// trusted column text and consecutive placeholder numbers. Callers supply a
+// positive first placeholder, positive boundary count, and matching ordered
+// arguments; equality proceeds to the following branch or final open bucket.
 func latencyHistogramBucketIndexCaseExpr(column string, firstPlaceholder, boundaryCount int) string {
 	var sb strings.Builder
 	_, _ = sb.WriteString("CASE\n")
@@ -101,7 +133,10 @@ func latencyHistogramBucketIndexCaseExpr(column string, firstPlaceholder, bounda
 	return sb.String()
 }
 
-// latencyHistogramBucketLabels returns ordered labels for bucket ranges.
+// latencyHistogramBucketLabels formats supplied cutoff order as adjacent
+// millisecond ranges plus a final open range. It performs no validation or
+// sorting; empty input returns the single zero-plus label, and callers
+// normalize production boundaries first.
 func latencyHistogramBucketLabels(boundaries []int64) []string {
 	labels := make([]string, 0, len(boundaries)+1)
 	lower := int64(0)

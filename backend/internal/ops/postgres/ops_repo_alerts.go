@@ -11,10 +11,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Alert events retain nullable measurements and dimensions alongside
+// independent status and email markers. A missing event becomes nil for
+// evaluator reads, while a missing rule update or deletion returns
+// sql.ErrNoRows for administration to classify. Active-event selection searches
+// firing status alone; it does not establish one active event per rule or
+// atomically reserve a future insert.
+//
+// JSON maps cross PostgreSQL as nullable text parameters. Nil maps become SQL
+// NULL and present empty maps remain objects; failed map decoding leaves
+// optional filters or dimensions absent while retaining the row. Silences match
+// the exact nullable rule/platform/group/region scope, so missing group or
+// region represents its own scope rather than every value. Cursor paging
+// combines firing timestamp with ID to continue tied rows in descending order,
+// and updates execute independently of evaluator decisions or mail delivery.
+
+// opsAlertEventRow permits a SQL row or compatible fixture to supply one event
+// scan.
 type opsAlertEventRow interface {
+	// Scan assigns one event row's selected columns into supplied destinations.
 	Scan(dest ...any) error
 }
 
+// ListAlertRules returns saved rules in descending ID order with nonnil empty
+// output when no rules exist. Nullable last-trigger timestamps become scalar
+// pointers, while absent or undecodable JSON filters stay nil and do not reject
+// an otherwise scanned rule.
 func (r *Store) ListAlertRules(ctx context.Context) ([]*ops.OpsAlertRule, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -45,6 +67,8 @@ ORDER BY id DESC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan error. Cleanup failures are
+	// suppressed, while iteration errors still reject this row set.
 	defer func() { _ = rows.Close() }()
 
 	out := []*ops.OpsAlertRule{}
@@ -76,6 +100,8 @@ ORDER BY id DESC`
 			v := lastTriggeredAt.Time
 			rule.LastTriggeredAt = &v
 		}
+		// Filter JSON is optional to the scanned rule. Ignore failed object decoding
+		// and keep scalar fields available rather than rejecting this stored row.
 		if len(filtersRaw) > 0 && string(filtersRaw) != "null" {
 			var decoded map[string]any
 			if err := json.Unmarshal(filtersRaw, &decoded); err == nil {
@@ -90,6 +116,10 @@ ORDER BY id DESC`
 	return out, nil
 }
 
+// CreateAlertRule inserts all editable fields and returns the saved rule with
+// database timestamps. Nil input is rejected; text is trimmed and Filters is
+// encoded before writing. The HTTP adapter supplies allowed metrics, defaults,
+// and ranges, while this method leaves those values to database constraints.
 func (r *Store) CreateAlertRule(ctx context.Context, input *ops.OpsAlertRule) (*ops.OpsAlertRule, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -98,6 +128,9 @@ func (r *Store) CreateAlertRule(ctx context.Context, input *ops.OpsAlertRule) (*
 		return nil, fmt.Errorf("nil input")
 	}
 
+	// Encode caller-owned filters before the SQL write, keeping nil distinct from
+	// an empty object. Unsupported mutable values fail serialization before
+	// persistence begins.
 	filtersArg, err := opsNullJSONMap(input.Filters)
 	if err != nil {
 		return nil, err
@@ -183,6 +216,8 @@ RETURNING
 		v := lastTriggeredAt.Time
 		out.LastTriggeredAt = &v
 	}
+	// Filter JSON is optional to the scanned rule. Ignore failed object decoding
+	// and keep scalar fields available rather than rejecting this stored row.
 	if len(filtersRaw) > 0 && string(filtersRaw) != "null" {
 		var decoded map[string]any
 		if err := json.Unmarshal(filtersRaw, &decoded); err == nil {
@@ -193,6 +228,10 @@ RETURNING
 	return &out, nil
 }
 
+// UpdateAlertRule replaces all editable fields for a positive rule identity and
+// returns the saved row. Nil input or nonpositive ID is rejected, while other
+// validation belongs to the caller. The existing created and last-trigger
+// timestamps remain stored; a missing ID yields sql.ErrNoRows.
 func (r *Store) UpdateAlertRule(ctx context.Context, input *ops.OpsAlertRule) (*ops.OpsAlertRule, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -204,6 +243,9 @@ func (r *Store) UpdateAlertRule(ctx context.Context, input *ops.OpsAlertRule) (*
 		return nil, fmt.Errorf("invalid id")
 	}
 
+	// Encode caller-owned filters before the SQL write, keeping nil distinct from
+	// an empty object. Unsupported mutable values fail serialization before
+	// persistence begins.
 	filtersArg, err := opsNullJSONMap(input.Filters)
 	if err != nil {
 		return nil, err
@@ -289,6 +331,8 @@ RETURNING
 		v := lastTriggeredAt.Time
 		out.LastTriggeredAt = &v
 	}
+	// Filter JSON is optional to the scanned rule. Ignore failed object decoding
+	// and keep scalar fields available rather than rejecting this stored row.
 	if len(filtersRaw) > 0 && string(filtersRaw) != "null" {
 		var decoded map[string]any
 		if err := json.Unmarshal(filtersRaw, &decoded); err == nil {
@@ -299,6 +343,10 @@ RETURNING
 	return &out, nil
 }
 
+// DeleteAlertRule deletes one positive rule identity and returns sql.ErrNoRows
+// when no row was affected. Events and silences are not deleted by this
+// statement; administration handles the returned error through its not-found
+// classifier.
 func (r *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -321,6 +369,17 @@ func (r *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	return nil
 }
 
+// ListAlertEvents returns a descending fired-at/ID selection after applying
+// saved event criteria and an optional complete cursor. A nil filter is
+// unrestricted; nonpositive limit selects one hundred and larger limits are
+// capped at five hundred. No total count is read.
+//
+// Nullable measurement zero remains a present pointer, missing resolution
+// remains nil, and undecodable dimensions leave that map absent without
+// rejecting the row. The cursor requires both nonzero timestamp and positive
+// ID, so tied firing times continue below the previous ID. Query, scan, and
+// iteration failures reject the whole selection, while input fields remain
+// read-only.
 func (r *Store) ListAlertEvents(ctx context.Context, filter *ops.OpsAlertEventFilter) ([]*ops.OpsAlertEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -333,6 +392,7 @@ func (r *Store) ListAlertEvents(ctx context.Context, filter *ops.OpsAlertEventFi
 	if limit <= 0 {
 		limit = 100
 	}
+	// Bound one history page; this selection has no separate total-count query.
 	if limit > 500 {
 		limit = 500
 	}
@@ -365,6 +425,8 @@ LIMIT ` + limitArg
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan error. Cleanup failures are
+	// suppressed, while iteration errors still reject this row set.
 	defer func() { _ = rows.Close() }()
 
 	out := []*ops.OpsAlertEvent{}
@@ -391,6 +453,9 @@ LIMIT ` + limitArg
 		); err != nil {
 			return nil, err
 		}
+		// Restore present measurements into separate pointers before optional
+		// dimensions decoding; stored zero remains an observation rather than being
+		// merged with missing SQL data.
 		if metricValue.Valid {
 			v := metricValue.Float64
 			ev.MetricValue = &v
@@ -403,6 +468,9 @@ LIMIT ` + limitArg
 			v := resolvedAt.Time
 			ev.ResolvedAt = &v
 		}
+		// Dimensions supplement the scalar event. Failed object decoding is ignored
+		// so listing can retain the observation even when metadata cannot be
+		// displayed.
 		if len(dimensionsRaw) > 0 && string(dimensionsRaw) != "null" {
 			var decoded map[string]any
 			if err := json.Unmarshal(dimensionsRaw, &decoded); err == nil {
@@ -417,6 +485,9 @@ LIMIT ` + limitArg
 	return out, nil
 }
 
+// GetAlertEventByID loads one positive event identity through the shared
+// scanner. sql.ErrNoRows becomes a nil event with nil error for OpsService to
+// translate into not found, while other query or scan failures propagate.
 func (r *Store) GetAlertEventByID(ctx context.Context, eventID int64) (*ops.OpsAlertEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -446,6 +517,8 @@ WHERE id = $1`
 	row := r.db.QueryRowContext(ctx, q, eventID)
 	ev, err := scanOpsAlertEvent(row)
 	if err != nil {
+		// Translate missing history to nil for caller decisions. Keep other
+		// scan/query failures visible so they are not mistaken for an absent event.
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -454,6 +527,10 @@ WHERE id = $1`
 	return ev, nil
 }
 
+// GetActiveAlertEvent selects the latest firing event for a positive rule
+// identity, ordered by fired_at with no ID tie breaker. Missing history becomes
+// nil with nil error; multiple firing rows can exist, and this read does not
+// reserve an insertion.
 func (r *Store) GetActiveAlertEvent(ctx context.Context, ruleID int64) (*ops.OpsAlertEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -485,6 +562,8 @@ LIMIT 1`
 	row := r.db.QueryRowContext(ctx, q, ruleID, ops.OpsAlertStatusFiring)
 	ev, err := scanOpsAlertEvent(row)
 	if err != nil {
+		// Translate missing history to nil for caller decisions. Keep other
+		// scan/query failures visible so they are not mistaken for an absent event.
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -493,6 +572,10 @@ LIMIT 1`
 	return ev, nil
 }
 
+// GetLatestAlertEvent selects the latest event for a positive rule identity
+// regardless of status, ordered by fired_at without an ID tie breaker. Missing
+// history becomes nil with nil error; the evaluator uses the returned firing
+// time for cooldown.
 func (r *Store) GetLatestAlertEvent(ctx context.Context, ruleID int64) (*ops.OpsAlertEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -524,6 +607,8 @@ LIMIT 1`
 	row := r.db.QueryRowContext(ctx, q, ruleID)
 	ev, err := scanOpsAlertEvent(row)
 	if err != nil {
+		// Translate missing history to nil for caller decisions. Keep other
+		// scan/query failures visible so they are not mistaken for an absent event.
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -532,6 +617,19 @@ LIMIT 1`
 	return ev, nil
 }
 
+// CreateAlertEvent inserts the supplied observation and returns its saved row
+// through the shared scanner. Nil input is rejected and dimensions encode
+// before insertion. Rule zero becomes SQL NULL, measurements preserve
+// pointer-valued zero, and FiredAt is stored as supplied rather than defaulted
+// here.
+//
+// Caller-provided status, severity, title, FiredAt, ResolvedAt, and mail marker
+// determine their stored values; the database supplies CreatedAt. The
+// statement does not reserve a rule or check an
+// existing active event; evaluator admission is performed earlier and
+// independently. Its generated ID distinguishes each insertion, while rule
+// last_triggered_at is not updated by this method. Failed optional dimensions
+// decoding after a successful insert leaves that map absent.
 func (r *Store) CreateAlertEvent(ctx context.Context, event *ops.OpsAlertEvent) (*ops.OpsAlertEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -540,6 +638,9 @@ func (r *Store) CreateAlertEvent(ctx context.Context, event *ops.OpsAlertEvent) 
 		return nil, fmt.Errorf("nil event")
 	}
 
+	// Serialize caller-owned dimensions before insertion, retaining NULL versus an
+	// empty object. An unsupported value rejects this event before any row is
+	// written.
 	dimensionsArg, err := opsNullJSONMap(event.Dimensions)
 	if err != nil {
 		return nil, err
@@ -595,6 +696,11 @@ RETURNING
 	return scanOpsAlertEvent(row)
 }
 
+// UpdateAlertEventStatus writes trimmed nonblank status and nullable resolution
+// time for a positive event identity. Nil or zero time becomes SQL NULL.
+// OpsService restricts administrator states; direct storage calls do not
+// enforce that enumeration, and missing rows can succeed because RowsAffected
+// is ignored.
 func (r *Store) UpdateAlertEventStatus(ctx context.Context, eventID int64, status string, resolvedAt *time.Time) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -616,6 +722,10 @@ WHERE id = $1`
 	return err
 }
 
+// UpdateAlertEventEmailSent writes the supplied mail marker for a positive
+// event identity. This update is separate from mail callback acceptance and
+// does not prove SMTP delivery; missing rows can return success because
+// RowsAffected is not inspected.
 func (r *Store) UpdateAlertEventEmailSent(ctx context.Context, eventID int64, emailSent bool) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -628,6 +738,16 @@ func (r *Store) UpdateAlertEventEmailSent(ctx context.Context, eventID int64, em
 	return err
 }
 
+// CreateAlertSilence inserts an exact saved scope with a positive rule,
+// nonblank platform, and nonzero deadline. Platform and optional text are
+// trimmed; group zero and missing group both become SQL NULL. A deadline in the
+// past is accepted by this storage method.
+//
+// Nil or blank region becomes SQL NULL, which later matches only the equally
+// missing region through IsAlertSilenced rather than acting as a wildcard.
+// Nonzero negative group or actor values remain supplied. Returned valid
+// optional values receive new scalar pointers, and database created_at is
+// returned alongside the supplied deadline and encoded scope.
 func (r *Store) CreateAlertSilence(ctx context.Context, input *ops.OpsAlertSilence) (*ops.OpsAlertSilence, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -690,6 +810,8 @@ RETURNING id, rule_id, platform, group_id, region, until, COALESCE(reason,''), c
 	); err != nil {
 		return nil, err
 	}
+	// Restore each nullable scope or actor as a separate scalar pointer after SQL
+	// encoding. Missing dimensions remain nil for later exact-scope comparisons.
 	if groupID.Valid {
 		v := groupID.Int64
 		out.GroupID = &v
@@ -707,6 +829,16 @@ RETURNING id, rule_id, platform, group_id, region, until, COALESCE(reason,''), c
 	return &out, nil
 }
 
+// IsAlertSilenced reports whether an exact rule/platform/group/region scope has
+// a deadline strictly after now. Positive rule identity is required; blank
+// platform returns false, and zero now selects current UTC time. Group zero and
+// nil both encode as SQL NULL, while nil or blank region also becomes NULL.
+//
+// IS NOT DISTINCT FROM compares nullable dimensions as values, so absent group
+// or region does not silence every populated scope. Equality at the deadline is
+// expired. Missing lookup returns false without error, while query failure
+// remains visible so the evaluator can apply its own fail-open notification
+// policy.
 func (r *Store) IsAlertSilenced(ctx context.Context, ruleID int64, platform string, groupID *int64, region *string, now time.Time) (bool, error) {
 	if r == nil || r.db == nil {
 		return false, fmt.Errorf("nil ops repository")
@@ -735,6 +867,8 @@ LIMIT 1`
 	var dummy int
 	err := r.db.QueryRowContext(ctx, q, ruleID, platform, opsNullInt64(groupID), opsNullString(region), now).Scan(&dummy)
 	if err != nil {
+		// An absent exact-scope row means notification is not silenced at this time.
+		// Other database failures remain errors for the evaluator's selected policy.
 		if err == sql.ErrNoRows {
 			return false, nil
 		}
@@ -743,6 +877,17 @@ LIMIT 1`
 	return true, nil
 }
 
+// scanOpsAlertEvent decodes one compatible event row into newly allocated
+// observation storage. The row must supply the event columns in the shared
+// SELECT/RETURNING order; scan errors propagate, including sql.ErrNoRows for
+// callers to translate. Nullable metric and threshold zero remain present,
+// while missing values and resolution time stay nil.
+//
+// Dimensions are decoded into a fresh map when object JSON is valid. Empty,
+// JSON null, or malformed dimensions remain absent, and decode failure is
+// suppressed because stored scalar event data can still be read. Returned
+// scalar pointers are independent of scan locals; no default firing time or
+// business-state validation occurs.
 func scanOpsAlertEvent(row opsAlertEventRow) (*ops.OpsAlertEvent, error) {
 	var ev ops.OpsAlertEvent
 	var metricValue sql.NullFloat64
@@ -767,6 +912,8 @@ func scanOpsAlertEvent(row opsAlertEventRow) (*ops.OpsAlertEvent, error) {
 	); err != nil {
 		return nil, err
 	}
+	// Allocate each valid measurement and resolution scalar separately, preserving
+	// SQL absence as nil while retaining recorded zero values for event display.
 	if metricValue.Valid {
 		v := metricValue.Float64
 		ev.MetricValue = &v
@@ -779,6 +926,9 @@ func scanOpsAlertEvent(row opsAlertEventRow) (*ops.OpsAlertEvent, error) {
 		v := resolvedAt.Time
 		ev.ResolvedAt = &v
 	}
+	// Read optional object dimensions after scalar values. Invalid metadata is
+	// suppressed, keeping the event available for status/cooldown decisions even
+	// when dimensions are absent.
 	if len(dimensionsRaw) > 0 && string(dimensionsRaw) != "null" {
 		var decoded map[string]any
 		if err := json.Unmarshal(dimensionsRaw, &decoded); err == nil {
@@ -788,6 +938,17 @@ func scanOpsAlertEvent(row opsAlertEventRow) (*ops.OpsAlertEvent, error) {
 	return &ev, nil
 }
 
+// buildOpsAlertEventsWhere returns bound predicates and ordered arguments for
+// saved event filters. Nil input yields an unrestricted condition. Nonzero
+// endpoints form a half-open firing-time range; text comparisons use trimmed
+// case-sensitive values and EmailSent preserves either supplied boolean.
+//
+// A cursor adds descending timestamp/ID continuation only when both values are
+// usable, matching ListAlertEvents tie ordering. Platform and positive GroupID
+// compare JSON text extracted from dimensions, with group formatted as decimal
+// text; differently encoded group values can fail that equality. Filters
+// combine conjunctively, and provided enum text is not validated by this
+// builder.
 func buildOpsAlertEventsWhere(filter *ops.OpsAlertEventFilter) (string, []any) {
 	clauses := []string{"1=1"}
 	args := []any{}
@@ -817,7 +978,9 @@ func buildOpsAlertEventsWhere(filter *ops.OpsAlertEventFilter) (string, []any) {
 		clauses = append(clauses, "fired_at < $"+itoa(len(args)))
 	}
 
-	// Cursor pagination (descending by fired_at, then id)
+	// Continue below both cursor components when firing times tie. An incomplete
+	// cursor adds no condition, matching the listing's descending timestamp and ID
+	// order.
 	if filter.BeforeFiredAt != nil && !filter.BeforeFiredAt.IsZero() && filter.BeforeID != nil && *filter.BeforeID > 0 {
 		args = append(args, *filter.BeforeFiredAt)
 		tsArg := "$" + itoa(len(args))
@@ -825,7 +988,9 @@ func buildOpsAlertEventsWhere(filter *ops.OpsAlertEventFilter) (string, []any) {
 		idArg := "$" + itoa(len(args))
 		clauses = append(clauses, fmt.Sprintf("(fired_at < %s OR (fired_at = %s AND id < %s))", tsArg, tsArg, idArg))
 	}
-	// Match dimension fields stored in JSONB.
+	// Compare saved JSON dimensions as extracted text. Decimal group encoding
+	// matches evaluator-built dimensions and avoids inferring current group or
+	// platform membership.
 	if platform := strings.TrimSpace(filter.Platform); platform != "" {
 		args = append(args, platform)
 		clauses = append(clauses, "(dimensions->>'platform') = $"+itoa(len(args)))
@@ -838,6 +1003,9 @@ func buildOpsAlertEventsWhere(filter *ops.OpsAlertEventFilter) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
+// opsNullJSONMap encodes a supplied map as nullable JSON text for PostgreSQL.
+// Nil becomes SQL NULL, present empty maps remain encoded objects, and
+// unsupported JSON values return a marshal error before persistence.
 func opsNullJSONMap(v map[string]any) (any, error) {
 	if v == nil {
 		return sql.NullString{}, nil

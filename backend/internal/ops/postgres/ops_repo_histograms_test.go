@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// TestLatencyHistogramBucketLabels supplies five increasing custom duration
+// cutoffs. It checks the six ordered labels retain their adjacent millisecond
+// ranges and the final open-ended suffix.
 func TestLatencyHistogramBucketLabels(t *testing.T) {
 	labels := latencyHistogramBucketLabels([]int64{1000, 2000, 5000, 10000, 20000})
 	require.Equal(t, []string{
@@ -23,6 +26,10 @@ func TestLatencyHistogramBucketLabels(t *testing.T) {
 	}, labels)
 }
 
+// TestOpsRepositoryGetLatencyHistogram_CustomBoundariesAndZeroBuckets returns
+// sparse SQL bucket counts for five custom cutoffs. It checks placeholder
+// placement, seventeen total requests, six returned buckets, and zero-filled
+// a missing range.
 func TestOpsRepositoryGetLatencyHistogram_CustomBoundariesAndZeroBuckets(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{db: db}

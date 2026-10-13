@@ -2,12 +2,16 @@ package ops
 
 import "testing"
 
+// TestHistoricalIngressRejectReason supplies top-level code responses, nested
+// numeric-code messages, an IP denial, and unrelated failure text. It checks
+// the listed ingress reasons while retaining the user-not-found, quota, and
+// validation-failure examples.
 func TestHistoricalIngressRejectReason(t *testing.T) {
 	tests := []struct {
-		name   string
-		item   HistoricalIngressCandidate
-		reason string
-		match  bool
+		name   string                     // classification case display name
+		item   HistoricalIngressCandidate // saved historical candidate fixture
+		reason string                     // expected matched ingress reason
+		match  bool                       // expected ingress cleanup eligibility
 	}{
 		{name: "standard invalid key", item: HistoricalIngressCandidate{Body: `{"code":"INVALID_API_KEY","message":"Invalid API key"}`}, reason: "invalid_key", match: true},
 		{name: "google missing key", item: HistoricalIngressCandidate{Body: `{"error":{"code":401,"message":"API key is required","status":"UNAUTHENTICATED"}}`}, reason: "missing_key", match: true},

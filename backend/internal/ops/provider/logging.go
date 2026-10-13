@@ -11,8 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Runtime log changes update level, caller reporting, stacktrace threshold, and
+// sampling in the shared logging core. Configuration audit callbacks serialize
+// old and new settings into structured events, while persistence ordering and
+// rollback remain in the Ops service that invokes this adapter.
+
+// LogControl applies Ops log settings and emits structured configuration-change
+// diagnostics.
 type LogControl struct{}
 
+// Apply reconfigures the shared logging core from nonnil Ops runtime settings
+// and returns its reconfiguration error. It normalizes level strings and copies
+// caller/sampling options; retention days and settings persistence are handled
+// by the owning Ops service.
 func (LogControl) Apply(cfg *ops.OpsRuntimeLogConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("nil runtime log config")
@@ -28,7 +39,14 @@ func (LogControl) Apply(cfg *ops.OpsRuntimeLogConfig) error {
 	})
 }
 
+// Changed emits an info-level configuration audit event with operator identity,
+// trimmed action, and serialized old/new settings. Nil settings serialize as
+// null, and delivery follows the current logging configuration and its sink
+// filters.
 func (LogControl) Changed(operatorID int64, oldCfg *ops.OpsRuntimeLogConfig, newCfg *ops.OpsRuntimeLogConfig, action string) {
+	// The serialized audit snapshots include retention and update metadata as well
+	// as the live logger options. Current scalar fields are JSON-supported,
+	// including null for nil settings.
 	oldRaw, _ := json.Marshal(oldCfg)
 	newRaw, _ := json.Marshal(newCfg)
 	logging.With(
@@ -40,7 +58,14 @@ func (LogControl) Changed(operatorID int64, oldCfg *ops.OpsRuntimeLogConfig, new
 	).Info("runtime log config changed")
 }
 
+// Failed emits a warning-level configuration audit event with operator
+// identity, trimmed reason, and serialized old/new settings. Nil settings
+// serialize as null; this diagnostic callback neither returns delivery errors
+// nor changes the settings result.
 func (LogControl) Failed(operatorID int64, oldCfg *ops.OpsRuntimeLogConfig, newCfg *ops.OpsRuntimeLogConfig, reason string) {
+	// The failure event records old and attempted configuration inputs. Their
+	// JSON-supported scalar snapshots describe the attempt, while the service
+	// separately handles application and rollback outcomes.
 	oldRaw, _ := json.Marshal(oldCfg)
 	newRaw, _ := json.Marshal(newCfg)
 	logging.With(

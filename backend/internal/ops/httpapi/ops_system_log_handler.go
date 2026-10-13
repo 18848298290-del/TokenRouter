@@ -13,24 +13,48 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-type opsSystemLogCleanupRequest struct {
-	StartTime string `json:"start_time"`
-	EndTime   string `json:"end_time"`
-	Host      string `json:"host"`
+// System-log administration lists indexed observations and submits filtered
+// deletion requests after monitoring checks. Listing caps pages and validates
+// supplied numeric identity filters, while cleanup additionally requires a positive
+// context subject and validates API-key identity itself; user and provider
+// cleanup IDs are passed to storage's positive-only filter rules. Deletion
+// audit delivery belongs to the service's separate attempt.
 
-	Level           string `json:"level"`
-	Component       string `json:"component"`
-	RequestID       string `json:"request_id"`
-	ClientRequestID string `json:"client_request_id"`
-	UserID          *int64 `json:"user_id"`
-	APIKeyID        *int64 `json:"api_key_id"`
-	ProviderID      *int64 `json:"provider_id"`
-	Platform        string `json:"platform"`
-	Model           string `json:"model"`
-	Query           string `json:"q"`
+// opsSystemLogCleanupRequest carries optional filters for administrator
+// deletion of indexed system logs.
+type opsSystemLogCleanupRequest struct {
+	// StartTime and EndTime independently omit their bounds when blank and
+	// otherwise use the two RFC3339 layouts. The cleanup service checks relative
+	// ordering when both parsed pointers exist.
+	StartTime string `json:"start_time"` // RFC3339
+	EndTime   string `json:"end_time"`   // RFC3339
+	Host      string `json:"host"`       // exact recorded host filter
+
+	Level     string `json:"level"`     // case-folded stored level filter
+	Component string `json:"component"` // exact stored component filter
+	// RequestID is passed to PostgreSQL request lookup after trimming. Exact
+	// stored local IDs suppress external alias matching in that lookup.
+	RequestID       string `json:"request_id"`        // request lookup identifier filter
+	ClientRequestID string `json:"client_request_id"` // exact client correlation filter
+	// UserID, APIKeyID, and ProviderID identify optional stored records. Nil omits
+	// a predicate, and PostgreSQL uses positive values; the HTTP handler
+	// additionally rejects nonpositive APIKeyID.
+	UserID *int64 `json:"user_id"` // optional recorded user identity
+	// APIKeyID is omitted when nil. A supplied nonpositive value is rejected by
+	// the HTTP cleanup handler before service deletion.
+	APIKeyID   *int64 `json:"api_key_id"`  // optional recorded Key identity
+	ProviderID *int64 `json:"provider_id"` // optional recorded provider identity
+	Platform   string `json:"platform"`    // exact stored platform filter
+	Model      string `json:"model"`       // exact stored model filter
+	// Query becomes an ILIKE pattern across message, IDs, and extra JSON text.
+	// PostgreSQL wraps it in percent signs and retains supplied wildcard
+	// characters.
+	Query string `json:"q"` // case-insensitive query pattern
 }
 
-// ListSystemLogs returns indexed system logs.
+// ListSystemLogs returns a paginated indexed-log response after monitoring
+// checks. It parses a one-hour default range, caps size at two hundred, trims
+// text filters, and requires positive supplied user, Key, and provider IDs.
 // GET /api/v1/admin/ops/system-logs
 func (h *OpsHandler) ListSystemLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -43,6 +67,7 @@ func (h *OpsHandler) ListSystemLogs(c *gin.Context) {
 	}
 
 	page, pageSize := response.ParsePagination(c)
+	// Limit indexed-log HTTP pages to the repository's two-hundred-row maximum.
 	if pageSize > 200 {
 		pageSize = 200
 	}
@@ -100,7 +125,11 @@ func (h *OpsHandler) ListSystemLogs(c *gin.Context) {
 	response.Paginated(c, result.Logs, int64(result.Total), result.Page, result.PageSize)
 }
 
-// CleanupSystemLogs deletes indexed system logs by filter.
+// CleanupSystemLogs binds deletion filters after monitoring and positive
+// context-subject checks, then returns the affected-row count. Blank time
+// strings omit bounds, invalid RFC3339 text or nonpositive Key IDs fail
+// locally, and service/storage own effective filtering and separate audit
+// attempts.
 // POST /api/v1/admin/ops/system-logs/cleanup
 func (h *OpsHandler) CleanupSystemLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -132,6 +161,8 @@ func (h *OpsHandler) CleanupSystemLogs(c *gin.Context) {
 		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 			return &t, nil
 		}
+		// Try the second timestamp layout before returning a parse error, keeping
+		// cleanup input consistent with other two-layout Ops parsers.
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			return nil, err
@@ -177,7 +208,9 @@ func (h *OpsHandler) CleanupSystemLogs(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": deleted})
 }
 
-// GetSystemLogIngestionHealth returns sink health metrics.
+// GetSystemLogIngestionHealth returns the bound sink's health after checking
+// monitoring. Missing Ops service state is unavailable; an unbound sink returns
+// zero-valued health through the service accessor.
 // GET /api/v1/admin/ops/system-logs/health
 func (h *OpsHandler) GetSystemLogIngestionHealth(c *gin.Context) {
 	if h.opsService == nil {

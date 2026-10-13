@@ -8,14 +8,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Group percentage and provider predicates use supplied availability
+// observations, including error entries with temporary-unschedulable deadlines.
+// These tests check selected indicator values and missing group identity using
+// immutable fixtures shared by parallel subtests; they do not enter evaluator
+// lifecycle or event persistence.
+
+// The interface assertion checks the dashboard stub's repository method set,
+// including methods promoted from its embedded interface for compilation.
 var _ OpsRepository = (*stubOpsRepo)(nil)
 
+// stubOpsRepo supplies dashboard results while other repository methods remain
+// promoted from its embedded interface.
 type stubOpsRepo struct {
+	// OpsRepository holds promoted methods that these selected metric
+	// fixtures leave nil. Tests keep their calls on the overridden or
+	// independent metric paths.
 	OpsRepository
-	overview *OpsDashboardOverview
-	err      error
+	// overview is returned by reference when present. Consumers share the
+	// fixture pointer and coordinate any mutations while parallel readers
+	// use it.
+	// overview and err select the dashboard response: err takes precedence,
+	// overview is returned when supplied, and absence of both allocates a
+	// new empty result.
+	overview *OpsDashboardOverview // supplied dashboard result
+	err      error                 // forced dashboard read failure
 }
 
+// GetDashboardOverview returns the configured error before inspecting its
+// supplied overview pointer. Context and filter are ignored; a present overview
+// is shared, while an absent overview allocates a new empty value.
 func (s *stubOpsRepo) GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -26,6 +48,9 @@ func (s *stubOpsRepo) GetDashboardOverview(ctx context.Context, filter *OpsDashb
 	return &OpsDashboardOverview{}, nil
 }
 
+// TestComputeGroupAvailableRatio supplies normal, zero-total, and
+// zero-available group counts in parallel cases. It checks eighty percent for
+// eight of ten and zero for the two supplied empty-count cases.
 func TestComputeGroupAvailableRatio(t *testing.T) {
 	t.Parallel()
 
@@ -36,6 +61,7 @@ func TestComputeGroupAvailableRatio(t *testing.T) {
 			TotalProviders: 10,
 			AvailableCount: 8,
 		})
+		// Allow a small absolute tolerance for percentage arithmetic.
 		require.InDelta(t, 80.0, got, 0.0001)
 	})
 
@@ -60,6 +86,9 @@ func TestComputeGroupAvailableRatio(t *testing.T) {
 	})
 }
 
+// TestCountProvidersByCondition supplies rate-limited providers, error
+// providers with a temporary exclusion, and an empty map. Parallel cases check
+// each selected predicate's count against its supplied fixture.
 func TestCountProvidersByCondition(t *testing.T) {
 	t.Parallel()
 
@@ -104,6 +133,10 @@ func TestCountProvidersByCondition(t *testing.T) {
 	})
 }
 
+// TestComputeRuleMetricNewIndicators supplies disk and availability
+// observations to selected direct indicator branches. Parallel cases check
+// returned values and usability, including unavailable group metrics when the
+// group identity is absent.
 func TestComputeRuleMetricNewIndicators(t *testing.T) {
 	t.Parallel()
 
@@ -125,6 +158,9 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 		},
 	}
 
+	// Parallel cases share these availability observations as read-only
+	// data; the injected getter bypasses production provider queries and
+	// returns the same fixture pointer.
 	opsService := &OpsService{
 		getProviderAvailability: func(_ context.Context, _ string, _ *int64) (*OpsProviderAvailability, error) {
 			return availability, nil
@@ -141,12 +177,21 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name       string
-		metricType string
-		system     *OpsSystemMetricsSnapshot
-		groupID    *int64
-		wantValue  float64
-		wantOK     bool
+		name       string // subtest display name
+		metricType string // selected indicator kind
+		// system supplies sample-based indicators and is read by
+		// computeRuleMetric. Parallel cases keep the pointed fixture
+		// values unchanged throughout their evaluation.
+		system *OpsSystemMetricsSnapshot // system sample pointer
+		// groupID is passed unchanged to metric selection. Nil
+		// exercises unavailable group observations; the supplied group
+		// cases use the positive fixture identity.
+		groupID *int64 // optional group selector
+		// wantValue and wantOK describe usable observations together. A
+		// false wantOK ends the case after checking availability, so
+		// its numeric result is not asserted.
+		wantValue float64 // expected usable value
+		wantOK    bool    // expected usable flag
 	}{
 		{
 			name:       "disk_usage_percent",
@@ -214,6 +259,8 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			if !tt.wantOK {
 				return
 			}
+			// Use a small absolute tolerance for returned
+			// measurements.
 			require.InDelta(t, tt.wantValue, gotValue, 0.0001)
 		})
 	}

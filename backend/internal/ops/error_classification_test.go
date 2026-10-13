@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsKnownOpsErrorType supplies recognized type labels and unknown or
+// serialized-nil strings. It checks membership decisions used to keep
+// normalization within the stored error-type vocabulary.
 func TestIsKnownOpsErrorType(t *testing.T) {
 	known := []string{
 		"invalid_request_error",
@@ -29,33 +32,31 @@ func TestIsKnownOpsErrorType(t *testing.T) {
 	}
 }
 
+// TestNormalizeOpsErrorType combines known, unknown, and empty types with
+// funding/subscription codes. It checks code-based defaults and that a
+// recognized type wins when its code suggests another classification.
 func TestNormalizeOpsErrorType(t *testing.T) {
 	tests := []struct {
-		name    string
-		errType string
-		code    string
-		want    string
+		name    string // normalization case display name
+		errType string // supplied observed type label
+		code    string // supplied response classification code
+		want    string // expected stored type label
 	}{
-		// Known types pass through.
 		{"known invalid_request_error", "invalid_request_error", "", "invalid_request_error"},
 		{"known rate_limit_error", "rate_limit_error", "", "rate_limit_error"},
 		{"known upstream_error", "upstream_error", "", "upstream_error"},
 
-		// Unknown/garbage types are rejected and fall through to code-based or default.
 		{"nil literal from upstream", "<nil>", "", "api_error"},
 		{"null string", "null", "", "api_error"},
 		{"random string", "something_weird", "", "api_error"},
 
-		// Unknown type but known code still maps correctly.
 		{"nil with INSUFFICIENT_BALANCE code", "<nil>", "INSUFFICIENT_BALANCE", "billing_error"},
 		{"nil with USAGE_LIMIT_EXCEEDED code", "<nil>", "USAGE_LIMIT_EXCEEDED", "subscription_error"},
 
-		// Empty type falls through to code-based mapping.
 		{"empty type with balance code", "", "INSUFFICIENT_BALANCE", "billing_error"},
 		{"empty type with subscription code", "", "SUBSCRIPTION_NOT_FOUND", "subscription_error"},
 		{"empty type no code", "", "", "api_error"},
 
-		// Known type overrides conflicting code-based mapping.
 		{"known type overrides conflicting code", "rate_limit_error", "INSUFFICIENT_BALANCE", "rate_limit_error"},
 	}
 	for _, tt := range tests {
@@ -66,7 +67,10 @@ func TestNormalizeOpsErrorType(t *testing.T) {
 	}
 }
 
-// TestNativeAccountErrorsKeepTheirClassification checks account wording in user and upstream error messages.
+// TestNativeAccountErrorsKeepTheirClassification passes native account wording
+// to the local recognition helpers. It checks inactive-user text identifies
+// client authentication and insufficient-account-balance text identifies a
+// local business limit.
 func TestNativeAccountErrorsKeepTheirClassification(t *testing.T) {
 	require.True(t, isOpsClientAuthError("", "user account is not active"))
 	require.True(t, isOpsLocalBusinessLimitError("", "insufficient account balance"))

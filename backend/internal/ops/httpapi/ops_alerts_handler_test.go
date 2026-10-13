@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpsAlertRuleValidation supplies the four core rule members and an empty
+// payload to the validator. It checks the accepted name, missing-member
+// rejection, and classification of selected percentage versus queue-count
+// indicators.
 func TestOpsAlertRuleValidation(t *testing.T) {
 	raw := map[string]json.RawMessage{
 		"name":        json.RawMessage(`"High error rate"`),

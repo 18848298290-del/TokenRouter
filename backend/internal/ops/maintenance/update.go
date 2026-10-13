@@ -12,8 +12,9 @@ import (
 // only the selected asset metadata to its installer. Local previous-binary rollback
 // is a separate installer operation that performs no release-candidate lookup.
 
-// Update errors distinguish an already-current installation from a requested version
-// outside the allowed rollback candidate set before any installer work is started.
+// ErrNoUpdateAvailable follows a false update flag, including a remote failure
+// without usable cache. ErrRollbackVersionNotAllowed rejects malformed or
+// unmatched candidate targets before installer work starts.
 var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
@@ -28,9 +29,10 @@ type (
 
 // ReleaseQueries provides current update information and eligible rollback release selection.
 type ReleaseQueries interface {
-	// CheckUpdate returns a nonnil update view on success, including ReleaseInfo
-	// when HasUpdate is true. Force controls initial cache use; the shared query
-	// implementation can still return cached information after a remote fetch failure.
+	// CheckUpdate returns a nonnil comparison view on success. HasUpdate records
+	// version ordering independently of ReleaseInfo presence; the shared query can
+	// accept cached data with absent metadata. Force controls the initial cache
+	// read, and a remote failure can still return a cached view with its warning.
 	CheckUpdate(context.Context, bool) (*ops.UpdateInfo, error)
 	// ListRollbackVersions returns display metadata for the allowed rollback choices.
 	// Selection belongs to the query implementation, keeping the UI's choices and
@@ -79,10 +81,14 @@ func NewUpdateService(query ReleaseQueries, installer Installer) *UpdateService 
 // use the maintenance operation wrapper for admission and its pre-call cancellation check.
 func (s *UpdateService) Rollback() error { return s.installer.Rollback() }
 
-// PerformUpdate requests forced update information and installs its selected
-// release assets when HasUpdate is true. A current installation returns
-// ErrNoUpdateAvailable before installer work; successful query results supply the
-// nonnil view and release metadata required by this call.
+// PerformUpdate requests forced update information and forwards release assets
+// to the installer when HasUpdate is true. It propagates query errors and
+// returns ErrNoUpdateAvailable when that flag is false.
+//
+// Force can still select cached data after a remote fetch failure. This method
+// checks HasUpdate before reading ReleaseInfo.Assets and has no nil metadata
+// guard. A cached view with a true flag and nil ReleaseInfo panics at that
+// dereference before installer Apply runs.
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
@@ -93,6 +99,9 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 		return ErrNoUpdateAvailable
 	}
 
+	// Argument evaluation reads the metadata slice before invoking Apply. A nil
+	// pointer therefore fails here before installer asset validation or error
+	// handling can run.
 	return s.installer.Apply(ctx, info.ReleaseInfo.Assets)
 }
 

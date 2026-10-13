@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// TestOpsRequestTimingFromExtra supplies body length, elapsed stages, counters,
+// and connection flags in several decoded value types. It checks the accepted
+// numeric values and preserves a zero stage as a present measurement.
 func TestOpsRequestTimingFromExtra(t *testing.T) {
 	timing := OpsRequestTimingFromExtra(map[string]any{
 		"request_content_length":          float64(8360000),
@@ -36,6 +39,10 @@ func TestOpsRequestTimingFromExtra(t *testing.T) {
 	}
 }
 
+// TestOpsRequestTimingFromExtraReturnsNilWithoutTimingFields supplies an
+// unrelated message field with no timing observations. It checks the nil result
+// used to represent absent timing evidence rather than an allocated empty
+// timing object.
 func TestOpsRequestTimingFromExtraReturnsNilWithoutTimingFields(t *testing.T) {
 	if got := OpsRequestTimingFromExtra(map[string]any{"message": "http request completed"}); got != nil {
 		t.Fatalf("expected nil timing, got %+v", got)

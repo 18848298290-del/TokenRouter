@@ -14,11 +14,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestOpsRequestIDConditionUsesIndexes checks alias lookups and local ID collisions for both log tables.
+// TestOpsRequestIDConditionUsesIndexes builds analyzed temporary log tables
+// with twenty thousand rows and a client/local-ID collision. It protects
+// exact-local precedence, client-ID lookup, missing results, and absence of
+// sequential scans for the tested fixture plans in both log tables.
 func TestOpsRequestIDConditionUsesIndexes(t *testing.T) {
 	ctx := t.Context()
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Keep the temporary tables and fixture writes inside one transaction.
+	// Deferred rollback removes them after assertions, suppressing cleanup errors
+	// while retaining test failures.
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `
 CREATE TEMP TABLE usage_logs (LIKE public.usage_logs INCLUDING ALL) ON COMMIT DROP;
@@ -40,8 +46,8 @@ ANALYZE ops_system_logs;`)
 	require.NoError(t, err)
 	for _, table := range []string{"ops_error_logs", "ops_system_logs"} {
 		for _, test := range []struct {
-			search string
-			want   string
+			search string // requested correlation lookup text
+			want   string // expected stored request identity
 		}{
 			{"request-1", "request-1"},
 			{"client-3", "request-3"},
@@ -58,6 +64,8 @@ ANALYZE ops_system_logs;`)
 					got = append(got, id)
 				}
 				require.NoError(t, rows.Err())
+				// Close each query cursor before the next EXPLAIN on the same transaction,
+				// so result resources do not remain active during plan inspection.
 				require.NoError(t, rows.Close())
 				if test.want == "" {
 					require.Empty(t, got)
@@ -66,14 +74,19 @@ ANALYZE ops_system_logs;`)
 				}
 				var raw []byte
 				require.NoError(t, tx.QueryRowContext(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+query, 0, test.search).Scan(&raw))
+				// planNode retains the plan operation and relation needed to inspect nested
+				// PostgreSQL scan nodes.
 				type planNode struct {
-					Type     string     `json:"Node Type"`
-					Relation string     `json:"Relation Name"`
-					Plans    []planNode `json:"Plans"`
+					Type     string     `json:"Node Type"`     // PostgreSQL plan operation name
+					Relation string     `json:"Relation Name"` // scanned PostgreSQL relation name
+					Plans    []planNode `json:"Plans"`         // nested child plan operations
 				}
 				var plans []struct {
-					Plan planNode `json:"Plan"`
+					Plan planNode `json:"Plan"` // root PostgreSQL plan node
 				}
+				// Decode EXPLAIN's nested JSON tree and inspect matching log-table nodes,
+				// so the assertion tests their chosen scan operations rather than another
+				// relation's plan.
 				require.NoError(t, json.Unmarshal(raw, &plans))
 				seen := false
 				var inspect func(planNode)
@@ -93,8 +106,15 @@ ANALYZE ops_system_logs;`)
 	}
 }
 
+// TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus stores missing and present
+// saved key prefixes plus a credential failure with upstream zero. It protects
+// returned prefix snapshots and a nonnil zero status through real PostgreSQL
+// reads.
 func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	ctx := context.Background()
+	// Clear the shared error fixture before these round trips. Setup truncation
+	// errors are suppressed, while the subsequent required inserts and reads
+	// determine this test.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE ops_error_logs RESTART IDENTITY CASCADE")
 	repo := NewOpsRepository(integrationDB)
 	var plainID int64
@@ -140,8 +160,14 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	require.Zero(t, *credentialFailure.UpstreamStatusCode)
 }
 
+// TestOpsRepositoryBatchInsertErrorLogs inserts two prepared observations with
+// distinct request IDs and phases. It protects the successful transactional
+// batch count and two stored matching rows in PostgreSQL.
 func TestOpsRepositoryBatchInsertErrorLogs(t *testing.T) {
 	ctx := context.Background()
+	// Reset shared error rows before the batch fixture. Setup truncation errors
+	// are suppressed; assertions count the two distinct request IDs submitted
+	// here.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE ops_error_logs RESTART IDENTITY")
 
 	repo := NewOpsRepository(integrationDB)

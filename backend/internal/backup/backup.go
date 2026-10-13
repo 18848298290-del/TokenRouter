@@ -19,9 +19,10 @@ import (
 )
 
 // An archive's destination is chosen before writing begins, while later reads
-// use its recorded storage type and object keys. Switching between local and S3
-// therefore leaves older records addressable, but remote bucket and credentials
-// still come from current settings. A completed archive and a successfully saved
+// use its recorded storage type and object keys. Changing the active destination
+// leaves older records' kind and keys intact. Remote connection details come
+// from settings and the cached store; records preserve no historical bucket or
+// credentials. A completed archive and a successfully saved
 // completion record are separate outcomes: final metadata failures can leave an
 // already written archive or restored database with stale recorded status.
 //
@@ -72,7 +73,8 @@ var (
 	ErrBackupStorageConfigCorrupt = infraerrors.InternalServer("BACKUP_STORAGE_CONFIG_CORRUPT", "backup storage config data is corrupted")
 	ErrBackupContentConfigCorrupt = infraerrors.InternalServer("BACKUP_CONTENT_CONFIG_CORRUPT", "backup content config data is corrupted")
 	ErrDatabaseMaintenanceBusy    = infraerrors.Conflict("MAINTENANCE_BUSY", "another database maintenance task is running")
-	// ErrSecretEncryptionKeyNotConfigured rejects new S3 secrets when the encryption key changes on restart.
+	// ErrSecretEncryptionKeyNotConfigured rejects newly supplied S3 secrets when
+	// deployment key stability has not been configured.
 	ErrSecretEncryptionKeyNotConfigured = infraerrors.BadRequest(
 		"SECRET_ENCRYPTION_KEY_NOT_CONFIGURED",
 		"cannot store the S3 secret access key: no fixed secret encryption key is configured, so the auto-generated key would change on every restart and make the stored secret undecryptable after a restart or upgrade. Set a fixed TOTP_ENCRYPTION_KEY (e.g. generate one with `openssl rand -hex 32`) and try again",
@@ -336,10 +338,16 @@ type BackupService struct {
 	// started and startDone publish one startup attempt under operationLifecycleMu.
 	// stopOnce selects the stop initiator; stopErr is published before stopDone closes,
 	// and all StopContext callers receive that same completion or timeout result.
-	started             bool          // startup attempt has begun
-	startDone, stopDone chan struct{} // startup completion and shared stop result
-	stopOnce            sync.Once     // shared stop initiation guard
-	stopErr             error         // first stop attempt result
+	started bool // startup attempt has begun
+	// startDone closes after the initial startup warmup returns, including
+	// failure, and wakes duplicate StartContext callers. stopDone closes after the
+	// first stop result is published in stopErr, including timeout while operation
+	// waiting continues.
+	// startDone: initial startup completion notification. stopDone: shared
+	// stop-attempt completion notification.
+	startDone, stopDone chan struct{}
+	stopOnce            sync.Once // shared stop initiation guard
+	stopErr             error     // first stop attempt result
 	// shutdownContext supplies the adopted budget for final saves and compensation.
 	// BeginStopContext replaces an absent or noncancellable context and retains an already cancellable budget.
 	shutdownContext context.Context
@@ -1085,6 +1093,7 @@ func (s *BackupService) newBackupRecord(storageType string, s3Cfg *BackupS3Confi
 	storageKey := s.buildStorageKey(storageType, s3Cfg, fileName)
 
 	var expiresAt string
+	// Calendar-day expiration follows the initial clock sample's location.
 	if expireDays > 0 {
 		expiresAt = now.AddDate(0, 0, expireDays).Format(time.RFC3339)
 	}
@@ -1754,7 +1763,9 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 // getCurrentBackupStore selects the destination for a subsequent archive and
 // returns its kind, store, and applicable S3 settings. Local selection uses the
 // injected store. Remote selection requires present credentials and uses the
-// cached factory-created store.
+// cached factory-created store. Returned S3 settings come from this read; a
+// previously cached store can retain another configuration until invalidation,
+// so its client and the returned placement settings need not describe one load.
 func (s *BackupService) getCurrentBackupStore(ctx context.Context) (string, BackupObjectStore, *BackupS3Config, error) {
 	cfg, err := s.loadStorageConfig(ctx)
 	if err != nil {
@@ -1975,6 +1986,8 @@ func (s *BackupService) saveRecord(ctx context.Context, record *BackupRecord) er
 // invalid timestamps skip age selection. Either rule can select a completed
 // record. Object failures retain its metadata and join diagnostics; successful
 // deletions precede the list write, whose failure can leave stale object references.
+// The day-to-duration product is unchecked; settings accept arbitrary integers,
+// so exceptionally large positive retention can overflow that age comparison.
 func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupScheduleConfig) error {
 	if schedule == nil {
 		return nil

@@ -9,6 +9,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// System metrics distinguish an unavailable observation from an observed zero
+// through nullable scalar encoding. Most integer metrics, floats, and booleans
+// retain zero or false, while disk-size fields use the general integer encoder
+// that omits zero. Metric insertion is an ordinary INSERT, and the repository
+// schema's minute/window indexes do not make repeated rows unique.
+//
+// Heartbeat updates combine optional observations under a job-name conflict.
+// Missing run, success, and duration fields retain prior values; a supplied
+// nonzero success time clears previous error metadata. Conflict updates
+// preserve the last successful result during failures, although a first insert
+// can store a result with no success timestamp. These records are written
+// separately from metric rows, and neither method couples their outcomes in a
+// transaction. Latest system reads select a global window row by time without
+// an age limit or row-ID tie breaker.
+
+// InsertSystemMetrics writes one supplied metrics row, defaulting nonpositive
+// window to one minute and a zero CreatedAt to current UTC time. Store, pool,
+// and input are required; a supplied timestamp is forwarded unchanged.
+//
+// Nullable metric encoders preserve explicit zero, including pool and queue
+// counts, and false health values. Disk-size inputs instead use opsNullInt,
+// which maps zero to SQL NULL; group identity also omits zero. The plain insert
+// has no conflict handler or per-minute deduplication, and job-heartbeat
+// persistence is a separate caller operation. Values receive no range or
+// finite-number validation in this method.
 func (r *Store) InsertSystemMetrics(ctx context.Context, input *ops.OpsInsertSystemMetricsInput) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -95,6 +120,9 @@ INSERT INTO ops_system_metrics (
   $42,$43
 )`
 
+	// Insert each accepted input as its own row; the SQL has no conflict clause,
+	// and OpsMetricsCollector records its heartbeat outcome independently
+	// afterward.
 	_, err := r.db.ExecContext(
 		ctx,
 		q,
@@ -135,6 +163,8 @@ INSERT INTO ops_system_metrics (
 		opsNullMetricInt64(input.MemoryUsedMB),
 		opsNullMetricInt64(input.MemoryTotalMB),
 		opsNullFloat64(input.MemoryUsagePercent),
+		// Disk size uses the general integer encoder, so a supplied zero becomes SQL
+		// NULL despite other metric encoders retaining their observed zeros.
 		opsNullInt(input.DiskUsedMB),
 		opsNullInt(input.DiskTotalMB),
 		opsNullFloat64(input.DiskUsagePercent),
@@ -145,7 +175,9 @@ INSERT INTO ops_system_metrics (
 		opsNullMetricInt(input.RedisConnTotal),
 		opsNullMetricInt(input.RedisConnIdle),
 
-		// Zero means no pool connections and must remain distinct from a missing measurement.
+		// Keep valid pool zeros present through the dedicated pointer encoder; the
+		// general integer helper would turn those observations into unavailable
+		// values.
 		opsNullableIntPointer(input.DBConnActive),
 		opsNullableIntPointer(input.DBConnIdle),
 		opsNullableIntPointer(input.DBConnWaiting),
@@ -156,6 +188,16 @@ INSERT INTO ops_system_metrics (
 	return err
 }
 
+// GetLatestSystemMetrics reads the newest global row for a supplied window
+// size, defaulting nonpositive size to one. Only SQL-null platform and group
+// dimensions qualify; there is no freshness cutoff or deterministic row-ID tie
+// breaker for equal created_at values.
+//
+// No matching row returns the database error. SQL-null observations remain nil,
+// while valid zero and false values become newly allocated scalar pointers.
+// Integer connection, goroutine, and queue values narrow to native int without
+// range validation; memory/disk sizes and switch counts retain int64. The
+// response uses its stored timestamp and does not merge fields from older rows.
 func (r *Store) GetLatestSystemMetrics(ctx context.Context, windowMinutes int) (*ops.OpsSystemMetricsSnapshot, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -242,6 +284,8 @@ LIMIT 1`
 		return nil, err
 	}
 
+	// Restore valid nullable observations with new scalar pointers so a measured
+	// zero or false survives readback while SQL absence remains nil.
 	if cpu.Valid {
 		v := cpu.Float64
 		out.CPUUsagePercent = &v
@@ -278,6 +322,8 @@ LIMIT 1`
 		v := redisOK.Bool
 		out.RedisOK = &v
 	}
+	// Narrow available connection/runtime counts to native int without a bounds
+	// check; other int64 size fields above retain their database width.
 	if redisTotal.Valid {
 		v := int(redisTotal.Int64)
 		out.RedisConnTotal = &v
@@ -314,6 +360,17 @@ LIMIT 1`
 	return &out, nil
 }
 
+// UpsertJobHeartbeat records optional job observations using exact nonempty
+// JobName as its conflict identity. Whitespace-only names are accepted here.
+// Nil or zero times and blank strings become SQL NULL; a zero duration also
+// becomes NULL through the general integer encoder.
+//
+// On conflict, absent run/success/duration values retain prior observations. A
+// nonnull success timestamp clears both error fields and can replace LastResult
+// when supplied; a failure retains the stored successful result. A first insert
+// stores provided result/error fields directly, so it can differ from
+// conflict-update behavior. Timestamps are not compared for monotonic
+// advancement, and this write is independent of the job's data changes.
 func (r *Store) UpsertJobHeartbeat(ctx context.Context, input *ops.OpsUpsertJobHeartbeatInput) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil ops repository")
@@ -325,6 +382,9 @@ func (r *Store) UpsertJobHeartbeat(ctx context.Context, input *ops.OpsUpsertJobH
 		return fmt.Errorf("job_name required")
 	}
 
+	// Apply optional fields through job-name conflict rules: success clears
+	// errors, missing values retain prior observations, and failure preserves the
+	// stored successful result.
 	q := `
 INSERT INTO ops_job_heartbeats (
   job_name,
@@ -370,6 +430,9 @@ ON CONFLICT (job_name) DO UPDATE SET
 	return err
 }
 
+// ListJobHeartbeats returns job-name-ordered stored observations with SQL
+// absence kept as nil pointers. Query, scan, and cursor errors reject the
+// result; newly allocated rows remain usable after the cursor closes.
 func (r *Store) ListJobHeartbeats(ctx context.Context) ([]*ops.OpsJobHeartbeat, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -392,6 +455,8 @@ ORDER BY job_name ASC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the heartbeat cursor after scanning or early error; close failures are
+	// suppressed while scan and iteration errors still reject the returned list.
 	defer func() { _ = rows.Close() }()
 
 	out := make([]*ops.OpsJobHeartbeat, 0, 8)
@@ -451,6 +516,9 @@ ORDER BY job_name ASC`
 	return out, nil
 }
 
+// opsNullBool returns SQL NULL for nil and a valid nullable boolean otherwise.
+// Explicit false stays present, letting health writes distinguish a failed
+// check from an unavailable check.
 func opsNullBool(v *bool) any {
 	if v == nil {
 		return sql.NullBool{}
@@ -458,6 +526,9 @@ func opsNullBool(v *bool) any {
 	return sql.NullBool{Bool: *v, Valid: true}
 }
 
+// opsNullFloat64 returns SQL NULL for nil and copies a supplied float into a
+// valid nullable value. Zero remains present, and no finite or range validation
+// is performed here.
 func opsNullFloat64(v *float64) any {
 	if v == nil {
 		return sql.NullFloat64{}
@@ -465,6 +536,9 @@ func opsNullFloat64(v *float64) any {
 	return sql.NullFloat64{Float64: *v, Valid: true}
 }
 
+// opsNullMetricInt returns SQL NULL for nil and converts a present native int
+// to valid int64 storage. Zero and negative values remain present; this encoder
+// performs no metric-value validation.
 func opsNullMetricInt(v *int) any {
 	if v == nil {
 		return sql.NullInt64{}
@@ -472,6 +546,9 @@ func opsNullMetricInt(v *int) any {
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
 }
 
+// opsNullMetricInt64 returns SQL NULL for nil and a valid copied int64
+// otherwise. Explicit zero is retained, allowing empty memory/count
+// observations to remain distinct from missing measurements.
 func opsNullMetricInt64(v *int64) any {
 	if v == nil {
 		return sql.NullInt64{}
@@ -479,6 +556,9 @@ func opsNullMetricInt64(v *int64) any {
 	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
+// opsNullTime returns SQL NULL for nil or a zero Time and otherwise copies the
+// supplied timestamp into a valid nullable value. Its location and instant are
+// retained without UTC normalization.
 func opsNullTime(v *time.Time) any {
 	if v == nil || v.IsZero() {
 		return sql.NullTime{}

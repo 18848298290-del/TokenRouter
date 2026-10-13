@@ -120,7 +120,9 @@ func (s *AuditLogService) Stop() { _ = s.StopContext(context.Background()) }
 // completion or the caller's context. A nil service completes immediately.
 //
 // One caller initiates shutdown under the lifecycle lock; later calls wait on the
-// same completion channel. Accepted records remain available to a started writer's
+// same completion channel. Synchronous shutdown setup and lifecycle-lock
+// acquisition occur before the context wait and do not observe its deadline.
+// Accepted records remain available to a started writer's
 // final drain. If ctx expires, its error describes an incomplete wait, while the
 // drain and completion notification continue independently for subsequent callers.
 func (s *AuditLogService) StopContext(ctx context.Context) error {
@@ -187,7 +189,7 @@ func (s *AuditLogService) List(ctx context.Context, filter *AuditLogFilter) (*Au
 	return s.repo.List(ctx, filter)
 }
 
-// GetByID returns one stored audit record including its redacted request body.
+// GetByID returns one stored audit record including its stored request body.
 // The repository returns ErrAuditLogNotFound for a missing identifier and propagates
 // query failures for the caller's HTTP error handling.
 func (s *AuditLogService) GetByID(ctx context.Context, id int64) (*AuditLog, error) {

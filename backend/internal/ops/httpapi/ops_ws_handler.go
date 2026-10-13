@@ -20,66 +20,134 @@ import (
 	servermiddleware "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// Ops WebSockets send the shared runtime's cached traffic payload and use a
+// reader to process control frames while discarding inbound application
+// messages. Environment-loaded policy trusts forwarded host and client
+// addresses only when the direct peer matches configured prefixes. A present
+// Origin is compared by hostname alone; strict mode additionally rejects a
+// missing Origin, while permissive mode accepts it.
+//
+// Runtime preparation precedes connection admission, and positive limits
+// reserve global and optional per-address counts around upgrade and socket
+// handling. Environment integers are narrowed without an int32 range check, so
+// their sign can change before admission reads them. The socket loop serializes
+// data, ping, and close writes, cancels on reader failure, and closes the
+// connection before joining its reader. Upgrade receives an explicit
+// timing-header map; Gorilla constructs its 101 response from that map rather
+// than the response writer's ordinary Header map.
+
+// These environment names, origin modes, admission defaults, and frame budgets
+// configure the Ops WebSocket handshake and ongoing socket loop.
 const (
-	envOpsWSTrustProxy     = "OPS_WS_TRUST_PROXY"
-	envOpsWSTrustedProxies = "OPS_WS_TRUSTED_PROXIES"
-	envOpsWSOriginPolicy   = "OPS_WS_ORIGIN_POLICY"
-	envOpsWSMaxConns       = "OPS_WS_MAX_CONNS"
-	envOpsWSMaxConnsPerIP  = "OPS_WS_MAX_CONNS_PER_IP"
+	envOpsWSTrustProxy     = "OPS_WS_TRUST_PROXY"      // forwarded-header trust switch name
+	envOpsWSTrustedProxies = "OPS_WS_TRUSTED_PROXIES"  // direct-peer prefix list name
+	envOpsWSOriginPolicy   = "OPS_WS_ORIGIN_POLICY"    // missing-Origin policy setting name
+	envOpsWSMaxConns       = "OPS_WS_MAX_CONNS"        // global admission limit setting name
+	envOpsWSMaxConnsPerIP  = "OPS_WS_MAX_CONNS_PER_IP" // per-address limit setting name
 
-	OriginPolicyStrict     = "strict"
-	OriginPolicyPermissive = "permissive"
+	OriginPolicyStrict     = "strict"     // reject a missing Origin
+	OriginPolicyPermissive = "permissive" // accept a missing Origin
 
-	qpsWSPushInterval = 2 * time.Second
+	qpsWSPushInterval = 2 * time.Second // cached payload push ticker interval
 
-	defaultMaxWSConns      = 100
-	defaultMaxWSConnsPerIP = 20
+	defaultMaxWSConns      = 100 // default global admission count
+	defaultMaxWSConnsPerIP = 20  // default per-address admission count
 
-	opsWSCloseRealtimeDisabled = 4001
+	opsWSCloseRealtimeDisabled = 4001 // realtime-disabled application close code
 
-	qpsWSWriteTimeout = 10 * time.Second
-	qpsWSPongWait     = 60 * time.Second
-	qpsWSPingInterval = 30 * time.Second
+	qpsWSWriteTimeout = 10 * time.Second // individual write deadline interval
+	qpsWSPongWait     = 60 * time.Second // read deadline renewed by pong
+	qpsWSPingInterval = 30 * time.Second // heartbeat ping ticker interval
 
-	// We don't expect clients to send application messages; we only read to process control frames (Pong/Close).
+	// qpsWSMaxReadBytes bounds inbound application messages even though the reader
+	// discards their contents while processing control frames.
 	qpsWSMaxReadBytes = 1024
 )
 
+// These process-wide handshake policies are loaded during package
+// initialization; callers leave their shared configuration unchanged while
+// requests are served.
 var (
+	// opsWSProxyConfig holds the startup peer-trust prefixes and missing-Origin
+	// policy used by both handshake and address helpers.
 	opsWSProxyConfig = loadOpsWSProxyConfigFromEnv()
 
+	// upgrader applies this adapter's Origin decision and negotiates supported
+	// administrator branding through Gorilla's handshake implementation.
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return isAllowedOpsWSOrigin(r)
 		},
-		// Prefer tokenrouter-admin while accepting sub2api-admin for compatibility. JWT authenticates the request.
+		// Negotiate current branding before the legacy name when both are offered.
+		// JWT tokens are separate inputs to route authentication and are not selected
+		// as this response subprotocol.
 		Subprotocols: []string{"tokenrouter-admin", "sub2api-admin"},
 	}
 
+	// opsWSLimits retains startup integer limits; the runtime interprets these
+	// values when each enabled WebSocket request attempts admission.
 	opsWSLimits = loadOpsWSRuntimeLimitsFromEnv()
 )
 
+// OpsWSProxyConfig describes trusted direct peers and missing-Origin handling
+// for administrator sockets.
 type OpsWSProxyConfig struct {
-	TrustProxy     bool
-	TrustedProxies []netip.Prefix
-	OriginPolicy   string
+	// TrustProxy and TrustedProxies jointly permit forwarded headers only for a
+	// valid direct peer inside a prefix. A disabled switch or empty prefix list
+	// selects the direct request values.
+	TrustProxy bool // forwarded-header trust enable flag
+	// TrustedProxies is retained as a shared prefix slice. The parser masks CIDRs
+	// and unmaps single addresses; request peers are unmapped before membership
+	// testing.
+	TrustedProxies []netip.Prefix // trusted direct-peer network prefixes
+	// OriginPolicy affects a blank Origin: strict rejects it, while permissive,
+	// blank, or unknown values allow it. Present origins use hostname comparison
+	// under every mode.
+	OriginPolicy string // missing-Origin policy mode
 }
 
+// opsWSRuntimeLimits carries narrowed connection ceilings consumed by realtime
+// runtime admission.
 type opsWSRuntimeLimits struct {
-	MaxConns      int32
-	MaxConnsPerIP int32
+	// MaxConns is narrowed to int32 after native-integer parsing. Positive values
+	// reserve a global slot; nonpositive runtime values bypass that reservation
+	// while the handler still calls ReleaseTotal.
+	MaxConns int32 // global admission count limit
+	// MaxConnsPerIP enables per-address admission only when positive and client IP
+	// is known. Zero or a negative narrowed value skips that admission path.
+	MaxConnsPerIP int32 // per-address admission count limit
 }
 
+// closeWS attempts a formatted close control frame under the write deadline,
+// then closes the socket. A nil connection is ignored, and frame-write or close
+// errors are discarded because callers are ending this connection.
 func closeWS(conn *websocket.Conn, code int, reason string) {
 	if conn == nil {
 		return
 	}
+	// Attempt the close control write before releasing the socket, ignoring either
+	// failure because this path finishes the disabled connection.
 	msg := websocket.FormatCloseMessage(code, reason)
 	_ = conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(qpsWSWriteTimeout))
 	_ = conn.Close()
 }
 
-// QPSWSHandler handles realtime QPS push via WebSocket.
+// QPSWSHandler admits an enabled realtime socket and serves the shared cached
+// traffic payload. It requires a usable Gin request before checking a nil
+// handler or service. Route middleware supplies administrator authentication.
+//
+// Disabled realtime attempts an upgrade followed by application close 4001.
+// Gorilla can already write a handshake error before that failure branch
+// attempts its JSON 404 response. Enabled requests prepare the runtime before
+// reserving counts, so a refused admission can still start or keep its sampler
+// active.
+//
+// Positive global and known-address limits are reserved before upgrade and
+// released by deferred handler cleanup after socket handling returns.
+// Nonpositive global limits bypass reservation although ReleaseTotal still
+// runs. The explicit upgrade headers contain available Server-Timing only;
+// ordinary writer Header mutations during Hijack do not add other headers to
+// Gorilla's 101 serialization.
 // GET /api/v1/admin/ops/ws/qps
 func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 	clientIP := requestClientIP(c.Request)
@@ -89,8 +157,9 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 		return
 	}
 
-	// If realtime monitoring is disabled, prefer a successful WS upgrade followed by a clean close
-	// with a deterministic close code. This prevents clients from spinning on 404/1006 reconnect loops.
+	// Attempt the disabled-state close through an upgraded socket so clients can
+	// receive the application code; failed upgrades may already have committed
+	// Gorilla's error response.
 	if !h.opsService.IsRealtimeMonitoringEnabled(c.Request.Context()) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, servermiddleware.ServerTimingResponseHeader(c))
 		if err != nil {
@@ -102,11 +171,13 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 	}
 
 	rt := h.opsService.Realtime()
-	// Prepare the shared refresh runtime on demand when a WebSocket request arrives.
-
+	// Prepare starts sampling before admission and cancels pending idle stopping.
+	// A later admission refusal does not undo this preparation here.
 	rt.Prepare(h.opsService)
 
-	// Reserve a global slot before upgrading the connection to keep the limit strict.
+	// For positive ceilings, reserve before upgrade so connecting requests consume
+	// capacity; deferred release covers upgrade failure and the completed socket
+	// loop.
 	if !rt.AcquireTotal(opsWSLimits.MaxConns) {
 		logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] connection limit reached: %d/%d", rt.Total(), opsWSLimits.MaxConns)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "too many connections"})
@@ -116,6 +187,8 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 		rt.ReleaseTotal()
 	}()
 
+	// Reserve the known address after global admission; refusal exits through the
+	// already registered global release, while absent address skips this limit.
 	if opsWSLimits.MaxConnsPerIP > 0 && clientIP != "" {
 		if !rt.AcquireIP(clientIP, opsWSLimits.MaxConnsPerIP) {
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] per-ip connection limit reached: ip=%s limit=%d", clientIP, opsWSLimits.MaxConnsPerIP)
@@ -125,12 +198,17 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 		defer rt.ReleaseIP(clientIP)
 	}
 
+	// Pass the explicit timing-header map to Gorilla, which constructs 101 after
+	// Hijack from these supplied headers rather than the writer's ordinary header
+	// map.
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, servermiddleware.ServerTimingResponseHeader(c))
 	if err != nil {
 		logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] upgrade failed: %v", err)
 		return
 	}
 
+	// Close the upgraded connection again on handler exit as final cleanup;
+	// handleQPSWebSocket has already joined its own reader before returning.
 	defer func() {
 		_ = conn.Close()
 	}()
@@ -138,14 +216,29 @@ func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
 	handleQPSWebSocket(c.Request.Context(), conn, rt)
 }
 
+// handleQPSWebSocket pushes cached payloads and pings while one reader handles
+// control frames and discards inbound data. A nil connection is ignored;
+// otherwise parentCtx and the realtime runtime are required.
+//
+// Pongs extend the read deadline, and a peer close queues a best-effort echo
+// before canceling the loop. The main loop serializes text, ping, and close
+// writes with a new deadline for each. Reader errors cancel it, and selected
+// write failures cancel and close immediately. Cleanup closes the socket before
+// joining the reader. Context cancellation can race with the close-frame queue,
+// so the available peer frame is used when observed and otherwise a
+// normal-close frame is attempted.
 func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops.RealtimeRuntime) {
 	if conn == nil {
 		return
 	}
 
+	// Use one cancellation lifetime for the reader and writer loop, then close the
+	// connection before waiting so a blocked read can finish.
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
+	// Combine selected shutdown paths through one socket close; reader completion
+	// remains a separate join after closing and any final-frame attempt.
 	var closeOnce sync.Once
 	closeConn := func() {
 		closeOnce.Do(func() {
@@ -156,17 +249,26 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 	closeFrameCh := make(chan []byte, 1)
 
 	var wg sync.WaitGroup
+	// Keep control-frame processing in one reader goroutine; its deferred
+	// cancellation notifies the writer loop when reads or deadline setup fail.
 	wg.Go(func() {
 		defer cancel()
 
+		// Bound inbound application messages while discarding their content;
+		// continued reads are still needed for Gorilla to dispatch ping, pong, and
+		// close controls.
 		conn.SetReadLimit(qpsWSMaxReadBytes)
 		if err := conn.SetReadDeadline(time.Now().Add(qpsWSPongWait)); err != nil {
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] set read deadline failed: %v", err)
 			return
 		}
+		// Extend read readiness after a pong so a responding peer can remain
+		// connected across the periodic heartbeat intervals.
 		conn.SetPongHandler(func(string) error {
 			return conn.SetReadDeadline(time.Now().Add(qpsWSPongWait))
 		})
+		// Queue a peer close frame without blocking the reader, then cancel; the main
+		// writer can echo an available frame through its serialized write path.
 		conn.SetCloseHandler(func(code int, text string) error {
 			select {
 			case closeFrameCh <- websocket.FormatCloseMessage(code, text):
@@ -179,6 +281,8 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
+				// Suppress diagnostics for expected closure codes while ending the reader
+				// for every read error; its deferred cancellation still wakes the writer.
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
 					logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] read failed: %v", err)
 				}
@@ -187,14 +291,18 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 		}
 	})
 
-	// Push the payload cached by the shared realtime runtime every two seconds.
+	// Read the shared cached payload on push ticks; the socket does not run its
+	// own SQL refresh or wait for a missing payload.
 	pushTicker := time.NewTicker(qpsWSPushInterval)
 	defer pushTicker.Stop()
 
-	// Heartbeat ping every 30 seconds.
+	// Schedule ping controls independently of payload availability so a responding
+	// peer can renew its pong-driven read deadline even while the cache is empty.
 	pingTicker := time.NewTicker(qpsWSPingInterval)
 	defer pingTicker.Stop()
 
+	// Serialize application writes in this loop and set a new deadline for each;
+	// Gorilla permits its reader's control writes concurrently.
 	writeWithTimeout := func(messageType int, data []byte) error {
 		if err := conn.SetWriteDeadline(time.Now().Add(qpsWSWriteTimeout)); err != nil {
 			return err
@@ -202,6 +310,8 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 		return conn.WriteMessage(messageType, data)
 	}
 
+	// Use a normal close when no peer frame is available, and ignore the
+	// close-write error because socket closure and reader joining follow.
 	sendClose := func(closeFrame []byte) {
 		if closeFrame == nil {
 			closeFrame = websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
@@ -218,6 +328,8 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 			}
 			if err := writeWithTimeout(websocket.TextMessage, msg); err != nil {
 				logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] write failed: %v", err)
+				// Cancel, close, and join after a payload-write failure so this handler
+				// cannot release admission counts while its reader still runs.
 				cancel()
 				closeConn()
 				wg.Wait()
@@ -225,6 +337,8 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 			}
 
 		case <-pingTicker.C:
+			// A ping failure follows the same cancellation, socket-close, and
+			// reader-join sequence as a failed payload write.
 			if err := writeWithTimeout(websocket.PingMessage, nil); err != nil {
 				logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] ping failed: %v", err)
 				cancel()
@@ -233,12 +347,16 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 				return
 			}
 
+		// Echo the queued peer frame before closing and joining the reader; the
+		// single writer owns the final application write.
 		case closeFrame := <-closeFrameCh:
 			sendClose(closeFrame)
 			closeConn()
 			wg.Wait()
 			return
 
+		// On cancellation, consume a peer frame only when already available, then
+		// attempt closure and join; racing signals can select the normal close.
 		case <-ctx.Done():
 			var closeFrame []byte
 			select {
@@ -254,6 +372,16 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn, rt *ops
 	}
 }
 
+// isAllowedOpsWSOrigin compares a supplied Origin hostname with the effective
+// request hostname. A nil request is rejected. Missing Origin uses
+// strict-versus-permissive policy, and direct assignments of unknown modes
+// allow that missing header.
+//
+// A trusted direct peer can replace request Host with the nonblank first
+// X-Forwarded-Host component. Both hostnames are case-folded, while scheme and
+// port are excluded from this comparison. The helper parses Origin as a URL but
+// imposes no scheme or userinfo check. An empty effective hostname rejects the
+// request, and hostWithoutPort supplies its separate textual fallback rules.
 func isAllowedOpsWSOrigin(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -277,6 +405,8 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 
 	trustProxyHeaders := shouldTrustOpsWSProxyHeaders(r)
 	reqHost := hostWithoutPort(r.Host)
+	// A matching direct-peer policy permits the first forwarded host to override
+	// Host; absent or blank first components keep the direct request host.
 	if trustProxyHeaders {
 		xfHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
 		if xfHost != "" {
@@ -293,6 +423,9 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 	return originHost == reqHost
 }
 
+// shouldTrustOpsWSProxyHeaders requires the trust switch and a valid direct
+// peer inside the configured prefix slice. Nil requests, malformed peers,
+// disabled trust, or no matching prefix reject forwarded-header use.
 func shouldTrustOpsWSProxyHeaders(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -307,11 +440,16 @@ func shouldTrustOpsWSProxyHeaders(r *http.Request) bool {
 	return isAddrInTrustedProxies(peerIP, opsWSProxyConfig.TrustedProxies)
 }
 
+// requestPeerIP parses RemoteAddr as host:port and otherwise retries it as a
+// bracket-trimmed address. Nil requests or invalid address text return false;
+// successful IPv4-mapped values are unmapped before trust evaluation.
 func requestPeerIP(r *http.Request) (netip.Addr, bool) {
 	if r == nil {
 		return netip.Addr{}, false
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	// Retry RemoteAddr as an address literal when host:port parsing fails,
+	// allowing bracketed or plain peer addresses from compatible request fixtures.
 	if err != nil {
 		host = strings.TrimSpace(r.RemoteAddr)
 	}
@@ -327,6 +465,15 @@ func requestPeerIP(r *http.Request) (netip.Addr, bool) {
 	return addr.Unmap(), true
 }
 
+// requestClientIP returns the first forwarded address component when valid and
+// the direct peer is trusted, otherwise its parsed direct address. A nil
+// request or unparseable direct address returns empty text.
+//
+// Trust is determined from RemoteAddr before X-Forwarded-For is considered.
+// Only its first component is tried, with surrounding brackets removed and
+// mapped IPv4 unmapped. An invalid first component returns to the direct-peer
+// path; later components are not searched. QPSWSHandler skips per-address
+// admission when this result is empty.
 func requestClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -336,7 +483,9 @@ func requestClientIP(r *http.Request) string {
 	if trustProxyHeaders {
 		xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
 		if xff != "" {
-			// Use the left-most entry (original client). If multiple proxies add values, they are comma-separated.
+			// Try the first forwarded component under the direct-peer trust decision.
+			// Invalid first text falls back to the peer instead of scanning later
+			// components.
 			xff = strings.TrimSpace(strings.Split(xff, ",")[0])
 			xff = strings.TrimPrefix(xff, "[")
 			xff = strings.TrimSuffix(xff, "]")
@@ -352,6 +501,9 @@ func requestClientIP(r *http.Request) string {
 	return ""
 }
 
+// isAddrInTrustedProxies reports membership of a valid address in any supplied
+// prefix. Invalid addresses or no matching prefixes return false; this helper
+// performs no mapped-address or prefix-family normalization itself.
 func isAddrInTrustedProxies(addr netip.Addr, trusted []netip.Prefix) bool {
 	if !addr.IsValid() {
 		return false
@@ -364,6 +516,17 @@ func isAddrInTrustedProxies(addr netip.Addr, trusted []netip.Prefix) bool {
 	return false
 }
 
+// loadOpsWSProxyConfigFromEnv reads startup trust and missing-Origin policy
+// with loopback prefixes, enabled trust, and permissive defaults. Blank values
+// leave those defaults in place.
+//
+// A supplied nonblank prefix list replaces the default even when every entry is
+// invalid, so an all-invalid list disables forwarded-header trust through empty
+// membership. Invalid boolean and policy values log diagnostics and retain
+// defaults. CIDR and single-address parsing follows parseTrustedProxyList,
+// whose mapped-address handling differs between those forms. Environment
+// changes after the global initializer do not refresh that stored configuration
+// automatically.
 func loadOpsWSProxyConfigFromEnv() OpsWSProxyConfig {
 	cfg := OpsWSProxyConfig{
 		TrustProxy:     true,
@@ -375,10 +538,14 @@ func loadOpsWSProxyConfigFromEnv() OpsWSProxyConfig {
 		if parsed, err := strconv.ParseBool(v); err == nil {
 			cfg.TrustProxy = parsed
 		} else {
+			// A malformed trust switch retains the enabled default, so prefix membership
+			// still controls whether forwarded fields are accepted.
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] invalid %s=%q (expected bool); using default=%v", envOpsWSTrustProxy, v, cfg.TrustProxy)
 		}
 	}
 
+	// Replace loopback defaults only for a nonblank list; an all-invalid supplied
+	// list remains empty and cannot trust any direct peer.
 	if raw := strings.TrimSpace(os.Getenv(envOpsWSTrustedProxies)); raw != "" {
 		prefixes, invalid := parseTrustedProxyList(raw)
 		if len(invalid) > 0 {
@@ -392,6 +559,8 @@ func loadOpsWSProxyConfigFromEnv() OpsWSProxyConfig {
 		switch normalized {
 		case OriginPolicyStrict, OriginPolicyPermissive:
 			cfg.OriginPolicy = normalized
+		// An unsupported nonblank policy retains the permissive default and emits a
+		// diagnostic rather than installing another missing-Origin rule.
 		default:
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] invalid %s=%q (expected %q or %q); using default=%q", envOpsWSOriginPolicy, v, OriginPolicyStrict, OriginPolicyPermissive, cfg.OriginPolicy)
 		}
@@ -400,6 +569,17 @@ func loadOpsWSProxyConfigFromEnv() OpsWSProxyConfig {
 	return cfg
 }
 
+// loadOpsWSRuntimeLimitsFromEnv reads default global 100 and per-address 20
+// ceilings, requiring a positive global native integer and a nonnegative
+// per-address integer. Blank or invalid values retain defaults with diagnostics
+// for invalid input.
+//
+// Accepted native integers are cast directly to int32 without range validation.
+// On a wider-int platform, large accepted values can wrap to zero or negative
+// values, changing the runtime's admission decision. Zero per-address value
+// deliberately disables that path. Global nonpositive runtime values also
+// bypass reservation, while the handler's deferred global release still
+// decrements its counter.
 func loadOpsWSRuntimeLimitsFromEnv() opsWSRuntimeLimits {
 	cfg := opsWSRuntimeLimits{
 		MaxConns:      defaultMaxWSConns,
@@ -408,26 +588,46 @@ func loadOpsWSRuntimeLimitsFromEnv() opsWSRuntimeLimits {
 
 	if v := strings.TrimSpace(os.Getenv(envOpsWSMaxConns)); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			// Narrow after native parsing without an int32 bounds check; a wrapped
+			// nonpositive ceiling changes AcquireTotal into its bypass path.
 			cfg.MaxConns = int32(parsed)
 		} else {
+			// Reject malformed or nonpositive global text and keep the default admission
+			// ceiling; only successfully parsed native integers reach narrowing.
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] invalid %s=%q (expected int>0); using default=%d", envOpsWSMaxConns, v, cfg.MaxConns)
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv(envOpsWSMaxConnsPerIP)); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			// The accepted zero disables address limiting, and wider positive native
+			// values can also narrow to a nonpositive disabled value.
 			cfg.MaxConnsPerIP = int32(parsed)
 		} else {
+			// Keep the per-address default for malformed or negative input; the prior
+			// accepted branch separately permits zero as a disabled limit.
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] invalid %s=%q (expected int>=0); using default=%d", envOpsWSMaxConnsPerIP, v, cfg.MaxConnsPerIP)
 		}
 	}
 	return cfg
 }
 
+// defaultTrustedProxies returns newly parsed IPv4-loopback and IPv6-loopback
+// network prefixes.
 func defaultTrustedProxies() []netip.Prefix {
 	prefixes, _ := parseTrustedProxyList("127.0.0.0/8,::1/128")
 	return prefixes
 }
 
+// parseTrustedProxyList returns accepted masked prefixes and trimmed rejected
+// tokens from a comma-separated list. Blank tokens are omitted, duplicate
+// entries remain, and a list with no valid entries returns no prefixes.
+//
+// CIDR input is parsed with its supplied address family and masked; single
+// addresses are unmapped first and converted to full-width prefixes. Thus an
+// IPv4-mapped single address becomes IPv4, while a mapped CIDR retains its
+// parsed family. Callers comparing unmapped peers account for this distinction.
+// Invalid address or prefix syntax is returned for diagnostics instead of
+// producing a matching prefix.
 func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []string) {
 	for token := range strings.SplitSeq(raw, ",") {
 		item := strings.TrimSpace(token)
@@ -446,6 +646,8 @@ func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []strin
 			addr, err = netip.ParseAddr(item)
 			if err == nil {
 				addr = addr.Unmap()
+				// Represent an unmapped literal as one host prefix, using IPv4 or IPv6
+				// width so prefix membership retains its address family.
 				bits := 128
 				if addr.Is4() {
 					bits = 32
@@ -454,6 +656,8 @@ func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []strin
 			}
 		}
 
+		// Return rejected nonblank tokens as diagnostics while keeping accepted
+		// prefixes usable; a caller can still receive an empty accepted list.
 		if err != nil || !p.IsValid() {
 			invalid = append(invalid, item)
 			continue
@@ -464,6 +668,10 @@ func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []strin
 	return prefixes, invalid
 }
 
+// hostWithoutPort trims text and extracts the host when SplitHostPort succeeds,
+// otherwise stripping surrounding brackets or returning text before the first
+// colon. Blank input returns empty; unbracketed IPv6 can be truncated by that
+// last fallback.
 func hostWithoutPort(hostport string) string {
 	hostport = strings.TrimSpace(hostport)
 	if hostport == "" {
@@ -475,6 +683,8 @@ func hostWithoutPort(hostport string) string {
 	if strings.HasPrefix(hostport, "[") && strings.HasSuffix(hostport, "]") {
 		return strings.Trim(hostport, "[]")
 	}
+	// For remaining malformed or unbracketed input, keep text before the first
+	// colon; this textual fallback is not complete IPv6 host parsing.
 	parts := strings.Split(hostport, ":")
 	return parts[0]
 }

@@ -10,6 +10,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Request drilldown combines usage rows labeled success with final-client error
+// rows through UNION ALL. Both observations can exist for one request, and the
+// query retains that distinction instead of producing one deduplicated HTTP
+// outcome. Errors prefer their stored request ID, then client ID, while saved
+// execution platform and model values determine outer dimension filtering.
+//
+// Pagination and times are normalized before count and page queries repeat the
+// same combined source independently. SLAOnly restricts the error branch alone;
+// it adds no count-token exclusion, and usage rows stay eligible. Request
+// lookup expands correlation text to stored IDs, duration bounds reject null
+// durations through SQL comparisons, and wildcard search retains user pattern
+// characters. Sort validation occurs after the count read, with no error-ID tie
+// breaker for equal creation times.
+
+// ListRequestDetails returns a page and separately queried total of combined
+// usage and final-client error observations. A nil filter uses one hour, page
+// one, and fifty rows; Normalize caps size at one hundred and orders supplied
+// endpoints without changing filter fields.
+//
+// Kind and platform filters are trimmed and folded, only positive identity
+// values add predicates, and model uses the saved model rather than requested-model
+// display overrides. RequestID uses request_lookup_ids, while search matches
+// ID/model/message with retained wildcards. SLAOnly affects error eligibility
+// but neither branch gains a count-probe filter. Count executes before sort
+// validation and the independent page read, so totals can diverge during
+// writes. Nullable numerics preserve zero through new pointers, with unchecked
+// native-int narrowing for duration/status, and blank returned platform becomes
+// unknown.
 func (r *Store) ListRequestDetails(ctx context.Context, filter *ops.OpsRequestDetailFilter) ([]*ops.OpsRequestDetail, int64, error) {
 	if r == nil || r.db == nil {
 		return nil, 0, fmt.Errorf("nil ops repository")
@@ -21,7 +49,8 @@ func (r *Store) ListRequestDetails(ctx context.Context, filter *ops.OpsRequestDe
 	conditions := make([]string, 0, 16)
 	args := make([]any, 0, 24)
 
-	// Placeholders $1/$2 reserved for time window inside the CTE.
+	// Reserve the first two parameters for both source ranges, then append outer
+	// filters so count and page share the same combined-window arguments.
 	args = append(args, startTime.UTC(), endTime.UTC())
 
 	addCondition := func(condition string, values ...any) {
@@ -84,6 +113,8 @@ func (r *Store) ListRequestDetails(ctx context.Context, filter *ops.OpsRequestDe
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
+	// Apply SLA exclusions inside the error branch before UNION ALL, leaving usage
+	// observations eligible and retaining the two source identities.
 	slaErrorWhere := ""
 	if filter != nil && filter.SLAOnly {
 		slaErrorWhere = "\n    AND " + opsSLACountableSQL(
@@ -96,6 +127,9 @@ func (r *Store) ListRequestDetails(ctx context.Context, filter *ops.OpsRequestDe
 		)
 	}
 
+	// Keep both source rows through UNION ALL and preserve error identity
+	// separately. Errors prefer nonempty stored request_id, then
+	// client_request_id; matching text does not collapse a usage/error pair.
 	cte := `
 WITH combined AS (
   SELECT
@@ -148,9 +182,13 @@ WITH combined AS (
 )
 `
 
+	// Read the matching total before sort selection and pagination; the later page
+	// statement can observe another committed state without a shared transaction.
 	countQuery := fmt.Sprintf(`%s SELECT COUNT(1) FROM combined %s`, cte, where)
 	var total int64
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		// Convert a missing aggregate-row result to zero total and continue paging;
+		// real COUNT normally supplies a row even when there are no matches.
 		if err == sql.ErrNoRows {
 			total = 0
 		} else {
@@ -200,8 +238,12 @@ LIMIT $%d OFFSET $%d
 	if err != nil {
 		return nil, 0, err
 	}
+	// Close the page cursor on success or early error; close failures are
+	// suppressed while scan and iteration errors reject this page result.
 	defer func() { _ = rows.Close() }()
 
+	// Restore valid duration/status zero as a new native-int pointer, retaining
+	// SQL absence as nil while performing unchecked width conversion.
 	toIntPtr := func(v sql.NullInt64) *int {
 		if !v.Valid {
 			return nil
@@ -285,6 +327,8 @@ LIMIT $%d OFFSET $%d
 			Stream: stream,
 		}
 
+		// Normalize blank or absent platform after scanning to unknown, including
+		// usage rows whose stored dimension was not replaced inside the error branch.
 		if item.Platform == "" {
 			item.Platform = "unknown"
 		}

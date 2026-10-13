@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+// TestDefaultNormalizeAndValidateRuntimeLogConfig supplies uppercase deployment
+// levels, sampling limits, and separate retention targets. It checks runtime
+// defaults use system-log retention and normalization fills the specified
+// text/numeric omissions before validation succeeds.
 func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 	defaults := defaultOpsRuntimeLogConfig(&Options{
 		Log: LogOptions{
@@ -48,10 +52,13 @@ func TestDefaultNormalizeAndValidateRuntimeLogConfig(t *testing.T) {
 	}
 }
 
+// TestValidateRuntimeLogConfigErrors supplies nil configuration, unsupported
+// levels, nonpositive sampling limits, and zero retention. It checks each
+// listed invalid input returns a validation error.
 func TestValidateRuntimeLogConfigErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		cfg  *OpsRuntimeLogConfig
+		name string               // invalid configuration case name
+		cfg  *OpsRuntimeLogConfig // submitted invalid settings fixture
 	}{
 		{name: "nil", cfg: nil},
 		{name: "bad level", cfg: &OpsRuntimeLogConfig{Level: "trace", StacktraceLevel: "error", SamplingInitial: 1, SamplingNext: 1, RetentionDays: 1}},
@@ -69,7 +76,9 @@ func TestValidateRuntimeLogConfigErrors(t *testing.T) {
 	}
 }
 
-// TestNormalizeRuntimeLogConfigNilInputs checks normalization with nil inputs.
+// TestNormalizeRuntimeLogConfigNilInputs calls normalization with a nil
+// configuration and then nil defaults. Completion protects the no-op nil guards
+// used by configuration construction; this test makes no mutation assertion.
 func TestNormalizeRuntimeLogConfigNilInputs(t *testing.T) {
 	normalizeOpsRuntimeLogConfig(nil, &OpsRuntimeLogConfig{Level: "info"})
 	normalizeOpsRuntimeLogConfig(&OpsRuntimeLogConfig{Level: "debug"}, nil)

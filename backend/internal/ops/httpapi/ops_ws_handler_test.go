@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpsWSHelpers mixes one valid network prefix with invalid text, strips a
+// normal host port, and checks matching addresses. It protects those supplied
+// helper cases without asserting complete proxy or Origin policy behavior.
 func TestOpsWSHelpers(t *testing.T) {
 	prefixes, invalid := parseTrustedProxyList("10.0.0.0/8,invalid")
 	require.Len(t, prefixes, 1)
@@ -24,15 +27,23 @@ func TestOpsWSHelpers(t *testing.T) {
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("192.168.0.1"), prefixes))
 }
 
-// TestOpsWSBrandNegotiation checks selection of sub2api-admin or tokenrouter-admin during the handshake.
+// TestOpsWSBrandNegotiation offers legacy, current, and mixed administrator
+// subprotocol names to a local upgrade server. It checks legacy compatibility
+// and current-name preference; jwt.fixture is not echoed, and this fixture
+// performs no JWT validation.
 func TestOpsWSBrandNegotiation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
+		// Release the server side immediately after handshake; these cases inspect
+		// protocol selection and require no traffic-push loop.
 		_ = conn.Close()
 	}))
+	// Stop accepting local handshakes after the cases. The server handler closes
+	// each upgraded socket separately, and client cases close their returned
+	// connections.
 	defer server.Close()
 	for _, protocols := range [][]string{
 		{"sub2api-admin", "jwt.fixture"},
@@ -40,6 +51,8 @@ func TestOpsWSBrandNegotiation(t *testing.T) {
 		{"sub2api-admin", "tokenrouter-admin", "jwt.fixture"},
 	} {
 		dialer := websocket.Dialer{Subprotocols: protocols}
+		// Open each case through a real local handshake to observe Gorilla's selected
+		// response subprotocol, then close the resulting connection.
 		conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 		require.NoError(t, err)
 		want := "tokenrouter-admin"

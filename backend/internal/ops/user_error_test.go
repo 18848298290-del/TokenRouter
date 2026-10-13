@@ -8,8 +8,12 @@ import (
 	"time"
 )
 
+// TestMapUserErrorCategory supplies stored phase/type combinations for request,
+// provider, routing, and unknown failures. It checks the exact frontend
+// category code selected for each listed classification.
 func TestMapUserErrorCategory(t *testing.T) {
 	cases := []struct {
+		// phase: stored phase label; etype: stored error type; want: expected category code
 		phase, etype, want string
 	}{
 		{"auth", "authentication_error", "auth"},
@@ -33,6 +37,9 @@ func TestMapUserErrorCategory(t *testing.T) {
 	}
 }
 
+// TestCategoryToFilter requests each supported category and the other category.
+// It checks the returned phase/type selections, including the combined Cyber
+// predicate and the unrestricted lists for other.
 func TestCategoryToFilter(t *testing.T) {
 	phases, types := CategoryToFilter("rate_limit")
 	if len(types) != 1 || types[0] != "rate_limit_error" || len(phases) != 0 {
@@ -72,6 +79,10 @@ func TestCategoryToFilter(t *testing.T) {
 	}
 }
 
+// TestToUserErrorRequest_RedactsSensitiveFields converts a request carrying
+// execution and requested model values. It checks the requested display label,
+// category, supplied status, endpoint, platform, and owner-visible API-key
+// metadata.
 func TestToUserErrorRequest_RedactsSensitiveFields(t *testing.T) {
 	src := &OpsErrorLog{
 		ID:              123,
@@ -111,6 +122,10 @@ func TestToUserErrorRequest_RedactsSensitiveFields(t *testing.T) {
 	}
 }
 
+// TestToUserErrorRequestDetail_WhitelistAndRedacts converts captured error
+// details containing internal user email and an upstream endpoint. It checks
+// copied response text and visible request metadata, then confirms those
+// internal field names are absent from serialized DTO JSON.
 func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 	uid := int64(42)
 	upstreamStatus := 503
@@ -144,7 +159,6 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		return
 	}
 
-	// Check basic field mapping.
 	if out.ID != 999 {
 		t.Errorf("want ID=999, got %d", out.ID)
 	}
@@ -158,7 +172,6 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		t.Errorf("UpstreamStatusCode mismatch")
 	}
 
-	// Users can view their own client IP, user agent, group, and stream fields, as in usage details.
 	if out.ClientIP != "1.2.3.4" {
 		t.Errorf("want client_ip=1.2.3.4, got %q", out.ClientIP)
 	}
@@ -172,7 +185,9 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		t.Errorf("want stream=true")
 	}
 
-	// Serialized output excludes internal fields.
+	// The DTO declares the response allowlist, so serialization excludes
+	// source-only user email and upstream endpoint fields even when the internal
+	// fixture contains them.
 	b, err := json.Marshal(out)
 	if err != nil {
 		t.Fatalf("json.Marshal failed: %v", err)
@@ -185,6 +200,9 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 	}
 }
 
+// TestToUserErrorRequestDetail_Nil passes an absent internal detail to the
+// converter. It protects the nil result callers use to recognize that no DTO
+// was created.
 func TestToUserErrorRequestDetail_Nil(t *testing.T) {
 	if out := ToUserErrorRequestDetail(nil); out != nil {
 		t.Errorf("expected nil for nil input, got %+v", out)

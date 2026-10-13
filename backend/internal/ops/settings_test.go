@@ -6,19 +6,30 @@ import (
 	"testing"
 )
 
-// fakeCleanupReloader records cleanup reloads triggered by settings updates.
+// fakeCleanupReloader records a synchronous settings callback and returns its
+// configured error.
 type fakeCleanupReloader struct {
-	calls int
-	last  context.Context
-	err   error
+	// calls and last record each Reload before err is returned. These fields are
+	// unsynchronized and owned by one serial settings fixture, so tests do not
+	// invoke them concurrently.
+	calls int             // observed reload invocation count
+	last  context.Context // latest supplied callback context
+	err   error           // configured reload return error
 }
 
+// Reload records its invocation count and supplied context before returning the
+// fixture error. It does not inspect cancellation or rebuild a scheduler;
+// settings tests use the observation to verify callback invocation.
 func (f *fakeCleanupReloader) Reload(ctx context.Context) error {
 	f.calls++
 	f.last = ctx
 	return f.err
 }
 
+// TestUpdateOpsAdvancedSettings_TriggersReload saves enabled cleanup with
+// supplied cadence and retention preferences. It protects one reloader
+// invocation when the advanced-settings update returns successfully in the
+// serial fixture.
 func TestUpdateOpsAdvancedSettings_TriggersReload(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	reloader := &fakeCleanupReloader{}
@@ -40,6 +51,9 @@ func TestUpdateOpsAdvancedSettings_TriggersReload(t *testing.T) {
 	}
 }
 
+// TestUpdateOpsAdvancedSettings_NilReloader_NoPanic updates retention with no
+// cleanup callback bound. It protects successful return when the optional
+// reloader is absent from the service.
 func TestUpdateOpsAdvancedSettings_NilReloader_NoPanic(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
@@ -48,12 +62,15 @@ func TestUpdateOpsAdvancedSettings_NilReloader_NoPanic(t *testing.T) {
 	cfg := defaultOpsAdvancedSettings()
 	cfg.DataRetention.ErrorLogRetentionDays = 7
 
-	// should not panic
 	if _, err := svc.UpdateOpsAdvancedSettings(context.Background(), cfg); err != nil {
 		t.Fatalf("update with nil reloader: %v", err)
 	}
 }
 
+// TestGetOpsAdvancedSettings_DefaultSnapshotHidesOpenAITokenStats reads a
+// service without initialized runtime snapshot. It protects default visibility,
+// exclusions, cleanup pacing, and absence of synchronous repository reads on
+// that path.
 func TestGetOpsAdvancedSettings_DefaultSnapshotHidesOpenAITokenStats(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
@@ -82,6 +99,10 @@ func TestGetOpsAdvancedSettings_DefaultSnapshotHidesOpenAITokenStats(t *testing.
 	}
 }
 
+// TestUpdateOpsAdvancedSettings_PersistsOpenAITokenStatsVisibility changes the two
+// display flags and reads the resulting published snapshot. It protects
+// returned preferences and subsequent cached visibility without another
+// repository read.
 func TestUpdateOpsAdvancedSettings_PersistsOpenAITokenStatsVisibility(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
@@ -117,6 +138,10 @@ func TestUpdateOpsAdvancedSettings_PersistsOpenAITokenStatsVisibility(t *testing
 	}
 }
 
+// TestGetOpsAdvancedSettings_BackfillsNewDisplayFlagsFromDefaults stores legacy
+// JSON in the fixture but leaves the runtime snapshot uninitialized. It
+// protects fallback defaults for display, exclusions, and cleanup tuning; this
+// call does not load that legacy JSON.
 func TestGetOpsAdvancedSettings_BackfillsNewDisplayFlagsFromDefaults(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
@@ -139,6 +164,9 @@ func TestGetOpsAdvancedSettings_BackfillsNewDisplayFlagsFromDefaults(t *testing.
 		"auto_refresh_enabled":          false,
 		"auto_refresh_interval_seconds": 30,
 	}
+	// Serialize the legacy fixture into repository storage without initializing or
+	// refreshing the runtime snapshot. The following getter still exercises the
+	// snapshot-absent default branch.
 	raw, err := json.Marshal(legacyCfg)
 	if err != nil {
 		t.Fatalf("marshal legacy config: %v", err)
@@ -163,6 +191,10 @@ func TestGetOpsAdvancedSettings_BackfillsNewDisplayFlagsFromDefaults(t *testing.
 	}
 }
 
+// TestUpdateOpsAdvancedSettings_NormalizesIgnoredStatusCodes supplies duplicate
+// and reversed authentication exclusions. It protects sorted distinct status
+// codes in the successful returned preferences after validation and
+// normalization.
 func TestUpdateOpsAdvancedSettings_NormalizesIgnoredStatusCodes(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}
@@ -179,6 +211,10 @@ func TestUpdateOpsAdvancedSettings_NormalizesIgnoredStatusCodes(t *testing.T) {
 	}
 }
 
+// TestUpdateOpsAdvancedSettings_AllowsEmptyIgnoredStatusCodes supplies an
+// allocated empty exclusion policy. It protects acceptance and retained empty
+// output, distinguishing deliberate absence of exclusions from the default nil
+// policy.
 func TestUpdateOpsAdvancedSettings_AllowsEmptyIgnoredStatusCodes(t *testing.T) {
 	repo := newRuntimeSettingRepoStub()
 	svc := &OpsService{settingRepo: repo}

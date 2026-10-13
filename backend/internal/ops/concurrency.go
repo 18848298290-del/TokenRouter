@@ -9,21 +9,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Live concurrency joins repository identities and configured capacities with
+// separately fetched scheduler load counters. The same provider can belong to
+// multiple groups, so group totals overlap, while provider details show a
+// single selected or first membership. Platform and group ratios divide
+// accumulated activity by accumulated configured capacity; they are not
+// averages of detail percentages.
+//
+// Load queries deduplicate positive identities and run in bounded chunks.
+// Failed chunks leave missing loads, which provider views display as zero
+// activity while user views omit zero-activity rows. Scheduling factors used to
+// request provider loads can differ from the displayed configured concurrency.
+// Paginated identity reads and load queries advance separately, so collection
+// timestamps do not establish a single atomic observation across these sources.
+
+// Live statistics use bounded repository pages and smaller load-query chunks,
+// so paginated identities and scheduler observations can be read in separate
+// requests.
 const (
-	opsProvidersPageSize         = 100
-	opsConcurrencyBatchChunkSize = 200
+	opsProvidersPageSize         = 100 // provider and user page size
+	opsConcurrencyBatchChunkSize = 200 // identities per scheduler load query
 )
 
-// opsProviderStatsRepository reads the provider fields needed for live statistics.
+// opsProviderStatsRepository is the optional direct reader for lightweight live
+// provider observations.
 type opsProviderStatsRepository interface {
+	// ListOpsProvidersForStats reads provider observations for the supplied
+	// platform and group selection. The service uses this optional method as a
+	// complete result, bypassing paginated ProviderReader calls and returning its
+	// query error directly.
 	ListOpsProvidersForStats(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error)
 }
 
-// listAllProvidersForOps uses the statistics query when supported and otherwise uses the paginated interface.
+// listAllProvidersForOps returns provider observations from the optional
+// statistics reader or paginated ProviderReader. Nil service or absent reader
+// yields an allocated empty slice. The paginated path forwards the platform and
+// group value, stops at reported totals or a short/empty page, and returns the
+// collected prefix after ten thousand pages; query errors discard that prefix.
 func (s *OpsService) listAllProvidersForOps(ctx context.Context, platformFilter string, groupIDFilter *int64) ([]ProviderObservation, error) {
 	if s == nil || s.providerRepo == nil {
 		return []ProviderObservation{}, nil
 	}
+	// The optional statistics query already returns the needed provider
+	// observations. Prefer it before pagination so these callers avoid the larger
+	// page-oriented provider read.
 	if repo, ok := s.providerRepo.(opsProviderStatsRepository); ok {
 		return repo.ListOpsProvidersForStats(ctx, platformFilter, groupIDFilter)
 	}
@@ -55,6 +84,8 @@ func (s *OpsService) listAllProvidersForOps(ctx context.Context, platformFilter 
 		}
 
 		page++
+		// The ten-thousand-page limit returns a collected prefix when pagination
+		// never provides a normal stopping point.
 		if page > 10_000 {
 			log.Printf("[Ops] listAllProvidersForOps: aborting after too many pages (platform=%q)", platformFilter)
 			break
@@ -64,6 +95,16 @@ func (s *OpsService) listAllProvidersForOps(ctx context.Context, platformFilter 
 	return out, nil
 }
 
+// getProvidersLoadMapBestEffort returns merged scheduler load observations for
+// positive provider identities, or an empty map when loading is unavailable.
+// Duplicate IDs request their largest observed EffectiveLoadFactor, which can
+// differ from the configured display concurrency.
+//
+// Requests run in chunks of two hundred. A failed chunk is logged and omitted
+// while successful maps are merged as supplied, retaining their load pointers
+// and allowing later returned keys to replace earlier values.
+// GetConcurrencyStats keeps missing-load provider rows with zero activity and
+// their configured capacity.
 func (s *OpsService) getProvidersLoadMapBestEffort(ctx context.Context, providers []ProviderObservation) map[int64]*ProviderLoadInfo {
 	if s == nil || s.concurrencyService == nil {
 		return map[int64]*ProviderLoadInfo{}
@@ -72,7 +113,9 @@ func (s *OpsService) getProvidersLoadMapBestEffort(ctx context.Context, provider
 		return map[int64]*ProviderLoadInfo{}
 	}
 
-	// De-duplicate IDs (and keep the max concurrency to avoid under-reporting).
+	// Provider observations can repeat an identity. Request one load value using
+	// the greatest observed scheduling factor, while display capacity remains the
+	// configured concurrency.
 	unique := make(map[int64]int, len(providers))
 	for _, acc := range providers {
 		if acc.ID <= 0 {
@@ -97,7 +140,8 @@ func (s *OpsService) getProvidersLoadMapBestEffort(ctx context.Context, provider
 		end := min(i+opsConcurrencyBatchChunkSize, len(batch))
 		part, err := s.concurrencyService.GetProvidersLoadBatch(ctx, batch[i:end])
 		if err != nil {
-			// Missing load entries are displayed as zero when a batch query fails.
+			// Keep loads from successful chunks. Views apply their zero-activity
+			// behavior to missing keys after this failed chunk is omitted.
 			log.Printf("[Ops] GetProvidersLoadBatch failed: %v", err)
 			continue
 		}
@@ -107,11 +151,18 @@ func (s *OpsService) getProvidersLoadMapBestEffort(ctx context.Context, provider
 	return out
 }
 
-// GetConcurrencyStats returns real-time concurrency usage aggregated by platform/group/provider.
+// GetConcurrencyStats returns platform, group, and provider concurrency views
+// after monitoring and provider-read checks. Platform filtering is delegated to
+// the repository; a positive group filter is reapplied against returned
+// memberships. Missing load entries keep selected providers present with zero
+// activity and configured display capacity.
 //
-// Optional filters:
-// - platformFilter: only include providers in that platform (best-effort reduces DB load)
-// - groupIDFilter: only include providers that belong to that group.
+// Platform totals sum entries with a nonempty platform, while each eligible
+// membership receives its provider load, so group totals can overlap. Repeated
+// provider IDs keep the first provider detail but still contribute each entry
+// to aggregate totals. Percentages use configured capacity when positive.
+// CollectedAt is sampled before separate load queries, so the response is
+// assembled from observations taken at different times.
 func (s *OpsService) GetConcurrencyStats(
 	ctx context.Context,
 	platformFilter string,
@@ -149,7 +200,9 @@ func (s *OpsService) GetConcurrencyStats(
 					break
 				}
 			}
-			// GroupObservation filter provided: skip providers not in that group.
+			// The paginated reader can return broader provider observations. Recheck the
+			// selected group here so every displayed detail and aggregate follows that
+			// membership filter.
 			if matchedGroup == nil {
 				continue
 			}
@@ -163,7 +216,9 @@ func (s *OpsService) GetConcurrencyStats(
 			waiting = int64(load.WaitingCount)
 		}
 
-		// Display the matched group, or the provider's first group when no group filter is set.
+		// Provider details have one display group even when aggregate membership
+		// totals overlap. Use the selected membership or the first supplied
+		// membership to label that detail.
 		displayGroupID := int64(0)
 		displayGroupName := ""
 		if matchedGroup != nil {
@@ -185,13 +240,16 @@ func (s *OpsService) GetConcurrencyStats(
 				MaxCapacity:    int64(acc.Concurrency),
 				WaitingInQueue: waiting,
 			}
+			// Use displayed configured capacity here; load retrieval can use a different
+			// effective scheduling factor for the same provider.
 			if info.MaxCapacity > 0 {
 				info.LoadPercentage = float64(info.CurrentInUse) / float64(info.MaxCapacity) * 100
 			}
 			provider[acc.ID] = info
 		}
 
-		// Platform aggregation.
+		// A nonempty saved platform places this entry in one platform total,
+		// independently of how many eligible group memberships it contributes to.
 		if acc.Platform != "" {
 			if _, ok := platform[acc.Platform]; !ok {
 				platform[acc.Platform] = &PlatformConcurrencyInfo{
@@ -204,7 +262,9 @@ func (s *OpsService) GetConcurrencyStats(
 			p.WaitingInQueue += waiting
 		}
 
-		// A provider contributes to each matching group.
+		// A selected group receives this entry once. Unfiltered observations
+		// contribute to every positive membership, so adding group totals can count
+		// the same provider several times.
 		if matchedGroup != nil {
 			grp := matchedGroup
 			if _, ok := group[grp.ID]; !ok {
@@ -242,7 +302,12 @@ func (s *OpsService) GetConcurrencyStats(
 		}
 	}
 
+	// Platform and group percentages use ratios of their accumulated counters and
+	// configured capacities, so they are not averages of individual provider
+	// percentages.
 	for _, info := range platform {
+		// Nonpositive accumulated provider capacity keeps the displayed percentage at
+		// zero.
 		if info.MaxCapacity > 0 {
 			info.LoadPercentage = float64(info.CurrentInUse) / float64(info.MaxCapacity) * 100
 		}
@@ -256,7 +321,11 @@ func (s *OpsService) GetConcurrencyStats(
 	return platform, group, provider, &collectedAt, nil
 }
 
-// listAllActiveUsersForOps returns all active users with their concurrency settings.
+// listAllActiveUsersForOps returns observations through the active-user
+// paginated reader, using an allocated empty slice for a nil service or missing
+// reader. It stops at the reported total or a short/empty page, returns a
+// prefix after ten thousand pages, and propagates query errors without the
+// collected prefix.
 func (s *OpsService) listAllActiveUsersForOps(ctx context.Context) ([]UserObservation, error) {
 	if s == nil || s.userRepo == nil {
 		return []UserObservation{}, nil
@@ -285,6 +354,8 @@ func (s *OpsService) listAllActiveUsersForOps(ctx context.Context) ([]UserObserv
 		}
 
 		page++
+		// The ten-thousand-page limit returns a collected prefix when pagination
+		// never provides a normal stopping point.
 		if page > 10_000 {
 			log.Printf("[Ops] listAllActiveUsersForOps: aborting after too many pages")
 			break
@@ -294,7 +365,15 @@ func (s *OpsService) listAllActiveUsersForOps(ctx context.Context) ([]UserObserv
 	return out, nil
 }
 
-// getUsersLoadMapBestEffort returns user load info for the given users.
+// getUsersLoadMapBestEffort returns merged scheduler loads for positive user
+// identities, with empty results when loading is unavailable. Repeated IDs
+// request the largest configured concurrency found in the supplied
+// observations.
+//
+// The helper queries chunks of two hundred and omits an entire failed chunk
+// after logging. Successful maps retain their load pointers, and later returned
+// values overwrite repeated keys. GetUserConcurrencyStats converts missing
+// entries to zero activity, which can omit users whose load was unavailable.
 func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []UserObservation) map[int64]*UserLoadInfo {
 	if s == nil || s.concurrencyService == nil {
 		return map[int64]*UserLoadInfo{}
@@ -303,7 +382,9 @@ func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []User
 		return map[int64]*UserLoadInfo{}
 	}
 
-	// De-duplicate IDs (and keep the max concurrency to avoid under-reporting).
+	// User observations can repeat an identity across pages. Request that identity
+	// once using the greatest configured concurrency carried by those
+	// observations.
 	unique := make(map[int64]int, len(users))
 	for _, u := range users {
 		if u.ID <= 0 {
@@ -327,7 +408,8 @@ func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []User
 		end := min(i+opsConcurrencyBatchChunkSize, len(batch))
 		part, err := s.concurrencyService.GetUsersLoadBatch(ctx, batch[i:end])
 		if err != nil {
-			// Missing load entries are displayed as zero when a batch query fails.
+			// Keep loads from successful chunks. Views apply their zero-activity
+			// behavior to missing keys after this failed chunk is omitted.
 			log.Printf("[Ops] GetUsersLoadBatch failed: %v", err)
 			continue
 		}
@@ -337,7 +419,16 @@ func (s *OpsService) getUsersLoadMapBestEffort(ctx context.Context, users []User
 	return out
 }
 
-// GetUserConcurrencyStats returns live concurrency for active users with running or waiting requests.
+// GetUserConcurrencyStats returns active-user observations whose loaded current
+// or waiting count is nonzero after monitoring validation. Repository errors
+// stop the view, while absent or failed load batches become zero activity and
+// can leave an empty successful map.
+//
+// The response copies observed counters and configured user capacity, computing
+// a percentage for positive capacity and leaving zero otherwise. Repeated user
+// identities replace their earlier detail row. CollectedAt is sampled between
+// identity retrieval and load queries, so it marks assembly timing rather than
+// an atomic scheduler snapshot.
 func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*UserConcurrencyInfo, *time.Time, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, nil, err
@@ -366,7 +457,9 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 			waiting = int64(load.WaitingCount)
 		}
 
-		// Skip users with no concurrency activity
+		// Zero activity hides the user row. A missing load entry also becomes zero
+		// here, so absence from this view cannot establish that the user was observed
+		// idle.
 		if currentInUse == 0 && waiting == 0 {
 			continue
 		}

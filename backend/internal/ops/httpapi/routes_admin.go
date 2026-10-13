@@ -4,7 +4,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterOpsRoutes registers admin routes after app installs authentication, rate limits, and auditing.
+// Ops and system routes inherit the supplied Gin admin group middleware.
+// Production app installs administrator authentication, panel-limiter, and
+// audit middleware before calling these registrars; endpoints perform request
+// and command checks. The historical OpenAI token-statistics path binds the
+// same general token handler as the current path.
+
+// RegisterOpsRoutes binds monitoring, runtime settings, diagnostic, and
+// dashboard handlers below the supplied admin group. Callers install
+// authentication, rate limits, and auditing on that group and provide a usable
+// endpoint before registration. Register once for its prefix before serving
+// requests.
 func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 	ops := admin.Group("/ops")
 	{
@@ -60,7 +70,7 @@ func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 		ops.GET("/errors/:id", endpoint.GetErrorLogByID)
 		ops.PUT("/errors/:id/resolve", endpoint.UpdateErrorResolution)
 
-		// Client-visible request failures.
+		// Request-error list, shared detail, and resolution aliases.
 		ops.GET("/request-errors", endpoint.ListRequestErrors)
 		ops.GET("/request-errors/:id", endpoint.GetRequestError)
 		ops.GET("/request-errors/:id/upstream-errors", endpoint.ListRequestErrorUpstreamErrors)
@@ -84,7 +94,7 @@ func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 		ops.POST("/system-logs/cleanup", endpoint.CleanupSystemLogs)
 		ops.GET("/system-logs/health", endpoint.GetSystemLogIngestionHealth)
 
-		// Dashboard queries use the configured data source.
+		// Dashboard snapshots and historical statistics.
 		ops.GET("/dashboard/snapshot-v2", endpoint.GetDashboardSnapshotV2)
 		ops.GET("/dashboard/overview", endpoint.GetDashboardOverview)
 		ops.GET("/dashboard/throughput-trend", endpoint.GetDashboardThroughputTrend)
@@ -92,12 +102,17 @@ func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 		ops.GET("/dashboard/error-trend", endpoint.GetDashboardErrorTrend)
 		ops.GET("/dashboard/error-distribution", endpoint.GetDashboardErrorDistribution)
 		ops.GET("/dashboard/token-stats", endpoint.GetDashboardTokenStats)
-		// The legacy route is an alias with the same response shape.
+		// The historical OpenAI token-stats URL uses the same general token handler.
+		// Its filters and response shape follow that endpoint, preserving clients
+		// that still request the older route.
 		ops.GET("/dashboard/openai-token-stats", endpoint.GetDashboardTokenStats)
 	}
 }
 
-// RegisterSystemRoutes registers admin routes after app installs authentication, rate limits, and auditing.
+// RegisterSystemRoutes binds version reads and update, rollback, and restart
+// handlers below the supplied admin group. Callers provide its protected
+// middleware and usable SystemHandler before registration; command checks
+// remain with that handler. Register once for the prefix before serving.
 func RegisterSystemRoutes(admin *gin.RouterGroup, endpoint *SystemHandler) {
 	system := admin.Group("/system")
 	{

@@ -18,26 +18,62 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Release archives use current tokenrouter names and historical sub2api names
+// for the same runtime platform. Installation prefers a current-name archive,
+// checks its initial download host, and verifies an archive hash only when
+// checksums.txt is supplied. Extraction similarly keeps a historical binary
+// while looking for a current-name entry.
+//
+// Preparation takes place beside the symlink-resolved executable. Replacement
+// moves the current binary to an adjacent backup before installing the staged
+// one, so the executable path is temporarily absent and a failed second move
+// needs restoration. Cancellation is checked before that sequence and is no
+// longer consulted during its filesystem moves. A successful update retains the
+// preceding executable, and local rollback consumes that backup.
+
+// Release downloads accept the listed HTTPS host spellings and pass one archive
+// byte cap to the bound downloader.
 const (
-	allowedDownloadHost = "github.com"
-	allowedAssetHost    = "objects.githubusercontent.com"
-	maxDownloadSize     = 500 * 1024 * 1024
+	allowedDownloadHost = "github.com"                    // primary release download host
+	allowedAssetHost    = "objects.githubusercontent.com" // release asset storage host
+	maxDownloadSize     = 500 * 1024 * 1024               // archive download byte cap
 )
 
-// BinaryDownload downloads selected release assets and checksums.
+// BinaryDownload supplies context-aware asset and checksum reads for a selected
+// release.
 type BinaryDownload interface {
+	// DownloadFile writes the supplied asset URL to the destination under context
+	// and a byte limit. BinaryInstaller passes its archive cap; the downloader
+	// defines network policy and incomplete-file handling on failure.
 	DownloadFile(context.Context, string, string, int64) error
+	// FetchChecksumFile reads the supplied checksum URL under context and returns
+	// its bytes or an error. BinaryInstaller parses filename/hash pairs itself;
+	// the downloader defines redirects and checksum-response size policy.
 	FetchChecksumFile(context.Context, string) ([]byte, error)
 }
 
-// BinaryInstaller replaces the configured executable; tests supply a temporary path.
+// BinaryInstaller stages a release executable and replaces its resolved
+// installed path.
 type BinaryInstaller struct {
+	// rename performs replacement and restoration moves. NewBinaryInstaller uses
+	// os.Rename, while fixtures replace it to reproduce specific failure
+	// positions.
 	rename func(string, string) error
 
+	// githubClient is the supplied downloader used for archives and optional
+	// checksums. It remains borrowed; callers provide a usable implementation
+	// before Apply.
 	githubClient BinaryDownload
-	executable   func() (string, error)
+	// executable identifies the installed program path before symlink resolution.
+	// A nil constructor argument selects os.Executable; Apply and Rollback resolve
+	// that path separately on each call.
+	executable func() (string, error)
 }
 
+// NewBinaryInstaller retains the downloader and executable-path callback,
+// selecting os.Executable when the callback is nil. It performs no installation
+// or download. Callers provide a nonnil downloader for Apply and serialize
+// operations that target the same executable.
 func NewBinaryInstaller(client BinaryDownload, executable func() (string, error)) *BinaryInstaller {
 	if executable == nil {
 		executable = os.Executable
@@ -45,13 +81,31 @@ func NewBinaryInstaller(client BinaryDownload, executable func() (string, error)
 	return &BinaryInstaller{githubClient: client, executable: executable, rename: os.Rename}
 }
 
+// Apply installs the first platform-matching tokenrouter archive, considering
+// sub2api names only when no current-name URL was selected. It uses the last
+// checksums.txt URL when present and permits installation without that asset.
+// Supply a nonnil context/downloader and serialize maintenance of the same
+// executable and backup paths.
+//
+// The executable path is resolved through symlinks, and staging beside that
+// resolved file keeps rename moves on its filesystem. Downloads, optional hash
+// checking, extraction, and permission changes precede the cancellation check.
+// Once replacement begins, context is no longer consulted: the old file moves
+// to .backup, then the staged file moves into place.
+//
+// The pair of renames leaves a gap at the executable path. Failure of the
+// second move attempts restoration; restoration failure leaves the caller to
+// inspect the combined error and remaining backup. Successful installation
+// retains the backup for Rollback, while a later update attempts to remove it
+// before creating another.
 func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) error {
-	// Find matching archive and checksum for current platform
 	archiveName := s.getArchiveName()
 	var downloadURL string
 	var checksumURL string
 
-	// Prefer tokenrouter archives; accept sub2api archives for historical releases.
+	// Current product archive names take precedence regardless of asset order.
+	// Only absence of a selected current-name URL opens the historical
+	// sub2api-name search.
 	for _, prefix := range []string{"tokenrouter_", "sub2api_"} {
 		for _, asset := range releaseAssets {
 			if strings.HasPrefix(asset.Name, prefix) && strings.Contains(asset.Name, archiveName) && !strings.HasSuffix(asset.Name, ".txt") {
@@ -73,7 +127,9 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 		return fmt.Errorf("no compatible release found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	// SECURITY: Validate download URL is from trusted domain
+	// Validate both selected initial URLs before downloading or staging. The bound
+	// downloader remains responsible for redirected destinations and
+	// request-header policy.
 	if err := validateDownloadURL(downloadURL); err != nil {
 		return fmt.Errorf("invalid download URL: %w", err)
 	}
@@ -83,7 +139,6 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 		}
 	}
 
-	// Get current executable path
 	exePath, err := s.executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -95,70 +150,82 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 
 	exeDir := filepath.Dir(exePath)
 
-	// Stage beside the executable so each rename stays on the same filesystem.
+	// Staging beside the symlink-resolved executable gives both replacement moves
+	// that directory filesystem. Deferred removal is best effort and does not
+	// change the install result.
 	tempDir, err := os.MkdirTemp(exeDir, ".tokenrouter-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	// Download archive
+	// The local archive basename comes from the raw download URL text. That same
+	// basename drives checksum matching, so query or fragment suffixes can affect
+	// verification and format detection.
 	archivePath := filepath.Join(tempDir, filepath.Base(downloadURL))
 	if err := s.downloadFile(ctx, downloadURL, archivePath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
-	// Verify checksum if available
+	// A nonempty selected checksums.txt URL enables filename-specific hash
+	// verification. Releases without this asset proceed directly to extraction and
+	// carry no verified archive hash from this path.
 	if checksumURL != "" {
 		if err := s.verifyChecksum(ctx, archivePath, checksumURL); err != nil {
 			return fmt.Errorf("checksum verification failed: %w", err)
 		}
 	}
 
-	// Extract binary from archive
 	newBinaryPath := filepath.Join(tempDir, "tokenrouter")
 	if err := s.extractBinary(archivePath, newBinaryPath); err != nil {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
 
-	// Set executable permission before replacement
 	if err := os.Chmod(newBinaryPath, 0o755); err != nil {
 		return fmt.Errorf("chmod failed: %w", err)
 	}
 
-	// Replacement uses two renames, with a gap while the executable path is absent:
-	// 1. Move the current executable to its backup path.
-	// 2. Move the staged binary to the executable path.
-	// Attempt to restore the backup if the second rename fails.
+	// Move the installed file to .backup before moving the staged binary into
+	// place. These separate moves temporarily remove the executable path; a
+	// second-move failure requires compensation.
 	backupPath := exePath + ".backup"
 
+	// Honor cancellation after preparation and before any backup removal. After
+	// this check, replacement and restoration use filesystem moves without another
+	// context check.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Remove old backup if exists
+	// A later update replaces the prior rollback candidate. Ignore failure
+	// removing that older backup and let the subsequent rename report any
+	// inability to create its new backup.
 	_ = os.Remove(backupPath)
 
-	// Step 1: Move current binary to backup
 	if err := s.rename(exePath, backupPath); err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
 
-	// Step 2: Move new binary to target location (atomic, same filesystem)
 	if err := s.rename(newBinaryPath, exePath); err != nil {
-		// Restore backup on failure
+		// The first move already removed the installed path. Attempt to restore it
+		// from the new backup, retaining both failure descriptions if compensation
+		// also fails.
 		if restoreErr := s.rename(backupPath, exePath); restoreErr != nil {
 			return fmt.Errorf("replace failed and restore failed: %w (restore error: %v)", err, restoreErr)
 		}
 		return fmt.Errorf("replace failed (restored backup): %w", err)
 	}
 
-	// Keep the backup for rollback.
-	// The next update removes it before creating a replacement backup.
+	// The completed update leaves its immediately preceding executable in the
+	// backup path. Rollback consumes it, and the next update attempts to replace
+	// it with that update predecessor.
 	return nil
 }
 
-// Rollback restores the previous version
-
+// Rollback resolves the current executable and replaces it with its adjacent
+// .backup through rename. Callers serialize it with installation and handle its
+// error before restart. A missing backup fails; success consumes that backup,
+// and no replacement backup of the current binary is retained. Resolving the
+// current path happens first, so its absence fails even when a backup remains.
 func (s *BinaryInstaller) Rollback() error {
 	exePath, err := s.executable()
 	if err != nil {
@@ -170,11 +237,16 @@ func (s *BinaryInstaller) Rollback() error {
 	}
 
 	backupFile := exePath + ".backup"
+	// Only recognized backup absence stops at Stat. Other stat errors proceed to
+	// rename, whose result decides whether the saved executable can replace the
+	// current path.
 	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
 		return fmt.Errorf("no backup found")
 	}
 
-	// Replace current with backup
+	// A successful rename consumes the saved executable and replaces the installed
+	// path. It does not save the displaced current binary as another rollback
+	// candidate.
 	if err := s.rename(backupFile, exePath); err != nil {
 		return fmt.Errorf("rollback failed: %w", err)
 	}
@@ -182,33 +254,40 @@ func (s *BinaryInstaller) Rollback() error {
 	return nil
 }
 
+// downloadFile delegates the asset URL and destination to the borrowed
+// downloader with the 500 MiB archive cap. The downloader owns response
+// validation and context handling; this wrapper returns its error directly.
 func (s *BinaryInstaller) downloadFile(ctx context.Context, downloadURL, dest string) error {
 	return s.githubClient.DownloadFile(ctx, downloadURL, dest, maxDownloadSize)
 }
 
+// getArchiveName returns the runtime operating-system and architecture fragment
+// used for asset selection.
 func (s *BinaryInstaller) getArchiveName() string {
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
 	return fmt.Sprintf("%s_%s", osName, arch)
 }
 
-// validateDownloadURL requires HTTPS and an allowed GitHub host or subdomain.
-// The check applies to this URL; redirects are handled by the download client.
-
+// validateDownloadURL accepts an initial HTTPS URL whose Host exactly matches a
+// listed GitHub host or its dotted subdomain suffix. Matching is case sensitive
+// against the full Host, so an explicit port does not match the listed host
+// spellings. Redirect validation belongs to the downloader, and this helper
+// does not reject user information.
 func validateDownloadURL(rawURL string) error {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// Must be HTTPS
 	if parsedURL.Scheme != "https" {
 		return fmt.Errorf("only HTTPS URLs are allowed")
 	}
 
-	// Check against allowed hosts
 	host := parsedURL.Host
-	// GitHub release URLs can be from github.com or objects.githubusercontent.com
+	// Compare the full Host spelling, including any explicit port, to these
+	// allowlist forms. This initial-URL check does not decide where the HTTP
+	// client may redirect.
 	if host != allowedDownloadHost &&
 		!strings.HasSuffix(host, "."+allowedDownloadHost) &&
 		host != allowedAssetHost &&
@@ -219,18 +298,29 @@ func validateDownloadURL(rawURL string) error {
 	return nil
 }
 
+// verifyChecksum compares the entire staged archive SHA-256 with the first
+// two-field checksum line whose filename exactly matches its local basename. It
+// fetches the checksum text through the bound downloader, using the supplied
+// context, and returns a download, file-read, missing-entry, or mismatch error.
+//
+// Whitespace splitting permits spaces or tabs between the hash and filename,
+// but hash spelling and filename are compared exactly. A matching filename ends
+// the search even when its hash differs; later duplicate entries cannot
+// override it. Scanner termination is reported as a missing checksum when no
+// matching entry was found, including scanner failures because its error is not
+// inspected.
 func (s *BinaryInstaller) verifyChecksum(ctx context.Context, filePath, checksumURL string) error {
-	// Download checksums file
 	checksumData, err := s.githubClient.FetchChecksumFile(ctx, checksumURL)
 	if err != nil {
 		return fmt.Errorf("failed to download checksums: %w", err)
 	}
 
-	// Calculate file hash
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
+	// The digest is determined by io.Copy before the read handle closes. Ignore
+	// the close error when returning the hash comparison result.
 	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
@@ -239,7 +329,9 @@ func (s *BinaryInstaller) verifyChecksum(ctx context.Context, filePath, checksum
 	}
 	actualHash := hex.EncodeToString(h.Sum(nil))
 
-	// Find expected hash in checksums file
+	// Match the local archive basename against exactly two whitespace-separated
+	// fields. The first named entry determines success or mismatch, even if later
+	// duplicate entries differ.
 	fileName := filepath.Base(filePath)
 	scanner := bufio.NewScanner(strings.NewReader(string(checksumData)))
 	for scanner.Scan() {
@@ -253,29 +345,56 @@ func (s *BinaryInstaller) verifyChecksum(ctx context.Context, filePath, checksum
 		}
 	}
 
+	// End-of-input and scanner failure both reach the missing-entry result because
+	// scanner.Err is not inspected. An earlier matching line can return before
+	// later checksum lines are read.
 	return fmt.Errorf("checksum not found for %s", fileName)
 }
 
+// extractBinary writes the selected executable bytes to destPath, choosing
+// decompression from archivePath spelling. Gzip suffixes select a gzip reader,
+// while a .tar substring anywhere in the path selects tar traversal. A .tgz
+// path alone therefore decodes gzip and copies its result directly.
+//
+// Tar traversal uses regular-file basenames and writes to the fixed
+// destination, accepting tokenrouter or sub2api with optional .exe. Every entry
+// name containing two adjacent dots is rejected before type selection. A legacy
+// entry is retained while scanning for a current-name entry; current-name
+// success returns immediately, while a later tar error can fail after a legacy
+// file was written.
+//
+// Matching tar entries with declared size above 500 MiB are rejected and copies
+// are bounded. The direct-copy path reads at most that limit and can succeed
+// with truncated oversized data because it does not inspect an extra byte. Copy
+// or close failures can leave a partial destination; Apply attempts
+// staging-directory cleanup afterward, while direct callers own cleanup.
 func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
 	}
+	// Close the archive after gzip or tar processing has returned. File-close
+	// failure is suppressed and does not remove a destination already written by
+	// extraction.
 	defer func() { _ = f.Close() }()
 
 	var reader io.Reader = f
 
-	// Handle gzip compression
+	// Suffix spelling enables gzip decoding before format selection. The later
+	// .tar substring check still decides whether decoded bytes are traversed as
+	// entries or copied directly.
 	if strings.HasSuffix(archivePath, ".gz") || strings.HasSuffix(archivePath, ".tar.gz") || strings.HasSuffix(archivePath, ".tgz") {
 		gzr, err := gzip.NewReader(f)
 		if err != nil {
 			return err
 		}
+		// Close the gzip wrapper before the underlying file through defer order.
+		// Wrapper close errors are suppressed; actual decompression reads determine
+		// extraction failures.
 		defer func() { _ = gzr.Close() }()
 		reader = gzr
 	}
 
-	// Handle tar archive
 	if strings.Contains(archivePath, ".tar") {
 		tr := tar.NewReader(reader)
 		legacyExtracted := false
@@ -288,23 +407,24 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 				return err
 			}
 
-			// Extract matching basenames into the fixed destination path.
-			// Reject entry names containing traversal components before extraction.
 			baseName := filepath.Base(hdr.Name)
 
-			// Check for path traversal attempts
+			// Entry paths never become output paths, but names containing adjacent dots
+			// are rejected even for skipped entries. This spelling check also rejects
+			// benign names containing that substring.
 			if strings.Contains(hdr.Name, "..") {
 				return fmt.Errorf("path traversal attempt detected: %s", hdr.Name)
 			}
 
-			// Validate the entry is a regular file
+			// Only regular tar payloads can supply the fixed destination binary.
+			// Directories and special entries are skipped after the entry-name check has
+			// accepted their spelling.
 			if hdr.Typeflag != tar.TypeReg {
-				continue // Skip directories and special files
+				continue
 			}
 
-			// Only extract the specific binary we need
 			if baseName == "tokenrouter" || baseName == "tokenrouter.exe" || baseName == "sub2api" || baseName == "sub2api.exe" {
-				// Limit the extracted binary to 500 MiB.
+				// Bound one matching executable by its uncompressed byte size.
 				const maxBinarySize = 500 * 1024 * 1024
 				if hdr.Size > maxBinarySize {
 					return fmt.Errorf("binary too large: %d bytes (max %d)", hdr.Size, maxBinarySize)
@@ -315,9 +435,14 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 					return err
 				}
 
-				// Use LimitReader to prevent decompression bombs
+				// The declared tar size was checked before opening the destination. Bound
+				// copied bytes as well, keeping one selected executable within the
+				// extraction cap.
 				limited := io.LimitReader(tr, maxBinarySize)
 				if _, err := io.Copy(out, limited); err != nil {
+					// Release the failed output handle before returning its copy error. Close
+					// failure is discarded, and the partly written destination remains until
+					// its caller cleans staging.
 					_ = out.Close()
 					return err
 				}
@@ -327,17 +452,24 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 				if baseName == "tokenrouter" || baseName == "tokenrouter.exe" {
 					return nil
 				}
-				// Keep the legacy entry as a fallback while searching for a tokenrouter entry.
+				// Keep this legacy payload at the fixed destination while traversal
+				// continues. A later tokenrouter entry overwrites it; tar errors still fail
+				// the operation after this write.
 				legacyExtracted = true
 			}
 		}
+		// Clean end-of-archive keeps the already written legacy executable when no
+		// current-name entry returned. An intervening tar-read failure instead exits
+		// through its earlier error path.
 		if legacyExtracted {
 			return nil
 		}
 		return fmt.Errorf("binary not found in archive")
 	}
 
-	// Direct copy for non-tar files (with size limit)
+	// The direct path caps bytes without reading beyond the limit. Oversized input
+	// can therefore produce a successful truncated destination when its copy and
+	// close complete.
 	const maxBinarySize = 500 * 1024 * 1024
 	out, err := os.Create(destPath)
 	if err != nil {
@@ -346,6 +478,9 @@ func (s *BinaryInstaller) extractBinary(archivePath, destPath string) error {
 
 	limited := io.LimitReader(reader, maxBinarySize)
 	if _, err := io.Copy(out, limited); err != nil {
+		// Release the partially written direct-copy output before returning its copy
+		// error. Its close result is suppressed and destination cleanup remains with
+		// the caller.
 		_ = out.Close()
 		return err
 	}

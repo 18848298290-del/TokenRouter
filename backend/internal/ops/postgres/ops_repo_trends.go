@@ -10,6 +10,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Throughput charts combine usage observations, final client failures, and
+// saved switch events as separate quantities. Tokens come from usage rows,
+// request totals add usage and failed client observations, and switches count
+// selected attempt-kind prefixes even when a request recovered. Each rate
+// divides by the complete bucket duration, so a partially selected bucket
+// retains that denominator.
+//
+// Raw SQL produces sparse buckets and later filling supplies a continuous
+// timeline. Five-minute SQL buckets use epoch arithmetic; minute and hour
+// date_trunc follow the SQL session timezone, while filling uses epoch-aligned
+// starts. Existing points survive only when their timestamp matches a generated
+// slot, so callers need compatible bucket alignment. Breakdown reads run after
+// the timeline query and may observe another database state. Every query uses
+// raw tables regardless of QueryMode, and provider/SLA error categories retain
+// different eligibility rules.
+
+// GetThroughputTrend returns raw throughput buckets and a selection-dependent
+// breakdown for nonzero endpoints. It accepts one-minute, five-minute, or
+// hourly buckets and replaces other values with one minute. Endpoint ordering
+// is left to OpsService; platform and positive group filtering use saved
+// dimensions, while QueryMode is ignored.
+//
+// Request totals add usage and final-error observations, tokens sum usage only,
+// and switch counts inspect saved attempt kinds independently of final status.
+// Rates divide by the entire bucket and round to one decimal, then missing
+// generated slots become zero points. An unrestricted selection loads
+// platforms; a platform without a positive group loads ten leading groups; a
+// positive group suppresses both. Breakdown errors reject the response after
+// the successful timeline read, and separate statements can observe different
+// writes.
 func (r *Store) GetThroughputTrend(ctx context.Context, filter *ops.OpsDashboardFilter, bucketSeconds int) (*ops.OpsThroughputTrendResponse, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -25,7 +55,9 @@ func (r *Store) GetThroughputTrend(ctx context.Context, filter *ops.OpsDashboard
 		bucketSeconds = 60
 	}
 	if bucketSeconds != 60 && bucketSeconds != 300 && bucketSeconds != 3600 {
-		// Unsupported bucket sizes use one-minute buckets.
+		// Use one minute for unsupported sizes so SQL bucket selection, returned
+		// labels, filling, and rate denominators keep one consistent normalized
+		// duration.
 		bucketSeconds = 60
 	}
 
@@ -38,6 +70,9 @@ func (r *Store) GetThroughputTrend(ctx context.Context, filter *ops.OpsDashboard
 	usageBucketExpr := opsBucketExprForUsage(bucketSeconds)
 	errorBucketExpr := opsBucketExprForError(bucketSeconds)
 
+	// Count switch-event kind prefixes independently of request totals. Recovered
+	// client outcomes can still contribute failover attempts, while tokens remain
+	// supplied by usage rows.
 	q := `
 WITH usage_buckets AS (
   SELECT ` + usageBucketExpr + ` AS bucket,
@@ -103,6 +138,8 @@ ORDER BY bucket ASC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan failure. Cleanup errors are
+	// suppressed, while iteration errors still reject this query's result.
 	defer func() { _ = rows.Close() }()
 
 	points := make([]*ops.OpsThroughputTrendPoint, 0, 256)
@@ -123,6 +160,8 @@ ORDER BY bucket ASC`
 			switchCount = switches.Int64
 		}
 
+		// Divide by the full normalized bucket seconds even at partially selected
+		// endpoints, then round QPS and TPS to one decimal.
 		denom := float64(bucketSeconds)
 		if denom <= 0 {
 			denom = 60
@@ -143,7 +182,9 @@ ORDER BY bucket ASC`
 		return nil, err
 	}
 
-	// Fill missing buckets with zeros so charts render continuous timelines.
+	// Fill epoch-aligned slots after the sparse raw query. This keeps idle
+	// intervals visible, reuses matching point pointers, and omits points with
+	// other alignment.
 	points = fillOpsThroughputBuckets(start, end, bucketSeconds, points)
 
 	var byPlatform []*ops.OpsThroughputPlatformBreakdownItem
@@ -158,9 +199,9 @@ ORDER BY bucket ASC`
 		groupID = filter.GroupID
 	}
 
-	// Drilldown helpers:
-	// - No platform/group: totals by platform
-	// - Platform selected but no group: top groups in that platform
+	// Read drilldown after the timeline: unrestricted filters select platforms,
+	// platform-only filters select leading groups, and a positive group leaves
+	// both absent. Each read can observe newer writes.
 	if platform == "" && (groupID == nil || *groupID <= 0) {
 		items, err := r.getThroughputBreakdownByPlatform(ctx, start, end)
 		if err != nil {
@@ -184,6 +225,17 @@ ORDER BY bucket ASC`
 	}, nil
 }
 
+// getThroughputBreakdownByPlatform returns raw usage-plus-client-failure counts
+// and usage token totals for each saved nonempty platform in the half-open
+// range. It expects a usable Store and supplied endpoints; count-token error
+// probes are excluded, and rows are ordered by request count without a tie
+// breaker.
+//
+// A full outer join retains a platform observed by either source, while empty
+// or null platforms disappear from the result. Group and provider joins on
+// usage retain recorded platform identity rather than deriving current
+// platform. This independent query can observe data newer than the preceding
+// timeline, and its scan or iteration errors reject the combined response.
 func (r *Store) getThroughputBreakdownByPlatform(ctx context.Context, start, end time.Time) ([]*ops.OpsThroughputPlatformBreakdownItem, error) {
 	q := `
 WITH usage_totals AS (
@@ -222,6 +274,8 @@ ORDER BY request_count DESC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan failure. Cleanup errors are
+	// suppressed, while iteration errors still reject this query's result.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]*ops.OpsThroughputPlatformBreakdownItem, 0, 8)
@@ -248,10 +302,22 @@ ORDER BY request_count DESC`
 	return items, nil
 }
 
+// getThroughputTopGroupsByPlatform returns leading raw group totals for a
+// supplied recorded platform and half-open range. Blank platform returns nil,
+// while nonpositive or over-one-hundred limits select ten. Other platform text
+// is bound as supplied, and request-count ordering has no group tie breaker.
+//
+// Usage rows require a current groups join, so usage whose group is gone is
+// excluded; error totals require a nonnull saved group and can still appear
+// with an empty name. The sources combine by group identity, tokens come from
+// usage, and count-token errors are excluded. Callers keep Store usable for
+// this query; scan and iteration errors reject its result.
 func (r *Store) getThroughputTopGroupsByPlatform(ctx context.Context, start, end time.Time, platform string, limit int) ([]*ops.OpsThroughputGroupBreakdownItem, error) {
 	if strings.TrimSpace(platform) == "" {
 		return nil, nil
 	}
+	// Keep drilldown within the supported hundred-group bound; unusable limits
+	// select the standard top-ten view requested by the timeline caller.
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
@@ -299,6 +365,8 @@ LIMIT $4`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan failure. Cleanup errors are
+	// suppressed, while iteration errors still reject this query's result.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]*ops.OpsThroughputGroupBreakdownItem, 0, limit)
@@ -331,40 +399,53 @@ LIMIT $4`
 	return items, nil
 }
 
+// opsBucketExprForUsage returns a trusted usage timestamp grouping expression.
+// Five-minute buckets align to Unix epoch multiples; minute and hour truncation
+// follows the SQL session timezone, and unsupported values choose minutes.
 func opsBucketExprForUsage(bucketSeconds int) string {
 	switch bucketSeconds {
 	case 3600:
 		return "date_trunc('hour', ul.created_at)"
 	case 300:
-		// 5-minute buckets in UTC.
+		// Epoch division creates five-minute absolute slots; formatting the returned
+		// timestamp in UTC does not depend on session hour boundaries.
 		return "to_timestamp(floor(extract(epoch from ul.created_at) / 300) * 300)"
 	default:
 		return "date_trunc('minute', ul.created_at)"
 	}
 }
 
+// opsBucketExprForError returns a trusted error timestamp grouping expression.
+// Five-minute buckets align to Unix epoch multiples; minute and hour date_trunc
+// uses the session timezone, and unsupported values choose minutes.
 func opsBucketExprForError(bucketSeconds int) string {
 	switch bucketSeconds {
 	case 3600:
 		return "date_trunc('hour', created_at)"
 	case 300:
+		// Epoch slots share the usage timeline's absolute five-minute alignment.
 		return "to_timestamp(floor(extract(epoch from created_at) / 300) * 300)"
 	default:
 		return "date_trunc('minute', created_at)"
 	}
 }
 
+// opsBucketLabel formats a display duration for supplied seconds. Nonpositive
+// input selects 1m, positive whole hours use h, and other values truncate to
+// minutes with a minimum label of 1m; no allowed-bucket validation occurs here.
 func opsBucketLabel(bucketSeconds int) string {
 	if bucketSeconds <= 0 {
 		return "1m"
 	}
 	if bucketSeconds%3600 == 0 {
+		// Convert whole hours into the compact chart label.
 		h := bucketSeconds / 3600
 		if h <= 0 {
 			h = 1
 		}
 		return fmt.Sprintf("%dh", h)
 	}
+	// Truncate partial minutes for the compact chart duration label.
 	m := bucketSeconds / 60
 	if m <= 0 {
 		m = 1
@@ -372,16 +453,34 @@ func opsBucketLabel(bucketSeconds int) string {
 	return fmt.Sprintf("%dm", m)
 }
 
+// opsFloorToBucketStart aligns nonnegative Unix seconds to the preceding
+// epoch-based slot and returns UTC. Nonpositive bucket size selects one minute;
+// Go remainder arithmetic rounds pre-epoch negative seconds toward zero instead
+// of mathematical floor.
 func opsFloorToBucketStart(t time.Time, bucketSeconds int) time.Time {
 	t = t.UTC()
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
 	}
 	secs := t.Unix()
+	// Use epoch-second remainder alignment for modern nonnegative observation
+	// times.
 	floored := secs - (secs % int64(bucketSeconds))
 	return time.Unix(floored, 0).UTC()
 }
 
+// fillOpsThroughputBuckets returns throughput slots enclosing a positive
+// half-open range, inserting zero points for missing timestamps. Nonpositive
+// bucket size selects one minute. An unordered or empty range returns the
+// supplied slice itself; otherwise existing points are indexed by UTC Unix
+// seconds, with the last duplicate winning and nil entries ignored.
+//
+// Existing point pointers are reused in the new slice, so callers keep their
+// contents immutable while sharing either result. Points outside the generated
+// slots or with incompatible alignment are omitted. The first slot can precede
+// start, and subtracting one nanosecond from end excludes an exactly aligned
+// exclusive-end slot. Whole-bucket rates are left as supplied for reused
+// observations.
 func fillOpsThroughputBuckets(start, end time.Time, bucketSeconds int, points []*ops.OpsThroughputTrendPoint) []*ops.OpsThroughputTrendPoint {
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
@@ -390,6 +489,8 @@ func fillOpsThroughputBuckets(start, end time.Time, bucketSeconds int, points []
 		return points
 	}
 
+	// Move the exclusive end back one nanosecond before selecting its last slot,
+	// so a range ending on a bucket start excludes that bucket.
 	endMinus := end.Add(-time.Nanosecond)
 	if endMinus.Before(start) {
 		return points
@@ -399,6 +500,9 @@ func fillOpsThroughputBuckets(start, end time.Time, bucketSeconds int, points []
 	last := opsFloorToBucketStart(endMinus, bucketSeconds)
 	step := time.Duration(bucketSeconds) * time.Second
 
+	// Index points by exact Unix-second bucket identity before generating slots.
+	// Later duplicates win and matched pointers stay shared with the caller's
+	// input.
 	existing := make(map[int64]*ops.OpsThroughputTrendPoint, len(points))
 	for _, p := range points {
 		if p == nil {
@@ -425,6 +529,19 @@ func fillOpsThroughputBuckets(start, end time.Time, bucketSeconds int, points []
 	return out
 }
 
+// GetErrorTrend returns raw classified error buckets for nonzero endpoints and
+// a normalized supported bucket size. OpsService owns endpoint-order
+// validation; this method ignores QueryMode and excludes count-token probes
+// through buildErrorWhere. Totals, business-limited, and SLA counts require
+// final client failure.
+//
+// Provider-owned SLA-countable observations are classified by effective
+// upstream-or-client status independently of final-error totals, including
+// eligible recovered observations. SQL reads sparse bucket counts, then filling
+// inserts zero slots with shared point ownership and epoch alignment
+// requirements. Error buckets and returned labels follow the same one-minute,
+// five-minute, or hourly normalization; query, scan, and iteration failures
+// reject the result.
 func (r *Store) GetErrorTrend(ctx context.Context, filter *ops.OpsDashboardFilter, bucketSeconds int) (*ops.OpsErrorTrendResponse, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -439,6 +556,8 @@ func (r *Store) GetErrorTrend(ctx context.Context, filter *ops.OpsDashboardFilte
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
 	}
+	// Normalize unsupported chart buckets before building expressions and filling
+	// slots, so both phases use the same rate-independent timeline duration.
 	if bucketSeconds != 60 && bucketSeconds != 300 && bucketSeconds != 3600 {
 		bucketSeconds = 60
 	}
@@ -468,6 +587,8 @@ ORDER BY 1 ASC`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan failure. Cleanup errors are
+	// suppressed, while iteration errors still reject this query's result.
 	defer func() { _ = rows.Close() }()
 
 	points := make([]*ops.OpsErrorTrendPoint, 0, 256)
@@ -501,6 +622,17 @@ ORDER BY 1 ASC`
 	}, nil
 }
 
+// fillOpsErrorTrendBuckets returns error-count slots enclosing a positive
+// half-open range, adding zero points where matching timestamps are missing.
+// Nonpositive bucket size selects one minute, and unordered or empty endpoints
+// return the supplied slice itself. Nil observations are skipped and the last
+// point for duplicate UTC Unix seconds wins.
+//
+// A new slice reuses matched point pointers, which callers treat as immutable
+// while shared. Out-of-range or differently aligned points are omitted; the
+// first enclosing slot can precede start. Subtracting a nanosecond from end
+// keeps an aligned exclusive end out of the timeline. Counts already present in
+// reused points remain supplied rather than being recomputed.
 func fillOpsErrorTrendBuckets(start, end time.Time, bucketSeconds int, points []*ops.OpsErrorTrendPoint) []*ops.OpsErrorTrendPoint {
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
@@ -509,6 +641,8 @@ func fillOpsErrorTrendBuckets(start, end time.Time, bucketSeconds int, points []
 		return points
 	}
 
+	// Move the exclusive end back one nanosecond before selecting its last slot,
+	// so a range ending on a bucket start excludes that bucket.
 	endMinus := end.Add(-time.Nanosecond)
 	if endMinus.Before(start) {
 		return points
@@ -518,6 +652,9 @@ func fillOpsErrorTrendBuckets(start, end time.Time, bucketSeconds int, points []
 	last := opsFloorToBucketStart(endMinus, bucketSeconds)
 	step := time.Duration(bucketSeconds) * time.Second
 
+	// Index points by exact Unix-second bucket identity before generating slots.
+	// Later duplicates win and matched pointers stay shared with the caller's
+	// input.
 	existing := make(map[int64]*ops.OpsErrorTrendPoint, len(points))
 	for _, p := range points {
 		if p == nil {
@@ -547,6 +684,17 @@ func fillOpsErrorTrendBuckets(start, end time.Time, bucketSeconds int, points []
 	return out
 }
 
+// GetErrorDistribution groups matching raw final-client failures by effective
+// saved status, preferring nonnull upstream status even when zero. Nonzero
+// endpoints are required, while ordering is validated by OpsService. QueryMode
+// is ignored and count-token errors are excluded by the shared base predicate.
+//
+// The shared SLA/business policy divides each displayed status group into
+// countable and excluded observations. SQL selects at most twenty groups
+// ordered by total without a status tie breaker. Response Total sums those
+// returned groups, so matching failures in additional statuses are absent from
+// that total. Items are newly allocated; query, scan, and iteration errors
+// reject the response.
 func (r *Store) GetErrorDistribution(ctx context.Context, filter *ops.OpsDashboardFilter) (*ops.OpsErrorDistributionResponse, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -564,6 +712,7 @@ func (r *Store) GetErrorDistribution(ctx context.Context, filter *ops.OpsDashboa
 	businessLimitedSQL := opsBusinessLimitedSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", filter.IgnoredStatusCodes)
 	slaCountableSQL := opsSLACountableSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", filter.IgnoredStatusCodes)
 
+	// Limit displayed status groups to the twenty most frequent.
 	q := `
 SELECT
   COALESCE(upstream_status_code, status_code, 0) AS status_code,
@@ -581,6 +730,8 @@ LIMIT 20`
 	if err != nil {
 		return nil, err
 	}
+	// Close the cursor after success or an early scan failure. Cleanup errors are
+	// suppressed, while iteration errors still reject this query's result.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]*ops.OpsErrorDistributionItem, 0, 16)

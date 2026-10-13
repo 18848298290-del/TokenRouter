@@ -8,18 +8,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Ingress-rejection rows accumulate deltas under a unique minute-and-dimension
+// key. A PostgreSQL transaction spans all fixed-size input chunks, and conflict
+// updates add request counts while retaining the earliest and latest recorded
+// arrival times. Optional caller IDs use stored zero sentinels so unidentified
+// requests participate in that key.
+//
+// Listing applies independently optional bucket and dimension comparisons, then
+// reads a total and an ordered page in separate statements. It returns positive
+// caller IDs as optional pointers and omits stored zero values. Additive writes
+// allow several snapshots to contribute to one aggregate, but resubmitting an
+// already committed delta adds it again; a commit error is not resolved through
+// a batch identity here.
+
+// ingressRejectUpsertChunkSize bounds each statement's input segment while one
+// transaction covers the complete supplied delta batch.
 const ingressRejectUpsertChunkSize = 500
 
+// BatchUpsertIngressRejects adds positive nonnil input deltas to their
+// minute-and-dimension aggregates in one transaction. A nil store, missing
+// database, or empty input is treated as successful omission.
+//
+// Input segments contain at most five hundred rows before invalid deltas are
+// filtered. Nil caller IDs become stored zero, and timestamps use UTC; counts
+// and identities are otherwise passed through. On conflict, counts are added
+// and first/last times are merged. An execution error invokes deferred
+// rollback; a commit error is returned without resolving whether the commit
+// occurred, so retrying can repeat deltas.
 func (r *Store) BatchUpsertIngressRejects(ctx context.Context, items []*ops.OpsIngressRejectAggregate) error {
 	if r == nil || r.db == nil || len(items) == 0 {
 		return nil
 	}
+	// Keep every chunk in one transaction so an execution failure can roll back
+	// earlier chunks before any successful return.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	// Defer rollback through all early returns; after a successful commit this
+	// cleanup is harmless, and rollback errors are suppressed.
 	defer func() { _ = tx.Rollback() }()
 
+	// Split the supplied batch into fixed segments before filtering, keeping
+	// statement parameter growth bounded even when some entries are skipped.
 	for start := 0; start < len(items); start += ingressRejectUpsertChunkSize {
 		end := min(start+ingressRejectUpsertChunkSize, len(items))
 		valid := make([]*ops.OpsIngressRejectAggregate, 0, end-start)
@@ -32,6 +63,8 @@ func (r *Store) BatchUpsertIngressRejects(ctx context.Context, items []*ops.OpsI
 			continue
 		}
 
+		// Builder writes target memory and return nil errors. SQL execution supplies
+		// the returned failure path, so construction discards those write results.
 		var query strings.Builder
 		_, _ = query.WriteString(`INSERT INTO ops_ingress_reject_aggregates
   (bucket_start, reject_reason, route_family, protocol, client_ip, user_id, api_key_id, request_count, first_seen, last_seen)
@@ -44,6 +77,8 @@ VALUES `)
 			base := len(args)
 			fmt.Fprintf(&query, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10)
+			// Encode absent caller IDs as zero to match the nonnull dimension key used
+			// by the aggregate's unique constraint.
 			var userID, apiKeyID int64
 			if item.UserID != nil {
 				userID = *item.UserID
@@ -64,9 +99,21 @@ DO UPDATE SET request_count = ops_ingress_reject_aggregates.request_count + EXCL
 			return err
 		}
 	}
+	// Commit after all chunk statements succeed; the returned commit error remains
+	// ambiguous to the in-memory queue's later retry.
 	return tx.Commit()
 }
 
+// ListIngressRejects returns matching aggregate rows ordered by bucket and row
+// ID descending. A nil filter uses defaults, nonpositive pagination becomes
+// page one and size fifty, and size is capped at two hundred.
+//
+// Bucket cutoffs are independently optional and form an inclusive-start,
+// exclusive-end interval. Nonblank dimensions use exact comparisons, client IP
+// is cast to inet, and nonnil IDs include stored zero when supplied directly.
+// Total and page queries use separate statements, so concurrent writes can
+// change membership between them. Newly scanned rows omit nonpositive optional
+// IDs and are returned after cursor errors are checked.
 func (r *Store) ListIngressRejects(ctx context.Context, filter *ops.OpsIngressRejectFilter) (*ops.OpsIngressRejectList, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -81,6 +128,7 @@ func (r *Store) ListIngressRejects(ctx context.Context, filter *ops.OpsIngressRe
 	if pageSize <= 0 {
 		pageSize = 50
 	}
+	// Bound aggregate pages to two hundred returned rows.
 	if pageSize > 200 {
 		pageSize = 200
 	}
@@ -117,6 +165,8 @@ func (r *Store) ListIngressRejects(ctx context.Context, filter *ops.OpsIngressRe
 	}
 	where := "WHERE " + strings.Join(clauses, " AND ")
 
+	// Read the total before the page with the same predicates; separate statements
+	// permit concurrent inserts to change the later page view.
 	var total int
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ops_ingress_reject_aggregates "+where, args...).Scan(&total); err != nil {
 		return nil, err
@@ -128,6 +178,8 @@ FROM ops_ingress_reject_aggregates %s ORDER BY bucket_start DESC,id DESC LIMIT $
 	if err != nil {
 		return nil, err
 	}
+	// Release the page cursor after scanning or any early error; close failures
+	// are suppressed while query and scan errors remain returned.
 	defer func() { _ = rows.Close() }()
 
 	result := &ops.OpsIngressRejectList{
@@ -140,6 +192,8 @@ FROM ops_ingress_reject_aggregates %s ORDER BY bucket_start DESC,id DESC LIMIT $
 			&item.ClientIP, &userID, &apiKeyID, &item.RequestCount, &item.FirstSeen, &item.LastSeen); err != nil {
 			return nil, err
 		}
+		// Restore positive IDs as optional values for the API; stored zero or
+		// negative identities are omitted from the returned row.
 		if userID > 0 {
 			item.UserID = &userID
 		}

@@ -46,7 +46,13 @@ type (
 // administrator unban operations.
 type UserSnapshot struct {
 	ID int64 // risk action account identifier
-	// account role, request eligibility status, and recipient email
+	// Role exempts the exact admin label from ordinary automatic banning before
+	// status commands run. Status controls whether ban and unban issue status
+	// commands, with an existing target status leaving that command unnecessary.
+	// Email is copied from identity by app but is unread by these moderation
+	// consumers.
+	// Role: identity account role label. Status: current identity eligibility
+	// status. Email: retained identity email address.
 	Role, Status, Email string
 }
 
@@ -59,7 +65,8 @@ type UserCommands interface {
 	GetByID(context.Context, int64) (*UserSnapshot, error)
 	// SetStatus persists the supplied status for the given account. Moderation calls
 	// authentication invalidation after a successful status command; a returned
-	// error prevents its successful-ban or successful-unban result from being reported.
+	// error prevents its successful-ban or successful-unban result from
+	// being reported.
 	SetStatus(context.Context, int64, string) error
 }
 
@@ -75,13 +82,20 @@ type GroupRepository interface {
 // ProxyInfo supplies the resolved audit URL and proxy observations used by
 // moderation diagnostics.
 type ProxyInfo struct {
-	// dial URL, display name, stored status, and credential-free diagnostic
-	// address
+	// URL supplies the proxy dial target and can include authentication. Name and
+	// Status describe the lookup for diagnostics; Address is formatted separately
+	// from protocol, host, and port for the target-change log in
+	// resolveModerationProxyURL.
+	// URL: proxy dial target URL. Name: stored proxy display name. Status:
+	// stored proxy status label. Address: separate protocol/host/port
+	// diagnostic text.
 	URL, Name, Status, Address string
 	// Active and Expired describe the proxy at the lookup time.
 	// resolveModerationProxyURL logs inactive or expired observations and still
 	// uses URL when the lookup succeeds.
-	Active, Expired bool // activity and sampled expiry observations
+	// Active: stored active-status observation. Expired: expiration-at-lookup
+	// observation flag.
+	Active, Expired bool
 }
 
 // ProxyRepository resolves stored proxy selections for moderation audit
@@ -89,7 +103,8 @@ type ProxyInfo struct {
 type ProxyRepository interface {
 	// Lookup returns the selected proxy and its observations at the supplied time.
 	// Resolution errors abort an audit attempt; successful inactive or expired
-	// records still supply their URL to resolveModerationProxyURL after diagnostic logging.
+	// records still supply their URL to resolveModerationProxyURL after
+	// diagnostic logging.
 	Lookup(context.Context, int64, time.Time) (ProxyInfo, error)
 }
 type (
@@ -104,7 +119,8 @@ type (
 	// AuditTransport executes one JSON moderation exchange and returns status,
 	// bounded failure bytes, or a transport or decode error to the core.
 	AuditTransport interface {
-		// Execute posts serialized input using the supplied credential and proxy resolver.
+		// Execute posts serialized input using the supplied credential
+		// and proxy resolver.
 		// The resolver is required and may return an empty direct URL; a resolver or
 		// client error aborts the exchange. Successful replies decode into output.
 		Execute(context.Context, string, string, []byte, func() (string, error), any) (int, []byte, error)
@@ -140,18 +156,22 @@ type Runtime struct {
 	ErrorMessage func([]byte) string // assembled upstream error extractor
 }
 
-// RiskSender delivers notices for the risk observations and account changes
-// already selected by moderation.
+// RiskSender processes notices for the risk observations and account changes
+// already selected by moderation. A nil result permits service email markers;
+// assembled notification delivery can also return nil for suppression or an
+// existing delivery marker, without a new SMTP send.
 type RiskSender interface {
 	// SendViolationEmail sends the ordinary hit notice for a nonnil log observation.
 	// Fresh ordinary logs still have no stored ID at this phase, so assembled
-	// notification delivery can proceed without source-key deduplication for that input.
+	// notification delivery can proceed without source-key deduplication
+	// for that input.
 	SendViolationEmail(context.Context, *notice.RiskPolicy, *notice.RiskLog) error
 	// SendAccountDisabledEmail reports an ordinary ban already applied by the caller.
 	// The assembled sender requires a nonnil log; the caller records delivery
 	// errors and retains the completed status change when delivery fails.
 	SendAccountDisabledEmail(context.Context, *notice.RiskPolicy, *notice.RiskLog) error
-	// SendCyberAccountDisabledEmail reports a committed Cyber ban using its warning identity.
+	// SendCyberAccountDisabledEmail reports a committed Cyber ban using its
+	// warning identity.
 	// The warning is nonnil and already stored; a delivery error leaves that
 	// transaction committed and prevents the later email-sent marker update.
 	SendCyberAccountDisabledEmail(context.Context, *notice.RiskPolicy, *notice.RiskWarning) error
