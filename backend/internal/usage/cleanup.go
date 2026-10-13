@@ -7,70 +7,110 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Administrator usage cleanup persists its filters and progress so interrupted
+// tasks can be reclaimed. Cleanup uses an inclusive start and end, while
+// ordinary report queries use exclusive ends; the worker requests bucket repair
+// after records have been deleted.
+
+// Cleanup status labels track task admission, execution, and terminal outcomes
+// for administrator lists, cancellation checks, and stale-running reclamation.
 const (
-	UsageCleanupStatusPending   = "pending"
-	UsageCleanupStatusRunning   = "running"
-	UsageCleanupStatusSucceeded = "succeeded"
-	UsageCleanupStatusFailed    = "failed"
-	UsageCleanupStatusCanceled  = "canceled"
+	UsageCleanupStatusPending   = "pending"   // persisted and awaiting execution
+	UsageCleanupStatusRunning   = "running"   // claimed for deletion work
+	UsageCleanupStatusSucceeded = "succeeded" // scan completed and reported successful
+	UsageCleanupStatusFailed    = "failed"    // execution failed with diagnostic text
+	UsageCleanupStatusCanceled  = "canceled"  // administrator cancellation was recorded
 )
 
-// UsageCleanupFilters selects records for a persisted cleanup task.
-// The time range is required; other filters are optional.
-// Task parameters are stored as JSON.
-//
-// start_time and end_time use RFC3339 timestamps,
-// with offsets resolved from UTC or the user's timezone before storage.
-//
-// Optional filter rules:
-//   - nil leaves the field unrestricted.
-//   - Supplied fields use exact matching.
+// UsageCleanupFilters contains the time range and optional exact-match inputs
+// persisted with a deletion task. The service sanitizes unsupported optional
+// values before storing them; the PostgreSQL deletion predicate includes both
+// time endpoints.
 type UsageCleanupFilters struct {
-	StartTime   time.Time `json:"start_time"`
-	EndTime     time.Time `json:"end_time"`
-	UserID      *int64    `json:"user_id,omitempty"`
-	APIKeyID    *int64    `json:"api_key_id,omitempty"`
-	ProviderID  *int64    `json:"provider_id,omitempty"`
-	GroupID     *int64    `json:"group_id,omitempty"`
-	TeamID      *int64    `json:"team_id,omitempty"`
-	Model       *string   `json:"model,omitempty"`
-	RequestType *int16    `json:"request_type,omitempty"`
-	Stream      *bool     `json:"stream,omitempty"`
-	BillingType *int8     `json:"billing_type,omitempty"`
+	// StartTime and EndTime are required instants stored as timestamp JSON.
+	// Deletion includes both endpoints. For positive-width ranges, aggregate
+	// repair includes the bucket beginning exactly at EndTime; equal endpoints
+	// select one instant, but the aggregation repair method returns a no-op.
+	StartTime  time.Time `json:"start_time"`            // inclusive deletion start instant
+	EndTime    time.Time `json:"end_time"`              // inclusive deletion end instant
+	UserID     *int64    `json:"user_id,omitempty"`     // optional acting user selector
+	APIKeyID   *int64    `json:"api_key_id,omitempty"`  // optional API key selector
+	ProviderID *int64    `json:"provider_id,omitempty"` // optional execution provider selector
+	GroupID    *int64    `json:"group_id,omitempty"`    // optional routed group selector
+	TeamID     *int64    `json:"team_id,omitempty"`     // optional owning team selector
+	Model      *string   `json:"model,omitempty"`       // optional stored model selector
+	// RequestType takes precedence over Stream after service sanitization. A valid
+	// explicit category clears Stream so older transport flags cannot further
+	// restrict the selected request category.
+	RequestType *int16 `json:"request_type,omitempty"` // optional recorded request category
+	Stream      *bool  `json:"stream,omitempty"`       // optional legacy stream selector
+	BillingType *int8  `json:"billing_type,omitempty"` // optional funding category selector
 }
 
-// UsageCleanupTask tracks deletion of usage records.
-// States are pending, running, succeeded, failed, and canceled.
+// UsageCleanupTask records administrator deletion state, progress, filters, and
+// lifecycle timestamps.
 type UsageCleanupTask struct {
-	ID          int64
-	Status      string
-	Filters     UsageCleanupFilters
-	CreatedBy   int64
-	DeletedRows int64
-	ErrorMsg    *string
-	CanceledBy  *int64
-	CanceledAt  *time.Time
-	StartedAt   *time.Time
-	FinishedAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID        int64               // persisted cleanup task ID
+	Status    string              // current cleanup task label
+	Filters   UsageCleanupFilters // persisted deletion selection inputs
+	CreatedBy int64               // task creator user ID
+	// DeletedRows is saved after successful deletion batches and reused when stale
+	// running tasks are reclaimed. A progress-write failure can leave it behind
+	// actual committed deletions.
+	DeletedRows int64   // reported cumulative deletion count
+	ErrorMsg    *string // optional execution failure text
+	// CanceledBy and CanceledAt record administrator cancellation; StartedAt and
+	// FinishedAt describe execution. Reclaiming a stale running task replaces
+	// StartedAt and clears the previous finish and error outcome.
+	CanceledBy *int64     // optional canceling user ID
+	CanceledAt *time.Time // optional recorded cancellation instant
+	StartedAt  *time.Time // latest task claim instant
+	FinishedAt *time.Time // optional terminal result instant
+	CreatedAt  time.Time  // task persistence creation instant
+	UpdatedAt  time.Time  // latest task update instant
 }
 
 // UsageCleanupRepository persists cleanup tasks and deletes matching usage records.
 type UsageCleanupRepository interface {
+	// CreateTask persists task filters and the initial progress fields, then fills
+	// its ID and creation timestamps. The supplied task remains mutable for that
+	// readback; nil input is accepted by the PostgreSQL implementation.
 	CreateTask(ctx context.Context, task *UsageCleanupTask) error
+	// ListTasks returns cleanup tasks ordered newest first together with exact
+	// pagination metadata. Filter decoding errors fail the read so an
+	// administrator is not shown a task with incomplete deletion parameters.
 	ListTasks(ctx context.Context, params pagination.PaginationParams) ([]UsageCleanupTask, *pagination.PaginationResult, error)
-	// ClaimNextPendingTask claims the next executable task:
-	//   - Select the oldest eligible task by creation time.
-	//   - Reclaim running tasks older than staleRunningAfterSeconds to resume interrupted work.
+	// ClaimNextPendingTask claims the oldest eligible pending or stale running
+	// task and retains its deletion count. Nonpositive stale timeouts select
+	// thirty minutes; no eligible task returns nil successfully. Filter decoding
+	// follows the SQL claim, so a decoding failure can leave the task running
+	// until stale-task reclamation.
 	ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*UsageCleanupTask, error)
-	// GetTaskStatus returns the task state or ErrCleanupTaskNotFound when absent.
+	// GetTaskStatus returns the persisted state used for cancellation checks.
+	// Missing tasks return ErrCleanupTaskNotFound; callers distinguish that case
+	// from repository failures before deciding whether execution may continue.
 	GetTaskStatus(ctx context.Context, taskID int64) (string, error)
-	// UpdateTaskProgress saves deleted_rows for progress display and resumed tasks.
+	// UpdateTaskProgress stores the cumulative successful deletion count for
+	// administrator display and resumption. The write is separate from deleting a
+	// batch, so callers handle progress errors after records may already be gone.
 	UpdateTaskProgress(ctx context.Context, taskID int64, deletedRows int64) error
-	// CancelTask marks pending or running tasks canceled.
+	// CancelTask conditionally marks a pending or running task canceled and
+	// records the operator. False means no eligible state was updated; callers can
+	// reread to recognize a concurrent cancellation.
 	CancelTask(ctx context.Context, taskID int64, canceledBy int64) (bool, error)
+	// MarkTaskSucceeded stores the completed scan outcome and cumulative deletion
+	// count. This task-row update follows the deletion batches and can fail
+	// independently after their record changes have persisted. PostgreSQL writes
+	// the status even if cancellation was recorded after the caller's last check.
 	MarkTaskSucceeded(ctx context.Context, taskID int64, deletedRows int64) error
+	// MarkTaskFailed stores an execution failure together with the cumulative
+	// deletion count and error text. Earlier deleted batches remain deleted, and
+	// callers still arrange aggregation repair for that affected range. PostgreSQL
+	// replaces the status even if cancellation occurred after the caller's check.
 	MarkTaskFailed(ctx context.Context, taskID int64, deletedRows int64, errorMsg string) error
+	// DeleteUsageLogsBatch deletes up to limit records matching the inclusive time
+	// range and optional selectors. Callers provide a positive limit, retain the
+	// returned count in cumulative progress, and arrange aggregate repair after
+	// records have been deleted.
 	DeleteUsageLogsBatch(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, error)
 }

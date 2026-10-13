@@ -10,52 +10,139 @@ import (
 	p "github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// Application assembly supplies calendars, background dispatch, and deployment
+// settings separately to usage services. Constructors and workers interpret
+// zero-valued durations and limits at their own call sites, while callbacks
+// keep scheduling, singleton acquisition, and reporting with their application
+// owners.
+
+// ErrCleanupTaskNotFound marks a missing persisted cleanup task so service
+// cancellation and worker status checks can distinguish absence from storage failure.
 var ErrCleanupTaskNotFound = errors.New("usage cleanup task not found")
 
+// Options carries application-owned dependencies and deployment settings for
+// usage services.
 type Options struct {
-	Calendar      timezone.Calendar
-	RunBackground func(string, func()) bool
-	DashboardAgg  DashboardAggregationConfig
-	UsageCleanup  UsageCleanupConfig
-	Dashboard     DashboardConfig
-	Logf          func(string, string, ...any)
+	Calendar timezone.Calendar // server report calendar dependency
+	// RunBackground receives a diagnostic name and callback; false means dispatch
+	// was rejected. App retains background-task ownership, and DashboardService
+	// uses its own runner when this field is nil.
+	RunBackground func(string, func()) bool  // tracked background dispatch callback
+	DashboardAgg  DashboardAggregationConfig // dashboard rollup deployment settings
+	UsageCleanup  UsageCleanupConfig         // administrator cleanup deployment settings
+	Dashboard     DashboardConfig            // dashboard snapshot deployment settings
+	// Logf receives component, format, and arguments. Nil selects the service's
+	// standard logger path, whose logUsage helper forwards the format and
+	// arguments to log.Printf.
+	Logf func(string, string, ...any) // usage component reporting callback
 }
+
+// DashboardAggregationConfig controls scheduled rollups, historical work, and
+// retention limits.
 type DashboardAggregationConfig struct {
-	Enabled                          bool
-	IntervalSeconds, LookbackSeconds int
-	BackfillEnabled                  bool
-	BackfillMaxDays                  int
-	Retention                        DashboardAggregationRetentionConfig
-	RecomputeDays                    int
+	Enabled bool // scheduled aggregation deployment gate
+	// IntervalSeconds and LookbackSeconds govern cadence and recent rescans.
+	// DashboardAggregationService replaces cadence with resolved runtime settings
+	// when bound and uses LookbackSeconds directly; DashboardService applies its
+	// own constructor defaults.
+	IntervalSeconds, LookbackSeconds int  // scheduled interval and live lookback seconds
+	BackfillEnabled                  bool // manual backfill deployment permission
+	// BackfillMaxDays bounds elapsed manual ranges using twenty-four-hour days
+	// when positive. Nonpositive values leave TriggerBackfill's duration cap unset.
+	BackfillMaxDays int                                 // maximum manual backfill duration days
+	Retention       DashboardAggregationRetentionConfig // raw and rollup retention settings
+	// RecomputeDays schedules startup range work when positive and no
+	// multidimensional analytics repository is bound. The scheduler uses this
+	// deployment value only for that legacy startup path.
+	RecomputeDays int // legacy startup reverse-range days
 }
 type (
-	DashboardAggregationRetentionConfig struct{ UsageLogsDays, UsageBillingDedupDays, HourlyDays, DailyDays int }
-	UsageCleanupConfig                  struct {
-		Enabled                                                            bool
-		MaxRangeDays, BatchSize, WorkerIntervalSeconds, TaskTimeoutSeconds int
+	// DashboardAggregationRetentionConfig supplies retention ages for raw records
+	// and both rollup sizes.
+	DashboardAggregationRetentionConfig struct {
+		// UsageLogsDays, UsageBillingDedupDays, HourlyDays, and DailyDays are
+		// subtracted from one cleanup instant with AddDate.
+		// DashboardAggregationService retains these ages and uses the resulting
+		// cutoffs directly for its retention work.
+		UsageLogsDays, UsageBillingDedupDays, HourlyDays, DailyDays int /* days */
+	}
+	// UsageCleanupConfig controls administrator deletion admission and worker
+	// batch execution.
+	UsageCleanupConfig struct {
+		// Enabled gates task creation, cancellation, and Start's registration of
+		// worker polling when an Options value is supplied to the cleanup service.
+		Enabled bool // cleanup task admission gate
+		// MaxRangeDays bounds elapsed range days, BatchSize bounds each deletion,
+		// WorkerIntervalSeconds sets polling, and TaskTimeoutSeconds bounds one
+		// claimed task. The cleanup service selects defaults for nonpositive values.
+		MaxRangeDays, BatchSize, WorkerIntervalSeconds, TaskTimeoutSeconds int // days rows seconds seconds
 	}
 )
 
+// DashboardConfig controls the serialized dashboard snapshot cache and refresh
+// lifetimes.
 type DashboardConfig struct {
-	Enabled                                                           bool
-	StatsFreshTTLSeconds, StatsTTLSeconds, StatsRefreshTimeoutSeconds int
+	// Enabled retains the supplied shared DashboardStatsCache when true. False
+	// drops that dependency at construction while per-query caches remain available.
+	Enabled bool // shared dashboard cache gate
+	// StatsFreshTTLSeconds selects when a cached value triggers refresh;
+	// StatsTTLSeconds selects Redis expiration, and StatsRefreshTimeoutSeconds
+	// bounds refresh and cache operations. Positive values override the
+	// constructor defaults.
+	StatsFreshTTLSeconds, StatsTTLSeconds, StatsRefreshTimeoutSeconds int // freshness expiration and refresh-timeout seconds
 }
+
+// TimingWheel schedules named recurring work and waits for cancellation of its
+// callbacks.
 type TimingWheel interface {
+	// ScheduleRecurring registers named work to recur after each callback
+	// finishes and the interval elapses. Services reserve that name for
+	// cancellation; replacing a name lets an already-running callback finish.
 	ScheduleRecurring(string, time.Duration, func())
+	// CancelAndWait cancels the current registration for name and waits for its
+	// active callbacks. Separately dispatched work keeps its own lifecycle, so
+	// usage services also wait for their background workers. Calling from that
+	// registration's callback waits for the caller itself.
 	CancelAndWait(string)
 }
+
+// AggregationSettings supplies runtime aggregation decisions and change
+// notifications to usage services.
 type AggregationSettings interface {
+	// UsageEnabled combines deployment availability with resolved Usage.Enabled
+	// for query and scheduling decisions. PreAggregationSettingsService uses its
+	// last cached settings after a read failure, or deployment defaults when no
+	// cache exists.
 	UsageEnabled(context.Context) bool
+	// Resolve returns runtime aggregation controls including the scheduled usage
+	// interval. PreAggregationSettingsService recovers read failures using its
+	// last cached snapshot, including expired data, and selects deployment
+	// defaults when no cached snapshot exists.
 	Resolve(context.Context) p.PreAggregationSettings
+	// RegisterListener retains an application-lifetime observer receiving
+	// previous and next settings. PreAggregationSettingsService invokes listeners
+	// synchronously after successful writes, in registration order; a listener
+	// must not call that service's Update reentrantly. Nil callbacks are ignored
+	// by PreAggregationSettingsService.
 	RegisterListener(func(p.PreAggregationSettings, p.PreAggregationSettings))
 }
 type (
+	// PreAggregationSettings is the shared runtime settings value consumed by
+	// usage aggregation.
 	PreAggregationSettings = p.PreAggregationSettings
-	SingletonLocker        func(context.Context, string, string, time.Duration) (func(), bool)
+	// SingletonLocker attempts a lease for key and owner for ttl, returning a
+	// release callback and an acquired flag. Success requires a nonnil callback,
+	// which the aggregation service defers until protected work returns; false
+	// skips that work.
+	SingletonLocker func(context.Context, string, string, time.Duration) (func(), bool)
 )
 
+// logUsage writes format and arguments through the standard Go logger.
 func logUsage(component, format string, args ...any) { log.Printf(format, args...) }
 
+// usageReporter returns the supplied component-aware logging callback for
+// service construction. Nil options or nil Logf leave the result nil so each
+// service can select logUsage when reporting.
 func usageReporter(options *Options) func(string, string, ...any) {
 	if options == nil {
 		return nil
