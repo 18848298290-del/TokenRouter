@@ -12,13 +12,40 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpconfig"
 )
 
+// Cross-origin permissions depend on the normalized origin list and whether
+// credentials may accompany requests. An exact origin is echoed with Vary:
+// Origin; a wildcard grants every origin and disables the credentials header.
+// Empty configuration produces no permission headers, and a denied ordinary
+// request still reaches its route handler.
+//
+// OPTIONS requests end at this middleware with the origin decision, allowing a
+// browser preflight to finish before endpoint handling. Approved responses
+// expose request-correlation and timing headers and advertise the application
+// and SDK request headers accepted by the browser policy. Configuration
+// warnings are emitted through a process-wide once guard when CORS is first
+// constructed.
+
+// corsWarningOnce emits configuration warnings during the first CORS
+// construction across the process's middleware instances.
 var corsWarningOnce sync.Once
 
-// CORS applies the configured cross-origin policy and handles preflight requests.
+// CORS snapshots the configured origin policy and returns middleware that
+// answers browser preflight requests. Origins are trimmed, exact origins are
+// case-sensitive, and an asterisk takes precedence over any specific entries.
+// Wildcard mode clears credential permission because browsers cannot use that
+// combination.
+//
+// Approved origins receive the advertised methods, request headers, exposed
+// response headers, and one-day preflight cache duration. OPTIONS ends with 204
+// or 403 according to that decision; ordinary requests continue even when no
+// CORS permission is added. Only the first construction emits configuration
+// warnings.
 func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 	allowedOrigins := normalizeOrigins(cfg.AllowedOrigins)
 	allowAll := slices.Contains(allowedOrigins, "*")
 	wildcardWithSpecific := allowAll && len(allowedOrigins) > 1
+	// An asterisk already admits every origin. Collapse mixed configuration to
+	// that policy so the specific entries do not suggest a narrower permission.
 	if wildcardWithSpecific {
 		allowedOrigins = []string{"*"}
 	}
@@ -35,6 +62,9 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 			log.Println("Warning: CORS allowed_origins set to '*', disabling allow_credentials.")
 		}
 	})
+	// Browsers reject credentialed wildcard permissions. Keep the advertised
+	// wildcard origin and suppress credential permission when the configuration
+	// requests both together.
 	if allowAll && allowCredentials {
 		allowCredentials = false
 	}
@@ -51,7 +81,8 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 		"accept", "origin", "Cache-Control", "X-Requested-With", "X-API-Key", "X-Admin-UI-Request", "X-User-UI-Request",
 		"X-Request-ID", "X-Client-Request-ID",
 	}
-	// Permit the OpenAI Node SDK's x-stainless-* headers in browser requests.
+	// Include the SDK metadata names in preflight permissions so browser clients
+	// can send the enumerated x-stainless properties alongside their API request.
 	openAIProperties := []string{
 		"lang", "package-version", "os", "arch", "retry-count", "runtime",
 		"runtime-version", "async", "helper-method", "poll-helper", "custom-poll-interval", "timeout",
@@ -81,9 +112,11 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 			c.Writer.Header().Set("Access-Control-Allow-Headers", allowHeadersValue)
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 			c.Writer.Header().Set("Access-Control-Expose-Headers", "ETag, Server-Timing, X-Request-ID, X-TokenRouter-Request-ID, X-Sub2API-Request-ID, X-Client-Request-ID")
+			// Cache approved browser preflight permissions for one day.
 			c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 		}
-		// End OPTIONS requests with the preflight decision.
+		// A browser preflight asks for permissions before sending its operation.
+		// Finish that decision here so OPTIONS does not reach the endpoint handler.
 		if c.Request.Method == http.MethodOptions {
 			if originAllowed {
 				c.AbortWithStatus(http.StatusNoContent)
@@ -97,6 +130,9 @@ func CORS(cfg httpconfig.CORSConfig) gin.HandlerFunc {
 	}
 }
 
+// normalizeOrigins returns trimmed nonempty entries in their supplied order.
+// Empty input returns nil; duplicates and wildcard entries remain for CORS to
+// interpret when constructing its origin policy.
 func normalizeOrigins(values []string) []string {
 	if len(values) == 0 {
 		return nil

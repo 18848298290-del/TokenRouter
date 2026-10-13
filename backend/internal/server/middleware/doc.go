@@ -1,4 +1,7 @@
-// Package middleware provides HTTP request IDs, logging, security headers, and ingress rate limits.
+// Package middleware applies HTTP correlation, logging, browser policy, and
+// ingress admission rules around Gin handlers. Global request capture runs
+// before route handling, while gateway middleware reuses its identity and
+// rejection markers feed aggregate observation after admission finishes.
 //
 // Start with:
 //   - client_request_id.go: internal request IDs and caller correlation IDs.

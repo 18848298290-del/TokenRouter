@@ -1,8 +1,5 @@
 package middleware
 
-// These tests cover model selection, request rewriting, and response restoration in
-// gateway/httpapi/api_key_composite.go and gateway/httpapi/api_key_model_mapping.go.
-
 import (
 	"bytes"
 	"compress/gzip"
@@ -27,6 +24,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// A composite prefix selects a group before key aliases redirect the internal
+// model, and response metadata still needs the client's requested spelling.
+// These scenarios exercise that sequence across
+// gateway/httpapi/api_key_composite.go and
+// gateway/httpapi/api_key_model_mapping.go using JSON, multipart, Gemini
+// parameters, compressed bodies, and response chunks.
+
+// TestResolveCompositeAPIKeyRequestJSON supplies a mixed-case composite prefix
+// followed by a slash-containing model name. Selection retains the group's
+// protocol policy and separates the client's full name from the rewritten JSON
+// model.
 func TestResolveCompositeAPIKeyRequestJSON(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gPt/vendor/model","messages":[]}`))
@@ -51,6 +59,9 @@ func TestResolveCompositeAPIKeyRequestJSON(t *testing.T) {
 	require.Equal(t, "vendor/model", actualModel)
 }
 
+// TestResolveCompositeAPIKeyRequestMultipart selects a group from an image-edit
+// multipart model field. The rewritten form keeps the image part and its bytes
+// while removing the composite prefix from the model.
 func TestResolveCompositeAPIKeyRequestMultipart(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -59,6 +70,9 @@ func TestResolveCompositeAPIKeyRequestMultipart(t *testing.T) {
 	require.NoError(t, err)
 	_, err = file.Write([]byte("image-data"))
 	require.NoError(t, err)
+	// Finish the multipart closing boundary before routing the fixture body. The
+	// downstream parser needs that complete stream to recover model and image
+	// parts.
 	require.NoError(t, writer.Close())
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -73,7 +87,9 @@ func TestResolveCompositeAPIKeyRequestMultipart(t *testing.T) {
 	fileHeader := c.Request.MultipartForm.File["image"][0]
 	opened, err := fileHeader.Open()
 	require.NoError(t, err)
-	// Close the multipart file before the test ends and check the close error.
+	// The small image part stays memory-backed under this parse limit. Close its
+	// opened file interface after reading and check the exposed Close result
+	// before the test ends.
 	defer func() {
 		require.NoError(t, opened.Close())
 	}()
@@ -82,6 +98,9 @@ func TestResolveCompositeAPIKeyRequestMultipart(t *testing.T) {
 	require.Equal(t, []byte("image-data"), content)
 }
 
+// TestResolveCompositeAPIKeyRequestGeminiURL supplies a composite prefix in a
+// Gemini model-action parameter. The selected key binds the requested group and
+// the route parameter retains the model's remaining path and action.
 func TestResolveCompositeAPIKeyRequestGeminiURL(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/GPT/vendor/model:generateContent", bytes.NewBufferString(`{}`))
@@ -94,6 +113,9 @@ func TestResolveCompositeAPIKeyRequestGeminiURL(t *testing.T) {
 	require.Equal(t, "/vendor/model:generateContent", c.Param("modelAction"))
 }
 
+// TestResolveCompositeAPIKeyRequestAdditionalModels includes a tool model
+// alongside the primary composite model. Matching group prefixes are rewritten,
+// while a tool selecting another group returns the unsupported-composite error.
 func TestResolveCompositeAPIKeyRequestAdditionalModels(t *testing.T) {
 	apiKeyService := testkit.NewService(nil, nil, nil, nil, nil, nil, nil)
 	apiKeyService.Start()
@@ -125,6 +147,10 @@ func TestResolveCompositeAPIKeyRequestAdditionalModels(t *testing.T) {
 	})
 }
 
+// TestResolveCompositeAPIKeyRequestSpecialEndpoints exercises model lists,
+// existing video reads, usage, and realtime paths. It protects no-group marking
+// separately from consumption bypass and rejects the represented realtime
+// connection cases.
 func TestResolveCompositeAPIKeyRequestSpecialEndpoints(t *testing.T) {
 	apiKeyService := testkit.NewService(nil, nil, nil, nil, nil, nil, nil)
 	apiKeyService.Start()
@@ -171,10 +197,16 @@ func TestResolveCompositeAPIKeyRequestSpecialEndpoints(t *testing.T) {
 	))
 }
 
+// TestReplaceCompositeResponseModel places the same model text in protocol
+// metadata and response content. Restoration changes recognized metadata
+// patterns, keeps the content text, and JSON-escapes an alias containing a
+// quote.
 func TestReplaceCompositeResponseModel(t *testing.T) {
 	response := []byte("data: {\"id\":\"gpt-5\",\"model\":\"gpt-5\",\"modelVersion\":\"gpt-5\",\"model_version\":\"gpt-5\",\"name\":\"models/gpt-5\",\"text\":\"gpt-5\"}\n\n")
 
-	// Restore protocol model fields while leaving identical text in response content unchanged.
+	// The same target appears in metadata and generated text. Restore recognized
+	// protocol fields so returning the client's alias does not rewrite that
+	// content text.
 	rewritten := replaceCompositeResponseModel(response, "gpt-5", "GPT/gpt-5")
 	require.Contains(t, string(rewritten), `"id":"GPT/gpt-5"`)
 	require.Contains(t, string(rewritten), `"model":"GPT/gpt-5"`)
@@ -183,11 +215,17 @@ func TestReplaceCompositeResponseModel(t *testing.T) {
 	require.Contains(t, string(rewritten), `"name":"models/GPT/gpt-5"`)
 	require.Contains(t, string(rewritten), `"text":"gpt-5"`)
 
-	// JSON-escape special characters in model aliases.
+	// Include a quote inside the client alias. The restored metadata needs JSON
+	// escaping so the complete output remains decodable while content text stays
+	// unchanged.
 	escaped := replaceCompositeResponseModel([]byte(`{"model":"safe-target","text":"safe-target"}`), "safe-target", `review"alias`)
 	require.JSONEq(t, `{"model":"review\"alias","text":"safe-target"}`, string(escaped))
 }
 
+// TestAbortCompositeKeyErrorPreservesProtocolShape reports composite errors
+// through OpenAI and Messages request paths. The responses retain their
+// protocol-specific envelope and the composite error code selected for each
+// case.
 func TestAbortCompositeKeyErrorPreservesProtocolShape(t *testing.T) {
 	openAIRecorder := httptest.NewRecorder()
 	openAIContext, _ := gin.CreateTestContext(openAIRecorder)
@@ -205,6 +243,10 @@ func TestAbortCompositeKeyErrorPreservesProtocolShape(t *testing.T) {
 	require.Equal(t, "COMPOSITE_KEY_MODEL_PREFIX_REQUIRED", gjson.Get(anthropicRecorder.Body.String(), "error.code").String())
 }
 
+// TestApplyAPIKeyModelRedirectRewritesJSONAndRestoresMetadataOnly redirects the
+// primary JSON alias and writes a response using another upstream model. Client
+// metadata returns to the requested alias while identical response content
+// remains unchanged.
 func TestApplyAPIKeyModelRedirectRewritesJSONAndRestoresMetadataOnly(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -225,6 +267,9 @@ func TestApplyAPIKeyModelRedirectRewritesJSONAndRestoresMetadataOnly(t *testing.
 	require.JSONEq(t, `{"model":"codex-auto-review","output_text":"upstream-luna"}`, recorder.Body.String())
 }
 
+// TestApplyAPIKeyModelRedirectDiscoversStreamingUpstreamModel writes a complete
+// response event with a discovered upstream model. The wrapped writer restores
+// the client alias in metadata and retains the event's output text.
 func TestApplyAPIKeyModelRedirectDiscoversStreamingUpstreamModel(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -238,11 +283,17 @@ func TestApplyAPIKeyModelRedirectDiscoversStreamingUpstreamModel(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"output_text":"upstream-target"`)
 }
 
+// TestApplyAPIKeyModelRedirectRewritesCompressedJSON supplies a gzip body with
+// primary and tool aliases. The restored reader contains both targets and the
+// compression header is removed after decoding.
 func TestApplyAPIKeyModelRedirectRewritesCompressedJSON(t *testing.T) {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
 	_, err := writer.Write([]byte(`{"model":"codex-auto-review","tools":[{"model":"tool-alias"}]}`))
 	require.NoError(t, err)
+	// Finish gzip output before routing the captured bytes. Closing writes the
+	// compressed stream trailer that the downstream body decoder needs to validate
+	// its input.
 	require.NoError(t, writer.Close())
 
 	recorder := httptest.NewRecorder()
@@ -262,11 +313,17 @@ func TestApplyAPIKeyModelRedirectRewritesCompressedJSON(t *testing.T) {
 	require.Equal(t, "tool-target", gjson.GetBytes(body, "tools.0.model").String())
 }
 
+// TestApplyAPIKeyModelRedirectRewritesMultipartModel uses an image alias also
+// present in a multipart prompt. The form model is redirected while prompt
+// content remains exactly as supplied.
 func TestApplyAPIKeyModelRedirectRewritesMultipartModel(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	require.NoError(t, writer.WriteField("model", "image-alias"))
 	require.NoError(t, writer.WriteField("prompt", "keep image-alias in text"))
+	// Finish the multipart boundary before supplying its content type and bytes to
+	// the request. The subsequent parser needs a complete form stream for model
+	// and prompt fields.
 	require.NoError(t, writer.Close())
 
 	recorder := httptest.NewRecorder()
@@ -280,6 +337,9 @@ func TestApplyAPIKeyModelRedirectRewritesMultipartModel(t *testing.T) {
 	require.Equal(t, "keep image-alias in text", c.Request.FormValue("prompt"))
 }
 
+// TestApplyAPIKeyModelRedirectRewritesGeminiURLModel maps a Gemini model alias
+// through route parameters. The action suffix remains attached after the
+// parameter switches to the configured target model.
 func TestApplyAPIKeyModelRedirectRewritesGeminiURLModel(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -291,6 +351,9 @@ func TestApplyAPIKeyModelRedirectRewritesGeminiURLModel(t *testing.T) {
 	require.Equal(t, "/gemini-3.1-pro-preview:generateContent", c.Param("modelAction"))
 }
 
+// TestApplyAPIKeyModelRedirectRewritesAdditionalToolModelsWithoutMainMatch
+// supplies a tool alias with an unmapped primary model. The primary text
+// remains and the independent tool field still receives its target.
 func TestApplyAPIKeyModelRedirectRewritesAdditionalToolModelsWithoutMainMatch(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -306,6 +369,9 @@ func TestApplyAPIKeyModelRedirectRewritesAdditionalToolModelsWithoutMainMatch(t 
 	require.Equal(t, "tool-target", gjson.GetBytes(body, "tools.0.model").String())
 }
 
+// TestApplyAPIKeyModelRedirectComposesWithCompositeResponseRestore seeds the
+// composite client model before key alias redirection. The response restores
+// the full prefixed client spelling after the internal target is written.
 func TestApplyAPIKeyModelRedirectComposesWithCompositeResponseRestore(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -319,7 +385,10 @@ func TestApplyAPIKeyModelRedirectComposesWithCompositeResponseRestore(t *testing
 	require.JSONEq(t, `{"model":"GPT/review"}`, recorder.Body.String())
 }
 
-// resolveCompositeAPIKeyRequest resolves a composite key's model and group through the gateway.
+// resolveCompositeAPIKeyRequest delegates composite selection with CopyAPIKey
+// views at input and output. Nil and ordinary keys return their supplied
+// pointer unchanged; copying still shares other key references, including
+// mapping data, which fixtures treat as read-only during the request.
 func resolveCompositeAPIKeyRequest(c *gin.Context, keys *apikey.APIKeyService, key *apikey.APIKey) (*apikey.APIKey, error) {
 	if key == nil || !key.IsComposite {
 		return key, nil
@@ -328,20 +397,39 @@ func resolveCompositeAPIKeyRequest(c *gin.Context, keys *apikey.APIKeyService, k
 	return apikey.CopyAPIKey(value), err
 }
 
+// replaceCompositeResponseModel delegates known model-metadata byte replacement
+// to the gateway implementation. Callers supply complete recognized patterns in
+// the chunk and use the returned bytes; arbitrary content text is outside those
+// supported metadata patterns.
 func replaceCompositeResponseModel(data []byte, actualModel, clientModel string) []byte {
 	return gatewayhttp.ReplaceCompositeResponseModel(data, actualModel, clientModel)
 }
 
+// isCompositeKeyBillingBypassEndpoint delegates consumption-bypass
+// classification for the supplied method and path. Existing usage,
+// batch-management, and video reads may qualify, while model-list selection
+// alone does not establish this bypass.
 func isCompositeKeyBillingBypassEndpoint(method, path string) bool {
 	return gatewayhttp.IsCompositeKeyBillingBypassEndpoint(method, path)
 }
 
+// isCompositeKeyUnsupportedEndpoint delegates composite realtime-path
+// classification to the gateway. The matched route template accompanies method
+// and path so sideband GET can be distinguished from ordinary endpoints sharing
+// the Codex prefix.
 func isCompositeKeyUnsupportedEndpoint(method, path, routePath string) bool {
 	return gatewayhttp.IsCompositeKeyUnsupportedEndpoint(method, path, routePath)
 }
 
+// abortCompositeKeyError delegates status, code, and protocol-envelope writing
+// for a composite error. Supply the request path for protocol selection; the
+// gateway helper writes its response and aborts Gin's handler chain.
 func abortCompositeKeyError(c *gin.Context, err error) { gatewayhttp.AbortCompositeKeyError(c, err) }
 
+// compositeMiddlewareTestKey constructs a fresh composite key with one active
+// exclusive OpenAI group. Its GPT prefix and allowed Responses/Chat protocols
+// support selection assertions; this fixture calls selection directly rather
+// than complete authentication.
 func compositeMiddlewareTestKey() *apikey.APIKey {
 	group := &routing.Group{
 		ID: 7, Name: "OpenAI", Status: billing.StatusActive, IsExclusive: true,
@@ -356,7 +444,9 @@ func compositeMiddlewareTestKey() *apikey.APIKey {
 	}
 }
 
-// compositeMiddlewareMultiGroupTestKey supplies two groups to test rejection of cross-group models in one request.
+// compositeMiddlewareMultiGroupTestKey appends an active Claude group to a
+// fresh GPT fixture. The returned key supplies independent prefixes so a
+// request can demonstrate rejection of tool models from another selected group.
 func compositeMiddlewareMultiGroupTestKey() *apikey.APIKey {
 	key := compositeMiddlewareTestKey()
 	group := &routing.Group{ID: 8, Name: "Claude", Status: billing.StatusActive, IsExclusive: true}
@@ -366,6 +456,10 @@ func compositeMiddlewareMultiGroupTestKey() *apikey.APIKey {
 	return key
 }
 
+// applyAPIKeyModelRedirect delegates key-alias rewriting using CopyAPIKey,
+// which retains shared mapping references. Call it after composite context
+// selection and keep fixture mappings unchanged while request and response
+// rewriting read them.
 func applyAPIKeyModelRedirect(c *gin.Context, apiKey *apikey.APIKey) {
 	gatewayhttp.ApplyAPIKeyModelRedirect(c, apikey.CopyAPIKey(apiKey))
 }

@@ -13,6 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// Access events combine final response metadata with the request logger and
+// context milestones. These cases inspect the accepted log sink for identity
+// separation, optional stage fields, admission-rejection markers, skipped
+// health probes, and severity-based suppression.
+
+// TestLogger_AccessLogIncludesCoreFields serves a created response with
+// provider and model values attached downstream. The accepted access event
+// contains the final status and the same provider, platform, and model.
 func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
@@ -80,6 +88,9 @@ func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 	}
 }
 
+// TestLogger_AccessLogSeparatesParentAndInternalRequestIDs sends an external
+// correlation header through ClientRequestID and Logger. The access event
+// retains the caller parent separately from its generated local diagnostic ID.
 func TestLogger_AccessLogSeparatesParentAndInternalRequestIDs(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
@@ -114,12 +125,18 @@ func TestLogger_AccessLogSeparatesParentAndInternalRequestIDs(t *testing.T) {
 	t.Fatalf("access log event not found")
 }
 
+// TestLogger_AccessLogIncludesRequestStageFields supplies context timestamps
+// relative to a known ingress time. The access event includes provider
+// admission, upstream SSE, visible output, and downstream flush milestones.
 func TestLogger_AccessLogIncludesRequestStageFields(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
 	r := gin.New()
 	r.Use(Logger())
 	r.GET("/v1/responses", func(c *gin.Context) {
+		// Supply synthetic milestones after one fixed ingress reference so
+		// stage-field coverage can be checked without depending on actual upload or
+		// upstream timing.
 		startedAt := time.Now().Add(-2 * time.Second)
 		ctx := context.WithValue(c.Request.Context(), telemetry.RequestStartedAt, startedAt)
 		ctx = context.WithValue(ctx, telemetry.ProviderSlotAcquiredAt, startedAt.Add(100*time.Millisecond))
@@ -151,6 +168,9 @@ func TestLogger_AccessLogIncludesRequestStageFields(t *testing.T) {
 	t.Fatal("access log event not found")
 }
 
+// TestLogger_IngressRejectRemainsInStandardAccessLog attaches an invalid-key
+// rejection marker to one completed request. Its emitted access event includes
+// the reason and requests exclusion from the Ops system-log sink.
 func TestLogger_IngressRejectRemainsInStandardAccessLog(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 	r := gin.New()
@@ -179,6 +199,10 @@ func TestLogger_IngressRejectRemainsInStandardAccessLog(t *testing.T) {
 	}
 }
 
+// TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy sends forwarding
+// metadata behind a configured proxy. The emitted access event resolves the
+// supplied client address; this fixture leaves GetClientIP in its
+// absent-snapshot compatibility mode.
 func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
@@ -212,6 +236,9 @@ func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	t.Fatalf("access log event not found")
 }
 
+// TestLogger_HealthPathSkipped serves a successful health probe through Logger
+// and its capture sink. The response succeeds while no access event reaches
+// that sink for this path.
 func TestLogger_HealthPathSkipped(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
@@ -232,6 +259,9 @@ func TestLogger_HealthPathSkipped(t *testing.T) {
 	}
 }
 
+// TestLogger_AccessLogDroppedWhenLevelWarn configures the logger at warning
+// severity before a successful request. The informational access event is
+// excluded from accepted sink events by severity filtering.
 func TestLogger_AccessLogDroppedWhenLevelWarn(t *testing.T) {
 	sink := initMiddlewareTestLoggerWithLevel(t, "warn")
 

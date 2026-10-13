@@ -11,6 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
+// Browser permission headers depend on the request origin, wildcard policy, and
+// credential flag. These cases check preflight termination separately from
+// ordinary responses and verify the advertised application headers, cache
+// duration, and Vary behavior.
+
+// TestCORS_DisallowedOrigin_NoAllowHeaders supplies disallowed or missing
+// origins for preflight and ordinary methods. None of these responses receive
+// the headers that would grant a browser cross-origin access.
 func TestCORS_DisallowedOrigin_NoAllowHeaders(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -19,9 +27,9 @@ func TestCORS_DisallowedOrigin_NoAllowHeaders(t *testing.T) {
 	middleware := CORS(cfg)
 
 	tests := []struct {
-		name   string
-		method string
-		origin string
+		name   string // subtest case label
+		method string // request HTTP method
+		origin string // incoming browser origin
 	}{
 		{
 			name:   "preflight_disallowed_origin",
@@ -69,6 +77,10 @@ func TestCORS_DisallowedOrigin_NoAllowHeaders(t *testing.T) {
 	}
 }
 
+// TestCORS_AllowedOrigin_HasAllowHeaders exercises an exact permitted origin
+// across preflight and ordinary requests. Each response advertises the
+// application request headers, exposed timing header, methods, and one-day
+// cache duration.
 func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -77,8 +89,8 @@ func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 	middleware := CORS(cfg)
 
 	tests := []struct {
-		name   string
-		method string
+		name   string // subtest case label
+		method string // request HTTP method
 	}{
 		{name: "preflight_OPTIONS", method: http.MethodOptions},
 		{name: "normal_GET", method: http.MethodGet},
@@ -115,6 +127,9 @@ func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 	}
 }
 
+// TestCORS_PreflightDisallowedOrigin_ReturnsForbidden sends OPTIONS from an
+// origin outside the configured list. The isolated middleware context receives
+// a 403 response for that preflight request.
 func TestCORS_PreflightDisallowedOrigin_ReturnsForbidden(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -133,6 +148,9 @@ func TestCORS_PreflightDisallowedOrigin_ReturnsForbidden(t *testing.T) {
 		"不允许的 origin 的 preflight 请求应返回 403")
 }
 
+// TestCORS_PreflightAllowedOrigin_ReturnsNoContent sends OPTIONS from the
+// configured exact origin. The isolated middleware context receives a 204
+// response for that permitted preflight request.
 func TestCORS_PreflightAllowedOrigin_ReturnsNoContent(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -151,6 +169,9 @@ func TestCORS_PreflightAllowedOrigin_ReturnsNoContent(t *testing.T) {
 		"允许的 origin 的 preflight 请求应返回 204")
 }
 
+// TestCORS_WildcardOrigin_AllowsAny uses an asterisk and sends a concrete
+// browser origin. The response advertises the wildcard together with
+// request-header and method permissions.
 func TestCORS_WildcardOrigin_AllowsAny(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"*"},
@@ -173,6 +194,9 @@ func TestCORS_WildcardOrigin_AllowsAny(t *testing.T) {
 		"通配符 origin 应设置 Allow-Methods")
 }
 
+// TestCORS_AllowCredentials_SetCorrectly enables credentials for an exact
+// origin and also sends a disallowed origin. Credential permission appears for
+// the allowed request and is absent from the denied origin's response.
 func TestCORS_AllowCredentials_SetCorrectly(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -205,6 +229,9 @@ func TestCORS_AllowCredentials_SetCorrectly(t *testing.T) {
 	})
 }
 
+// TestCORS_WildcardWithCredentials_DisablesCredentials configures both wildcard
+// origins and credential permission. The middleware suppresses the credentials
+// header so its wildcard response remains usable by browsers.
 func TestCORS_WildcardWithCredentials_DisablesCredentials(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"*"},
@@ -219,11 +246,16 @@ func TestCORS_WildcardWithCredentials_DisablesCredentials(t *testing.T) {
 
 	middleware(c)
 
-	// Wildcard origins disable credentials because browsers reject that combination.
+	// Exercise the incompatible flags together. Browsers reject a credentialed
+	// wildcard response, so the middleware clears credential permission during
+	// construction.
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"),
 		"通配符 origin 应禁用 Allow-Credentials")
 }
 
+// TestCORS_MultipleAllowedOrigins configures two exact origins and exercises
+// each plus an unlisted origin. Each configured origin is echoed, while the
+// unlisted request receives no origin or request-header permission.
 func TestCORS_MultipleAllowedOrigins(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins: []string{
@@ -271,6 +303,9 @@ func TestCORS_MultipleAllowedOrigins(t *testing.T) {
 	})
 }
 
+// TestCORS_VaryHeader_SetForSpecificOrigin sends a request from an exact
+// allowed origin. The response includes Vary: Origin so caches can distinguish
+// permissions for different browser origins.
 func TestCORS_VaryHeader_SetForSpecificOrigin(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"https://allowed.example.com"},
@@ -289,11 +324,14 @@ func TestCORS_VaryHeader_SetForSpecificOrigin(t *testing.T) {
 		"非通配符允许的 origin 应设置 Vary: Origin")
 }
 
+// TestNormalizeOrigins supplies empty slices, padded origins, and blank entries
+// to normalization. Empty input stays nil, whitespace is removed, and
+// meaningful entries keep their input order.
 func TestNormalizeOrigins(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  []string
-		expect []string
+		name   string   // subtest case label
+		input  []string // configured origin entries
+		expect []string // expected normalized entries
 	}{
 		{name: "nil_input", input: nil, expect: nil},
 		{name: "empty_input", input: []string{}, expect: nil},

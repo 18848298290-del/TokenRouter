@@ -11,11 +11,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// TestLocaleSelection checks HTML cookies, weighted API language preferences, and admin presentation scope.
+// Page navigation and API calls obtain language preferences from different
+// request inputs. The cases distinguish a saved page cookie from weighted
+// language headers and verify that administrator paths retain language metadata
+// while disabling user presentation.
+
+// TestLocaleSelection supplies HTML cookies, weighted API headers, and an
+// invalid requested language. Context flags and response headers protect cookie
+// precedence, default selection, and administrator presentation scope.
 func TestLocaleSelection(t *testing.T) {
 	for _, tc := range []struct {
+		// path selects the route. accept identifies the response content requested.
+		// language supplies Accept-Language. cookie supplies the saved page locale.
+		// want is the negotiated language expected in both context and headers.
 		path, accept, language, cookie, want string
-		user                                 bool
+		user                                 bool // expected user presentation flag
 	}{
 		{"/", "text/html", "en", "zh", "zh-Hans", true},
 		{"/api/v1/user", "application/json", "en;q=0.2,zh-CN;q=0.9", "en", "zh-Hans", true},

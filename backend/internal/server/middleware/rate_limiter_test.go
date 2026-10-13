@@ -14,12 +14,26 @@ import (
 	ippkg "github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// fakeFixedWindow provides controllable counts and errors for HTTP rate limit tests.
+// HTTP rate limiting separates route-and-client buckets and exposes rejection
+// through status, JSON, and retry headers. A deterministic counter fixture
+// keeps counts indefinitely so these tests can isolate failure policy and the
+// request's captured forwarding mode.
+
+// fakeFixedWindow supplies serial, nonexpiring request counts or one injected
+// counter failure.
 type fakeFixedWindow struct {
-	counts  map[string]int64
+	// counts retains every call per exact key and never expires. Tests allocate
+	// the map before successful counting and use the fixture serially.
+	counts map[string]int64
+	// failure is returned before counts is accessed. Set it during fixture setup
+	// to exercise HTTP counter-error policy independently of admitted counts.
 	failure error
 }
 
+// Allow increments the serial fixture's exact-key count and compares it with
+// limit, including rejected calls. counts must be initialized and calls
+// serialized; failure returns immediately. Rejection returns window as its
+// retry delay because this fixture does not track expiry.
 func (f *fakeFixedWindow) Allow(_ context.Context, key string, limit int, window time.Duration) (bool, int64, time.Duration, error) {
 	if f.failure != nil {
 		return false, 0, 0, f.failure
@@ -32,7 +46,9 @@ func (f *fakeFixedWindow) Allow(_ context.Context, key string, limit int, window
 	return true, count, 0, nil
 }
 
-// TestRateLimiterFailureModes covers allowing and rejecting requests on counter errors.
+// TestRateLimiterFailureModes injects a counter error into each supported HTTP
+// failure policy. Fail-close returns 429 while fail-open allows the successful
+// endpoint to run.
 func TestRateLimiterFailureModes(t *testing.T) {
 	for _, mode := range []RateLimitFailureMode{RateLimitFailOpen, RateLimitFailClose} {
 		limiter := NewRateLimiter(&fakeFixedWindow{failure: errors.New("redis unavailable")})
@@ -51,6 +67,9 @@ func TestRateLimiterFailureModes(t *testing.T) {
 	}
 }
 
+// TestRateLimiterDifferentIPsIndependent sends two client addresses through one
+// route limiter. Each address starts with its own budget, and a repeated
+// request exhausts only the first client's counter.
 func TestRateLimiterDifferentIPsIndependent(t *testing.T) {
 	callCounts := make(map[string]int64)
 	limiter := NewRateLimiter(&fakeFixedWindow{counts: callCounts})
@@ -83,12 +102,17 @@ func TestRateLimiterDifferentIPsIndependent(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, rec3.Code, "第一个 IP 的第二次请求应被限流")
 }
 
+// TestRateLimiterHonorsForwardedIPSnapshot pins compatibility forwarding policy
+// before HTTP limiting behind one shared peer address. Forwarded clients get
+// distinct buckets, and a repeated forwarded address exhausts its own budget.
 func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
 	callCounts := make(map[string]int64)
 	limiter := NewRateLimiter(&fakeFixedWindow{counts: callCounts})
 
 	router := gin.New()
-	// Simulate the forwarded-IP compatibility snapshot installed by SessionBindingContext.
+	// Pin compatibility policy before limiting so request consumers resolve
+	// forwarded clients using one captured mode, as they do after
+	// SessionBindingContext in application assembly.
 	router.Use(func(c *gin.Context) {
 		ippkg.SetForwardedIPSettings(c, true, nil)
 		c.Next()
@@ -118,7 +142,9 @@ func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
 	require.Contains(t, callCounts, "fwd:198.51.100.2")
 }
 
-// TestRateLimiterSuccessAndLimit checks the rejection response and Retry-After header.
+// TestRateLimiterSuccessAndLimit sends two requests into a one-request client
+// budget. The second response protects the 429 JSON shape and the integer retry
+// delay.
 func TestRateLimiterSuccessAndLimit(t *testing.T) {
 	limiter := NewRateLimiter(&fakeFixedWindow{counts: map[string]int64{}})
 	router := gin.New()

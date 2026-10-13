@@ -1,8 +1,5 @@
 package middleware
 
-// These tests cover authentication, subscription admission, and rejection markers in
-// gateway/httpapi/authorization.go, apikey/httpapi/authenticate.go, and ingress_reject.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -33,53 +30,140 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// Gateway authorization combines credential lookup with group, funding, and
+// consumption eligibility while preserving the endpoint's error format. These
+// scenarios cross gateway/httpapi/authorization.go,
+// apikey/httpapi/authenticate.go, and ingress_reject.go with controlled key and
+// subscription repositories, then inspect status, billing context, ownership,
+// and admission markers.
+//
+// Credential syntax and invalid-auth abuse checks are distinguished from
+// repository failures so an operational error does not become an expected
+// rejection. Read-only usage and existing-task operations can retain an
+// unavailable funding source; generation paths enforce consumption rules. The
+// callback fixtures expose maintenance results and shallow record copies whose
+// nested references remain shared during these serial requests.
+
+// maxAPIKeyAuthorizationHeaderBytes mirrors the credential byte limit plus
+// Authorization overhead used by the oversized-header rejection fixture.
 const maxAPIKeyAuthorizationHeaderBytes = apikey.MaxAPIKeyCredentialBytes + 128
 
+// fakeAPIKeyRepo supplies credential lookup and diagnostic-touch callbacks for
+// Google authorization cases.
 type fakeAPIKeyRepo struct {
-	getByKey       func(ctx context.Context, key string) (*apikey.APIKey, error)
+	// getByKey controls exact credential lookup for a request. Configure it before
+	// use; a nil callback reports an unexpected call in this Google fixture.
+	getByKey func(ctx context.Context, key string) (*apikey.APIKey, error)
+	// updateLastUsed receives a successful authentication's diagnostic touch when
+	// configured. A nil callback accepts the touch, leaving fixture timestamps and
+	// counters unchanged.
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
 }
 
+// fakeGoogleSubscriptionRepo supplies subscription lookup and
+// window-maintenance callbacks for Google authorization cases.
 type fakeGoogleSubscriptionRepo struct {
-	listActive     func(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error)
-	getByID        func(ctx context.Context, id int64) (*billingcore.UserSubscription, error)
-	updateStatus   func(ctx context.Context, subscriptionID int64, status string) error
+	// listActive supplies the user's candidate funding subscriptions. A configured
+	// callback decides returned sharing; a nil callback reports the unsupported
+	// list operation.
+	listActive func(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error)
+	// getByID supplies a selected or reloaded subscription by ID. Configure it
+	// before maintenance checks; a nil callback reports unsupported subscription
+	// lookup.
+	getByID func(ctx context.Context, id int64) (*billingcore.UserSubscription, error)
+	// updateStatus handles the subscription status change requested by validation.
+	// A nil callback reports unsupported persistence, letting the service observe
+	// that fixture failure.
+	updateStatus func(ctx context.Context, subscriptionID int64, status string) error
+	// activateWindow handles activation with the subscription ID and start time.
+	// The fixture ignores the activation mask, and an absent callback reports
+	// unsupported activation.
 	activateWindow func(ctx context.Context, id int64, start time.Time) error
-	resetDaily     func(ctx context.Context, id int64, start time.Time) error
-	resetWeekly    func(ctx context.Context, id int64, start time.Time) error
-	resetMonthly   func(ctx context.Context, id int64, start time.Time) error
+	// resetDaily handles the daily reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetDaily func(ctx context.Context, id int64, start time.Time) error
+	// resetWeekly handles the weekly reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetWeekly func(ctx context.Context, id int64, start time.Time) error
+	// resetMonthly handles the monthly reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetMonthly func(ctx context.Context, id int64, start time.Time) error
 }
 
+// googleErrorResponse decodes the Google error envelope asserted by
+// authorization scenarios.
 type googleErrorResponse struct {
 	Error struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
+		Code    int    `json:"code"`    // response HTTP status code
+		Message string `json:"message"` // public protocol error message
+		Status  string `json:"status"`  // Google error status name
+	} `json:"error"` // protocol error envelope object
 }
 
+// stubApiKeyRepo supplies credential lookup and diagnostic touches for standard
+// gateway authorization.
 type stubApiKeyRepo struct {
-	getByKey       func(ctx context.Context, key string) (*apikey.APIKey, error)
+	// getByKey controls the exact credential lookup result for a request.
+	// Configure it before use; a missing callback returns this fixture's
+	// unsupported-call error.
+	getByKey func(ctx context.Context, key string) (*apikey.APIKey, error)
+	// updateLastUsed receives a successful authentication's diagnostic touch when
+	// configured. A nil callback accepts the touch, leaving fixture timestamps and
+	// counters unchanged.
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
 }
 
+// stubGroupRepoForAuth supplies explicit groups for unavailable-group fallback
+// authorization scenarios.
 type stubGroupRepoForAuth struct {
+	// groupsByID is populated before requests and read by exact ID. Returned
+	// records copy the outer Group value while its nested references stay shared.
 	groupsByID map[int64]routing.Group
 }
 
+// stubUserSubscriptionRepo supplies funding lookup and maintenance callbacks
+// for standard gateway authorization.
 type stubUserSubscriptionRepo struct {
-	listActive     func(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error)
-	getByID        func(ctx context.Context, id int64) (*billingcore.UserSubscription, error)
-	updateStatus   func(ctx context.Context, subscriptionID int64, status string) error
+	// listActive supplies the user's candidate funding subscriptions. A configured
+	// callback decides returned sharing; a nil callback reports the unsupported
+	// list operation.
+	listActive func(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error)
+	// getByID supplies a selected or reloaded subscription by ID. Configure it
+	// before maintenance checks; a nil callback reports unsupported subscription
+	// lookup.
+	getByID func(ctx context.Context, id int64) (*billingcore.UserSubscription, error)
+	// updateStatus handles the subscription status change requested by validation.
+	// A nil callback reports unsupported persistence, letting the service observe
+	// that fixture failure.
+	updateStatus func(ctx context.Context, subscriptionID int64, status string) error
+	// activateWindow handles activation with the subscription ID and start time.
+	// The fixture ignores the activation mask, and an absent callback reports
+	// unsupported activation.
 	activateWindow func(ctx context.Context, id int64, start time.Time) error
-	resetDaily     func(ctx context.Context, id int64, start time.Time) error
-	resetWeekly    func(ctx context.Context, id int64, start time.Time) error
-	resetMonthly   func(ctx context.Context, id int64, start time.Time) error
+	// resetDaily handles the daily reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetDaily func(ctx context.Context, id int64, start time.Time) error
+	// resetWeekly handles the weekly reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetWeekly func(ctx context.Context, id int64, start time.Time) error
+	// resetMonthly handles the monthly reset ID and new window start. The
+	// expected-window pointer is ignored, and a nil callback reports unsupported
+	// maintenance.
+	resetMonthly func(ctx context.Context, id int64, start time.Time) error
 }
 
-// subscriptionAuthGroups returns empty group results for authentication fixtures without a group source.
+// subscriptionAuthGroups reports absent group details to the subscription
+// fixture's optional group reader.
 type subscriptionAuthGroups struct{}
 
+// TestGoogleAPIKeyAuthRejectsOversizedCredentialsBeforeLookup sends a Google
+// credential beyond the supported byte width. Authentication returns 401 with
+// an invalid-key marker and leaves the repository callback uncalled.
 func TestGoogleAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	var calls atomic.Int32
 	repo := fakeAPIKeyRepo{getByKey: func(context.Context, string) (*apikey.APIKey, error) {
@@ -108,6 +192,9 @@ func TestGoogleAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	require.Equal(t, IngressRejectInvalidAPIKey, reason)
 }
 
+// TestGoogleAPIKeyAuthMarksLookupBulkheadRejection supplies a valid-shaped
+// Google credential whose lookup reports exhausted authentication capacity. The
+// request returns 503 and retains the expected admission-overload marker.
 func TestGoogleAPIKeyAuthMarksLookupBulkheadRejection(t *testing.T) {
 	repo := fakeAPIKeyRepo{getByKey: func(context.Context, string) (*apikey.APIKey, error) {
 		return nil, apikey.ErrAPIKeyAuthOverloaded
@@ -133,6 +220,9 @@ func TestGoogleAPIKeyAuthMarksLookupBulkheadRejection(t *testing.T) {
 	require.Equal(t, IngressRejectAPIKeyAuthOverloaded, reason)
 }
 
+// TestGoogleAPIKeyAuthCompositeModelListStillChecksQuota lists models with an
+// exhausted composite key. The request returns a Google 429 quota message
+// despite needing no single selected model group.
 func TestGoogleAPIKeyAuthCompositeModelListStillChecksQuota(t *testing.T) {
 	user := &identity.User{ID: 7, Status: billingcore.StatusActive, Balance: 10}
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -166,6 +256,10 @@ func TestGoogleAPIKeyAuthCompositeModelListStillChecksQuota(t *testing.T) {
 	require.Equal(t, "The API key quota has been exhausted.", response.Error.Message)
 }
 
+// TestAPIKeyAuthWithSubscriptionGoogle_UsageKeepsUnavailablePreferredSubscription
+// reads usage with an expired preferred subscription and available balance. Its
+// context retains the selected subscription source and reports that source
+// unavailable.
 func TestAPIKeyAuthWithSubscriptionGoogle_UsageKeepsUnavailablePreferredSubscription(t *testing.T) {
 	now := time.Now()
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -232,9 +326,9 @@ func TestAPIKeyAuthWithSubscriptionGoogle_UsageKeepsUnavailablePreferredSubscrip
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var response struct {
-		Source         string `json:"source"`
-		SubscriptionID int64  `json:"subscription_id"`
-		Available      bool   `json:"available"`
+		Source         string `json:"source"`          // selected funding source name
+		SubscriptionID int64  `json:"subscription_id"` // selected subscription record ID
+		Available      bool   `json:"available"`       // selected funding availability flag
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	require.Equal(t, "subscription", response.Source)
@@ -242,6 +336,9 @@ func TestAPIKeyAuthWithSubscriptionGoogle_UsageKeepsUnavailablePreferredSubscrip
 	require.False(t, response.Available)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_MissingKey sends a request with no
+// credential. Authentication returns the Google 401 envelope and its
+// required-key message before the endpoint executes.
 func TestApiKeyAuthWithSubscriptionGoogle_MissingKey(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -264,6 +361,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_MissingKey(t *testing.T) {
 	require.Equal(t, "UNAUTHENTICATED", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_QueryApiKeyRejected uses the deprecated
+// api_key query parameter on a Google path. The response returns Google's 400
+// INVALID_ARGUMENT envelope with the credential migration message.
 func TestApiKeyAuthWithSubscriptionGoogle_QueryApiKeyRejected(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -286,6 +386,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_QueryApiKeyRejected(t *testing.T) {
 	require.Equal(t, "INVALID_ARGUMENT", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext authenticates an active
+// key carrying a hydrated group. The downstream handler observes that same
+// group ID in the request-state context.
 func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 	group := &routing.Group{
 		ID:     99,
@@ -350,6 +453,10 @@ func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_QueryKeyAllowedOnV1Beta supplies
+// Google's supported key query parameter with an active, funded user. The
+// authenticated request reaches the successful v1beta endpoint and returns HTTP
+// 200.
 func TestApiKeyAuthWithSubscriptionGoogle_QueryKeyAllowedOnV1Beta(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -377,6 +484,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_QueryKeyAllowedOnV1Beta(t *testing.T) 
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_InvalidKey makes credential lookup
+// return key-not-found. The request receives Google's unauthorized envelope and
+// the invalid-key admission marker remains observable after handling.
 func TestApiKeyAuthWithSubscriptionGoogle_InvalidKey(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -408,6 +518,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_InvalidKey(t *testing.T) {
 	require.Equal(t, IngressRejectInvalidAPIKey, rejectReason)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_MarksUnavailableGroupBusinessLimited
+// authenticates a key referencing a deleted group. The forbidden response
+// retains the group-deleted rejection and the separate business-limit reason.
 func TestApiKeyAuthWithSubscriptionGoogle_MarksUnavailableGroupBusinessLimited(t *testing.T) {
 	groupID := int64(101)
 	user := &identity.User{
@@ -473,6 +586,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_MarksUnavailableGroupBusinessLimited(t
 	require.Equal(t, IngressRejectGroupDeleted, rejectReason)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_RepoError injects a database lookup
+// failure for a supplied credential. The client receives a Google 500
+// validation message and INTERNAL status rather than a missing-key response.
 func TestApiKeyAuthWithSubscriptionGoogle_RepoError(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -496,6 +612,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_RepoError(t *testing.T) {
 	require.Equal(t, "INTERNAL", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_DisabledKey supplies a disabled key
+// behind a valid-shaped Authorization Bearer credential. Authentication returns
+// Google's unauthorized envelope with the disabled-key message before endpoint
+// handling.
 func TestApiKeyAuthWithSubscriptionGoogle_DisabledKey(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -527,14 +647,17 @@ func TestApiKeyAuthWithSubscriptionGoogle_DisabledKey(t *testing.T) {
 	require.Equal(t, "UNAUTHENTICATED", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_RejectsRuntimeKeyRestrictions varies key
+// expiry and exhausted quota after credential lookup succeeds. Google status,
+// public message, and error status name protect each runtime rejection shape.
 func TestApiKeyAuthWithSubscriptionGoogle_RejectsRuntimeKeyRestrictions(t *testing.T) {
 	expiredAt := time.Now().Add(-time.Minute)
 	tests := []struct {
-		name            string
-		configureAPIKey func(*apikey.APIKey)
-		wantCode        int
-		wantMessage     string
-		wantStatus      string
+		name            string               // authorization scenario label
+		configureAPIKey func(*apikey.APIKey) // fixture key restriction mutation
+		wantCode        int                  // expected response HTTP status
+		wantMessage     string               // expected public response message
+		wantStatus      string               // expected Google error status
 	}{
 		{
 			name: "expired_at",
@@ -597,6 +720,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_RejectsRuntimeKeyRestrictions(t *testi
 	}
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_IPRestrictionDoesNotTrustForwardedClientIPByDefault
+// uses zero-valued configuration and no trusted proxies with spoofed forwarding
+// headers. The ACL denies the actual peer and reports that peer in Google's
+// error.
 func TestApiKeyAuthWithSubscriptionGoogle_IPRestrictionDoesNotTrustForwardedClientIPByDefault(t *testing.T) {
 	apiKey := &apikey.APIKey{
 		ID:          1,
@@ -644,6 +771,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_IPRestrictionDoesNotTrustForwardedClie
 	require.Equal(t, gatewayhttp.OpsClientBusinessLimitedReasonIPRestriction, businessLimitedReason)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance authenticates an
+// active user with zero balance and no eligible subscription. Its Google
+// response is forbidden with the insufficient-balance message.
 func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -676,8 +806,13 @@ func TestApiKeyAuthWithSubscriptionGoogle_InsufficientBalance(t *testing.T) {
 	require.Equal(t, "PERMISSION_DENIED", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_BalanceBelowMinimumReserve configures a
+// reserve above the fixture's positive balance. The authorization stage still
+// allows the request, protecting its positive-balance check independently of
+// later billing reserve checks.
 func TestApiKeyAuthWithSubscriptionGoogle_BalanceBelowMinimumReserve(t *testing.T) {
-	// MinimumBalanceReserve applies to billing-cache prechecks; authentication accepts a positive balance.
+	// MinimumBalanceReserve applies to billing-cache prechecks; authentication
+	// accepts a positive balance.
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
 		getByKey: func(ctx context.Context, key string) (*apikey.APIKey, error) {
@@ -706,6 +841,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_BalanceBelowMinimumReserve(t *testing.
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_RejectsExhaustedBalance supplies an
+// active credential with an exhausted wallet. Authorization returns Google's
+// forbidden insufficient-balance response before the successful endpoint can
+// run.
 func TestApiKeyAuthWithSubscriptionGoogle_RejectsExhaustedBalance(t *testing.T) {
 	r := gin.New()
 	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
@@ -739,6 +878,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_RejectsExhaustedBalance(t *testing.T) 
 	require.Equal(t, "PERMISSION_DENIED", resp.Error.Status)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedOnSuccess records the
+// callback for an admitted Google credential. It observes that key ID and a
+// nonzero touch timestamp after the response succeeds.
 func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedOnSuccess(t *testing.T) {
 	user := &identity.User{
 		ID:          11,
@@ -786,6 +928,9 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedOnSuccess(t *testing.T)
 	require.False(t, touchedAt.IsZero())
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_TouchFailureDoesNotBlock makes last-used
+// persistence return an error after successful credential validation. The
+// request remains admitted and the touch callback runs once.
 func TestApiKeyAuthWithSubscriptionGoogle_TouchFailureDoesNotBlock(t *testing.T) {
 	user := &identity.User{
 		ID:          12,
@@ -830,6 +975,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchFailureDoesNotBlock(t *testing.T)
 	require.Equal(t, 1, touchCalls)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedInStandardMode
+// authenticates an active Google fixture using the Authorization Bearer header.
+// Successful handling records exactly one diagnostic touch through the supplied
+// repository callback.
 func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedInStandardMode(t *testing.T) {
 	user := &identity.User{
 		ID:          13,
@@ -874,6 +1023,10 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedInStandardMode(t *testi
 	require.Equal(t, 1, touchCalls)
 }
 
+// TestApiKeyAuthWithSubscriptionGoogle_ExhaustedSubscriptionFallsBackToBalance
+// supplies an exhausted candidate subscription and positive wallet balance.
+// Automatic funding still admits the Google request with its available balance
+// path.
 func TestApiKeyAuthWithSubscriptionGoogle_ExhaustedSubscriptionFallsBackToBalance(t *testing.T) {
 	group := &routing.Group{
 		ID:     77,
@@ -948,12 +1101,16 @@ func TestApiKeyAuthWithSubscriptionGoogle_ExhaustedSubscriptionFallsBackToBalanc
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestTeamAPIKeyErrorsHaveStableGatewayStatus maps team identity and
+// member-budget errors through the standard and Google helpers. Both preserve
+// the represented HTTP statuses, and standard responses retain their reason
+// codes.
 func TestTeamAPIKeyErrorsHaveStableGatewayStatus(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		wantStatus int
-		wantCode   string
+		name       string // authorization scenario label
+		err        error  // team admission error fixture
+		wantStatus int    // expected response HTTP status
+		wantCode   string // expected protocol reason code
 	}{
 		{name: "feature_disabled", err: team.ErrTeamFeatureDisabled, wantStatus: http.StatusForbidden, wantCode: "TEAM_FEATURE_DISABLED"},
 		{name: "team_suspended", err: team.ErrTeamSuspended, wantStatus: http.StatusForbidden, wantCode: "TEAM_SUSPENDED"},
@@ -980,10 +1137,14 @@ func TestTeamAPIKeyErrorsHaveStableGatewayStatus(t *testing.T) {
 	}
 }
 
+// TestTeamMemberLimitsSkipNonConsumingRequests classifies usage, model listing,
+// batch management, and token counting methods and paths. The represented reads
+// and controls qualify, while generation, submission, and the removed billing
+// path do not.
 func TestTeamMemberLimitsSkipNonConsumingRequests(t *testing.T) {
 	tests := []struct {
-		method string
-		path   string
+		method string // request HTTP method
+		path   string // request path under test
 	}{
 		{method: http.MethodGet, path: "/v1/usage"},
 		{method: http.MethodGet, path: "/v1/models"},
@@ -1002,6 +1163,9 @@ func TestTeamMemberLimitsSkipNonConsumingRequests(t *testing.T) {
 	require.False(t, isAPIKeyNonConsumingRequest(http.MethodPost, "/v1/images/batches"))
 }
 
+// TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup exceeds key and
+// Authorization header limits in different credential representations. Each
+// response is unauthorized and the repository lookup count remains zero.
 func TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	var calls atomic.Int32
 	repo := &stubApiKeyRepo{getByKey: func(context.Context, string) (*apikey.APIKey, error) {
@@ -1031,6 +1195,10 @@ func TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	require.Zero(t, calls.Load())
 }
 
+// TestAPIKeyAuthEnforcesQuotaAndCredentials varies subscription maintenance,
+// reloaded quota, key limits, and bearer spelling through standard
+// authorization. The responses protect maintenance completion and current-quota
+// rejection alongside automatic balance funding and accepted credential forms.
 func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 	group := &routing.Group{
 		ID:       42,
@@ -1083,6 +1251,9 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 			MonthlyWindowStart: &past,
 			DailyUsageUSD:      0,
 		}
+		// Buffer the maintenance signal because resetDaily must finish before the
+		// request returns, while the assertion receives the signal only after that
+		// response.
 		maintenanceCalled := make(chan struct{}, 1)
 		subscriptionRepo := &stubUserSubscriptionRepo{
 			getByID: func(ctx context.Context, id int64) (*billingcore.UserSubscription, error) {
@@ -1095,6 +1266,9 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 			},
 			updateStatus:   func(ctx context.Context, subscriptionID int64, status string) error { return nil },
 			activateWindow: func(ctx context.Context, id int64, start time.Time) error { return nil },
+			// This callback mutates the shared fixture before signaling completion. The
+			// buffered signal lets the synchronous authorization check return before its
+			// assertion receives that observation.
 			resetDaily: func(ctx context.Context, id int64, start time.Time) error {
 				sub.DailyWindowStart = &start
 				sub.DailyUsageUSD = 0
@@ -1121,6 +1295,9 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
+		// Observe the completed reset after the synchronous request. Bound the
+		// receive wait so a missing maintenance callback reports a test failure
+		// instead of hanging the suite.
 		select {
 		case <-maintenanceCalled:
 		case <-time.After(time.Second):
@@ -1154,6 +1331,9 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 		fresh.MonthlyWindowStart = &current
 		fresh.DailyUsageUSD = 2
 
+		// Return the stale candidate during selection and fresh data during reread.
+		// Reset callbacks accept maintenance without changing state, modeling the
+		// competing-writer observation used by quota revalidation.
 		subscriptionRepo := &stubUserSubscriptionRepo{
 			listActive: func(context.Context, int64) ([]billingcore.UserSubscription, error) {
 				clone := *stale
@@ -1181,10 +1361,15 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 	t.Run("旧配置仍检查配额", func(t *testing.T) {
 		t.Setenv("RUN_MODE", "simple")
 		// An exhausted key quota rejects the request before upstream execution.
+		// This key is shared by sibling subtests. Save both quota values before
+		// exhaustion and restore them afterward so later credential cases start with
+		// their intended budget.
 		originalQuota, originalUsed := apiKey.Quota, apiKey.QuotaUsed
 		apiKey.Quota, apiKey.QuotaUsed = 1, 1
 		defer func() { apiKey.Quota, apiKey.QuotaUsed = originalQuota, originalUsed }()
-		// Use balance funding for this case.
+		// The key is shared across these serial subtests. Restore its billing mode
+		// after selecting balance so subscription fixtures in later cases keep their
+		// own intended funding choice.
 		originalBillingMode := apiKey.BillingMode
 		apiKey.BillingMode = apikey.APIKeyBillingModeBalance
 		defer func() { apiKey.BillingMode = originalBillingMode }()
@@ -1203,7 +1388,9 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 	})
 
 	t.Run("接受小写Bearer凭据", func(t *testing.T) {
-		// Use balance funding for this case.
+		// The key is shared across these serial subtests. Restore its billing mode
+		// after selecting balance so subscription fixtures in later cases keep their
+		// own intended funding choice.
 		originalBillingMode := apiKey.BillingMode
 		apiKey.BillingMode = apikey.APIKeyBillingModeBalance
 		defer func() { apiKey.BillingMode = originalBillingMode }()
@@ -1264,6 +1451,10 @@ func TestAPIKeyAuthEnforcesQuotaAndCredentials(t *testing.T) {
 	})
 }
 
+// TestAPIKeyAuthPreferredSubscriptionRejectsPlanRestrictedGroup binds a key to
+// a group outside its preferred plan's group list. The request is forbidden
+// with the preferred-subscription group reason even though the wallet has
+// balance.
 func TestAPIKeyAuthPreferredSubscriptionRejectsPlanRestrictedGroup(t *testing.T) {
 	now := time.Now()
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -1314,6 +1505,10 @@ func TestAPIKeyAuthPreferredSubscriptionRejectsPlanRestrictedGroup(t *testing.T)
 	requireAPIKeyAuthError(t, w, "PREFERRED_SUBSCRIPTION_GROUP_NOT_ALLOWED", apikey.ErrPreferredSubscriptionGroup.Error())
 }
 
+// TestAPIKeyAuthPreferredSubscriptionDoesNotFallBackAfterQuotaExhaustion
+// exhausts the explicitly selected plan while retaining positive balance.
+// Authorization returns the subscription usage-limit error and keeps that
+// preference decisive.
 func TestAPIKeyAuthPreferredSubscriptionDoesNotFallBackAfterQuotaExhaustion(t *testing.T) {
 	now := time.Now()
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -1366,6 +1561,9 @@ func TestAPIKeyAuthPreferredSubscriptionDoesNotFallBackAfterQuotaExhaustion(t *t
 	requireAPIKeyAuthError(t, w, "USAGE_LIMIT_EXCEEDED", billingcore.ErrDailyLimitExceeded.Error())
 }
 
+// TestAPIKeyAuthUsageKeepsPreferredSubscriptionSource reads both usage aliases
+// using a valid preferred plan. Each handler receives the subscription source,
+// matching subscription ID, and an available funding flag.
 func TestAPIKeyAuthUsageKeepsPreferredSubscriptionSource(t *testing.T) {
 	now := time.Now()
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -1430,9 +1628,9 @@ func TestAPIKeyAuthUsageKeepsPreferredSubscriptionSource(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, w.Code, path)
 		var response struct {
-			Source         string `json:"source"`
-			SubscriptionID int64  `json:"subscription_id"`
-			Available      bool   `json:"available"`
+			Source         string `json:"source"`          // selected funding source name
+			SubscriptionID int64  `json:"subscription_id"` // selected subscription record ID
+			Available      bool   `json:"available"`       // selected funding availability flag
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response), path)
 		require.Equal(t, "subscription", response.Source, path)
@@ -1441,6 +1639,9 @@ func TestAPIKeyAuthUsageKeepsPreferredSubscriptionSource(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthAntigravityUsageKeepsUnavailablePreferredSubscription reads an
+// existing usage endpoint after the chosen subscription expired. Its successful
+// handler retains that subscription source and ID with availability false.
 func TestAPIKeyAuthAntigravityUsageKeepsUnavailablePreferredSubscription(t *testing.T) {
 	now := time.Now()
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -1501,6 +1702,9 @@ func TestAPIKeyAuthAntigravityUsageKeepsUnavailablePreferredSubscription(t *test
 	require.False(t, got.Available)
 }
 
+// TestAPIKeyAuthRejectsUnboundGroupBeforeSubscriptionSelection supplies a
+// preferred plan but leaves the ordinary key unbound. Authorization returns
+// GROUP_REQUIRED before that plan can supply a request group.
 func TestAPIKeyAuthRejectsUnboundGroupBeforeSubscriptionSelection(t *testing.T) {
 	now := time.Now()
 	user := &identity.User{ID: 7, Status: billingcore.StatusActive, Role: identity.RoleUser, Balance: 100}
@@ -1548,6 +1752,9 @@ func TestAPIKeyAuthRejectsUnboundGroupBeforeSubscriptionSelection(t *testing.T) 
 	require.Contains(t, w.Body.String(), "GROUP_REQUIRED")
 }
 
+// TestAPIKeyAuthSetsGroupContext authenticates an active grouped key whose key
+// policy forces Fast off. Successful handling requires the expected group ID,
+// payer identity, and Fast-off policy in the access snapshot.
 func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	group := &routing.Group{
 		ID:     101,
@@ -1615,6 +1822,9 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed supplies an active
+// exclusive group whose owner lacks allowed-group membership. The request is
+// forbidden with GROUP_NOT_ALLOWED before its successful fixture endpoint.
 func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
 	group := &routing.Group{
 		ID:          202,
@@ -1665,6 +1875,9 @@ func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
 	require.Contains(t, w.Body.String(), "GROUP_NOT_ALLOWED")
 }
 
+// TestAPIKeyAuthOverwritesInvalidContextGroup supplies an unhydrated context
+// group alongside the key's valid hydrated group. The downstream handler
+// receives the valid key group with a different record pointer.
 func TestAPIKeyAuthOverwritesInvalidContextGroup(t *testing.T) {
 	group := &routing.Group{
 		ID:     101,
@@ -1729,6 +1942,9 @@ func TestAPIKeyAuthOverwritesInvalidContextGroup(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestAPIKeyAuthRejectsUnavailableGroup varies active, disabled, deleted, and
+// missing bound groups. Forbidden cases retain their expected group rejection
+// and business-limit markers, while the active group reaches the endpoint.
 func TestAPIKeyAuthRejectsUnavailableGroup(t *testing.T) {
 	groupID := int64(101)
 	user := &identity.User{
@@ -1740,12 +1956,12 @@ func TestAPIKeyAuthRejectsUnavailableGroup(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		group      *routing.Group
-		wantStatus int
-		wantCode   string
-		wantMarked bool
-		wantReject IngressRejectReason
+		name       string              // authorization scenario label
+		group      *routing.Group      // bound group state fixture
+		wantStatus int                 // expected response HTTP status
+		wantCode   string              // expected protocol reason code
+		wantMarked bool                // expected business-limit marker presence
+		wantReject IngressRejectReason // expected admission rejection reason
 	}{
 		{
 			name: "active group passes",
@@ -1856,6 +2072,9 @@ func TestAPIKeyAuthRejectsUnavailableGroup(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthRejectsUserDisabledPublicGroup gives an active public group to
+// a user whose loaded restrictions disable it. Authorization returns the
+// user-group denial code before endpoint handling.
 func TestAPIKeyAuthRejectsUserDisabledPublicGroup(t *testing.T) {
 	groupID := int64(101)
 	user := &identity.User{
@@ -1910,16 +2129,20 @@ func TestAPIKeyAuthRejectsUserDisabledPublicGroup(t *testing.T) {
 	require.Contains(t, w.Body.String(), "GROUP_DISABLED_FOR_USER")
 }
 
+// TestAPIKeyAuthMarksOnlyExpectedIngressRejections varies missing or malformed
+// credentials, credential lookup errors, and lookup overload. Expected
+// admission failures receive markers, while the operational database error
+// remains an unmarked 500.
 func TestAPIKeyAuthMarksOnlyExpectedIngressRejections(t *testing.T) {
 	tests := []struct {
-		name       string
-		path       string
-		key        string
-		authHeader string
-		repoErr    error
-		wantStatus int
-		wantCode   string
-		wantReason IngressRejectReason
+		name       string              // authorization scenario label
+		path       string              // request path under test
+		key        string              // supplied credential text
+		authHeader string              // supplied Authorization header value
+		repoErr    error               // injected credential lookup failure
+		wantStatus int                 // expected response HTTP status
+		wantCode   string              // expected protocol reason code
+		wantReason IngressRejectReason // expected admission rejection reason
 	}{
 		{
 			name:       "query key deprecated",
@@ -2015,6 +2238,9 @@ func TestAPIKeyAuthMarksOnlyExpectedIngressRejections(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort loads a valid key whose group is
+// disabled. The forbidden request retains its key, user, and group data through
+// the diagnostic fallback for later observation.
 func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	groupID := int64(101)
 	user := &identity.User{
@@ -2069,8 +2295,8 @@ func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	req.Header.Set("x-api-key", apiKey.Key)
 	router.ServeHTTP(w, req)
 
-	// A disabled group's Ops fallback key includes the user and group; platform is recorded after provider
-	// selection.
+	// The early-abort diagnostic copy carries key ownership even though the
+	// disabled group prevents this request from reaching gateway execution.
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "GROUP_DISABLED")
 	require.True(t, fallbackOK, "鉴权早退时也应写入 ops fallback api key")
@@ -2083,6 +2309,9 @@ func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	require.NotNil(t, fallback.Group)
 }
 
+// TestAPIKeyAuthGoogleSetsOpsFallbackKeyOnEarlyAbort loads a Google credential
+// before its disabled group is rejected. The request remains forbidden while
+// its diagnostic key copy keeps key and user attribution.
 func TestAPIKeyAuthGoogleSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	groupID := int64(202)
 	user := &identity.User{
@@ -2145,6 +2374,9 @@ func TestAPIKeyAuthGoogleSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	require.Equal(t, user.ID, fallback.User.ID)
 }
 
+// TestAPIKeyAuthGoogleRejectsExclusiveGroupWhenUserNoLongerAllowed loads an
+// active key in an exclusive group lacking current user permission. The Google
+// request is forbidden and carries the business-limit marker.
 func TestAPIKeyAuthGoogleRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
 	groupID := int64(303)
 	user := &identity.User{
@@ -2204,6 +2436,10 @@ func TestAPIKeyAuthGoogleRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing
 	require.True(t, markedBusinessLimited)
 }
 
+// TestRequireGroupAssignmentMarksUngroupedKeyBusinessLimited injects a loaded
+// ordinary key with no group. The group guard returns a Messages forbidden
+// response and retains both group-unassigned admission and business-limit
+// markers.
 func TestRequireGroupAssignmentMarksUngroupedKeyBusinessLimited(t *testing.T) {
 	apiKey := &apikey.APIKey{
 		ID:     100,
@@ -2245,7 +2481,10 @@ func TestRequireGroupAssignmentMarksUngroupedKeyBusinessLimited(t *testing.T) {
 	require.Equal(t, gatewayhttp.OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned, businessLimitedReason)
 }
 
-// TestAPIKeyAuthUsesExplicitUnavailableFallback checks the configured fallback group for an unavailable group.
+// TestAPIKeyAuthUsesExplicitUnavailableFallback toggles an unavailable group's
+// configured fallback while the key permits fallback. A configured target
+// becomes the effective group, while its absence keeps the disabled-group
+// rejection.
 func TestAPIKeyAuthUsesExplicitUnavailableFallback(t *testing.T) {
 	for _, explicit := range []bool{true, false} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
@@ -2328,6 +2567,10 @@ func TestAPIKeyAuthUsesExplicitUnavailableFallback(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthRejectsDisabledGroupWhenFallbackDisabled gives the disabled
+// group an explicit active fallback but leaves key fallback disabled.
+// Authorization keeps the GROUP_DISABLED response rather than rebinding the
+// fixture.
 func TestAPIKeyAuthRejectsDisabledGroupWhenFallbackDisabled(t *testing.T) {
 	disabledGroupID := int64(101)
 	defaultGroupID := int64(202)
@@ -2388,6 +2631,10 @@ func TestAPIKeyAuthRejectsDisabledGroupWhenFallbackDisabled(t *testing.T) {
 	require.Contains(t, w.Body.String(), "GROUP_DISABLED")
 }
 
+// TestAPIKeyAuthIPRestrictionUsesTrustedPathWhenSwitchDisabled disables
+// compatibility and configures no trusted peer. Forwarded allowlist addresses
+// are ignored, and the denial reports the actual client peer with the IP
+// business-limit reason.
 func TestAPIKeyAuthIPRestrictionUsesTrustedPathWhenSwitchDisabled(t *testing.T) {
 	user := &identity.User{
 		ID:          7,
@@ -2450,6 +2697,9 @@ func TestAPIKeyAuthIPRestrictionUsesTrustedPathWhenSwitchDisabled(t *testing.T) 
 	require.Equal(t, gatewayhttp.OpsClientBusinessLimitedReasonIPRestriction, businessLimitedReason)
 }
 
+// TestAPIKeyAuthIPRestrictionIncludesClientIPForBlacklistDenial blacklists the
+// direct peer with forwarding trust absent. Authorization returns ACCESS_DENIED
+// with that resolved address in the public message.
 func TestAPIKeyAuthIPRestrictionIncludesClientIPForBlacklistDenial(t *testing.T) {
 	user := &identity.User{
 		ID:          7,
@@ -2497,6 +2747,9 @@ func TestAPIKeyAuthIPRestrictionIncludesClientIPForBlacklistDenial(t *testing.T)
 	requireAPIKeyAuthError(t, w, "ACCESS_DENIED", "Access denied. Your IP is 9.9.9.9")
 }
 
+// TestAPIKeyAuthIPRestrictionUsesConfiguredTrustedProxy disables raw-header
+// compatibility and trusts the direct proxy explicitly. Its forwarded
+// allowlisted address passes the ACL and reaches the successful endpoint.
 func TestAPIKeyAuthIPRestrictionUsesConfiguredTrustedProxy(t *testing.T) {
 	user := &identity.User{
 		ID:          7,
@@ -2548,6 +2801,9 @@ func TestAPIKeyAuthIPRestrictionUsesConfiguredTrustedProxy(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestAPIKeyAuthIPRestrictionUsesForwardedClientIPInDenialWhenTrusted resolves
+// a forwarded address through an explicitly trusted proxy. That address fails
+// the allowlist, and the denial reports it instead of the proxy peer.
 func TestAPIKeyAuthIPRestrictionUsesForwardedClientIPInDenialWhenTrusted(t *testing.T) {
 	user := &identity.User{
 		ID:          7,
@@ -2599,6 +2855,9 @@ func TestAPIKeyAuthIPRestrictionUsesForwardedClientIPInDenialWhenTrusted(t *test
 	requireAPIKeyAuthError(t, w, "ACCESS_DENIED", "Access denied. Your IP is 1.2.3.4")
 }
 
+// TestAPIKeyAuthTouchesLastUsedOnSuccess authenticates an active grouped key
+// with a capturing touch callback. Successful handling records the matching key
+// ID and a nonzero timestamp.
 func TestAPIKeyAuthTouchesLastUsedOnSuccess(t *testing.T) {
 	user := &identity.User{
 		ID:          7,
@@ -2648,6 +2907,9 @@ func TestAPIKeyAuthTouchesLastUsedOnSuccess(t *testing.T) {
 	require.False(t, touchedAt.IsZero(), "expected touch timestamp")
 }
 
+// TestAPIKeyAuthTouchLastUsedFailureDoesNotBlock returns a write failure from
+// the diagnostic touch callback. Standard authorization still allows the
+// request and invokes that callback exactly once in this case.
 func TestAPIKeyAuthTouchLastUsedFailureDoesNotBlock(t *testing.T) {
 	user := &identity.User{
 		ID:          8,
@@ -2694,6 +2956,9 @@ func TestAPIKeyAuthTouchLastUsedFailureDoesNotBlock(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
+// TestAPIKeyAuthTouchesLastUsedInStandardMode serves an active key through the
+// standard authorization fixture. A successful response records one diagnostic
+// touch using the supplied callback.
 func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	user := &identity.User{
 		ID:          9,
@@ -2740,6 +3005,10 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
+// TestAPIKeyAuthRemovedBillingPathUsesNormalQuotaChecks deliberately registers
+// the removed billing path in the authorization fixture. An exhausted key then
+// receives the normal quota rejection, confirming that this path has no
+// consumption bypass.
 func TestAPIKeyAuthRemovedBillingPathUsesNormalQuotaChecks(t *testing.T) {
 	user := &identity.User{ID: 7, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 10}
 	apiKey := &apikey.APIKey{
@@ -2768,6 +3037,9 @@ func TestAPIKeyAuthRemovedBillingPathUsesNormalQuotaChecks(t *testing.T) {
 	requireAPIKeyAuthError(t, w, "API_KEY_QUOTA_EXHAUSTED", "The API key quota has been exhausted.")
 }
 
+// TestAPIKeyAuthUsageStillTouchesLastUsed serves an existing usage endpoint
+// with an active key and funded user. Its consumption bypass still performs one
+// successful-authentication diagnostic touch after admission.
 func TestAPIKeyAuthUsageStillTouchesLastUsed(t *testing.T) {
 	user := &identity.User{ID: 7, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 10}
 	apiKey := &apikey.APIKey{ID: 100, UserID: user.ID, Key: "usage-touch", Status: billingcore.StatusActive, User: user}
@@ -2796,6 +3068,9 @@ func TestAPIKeyAuthUsageStillTouchesLastUsed(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
+// TestAPIKeyAuthAllowsBalanceBelowMinimumReserve sets the fixture's positive
+// wallet below the configured reserve. Authorization admits that wallet at this
+// stage, keeping reserve-based prechecks separate from its balance eligibility.
 func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	user := &identity.User{
 		ID:          10,
@@ -2835,10 +3110,14 @@ func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	req.Header.Set("x-api-key", apiKey.Key)
 	router.ServeHTTP(w, req)
 
-	// MinimumBalanceReserve applies to billing-cache prechecks; authentication accepts a positive balance.
+	// MinimumBalanceReserve applies to billing-cache prechecks; authentication
+	// accepts a positive balance.
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestAPIKeyAuthRejectsExhaustedBalance gives an active grouped key a zero
+// wallet. Standard authorization returns the insufficient-balance reason and
+// public message before endpoint execution.
 func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 	user := &identity.User{
 		ID:          10,
@@ -2881,6 +3160,9 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 	requireAPIKeyAuthError(t, w, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 }
 
+// TestAPIKeyAuthOpenAIQuotaErrorFormat sends an exhausted key to a Responses
+// path. The 429 body decodes to OpenAI's insufficient_quota type and code,
+// with a nil parameter value.
 func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {
 	user := &identity.User{ID: 11, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 10}
 	group := &routing.Group{ID: 8, Status: billingcore.StatusActive}
@@ -2908,11 +3190,11 @@ func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 	var response struct {
 		Error struct {
-			Message string  `json:"message"`
-			Type    string  `json:"type"`
-			Param   *string `json:"param"`
-			Code    string  `json:"code"`
-		} `json:"error"`
+			Message string  `json:"message"` // public protocol error message
+			Type    string  `json:"type"`    // protocol error type name
+			Param   *string `json:"param"`   // associated error parameter name
+			Code    string  `json:"code"`    // protocol error reason code
+		} `json:"error"` // protocol error envelope object
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	require.Equal(t, "The API key quota has been exhausted.", response.Error.Message)
@@ -2921,6 +3203,10 @@ func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {
 	require.Equal(t, "insufficient_quota", response.Error.Code)
 }
 
+// TestAPIKeyAuthQuotaErrorKeepsLegacyFormatOutsideResponses sends the same
+// exhausted-key condition to a Messages fixture path. The response keeps the
+// represented top-level quota reason and message expected by these
+// legacy-context tests.
 func TestAPIKeyAuthQuotaErrorKeepsLegacyFormatOutsideResponses(t *testing.T) {
 	user := &identity.User{ID: 11, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 10}
 	group := &routing.Group{ID: 8, Status: billingcore.StatusActive}
@@ -2949,6 +3235,9 @@ func TestAPIKeyAuthQuotaErrorKeepsLegacyFormatOutsideResponses(t *testing.T) {
 	requireAPIKeyAuthError(t, w, "API_KEY_QUOTA_EXHAUSTED", "The API key quota has been exhausted.")
 }
 
+// TestAPIKeyAuthAllowsBatchManagementAfterQuotaExhaustion uses an exhausted key
+// and empty wallet to manage existing batches. Listing, reading, cancellation,
+// and deletion requests reach their successful fixture endpoints.
 func TestAPIKeyAuthAllowsBatchManagementAfterQuotaExhaustion(t *testing.T) {
 	user := &identity.User{ID: 11, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 0}
 	apiKey := &apikey.APIKey{
@@ -2968,8 +3257,8 @@ func TestAPIKeyAuthAllowsBatchManagementAfterQuotaExhaustion(t *testing.T) {
 	cfg := &config.Config{}
 	router := newAuthTestRouter(testkit.NewService(apiKeyRepo, nil, nil, nil, nil, nil, cfg), nil, cfg)
 	requests := []struct {
-		method string
-		path   string
+		method string // request HTTP method
+		path   string // request path under test
 	}{
 		{method: http.MethodGet, path: "/v1/images/batches"},
 		{method: http.MethodGet, path: "/v1/images/batches/batch-1"},
@@ -2985,6 +3274,9 @@ func TestAPIKeyAuthAllowsBatchManagementAfterQuotaExhaustion(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthCompositeModelListStillChecksQuota supplies an exhausted
+// composite key to ordinary and batch model lists. Both return the standard
+// key-quota rejection despite requiring no single selected request model.
 func TestAPIKeyAuthCompositeModelListStillChecksQuota(t *testing.T) {
 	user := &identity.User{ID: 11, Role: identity.RoleUser, Status: billingcore.StatusActive, Balance: 10}
 	group := &routing.Group{ID: 9, Status: billingcore.StatusActive, Hydrated: true}
@@ -3014,6 +3306,10 @@ func TestAPIKeyAuthCompositeModelListStillChecksQuota(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository combines absent,
+// malformed, and unknown credentials in one client's abuse bucket. The next
+// request returns 429 with a retry header and never adds another repository
+// lookup.
 func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
 	repoCalls := 0
 	repo := &stubApiKeyRepo{getByKey: func(context.Context, string) (*apikey.APIKey, error) {
@@ -3049,6 +3345,10 @@ func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
 	require.Equal(t, 1, repoCalls, "rate-limited request must not reach the repository")
 }
 
+// TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429 exhausts the Google
+// client's invalid-credential allowance with two lookup failures. The next
+// response is Google's quota-shaped 429 with the invalid-auth rate-limit marker
+// and retry header.
 func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
 	repoCalls := 0
 	repo := fakeAPIKeyRepo{getByKey: func(context.Context, string) (*apikey.APIKey, error) {
@@ -3083,6 +3383,10 @@ func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
 	require.Equal(t, 2, repoCalls)
 }
 
+// TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures interleaves an
+// invalid credential with successful authentication and database errors. The
+// abuse health count retains the single invalid attempt, including after a
+// valid Google-style header is accepted.
 func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
 	user := &identity.User{ID: 1, Status: billingcore.StatusActive, Role: identity.RoleUser, Balance: 1}
 	repo := &stubApiKeyRepo{getByKey: func(_ context.Context, key string) (*apikey.APIKey, error) {
@@ -3103,8 +3407,8 @@ func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
 	r.POST("/t", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	for _, tc := range []struct {
-		key  string
-		want int
+		key  string // supplied credential text
+		want int    // expected response HTTP status
 	}{{"invalid", 401}, {"valid-key", 200}, {"db-error", 500}, {"db-error", 500}} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httpRequest(t, "/t", "", tc.key))
@@ -3118,33 +3422,56 @@ func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
 	require.Equal(t, uint64(1), svc.InvalidAuthAbuseHealth().Recorded)
 }
 
-// APIKeyAuthGoogle returns Google-format API-key authentication errors.
+// APIKeyAuthGoogle returns the Google authorization fixture with subscription
+// support absent. Services and configuration stay available during request
+// execution, while the gateway constructor chooses Google credential handling
+// and error envelopes.
 func APIKeyAuthGoogle(apiKeyService *apikey.APIKeyService, cfg *config.Config) gin.HandlerFunc {
 	return APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, cfg)
 }
 
+// APIKeyAuthWithSubscriptionGoogle returns the shared test authorization
+// callbacks using the Google gateway constructor. Keep the supplied services
+// and configuration usable while requests execute; a missing subscription
+// service is handled by the shared helper.
 func APIKeyAuthWithSubscriptionGoogle(apiKeyService *apikey.APIKeyService, subscriptionService *billingcore.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return newGatewayAuthorization(apiKeyService, subscriptionService, cfg, true)
 }
 
+// googleTeamAPIKeyError delegates team-error mapping to the Google
+// authentication adapter. The success flag identifies a recognized team error;
+// callers inspect that flag before using the returned status and public
+// message.
 func googleTeamAPIKeyError(err error) (int, string, bool) { return keyhttp.GoogleTeamError(err) }
 
+// FilterByGroup returns the supplied subscription slice for every group ID. Its
+// backing records remain shared, and this fixture performs no group filtering;
+// scenarios configure candidate group eligibility in their input records.
 func (f fakeGoogleSubscriptionRepo) FilterByGroup(_ context.Context, subs []billingcore.UserSubscription, _ int64) ([]billingcore.UserSubscription, error) {
 	return subs, nil
 }
 
+// Create rejects key creation with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) Create(ctx context.Context, key *apikey.APIKey) error {
 	return errors.New("not implemented")
 }
 
+// GetByID rejects key-ID lookup with the authentication fixture's unimplemented
+// error.
 func (f fakeAPIKeyRepo) GetByID(ctx context.Context, id int64) (*apikey.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetKeyAndOwnerID rejects credential-owner lookup with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	return "", 0, errors.New("not implemented")
 }
 
+// GetByKey invokes the configured credential callback with ctx and the exact
+// supplied key. A nil callback returns the unexpected-call error; the callback
+// determines returned record sharing and lookup failures.
 func (f fakeAPIKeyRepo) GetByKey(ctx context.Context, key string) (*apikey.APIKey, error) {
 	if f.getByKey == nil {
 		return nil, errors.New("unexpected call")
@@ -3152,70 +3479,108 @@ func (f fakeAPIKeyRepo) GetByKey(ctx context.Context, key string) (*apikey.APIKe
 	return f.getByKey(ctx, key)
 }
 
+// GetByKeyForAuth delegates exact credential lookup to this fixture's GetByKey
+// callback path. Returned objects and errors are supplied by that callback, so
+// callers follow its configured sharing and missing-callback behavior.
 func (f fakeAPIKeyRepo) GetByKeyForAuth(ctx context.Context, key string) (*apikey.APIKey, error) {
 	return f.GetByKey(ctx, key)
 }
 
+// RotateCredential panics if this authentication fixture receives a rotation
+// request. The scenarios configure credential reads and diagnostic touches;
+// rotation callers require a repository that implements credential mutation.
 func (f fakeAPIKeyRepo) RotateCredential(context.Context, *apikey.APIKey, string) error {
 	panic("unexpected RotateCredential call")
 }
 
+// Update rejects key updates with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) Update(ctx context.Context, key *apikey.APIKey, _ apikey.APIKeyUpdateFields) error {
 	return errors.New("not implemented")
 }
 
+// Delete rejects key deletion with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// DeleteWithAudit rejects audited key deletion with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) DeleteWithAudit(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// ListByUserID rejects user-key pagination with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, _ apikey.APIKeyListFilters) ([]apikey.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// VerifyOwnership rejects ownership queries with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	return nil, errors.New("not implemented")
 }
 
+// CountByUserID rejects user-key counting with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// ExistsByKey rejects credential-existence queries with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) ExistsByKey(ctx context.Context, key string) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
+// ListByGroupID rejects group-key pagination with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]apikey.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// SearchAPIKeys rejects key searches with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]apikey.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ClearGroupIDByGroupID rejects group-binding removal with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// CountByGroupID rejects group-key counting with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// ListKeysByUserID rejects user credential listing with the fixture's
+// unimplemented error.
 func (f fakeAPIKeyRepo) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListKeysByGroupID rejects group credential listing with the fixture's
+// unimplemented error.
 func (f fakeAPIKeyRepo) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
+// IncrementQuotaUsed rejects quota writes with the authentication fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// UpdateLastUsed invokes the configured touch callback with the key ID and
+// timestamp. Without a callback it reports success and leaves fixture state
+// unchanged, keeping diagnostic persistence optional in these authorization
+// cases.
 func (f fakeAPIKeyRepo) UpdateLastUsed(ctx context.Context, id int64, usedAt time.Time) error {
 	if f.updateLastUsed != nil {
 		return f.updateLastUsed(ctx, id, usedAt)
@@ -3223,26 +3588,40 @@ func (f fakeAPIKeyRepo) UpdateLastUsed(ctx context.Context, id int64, usedAt tim
 	return nil
 }
 
+// IncrementRateLimitUsage accepts diagnostic spending updates and leaves
+// fixture counters unchanged.
 func (f fakeAPIKeyRepo) IncrementRateLimitUsage(ctx context.Context, id int64, cost float64) error {
 	return nil
 }
 
+// ResetRateLimitWindows accepts window resets and leaves authentication fixture
+// state unchanged.
 func (f fakeAPIKeyRepo) ResetRateLimitWindows(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetRateLimitData returns a fresh zero-valued rate-counter record for any key
+// ID. It reports success while keeping no persistent counters, so this Google
+// fixture supplies empty observations independently of request counting.
 func (f fakeAPIKeyRepo) GetRateLimitData(ctx context.Context, id int64) (*apikey.APIKeyRateLimitData, error) {
 	return &apikey.APIKeyRateLimitData{}, nil
 }
 
+// UpdateGroupIDByUserAndGroup rejects group rebinding with the fixture's
+// unimplemented-operation error.
 func (f fakeAPIKeyRepo) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// Create rejects subscription creation with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) Create(ctx context.Context, sub *billingcore.UserSubscription) error {
 	return errors.New("not implemented")
 }
 
+// GetByID invokes the configured ID lookup callback for funding or maintenance
+// reload. A nil callback reports the unimplemented operation; callback results
+// determine sharing, missing records, and failures.
 func (f fakeGoogleSubscriptionRepo) GetByID(ctx context.Context, id int64) (*billingcore.UserSubscription, error) {
 	if f.getByID != nil {
 		return f.getByID(ctx, id)
@@ -3250,38 +3629,57 @@ func (f fakeGoogleSubscriptionRepo) GetByID(ctx context.Context, id int64) (*bil
 	return nil, errors.New("not implemented")
 }
 
+// GetByIDIncludeDeleted rejects deleted-inclusive subscription lookup with the
+// fixture's unimplemented error.
 func (f fakeGoogleSubscriptionRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetByUserIDAndGroupID rejects group subscription lookup with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetActiveByUserIDAndGroupID rejects active group lookup with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetLatestByUserIDAndPlanID rejects latest-plan lookup with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) GetLatestByUserIDAndPlanID(ctx context.Context, userID, planID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// Update rejects subscription replacement with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *billingcore.UserSubscription) error {
 	return errors.New("not implemented")
 }
 
+// Delete rejects subscription deletion with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// Restore rejects subscription restoration with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListByUserID rejects subscription history listing with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ListByUserID(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListActiveByUserID invokes the configured candidate-list callback for the
+// supplied user. Missing callback configuration reports an unimplemented
+// operation, and returned slices retain whatever sharing the callback supplies.
 func (f fakeGoogleSubscriptionRepo) ListActiveByUserID(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error) {
 	if f.listActive != nil {
 		return f.listActive(ctx, userID)
@@ -3289,34 +3687,51 @@ func (f fakeGoogleSubscriptionRepo) ListActiveByUserID(ctx context.Context, user
 	return nil, errors.New("not implemented")
 }
 
+// ListByUserIDAndPlanID rejects plan history listing with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ListByUserIDAndPlanID(ctx context.Context, userID, planID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListByGroupID rejects group subscription pagination with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListByPlanID rejects plan subscription pagination with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ListByPlanID(ctx context.Context, planID int64, params pagination.PaginationParams) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// List rejects general subscription pagination with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) List(ctx context.Context, params pagination.PaginationParams, userID, planID *int64, status, platform, sortBy, sortOrder string) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListBySourceOrderID rejects source-order lookup with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ListBySourceOrderID(ctx context.Context, sourceOrderID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ExistsByUserIDAndGroupID rejects membership queries with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ExistsByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
+// ExtendExpiry rejects subscription extension with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error {
 	return errors.New("not implemented")
 }
 
+// UpdateStatus invokes the configured status callback with the subscription ID
+// and requested state. A nil callback reports unimplemented persistence, so
+// validation observes that fixture failure directly.
 func (f fakeGoogleSubscriptionRepo) UpdateStatus(ctx context.Context, subscriptionID int64, status string) error {
 	if f.updateStatus != nil {
 		return f.updateStatus(ctx, subscriptionID, status)
@@ -3324,10 +3739,15 @@ func (f fakeGoogleSubscriptionRepo) UpdateStatus(ctx context.Context, subscripti
 	return errors.New("not implemented")
 }
 
+// UpdateNotes rejects subscription note changes with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) UpdateNotes(ctx context.Context, subscriptionID int64, notes string) error {
 	return errors.New("not implemented")
 }
 
+// ActivateWindows invokes the activation callback with ID and start time while
+// ignoring the activation mask. Missing callback configuration reports the
+// unsupported operation; the callback controls any fixture changes.
 func (f fakeGoogleSubscriptionRepo) ActivateWindows(ctx context.Context, id int64, start time.Time, activation billingcore.SubscriptionWindowActivation) error {
 	if f.activateWindow != nil {
 		return f.activateWindow(ctx, id, start)
@@ -3335,10 +3755,15 @@ func (f fakeGoogleSubscriptionRepo) ActivateWindows(ctx context.Context, id int6
 	return errors.New("not implemented")
 }
 
+// ResetUsageWindows rejects combined window resets with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) ResetUsageWindows(context.Context, int64, bool, bool, bool, time.Time) error {
 	return errors.New("not implemented")
 }
 
+// ResetDailyUsage passes ID and the new start to the daily reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// so these fixture callbacks do not implement database compare-and-swap.
 func (f fakeGoogleSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetDaily != nil {
 		return f.resetDaily(ctx, id, start)
@@ -3346,6 +3771,9 @@ func (f fakeGoogleSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int6
 	return errors.New("not implemented")
 }
 
+// ResetWeeklyUsage passes ID and the new start to the weekly reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// leaving callback behavior to the scenario's maintenance fixture.
 func (f fakeGoogleSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetWeekly != nil {
 		return f.resetWeekly(ctx, id, start)
@@ -3353,6 +3781,9 @@ func (f fakeGoogleSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int
 	return errors.New("not implemented")
 }
 
+// ResetMonthlyUsage passes ID and the new start to the monthly reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// leaving callback behavior to the scenario's maintenance fixture.
 func (f fakeGoogleSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, _ *time.Time, start time.Time) error {
 	if f.resetMonthly != nil {
 		return f.resetMonthly(ctx, id, start)
@@ -3360,14 +3791,23 @@ func (f fakeGoogleSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id in
 	return errors.New("not implemented")
 }
 
+// IncrementUsage rejects subscription usage writes with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
 	return errors.New("not implemented")
 }
 
+// BatchUpdateExpiredStatus rejects expiry maintenance with the fixture's
+// unimplemented-operation error.
 func (f fakeGoogleSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// newTestAPIKeyService constructs the API-key test service with the supplied
+// repository and zero-valued configuration. Its other optional repository and
+// cache dependencies are nil, keeping fixture lookup behavior in the supplied
+// key source. It returns an unstarted service; zero cache settings disable
+// local positive, shared positive, and local negative caching.
 func newTestAPIKeyService(repo apikey.APIKeyRepository) *apikey.APIKeyService {
 	return testkit.NewService(
 		repo,
@@ -3380,6 +3820,10 @@ func newTestAPIKeyService(repo apikey.APIKeyRepository) *apikey.APIKeyService {
 	)
 }
 
+// newAuthTestRouter mounts standard authorization before successful fixture
+// endpoints for generation, usage, model listing, and batch management. It also
+// registers the removed billing path deliberately so classification can be
+// tested apart from production route removal.
 func newAuthTestRouter(apiKeyService *apikey.APIKeyService, subscriptionService *billingcore.SubscriptionService, cfg *config.Config) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, cfg)))
@@ -3401,6 +3845,9 @@ func newAuthTestRouter(apiKeyService *apikey.APIKeyService, subscriptionService 
 	return router
 }
 
+// requireAPIKeyAuthError decodes the represented top-level legacy error
+// response and compares its code and message. Invalid JSON or mismatched fields
+// fail the calling test using its supplied recorder.
 func requireAPIKeyAuthError(t *testing.T, w *httptest.ResponseRecorder, code, message string) {
 	t.Helper()
 
@@ -3410,10 +3857,15 @@ func requireAPIKeyAuthError(t *testing.T, w *httptest.ResponseRecorder, code, me
 	require.Equal(t, message, resp.Message)
 }
 
+// Create rejects group creation with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) Create(ctx context.Context, group *routing.Group) error {
 	return errors.New("not implemented")
 }
 
+// GetByID returns an outer Group copy from the exact-ID fixture map, or
+// ErrGroupNotFound. Nested references remain shared, and the map stays
+// unchanged while requests use these fallback group results.
 func (r *stubGroupRepoForAuth) GetByID(ctx context.Context, id int64) (*routing.Group, error) {
 	if value, ok := r.groupsByID[id]; ok {
 		return &value, nil
@@ -3421,70 +3873,107 @@ func (r *stubGroupRepoForAuth) GetByID(ctx context.Context, id int64) (*routing.
 	return nil, routing.ErrGroupNotFound
 }
 
+// GetByIDLite delegates to the same exact-ID lookup and outer-copy behavior as
+// GetByID. The fixture supplies no separate lightweight representation, and
+// nested group references remain shared with its setup data.
 func (r *stubGroupRepoForAuth) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	return r.GetByID(ctx, id)
 }
 
+// Update rejects group updates with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) Update(ctx context.Context, group *routing.Group) error {
 	return errors.New("not implemented")
 }
 
+// Delete rejects group deletion with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// DeleteCascade rejects cascading group deletion with the fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
 	return nil, errors.New("not implemented")
 }
 
+// List rejects group pagination with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) List(ctx context.Context, params pagination.PaginationParams) ([]routing.Group, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListWithFilters rejects filtered group pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]routing.Group, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListActive rejects active-group enumeration with the fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) ListActive(ctx context.Context) ([]routing.Group, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ExistsByName rejects group-name queries with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) ExistsByName(ctx context.Context, name string) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
+// GetProviderCount rejects provider counting with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) GetProviderCount(ctx context.Context, groupID int64) (int64, int64, error) {
 	return 0, 0, errors.New("not implemented")
 }
 
+// DeleteProviderGroupsByGroupID rejects membership deletion with the fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) DeleteProviderGroupsByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// GetProviderIDsByGroupIDs rejects membership enumeration with the fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) GetProviderIDsByGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error) {
 	return nil, errors.New("not implemented")
 }
 
+// BindProvidersToGroup rejects membership writes with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) BindProvidersToGroup(ctx context.Context, groupID int64, providerIDs []int64) error {
 	return errors.New("not implemented")
 }
 
+// UpdateSortOrders rejects sort-order writes with the fallback fixture's
+// unimplemented-operation error.
 func (r *stubGroupRepoForAuth) UpdateSortOrders(ctx context.Context, updates []routing.GroupSortOrderUpdate) error {
 	return errors.New("not implemented")
 }
 
+// Create rejects key creation with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) Create(ctx context.Context, key *apikey.APIKey) error {
 	return errors.New("not implemented")
 }
 
+// GetByID rejects key-ID lookup with the authentication fixture's unimplemented
+// error.
 func (r *stubApiKeyRepo) GetByID(ctx context.Context, id int64) (*apikey.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetKeyAndOwnerID rejects credential-owner lookup with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	return "", 0, errors.New("not implemented")
 }
 
+// GetByKey invokes the configured credential callback with ctx and the exact
+// supplied key. Missing lookup configuration returns the
+// unimplemented-operation error; record sharing and lookup failures come from
+// the configured callback.
 func (r *stubApiKeyRepo) GetByKey(ctx context.Context, key string) (*apikey.APIKey, error) {
 	if r.getByKey != nil {
 		return r.getByKey(ctx, key)
@@ -3492,74 +3981,114 @@ func (r *stubApiKeyRepo) GetByKey(ctx context.Context, key string) (*apikey.APIK
 	return nil, errors.New("not implemented")
 }
 
+// GetByKeyForAuth delegates exact credential lookup to this fixture's GetByKey
+// callback path. Returned objects and errors are supplied by that callback, so
+// callers follow its configured sharing and missing-callback behavior.
 func (r *stubApiKeyRepo) GetByKeyForAuth(ctx context.Context, key string) (*apikey.APIKey, error) {
 	return r.GetByKey(ctx, key)
 }
 
+// RotateCredential panics if this authentication fixture receives a rotation
+// request. The scenarios configure credential reads and diagnostic touches;
+// rotation callers require a repository that implements credential mutation.
 func (r *stubApiKeyRepo) RotateCredential(context.Context, *apikey.APIKey, string) error {
 	panic("unexpected RotateCredential call")
 }
 
+// Update rejects key updates with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) Update(ctx context.Context, key *apikey.APIKey, _ apikey.APIKeyUpdateFields) error {
 	return errors.New("not implemented")
 }
 
+// Delete rejects key deletion with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// DeleteWithAudit rejects audited key deletion with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) DeleteWithAudit(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// ListByUserID rejects user-key pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, _ apikey.APIKeyListFilters) ([]apikey.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// VerifyOwnership rejects ownership queries with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	return nil, errors.New("not implemented")
 }
 
+// CountByUserID rejects user-key counting with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// ExistsByKey rejects credential-existence queries with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) ExistsByKey(ctx context.Context, key string) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
+// ListByGroupID rejects group-key pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]apikey.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// SearchAPIKeys rejects key searches with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]apikey.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ClearGroupIDByGroupID rejects group-binding removal with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// UpdateGroupIDByUserAndGroup rejects group rebinding with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// CountByGroupID rejects group-key counting with the fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// ListKeysByUserID rejects user credential listing with the fixture's
+// unimplemented error.
 func (r *stubApiKeyRepo) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListKeysByGroupID rejects group credential listing with the fixture's
+// unimplemented error.
 func (r *stubApiKeyRepo) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 
+// IncrementQuotaUsed rejects quota writes with the authentication fixture's
+// unimplemented-operation error.
 func (r *stubApiKeyRepo) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
+// UpdateLastUsed invokes the configured touch callback with the key ID and
+// timestamp. Without a callback it reports success and leaves fixture state
+// unchanged, keeping diagnostic persistence optional in these authorization
+// cases.
 func (r *stubApiKeyRepo) UpdateLastUsed(ctx context.Context, id int64, usedAt time.Time) error {
 	if r.updateLastUsed != nil {
 		return r.updateLastUsed(ctx, id, usedAt)
@@ -3567,26 +4096,41 @@ func (r *stubApiKeyRepo) UpdateLastUsed(ctx context.Context, id int64, usedAt ti
 	return nil
 }
 
+// IncrementRateLimitUsage accepts diagnostic spending updates and leaves
+// fixture counters unchanged.
 func (r *stubApiKeyRepo) IncrementRateLimitUsage(ctx context.Context, id int64, cost float64) error {
 	return nil
 }
 
+// ResetRateLimitWindows accepts window resets and leaves authentication fixture
+// state unchanged.
 func (r *stubApiKeyRepo) ResetRateLimitWindows(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetRateLimitData reports successful absence of a rate-counter record for any
+// key ID. It returns nil data because this standard authorization fixture
+// retains no repository rate state.
 func (r *stubApiKeyRepo) GetRateLimitData(ctx context.Context, id int64) (*apikey.APIKeyRateLimitData, error) {
 	return nil, nil
 }
 
+// FilterByGroup returns the supplied subscription slice for every group ID. Its
+// backing records remain shared, and this fixture performs no group filtering;
+// scenarios configure candidate group eligibility in their input records.
 func (r *stubUserSubscriptionRepo) FilterByGroup(_ context.Context, subs []billingcore.UserSubscription, _ int64) ([]billingcore.UserSubscription, error) {
 	return subs, nil
 }
 
+// Create rejects subscription creation with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) Create(ctx context.Context, sub *billingcore.UserSubscription) error {
 	return errors.New("not implemented")
 }
 
+// GetByID invokes the configured ID lookup callback for funding or maintenance
+// reload. A nil callback reports the unimplemented operation; callback results
+// determine sharing, missing records, and failures.
 func (r *stubUserSubscriptionRepo) GetByID(ctx context.Context, id int64) (*billingcore.UserSubscription, error) {
 	if r.getByID != nil {
 		return r.getByID(ctx, id)
@@ -3594,38 +4138,57 @@ func (r *stubUserSubscriptionRepo) GetByID(ctx context.Context, id int64) (*bill
 	return nil, errors.New("not implemented")
 }
 
+// GetByIDIncludeDeleted rejects deleted-inclusive subscription lookup with the
+// fixture's unimplemented error.
 func (r *stubUserSubscriptionRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetByUserIDAndGroupID rejects group subscription lookup with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetActiveByUserIDAndGroupID rejects active group lookup with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// GetLatestByUserIDAndPlanID rejects latest-plan lookup with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) GetLatestByUserIDAndPlanID(ctx context.Context, userID, planID int64) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// Update rejects subscription replacement with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) Update(ctx context.Context, sub *billingcore.UserSubscription) error {
 	return errors.New("not implemented")
 }
 
+// Delete rejects subscription deletion with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+// Restore rejects subscription restoration with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListByUserID rejects subscription history listing with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ListByUserID(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListActiveByUserID invokes the configured candidate-list callback for the
+// supplied user. Missing callback configuration reports an unimplemented
+// operation, and returned slices retain whatever sharing the callback supplies.
 func (r *stubUserSubscriptionRepo) ListActiveByUserID(ctx context.Context, userID int64) ([]billingcore.UserSubscription, error) {
 	if r.listActive != nil {
 		return r.listActive(ctx, userID)
@@ -3633,34 +4196,51 @@ func (r *stubUserSubscriptionRepo) ListActiveByUserID(ctx context.Context, userI
 	return nil, errors.New("not implemented")
 }
 
+// ListByUserIDAndPlanID rejects plan history listing with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ListByUserIDAndPlanID(ctx context.Context, userID, planID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ListByGroupID rejects group subscription pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListByPlanID rejects plan subscription pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ListByPlanID(ctx context.Context, planID int64, params pagination.PaginationParams) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// List rejects general subscription pagination with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) List(ctx context.Context, params pagination.PaginationParams, userID, planID *int64, status, platform, sortBy, sortOrder string) ([]billingcore.UserSubscription, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
+// ListBySourceOrderID rejects source-order lookup with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ListBySourceOrderID(ctx context.Context, sourceOrderID int64) ([]billingcore.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 
+// ExistsByUserIDAndGroupID rejects membership queries with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ExistsByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
 	return false, errors.New("not implemented")
 }
 
+// ExtendExpiry rejects subscription extension with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error {
 	return errors.New("not implemented")
 }
 
+// UpdateStatus invokes the configured status callback with the subscription ID
+// and requested state. A nil callback reports unimplemented persistence, so
+// validation observes that fixture failure directly.
 func (r *stubUserSubscriptionRepo) UpdateStatus(ctx context.Context, subscriptionID int64, status string) error {
 	if r.updateStatus != nil {
 		return r.updateStatus(ctx, subscriptionID, status)
@@ -3668,10 +4248,15 @@ func (r *stubUserSubscriptionRepo) UpdateStatus(ctx context.Context, subscriptio
 	return errors.New("not implemented")
 }
 
+// UpdateNotes rejects subscription note changes with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) UpdateNotes(ctx context.Context, subscriptionID int64, notes string) error {
 	return errors.New("not implemented")
 }
 
+// ActivateWindows invokes the activation callback with ID and start time while
+// ignoring the activation mask. Missing callback configuration reports the
+// unsupported operation; the callback controls any fixture changes.
 func (r *stubUserSubscriptionRepo) ActivateWindows(ctx context.Context, id int64, start time.Time, activation billingcore.SubscriptionWindowActivation) error {
 	if r.activateWindow != nil {
 		return r.activateWindow(ctx, id, start)
@@ -3679,10 +4264,15 @@ func (r *stubUserSubscriptionRepo) ActivateWindows(ctx context.Context, id int64
 	return errors.New("not implemented")
 }
 
+// ResetUsageWindows rejects combined window resets with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) ResetUsageWindows(context.Context, int64, bool, bool, bool, time.Time) error {
 	return errors.New("not implemented")
 }
 
+// ResetDailyUsage passes ID and the new start to the daily reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// so these fixture callbacks do not implement database compare-and-swap.
 func (r *stubUserSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetDaily != nil {
 		return r.resetDaily(ctx, id, newWindowStart)
@@ -3690,6 +4280,9 @@ func (r *stubUserSubscriptionRepo) ResetDailyUsage(ctx context.Context, id int64
 	return errors.New("not implemented")
 }
 
+// ResetWeeklyUsage passes ID and the new start to the weekly reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// leaving callback behavior to the scenario's maintenance fixture.
 func (r *stubUserSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetWeekly != nil {
 		return r.resetWeekly(ctx, id, newWindowStart)
@@ -3697,6 +4290,9 @@ func (r *stubUserSubscriptionRepo) ResetWeeklyUsage(ctx context.Context, id int6
 	return errors.New("not implemented")
 }
 
+// ResetMonthlyUsage passes ID and the new start to the monthly reset callback,
+// ignoring expectedWindowStart. A nil callback reports the unsupported reset,
+// leaving callback behavior to the scenario's maintenance fixture.
 func (r *stubUserSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int64, _ *time.Time, newWindowStart time.Time) error {
 	if r.resetMonthly != nil {
 		return r.resetMonthly(ctx, id, newWindowStart)
@@ -3704,15 +4300,21 @@ func (r *stubUserSubscriptionRepo) ResetMonthlyUsage(ctx context.Context, id int
 	return errors.New("not implemented")
 }
 
+// IncrementUsage rejects subscription usage writes with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
 	return errors.New("not implemented")
 }
 
+// BatchUpdateExpiredStatus rejects expiry maintenance with the fixture's
+// unimplemented-operation error.
 func (r *stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// bindAuthTestGroup attaches an active group for authentication, quota, and cache tests.
+// bindAuthTestGroup attaches a new active hydrated group to a nonnil key and
+// returns that same key pointer. It replaces GroupID and Group together so
+// authentication, quota, and cache fixtures use a consistent bound group.
 func bindAuthTestGroup(key *apikey.APIKey) *apikey.APIKey {
 	group := &routing.Group{ID: 9001, Name: "explicit-test-group", Status: billingcore.StatusActive, Hydrated: true, RateMultiplier: 1}
 	key.GroupID = &group.ID
@@ -3720,13 +4322,24 @@ func bindAuthTestGroup(key *apikey.APIKey) *apikey.APIKey {
 	return key
 }
 
+// isAPIKeyNonConsumingRequest delegates the supplied method and path's
+// non-consuming classification to gateway HTTP rules. Callers use the result
+// for member-budget checks, while other key quota and funding rules retain
+// their own admission scope.
 func isAPIKeyNonConsumingRequest(method, path string) bool {
 	return gatewayhttp.IsAPIKeyNonConsumingRequest(method, path)
 }
 
+// abortTeamAPIKeyError delegates team-error response handling to the
+// authentication adapter and reports whether it handled err. Recognized errors
+// write and abort; callers continue their own error handling when the flag is
+// false.
 func abortTeamAPIKeyError(c *gin.Context, err error) bool { return keyhttp.AbortTeamError(c, err) }
 
-// RequireGroupAssignment passes test-context key data to the gateway's group admission check.
+// RequireGroupAssignment adapts legacy fixture key context to the gateway group
+// guard. Loaded ordinary keys require GroupID; a composite no-group marker
+// enables the represented exception. The supplied writer produces the protocol
+// response, and rejections attach admission and business-limit markers.
 func RequireGroupAssignment(writeError gatewayhttp.GatewayErrorWriter) gin.HandlerFunc {
 	return gatewayhttp.RequireGroupAssignment(gatewayhttp.GroupAssignmentOptions{Access: func(c *gin.Context) gatewayhttp.GroupAssignmentAccess {
 		key, ok := keyhttp.GetAPIKeyFromContext(c)
@@ -3741,14 +4354,25 @@ func RequireGroupAssignment(writeError gatewayhttp.GatewayErrorWriter) gin.Handl
 	}})
 }
 
+// invalidAuthAbuseTestConfig returns an enabled invalid-auth bucket
+// configuration using threshold and minute-long observation and block periods.
+// Its bounded capacity supports the repeated-client fixtures; tests configure
+// threshold before constructing their service.
 func invalidAuthAbuseTestConfig(threshold int) *config.Config {
 	return &config.Config{
 		APIKeyAuth: config.APIKeyAuthCacheConfig{InvalidAbuse: config.InvalidAuthAbuseConfig{
+			// Minute-long windows make the retry header predictable in abuse assertions.
+			// Capacity bounds the fixture's retained client buckets during those
+			// repeated attempts.
 			Enabled: true, Threshold: threshold, WindowSeconds: 60, BlockSeconds: 60, Capacity: 256,
 		}},
 	}
 }
 
+// httpRequest constructs a POST with a fixed public peer and optional
+// Authorization and x-api-key values. Empty credential arguments leave their
+// headers absent so one client can exercise the different invalid-auth failure
+// paths.
 func httpRequest(t *testing.T, path, authorization, apiKey string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, nil)
@@ -3762,11 +4386,20 @@ func httpRequest(t *testing.T, path, authorization, apiKey string) *http.Request
 	return req
 }
 
+// GetByIDLite reports successful absence of subscription group details for
+// every ID. The fixture has no group source, so callers receive nil data
+// instead of a synthetic group name or configuration.
 func (subscriptionAuthGroups) GetByIDLite(context.Context, int64) (*billingcore.SubscriptionPlanGroup, error) {
 	return nil, nil
 }
 
-// newSubscriptionAuthFixture constructs the subscription service used by authentication tests.
+// newSubscriptionAuthFixture constructs validation around the supplied
+// subscription repository and absent group-details reader. The mutation adapter
+// has no base client; these scenarios supply transaction-free contexts so
+// repository callbacks produce their maintenance observations.
+//
+// Omitting DateRuntime selects system time and the local calendar. Stop is an
+// inert hook here because periodic workers belong to SubscriptionExpiryService.
 func newSubscriptionAuthFixture(repo billingcore.UserSubscriptionRepository) *billingcore.SubscriptionService {
 	return billingcore.NewSubscriptionService(subscriptionAuthGroups{}, repo, billingpostgres.NewSubscriptionMutations(nil))
 }

@@ -14,8 +14,18 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Panic recovery has separate diagnostic and public-response effects. These
+// cases inspect Gin's captured panic output and compare the ordinary JSON
+// envelope with a response already committed before the panic, keeping its sent
+// body intact.
+
+// TestRecovery_PanicLogContainsInfo raises a named panic under the project
+// recovery middleware. The response returns 500 and Gin's captured diagnostics
+// contain both the panic message and a stack-file reference.
 func TestRecovery_PanicLogContainsInfo(t *testing.T) {
-	// Capture Gin's panic log and restore the process-wide writer after the test.
+	// Replace Gin's process-wide diagnostic writer before constructing Recovery,
+	// which captures that writer. Restore it at cleanup so later serial tests use
+	// their own destination.
 	var buf bytes.Buffer
 	originalWriter := gin.DefaultErrorWriter
 	gin.DefaultErrorWriter = &buf
@@ -40,12 +50,15 @@ func TestRecovery_PanicLogContainsInfo(t *testing.T) {
 	require.Contains(t, logOutput, "recovery_test.go", "日志应包含堆栈跟踪文件名")
 }
 
+// TestRecovery compares an unwritten panic, successful handling, and a panic
+// after a committed JSON response. Recovery supplies the public 500 envelope
+// for the first case and keeps the already sent success response intact.
 func TestRecovery(t *testing.T) {
 	tests := []struct {
-		name         string
-		handler      gin.HandlerFunc
-		wantHTTPCode int
-		wantBody     response.Response
+		name         string            // recovery scenario label
+		handler      gin.HandlerFunc   // downstream panic or response action
+		wantHTTPCode int               // expected final HTTP status
+		wantBody     response.Response // expected decoded public envelope
 	}{
 		{
 			name: "panic_returns_standard_json_500",

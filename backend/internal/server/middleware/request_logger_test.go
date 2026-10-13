@@ -11,6 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// HTTP request capture connects one local ID to context, response headers, and
+// lifecycle snapshots. These cases distinguish caller aliases from that
+// identity and check committed streaming headers after overwrites, plus storage
+// normalization for an unknown route containing a decoded NUL.
+
+// TestRequestLogger_GenerateAndPropagateRequestID serves a request without
+// caller correlation metadata. The handler context and response header contain
+// the same nonempty local identifier through completion.
 func TestRequestLogger_GenerateAndPropagateRequestID(t *testing.T) {
 	r := gin.New()
 	r.Use(RequestLogger())
@@ -36,6 +44,9 @@ func TestRequestLogger_GenerateAndPropagateRequestID(t *testing.T) {
 	}
 }
 
+// TestRequestLogger_SeparatesIncomingRequestID supplies an external
+// X-Request-ID before entry capture. The incoming value remains a parent
+// context alias while the request and response use a distinct local identifier.
 func TestRequestLogger_SeparatesIncomingRequestID(t *testing.T) {
 	r := gin.New()
 	r.Use(RequestLogger())
@@ -62,6 +73,9 @@ func TestRequestLogger_SeparatesIncomingRequestID(t *testing.T) {
 	}
 }
 
+// TestRequestLoggerBoundsIncomingRequestID supplies a caller header far beyond
+// the persisted correlation width. The returned request ID still uses the
+// generated UUID's bounded text representation.
 func TestRequestLoggerBoundsIncomingRequestID(t *testing.T) {
 	r := gin.New()
 	r.Use(RequestLogger())
@@ -81,7 +95,10 @@ func TestRequestLoggerBoundsIncomingRequestID(t *testing.T) {
 	}
 }
 
-// TestRequestLoggerPreservesIDAcrossStreaming covers header overwrites and streamed success and error responses.
+// TestRequestLoggerPreservesIDAcrossStreaming overwrites correlation headers
+// before streaming several response statuses. Committed wire headers retain the
+// capture ID and completion snapshots include the handler's selected status and
+// finish time.
 func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
 	for _, status := range []int{200, 401, 403, 429, 500} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -93,6 +110,9 @@ func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
 				if c.Writer.Header().Get(internalRequestIDHeader) != id {
 					t.Fatal("gateway generated another ID")
 				}
+				// Model upstream header copying after entry correlation has been
+				// established. The subsequent write must restore local names before the
+				// recorder captures committed response headers.
 				c.Header(requestIDHeader, "upstream-id")
 				c.Header(internalRequestIDHeader, "spoofed-id")
 				c.Status(status)
@@ -118,7 +138,9 @@ func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
 	}
 }
 
-// TestRequestLoggerUnknownPathCanBeStored covers an unknown route containing a URL-decoded NUL.
+// TestRequestLoggerUnknownPathCanBeStored requests an unmatched URL with a
+// decoded NUL in its path. The response stays 404 and observer-side
+// normalization removes that character from the path in each collected snapshot.
 func TestRequestLoggerUnknownPathCanBeStored(t *testing.T) {
 	var records []telemetry.RequestRecord
 	router := gin.New()

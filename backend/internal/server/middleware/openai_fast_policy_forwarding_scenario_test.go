@@ -1,8 +1,5 @@
 package middleware
 
-// These tests cover user Fast policy forwarding in gateway/httpapi/authorization.go,
-// gateway/httpapi/openai_responses_execution.go, and gateway/provider/execution_fast_policy.go.
-
 import (
 	"bytes"
 	"context"
@@ -40,21 +37,56 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// User-scoped Fast policy needs the authenticated key owner to reach outbound
+// request preparation. The scenario crosses gateway/httpapi/authorization.go,
+// gateway/httpapi/openai_responses_execution.go, and
+// gateway/provider/execution_fast_policy.go, then inspects two captured
+// upstream JSON bodies for the allowed user's tier and the other user's
+// filtered request.
+
+// openAIFastPolicyForwardingAPIKeyRepo serves exact credential lookup and
+// accepts diagnostic touches for the forwarding scenario.
 type openAIFastPolicyForwardingAPIKeyRepo struct {
+	// APIKeyRepository supplies the remaining method shape. This fixture leaves it
+	// nil, so calling an operation not overridden here panics through that
+	// embedded interface.
 	apikey.APIKeyRepository
+	// apiKeys retains credential-indexed fixture pointers. Lookup copies the outer
+	// record while user, group, and other references remain shared and read-only
+	// during requests.
 	apiKeys map[string]*apikey.APIKey
 }
 
+// openAIFastPolicyForwardingSettingRepo returns one serialized policy string
+// for runtime reader lookups.
 type openAIFastPolicyForwardingSettingRepo struct {
+	// Repository supplies unoverridden operations through its embedded interface.
+	// This fixture leaves it nil and configures GetValue alone for runtime policy
+	// reads.
 	settingscore.Repository
+	// value is returned for every settings key requested by the runtime readers.
+	// Tests set the serialized policy before forwarding begins and keep it
+	// unchanged.
 	value string
 }
 
+// openAIFastPolicyForwardingHTTPUpstream delegates forwarding to the local test
+// server's ordinary HTTP client.
 type openAIFastPolicyForwardingHTTPUpstream struct {
+	// client remains usable while the scenario forwards requests. It owns HTTP
+	// transport behavior; callers close returned response bodies after their
+	// execution consumer finishes.
 	client *http.Client
 }
 
+// TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream authenticates two
+// key owners under one priority-tier filter with a user-specific pass rule.
+// Captured outbound JSON retains priority for user 42 and removes that field
+// for user 43 after forwarding.
 func TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream(t *testing.T) {
+	// Buffer the two expected upstream bodies because the test reads them after
+	// both HTTP requests return. Server handlers can then enqueue captured bytes
+	// before writing their responses.
 	upstreamBodies := make(chan []byte, 2)
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -66,6 +98,9 @@ func TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"resp_test","object":"response","model":"gpt-5","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
 	}))
+	// Keep the upstream server available throughout both forwarded requests and
+	// body assertions. Closing it on return releases its listener and waits for
+	// outstanding requests to finish.
 	defer upstreamServer.Close()
 
 	settings := &tierpolicy.OpenAIFastPolicySettings{
@@ -94,7 +129,9 @@ func TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream(t *testing.T) {
 		value: string(settingsJSON),
 	})
 
-	// Selection and forwarding share response, block, and transport state; this scenario uses HTTP upstream.
+	// Obtain HTTP and lineage lifetimes from compatible selection options and
+	// reuse the response, block, and circuit instances when wiring output. This
+	// fixture forwards its predefined provider over HTTP.
 	responses := session.NewOpenAIWSStateStore(nil, gatewayprovider.LogOpenAIWSModeInfo)
 	transient := providercore.NewModelTransientState(0)
 	circuit := egress.NewProxyStreamCircuit(egress.DefaultProxyStreamCircuitSettings())
@@ -175,6 +212,10 @@ func TestAPIKeyAuthForwardsUserScopedOpenAIFastPolicyToUpstream(t *testing.T) {
 	require.False(t, gjson.GetBytes(otherUserBody, "service_tier").Exists())
 }
 
+// newOpenAIFastPolicyForwardingAPIKey returns an active key and active user
+// with positive fixture funding. It retains the supplied group pointer, so both
+// users can share the read-only group configuration while exercising their
+// distinct policy identities.
 func newOpenAIFastPolicyForwardingAPIKey(id int64, key string, userID, groupID int64, group *routing.Group) *apikey.APIKey {
 	return &apikey.APIKey{
 		ID:      id,
@@ -193,6 +234,9 @@ func newOpenAIFastPolicyForwardingAPIKey(id int64, key string, userID, groupID i
 	}
 }
 
+// GetByKeyForAuth returns a shallow outer copy of an exact credential match, or
+// ErrAPIKeyNotFound. Nested user, group, and other references stay shared, so
+// the scenario keeps mapped fixture data unchanged during authentication.
 func (r *openAIFastPolicyForwardingAPIKeyRepo) GetByKeyForAuth(_ context.Context, key string) (*apikey.APIKey, error) {
 	apiKey, ok := r.apiKeys[key]
 	if !ok {
@@ -202,23 +246,40 @@ func (r *openAIFastPolicyForwardingAPIKeyRepo) GetByKeyForAuth(_ context.Context
 	return &clone, nil
 }
 
+// UpdateLastUsed accepts authentication's diagnostic touch and leaves fixture
+// key timestamps unchanged.
 func (r *openAIFastPolicyForwardingAPIKeyRepo) UpdateLastUsed(context.Context, int64, time.Time) error {
 	return nil
 }
 
+// GetValue returns the fixture's serialized policy string for every requested
+// key. The context and key are ignored; configure this string before runtime
+// readers begin forwarding so they observe stable fixture data.
 func (r *openAIFastPolicyForwardingSettingRepo) GetValue(context.Context, string) (string, error) {
 	return r.value, nil
 }
 
+// Do performs the request through the configured local HTTP client and returns
+// its response or transport error. Proxy, provider ID, and concurrency
+// parameters are ignored here; the execution consumer owns reading and closing
+// the response body.
 func (u *openAIFastPolicyForwardingHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	// #nosec G704 -- The target is a local httptest.Server.
 	return u.client.Do(req)
 }
 
+// DoWithTLS delegates to the fixture's ordinary Do path and ignores the
+// fingerprint profile. It accepts production transport parameters for the
+// interface, while the configured HTTP client determines this local request's
+// actual transport.
 func (u *openAIFastPolicyForwardingHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// responseHeaderFilterForTest compiles the supplied configuration's
+// response-header policy for the forwarding executor. Nil configuration returns
+// nil; otherwise enablement, extra allowed fields, and forced removals are
+// delegated to the egress compiler.
 func responseHeaderFilterForTest(cfg *config.Config) *egress.CompiledHeaderFilter {
 	if cfg == nil {
 		return nil

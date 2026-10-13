@@ -13,6 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// A caller's correlation header is separate from the local diagnostic identity
+// returned by gateway middleware. These cases exercise missing, valid, unsafe,
+// and oversized identifiers while checking which values reach the request
+// context and response headers.
+
+// TestClientRequestID_GeneratesWhenMissing supplies spoofed internal headers
+// without a caller correlation ID. The request gains a local ID, the spoofed
+// headers are stripped, and both internal response names agree.
 func TestClientRequestID_GeneratesWhenMissing(t *testing.T) {
 	r := gin.New()
 	r.Use(ClientRequestID())
@@ -39,6 +47,9 @@ func TestClientRequestID_GeneratesWhenMissing(t *testing.T) {
 	require.Equal(t, w.Header().Get(internalRequestIDHeader), w.Header().Get(legacyInternalRequestIDHeader))
 }
 
+// TestClientRequestIDSeparatesInternalAndParentIDs sends a valid caller
+// correlation header through the gateway middleware. The context and response
+// retain that parent while the local UUID identifies the request independently.
 func TestClientRequestIDSeparatesInternalAndParentIDs(t *testing.T) {
 	var internalID string
 	r := gin.New()
@@ -69,6 +80,10 @@ func TestClientRequestIDSeparatesInternalAndParentIDs(t *testing.T) {
 	require.Equal(t, internalID, w.Header().Get(internalRequestIDHeader))
 }
 
+// TestClientRequestIDRejectsUnsafeIncomingHeader sends a correlation ID
+// containing embedded spaces. The parent is absent from context and the
+// response uses the local UUID, while downstream code can still read the
+// incoming header.
 func TestClientRequestIDRejectsUnsafeIncomingHeader(t *testing.T) {
 	r := gin.New()
 	r.Use(ClientRequestID())
@@ -90,6 +105,9 @@ func TestClientRequestIDRejectsUnsafeIncomingHeader(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestClientRequestID_PreservesExisting starts with a valid ID in the request
+// context. The middleware reuses that ID and returns it in the
+// caller-correlation response header when no parent was supplied.
 func TestClientRequestID_PreservesExisting(t *testing.T) {
 	r := gin.New()
 	r.Use(ClientRequestID())
@@ -108,6 +126,9 @@ func TestClientRequestID_PreservesExisting(t *testing.T) {
 	require.Equal(t, "keep", w.Header().Get(clientRequestIDHeader))
 }
 
+// TestClientRequestID_ReplacesOversizedExistingID starts with an internal
+// context value exceeding the persisted byte limit. The handler and response
+// receive the same newly generated UUID after that value is rejected.
 func TestClientRequestID_ReplacesOversizedExistingID(t *testing.T) {
 	r := gin.New()
 	r.Use(ClientRequestID())

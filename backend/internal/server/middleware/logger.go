@@ -13,7 +13,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// Logger records completed requests and samples expected ingress rejections.
+// Access logging observes the handler's final status, selected provider, and
+// request stages after downstream execution. Health and setup probes are
+// skipped. Expected admission rejections reach the aggregate recorder first,
+// then a shared sampler decides whether to emit their access event and
+// occasional dropped-count summary.
+
+// Logger emits access metadata after downstream handlers return, skipping
+// /health and /setup/status. Install the request's forwarding-policy snapshot
+// beforehand when access logging should use the same client-address policy as
+// security consumers.
+//
+// Marked admission rejections are recorded before their access-event sampling
+// decision; sampled events and dropped summaries request exclusion from the Ops
+// system-log sink. Emitted events also replace the request capture's stage
+// timings with available millisecond fields. Overall latency starts at this
+// middleware's entry, while stage offsets use their recorded timing references.
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
@@ -22,7 +37,8 @@ func Logger() gin.HandlerFunc {
 
 		c.Next()
 
-		// Omit high-frequency health and setup probes from access logs.
+		// Health and setup status responses describe service readiness. Skipping
+		// these known probe paths keeps routine checks out of request access output.
 		if path == "/health" || path == "/setup/status" {
 			return
 		}
@@ -39,8 +55,14 @@ func Logger() gin.HandlerFunc {
 		model, _ := c.Request.Context().Value(telemetry.Model).(string)
 		reason, rejected := GetIngressRejectReason(c)
 		if rejected {
+			// Record the marked rejection before spending its access-event budget.
+			// Aggregate admission counts therefore remain available even when the access
+			// log is sampled away.
 			recordIngressReject(c, reason)
 			allowed, droppedSummary := globalIngressRejectAccessSampler.allow(endTime)
+			// The sampler returns a completed skipped-event count for occasional
+			// reporting. Mark the summary to skip the Ops sink so rejection volume does
+			// not reappear there.
 			if droppedSummary > 0 {
 				logging.FromContext(c.Request.Context()).Info("ingress rejection access logs dropped",
 					zap.String("component", "http.access"),
@@ -53,6 +75,8 @@ func Logger() gin.HandlerFunc {
 			}
 		}
 
+		// Access latency uses whole milliseconds; submillisecond portions are
+		// truncated.
 		fields := []zap.Field{
 			zap.String("component", "http.access"),
 			zap.Int("status_code", statusCode),
@@ -81,6 +105,9 @@ func Logger() gin.HandlerFunc {
 			fields = append(fields, zap.Int64("request_content_length", c.Request.ContentLength))
 		}
 		fields = appendRequestStageFields(fields, c)
+		// Copy the emitted stage fields into the shared request capture under its
+		// update lock. Exclude this middleware's latency so RequestLogger keeps
+		// ownership of total request duration.
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
 			record.Timings = make(map[string]int64)
 			for _, field := range fields {
@@ -99,8 +126,11 @@ func Logger() gin.HandlerFunc {
 	}
 }
 
-// appendRequestStageFields adds ingress-relative stage timestamps and outbound HTTP trace fields.
-// Counts capture repeated connection and request attempts.
+// appendRequestStageFields appends available request milestone and outbound
+// trace fields, returning the supplied slice for a missing request. Context
+// milestones use RequestStartedAt, while HTTP trace offsets use the trace
+// snapshot's own installation time. Invalid milestone timestamps are omitted;
+// trace counts retain repeated attempts.
 func appendRequestStageFields(fields []zap.Field, c *gin.Context) []zap.Field {
 	if c == nil || c.Request == nil {
 		return fields
@@ -109,9 +139,14 @@ func appendRequestStageFields(fields []zap.Field, c *gin.Context) []zap.Field {
 	startedAt, _ := ctx.Value(telemetry.RequestStartedAt).(time.Time)
 	appendTimestamp := func(key telemetry.ContextKey, name string) {
 		at, ok := ctx.Value(key).(time.Time)
+		// An absent reference or a stage predating ingress cannot supply a valid
+		// request milestone. Omit that field rather than encoding a misleading
+		// negative offset.
 		if !ok || startedAt.IsZero() || at.Before(startedAt) {
 			return
 		}
+		// Store whole milliseconds to match request-record stage fields. Fractional
+		// milliseconds are truncated while a stage exactly at ingress remains zero.
 		fields = append(fields, zap.Int64(name, at.Sub(startedAt).Milliseconds()))
 	}
 	appendTimestamp(telemetry.ProviderSlotAcquiredAt, "provider_slot_acquired_ms")

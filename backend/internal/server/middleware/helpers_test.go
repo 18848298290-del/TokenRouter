@@ -19,28 +19,59 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// Middleware scenarios exercise the gateway authorization adapter while
+// retaining legacy key and group context for their assertions. Shared helpers
+// bind the production authentication callbacks and provide a synchronized log
+// sink; logger configuration and sink installation are process-wide test
+// fixtures.
+
+// testLogSink retains accepted logging event pointers for synchronized
+// middleware assertions.
 type testLogSink struct {
-	mu     sync.Mutex
-	events []*logging.LogEvent
+	// mu protects events during sink writes and list snapshots. The slice is
+	// copied for readers, while retained event pointers and their fields remain
+	// shared.
+	mu     sync.Mutex          // event collection mutex
+	events []*logging.LogEvent // accepted logging event pointers
 }
 
+// init performs no package setup; TestMain selects Gin test mode before the
+// suite runs.
 func init() {
 	// TestMain sets Gin's test mode.
 }
 
+// init has an empty body and leaves package fixture initialization to
+// individual tests.
 func init() {
 }
 
-// NewAPIKeyAuthMiddleware combines API-key authentication and subscription checks for middleware tests.
+// NewAPIKeyAuthMiddleware returns the standard gateway authorization adapter
+// under its named middleware type. The supplied services and configuration
+// remain available for requests, and subscription checks are optional when the
+// subscription service is nil.
 func NewAPIKeyAuthMiddleware(apiKeyService *apikey.APIKeyService, subscriptionService *billing.SubscriptionService, cfg *config.Config) keyhttp.APIKeyAuthMiddleware {
 	return keyhttp.APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, cfg))
 }
 
+// apiKeyAuthWithSubscription returns standard-protocol authorization with the
+// shared test callbacks. It keeps the supplied services for request handling
+// and delegates credential, group, funding, and lease checks to the gateway
+// adapter.
 func apiKeyAuthWithSubscription(apiKeyService *apikey.APIKeyService, subscriptionService *billing.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return newGatewayAuthorization(apiKeyService, subscriptionService, cfg, false)
 }
 
-// newGatewayAuthorization assembles API-key authentication and subscription checks for tests.
+// newGatewayAuthorization builds the gateway authorization middleware used by
+// these legacy-context scenarios. Google selects the protocol-specific
+// constructor; a missing subscription service is passed as a nil interface.
+// Requests obtain client addresses from the configured security policy and
+// carry rejection and business-limit markers.
+//
+// Loaded keys are copied into early-abort diagnostics, and admitted keys are
+// copied before binding their legacy Gin entry and valid group snapshot. The
+// services and configuration are retained by callbacks, so fixtures keep them
+// usable until request handling finishes.
 func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.SubscriptionService, cfg *config.Config, google bool) gin.HandlerFunc {
 	options := gatewayhttp.APIKeyAuthorizationOptions{
 		Authentication: keyhttp.AuthenticationOptions{
@@ -63,6 +94,9 @@ func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.
 			setGroupContext(c, legacy.Group)
 		},
 	}
+	// Assign a subscription interface only for a present service. The gateway can
+	// then distinguish absent subscription support from an interface containing a
+	// typed nil pointer.
 	var reader gatewayhttp.AuthorizationSubscriptions
 	if subscriptions != nil {
 		reader = subscriptions
@@ -77,7 +111,9 @@ func newGatewayAuthorization(keys *apikey.APIKeyService, subscriptions *billing.
 	return gatewayhttp.NewAPIKeyAuthorization(nativeKeys, reader, options)
 }
 
-// setGroupContext attaches a valid group to the test request context.
+// setGroupContext attaches a valid group snapshot to the test request. Invalid
+// input is ignored; an existing valid snapshot with the same ID wins, and other
+// valid groups are copied through requeststate.WithGroup.
 func setGroupContext(c *gin.Context, group *routing.Group) {
 	if !routing.IsGroupContextValid(group) {
 		return
@@ -89,15 +125,25 @@ func setGroupContext(c *gin.Context, group *routing.Group) {
 	c.Request = c.Request.WithContext(ctx)
 }
 
-// invalidAuthClientKey returns the client bucket for invalid-authentication requests.
+// invalidAuthClientKey delegates the invalid-authentication client bucket to
+// the middleware resolver.
 func invalidAuthClientKey(c *gin.Context) string { return InvalidAuthClientKey(c) }
 
+// WriteLogEvent appends the supplied event pointer while excluding list
+// snapshots with the same mutex. The event and its Fields remain shared, so
+// tests inspect retained events without mutating logger-owned values.
 func (s *testLogSink) WriteLogEvent(event *logging.LogEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Logger writes can arrive during an assertion snapshot. Append under the
+	// collection lock so snapshot copying cannot read a changing slice or backing
+	// array.
 	s.events = append(s.events, event)
 }
 
+// list returns a new slice of the captured event pointers under the fixture
+// mutex. Readers may change the returned slice; the pointed-to events and their
+// Fields remain shared with the sink.
 func (s *testLogSink) list() []*logging.LogEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,10 +152,17 @@ func (s *testLogSink) list() []*logging.LogEvent {
 	return out
 }
 
+// initMiddlewareTestLogger installs the shared JSON test logger at debug
+// severity. It returns the capture sink and registers sink removal at cleanup,
+// so tests that replace this process-wide logger run serially.
 func initMiddlewareTestLogger(t *testing.T) *testLogSink {
 	return initMiddlewareTestLoggerWithLevel(t, "debug")
 }
 
+// initMiddlewareTestLoggerWithLevel initializes process-wide JSON logging and
+// installs an empty capture sink. Blank levels select debug, initialization
+// errors fail the test, and cleanup removes the sink. Tests keep this fixture
+// serial with other global logger replacements.
 func initMiddlewareTestLoggerWithLevel(t *testing.T, level string) *testLogSink {
 	t.Helper()
 	level = strings.TrimSpace(level)
@@ -129,6 +182,9 @@ func initMiddlewareTestLoggerWithLevel(t *testing.T, level string) *testLogSink 
 		t.Fatalf("init logger: %v", err)
 	}
 	sink := &testLogSink{}
+	// Install the capture sink after logger initialization succeeds. Remove it
+	// during cleanup so later tests do not append events to this test's retained
+	// fixture.
 	logging.SetSink(sink)
 	t.Cleanup(func() {
 		logging.SetSink(nil)

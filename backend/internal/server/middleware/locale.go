@@ -8,7 +8,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// Locale puts the browser or API language preference into the request context.
+// HTML navigation can carry a saved locale cookie even when the browser's
+// Accept-Language expresses another preference. Requests below /api/ negotiate
+// language from the header, and administrator or setup prefixes disable user
+// presentation while retaining a selected language in context.
+
+// Locale negotiates a supported language and attaches language and
+// user-presentation flags before downstream handling. A nil defaultLanguage
+// uses the catalog default; otherwise the callback is read on each request and
+// negotiation handles unsupported results. HTML requests outside /api/ prefer a
+// valid saved locale cookie.
+//
+// The response receives Content-Language and Vary: Accept-Language.
+// Presentation is disabled for /api/v1/admin/, /admin/, and /setup prefixes,
+// independently of the negotiated language. Supply a callback that can be read
+// by concurrent requests.
 func Locale(defaultLanguage func() string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fallback := locale.Default()
@@ -16,7 +30,9 @@ func Locale(defaultLanguage func() string) gin.HandlerFunc {
 			fallback = defaultLanguage()
 		}
 		requested := c.GetHeader("Accept-Language")
-		// Browser navigation cannot set application headers, so HTML requests prefer the saved locale cookie.
+		// HTML navigation relies on browser-managed headers. Prefer a supported saved
+		// cookie outside /api/ so the user's selected page language survives
+		// navigation.
 		if !strings.HasPrefix(c.Request.URL.Path, "/api/") && strings.Contains(c.GetHeader("Accept"), "text/html") {
 			if cookie, err := c.Cookie("tokenrouter_locale"); err == nil && locale.Normalize(cookie) != "" {
 				requested = cookie
