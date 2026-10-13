@@ -15,6 +15,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Group duplication copies provider bindings before enqueueing the scheduler
+// event. A PostgreSQL trigger rejects the event for one duplicate operation ID,
+// letting SQL queries verify that the newly created group, copied bindings,
+// and outbox row are all absent after the failure.
+
+// TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails injects a scheduler
+// outbox failure after group duplication begins. The repository call must return
+// the injected error, and SQL counts must show no duplicate group, copied links,
+// or corresponding outbox row.
 func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 	ctx := context.Background()
 	client, integrationDB := routingDatabase(t)
@@ -38,7 +47,8 @@ func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
-	// Fail the transactional outbox write after copying the group and links to verify rollback.
+	// Match the duplicate operation ID inside the trigger so source setup still
+	// succeeds and failure occurs after group insertion and provider-link copying.
 	functionName := fmt.Sprintf("fail_group_duplicate_outbox_%d", suffix)
 	triggerName := fmt.Sprintf("fail_group_duplicate_outbox_trigger_%d", suffix)
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`
@@ -62,6 +72,9 @@ func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 	require.NoError(t, err)
 
 	duplicateName := fmt.Sprintf("duplicate-rollback-copy-%d", suffix)
+	// Drop the trigger before its referenced function, then attempt each source-row
+	// cleanup. The ignored errors let later cleanup statements run after an earlier
+	// removal fails.
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON scheduler_outbox", triggerName))
 		_, _ = integrationDB.ExecContext(context.Background(), fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName))
@@ -85,6 +98,8 @@ func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 	err = repo.CreateFromSource(ctx, duplicate, source.ID)
 	require.ErrorContains(t, err, "forced duplicate outbox failure")
 
+	// The duplicate ID is assigned before the injected outbox failure. Query
+	// each participating table to distinguish transaction rollback from a returned error alone.
 	var groupCount, bindingCount, outboxCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM groups WHERE name = $1", duplicateName).Scan(&groupCount))
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM provider_groups WHERE group_id = $1", duplicate.ID).Scan(&bindingCount))

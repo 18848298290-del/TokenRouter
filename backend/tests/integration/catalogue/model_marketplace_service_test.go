@@ -12,12 +12,26 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
+// Public model listing reuses one provider prefetch across visible groups.
+// Provider memberships determine each group's candidates, and global provider
+// priority orders each pool before catalogue resolution; separate price fixtures
+// check a custom Qoder alias against its upstream route key.
+
+// marketplaceGroupRepoStub supplies configured public-group candidates to listing scenarios.
 type marketplaceGroupRepoStub struct {
+	// GroupRepository supplies unexercised methods through a nil interface; tests
+	// call the ListActive override and leave the other repository operations unsupported.
 	routing.GroupRepository
 
+	// groups is returned directly by ListActive, so tests keep these rows stable
+	// while public listing resolves their models and associated price data.
 	groups []routing.Group
 }
 
+// TestModelMarketplaceQoderProviderMappedCustomModelUsesRouteKeyManualPricing
+// maps a custom Qoder name to qmodel with upstream billing selected. The public
+// alias must display the manually configured input and output token prices for
+// that route key.
 func TestModelMarketplaceQoderProviderMappedCustomModelUsesRouteKeyManualPricing(t *testing.T) {
 	groupID := int64(903)
 	inputPrice := 0.01
@@ -59,6 +73,9 @@ func TestModelMarketplaceQoderProviderMappedCustomModelUsesRouteKeyManualPricing
 	}
 }
 
+// TestModelMarketplaceListPublicPrefetchesProvidersOnce places different aliases
+// in two groups with separate provider memberships. Listing must read the global
+// pool once, skip per-group reads, and keep each alias in its own group's models.
 func TestModelMarketplaceListPublicPrefetchesProvidersOnce(t *testing.T) {
 	groups := []routing.Group{
 		{ID: 4101, Name: "OpenAI A", Status: billing.StatusActive, RateMultiplier: 1, ActiveProviderCount: 1},
@@ -134,6 +151,9 @@ func TestModelMarketplaceListPublicPrefetchesProvidersOnce(t *testing.T) {
 	}
 }
 
+// TestModelMarketplacePrefetchSortsByGlobalProviderPriority supplies an unordered
+// pool containing equal-priority providers. Prefetch must order the group's rows
+// by ascending priority and then ascending provider ID for the tie.
 func TestModelMarketplacePrefetchSortsByGlobalProviderPriority(t *testing.T) {
 	providerRepo := &modelsListProviderRepoStub{all: []providercore.Record{
 		{ID: 5103, Priority: 10, GroupIDs: []int64{4101}},
@@ -156,6 +176,9 @@ func TestModelMarketplacePrefetchSortsByGlobalProviderPriority(t *testing.T) {
 	}
 }
 
+// ListActive returns the group rows configured for the marketplace scenario.
+// The returned slice shares fixture storage, and callers supply active rows
+// because this stub performs no status filtering.
 func (s *marketplaceGroupRepoStub) ListActive(context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }

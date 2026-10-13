@@ -11,7 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestGrokRequestableModelsExcludeBuiltinAliases checks that aliases require configured mappings.
+// Grok aliases enter the requestable catalogue through saved provider mappings.
+// An API-key provider with empty credentials supplies no concrete candidates;
+// replacing its fixture rows after adding a mapping makes the alias visible on
+// the next catalogue query.
+
+// TestGrokRequestableModelsExcludeBuiltinAliases starts with an unconfigured Grok
+// API-key provider and then saves an alias mapping. The first query must be empty,
+// and the next query must include the configured grok alias.
 func TestGrokRequestableModelsExcludeBuiltinAliases(t *testing.T) {
 	groupID := int64(4510)
 	provider := providercore.Record{ID: 1, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{}}

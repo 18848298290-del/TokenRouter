@@ -18,23 +18,40 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// modelRateLimitsKey identifies model cooldowns in provider snapshots.
+// Client model names can differ from the group-mapped and upstream identities
+// used for billing. Catalogue resolution keeps the client ID while checking
+// provider model eligibility and the configured pricing basis; marketplace
+// fixtures then inspect the resulting public token prices or unknown status.
+
+// modelRateLimitsKey selects the fixture's per-model cooldown data consumed by
+// provider eligibility during catalogue resolution.
 const modelRateLimitsKey = "model_rate_limits"
 
+// requestableModelsPricingConfigRepoStub injects pricing query failures into
+// catalogue resolution fixtures.
 type requestableModelsPricingConfigRepoStub struct {
+	// PricingConfigRepository supplies unused methods through a nil interface;
+	// these fixtures exercise ListAll and leave other repository calls unsupported.
 	routing.PricingConfigRepository
-	err error
+	err error // injected pricing query failure
 }
 
-// sequencedRequestableModelsProviderRepoStub fails its first query and succeeds on later calls.
+// sequencedRequestableModelsProviderRepoStub reproduces recovery on a later provider query.
 type sequencedRequestableModelsProviderRepoStub struct {
+	// catalogueRows supplies the unused global read through a nil interface;
+	// this fixture is queried through its group-specific override.
 	catalogueRows
+	// providers is shallow-copied after the first call. Nested provider data
+	// stays shared, so tests keep it stable across each catalogue query.
 	providers []providercore.Record
-	calls     int
+	// calls chooses the first failure and counts later queries; callers access
+	// this fixture sequentially because its counter is not synchronized.
+	calls int
 }
 
-// TestResolveRequestableModels_RequiresModelLevelSchedulability requires a provider outside model
-// cooldown for visibility.
+// TestResolveRequestableModels_RequiresModelLevelSchedulability puts the mapped
+// upstream model in a provider's future cooldown. The alias must disappear when
+// all providers are limited and remain visible when one provider is healthy.
 func TestResolveRequestableModels_RequiresModelLevelSchedulability(t *testing.T) {
 	groupID := int64(4120)
 	pricingConfig := routingtestkit.Configuration{
@@ -42,6 +59,7 @@ func TestResolveRequestableModels_RequiresModelLevelSchedulability(t *testing.T)
 		Status:       billing.StatusActive,
 		ModelMapping: map[string]string{"client-alias": "group-model"},
 	}
+	// Keep the cooldown ahead of wall-clock time while both provider pools resolve.
 	future := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
 	limitedProvider := providercore.Record{
 		ID:       80,
@@ -74,20 +92,29 @@ func TestResolveRequestableModels_RequiresModelLevelSchedulability(t *testing.T)
 	})
 }
 
+// ListAll returns the injected pricing-repository error with no configuration
+// rows. This stub exercises pricing lookup failure while the test independently
+// controls the group-policy reader used by catalogue resolution.
 func (s *requestableModelsPricingConfigRepoStub) ListAll(context.Context) ([]routing.PricingConfig, error) {
 	return nil, s.err
 }
 
-// ListSchedulableByGroupID fails once, then returns a copy of the configured providers.
+// ListSchedulableByGroupID fails the first group query and returns shallow-copied
+// provider rows on later calls. The group argument is ignored, and sequential
+// callers share the unsynchronized attempt counter and nested provider data.
 func (s *sequencedRequestableModelsProviderRepoStub) ListSchedulableByGroupID(context.Context, int64) ([]providercore.Record, error) {
 	s.calls++
+	// Fail one complete query so the next catalogue request exercises recovery
+	// through a fresh read, rather than a retry inside this repository method.
 	if s.calls == 1 {
 		return nil, errors.New("temporary provider query failure")
 	}
 	return append([]providercore.Record(nil), s.providers...), nil
 }
 
-// requestableModelByID finds a client model in the resolved catalogue.
+// requestableModelByID returns the first exact client-ID match and whether it
+// exists. Missing IDs yield a zero-valued model with false, while a found model's
+// nested values remain shared with the input slice.
 func requestableModelByID(models []routing.RequestableModel, id string) (routing.RequestableModel, bool) {
 	for _, model := range models {
 		if model.ID == id {
@@ -97,13 +124,20 @@ func requestableModelByID(models []routing.RequestableModel, id string) (routing
 	return routing.RequestableModel{}, false
 }
 
+// TestResolveRequestableModels_UsesConfiguredPricingBasis supplies distinct
+// requested, group-mapped, and upstream names for one alias. Each configured
+// billing source must select its expected pricing model while keeping the alias
+// visible and its pricing unambiguous.
 func TestResolveRequestableModels_UsesConfiguredPricingBasis(t *testing.T) {
 	groupID := int64(4101)
 	inputPrice := 0.01
 	for _, test := range []struct {
-		name          string
-		billingSource string
-		pricingModel  string
+		name string // subtest display name
+		// billingSource selects the model identity used for charging, and
+		// pricingModel names the expected result for the same request, group,
+		// and provider mapping chain.
+		billingSource string // configured billing identity stage
+		pricingModel  string // expected resolved pricing identity
 	}{
 		{name: "requested", billingSource: routing.BillingModelSourceRequested, pricingModel: "client-alias"},
 		{name: "channel mapped", billingSource: routing.BillingModelSourceGroupMapped, pricingModel: "group-model"},
@@ -142,6 +176,10 @@ func TestResolveRequestableModels_UsesConfiguredPricingBasis(t *testing.T) {
 	}
 }
 
+// TestResolveRequestableModels_WildcardsMatchConcreteCandidateOnly combines
+// wildcard mapping and price patterns with a concrete provider candidate. The
+// concrete alias must resolve to the group pricing model, and wildcard patterns
+// must remain absent from returned IDs.
 func TestResolveRequestableModels_WildcardsMatchConcreteCandidateOnly(t *testing.T) {
 	groupID := int64(4102)
 	price := 0.02
@@ -177,6 +215,10 @@ func TestResolveRequestableModels_WildcardsMatchConcreteCandidateOnly(t *testing
 	require.NotContains(t, routing.RequestableModelIDs(result.Models), "group-*")
 }
 
+// TestResolveRequestableModels_UnrestrictedProviderAddsDefaultsAndMappingSource
+// supplies case-colliding aliases and a wildcard provider mapping. The catalogue
+// must retain the selected alias spelling and concrete target while excluding
+// the duplicate spelling and wildcard pattern.
 func TestResolveRequestableModels_UnrestrictedProviderAddsDefaultsAndMappingSource(t *testing.T) {
 	groupID := int64(4103)
 	provider := providercore.Record{
@@ -200,6 +242,10 @@ func TestResolveRequestableModels_UnrestrictedProviderAddsDefaultsAndMappingSour
 	require.NotContains(t, ids, "gpt-*")
 }
 
+// TestResolveRequestableModels_QoderUsesSchedulableProviderSiteUnion compares
+// Global, CN, and mixed Qoder provider pools. Site-specific exclusions must hold,
+// the mixed pool must deduplicate its common model, and a configured alias must
+// respect the CN site's eligibility.
 func TestResolveRequestableModels_QoderUsesSchedulableProviderSiteUnion(t *testing.T) {
 	groupID := int64(4121)
 	global := providercore.Record{
@@ -214,6 +260,9 @@ func TestResolveRequestableModels_QoderUsesSchedulableProviderSiteUnion(t *testi
 		Type:        capability.ProviderTypeCosy,
 		Credentials: map[string]any{"site": "cn"},
 	}
+	// resolve enumerates Qoder IDs for this group from the supplied provider rows.
+	// Each call builds a fresh catalogue with no group policy, so site eligibility
+	// is read from the current fixture credentials.
 	resolve := func(providers ...providercore.Record) []string {
 		svc := newCatalogueFixture(&modelsListProviderRepoStub{byGroup: map[int64][]providercore.Record{groupID: providers}}, nil, nil)
 		result := svc.ResolveRequestableModels(context.Background(), &groupID, capability.PlatformQoder)
@@ -253,6 +302,9 @@ func TestResolveRequestableModels_QoderUsesSchedulableProviderSiteUnion(t *testi
 	require.NotContains(t, resolve(cn), "claude-opus-4-6", "显式映射不能扩大CN站点硬能力")
 }
 
+// TestResolveRequestableModels_ProviderWhitelistRemovesUnsupportedCandidate
+// maps a group alias to a model outside the provider's whitelist. The alias
+// must remain absent from the resolved requestable model IDs.
 func TestResolveRequestableModels_ProviderWhitelistRemovesUnsupportedCandidate(t *testing.T) {
 	groupID := int64(4104)
 	pricingConfig := routingtestkit.Configuration{
@@ -273,6 +325,9 @@ func TestResolveRequestableModels_ProviderWhitelistRemovesUnsupportedCandidate(t
 	require.NotContains(t, routing.RequestableModelIDs(result.Models), "blocked-alias")
 }
 
+// TestResolveRequestableModels_UpstreamPricingAmbiguousAcrossProviders maps
+// one group model to two different upstream names with upstream billing selected.
+// The alias must remain visible with an empty pricing model and ambiguity set.
 func TestResolveRequestableModels_UpstreamPricingAmbiguousAcrossProviders(t *testing.T) {
 	groupID := int64(4105)
 	pricingConfig := routingtestkit.Configuration{
@@ -294,6 +349,9 @@ func TestResolveRequestableModels_UpstreamPricingAmbiguousAcrossProviders(t *tes
 	require.True(t, model.PricingAmbiguous)
 }
 
+// TestResolveRequestableModels_UpstreamUsesBedrockRegionalModel configures
+// upstream billing for a Claude model through a us-east-1 Bedrock provider. The
+// visible model must use the regional inference ID as its unambiguous pricing key.
 func TestResolveRequestableModels_UpstreamUsesBedrockRegionalModel(t *testing.T) {
 	groupID := int64(4114)
 	price := 0.08
@@ -326,6 +384,10 @@ func TestResolveRequestableModels_UpstreamUsesBedrockRegionalModel(t *testing.T)
 	require.False(t, model.PricingAmbiguous)
 }
 
+// TestResolveRequestableModels_UpstreamMarksAntigravityThinkingVariantAmbiguous
+// lists a Claude model through an Antigravity provider with upstream billing.
+// The model must remain visible with an empty pricing key and the ambiguity
+// flag set for its available variants.
 func TestResolveRequestableModels_UpstreamMarksAntigravityThinkingVariantAmbiguous(t *testing.T) {
 	groupID := int64(4115)
 	pricingConfig := routingtestkit.Configuration{
@@ -343,6 +405,9 @@ func TestResolveRequestableModels_UpstreamMarksAntigravityThinkingVariantAmbiguo
 	require.True(t, model.PricingAmbiguous)
 }
 
+// TestResolveRequestableModels_UpstreamNormalizesAnthropicOAuthMapping maps a
+// client alias to a Claude model through Anthropic OAuth. The alias must use the
+// configured target as its unambiguous upstream pricing model.
 func TestResolveRequestableModels_UpstreamNormalizesAnthropicOAuthMapping(t *testing.T) {
 	groupID := int64(4116)
 	pricingConfig := routingtestkit.Configuration{
@@ -367,16 +432,23 @@ func TestResolveRequestableModels_UpstreamNormalizesAnthropicOAuthMapping(t *tes
 	require.False(t, model.PricingAmbiguous)
 }
 
-// TestResolveRequestableModels_OpenAIUsesActualForwardedModel checks upstream pricing identity for
-// OAuth and passthrough providers.
+// TestResolveRequestableModels_OpenAIUsesActualForwardedModel combines
+// OAuth mapping cases with and without passthrough enabled. Prepared provider
+// rules and the alias's upstream pricing model must agree on the configured
+// forwarded identity in each case.
 func TestResolveRequestableModels_OpenAIUsesActualForwardedModel(t *testing.T) {
 	price := 0.09
 	tests := []struct {
-		name               string
-		groupID            int64
-		pricingConfigModel string
-		pricingModel       string
-		provider           providercore.Record
+		name    string // subtest display name
+		groupID int64  // fixture group lookup ID
+		// pricingConfigModel is the target of the group alias; pricingModel
+		// is the expected identity after this case's provider mapping. Both
+		// participate in the upstream-billing assertion.
+		pricingConfigModel string // configured group mapping target
+		pricingModel       string // expected forwarded pricing identity
+		// provider supplies the case's query record. The catalogue prepares its
+		// mappings and reads its nested values while the test keeps them stable.
+		provider providercore.Record
 	}{
 		{
 			name:               "OAuth 显式后缀映射",
@@ -435,6 +507,9 @@ func TestResolveRequestableModels_OpenAIUsesActualForwardedModel(t *testing.T) {
 	}
 }
 
+// TestResolveRequestableModels_RestrictionEmptyDoesNotFallBack enables group
+// model restriction with no configured allowed entries. The catalogue must
+// report restriction and return an empty model list for the supplied provider.
 func TestResolveRequestableModels_RestrictionEmptyDoesNotFallBack(t *testing.T) {
 	groupID := int64(4106)
 	pricingConfig := routingtestkit.Configuration{
@@ -451,6 +526,9 @@ func TestResolveRequestableModels_RestrictionEmptyDoesNotFallBack(t *testing.T) 
 	require.Empty(t, result.Models)
 }
 
+// TestResolveRequestableModelsUsesUnifiedPriceSpace supplies an Anthropic
+// provider and a requested-model price entry for the same concrete name. The
+// restricted catalogue must return that model as its sole ID.
 func TestResolveRequestableModelsUsesUnifiedPriceSpace(t *testing.T) {
 	groupID := int64(4107)
 	price := 0.03
@@ -478,6 +556,9 @@ func TestResolveRequestableModelsUsesUnifiedPriceSpace(t *testing.T) {
 	require.Equal(t, []string{"same-model"}, routing.RequestableModelIDs(result.Models))
 }
 
+// TestResolveRequestableModels_QoderRequiresEffectivePricing supplies a Qoder
+// alias with an empty exact entry and a priced wildcard fixture entry. The
+// requestable ID list must include that configured alias.
 func TestResolveRequestableModels_QoderRequiresEffectivePricing(t *testing.T) {
 	groupID := int64(4108)
 	effectivePrice := 0.04
@@ -498,6 +579,9 @@ func TestResolveRequestableModels_QoderRequiresEffectivePricing(t *testing.T) {
 	require.Contains(t, routing.RequestableModelIDs(result.Models), "qoder-model")
 }
 
+// TestResolveRequestableModels_ProviderQueryFailureKeepsEmpty injects a failed
+// provider query for one group. Catalogue resolution must report restriction
+// and return empty IDs for that attempted read.
 func TestResolveRequestableModels_ProviderQueryFailureKeepsEmpty(t *testing.T) {
 	groupID := int64(4109)
 	svc := newCatalogueFixture(&modelsListProviderRepoStub{err: errors.New("temporary failure")}, nil, nil)
@@ -507,8 +591,9 @@ func TestResolveRequestableModels_ProviderQueryFailureKeepsEmpty(t *testing.T) {
 	require.Empty(t, routing.RequestableModelIDs(result.Models))
 }
 
-// TestResolveRequestableModels_NextQueryRecoversProviderFailure checks that a new request retries a
-// failed provider read.
+// TestResolveRequestableModels_NextQueryRecoversProviderFailure injects a
+// single failed provider read followed by configured rows. The first result must
+// be restricted and empty; the next query must read again and expose the private model.
 func TestResolveRequestableModels_NextQueryRecoversProviderFailure(t *testing.T) {
 	groupID := int64(4121)
 	repo := &sequencedRequestableModelsProviderRepoStub{providers: []providercore.Record{{
@@ -531,6 +616,10 @@ func TestResolveRequestableModels_NextQueryRecoversProviderFailure(t *testing.T)
 	require.Equal(t, []string{"private-model"}, routing.RequestableModelIDs(result.Models))
 }
 
+// TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidates
+// fails pricing lookup while supplying an independent empty group-policy read.
+// Provider-configured aliases must remain visible, and the result must remain
+// unrestricted for that fixture.
 func TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidates(t *testing.T) {
 	groupID := int64(4113)
 	provider := providercore.Record{
@@ -544,7 +633,8 @@ func TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidat
 	svc := newCatalogueFixture(&modelsListProviderRepoStub{byGroup: map[int64][]providercore.Record{groupID: {provider}}}, routing.NewPricingConfigService(&requestableModelsPricingConfigRepoStub{
 		err: errors.New("temporary price configuration failure"),
 	}, nil, routing.PricingConfigOptions{
-		// Group policy reads remain independent of pricing read failures.
+		// Supply a successful policy read while ListAll fails, isolating the
+		// pricing failure from a policy failure that would restrict the catalogue.
 		ReadGroup: func(context.Context, int64) (*routing.Group, error) { return nil, nil },
 		Warn:      slog.Warn,
 		Now: time.
@@ -558,8 +648,10 @@ func TestResolveRequestableModels_PricingConfigQueryFailureKeepsProviderCandidat
 	require.Contains(t, routing.RequestableModelIDs(result.Models), "client-alias")
 }
 
-// TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty prevents default
-// models appearing without providers.
+// TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty
+// configures a failing pricing source beside a successfully read empty provider
+// pool. The observed no-provider path must return no models with Restricted false
+// before pricing rules are needed.
 func TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoolEmpty(t *testing.T) {
 	groupID := int64(4117)
 	svc := newCatalogueFixture(&modelsListProviderRepoStub{byGroup: map[int64][]providercore.Record{groupID: {}}}, routing.NewPricingConfigService(&requestableModelsPricingConfigRepoStub{
@@ -578,6 +670,9 @@ func TestResolveRequestableModels_PricingConfigQueryFailureKeepsEmptyProviderPoo
 	require.Empty(t, result.Models)
 }
 
+// TestModelMarketplaceUsesResolvedGroupMappedPricingModel configures distinct
+// client, group, and upstream names with group-mapped billing. The public alias
+// must display the configured group-model token prices and report a priced status.
 func TestModelMarketplaceUsesResolvedGroupMappedPricingModel(t *testing.T) {
 	groupID := int64(4110)
 	inputPrice := 0.05
@@ -621,6 +716,9 @@ func TestModelMarketplaceUsesResolvedGroupMappedPricingModel(t *testing.T) {
 	require.Equal(t, outputPrice, alias.Pricing.OutputPricePerToken)
 }
 
+// TestModelMarketplaceKeepsAmbiguousUpstreamModelUnpriced gives one alias
+// two upstream identities, each with a price entry. The marketplace must retain
+// the alias with unpriced status and an unknown pricing mode.
 func TestModelMarketplaceKeepsAmbiguousUpstreamModelUnpriced(t *testing.T) {
 	groupID := int64(4111)
 	price := 0.07
@@ -656,6 +754,9 @@ func TestModelMarketplaceKeepsAmbiguousUpstreamModelUnpriced(t *testing.T) {
 	require.Equal(t, "unknown", alias.Pricing.PricingMode)
 }
 
+// TestModelMarketplaceQoderUsesResolvedRequestedPricingModelWithoutRemapping
+// quotes a supplied requested pricing identity while a price exists for its group
+// mapping target. The quote must remain unpriced with unknown mode for that identity.
 func TestModelMarketplaceQoderUsesResolvedRequestedPricingModelWithoutRemapping(t *testing.T) {
 	groupID := int64(4112)
 	groupMappedPrice := 0.08

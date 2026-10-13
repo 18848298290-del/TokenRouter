@@ -21,16 +21,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// routingDatabase creates a test database and Ent client; the database fixture closes connections at
-// cleanup.
+// Routing persistence scenarios connect Ent and SQL operations to the same
+// migrated PostgreSQL fixture. Group storage receives provider-link, user-access,
+// and scheduler-outbox participants through the executor supplied by each
+// mutation, allowing its transaction to encompass the participating writes.
+
+// routingDatabase returns an Ent client and the pool from a dedicated migrated
+// PostgreSQL container. The underlying fixture registers pool closure and container
+// termination; callers register rollback for transactions they open.
 func routingDatabase(t *testing.T) (*dbent.Client, *sql.DB) {
 	t.Helper()
 	db := postgrescontainer.New(t)
 	return dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db))), db
 }
 
-// newGroupStoreFixture wires provider links, user-access deletion, and scheduler outbox writes into
-// group storage.
+// newGroupStoreFixture assembles group storage with provider-link changes,
+// user-access deletion, and scheduler events. Each participant uses the executor
+// supplied by GroupStore for its mutation, allowing transaction-scoped calls to
+// share that transaction's database writes.
 func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *routingpostgres.GroupStore {
 	return routingpostgres.NewGroupStore(client, db, routingpostgres.GroupStoreOptions{
 		Providers: func(exec postgresinfra.Executor) routingpostgres.GroupLinkParticipant {

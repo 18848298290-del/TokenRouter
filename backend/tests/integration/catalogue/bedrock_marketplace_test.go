@@ -13,12 +13,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Bedrock aliases inherit the configured source region's model eligibility.
+// The public marketplace and direct requestable catalogue resolve the same
+// provider mapping, so enabling global routing changes alias visibility in both
+// results for the Tokyo fixture.
+
+// bedrockMarketplaceGroups supplies fixed active-group rows to marketplace tests.
 type bedrockMarketplaceGroups struct {
+	// GroupRepository supplies unused methods through a nil interface; these
+	// fixtures exercise the ListActive override and leave other calls unsupported.
 	routing.GroupRepository
+	// groups is returned directly by ListActive, so tests keep its storage stable
+	// while the marketplace resolves the rows and their model lists.
 	groups []routing.Group
 }
 
-// newBedrockRoutingTestProvider creates a Bedrock provider with a region and optional global routing.
+// newBedrockRoutingTestProvider builds a schedulable SigV4 fixture for the supplied
+// region and optional global routing. Credentials are test placeholders consumed
+// by catalogue rules; callers attach group memberships and model mappings.
 func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) providercore.Record {
 	provider := providercore.Record{
 		ID: id, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeBedrock,
@@ -29,15 +41,23 @@ func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) pr
 		},
 	}
 	if forceGlobal {
+		// Bedrock's credential reader accepts the saved string form of this flag,
+		// allowing the fixture to exercise the same representation as stored providers.
 		provider.Credentials["aws_force_global"] = "true"
 	}
 	return provider
 }
 
+// ListActive returns the configured group slice for marketplace enumeration.
+// Callers treat the returned storage as borrowed, and this stub relies on each
+// test to supply active groups.
 func (s *bedrockMarketplaceGroups) ListActive(context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
+// TestBedrockRegionRouting_MarketplaceUsesSharedResolution maps a client alias to
+// a Claude model whose Tokyo eligibility depends on global routing. Both catalogue
+// paths must expose matching model IDs and agree on the alias's regional visibility.
 func TestBedrockRegionRouting_MarketplaceUsesSharedResolution(t *testing.T) {
 	groupID := int64(5201)
 	for _, forceGlobal := range []bool{false, true} {
@@ -69,7 +89,6 @@ func TestBedrockRegionRouting_MarketplaceUsesSharedResolution(t *testing.T) {
 			for _, model := range groups[0].Models {
 				publicModels = append(publicModels, model.ID)
 			}
-			// The marketplace and requestable catalogue agree on regional exclusions, including aliases.
 			require.ElementsMatch(t, routing.RequestableModelIDs(models.Models), publicModels)
 			if forceGlobal {
 				require.Contains(t, publicModels, "client-alias")

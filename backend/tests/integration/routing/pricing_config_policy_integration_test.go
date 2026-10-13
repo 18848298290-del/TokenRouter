@@ -14,6 +14,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
+// Group mappings and allowlists are persisted independently of shared price
+// configurations. A duplicated group keeps its own policy, while creating,
+// disabling, and deleting a shared price configuration leaves the source group's
+// routing decisions available through the pricing service.
+
+// TestPricingConfigCRUDPreservesIndependentGroupPolicies saves and duplicates a
+// group policy before changing a shared price configuration's lifecycle. Stored
+// zero prices and group associations must survive creation, and subsequent
+// pricing changes must leave the source mapping and restrictions intact.
 func TestPricingConfigCRUDPreservesIndependentGroupPolicies(t *testing.T) {
 	ctx := context.Background()
 	client, db := routingDatabase(t)
@@ -44,6 +53,8 @@ func TestPricingConfigCRUDPreservesIndependentGroupPolicies(t *testing.T) {
 
 	store := postgres.NewPricingConfigStore(db)
 	service := routing.NewPricingConfigService(store, nil, routing.PricingConfigOptions{ReadGroup: groups.GetByIDLite, LoadLocation: time.LoadLocation})
+	// A nonnil zero price distinguishes a configured free price from a missing
+	// amount, so the persisted pointer is checked before exercising the policy reads.
 	zero := 0.0
 	config, err := service.Create(ctx, &routing.CreatePricingConfigInput{Name: "shared-price", GroupIDs: []int64{source.ID, duplicate.ID}, ModelPricing: []routing.ModelPricingEntry{{Models: []string{"gpt-other"}, InputPrice: &zero, BillingMode: routing.BillingModeToken}}})
 	require.NoError(t, err)
@@ -51,6 +62,9 @@ func TestPricingConfigCRUDPreservesIndependentGroupPolicies(t *testing.T) {
 	require.NotNil(t, config.ModelPricing[0].InputPrice)
 	require.Zero(t, *config.ModelPricing[0].InputPrice)
 	require.ElementsMatch(t, []int64{source.ID, duplicate.ID}, config.GroupIDs)
+	// check rereads the source group's alias mapping and model restrictions through
+	// the pricing service. Running it after each price mutation verifies that
+	// group policy remains available across price-cache invalidation.
 	check := func() {
 		t.Helper()
 		require.Equal(t, "gpt-allowed", service.ResolveGroupMapping(ctx, source.ID, "alias").MappedModel)

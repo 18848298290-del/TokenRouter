@@ -21,28 +21,51 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
+// Group storage combines persisted group settings with provider-link counts.
+// The suite uses one migrated PostgreSQL client and separate test transactions,
+// allowing direct SQL fixtures to exercise search, duplication, scheduling
+// eligibility, and soft-deleted visibility while requesting rollback after each
+// case.
+
+// GroupRepoSuite runs group-storage assertions against per-test PostgreSQL transactions.
 type GroupRepoSuite struct {
-	suite.Suite
+	suite.Suite // assertion and subtest helpers
+	// client is created once for the suite; routingDatabase registers cleanup
+	// of its underlying SQL pool and dedicated PostgreSQL container.
 	client *dbent.Client
-	ctx    context.Context
-	tx     *dbent.Tx
-	repo   *routingpostgres.GroupStore
+	// ctx, tx, and repo are replaced before each case. repo uses tx's client and
+	// SQL executor, so its writes and the test's direct fixtures share that transaction.
+	ctx  context.Context             // per-test operation context
+	tx   *dbent.Tx                   // per-test database transaction
+	repo *routingpostgres.GroupStore // transaction-bound group persistence
 }
 
+// forbidSQLExecutor detects auxiliary SQL access during the lite-lookup scenario.
 type forbidSQLExecutor struct {
+	// called becomes true after either executor method runs. The lite-lookup
+	// test inspects this flag to detect an unexpected provider-count query path.
 	called bool
 }
 
+// ExecContext records any auxiliary SQL write as unexpected and returns the
+// fixture error. The supplied context, query, and arguments are ignored, so the
+// caller receives no database result.
 func (s *forbidSQLExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	s.called = true
 	return nil, errors.New("unexpected sql exec")
 }
 
+// QueryContext records any auxiliary SQL query as unexpected and returns the
+// fixture error. It ignores the supplied context, statement, and arguments, so
+// callers receive no rows to consume.
 func (s *forbidSQLExecutor) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	s.called = true
 	return nil, errors.New("unexpected sql query")
 }
 
+// SetupTest gives each suite case a fresh PostgreSQL transaction and group
+// storage using its client and executor. The transaction helper registers rollback
+// with the current test for disposal after assertions finish.
 func (s *GroupRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := s.transaction(s.T())
@@ -50,10 +73,16 @@ func (s *GroupRepoSuite) SetupTest() {
 	s.repo = newGroupStoreFixture(tx.Client(), tx)
 }
 
+// TestGroupRepoSuite runs PostgreSQL group-storage scenarios in transactions
+// registered for cleanup after each case. The cases protect record visibility,
+// provider counts, search, duplication, ordering, and stored protocol settings.
 func TestGroupRepoSuite(t *testing.T) {
 	suite.Run(t, new(GroupRepoSuite))
 }
 
+// TestCreate stores an active group through the assembled PostgreSQL repository.
+// The supplied value must receive an ID, and subsequent lookup must return its
+// saved group name.
 func (s *GroupRepoSuite) TestCreate() {
 	group := &routing.Group{
 		Name: "test-create",
@@ -76,6 +105,10 @@ func (s *GroupRepoSuite) TestCreate() {
 	s.Require().Equal("test-create", got.Name)
 }
 
+// TestCreateFromSourcePreservesPriorityAndFiltersIneligibleProviders duplicates
+// an OAuth-only group with OAuth, API-key, and deleted provider links. The copy
+// must contain the eligible OAuth link, be recoverable by operation ID, and have
+// one scheduler outbox row.
 func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligibleProviders() {
 	source := &routing.Group{
 		Name: "duplicate-source",
@@ -90,9 +123,14 @@ func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligib
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, source))
 
+	// insertProvider writes one provider and returns its generated ID for source
+	// group links. providerType supplies the auth type for the duplicate's API-key
+	// filter; deleted sets deleted_at while leaving membership setup to the caller.
 	insertProvider := func(name, providerType string, deleted bool) int64 {
 		var id int64
 		deletedAt := any(nil)
+		// Pre-mark this provider deleted in its insert, then retain its source
+		// membership below so duplication has a stale provider link to filter.
 		if deleted {
 			deletedAt = "2026-07-16T00:00:00Z"
 		}
@@ -139,6 +177,8 @@ func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligib
 		duplicate.ID,
 	)
 	s.Require().NoError(err)
+	// Close the inspection on early assertion exit so an unfinished result is
+	// released before this test's registered transaction rollback starts.
 	defer func() { _ = rows.Close() }()
 	s.Require().True(rows.Next())
 	var copiedProviderID int64
@@ -161,12 +201,18 @@ func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligib
 	s.Require().Equal(1, outboxCount)
 }
 
+// TestGetByID_NotFound looks up an ID absent from the migrated PostgreSQL fixture.
+// The repository must return an error matching ErrGroupNotFound for that missing
+// group.
 func (s *GroupRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
 }
 
+// TestGetByIDLite_DoesNotUseProviderCount loads a saved group through Ent while
+// replacing the auxiliary SQL executor with a failing spy. The lookup must succeed
+// and leave that spy unused.
 func (s *GroupRepoSuite) TestGetByIDLite_DoesNotUseProviderCount() {
 	group := &routing.Group{
 		Name: "lite-group",
@@ -190,6 +236,9 @@ func (s *GroupRepoSuite) TestGetByIDLite_DoesNotUseProviderCount() {
 	s.Require().False(spy.called, "expected no direct sql executor usage")
 }
 
+// TestUpdate changes the name of a previously stored group through the repository.
+// A subsequent detail lookup must return the updated name for the same persisted
+// record.
 func (s *GroupRepoSuite) TestUpdate() {
 	group := &routing.Group{
 		Name: "original",
@@ -213,6 +262,9 @@ func (s *GroupRepoSuite) TestUpdate() {
 	s.Require().Equal("updated", got.Name)
 }
 
+// TestDelete creates a group and deletes it through the repository's normal
+// operation. Detail lookup must then return an error matching ErrGroupNotFound
+// for that group's ID.
 func (s *GroupRepoSuite) TestDelete() {
 	group := &routing.Group{
 		Name: "to-delete",
@@ -235,6 +287,9 @@ func (s *GroupRepoSuite) TestDelete() {
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
 }
 
+// TestList adds two groups after reading the fixture's baseline page and count.
+// The same list query must include two additional rows and increase its total by
+// two.
 func (s *GroupRepoSuite) TestList() {
 	baseGroups, basePage, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10})
 	s.Require().NoError(err, "List base")
@@ -268,6 +323,9 @@ func (s *GroupRepoSuite) TestList() {
 	s.Require().Equal(basePage.Total+2, page.Total)
 }
 
+// TestListWithFiltersIncludesAllGroups creates groups with different protocol
+// configurations and leaves every filter empty. The filtered list must contain
+// two additional rows compared with its initial fixture page.
 func (s *GroupRepoSuite) TestListWithFiltersIncludesAllGroups() {
 	baseGroups, _, err := s.repo.ListWithFilters(
 		s.ctx,
@@ -307,6 +365,9 @@ func (s *GroupRepoSuite) TestListWithFiltersIncludesAllGroups() {
 	s.Require().Len(groups, len(baseGroups)+2)
 }
 
+// TestListWithFilters_Status inserts one active group and one disabled group
+// before selecting the disabled status. The filtered result must contain one row
+// whose status is disabled.
 func (s *GroupRepoSuite) TestListWithFilters_Status() {
 	s.Require().NoError(s.repo.Create(s.ctx, &routing.Group{
 		Name: "g1",
@@ -337,6 +398,9 @@ func (s *GroupRepoSuite) TestListWithFilters_Status() {
 	s.Require().Equal(billing.StatusDisabled, groups[0].Status)
 }
 
+// TestListWithFilters_IsExclusive creates ordinary and exclusive groups before
+// selecting the exclusive filter. The repository must return one row with its
+// exclusive flag set for that query.
 func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
 	s.Require().NoError(s.repo.Create(s.ctx, &routing.Group{
 		Name: "g1",
@@ -368,12 +432,19 @@ func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
 	s.Require().True(groups[0].IsExclusive)
 }
 
+// TestListWithFilters_Search searches independently created group fixtures by
+// name and description. Matching must ignore case, treat percent and underscore
+// as literal characters, and return empty rows for the tested absent phrase.
 func (s *GroupRepoSuite) TestListWithFilters_Search() {
+	// newRepo opens an additional transaction for the current search subtest and
+	// assembles group storage on that transaction. The transaction helper registers
+	// rollback with this subtest, isolating its independently created fixtures.
 	newRepo := func() (*routingpostgres.GroupStore, context.Context) {
 		tx := s.transaction(s.T())
 		return newGroupStoreFixture(tx.Client(), tx), context.Background()
 	}
 
+	// containsID reports whether the returned page contains a group with id.
 	containsID := func(groups []routing.Group, id int64) bool {
 		for i := range groups {
 			if groups[i].ID == id {
@@ -383,12 +454,18 @@ func (s *GroupRepoSuite) TestListWithFilters_Search() {
 		return false
 	}
 
+	// mustCreate persists the supplied group and requires a generated ID before a
+	// search assertion uses it. The repository mutates g in place; the helper
+	// returns that same pointer for later ID assertions.
 	mustCreate := func(repo *routingpostgres.GroupStore, ctx context.Context, g *routing.Group) *routing.Group {
 		s.Require().NoError(repo.Create(ctx, g))
 		s.Require().NotZero(g.ID)
 		return g
 	}
 
+	// newGroup builds an active, ordinary group with the Anthropic protocol defaults
+	// used by the search scenarios. It leaves identity assignment to the repository
+	// when mustCreate persists the supplied name.
 	newGroup := func(name string) *routing.Group {
 		return &routing.Group{
 			Name: name,
@@ -455,6 +532,8 @@ func (s *GroupRepoSuite) TestListWithFilters_Search() {
 		s.Require().False(containsID(groups, other.ID), "expected other group to be filtered out")
 	})
 
+	// Pair literal LIKE metacharacters with single-character alternatives so the
+	// assertions distinguish escaped user text from wildcard matching in the SQL search.
 	s.Run("search_should_escape_like_wildcards", func() {
 		repo, ctx := newRepo()
 
@@ -476,6 +555,9 @@ func (s *GroupRepoSuite) TestListWithFilters_Search() {
 	})
 }
 
+// TestUpdateSortOrders_BatchCaseWhen submits sort orders for three groups and
+// repeats one ID with another value. Readback must show each requested order,
+// using the last value for the repeated group.
 func (s *GroupRepoSuite) TestUpdateSortOrders_BatchCaseWhen() {
 	g1 := &routing.Group{
 		Name: "sort-g1",
@@ -518,7 +600,7 @@ func (s *GroupRepoSuite) TestUpdateSortOrders_BatchCaseWhen() {
 		{ID: g1.ID, SortOrder: 30},
 		{ID: g2.ID, SortOrder: 10},
 		{ID: g3.ID, SortOrder: 20},
-		{ID: g2.ID, SortOrder: 15}, // The last update for a duplicate ID wins.
+		{ID: g2.ID, SortOrder: 15},
 	})
 	s.Require().NoError(err)
 
@@ -533,6 +615,9 @@ func (s *GroupRepoSuite) TestUpdateSortOrders_BatchCaseWhen() {
 	s.Require().Equal(20, got3.SortOrder)
 }
 
+// TestUpdateSortOrders_MissingGroupNoPartialUpdate combines one saved group
+// with an absent ID in a sort-order batch. The call must return ErrGroupNotFound
+// and leave the existing group's order unchanged.
 func (s *GroupRepoSuite) TestUpdateSortOrders_MissingGroupNoPartialUpdate() {
 	g1 := &routing.Group{
 		Name: "sort-no-partial",
@@ -563,6 +648,9 @@ func (s *GroupRepoSuite) TestUpdateSortOrders_MissingGroupNoPartialUpdate() {
 	s.Require().Equal(beforeSort, after.SortOrder)
 }
 
+// TestListWithFilters_ProviderCount links one provider to ordinary and exclusive
+// groups, then selects the exclusive group. The filtered page must return that
+// group with a total provider count of one.
 func (s *GroupRepoSuite) TestListWithFilters_ProviderCount() {
 	g1 := &routing.Group{
 		Name: "g1",
@@ -611,6 +699,9 @@ func (s *GroupRepoSuite) TestListWithFilters_ProviderCount() {
 	s.Require().Equal(int64(1), groups[0].ProviderCount, "ProviderCount mismatch")
 }
 
+// TestListActive creates an active group and a disabled group after reading
+// the initial active list. The result must gain one row and include the newly
+// created active group.
 func (s *GroupRepoSuite) TestListActive() {
 	baseGroups, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err, "ListActive base")
@@ -651,6 +742,9 @@ func (s *GroupRepoSuite) TestListActive() {
 	s.Require().True(found, "active1 group should be in results")
 }
 
+// TestListActiveDoesNotPartitionGroups adds two active groups with different
+// protocol configurations and one disabled group. The active list must grow by
+// two rows and contain the tested active group.
 func (s *GroupRepoSuite) TestListActiveDoesNotPartitionGroups() {
 	before, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err)
@@ -690,7 +784,6 @@ func (s *GroupRepoSuite) TestListActiveDoesNotPartitionGroups() {
 
 	groups, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err, "ListActiveByPlatform")
-	// Both active groups appear regardless of protocol configuration; the disabled group is excluded.
 	s.Require().Len(groups, len(before)+2)
 	var found bool
 	for _, g := range groups {
@@ -702,6 +795,9 @@ func (s *GroupRepoSuite) TestListActiveDoesNotPartitionGroups() {
 	s.Require().True(found, "g1 group should be in results")
 }
 
+// TestExistsByName stores a group before querying its name and another absent
+// name. The repository must return true for the saved name and false for the
+// missing one.
 func (s *GroupRepoSuite) TestExistsByName() {
 	s.Require().NoError(s.repo.Create(s.ctx, &routing.Group{
 		Name: "existing-group",
@@ -724,6 +820,9 @@ func (s *GroupRepoSuite) TestExistsByName() {
 	s.Require().False(notExists)
 }
 
+// TestGetProviderCount links two directly inserted providers to a saved group
+// in the same transaction. The repository's total-count result must equal two
+// for that group's ID.
 func (s *GroupRepoSuite) TestGetProviderCount() {
 	group := &routing.Group{
 		Name: "g-count",
@@ -765,6 +864,9 @@ func (s *GroupRepoSuite) TestGetProviderCount() {
 	s.Require().Equal(int64(2), count)
 }
 
+// TestGetProviderCount_Empty queries a saved group that has no linked provider
+// rows in the transaction. The repository must return a zero total provider
+// count for that group.
 func (s *GroupRepoSuite) TestGetProviderCount_Empty() {
 	group := &routing.Group{
 		Name: "g-empty",
@@ -784,9 +886,9 @@ func (s *GroupRepoSuite) TestGetProviderCount_Empty() {
 	s.Require().Zero(count)
 }
 
-// TestListWithFilters_ActiveProviderCount_LessThanTotal checks that disabled or unschedulable providers
-// contribute to ProviderCount but not ActiveProviderCount, and that both counts agree
-// with GetProviderCount.
+// TestListWithFilters_ActiveProviderCount_LessThanTotal links healthy, disabled,
+// and unschedulable providers to one group. Listing must count all three in the
+// total, count one as active, and agree with the direct count query.
 func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal() {
 	g := &routing.Group{
 		Name: "g-mixed-status",
@@ -801,6 +903,9 @@ func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal()
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, g))
 
+	// insertProvider creates one provider with the supplied status and scheduling
+	// flag in this case's transaction. It returns the generated ID so link can
+	// attach each eligibility category to the same group.
 	insertProvider := func(name, status string, schedulable bool) int64 {
 		var id int64
 		s.Require().NoError(postgresinfra.ScanSingleRow(
@@ -811,6 +916,9 @@ func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal()
 		))
 		return id
 	}
+	// link attaches a provider to this test's group using the active transaction.
+	// It requires successful insertion before list and direct-count reads compare
+	// that group's total and active provider counts.
 	link := func(providerID int64) {
 		_, err := s.tx.ExecContext(s.ctx,
 			"INSERT INTO provider_groups (provider_id, group_id, created_at) VALUES ($1, $2, NOW())",
@@ -842,17 +950,16 @@ func (s *GroupRepoSuite) TestListWithFilters_ActiveProviderCount_LessThanTotal()
 	s.Assert().Equal(int64(3), found.ProviderCount, "ProviderCount must count all 3 providers")
 	s.Assert().Equal(int64(1), found.ActiveProviderCount, "ActiveProviderCount must count only the active+schedulable provider")
 
-	// The direct count query should agree with the filtered list.
 	total, active, err := s.repo.GetProviderCount(s.ctx, g.ID)
 	s.Require().NoError(err)
 	s.Assert().Equal(found.ProviderCount, total, "GetProviderCount total must match ListWithFilters ProviderCount")
 	s.Assert().Equal(found.ActiveProviderCount, active, "GetProviderCount active must match ListWithFilters ActiveProviderCount")
 }
 
-// TestListWithFilters_RateLimitedProviderCount excludes temporarily blocked providers from the active
-// count.
-// Rate limits, overload, temporary unschedulability, and auto-paused expiry
-// remove providers from the current schedulable pool.
+// TestListWithFilters_RateLimitedProviderCount links healthy, temporarily
+// blocked, and expired providers to one group. Listing must distinguish five
+// total, one active, and three temporarily limited providers, and detail and
+// direct-count reads must agree.
 func (s *GroupRepoSuite) TestListWithFilters_RateLimitedProviderCount() {
 	g := &routing.Group{
 		Name: "g-rate-limited",
@@ -873,6 +980,8 @@ func (s *GroupRepoSuite) TestListWithFilters_RateLimitedProviderCount() {
 		[]any{"acc-normal", capability.PlatformAnthropic, capability.ProviderTypeOAuth},
 		&normalID))
 
+	// Keep temporary block times an hour ahead of the database clock and expiry
+	// an hour behind it, so count assertions exercise stable eligibility categories.
 	var rateLimitedID int64
 	s.Require().NoError(postgresinfra.ScanSingleRow(s.ctx, s.tx,
 		"INSERT INTO providers (name, platform, type, rate_limit_reset_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour') RETURNING id",
@@ -948,6 +1057,9 @@ func (s *GroupRepoSuite) TestListWithFilters_RateLimitedProviderCount() {
 	s.Assert().Equal(found.RateLimitedProviderCount, detail.RateLimitedProviderCount, "GetByID RateLimitedProviderCount must match ListWithFilters")
 }
 
+// TestDeleteProviderGroupsByGroupID removes one provider association from a
+// saved group. The repository must report one affected row, and the group's
+// subsequent total provider count must be zero.
 func (s *GroupRepoSuite) TestDeleteProviderGroupsByGroupID() {
 	g := &routing.Group{
 		Name: "g-del",
@@ -981,6 +1093,9 @@ func (s *GroupRepoSuite) TestDeleteProviderGroupsByGroupID() {
 	s.Require().Equal(int64(0), count, "expected 0 provider groups")
 }
 
+// TestDeleteProviderGroupsByGroupID_MultipleProviders removes three provider
+// associations from one saved group. The affected-row result must be three, and
+// the subsequent returned total must be zero.
 func (s *GroupRepoSuite) TestDeleteProviderGroupsByGroupID_MultipleProviders() {
 	g := &routing.Group{
 		Name: "g-multi",
@@ -995,6 +1110,9 @@ func (s *GroupRepoSuite) TestDeleteProviderGroupsByGroupID_MultipleProviders() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, g))
 
+	// insertProvider creates an OAuth provider in the current transaction and
+	// returns its ID. The caller attaches each returned provider to g before
+	// DeleteProviderGroupsByGroupID removes the resulting association rows.
 	insertProvider := func(name string) int64 {
 		var id int64
 		s.Require().NoError(postgresinfra.ScanSingleRow(
@@ -1020,10 +1138,15 @@ func (s *GroupRepoSuite) TestDeleteProviderGroupsByGroupID_MultipleProviders() {
 	s.Require().NoError(err)
 	s.Require().Equal(int64(3), affected)
 
+	// The affected-row result is checked above. This final assertion inspects the
+	// returned count while discarding its query error, limiting that secondary check.
 	count, _, _ := s.repo.GetProviderCount(s.ctx, g.ID)
 	s.Require().Zero(count)
 }
 
+// TestDelete_SoftDelete_NotVisibleInList deletes a group after recording the
+// list size in the same transaction. The next list must lose one row, and detail
+// lookup must return ErrGroupNotFound.
 func (s *GroupRepoSuite) TestDelete_SoftDelete_NotVisibleInList() {
 	group := &routing.Group{
 		Name: "to-soft-delete",
@@ -1045,17 +1168,18 @@ func (s *GroupRepoSuite) TestDelete_SoftDelete_NotVisibleInList() {
 	err = s.repo.Delete(s.ctx, group.ID)
 	s.Require().NoError(err, "Delete (soft delete)")
 
-	// Soft-deleted groups are excluded from list results.
 	listAfter, _, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 100})
 	s.Require().NoError(err)
 	s.Require().Len(listAfter, beforeCount-1, "soft deleted group should not appear in list")
 
-	// Direct lookup also treats a soft-deleted group as missing.
 	_, err = s.repo.GetByID(s.ctx, group.ID)
 	s.Require().Error(err)
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
 }
 
+// TestDelete_SoftDeletedGroup_lockForUpdate creates and deletes a group before
+// performing a detail lookup on its ID. The lookup must return an error matching
+// ErrGroupNotFound for the deleted record.
 func (s *GroupRepoSuite) TestDelete_SoftDeletedGroup_lockForUpdate() {
 	group := &routing.Group{
 		Name: "lock-soft-delete",
@@ -1073,24 +1197,32 @@ func (s *GroupRepoSuite) TestDelete_SoftDeletedGroup_lockForUpdate() {
 	err := s.repo.Delete(s.ctx, group.ID)
 	s.Require().NoError(err)
 
-	// Direct lookup returns ErrGroupNotFound for the soft-deleted row.
 	_, err = s.repo.GetByID(s.ctx, group.ID)
 	s.Require().Error(err, "should fail to get soft-deleted group")
 	s.Require().ErrorIs(err, routing.ErrGroupNotFound)
 }
 
+// SetupSuite initializes the migrated PostgreSQL client shared by this suite's
+// cases. routingDatabase registers cleanup for its underlying pool and container,
+// and each test opens a separate transaction through the helper.
 func (s *GroupRepoSuite) SetupSuite() { s.client, _ = routingDatabase(s.T()) }
 
+// transaction opens a transaction on the suite client and registers rollback
+// with the supplied test. Callers leave completion to that cleanup; its rollback
+// result is discarded after the test finishes.
 func (s *GroupRepoSuite) transaction(t *testing.T) *dbent.Tx {
 	t.Helper()
 	tx, err := s.client.Tx(context.Background())
 	s.Require().NoError(err)
+	// Register disposal with this test so setup and assertion failures also
+	// request rollback of its fixtures before the suite proceeds to later cases.
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx
 }
 
-// TestListWithProviderCountSort_AttachesActiveCount checks that sorting by total provider count
-// returns both total and active counts.
+// TestListWithProviderCountSort_AttachesActiveCount sorts groups whose total
+// provider counts differ while their active counts match. The list must attach
+// both counts and place the group with two total providers first.
 func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 	gA := &routing.Group{
 		Name: "sort-count-a", RateMultiplier: 1, Status: billing.StatusActive,
@@ -1107,6 +1239,10 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 	s.Require().NoError(s.repo.Create(s.ctx, gA))
 	s.Require().NoError(s.repo.Create(s.ctx, gB))
 
+	// insertProvider writes an OAuth provider with the supplied status and returns
+	// its ID for count-sort fixtures. The caller varies status while leaving other
+	// eligibility columns at database defaults, separating active counts from
+	// membership totals.
 	insertProvider := func(name, status string) int64 {
 		var id int64
 		s.Require().NoError(postgresinfra.ScanSingleRow(s.ctx, s.tx,
@@ -1115,6 +1251,9 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 			&id))
 		return id
 	}
+	// link associates an existing provider and group in the current transaction.
+	// Callers pass IDs created in this test; a failed insert aborts the case before
+	// counts or ordering are asserted.
 	link := func(providerID, groupID int64) {
 		_, err := s.tx.ExecContext(s.ctx,
 			"INSERT INTO provider_groups (provider_id, group_id, created_at) VALUES ($1, $2, NOW())",
@@ -1149,7 +1288,6 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 	s.Assert().Equal(int64(1), cB.ProviderCount, "gB ProviderCount must be 1")
 	s.Assert().Equal(int64(1), cB.ActiveProviderCount, "gB ActiveProviderCount must be 1")
 
-	// Descending total count places group A before group B despite equal active counts.
 	indexByID := make(map[int64]int, len(groups))
 	for i, g := range groups {
 		indexByID[g.ID] = i
@@ -1157,6 +1295,9 @@ func (s *GroupRepoSuite) TestListWithProviderCountSort_AttachesActiveCount() {
 	s.Assert().Less(indexByID[gA.ID], indexByID[gB.ID], "gA (total=2) must rank above gB (total=1) with provider_count desc")
 }
 
+// TestList_DefaultSortBySortOrderAsc stores two groups with different manual
+// sort orders and queries the default list. The lower sort order must appear
+// before the higher one in that result.
 func (s *GroupRepoSuite) TestList_DefaultSortBySortOrderAsc() {
 	g1 := &routing.Group{
 		Name: "g1", RateMultiplier: 1, Status: billing.StatusActive, SortOrder: 20,
@@ -1182,10 +1323,12 @@ func (s *GroupRepoSuite) TestList_DefaultSortBySortOrderAsc() {
 	}
 	s.Require().Contains(indexByID, g1.ID)
 	s.Require().Contains(indexByID, g2.ID)
-	// Ascending SortOrder places g2 (10) before g1 (20).
 	s.Require().Less(indexByID[g2.ID], indexByID[g1.ID])
 }
 
+// TestList_SortBySortOrderDesc stores groups with different manual sort orders
+// and selects descending sort_order ordering. The higher-valued group must appear
+// before the lower-valued group in the returned list.
 func (s *GroupRepoSuite) TestList_SortBySortOrderDesc() {
 	g1 := &routing.Group{
 		Name: "g1", RateMultiplier: 1, Status: billing.StatusActive, SortOrder: 40,
@@ -1219,7 +1362,9 @@ func (s *GroupRepoSuite) TestList_SortBySortOrderDesc() {
 	s.Require().Less(indexByID[g2.ID], indexByID[g1.ID])
 }
 
-// TestUnifiedProtocolRoundTrip checks persistence of group protocol settings and empty collections.
+// TestUnifiedProtocolRoundTrip saves allowed protocols, protocol fallbacks, and
+// an image policy, then clears the collections through Update. Lookup must return
+// the saved values first and empty collections with the changed policy afterward.
 func (s *GroupRepoSuite) TestUnifiedProtocolRoundTrip() {
 	original := &routing.Group{Name: "protocol-group", Status: billing.StatusActive, RateMultiplier: 1, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages}, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolAnthropicMessages: {protocol.ProtocolOpenAIResponses}}, ResponsesImagePolicy: "disabled"}
 	s.Require().NoError(s.repo.Create(s.ctx, original))
