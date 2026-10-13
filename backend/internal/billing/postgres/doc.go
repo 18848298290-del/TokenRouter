@@ -1,5 +1,7 @@
-// Package postgres persists billing balances, plans, subscriptions, and redemption codes, and settles request and
-// task funds.
+// Package postgres persists billing balances, plans, subscriptions and
+// redemption codes, and settles request and task funds. Settlement owns its
+// complete SQL transaction, while explicit Ent participants join caller-owned
+// entitlement transactions with their supplied connection.
 //
 // Reading entry points:
 //   - settlement.go: charges requests and reserves, captures, and releases task funds.

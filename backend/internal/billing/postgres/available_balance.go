@@ -9,8 +9,27 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// DeductAvailableBalance deducts up to the nonnegative balance and returns the
-// remaining balance and actual deduction. The caller supplies a nonnegative amount.
+// Refund preparation needs a deduction capped by the user's positive stored
+// balance when the requested amount exceeds those funds. The SQL
+// locks a non-deleted user, updates that same row and returns the deducted
+// amount together with the remaining balance in one statement.
+//
+// An existing nonpositive balance remains unchanged and contributes no
+// deduction. A positive balance smaller than the request is reduced to zero;
+// otherwise the requested amount is removed. This calculation reads raw
+// balance, with frozen funds handled by other billing paths. Callers supply a
+// nonnegative amount and own any surrounding transaction.
+
+// DeductAvailableBalance selects a deduction capped by positive raw balance
+// and returns it with the stored new balance. The caller supplies a
+// nonnegative finite amount compatible with stored numeric precision and a
+// usable query connection; an absent non-deleted user returns ErrUserNotFound.
+//
+// The locked balance controls update and deduction selection in one SQL
+// statement, preventing a stale caller snapshot from choosing the cap.
+// Existing debt remains with zero deduction. The reported deduction is
+// selected before column rounding, frozen balance is not an input, and the
+// caller owns any surrounding transaction.
 func DeductAvailableBalance(ctx context.Context, q postgresinfra.Queryer, userID int64, amount float64) (float64, float64, error) {
 	const query = `
 		WITH locked_user AS (
@@ -42,6 +61,8 @@ func DeductAvailableBalance(ctx context.Context, q postgresinfra.Queryer, userID
 		CROSS JOIN locked_user
 	`
 
+	// Select the deduction from the locked balance and return it with the stored
+	// result; refund preparation receives both observations from this statement.
 	var (
 		newBalance     float64
 		deductedAmount float64

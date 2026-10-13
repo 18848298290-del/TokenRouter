@@ -62,8 +62,9 @@ func DeriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *Cat
 	if err := json.Unmarshal(rawEntry, &fields); err != nil {
 		return
 	}
-	// tierPrices contains the accepted input and output above-price amounts for
-	// one threshold.
+	// tierPrices holds accepted input and output above-price amounts for one
+	// threshold. A missing side remains zero, so derivation keeps that side's
+	// unit multiplier instead of inferring a free price.
 	type tierPrices struct {
 		input, // accepted input above-price amount
 		output float64 // accepted output above-price amount
@@ -108,6 +109,8 @@ func DeriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *Cat
 		}
 	}
 	tier := tiers[threshold]
+	// A missing above-price side or nonpositive base cannot establish a ratio;
+	// keep its unit factor while deriving the other accepted side independently.
 	inputMultiplier, outputMultiplier := 1.0, 1.0
 	if tier.input > 0 && pricing.InputCostPerToken > 0 {
 		inputMultiplier = tier.input / pricing.InputCostPerToken

@@ -18,8 +18,16 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
+// Direct model lookup remains unavailable when a calculator has no catalog
+// data, while configured cards can still supply complete prices. These fixture
+// scenarios isolate full-name identity, explicit zero buckets, aggregate cache
+// limits and price modifiers, then compare selected unit amounts with token,
+// media and operation charges.
+
 const (
-	// gpt56LadderCatalogJSON supplies tiered GPT-5.6 catalog prices.
+	// gpt56LadderCatalogJSON supplies standard, priority and above-threshold
+	// fixture amounts for comparing grouped marketplace display with token
+	// calculation, including cache writes and reads.
 	gpt56LadderCatalogJSON = `{
 	"gpt-5.6-sol": {"provider": "openai", "mode": "chat", "cache_write_multiplier": 1.25, "flex_multiplier": 0.5,
 		"input_cost_per_token": 5e-06, "input_cost_per_token_priority": 1e-05,
@@ -44,8 +52,9 @@ const (
 		"cache_read_input_token_cost_above_272k_tokens": 4e-08}
 }`
 
-	// openAILadderCatalogJSON models synced catalog data with absolute above_272k rates.
-	// The parser converts those rates into a threshold and multipliers.
+	// openAILadderCatalogJSON supplies absolute above-272k fixture amounts for
+	// decoder-driven threshold conversion. Its two explicit model entries use
+	// separate input and output surcharge ratios.
 	openAILadderCatalogJSON = `{
 	"gpt-5.4": {"provider": "openai", "mode": "chat", "fast_multiplier": 2, "flex_multiplier": 0.5,
 		"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05,
@@ -60,15 +69,18 @@ const (
 }`
 )
 
-// TestCalculateCost_RateMultiplier_NegativeClampedToZero checks that negative multipliers produce zero charges.
+// TestCalculateCost_RateMultiplier_NegativeClampedToZero supplies negative,
+// zero and positive user factors to fixture token pricing. Base cost remains
+// positive while actual cost must match each expected clamped or positive
+// factor.
 func TestCalculateCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 1000, OutputTokens: 500}
 
 	tests := []struct {
-		name       string
-		multiplier float64
-		wantRatio  float64 // ActualCost / TotalCost
+		name       string  // user factor case label
+		multiplier float64 // supplied user charge factor
+		wantRatio  float64 // expected actual-to-base cost factor
 	}{
 		{"negative clamped to 0", -1.5, 0},
 		{"zero passes through as 0 (defense in depth)", 0, 0},
@@ -81,20 +93,23 @@ func TestCalculateCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 			cost, err := svc.CalculateCost("claude-sonnet-4", tokens, tt.multiplier)
 			require.NoError(t, err)
 			require.Greater(t, cost.TotalCost, 0.0, "TotalCost should be non-zero")
+			// Allow float multiplication residue in these scaled component comparisons.
 			require.InDelta(t, tt.wantRatio*cost.TotalCost, cost.ActualCost, 1e-9)
 		})
 	}
 }
 
-// TestCalculateImageCost_RateMultiplier_NegativeClampedToZero checks that image charges clamp negative multipliers
-// to zero.
+// TestCalculateImageCost_RateMultiplier_NegativeClampedToZero prices two
+// fixture images with negative, zero and positive factors. Their base total
+// remains positive, and actual image charges must reflect the selected
+// nonnegative factor.
 func TestCalculateImageCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 	svc := newTestCalculator()
 
 	tests := []struct {
-		name       string
-		multiplier float64
-		wantRatio  float64
+		name       string  // image factor case label
+		multiplier float64 // supplied image charge factor
+		wantRatio  float64 // expected actual-to-base cost factor
 	}{
 		{"negative clamped to 0", -0.5, 0},
 		{"zero passes through", 0, 0},
@@ -109,11 +124,15 @@ func TestCalculateImageCost_RateMultiplier_NegativeClampedToZero(t *testing.T) {
 			}
 			require.NotNil(t, cost)
 			require.Greater(t, cost.TotalCost, 0.0)
+			// Allow float multiplication residue in these scaled component comparisons.
 			require.InDelta(t, tt.wantRatio*cost.TotalCost, cost.ActualCost, 1e-9)
 		})
 	}
 }
 
+// TestCalculateCost_BasicComputation supplies one thousand input and five
+// hundred output tokens at known fixture rates. Component costs, base total
+// and unit-factor actual cost must equal the expected token arithmetic.
 func TestCalculateCost_BasicComputation(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -128,12 +147,16 @@ func TestCalculateCost_BasicComputation(t *testing.T) {
 	// 1000 * 3e-6 = 0.003, 500 * 15e-6 = 0.0075
 	expectedInput := 1000 * 3e-6
 	expectedOutput := 500 * 15e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.TotalCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
+// TestCalculateCost_WithCacheTokens adds cache creation and reading to
+// ordinary text usage. Each cache bucket must use its fixture rate, and total
+// cost must include the text components and both cache amounts.
 func TestCalculateCost_WithCacheTokens(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -148,6 +171,7 @@ func TestCalculateCost_WithCacheTokens(t *testing.T) {
 
 	expectedCacheCreation := 2000 * 3.75e-6
 	expectedCacheRead := 3000 * 0.3e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expectedCacheCreation, cost.CacheCreationCost, 1e-10)
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10)
 
@@ -155,6 +179,9 @@ func TestCalculateCost_WithCacheTokens(t *testing.T) {
 	require.InDelta(t, expectedTotal, cost.TotalCost, 1e-10)
 }
 
+// TestCalculateCost_RateMultiplier calculates identical token usage with unit
+// and doubled user factors. Base total must remain equal while the actual user
+// charge doubles with the second factor.
 func TestCalculateCost_RateMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -166,17 +193,24 @@ func TestCalculateCost_RateMultiplier(t *testing.T) {
 	cost2x, err := svc.CalculateCost("claude-sonnet-4", tokens, 2.0)
 	require.NoError(t, err)
 
-	// The multiplier leaves TotalCost unchanged and doubles ActualCost.
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, cost1x.TotalCost, cost2x.TotalCost, 1e-10)
 	require.InDelta(t, cost1x.ActualCost*2, cost2x.ActualCost, 1e-10)
 }
 
+// TestGetModelPricing_FallbackMatchesByFamily queries supplied Claude version
+// spellings against the test catalog. Only the registered Opus 4.8 full name
+// returns its fixture amount; every other listed spelling must remain
+// unavailable.
 func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 	svc := newTestCalculator()
 
 	tests := []struct {
-		model         string
-		expectedInput float64
+		model string // requested full model spelling
+		// expectedInput is compared only for the registered Opus row. Other model
+		// rows assert unavailable pricing and never consume their retained reference
+		// amount.
+		expectedInput float64 // registered fixture input rate
 	}{
 		{"claude-opus-4.5-20250101", 5e-6},
 		{"claude-opus-4-8", 5e-6},
@@ -195,10 +229,15 @@ func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, "模型 %s", tt.model)
+		// Allow binary representation residue in these fixture rate comparisons.
 		require.InDelta(t, tt.expectedInput, pricing.InputPricePerToken, 1e-12, "模型 %s 输入价格", tt.model)
 	}
 }
 
+// TestGetModelPricing_CaseInsensitive queries mixed-case and lowercase
+// spellings of the same registered model. Both lookups must succeed and return
+// equal input rates, protecting case normalization without testing cross-model
+// aliases.
 func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -211,24 +250,37 @@ func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	require.Equal(t, p1.InputPricePerToken, p2.InputPricePerToken)
 }
 
+// TestGetModelPricing_GLM52UsesOwnPrice queries the registered GLM-5.2 fixture
+// entry. Input, output and cached-input rates must match that full-name
+// record, protecting its distinct lookup from shorter family-name selection.
 func TestGetModelPricing_GLM52UsesOwnPrice(t *testing.T) {
 	svc := newTestCalculator()
 
 	pricing, err := svc.GetModelPricing("glm-5.2")
 	require.NoError(t, err)
 	require.NotNil(t, pricing)
-	// GLM-5.2 uses its own fixture rates, matching GLM-5.1; a glm-5 substring must not select another price.
+	// GLM-5.2 uses its own fixture rates, matching GLM-5.1; a glm-5 substring
+	// must not select another price.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 1.4e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 4.4e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 0.26e-6, pricing.CacheReadPricePerToken, 1e-12)
 }
 
+// TestGetModelPricing_UnknownClaudeModelIsUnpriced requests a Claude spelling
+// absent from the fixture catalog. The result must be nil with
+// ErrModelPricingUnavailable, keeping a familiar family prefix insufficient
+// for pricing.
 func TestGetModelPricing_UnknownClaudeModelIsUnpriced(t *testing.T) {
 	value, err := newTestCalculator().GetModelPricing("claude-unknown-model")
 	require.ErrorIs(t, err, billingpricing.ErrModelPricingUnavailable)
 	require.Nil(t, value)
 }
 
+// TestGetModelPricing_UnknownOpenAIModelReturnsError requests an absent GPT
+// spelling from the fixture catalog. Lookup must return nil pricing and an
+// error containing the missing-price diagnostic, exposing unavailability to
+// callers.
 func TestGetModelPricing_UnknownOpenAIModelReturnsError(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -238,32 +290,46 @@ func TestGetModelPricing_UnknownOpenAIModelReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "pricing not found")
 }
 
+// TestGetModelPricing_OpenAIGPT54Fallback reads the registered GPT-5.4
+// fixture's text and cache rates. Its omitted above-threshold metadata must
+// leave the built-in long-context threshold and both multipliers zero.
 func TestGetModelPricing_OpenAIGPT54Fallback(t *testing.T) {
 	svc := newTestCalculator()
 
 	pricing, err := svc.GetModelPricing("gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, pricing)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 2.5e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 0.25e-6, pricing.CacheReadPricePerToken, 1e-12)
-	// Long-context tiers require above-threshold catalog fields, which this fixture omits.
+	// This fixture has neither explicit long-context rules nor above-threshold
+	// amounts. The full model name alone therefore supplies no surcharge metadata
+	// to this lookup.
 	require.Zero(t, pricing.LongContextInputThreshold)
 	require.Zero(t, pricing.LongContextInputMultiplier)
 	require.Zero(t, pricing.LongContextOutputMultiplier)
 }
 
+// TestGetModelPricing_CatalogAboveTierFieldsDriveLongContext parses above-272k
+// catalog amounts into calculation metadata. Lookup must retain the exclusive
+// threshold and derive the supplied input and output surcharge factors.
 func TestGetModelPricing_CatalogAboveTierFieldsDriveLongContext(t *testing.T) {
 	svc := newLadderCalculator(t)
 
 	pricing, err := svc.GetModelPricing("gpt-5.4")
 	require.NoError(t, err)
 	require.Equal(t, 272000, pricing.LongContextInputThreshold)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 2.0, pricing.LongContextInputMultiplier, 1e-12)
 	require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
 	require.False(t, pricing.LongContextThresholdInclusive)
 }
 
+// TestGetModelPricing_OpenAIImplicitAliasesAreUnpriced requests the listed
+// compact, prefixed and effort-suffixed spellings absent from the fixture
+// catalog. Every lookup must return nil with pricing unavailable rather than
+// borrowing another full model entry.
 func TestGetModelPricing_OpenAIImplicitAliasesAreUnpriced(t *testing.T) {
 	svc := newTestCalculator()
 	for _, model := range []string{"gpt5.5", "gpt-5.5-pro-high", "openai/gpt5.5pro", "openai/gpt5.4", "gpt5.4-mini", "gpt5.3codexspark"} {
@@ -273,18 +339,26 @@ func TestGetModelPricing_OpenAIImplicitAliasesAreUnpriced(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_OpenAIGPT54MiniFallback reads the explicit GPT-5.4-mini
+// fixture. Its three text/cache rates must match that entry, and its absent
+// long-context metadata must leave the threshold zero.
 func TestGetModelPricing_OpenAIGPT54MiniFallback(t *testing.T) {
 	svc := newTestCalculator()
 
 	pricing, err := svc.GetModelPricing("gpt-5.4-mini")
 	require.NoError(t, err)
 	require.NotNil(t, pricing)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 7.5e-7, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 4.5e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 7.5e-8, pricing.CacheReadPricePerToken, 1e-12)
 	require.Zero(t, pricing.LongContextInputThreshold)
 }
 
+// TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers
+// supplies input above the parsed fixture threshold. Whole input and output
+// components must receive their respective factors, and unit-rate totals must
+// retain the actual-charge marker.
 func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *testing.T) {
 	svc := newLadderCalculator(t)
 
@@ -298,6 +372,7 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 
 	expectedInput := float64(tokens.InputTokens) * 2.5e-6 * 2.0
 	expectedOutput := float64(tokens.OutputTokens) * 15e-6 * 1.5
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.TotalCost, 1e-10)
@@ -305,6 +380,10 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 	require.True(t, cost.LongContextBillingApplied)
 }
 
+// TestCalculateCost_OpenAIGPT54LongContextMarkerRequiresActualCostIncrease
+// prices above-threshold input with a zero user factor. Actual cost must
+// remain zero, and the long-context marker must be false because this user
+// charge does not increase.
 func TestCalculateCost_OpenAIGPT54LongContextMarkerRequiresActualCostIncrease(t *testing.T) {
 	svc := newLadderCalculator(t)
 
@@ -320,12 +399,16 @@ func TestCalculateCost_OpenAIGPT54LongContextMarkerRequiresActualCostIncrease(t 
 	require.False(t, cost.LongContextBillingApplied)
 }
 
+// TestCalculateCost_OpenAILongContextBoundaryIncludesCacheTokens fixes input
+// and cache writes while varying cached reads by one token. Exact aggregate
+// threshold must leave the surcharge marker false, while one token above must
+// set it.
 func TestCalculateCost_OpenAILongContextBoundaryIncludesCacheTokens(t *testing.T) {
 	svc := newLadderCalculator(t)
 	tests := []struct {
-		name        string
-		cacheRead   int
-		wantApplied bool
+		name        string // context threshold case label
+		cacheRead   int    // variable cached-input token count
+		wantApplied bool   // expected actual-charge surcharge marker
 	}{
 		{name: "exact threshold uses base price", cacheRead: 72000, wantApplied: false},
 		{name: "one token above threshold uses long price", cacheRead: 72001, wantApplied: true},
@@ -346,8 +429,15 @@ func TestCalculateCost_OpenAILongContextBoundaryIncludesCacheTokens(t *testing.T
 	}
 }
 
+// TestCalculateCost_GPT56SolMarketplaceIntervalsMatchSettlement builds grouped
+// display intervals from the parsed GPT-5.6 fixture. Standard and priority
+// calculations above its threshold must match the displayed bucket amounts and
+// final grouped charge.
 func TestCalculateCost_GPT56SolMarketplaceIntervalsMatchSettlement(t *testing.T) {
 	svc := newCalculator(newStubCatalogFromJSON(t, gpt56LadderCatalogJSON))
+	// Use one fixed user factor for display and actual-cost comparison, keeping
+	// catalog unit prices distinct from the grouped amounts exposed to
+	// marketplace readers.
 	const groupRate = 3.0
 
 	display := svc.DisplayPricing("gpt-5.6-sol", groupRate)
@@ -359,6 +449,9 @@ func TestCalculateCost_GPT56SolMarketplaceIntervalsMatchSettlement(t *testing.T)
 	require.Equal(t, 272000, *baseInterval.MaxTokens)
 	require.Equal(t, 272000, longInterval.MinTokens)
 	require.Nil(t, longInterval.MaxTokens)
+	// Convert displayed per-token amounts to USD per million for these fixture
+	// assertions. Apply the same conversion to ordinary, priority and cache rates
+	// on both intervals.
 	require.InDelta(t, 15.0, baseInterval.InputPricePerToken*1_000_000, 1e-10)
 	require.InDelta(t, 90.0, baseInterval.OutputPricePerToken*1_000_000, 1e-10)
 	require.InDelta(t, 18.75, baseInterval.CacheWritePricePerToken*1_000_000, 1e-10)
@@ -383,9 +476,16 @@ func TestCalculateCost_GPT56SolMarketplaceIntervalsMatchSettlement(t *testing.T)
 		OutputTokens:        1000,
 	}
 	tiers := []struct {
-		name, serviceTier               string
-		inputPrice, outputPrice         float64
-		cacheWritePrice, cacheReadPrice float64
+		// name labels this display comparison and serviceTier selects its
+		// calculation tier. inputPrice, outputPrice, cacheWritePrice and
+		// cacheReadPrice are the grouped display amounts used to reconstruct that
+		// tier's expected charge.
+		name, // service-tier comparison case label
+		serviceTier string // calculation billing tier text
+		inputPrice, // displayed input USD per token
+		outputPrice float64 // displayed output USD per token
+		cacheWritePrice, // displayed cache-write USD per token
+		cacheReadPrice float64 // displayed cache-read USD per token
 	}{
 		{
 			name:            "standard",
@@ -421,6 +521,10 @@ func TestCalculateCost_GPT56SolMarketplaceIntervalsMatchSettlement(t *testing.T)
 	}
 }
 
+// TestApplyLongContextDisplayMultipliersScalesAllCachePrices supplies distinct
+// ordinary, priority and cache-TTL rates with separate input/output factors.
+// The result must be a different object with expected scaled buckets while the
+// checked source input rate remains unchanged.
 func TestApplyLongContextDisplayMultipliersScalesAllCachePrices(t *testing.T) {
 	pricing := &billingpricing.ModelPricing{
 		InputPricePerToken:                 1,
@@ -453,12 +557,19 @@ func TestApplyLongContextDisplayMultipliersScalesAllCachePrices(t *testing.T) {
 	require.Equal(t, float64(20), adjusted.CacheReadPricePerTokenPriority)
 }
 
+// TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
+// uses manual short/long rates with the default fixture base, which has no
+// built-in ladder. Calculation checks the chosen manual buckets and false
+// surcharge marker; display checks their grouped long amounts.
 func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, svc)
 	basePricing, err := svc.GetModelPricing("gpt-5.6-sol")
 	require.NoError(t, err)
 
+	// Place the explicit interval boundary at the fixture's chosen context scale.
+	// The supplied aggregate of 272001 then exercises manual long-range selection
+	// rather than catalog tier metadata.
 	shortMax := 272000
 	shortInput := 7e-6
 	shortOutput := 31e-6
@@ -491,6 +602,8 @@ func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
 		CacheReadTokens:     72001,
 		OutputTokens:        1000,
 	}
+	// Use the same user factor in calculation and display, so their manual
+	// interval amounts are compared after a common final scaling step.
 	const groupRate = 2.0
 
 	cost, err := svc.CalculateCostUnified(billing.CostInput{
@@ -504,6 +617,7 @@ func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
 
 	require.NoError(t, err)
 	require.False(t, cost.LongContextBillingApplied)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, float64(tokens.InputTokens)*longInput, cost.InputCost, 1e-10)
 	require.InDelta(t, float64(tokens.OutputTokens)*longOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, float64(tokens.CacheCreationTokens)*longCacheWrite, cost.CacheCreationCost, 1e-10)
@@ -524,6 +638,10 @@ func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
 	require.InDelta(t, longCacheRead*groupRate, displayLong.CacheReadPricePerToken, 1e-12)
 }
 
+// TestCalculateCost_OpenAIGPT55ProLongContextAppliesWholeSessionMultipliers
+// supplies above-threshold usage to parsed GPT-5.5-pro fixture pricing. Input,
+// output and totals must reflect the complete-session factors for their
+// respective buckets.
 func TestCalculateCost_OpenAIGPT55ProLongContextAppliesWholeSessionMultipliers(t *testing.T) {
 	svc := newLadderCalculator(t)
 
@@ -537,19 +655,23 @@ func TestCalculateCost_OpenAIGPT55ProLongContextAppliesWholeSessionMultipliers(t
 
 	expectedInput := float64(tokens.InputTokens) * 30e-6 * 2.0
 	expectedOutput := float64(tokens.OutputTokens) * 180e-6 * 1.5
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.TotalCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead covers issue #2293: cache reads use
-// LongContextInputMultiplier.
-// Here CacheReadCost = tokens * 0.25e-6 * 2.0.
+// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead reaches
+// the long tier primarily through cached reads. Text input and cached input
+// must receive the input factor, output its separate factor, and totals must
+// include all three components.
 func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
+	// Text input and cached reads contribute 301000 context tokens, so this
+	// fixture reaches the long tier through cached input rather than ordinary
+	// prompt volume alone.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:     1000,
 		CacheReadTokens: 300000,
@@ -563,6 +685,7 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead(t *tes
 	expectedOutput := float64(tokens.OutputTokens) * 15e-6 * 1.5
 	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.25e-6 * 2.0
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10,
@@ -573,11 +696,16 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheRead(t *tes
 	require.InDelta(t, expectedTotal, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice checks base cache-read rates below the threshold.
+// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice supplies
+// aggregate input below the parsed long-context threshold. Its cache-read
+// component must retain the ordinary fixture rate, isolating that bucket from
+// above-threshold scaling.
 func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 101000, below the 272000 threshold.
+	// Text input and cached reads total 101000 context tokens. Their combined
+	// value stays below the fixture threshold, leaving the read bucket at its
+	// ordinary amount.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:     1000,
 		CacheReadTokens: 100000,
@@ -588,17 +716,21 @@ func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheReadAtBasePrice(t *test
 	require.NoError(t, err)
 
 	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.25e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10,
 		"cache_read_cost should remain at base price when below long-context threshold")
 }
 
-// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation covers issue #2816: cache writes use
-// LongContextInputMultiplier.
-// Cache-write rates are read separately; omitting the 2x multiplier would halve their charge.
+// TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation
+// supplies input, cached reads and cache writes above the parsed threshold.
+// The cache-creation component must double its separately supplied fixture
+// write rate.
 func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
+	// Text input, cached reads and aggregate writes contribute 311000 context
+	// tokens. The write bucket is therefore charged on the long tier selected by
+	// their combined context.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:         1000,
 		CacheReadTokens:     300000,
@@ -609,18 +741,24 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesMultiplierToCacheCreation(t 
 	cost, err := svc.CalculateCost("gpt-5.4", tokens, 1.0)
 	require.NoError(t, err)
 
-	// The fixture sets CacheCreationPricePerToken to 2.5e-6 and LongContextInputMultiplier to 2.0.
+	// The fixture sets CacheCreationPricePerToken to 2.5e-6 and
+	// LongContextInputMultiplier to 2.0.
 	expectedCacheCreation := float64(tokens.CacheCreationTokens) * 2.5e-6 * 2.0
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expectedCacheCreation, cost.CacheCreationCost, 1e-10,
 		"cache_creation_cost should be scaled by LongContextInputMultiplier when long-context pricing applies")
 }
 
-// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice checks base cache-write rates below the
-// threshold.
+// TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice
+// supplies text/cache usage whose aggregate remains below threshold. Cache
+// creation must retain its ordinary fixture bucket amount rather than
+// receiving a long-context surcharge.
 func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice(t *testing.T) {
 	svc := newLadderCalculator(t)
 
-	// InputTokens + CacheReadTokens = 101000, below the 272000 threshold.
+	// Including the aggregate cache writes makes this supplied context 111000
+	// tokens. It still stays below threshold, so the separately checked write
+	// bucket keeps its base rate.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:         1000,
 		CacheReadTokens:     100000,
@@ -632,14 +770,15 @@ func TestCalculateCost_OpenAIGPT54NoLongContextKeepsCacheCreationAtBasePrice(t *
 	require.NoError(t, err)
 
 	expectedCacheCreation := float64(tokens.CacheCreationTokens) * 2.5e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expectedCacheCreation, cost.CacheCreationCost, 1e-10,
 		"cache_creation_cost should remain at base price when below long-context threshold")
 }
 
-// TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h checks that both ephemeral cache-write
-// tiers receive the long-context multiplier.
-// A custom price fixture controls both cache breakdown support
-// and the long-context threshold.
+// TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h
+// supplies separate five-minute and hourly cache-write details with
+// above-threshold input. Their combined component must scale both fixture TTL
+// prices by the input surcharge factor.
 func TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h(t *testing.T) {
 	svc := newCalculatorWithPrices(nil, map[string]*billingpricing.ModelPricing{
 		"claude-sonnet-4": {
@@ -655,7 +794,9 @@ func TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h(t *tes
 		},
 	})
 
-	// InputTokens + CacheReadTokens = 301000, above the 272000 threshold.
+	// Ordinary input plus cached reads already contribute 301000 context tokens.
+	// This exceeds threshold independently of the detailed TTL counts whose
+	// scaled write charge is asserted below.
 	tokens := billingpricing.UsageTokens{
 		InputTokens:           1000,
 		CacheReadTokens:       300000,
@@ -669,10 +810,15 @@ func TestCalculateCost_LongContextAppliesMultiplierToCacheCreation5mAnd1h(t *tes
 
 	expected5m := float64(tokens.CacheCreation5mTokens) * 4e-6 * 2.0
 	expected1h := float64(tokens.CacheCreation1hTokens) * 5e-6 * 2.0
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expected5m+expected1h, cost.CacheCreationCost, 1e-10,
 		"both 5m and 1h cache_creation prices should be scaled by LongContextInputMultiplier")
 }
 
+// TestGetModelPricing_DoubaoEmbeddingVisionImageInputRate checks bare and
+// case-folded registered names plus one absent dated spelling. Valid entries
+// must expose the fixture text/image input rates and zero output, while the
+// absent full name stays unavailable.
 func TestGetModelPricing_DoubaoEmbeddingVisionImageInputRate(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -688,14 +834,17 @@ func TestGetModelPricing_DoubaoEmbeddingVisionImageInputRate(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
+		// Allow binary representation residue in these fixture rate comparisons.
 		require.InDelta(t, 0.098e-6, pricing.InputPricePerToken, 1e-12)
 		require.InDelta(t, 0.252e-6, pricing.ImageInputPricePerToken, 1e-12)
 		require.Zero(t, pricing.OutputPricePerToken)
 	}
 }
 
-// TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput checks separate text and image input charges.
-// Zero image tokens use text rates; excess image tokens are capped at total input, leaving no text charge.
+// TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput separates image
+// tokens from a shared prompt count. Mixed and text-only charges must match
+// their respective rates, and oversized image counts must cap at total input
+// with zero text remainder.
 func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -707,6 +856,7 @@ func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	require.NoError(t, err)
 	wantText := float64(1312) * 0.098e-6
 	wantImage := float64(28) * 0.252e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, wantText, cost.InputCost, 1e-15, "InputCost 仅计文本输入")
 	require.InDelta(t, wantImage, cost.ImageInputCost, 1e-15, "ImageInputCost 单独计图片输入")
 	require.InDelta(t, wantText+wantImage, cost.TotalCost, 1e-15, "TotalCost 口径不变")
@@ -730,10 +880,10 @@ func TestCalculateCost_DoubaoEmbeddingVisionDifferentialInput(t *testing.T) {
 	require.InDelta(t, float64(10)*0.252e-6, costWeird.TotalCost, 1e-15)
 }
 
-// TestComputeTokenBreakdown_GptImage2ImageEditIssue4386 covers one input image in gpt-image-2 edits from issue #4386.
-// The fixture has 371 input tokens (352 image and 19 text) and 439 image output tokens.
-// Rates per million tokens are $5 text input, $8 image input, $10 text output, and $30 image output.
-// Charging image input at the text rate would undercharge this request by about 6.6%.
+// TestComputeTokenBreakdown_GptImage2ImageEditIssue4386 supplies 352 image
+// plus nineteen text input tokens and all-image output. Separate fixture rates
+// must produce the asserted component charges and 0.016081 USD total, with
+// zero text output cost.
 func TestComputeTokenBreakdown_GptImage2ImageEditIssue4386(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -756,6 +906,7 @@ func TestComputeTokenBreakdown_GptImage2ImageEditIssue4386(t *testing.T) {
 	wantTextInput := float64(19) * 5e-6     // 0.000095
 	wantImageInput := float64(352) * 8e-6   // 0.002816
 	wantImageOutput := float64(439) * 30e-6 // 0.013170
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, wantTextInput, cost.InputCost, 1e-15, "InputCost 仅含文本输入")
 	require.InDelta(t, wantImageInput, cost.ImageInputCost, 1e-15, "图片输入按 $8/1M 独立计费")
 	require.Zero(t, cost.OutputCost, "输出全部为图片，文本输出费用为 0")
@@ -763,6 +914,9 @@ func TestComputeTokenBreakdown_GptImage2ImageEditIssue4386(t *testing.T) {
 	require.InDelta(t, 0.016081, cost.TotalCost, 1e-9, "总额应为 $0.016081（修复前为 $0.015025）")
 }
 
+// TestCalculateImageCost prices three images using the registered
+// quality-model size fixture. Base and unit-factor actual totals must both
+// equal three times its supplied 0.05 USD per-image amount.
 func TestCalculateImageCost(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -771,10 +925,15 @@ func TestCalculateImageCost(t *testing.T) {
 		t.Fatal(mediaErr)
 	}
 
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.05*3, cost.TotalCost, 1e-10)
 	require.InDelta(t, 0.05*3, cost.ActualCost, 1e-10)
 }
 
+// TestCalculateVideoCostBillsPerSecond compares one-second and fifteen-second
+// fixture videos, then nonpositive and excessive durations. Totals must use
+// the per-second rate with the selected eight-second default and
+// fifteen-second maximum.
 func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -786,7 +945,8 @@ func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
-	// Nonpositive duration defaults to 8 seconds; duration above 15 seconds is capped at 15.
+	// Nonpositive duration defaults to 8 seconds; duration above 15 seconds is
+	// capped at 15.
 	defaultDuration, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "720p", 1, 0, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
@@ -796,12 +956,17 @@ func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 		t.Fatal(mediaErr)
 	}
 
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.07, oneSecond.TotalCost, 1e-10)
 	require.InDelta(t, 0.07*15, fifteenSeconds.TotalCost, 1e-10)
 	require.InDelta(t, 0.07*8, defaultDuration.TotalCost, 1e-10)
 	require.InDelta(t, 0.07*15, clampedDuration.TotalCost, 1e-10)
 }
 
+// TestCalculateGrokImagineImageCostUsesDefaultRateCard queries two sizes for
+// ordinary and quality image fixtures. The supplied four per-image amounts
+// must determine totals, including the ordinary model's equal rates across
+// those sizes.
 func TestCalculateGrokImagineImageCostUsesDefaultRateCard(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -822,12 +987,17 @@ func TestCalculateGrokImagineImageCostUsesDefaultRateCard(t *testing.T) {
 		t.Fatal(mediaErr)
 	}
 
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.02, standard1K.TotalCost, 1e-10)
 	require.InDelta(t, 0.02, standard2K.TotalCost, 1e-10)
 	require.InDelta(t, 0.05, quality1K.TotalCost, 1e-10)
 	require.InDelta(t, 0.07, quality2K.TotalCost, 1e-10)
 }
 
+// TestCalculateGrokImagineVideoCostUsesDefaultRateCard queries one-second
+// outputs for two registered video fixtures across supported resolutions. Each
+// total must match its specific fixture per-second amount, including the newer
+// model's highest resolution.
 func TestCalculateGrokImagineVideoCostUsesDefaultRateCard(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -853,6 +1023,7 @@ func TestCalculateGrokImagineVideoCostUsesDefaultRateCard(t *testing.T) {
 		t.Fatal(mediaErr)
 	}
 
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.05, standard480P.TotalCost, 1e-10)
 	require.InDelta(t, 0.07, standard720P.TotalCost, 1e-10)
 	require.InDelta(t, 0.08, video15_480P.TotalCost, 1e-10)
@@ -860,6 +1031,9 @@ func TestCalculateGrokImagineVideoCostUsesDefaultRateCard(t *testing.T) {
 	require.InDelta(t, 0.25, video15_1080P.TotalCost, 1e-10)
 }
 
+// TestCalculateCost_ZeroTokens supplies an empty usage record for a catalogued
+// fixture model. Calculation must succeed with zero base total and actual
+// cost, retaining known pricing independently of usage quantity.
 func TestCalculateCost_ZeroTokens(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -869,6 +1043,10 @@ func TestCalculateCost_ZeroTokens(t *testing.T) {
 	require.Equal(t, 0.0, cost.ActualCost)
 }
 
+// TestForceUpdatePricing_NilService constructs a calculator with no catalog
+// reader and requests refresh. It must return an initialization error,
+// demonstrating refresh availability separately from configured-card price
+// calculation.
 func TestForceUpdatePricing_NilService(t *testing.T) {
 	svc := billing.NewCalculator(nil, billing.CalculatorOptions{})
 
@@ -877,6 +1055,10 @@ func TestForceUpdatePricing_NilService(t *testing.T) {
 	require.Contains(t, err.Error(), "not initialized")
 }
 
+// TestGetModelPricing_Grok45OfficialFallback queries registered Grok-4.5 and
+// an absent latest suffix. The registered name must expose its fixture
+// text/cache amounts and unsupported cache breakdown, while the suffix stays
+// unavailable.
 func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -889,6 +1071,7 @@ func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			// Allow binary representation residue in these fixture rate comparisons.
 			require.InDelta(t, 2e-6, pricing.InputPricePerToken, 1e-12)
 			require.InDelta(t, 6e-6, pricing.OutputPricePerToken, 1e-12)
 			require.InDelta(t, 0.3e-6, pricing.CacheReadPricePerToken, 1e-12)
@@ -897,6 +1080,9 @@ func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_GrokBareAliasesUseGrok46 requests bare Grok and
+// latest-alias text from the default fixture catalog. Both must return nil
+// with pricing unavailable for these unregistered full spellings.
 func TestGetModelPricing_GrokBareAliasesUseGrok46(t *testing.T) {
 	svc := newTestCalculator()
 	for _, model := range []string{"grok", "grok-latest"} {
@@ -906,6 +1092,9 @@ func TestGetModelPricing_GrokBareAliasesUseGrok46(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_Grok46OfficialFallback queries registered Grok-4.6 and
+// an absent latest suffix. The registered fixture returns its text/cache
+// amounts and 200000-token factors, while the suffixed name stays unavailable.
 func TestGetModelPricing_Grok46OfficialFallback(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -918,6 +1107,7 @@ func TestGetModelPricing_Grok46OfficialFallback(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			// Allow binary representation residue in these fixture rate comparisons.
 			require.InDelta(t, 2e-6, pricing.InputPricePerToken, 1e-12)
 			require.InDelta(t, 6e-6, pricing.OutputPricePerToken, 1e-12)
 			require.InDelta(t, 0.5e-6, pricing.CacheReadPricePerToken, 1e-12)
@@ -929,11 +1119,17 @@ func TestGetModelPricing_Grok46OfficialFallback(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_GrokOfficialFamilyCards reads three explicitly
+// registered fixture model IDs. Each must return its own supplied text/cache
+// buckets and threshold, without relying on substring or family fallback
+// selection.
 func TestGetModelPricing_GrokOfficialFamilyCards(t *testing.T) {
 	svc := newTestCalculator()
 	for _, tc := range []struct {
-		model                 string
-		input, cached, output float64
+		model  string // requested registered fixture model
+		input, // fixture input USD per token
+		cached, // fixture cached-input USD per token
+		output float64 // fixture output USD per token
 	}{
 		{"grok-4.3", 1.25e-6, 0.2e-6, 2.5e-6},
 		{"grok-4.20-0309-reasoning", 1.25e-6, 0.2e-6, 2.5e-6},
@@ -941,6 +1137,7 @@ func TestGetModelPricing_GrokOfficialFamilyCards(t *testing.T) {
 	} {
 		p, err := svc.GetModelPricing(tc.model)
 		require.NoError(t, err, tc.model)
+		// Allow binary representation residue in these fixture rate comparisons.
 		require.InDelta(t, tc.input, p.InputPricePerToken, 1e-12)
 		require.InDelta(t, tc.cached, p.CacheReadPricePerToken, 1e-12)
 		require.InDelta(t, tc.output, p.OutputPricePerToken, 1e-12)
@@ -948,6 +1145,10 @@ func TestGetModelPricing_GrokOfficialFamilyCards(t *testing.T) {
 	}
 }
 
+// TestCalculateCostUnified_ConfigLongContextToggleUsesPresetLadder prices
+// fixed above-threshold Grok fixture usage before and after enabling built-in
+// tiers. Only enabled calculation must mark surcharge and double the checked
+// text components.
 func TestCalculateCostUnified_ConfigLongContextToggleUsesPresetLadder(t *testing.T) {
 	svc := newTestCalculator()
 	settings := billingpricing.DefaultBillingSettings()
@@ -960,6 +1161,9 @@ func TestCalculateCostUnified_ConfigLongContextToggleUsesPresetLadder(t *testing
 	})
 	require.NoError(t, err)
 
+	// Flip only the supplied built-in tier setting while retaining usage and
+	// catalog amounts. The repeated calculation therefore isolates policy
+	// enablement from model-rate changes.
 	source.settings.LongContextPricingEnabled = true
 	enabled, err := svc.CalculateCostUnified(billing.CostInput{
 		Model: "grok-4.5", GroupID: testkit.GroupID(), Tokens: tokens, RateMultiplier: 1, Resolver: resolver,
@@ -968,10 +1172,15 @@ func TestCalculateCostUnified_ConfigLongContextToggleUsesPresetLadder(t *testing
 
 	require.False(t, disabled.LongContextBillingApplied)
 	require.True(t, enabled.LongContextBillingApplied)
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, disabled.InputCost*2, enabled.InputCost, 1e-12)
 	require.InDelta(t, disabled.OutputCost*2, enabled.OutputCost, 1e-12)
 }
 
+// TestGetModelPricing_UnknownGrokTextFallsBackToGrok46 establishes one
+// registered model, then queries absent text and media spellings. Those
+// requests must stay unavailable, while the separately registered build model
+// retains its own input amount.
 func TestGetModelPricing_UnknownGrokTextFallsBackToGrok46(t *testing.T) {
 	svc := newTestCalculator()
 	_, err := svc.GetModelPricing("grok-4.6")
@@ -1000,21 +1209,28 @@ func TestGetModelPricing_UnknownGrokTextFallsBackToGrok46(t *testing.T) {
 		require.ErrorIs(t, err, billingpricing.ErrModelPricingUnavailable)
 	}
 
-	// The registered price card takes precedence over a 4.5 family price.
+	// Read the separately registered build entry after missing-name results. Its
+	// input amount comes from that full-name fixture, not a family price selected
+	// for the preceding requests.
 	build, err := svc.GetModelPricing("grok-build-0.1")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 1e-6, build.InputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricing_GrokCatalogFallbacks iterates explicit fixture records
+// and listed absent aliases in two groups. Registered names must return each
+// group's supplied bucket rates, while selected unregistered full spellings
+// must return nil and pricing unavailable.
 func TestGetModelPricing_GrokCatalogFallbacks(t *testing.T) {
 	svc := newTestCalculator()
 
 	tests := []struct {
-		name      string
-		models    []string
-		input     float64
-		cacheRead float64
-		output    float64
+		name      string   // fixture model group label
+		models    []string // requested full model spellings
+		input     float64  // fixture input USD per token
+		cacheRead float64  // fixture cached-input USD per token
+		output    float64  // fixture output USD per token
 	}{
 		{
 			name: "Grok 4.3 family",
@@ -1055,6 +1271,7 @@ func TestGetModelPricing_GrokCatalogFallbacks(t *testing.T) {
 					continue
 				}
 				require.NoError(t, err, "model %s", model)
+				// Allow binary representation residue in these fixture rate comparisons.
 				require.InDelta(t, tt.input, pricing.InputPricePerToken, 1e-12, "model %s input", model)
 				require.InDelta(t, tt.cacheRead, pricing.CacheReadPricePerToken, 1e-12, "model %s cached input", model)
 				require.InDelta(t, tt.output, pricing.OutputPricePerToken, 1e-12, "model %s output", model)
@@ -1063,6 +1280,10 @@ func TestGetModelPricing_GrokCatalogFallbacks(t *testing.T) {
 	}
 }
 
+// TestCalculateCost_SupportsCacheBreakdown supplies supported five-minute and
+// hourly cache-write counts with distinct prices. The combined cache-creation
+// component must equal both detail charges, keeping their TTL rates separately
+// billable.
 func TestCalculateCost_SupportsCacheBreakdown(t *testing.T) {
 	svc := newCalculatorWithPrices(nil, map[string]*billingpricing.ModelPricing{
 		"claude-sonnet-4": {
@@ -1085,9 +1306,14 @@ func TestCalculateCost_SupportsCacheBreakdown(t *testing.T) {
 
 	expected5m := float64(tokens.CacheCreation5mTokens) * 4e-6
 	expected1h := float64(tokens.CacheCreation1hTokens) * 5e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expected5m+expected1h, cost.CacheCreationCost, 1e-10)
 }
 
+// TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate supplies
+// two full-size cache details against one positive aggregate. Equal unit TTL
+// rates must produce a billed count equivalent no larger than the asserted
+// aggregate.
 func TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate(t *testing.T) {
 	pricing := &billingpricing.ModelPricing{
 		SupportsCacheBreakdown: true,
@@ -1106,12 +1332,19 @@ func TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate(t *testi
 		"billed cache-creation token equivalent must not exceed the positive aggregate")
 }
 
+// TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant checks supplied
+// ratio caps, missing/negative details, host-integer extremes and zero
+// aggregates. Both normalized TTL counts must match their expected values,
+// protecting the specific integer and aggregate cases in this table.
 func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 	tests := []struct {
-		name   string
-		tokens billingpricing.UsageTokens
-		want5m int
-		want1h int
+		name   string                     // cache normalization case label
+		tokens billingpricing.UsageTokens // supplied aggregate and TTL counts
+		// want5m and want1h check normalized TTL details together against tokens. A
+		// positive aggregate caps their combined output; zero aggregate permits the
+		// existing positive details.
+		want5m int // expected five-minute token count
+		want1h int // expected hourly token count
 	}{
 		{
 			name:   "preserves ratio when capping",
@@ -1150,12 +1383,18 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 			want1h: 100,
 		},
 		{
+			// Use the host integer maximum as oversized detail input while keeping a
+			// small aggregate. Expected normalized counts therefore expose proportional
+			// capping at that representable limit.
 			name:   "integer boundary details capped without overflow",
 			tokens: billingpricing.UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: int(^uint(0) >> 1), CacheCreation1hTokens: int(^uint(0) >> 1)},
 			want5m: 50,
 			want1h: 50,
 		},
 		{
+			// Keep the aggregate at the host integer ceiling with one extra detail
+			// token. The expected pair retains the bounded aggregate while discarding
+			// the tiny proportional remainder.
 			name:   "integer boundary aggregate avoids float conversion overflow",
 			tokens: billingpricing.UsageTokens{CacheCreationTokens: int(^uint(0) >> 1), CacheCreation5mTokens: int(^uint(0) >> 1), CacheCreation1hTokens: 1},
 			want5m: int(^uint(0) >> 1),
@@ -1178,6 +1417,10 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 	}
 }
 
+// TestComputeCacheCreationCost_PreservesZeroDetailFallback supplies positive
+// aggregate cache writes with absent or negative detail counts. Each case must
+// charge the aggregate at the fixture's five-minute rate after unusable
+// details normalize away.
 func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 	pricing := &billingpricing.ModelPricing{
 		SupportsCacheBreakdown: true,
@@ -1186,8 +1429,8 @@ func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		tokens billingpricing.UsageTokens
+		name   string                     // unusable cache detail case
+		tokens billingpricing.UsageTokens // supplied aggregate and TTL counts
 	}{
 		{name: "zero details", tokens: billingpricing.UsageTokens{CacheCreationTokens: 100}},
 		{name: "one negative detail", tokens: billingpricing.UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -25}},
@@ -1197,11 +1440,15 @@ func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cost := billingpricing.ComputeCacheCreationCost(pricing, tt.tokens, 0, 1)
+			// Allow float arithmetic residue in these calculated component amounts.
 			require.InDelta(t, 100*4e-6, cost, 1e-12)
 		})
 	}
 }
 
+// TestCalculateCost_LargeTokenCount supplies one million input and output
+// tokens at the fixture's ordinary rates. Components must reach their expected
+// dollar amounts and the total must remain finite.
 func TestCalculateCost_LargeTokenCount(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1213,12 +1460,17 @@ func TestCalculateCost_LargeTokenCount(t *testing.T) {
 	require.NoError(t, err)
 
 	// Input: 1M * 3e-6 = $3, Output: 1M * 15e-6 = $15
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, 3.0, cost.InputCost, 1e-6)
 	require.InDelta(t, 15.0, cost.OutputCost, 1e-6)
 	require.False(t, math.IsNaN(cost.TotalCost))
 	require.False(t, math.IsInf(cost.TotalCost, 0))
 }
 
+// TestCalculateCostWithServiceTier_PricingConfigFlexMultiplier calculates
+// identical usage with a configured quarter-price Flex factor. Flex total must
+// equal one quarter of the standard total selected after those manual token
+// rates.
 func TestCalculateCostWithServiceTier_PricingConfigFlexMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	configPricing := &routing.ModelPricingEntry{
@@ -1231,9 +1483,14 @@ func TestCalculateCostWithServiceTier_PricingConfigFlexMultiplier(t *testing.T) 
 	require.NoError(t, err)
 	flex, err := svc.CalculateCostInternal("claude-sonnet-4", tokens, 1, "flex", configPricing)
 	require.NoError(t, err)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, standard.TotalCost*0.25, flex.TotalCost, 1e-12)
 }
 
+// TestCalculateCostWithServiceTier_OpenAIPriorityUsesPriorityPricing compares
+// standard and priority usage for the registered Codex fixture. Input, output,
+// cached input and total must double according to its supplied priority
+// buckets.
 func TestCalculateCostWithServiceTier_OpenAIPriorityUsesPriorityPricing(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 20}
@@ -1244,12 +1501,16 @@ func TestCalculateCostWithServiceTier_OpenAIPriorityUsesPriorityPricing(t *testi
 	priorityCost, err := svc.CalculateCostWithServiceTier("gpt-5.3-codex", tokens, 1.0, "priority")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost*2, priorityCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*2, priorityCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheReadCost*2, priorityCost.CacheReadCost, 1e-10)
 	require.InDelta(t, baseCost.TotalCost*2, priorityCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier compares standard
+// and Flex usage for GPT-5.4 fixture pricing. All checked text/cache
+// components and total must halve under the fixture's declared factor.
 func TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 100, OutputTokens: 50, CacheCreationTokens: 40, CacheReadTokens: 20}
@@ -1260,6 +1521,7 @@ func TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier(t *testing.T) {
 	flexCost, err := svc.CalculateCostWithServiceTier("gpt-5.4", tokens, 1.0, "flex")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost*0.5, flexCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*0.5, flexCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost*0.5, flexCost.CacheCreationCost, 1e-10)
@@ -1267,6 +1529,10 @@ func TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier(t *testing.T) {
 	require.InDelta(t, baseCost.TotalCost*0.5, flexCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_Gpt54MiniPriorityFallsBackToTierMultiplier
+// supplies ordinary, cache-write and cached-read usage to the mini fixture.
+// Priority components and total must double through its configured
+// service-tier factor.
 func TestCalculateCostWithServiceTier_Gpt54MiniPriorityFallsBackToTierMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 120, OutputTokens: 30, CacheCreationTokens: 12, CacheReadTokens: 8}
@@ -1277,6 +1543,7 @@ func TestCalculateCostWithServiceTier_Gpt54MiniPriorityFallsBackToTierMultiplier
 	priorityCost, err := svc.CalculateCostWithServiceTier("gpt-5.4-mini", tokens, 1.0, "priority")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost*2, priorityCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*2, priorityCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost*2, priorityCost.CacheCreationCost, 1e-10)
@@ -1284,6 +1551,9 @@ func TestCalculateCostWithServiceTier_Gpt54MiniPriorityFallsBackToTierMultiplier
 	require.InDelta(t, baseCost.TotalCost*2, priorityCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_Gpt54NanoFlexAppliesHalfMultiplier compares
+// standard and Flex charges for the nano fixture. Each text/cache component
+// and total must receive the supplied half-price factor.
 func TestCalculateCostWithServiceTier_Gpt54NanoFlexAppliesHalfMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 100, OutputTokens: 50, CacheCreationTokens: 40, CacheReadTokens: 20}
@@ -1294,6 +1564,7 @@ func TestCalculateCostWithServiceTier_Gpt54NanoFlexAppliesHalfMultiplier(t *test
 	flexCost, err := svc.CalculateCostWithServiceTier("gpt-5.4-nano", tokens, 1.0, "flex")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost*0.5, flexCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*0.5, flexCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost*0.5, flexCost.CacheCreationCost, 1e-10)
@@ -1301,6 +1572,10 @@ func TestCalculateCostWithServiceTier_Gpt54NanoFlexAppliesHalfMultiplier(t *test
 	require.InDelta(t, baseCost.TotalCost*0.5, flexCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWithoutExplicitPriorityPrice
+// compares Claude fixture charges lacking explicit priority bucket amounts.
+// Its declared Fast factor must double every checked text/cache component and
+// total.
 func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWithoutExplicitPriorityPrice(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{InputTokens: 120, OutputTokens: 30, CacheCreationTokens: 12, CacheReadTokens: 8}
@@ -1311,6 +1586,7 @@ func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWithoutEx
 	priorityCost, err := svc.CalculateCostWithServiceTier("claude-sonnet-4", tokens, 1.0, "priority")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost*2, priorityCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost*2, priorityCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost*2, priorityCost.CacheCreationCost, 1e-10)
@@ -1318,6 +1594,10 @@ func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWithoutEx
 	require.InDelta(t, baseCost.TotalCost*2, priorityCost.TotalCost, 1e-10)
 }
 
+// TestCalculateCostWithServiceTier_ClaudeOpus48FastUsesDoublePricing first
+// checks the registered Opus fixture's ordinary and TTL rates. Priority
+// calculation must double text/cache components and total through the
+// fixture's declared service-tier support.
 func TestCalculateCostWithServiceTier_ClaudeOpus48FastUsesDoublePricing(t *testing.T) {
 	svc := newTestCalculator()
 	tokens := billingpricing.UsageTokens{
@@ -1330,6 +1610,7 @@ func TestCalculateCostWithServiceTier_ClaudeOpus48FastUsesDoublePricing(t *testi
 
 	pricing, err := svc.GetModelPricing("claude-opus-4-8")
 	require.NoError(t, err)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 5e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 25e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 6.25e-6, pricing.CacheCreation5mPrice, 1e-12)
@@ -1352,6 +1633,10 @@ func TestCalculateCostWithServiceTier_ClaudeOpus48FastUsesDoublePricing(t *testi
 	require.InDelta(t, baseCost.TotalCost*2, fastCost.TotalCost, 1e-10)
 }
 
+// TestBillingServiceGetModelPricing_UsesDynamicPriorityFields supplies one raw
+// catalog record with priority, cache and long-context metadata. Lookup must
+// transfer the checked ordinary/priority amounts, threshold and factors into
+// calculation pricing.
 func TestBillingServiceGetModelPricing_UsesDynamicPriorityFields(t *testing.T) {
 	pricingSvc := newCatalogFixture(catalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -1373,6 +1658,7 @@ func TestBillingServiceGetModelPricing_UsesDynamicPriorityFields(t *testing.T) {
 
 	pricing, err := svc.GetModelPricing("gpt-5.4")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 2.5e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 5e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
@@ -1384,12 +1670,17 @@ func TestBillingServiceGetModelPricing_UsesDynamicPriorityFields(t *testing.T) {
 	require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
 }
 
+// TestBillingServiceGetModelPricing_OpenAIFallbackGpt52Variants reads the
+// registered GPT-5.2 fixture and an absent Codex full name. The first must
+// expose its ordinary/priority input rates, while the second returns nil and
+// pricing unavailable.
 func TestBillingServiceGetModelPricing_OpenAIFallbackGpt52Variants(t *testing.T) {
 	svc := newTestCalculator()
 
 	gpt52, err := svc.GetModelPricing("gpt-5.2")
 	require.NoError(t, err)
 	require.NotNil(t, gpt52)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 1.75e-6, gpt52.InputPricePerToken, 1e-12)
 	require.InDelta(t, 3.5e-6, gpt52.InputPricePerTokenPriority, 1e-12)
 
@@ -1398,6 +1689,9 @@ func TestBillingServiceGetModelPricing_OpenAIFallbackGpt52Variants(t *testing.T)
 	require.Nil(t, value)
 }
 
+// TestCalculateCostWithServiceTier_MissingPriorityDoesNotInventMultiplier
+// supplies a custom catalog model with ordinary buckets and no priority rules.
+// Standard and priority calls must return equal checked components and totals.
 func TestCalculateCostWithServiceTier_MissingPriorityDoesNotInventMultiplier(t *testing.T) {
 	svc := newCalculator(newCatalogFixture(catalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -1417,6 +1711,7 @@ func TestCalculateCostWithServiceTier_MissingPriorityDoesNotInventMultiplier(t *
 	priorityCost, err := svc.CalculateCostWithServiceTier("custom-no-priority", tokens, 1.0, "priority")
 	require.NoError(t, err)
 
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, baseCost.InputCost, priorityCost.InputCost, 1e-10)
 	require.InDelta(t, baseCost.OutputCost, priorityCost.OutputCost, 1e-10)
 	require.InDelta(t, baseCost.CacheCreationCost, priorityCost.CacheCreationCost, 1e-10)
@@ -1424,11 +1719,16 @@ func TestCalculateCostWithServiceTier_MissingPriorityDoesNotInventMultiplier(t *
 	require.InDelta(t, baseCost.TotalCost, priorityCost.TotalCost, 1e-10)
 }
 
+// TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices checks
+// ordinary/priority text amounts on the registered GPT-5.2 fixture. An absent
+// Codex spelling must return nil with pricing unavailable rather than inherit
+// those rates.
 func TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices(t *testing.T) {
 	svc := newTestCalculator()
 
 	gpt52, err := svc.GetModelPricing("gpt-5.2")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 1.75e-6, gpt52.InputPricePerToken, 1e-12)
 	require.InDelta(t, 3.5e-6, gpt52.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 14e-6, gpt52.OutputPricePerToken, 1e-12)
@@ -1439,6 +1739,10 @@ func TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices(t *testing.T) 
 	require.Nil(t, value)
 }
 
+// TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing supplies raw
+// text, priority, cache-TTL and threshold fields for a custom model. Lookup
+// must transfer the checked amounts, cache-breakdown support and long-context
+// factors.
 func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.T) {
 	svc := newCalculator(newCatalogFixture(catalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -1460,6 +1764,7 @@ func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.
 
 	pricing, err := svc.GetModelPricing("dynamic-tier-model")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 1e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 2e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 3e-6, pricing.OutputPricePerToken, 1e-12)
@@ -1474,6 +1779,10 @@ func TestGetModelPricing_MapsDynamicPriorityFieldsIntoBillingPricing(t *testing.
 	require.InDelta(t, 1.25, pricing.LongContextOutputMultiplier, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_NilConfigPricing_ReturnsOriginal compares a
+// nil-card lookup with an ordinary fixture lookup. The four checked
+// token/cache bucket rates must remain equal, without asserting pointer
+// identity or nested ownership.
 func TestGetModelPricingWithConfig_NilConfigPricing_ReturnsOriginal(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1481,15 +1790,18 @@ func TestGetModelPricingWithConfig_NilConfigPricing_ReturnsOriginal(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, pricing)
 
-	// Should be identical to GetModelPricing
 	original, err := svc.GetModelPricing("claude-sonnet-4")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, original.InputPricePerToken, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, original.OutputPricePerToken, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, original.CacheCreationPricePerToken, pricing.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, original.CacheReadPricePerToken, pricing.CacheReadPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_OverrideInputPriceOnly supplies a manual input
+// amount for a known Claude fixture. Input must change while output keeps its
+// catalog value and missing priority input remains zero.
 func TestGetModelPricingWithConfig_OverrideInputPriceOnly(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1499,14 +1811,18 @@ func TestGetModelPricingWithConfig_OverrideInputPriceOnly(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// The input override applies to standard rates; this catalog model has no priority price.
+	// The input override applies to standard rates; this catalog model has no
+	// priority price.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 99e-6, pricing.InputPricePerToken, 1e-12)
 	require.Zero(t, pricing.InputPricePerTokenPriority)
 
-	// The catalog output price remains 15e-6.
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_PriceMultiplierAppliesAfterOverrides supplies
+// an input override plus a doubled price factor. Returned input and inherited
+// output must both reflect scaling after their bucket selection.
 func TestGetModelPricingWithConfig_PriceMultiplierAppliesAfterOverrides(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1517,11 +1833,17 @@ func TestGetModelPricingWithConfig_PriceMultiplierAppliesAfterOverrides(t *testi
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// The multiplier applies after merging the manual input rate and inherited output rate.
+	// The multiplier applies after merging the manual input rate and inherited
+	// output rate.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 20e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 30e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_PreservesNativeTierRatio overrides GPT-5.4
+// fixture text and cache amounts. Existing doubled priority ratios must remain
+// on supplied buckets, while absent cache-write priority continues to be
+// unset.
 func TestGetModelPricingWithConfig_PreservesNativeTierRatio(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1533,13 +1855,19 @@ func TestGetModelPricingWithConfig_PreservesNativeTierRatio(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GPT-5.4 priority rates are twice standard rates; an absent cache-write priority price stays unset.
+	// The GPT-5.4 fixture's priority rates are twice standard rates; its absent
+	// cache-write priority price stays unset.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 20e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 80e-6, pricing.OutputPricePerTokenPriority, 1e-12)
 	require.Zero(t, pricing.CacheCreationPricePerTokenPriority)
 	require.InDelta(t, 2e-6, pricing.CacheReadPricePerTokenPriority, 1e-12)
 }
 
+// TestCalculateCostWithPricingConfigFastModeMultiplierUsesFinalStandardPrice
+// combines bucket overrides, a price factor and a manual Fast factor. Every
+// checked text/image/cache component and total must scale from the selected
+// standard calculation by 1.5.
 func TestCalculateCostWithPricingConfigFastModeMultiplierUsesFinalStandardPrice(t *testing.T) {
 	svc := newTestCalculator()
 	configPricing := &routing.ModelPricingEntry{
@@ -1566,7 +1894,9 @@ func TestCalculateCostWithPricingConfigFastModeMultiplierUsesFinalStandardPrice(
 	fast, err := svc.CalculateCostInternal("gpt-5.4", tokens, 1, "priority", configPricing)
 	require.NoError(t, err)
 
-	// The configured multiplier overrides catalog priority rates for text, image, and cache charges.
+	// The configured multiplier overrides catalog priority rates for text,
+	// image, and cache charges.
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, standard.InputCost*1.5, fast.InputCost, 1e-12)
 	require.InDelta(t, standard.ImageInputCost*1.5, fast.ImageInputCost, 1e-12)
 	require.InDelta(t, standard.OutputCost*1.5, fast.OutputCost, 1e-12)
@@ -1576,6 +1906,10 @@ func TestCalculateCostWithPricingConfigFastModeMultiplierUsesFinalStandardPrice(
 	require.InDelta(t, standard.TotalCost*1.5, fast.TotalCost, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_DoesNotMutateFallbackPricing resolves a manual
+// input override before querying the fixture model again. The later ordinary
+// input/output rates must retain their base values, protecting the observed
+// subsequent lookup.
 func TestGetModelPricingWithConfig_DoesNotMutateFallbackPricing(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1587,10 +1921,14 @@ func TestGetModelPricingWithConfig_DoesNotMutateFallbackPricing(t *testing.T) {
 
 	pricing, err := svc.GetModelPricing("claude-sonnet-4")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_OverrideOutputPriceOnly supplies a manual
+// output amount for a known Claude fixture. Output must change while input
+// retains its catalog value and missing priority output remains zero.
 func TestGetModelPricingWithConfig_OverrideOutputPriceOnly(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1600,14 +1938,19 @@ func TestGetModelPricingWithConfig_OverrideOutputPriceOnly(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// The output override applies to standard rates; this catalog model has no priority price.
+	// The output override applies to standard rates; this catalog model has no
+	// priority price.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 88e-6, pricing.OutputPricePerToken, 1e-12)
 	require.Zero(t, pricing.OutputPricePerTokenPriority)
 
-	// The catalog input price remains 3e-6.
 	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_OverrideAllFields supplies manual text, cache
+// and image-output buckets for a known model. Returned amounts must match the
+// overrides, both TTL write slots share the supplied rate and absent priority
+// slots stay zero.
 func TestGetModelPricingWithConfig_OverrideAllFields(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1621,6 +1964,7 @@ func TestGetModelPricingWithConfig_OverrideAllFields(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
 	require.Zero(t, pricing.InputPricePerTokenPriority)
 	require.InDelta(t, 20e-6, pricing.OutputPricePerToken, 1e-12)
@@ -1633,6 +1977,9 @@ func TestGetModelPricingWithConfig_OverrideAllFields(t *testing.T) {
 	require.InDelta(t, 50e-6, pricing.ImageOutputPricePerToken, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_CacheWritePriceAffects5mAnd1h supplies one
+// manual short cache-write amount without an hourly replacement. Aggregate,
+// five-minute and hourly returned write slots must all use that supplied rate.
 func TestGetModelPricingWithConfig_CacheWritePriceAffects5mAnd1h(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1642,12 +1989,15 @@ func TestGetModelPricingWithConfig_CacheWritePriceAffects5mAnd1h(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// CacheWritePrice should set all three: CacheCreationPricePerToken, 5m, and 1h
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 7e-6, pricing.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 7e-6, pricing.CacheCreation5mPrice, 1e-12)
 	require.InDelta(t, 7e-6, pricing.CacheCreation1hPrice, 1e-12)
 }
 
+// TestGetModelPricingWithConfig_CacheWriteTTLPricesCanDiffer supplies distinct
+// short and hourly cache amounts for the Fable fixture. The result must retain
+// cache-breakdown support and separate five-minute/hourly rates.
 func TestGetModelPricingWithConfig_CacheWriteTTLPricesCanDiffer(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1657,16 +2007,21 @@ func TestGetModelPricingWithConfig_CacheWriteTTLPricesCanDiffer(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, pricing.SupportsCacheBreakdown)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 13e-6, pricing.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 13e-6, pricing.CacheCreation5mPrice, 1e-12)
 	require.InDelta(t, 21e-6, pricing.CacheCreation1hPrice, 1e-12)
 }
 
+// TestGetModelPricing_Fable51FallbackPricing reads the registered Fable
+// fixture's text/cache buckets. Lookup must expose those supplied rates and
+// the present three-times Max reasoning factor from that entry.
 func TestGetModelPricing_Fable51FallbackPricing(t *testing.T) {
 	svc := newTestCalculator()
 
 	pricing, err := svc.GetModelPricing("claude-fable-5-1")
 	require.NoError(t, err)
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
 	require.InDelta(t, 12.5e-6, pricing.CacheCreation5mPrice, 1e-12)
@@ -1676,6 +2031,9 @@ func TestGetModelPricing_Fable51FallbackPricing(t *testing.T) {
 	require.Equal(t, 3.0, *pricing.MaxReasoningEffortMultiplier)
 }
 
+// TestGetModelPricingWithConfig_CacheReadPriceAffectsPriority overrides cached
+// input on a fixture without an explicit priority cache bucket. Standard
+// cached input must change to the supplied amount while priority remains zero.
 func TestGetModelPricingWithConfig_CacheReadPriceAffectsPriority(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1685,11 +2043,17 @@ func TestGetModelPricingWithConfig_CacheReadPriceAffectsPriority(t *testing.T) {
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	// CacheReadPrice overrides the standard rate; this model has no configured priority rate.
+	// CacheReadPrice overrides the standard rate; this model has no configured
+	// priority rate.
+	// Allow binary representation residue in these fixture rate comparisons.
 	require.InDelta(t, 2e-6, pricing.CacheReadPricePerToken, 1e-12)
 	require.Zero(t, pricing.CacheReadPricePerTokenPriority)
 }
 
+// TestGetModelPricingWithConfig_UnknownModelReturnsError supplies a manual
+// input card for an absent full model through the catalog-first helper. Lookup
+// must fail before card application, returning nil and the missing-price
+// diagnostic.
 func TestGetModelPricingWithConfig_UnknownModelReturnsError(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1702,13 +2066,18 @@ func TestGetModelPricingWithConfig_UnknownModelReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "pricing not found")
 }
 
+// TestGetModelPricingWithConfig_NilImageOutputPriceZerosAndMarksExplicit
+// supplies text overrides while omitting the image-output bucket. Returned
+// image output must be explicit zero, preventing configuration absence from
+// borrowing a text-output amount.
 func TestGetModelPricingWithConfig_NilImageOutputPriceZerosAndMarksExplicit(t *testing.T) {
 	svc := newTestCalculator()
 
 	chPricing := &routing.ModelPricingEntry{
 		InputPrice:  testPtrFloat64(10e-6),
 		OutputPrice: testPtrFloat64(20e-6),
-		// Leave image output pricing unset to test inheritance.
+		// Leave this configuration image bucket absent so the returned explicit-zero
+		// marker can distinguish card control from catalog text-output inheritance.
 	}
 	pricing, err := svc.GetModelPricingWithConfig("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
@@ -1717,6 +2086,10 @@ func TestGetModelPricingWithConfig_NilImageOutputPriceZerosAndMarksExplicit(t *t
 	require.True(t, pricing.ImageOutputPriceExplicit)
 }
 
+// TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback splits fifty
+// image tokens from two hundred output tokens with explicit zero image
+// pricing. Image cost must stay zero while the remaining text output uses its
+// ordinary rate.
 func TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1736,9 +2109,14 @@ func TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback(t *testing.T) {
 	// An explicit zero image-output rate prevents use of the text-output rate.
 	require.Equal(t, 0.0, bd.ImageOutputCost)
 	// Text output tokens = 200 - 50 = 150.
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 150*15e-6, bd.OutputCost, 1e-12)
 }
 
+// TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput
+// supplies the same output split with an absent image-price marker. Both text
+// and image portions must use the text-output rate in their separately checked
+// components.
 func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1756,22 +2134,48 @@ func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *te
 	bd := svc.ComputeTokenBreakdown(pricing, tokens, 1.0, "", false)
 
 	// An unset image-output rate uses the text-output rate.
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 50*15e-6, bd.ImageOutputCost, 1e-12)
 	// Text output tokens = 200 - 50 = 150.
 	require.InDelta(t, 150*15e-6, bd.OutputCost, 1e-12)
 }
 
-// TestCalculateCostUnified_LongContextContract checks whole-request pricing and the actual-charge marker.
+// TestCalculateCostUnified_LongContextContract supplies ten combinations of
+// context buckets, threshold policy, enablement, rates and surcharge factors.
+// Base total, actual charge and marker must match each case, including
+// zero-charge and unit-factor exclusions.
 func TestCalculateCostUnified_LongContextContract(t *testing.T) {
 	svc := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, svc)
 	cases := []struct {
-		name                            string
-		input, cacheRead, cacheWrite    int
-		threshold                       int
-		inclusive, disabled, unitPrices bool
-		rate, wantTotal, wantActual     float64
-		applied                         bool
+		name string // supplied long-context case label
+		// input, cacheRead and cacheWrite contribute to the aggregate context tested
+		// against threshold. Their separate buckets also determine which input-side
+		// component is charged after the threshold decision.
+		input, // ordinary input token count
+		cacheRead, // cached-input token count
+		cacheWrite int // aggregate cache-write token count
+		threshold int // configured context token threshold
+		// inclusive, disabled and unitPrices combine threshold equality, enablement
+		// and surcharge-factor inputs. These controls determine whether this
+		// supplied context receives a price increase in the asserted result.
+		// inclusive selects whether aggregate context exactly at threshold enters
+		// long pricing. The paired equality cases assert different amounts under
+		// that policy.
+		inclusive, // equality enters the long tier
+		// disabled sets the resolution's enablement false, keeping built-in tier
+		// factors inactive even when the supplied context crosses threshold.
+		disabled, // built-in tier enablement disabled
+		// unitPrices replaces both long-context factors with one before calculation,
+		// so eligible context alone cannot create the expected surcharge marker.
+		unitPrices bool // unit long-context factors selected
+		// rate supplies the final user factor, wantTotal is the expected base charge
+		// and wantActual the scaled user charge. These expectations distinguish base
+		// surcharge from actual-cost marker eligibility.
+		rate, // supplied final user cost factor
+		wantTotal, // expected pre-user-factor base charge
+		wantActual float64 // expected final user charge
+		applied bool // expected actual-cost surcharge marker
 	}{
 		{name: "低于阈值", input: 99, cacheRead: 100, threshold: 200, rate: 1, wantTotal: 111, wantActual: 111},
 		{name: "等于排他阈值", input: 100, cacheRead: 100, threshold: 200, rate: 1, wantTotal: 112, wantActual: 112},
@@ -1803,6 +2207,7 @@ func TestCalculateCostUnified_LongContextContract(t *testing.T) {
 				Resolved: &billingpricing.ResolvedPricing{Mode: billingpricing.BillingModeToken, BasePricing: prices, Source: billingpricing.PricingSourceConfig, LongContextPricingEnabled: !tc.disabled},
 			})
 			require.NoError(t, err)
+			// Allow float arithmetic residue in these calculated component amounts.
 			require.InDelta(t, tc.wantTotal, cost.TotalCost, 1e-10)
 			require.InDelta(t, tc.wantActual, cost.ActualCost, 1e-10)
 			require.Equal(t, tc.applied, cost.LongContextBillingApplied)
@@ -1810,6 +2215,9 @@ func TestCalculateCostUnified_LongContextContract(t *testing.T) {
 	}
 }
 
+// TestCalculateCostUnified_NilResolver_FallsBackToOldPath omits Resolver for
+// ordinary fixture token usage. Totals must match direct token calculation,
+// and the result's billing mode must remain empty on that delegated path.
 func TestCalculateCostUnified_NilResolver_FallsBackToOldPath(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -1823,15 +2231,17 @@ func TestCalculateCostUnified_NilResolver_FallsBackToOldPath(t *testing.T) {
 	cost, err := svc.CalculateCostUnified(input)
 	require.NoError(t, err)
 
-	// With no resolver, costs match the direct token calculation.
 	expected, err := svc.CalculateCostInternal("claude-sonnet-4", tokens, 1.0, "", nil)
 	require.NoError(t, err)
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expected.TotalCost, cost.TotalCost, 1e-10)
 	require.InDelta(t, expected.ActualCost, cost.ActualCost, 1e-10)
-	// The no-resolver path leaves BillingMode empty.
 	require.Empty(t, cost.BillingMode)
 }
 
+// TestCalculateCostUnified_TokenMode resolves known fixture token amounts and
+// applies a 1.5 user factor. Base and actual totals must match the supplied
+// text usage and the result must report token mode.
 func TestCalculateCostUnified_TokenMode(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -1848,13 +2258,16 @@ func TestCalculateCostUnified_TokenMode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cost)
 
-	// Verify token billing: Input: 1000*3e-6=0.003, Output: 500*15e-6=0.0075
 	expectedTotal := 1000*3e-6 + 500*15e-6
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, expectedTotal, cost.TotalCost, 1e-10)
 	require.InDelta(t, expectedTotal*1.5, cost.ActualCost, 1e-10)
 	require.Equal(t, string(routing.BillingModeToken), cost.BillingMode)
 }
 
+// TestCalculateCostUnified_Fable51MaxReasoningMultiplier compares xhigh and
+// max effort on identical Fable fixture usage. Max base and actual totals must
+// triple according to the entry's supplied reasoning factor.
 func TestCalculateCostUnified_Fable51MaxReasoningMultiplier(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -1870,10 +2283,14 @@ func TestCalculateCostUnified_Fable51MaxReasoningMultiplier(t *testing.T) {
 		RateMultiplier: 1, ReasoningEffort: "max", Resolver: resolver,
 	})
 	require.NoError(t, err)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, standard.TotalCost*3, max.TotalCost, 1e-12)
 	require.InDelta(t, standard.ActualCost*3, max.ActualCost, 1e-12)
 }
 
+// TestCalculateCostUnified_PricingConfigOverridesFable51MaxReasoningMultiplier
+// supplies a configured reasoning factor above the Fable base card. Max-effort
+// total must use that 1.5 factor on the selected manual input amount.
 func TestCalculateCostUnified_PricingConfigOverridesFable51MaxReasoningMultiplier(t *testing.T) {
 	configured := 1.5
 	groupID := int64(7)
@@ -1899,9 +2316,14 @@ func TestCalculateCostUnified_PricingConfigOverridesFable51MaxReasoningMultiplie
 		Tokens: billingpricing.UsageTokens{InputTokens: 1000}, RateMultiplier: 1, ReasoningEffort: "max", Resolver: resolver,
 	})
 	require.NoError(t, err)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 1000*10e-6*configured, cost.TotalCost, 1e-12)
 }
 
+// TestCalculateCostUnified_AppliesPricingConfigPriceMultiplierBeforeRateMultiplier
+// combines a manual input amount, inherited output, doubled card factor and
+// tripled user factor. Base total must reflect card scaling before the final
+// actual-cost scaling.
 func TestCalculateCostUnified_AppliesPricingConfigPriceMultiplierBeforeRateMultiplier(t *testing.T) {
 	cs := newTestPricingConfigServiceWithCache(t, &routingtestkit.ModelConfigData{
 		Prices: map[routingtestkit.ModelKey]*routing.ModelPricingEntry{
@@ -1934,12 +2356,18 @@ func TestCalculateCostUnified_AppliesPricingConfigPriceMultiplierBeforeRateMulti
 	})
 	require.NoError(t, err)
 
-	// Input 5e-6 and inherited output 15e-6 receive the configured 2x multiplier, then the group 3x multiplier.
+	// Input 5e-6 and inherited output 15e-6 receive the configured 2x
+	// multiplier, then the group 3x multiplier.
 	expectedTotal := 100*10e-6 + 10*30e-6
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, expectedTotal, cost.TotalCost, 1e-12)
 	require.InDelta(t, expectedTotal*3, cost.ActualCost, 1e-12)
 }
 
+// TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens
+// separates image output from aggregate output on known fixture pricing. Base
+// total must include both output portions and actual cost must apply the user
+// factor to their combined amount.
 func TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -1957,11 +2385,15 @@ func TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens(t *tes
 	textInput := 1000 * 3e-6
 	textOutput := 500 * 15e-6
 	imageOutput := 100 * 15e-6
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, textInput+textOutput+imageOutput, cost.TotalCost, 1e-10)
 	require.InDelta(t, (textInput+textOutput+imageOutput)*3.0, cost.ActualCost, 1e-10)
 	require.InDelta(t, imageOutput, cost.ImageOutputCost, 1e-10)
 }
 
+// TestCalculateCostUnified_PerRequestMode supplies a fixed per-request card
+// for three requests with a doubled user factor. Base and actual totals must
+// follow unit-count arithmetic and report per-request mode.
 func TestCalculateCostUnified_PerRequestMode(t *testing.T) {
 	cs := newTestPricingConfigServiceWithCache(t, &routingtestkit.ModelConfigData{
 		Prices: map[routingtestkit.ModelKey]*routing.ModelPricingEntry{
@@ -1997,13 +2429,15 @@ func TestCalculateCostUnified_PerRequestMode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cost)
 
-	// 3 requests * $0.05 = $0.15
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, 0.15, cost.TotalCost, 1e-10)
-	// ActualCost = 0.15 * 2.0 = 0.30
 	require.InDelta(t, 0.30, cost.ActualCost, 1e-10)
 	require.Equal(t, string(routing.BillingModePerRequest), cost.BillingMode)
 }
 
+// TestCalculateCostUnified_PerRequestTierExplicitZeroDoesNotFallbackToDefault
+// supplies an image-size zero tier above a nonzero default. The chosen size
+// must produce zero totals for both images and retain image billing mode.
 func TestCalculateCostUnified_PerRequestTierExplicitZeroDoesNotFallbackToDefault(t *testing.T) {
 	zero := 0.0
 	defaultPrice := 0.10
@@ -2042,11 +2476,16 @@ func TestCalculateCostUnified_PerRequestTierExplicitZeroDoesNotFallbackToDefault
 	})
 	require.NoError(t, err)
 	require.NotNil(t, cost)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.0, cost.TotalCost, 1e-10)
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
 }
 
+// TestCalculateCostUnified_PerRequestContextTierExplicitZeroDoesNotFallbackToDefault
+// supplies an explicit-zero request context tier above a nonzero default. A
+// matching context must produce zero totals for the supplied request count and
+// retain request mode.
 func TestCalculateCostUnified_PerRequestContextTierExplicitZeroDoesNotFallbackToDefault(t *testing.T) {
 	zero := 0.0
 	defaultPrice := 0.10
@@ -2086,11 +2525,15 @@ func TestCalculateCostUnified_PerRequestContextTierExplicitZeroDoesNotFallbackTo
 	})
 	require.NoError(t, err)
 	require.NotNil(t, cost)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.0, cost.TotalCost, 1e-10)
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 	require.Equal(t, string(routing.BillingModePerRequest), cost.BillingMode)
 }
 
+// TestCalculateCostUnified_ImageMode supplies a manual per-image amount for a
+// model absent from the calculator catalog. Two image units must produce the
+// configured total and report image mode with unit-factor actual cost.
 func TestCalculateCostUnified_ImageMode(t *testing.T) {
 	cs := newTestPricingConfigServiceWithCache(t, &routingtestkit.ModelConfigData{
 		Prices: map[routingtestkit.ModelKey]*routing.ModelPricingEntry{
@@ -2126,14 +2569,15 @@ func TestCalculateCostUnified_ImageMode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cost)
 
-	// 2 * $0.10 = $0.20
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.20, cost.TotalCost, 1e-10)
 	require.InDelta(t, 0.20, cost.ActualCost, 1e-10)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
 }
 
-// TestCalculateCostUnified_RateMultiplierZeroProducesZero checks zero-multiplier charges.
-// The calculation accepts zero even though saved group multipliers must be positive.
+// TestCalculateCostUnified_RateMultiplierZeroProducesZero supplies known token
+// pricing with a zero user factor. Base total must remain positive while
+// actual cost is zero, protecting the calculator's accepted zero-factor input.
 func TestCalculateCostUnified_RateMultiplierZeroProducesZero(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -2149,11 +2593,13 @@ func TestCalculateCostUnified_RateMultiplierZeroProducesZero(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Greater(t, cost.TotalCost, 0.0)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 }
 
-// TestCalculateCostUnified_NegativeRateMultiplierClampedToZero checks that unified billing clamps negative
-// multipliers to zero.
+// TestCalculateCostUnified_NegativeRateMultiplierClampedToZero supplies known
+// token pricing with a negative user factor. Base total must remain positive
+// while actual cost is zero under calculation-side factor clamping.
 func TestCalculateCostUnified_NegativeRateMultiplierClampedToZero(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -2169,9 +2615,14 @@ func TestCalculateCostUnified_NegativeRateMultiplierClampedToZero(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.Greater(t, cost.TotalCost, 0.0)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 }
 
+// TestCalculateCostUnified_BillingModeFieldFilled supplies a resolver for
+// ordinary catalogued fixture token usage. The successful result must report
+// token mode, exposing resolved dispatch metadata alongside calculation
+// amounts.
 func TestCalculateCostUnified_BillingModeFieldFilled(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
@@ -2187,11 +2638,17 @@ func TestCalculateCostUnified_BillingModeFieldFilled(t *testing.T) {
 	require.Equal(t, "token", cost.BillingMode)
 }
 
+// TestCalculateCostUnified_UsesPreResolvedPricing supplies request-mode
+// pricing while the ordinary fixture model has token rates. Calculation must
+// reuse the supplied selection, charging two request units and reporting
+// per-request mode.
 func TestCalculateCostUnified_UsesPreResolvedPricing(t *testing.T) {
 	bs := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, bs)
 
-	// Pre-resolve with per_request mode to verify it's used instead of re-resolving
+	// Supply request-mode resolution for a catalog-token model. This fixes the
+	// selected funding unit for the call and makes an accidental second
+	// resolution observable in its result.
 	preResolved := &billingpricing.ResolvedPricing{
 		Mode:                   routing.BillingModePerRequest,
 		DefaultPerRequestPrice: 0.07,
@@ -2209,13 +2666,15 @@ func TestCalculateCostUnified_UsesPreResolvedPricing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cost)
 
-	// 2 * $0.07 = $0.14
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, 0.14, cost.TotalCost, 1e-10)
 	require.Equal(t, string(routing.BillingModePerRequest), cost.BillingMode)
 }
 
-// TestEmptyCatalogNeverRecreatesHistoricalPrices checks all historical fixture models remain unpriced without a
-// catalog.
+// TestEmptyCatalogNeverRecreatesHistoricalPrices constructs a production
+// calculator with no catalog and iterates historical fixture names. Every
+// lookup must remain unavailable, and each default display must report
+// unpriced instead of reconstructing fixture rates.
 func TestEmptyCatalogNeverRecreatesHistoricalPrices(t *testing.T) {
 	calculator := billing.NewCalculator(nil, billing.CalculatorOptions{})
 	for model := range testkit.HistoricalPrices() {
@@ -2226,6 +2685,9 @@ func TestEmptyCatalogNeverRecreatesHistoricalPrices(t *testing.T) {
 	}
 }
 
+// TestCalculateSearchCost checks nonpositive calls, missing/zero rates and a
+// supplied USD-per-thousand amount. Positive usage must produce the asserted
+// base and scaled actual totals, while those nonbillable inputs return zero.
 func TestCalculateSearchCost(t *testing.T) {
 	t.Parallel()
 	s := testkit.Calculator(nil, map[string]*billingpricing.ModelPricing{})
@@ -2234,18 +2696,28 @@ func TestCalculateSearchCost(t *testing.T) {
 	require.Zero(t, s.CalculateSearchCost(5, nil, 1).ActualCost)
 	// An explicit zero price means free usage.
 	require.Equal(t, 0.0, s.CalculateSearchCost(5, floatPtr(0), 1).ActualCost)
+	// The configured search amount is USD per thousand calls, so one hundred
+	// calls consume one tenth before the final user factor applies.
 	price := 10.0
 	cost := s.CalculateSearchCost(100, &price, 1.5)
-	// The charge is 10 / 1000 * 100 * 1.5 = 1.5.
+	// Allow float residue after converting the thousand-call price unit.
 	require.InDelta(t, 1.0, cost.TotalCost, 1e-9)
 	require.InDelta(t, 1.5, cost.ActualCost, 1e-9)
 }
 
+// TestCalculateAudioCost supplies realtime minutes, TTS million-character
+// units and STT hours with configured prices. Each recognized mode must
+// produce its asserted cost, while unknown modes and missing/explicit-zero
+// rates return zero.
 func TestCalculateAudioCost(t *testing.T) {
 	t.Parallel()
 	s := testkit.Calculator(nil, map[string]*billingpricing.ModelPricing{})
+	// Supply realtime rates per minute, TTS per million characters and STT per
+	// hour. Each later quantity is already in its matching unit, keeping those
+	// operation bases distinct.
 	rt, tts, stt := 0.10, 15.0, 0.50
 	cfg := &billingpricing.AudioPriceConfig{RealtimePerMin: &rt, TTSPerMChars: &tts, STTPerHour: &stt}
+	// Allow float residue in the separately converted operation-unit charges.
 	require.InDelta(t, 0.20, s.CalculateAudioCost("realtime", 2, cfg, 1).ActualCost, 1e-9)
 	require.InDelta(t, 1.5, s.CalculateAudioCost("tts", 0.1, cfg, 1).ActualCost, 1e-9)
 	require.InDelta(t, 0.25, s.CalculateAudioCost("stt", 0.5, cfg, 1).ActualCost, 1e-9)
@@ -2259,7 +2731,9 @@ func TestCalculateAudioCost(t *testing.T) {
 	require.Equal(t, 0.0, s.CalculateAudioCost("realtime", 1, &billingpricing.AudioPriceConfig{RealtimePerMin: &zero}, 1).ActualCost)
 }
 
-// TestCalculateImageCost_DefaultPricing checks per-image catalog rates without group overrides.
+// TestCalculateImageCost_DefaultPricing supplies explicit catalog image-size
+// amounts for a full model. One and three 2K images must use the supplied
+// 0.201 USD unit amount in the checked totals.
 func TestCalculateImageCost_DefaultPricing(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{}) // Use the full model name's catalog entry.
 
@@ -2268,6 +2742,7 @@ func TestCalculateImageCost_DefaultPricing(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)
 	require.InDelta(t, 0.201, cost.ActualCost, 0.0001)
 
@@ -2278,6 +2753,9 @@ func TestCalculateImageCost_DefaultPricing(t *testing.T) {
 	require.InDelta(t, 0.603, cost.TotalCost, 0.0001)
 }
 
+// TestCalculateImageCost_NormalizesInvalidSizeTo2K requests empty, auto and
+// unrecognized size labels from a catalog image fixture. Each must select 2K
+// and charge its supplied rate for two images.
 func TestCalculateImageCost_NormalizesInvalidSizeTo2K(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2287,13 +2765,16 @@ func TestCalculateImageCost_NormalizesInvalidSizeTo2K(t *testing.T) {
 			if mediaErr != nil {
 				t.Fatal(mediaErr)
 			}
+			// Allow float residue in the selected media-unit charge comparisons.
 			require.InDelta(t, 0.402, cost.TotalCost, 0.0001)
 			require.InDelta(t, 0.402, cost.ActualCost, 0.0001)
 		})
 	}
 }
 
-// TestCalculateImageCost_Explicit4KPrice checks the catalog's 4K per-image rate.
+// TestCalculateImageCost_Explicit4KPrice queries one 4K image using an
+// explicit catalog size table. Total cost must equal that fixture's 0.268 USD
+// amount, protecting size-specific unit selection.
 func TestCalculateImageCost_Explicit4KPrice(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2302,10 +2783,13 @@ func TestCalculateImageCost_Explicit4KPrice(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
+	// Allow float residue in the selected media-unit charge comparisons.
 	require.InDelta(t, 0.268, cost.TotalCost, 0.0001)
 }
 
-// TestCalculateImageCost_RateMultiplier checks that image charges apply the group multiplier.
+// TestCalculateImageCost_RateMultiplier combines image count and user factors
+// on an explicit catalog size table. Base totals must follow image quantity,
+// while actual totals apply each supplied factor afterward.
 func TestCalculateImageCost_RateMultiplier(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2313,6 +2797,7 @@ func TestCalculateImageCost_RateMultiplier(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)   // TotalCost uses the 2K unit price before the group multiplier.
 	require.InDelta(t, 0.3015, cost.ActualCost, 0.0001) // ActualCost = 0.201 * 1.5
 
@@ -2324,7 +2809,9 @@ func TestCalculateImageCost_RateMultiplier(t *testing.T) {
 	require.InDelta(t, 0.804, cost.ActualCost, 0.0001)
 }
 
-// TestCalculateImageCost_ZeroCount checks that no images produce zero cost.
+// TestCalculateImageCost_ZeroCount supplies a priced catalog model but
+// requests zero images. Calculation must succeed with zero base and actual
+// amounts, keeping quantity handling separate from fixture availability.
 func TestCalculateImageCost_ZeroCount(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2336,7 +2823,9 @@ func TestCalculateImageCost_ZeroCount(t *testing.T) {
 	require.Equal(t, 0.0, cost.ActualCost)
 }
 
-// TestCalculateImageCost_NegativeCount checks that negative counts produce zero cost.
+// TestCalculateImageCost_NegativeCount supplies a priced catalog model with
+// negative image quantity. Calculation must succeed with zero base and actual
+// amounts, retaining the calculator's nonpositive-count result.
 func TestCalculateImageCost_NegativeCount(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2348,7 +2837,9 @@ func TestCalculateImageCost_NegativeCount(t *testing.T) {
 	require.Equal(t, 0.0, cost.ActualCost)
 }
 
-// TestCalculateImageCost_ZeroRateMultiplier checks that a zero multiplier produces zero image charges.
+// TestCalculateImageCost_ZeroRateMultiplier requests a priced image with zero
+// user factor. The base amount must retain its catalog size rate while the
+// actual user charge remains zero.
 func TestCalculateImageCost_ZeroRateMultiplier(t *testing.T) {
 	svc := testkit.Calculator(newCatalogFixture(catalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{"gemini-3-pro-image": {CatalogRules: billingpricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.134, "2K": 0.201, "4K": 0.268}}, OutputCostPerImage: 0.134, ImagePricePresent: true, Mode: "image_generation", TokenPricingAbsent: true}}}), map[string]*billingpricing.ModelPricing{})
 
@@ -2356,11 +2847,14 @@ func TestCalculateImageCost_ZeroRateMultiplier(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.201, cost.TotalCost, 0.0001)
 	require.InDelta(t, 0.0, cost.ActualCost, 1e-10)
 }
 
-// TestGetDefaultImagePrice_UnknownModel checks that absent catalog prices return the missing-price error.
+// TestGetDefaultImagePrice_UnknownModel queries supported sizes for a full
+// model absent from the default historical/media fixture. Each positive-count
+// calculation must return nil cost with the shared pricing-unavailable error.
 func TestGetDefaultImagePrice_UnknownModel(t *testing.T) {
 	svc := testkit.Calculator(nil, nil)
 	for _, size := range []string{"1K", "2K", "4K"} {
@@ -2370,6 +2864,10 @@ func TestGetDefaultImagePrice_UnknownModel(t *testing.T) {
 	}
 }
 
+// TestCalculateCostUnifiedAppliesPricingTimeMultiplierToTokenBuckets supplies
+// a UTC instant matching the configured Shanghai morning schedule. Both token
+// buckets must receive its doubled factor before the final tripled user
+// charge.
 func TestCalculateCostUnifiedAppliesPricingTimeMultiplierToTokenBuckets(t *testing.T) {
 	groupID := int64(71)
 	pricing := &routing.ModelPricingEntry{
@@ -2395,16 +2893,23 @@ func TestCalculateCostUnifiedAppliesPricingTimeMultiplierToTokenBuckets(t *testi
 		GroupID:        &groupID,
 		Tokens:         billingpricing.UsageTokens{InputTokens: 100, OutputTokens: 10},
 		RateMultiplier: 3,
-		PricingAt:      time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC),
-		Resolver:       resolver,
-		Resolved:       resolved,
+		// The fixture instant is 09:00 in the configured Shanghai zone, placing this
+		// call at the schedule's inclusive start for the selected billing mode.
+		PricingAt: time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC),
+		Resolver:  resolver,
+		Resolved:  resolved,
 	})
 	require.NoError(t, err)
 	want := (100*5e-6 + 10*15e-6) * 2
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, want, cost.TotalCost, 1e-12)
 	require.InDelta(t, want*3, cost.ActualCost, 1e-12)
 }
 
+// TestCalculateCostUnifiedDoesNotApplyConfigTimeMultiplierToPerRequest
+// supplies that same schedule instant with request-mode pricing. Three units
+// must retain their ordinary request total and doubled user charge despite the
+// token-only time rule.
 func TestCalculateCostUnifiedDoesNotApplyConfigTimeMultiplierToPerRequest(t *testing.T) {
 	groupID := int64(72)
 	pricing := &routing.ModelPricingEntry{
@@ -2425,15 +2930,22 @@ func TestCalculateCostUnifiedDoesNotApplyConfigTimeMultiplierToPerRequest(t *tes
 		GroupID:        &groupID,
 		RequestCount:   3,
 		RateMultiplier: 2,
-		PricingAt:      time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC),
-		Resolver:       resolver,
-		Resolved:       resolved,
+		// The fixture instant is 09:00 in the configured Shanghai zone, placing this
+		// call at the schedule's inclusive start for the selected billing mode.
+		PricingAt: time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC),
+		Resolver:  resolver,
+		Resolved:  resolved,
 	})
 	require.NoError(t, err)
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 0.15, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.30, cost.ActualCost, 1e-12)
 }
 
+// TestDisplayPricingCarriesConfigTimePricingAndMaxReasoningMultiplier supplies
+// schedule metadata, a reasoning factor and a doubled user rate. Displayed
+// base input must reflect the user rate, while schedule/factor metadata remain
+// separate and the schedule is a different object.
 func TestDisplayPricingCarriesConfigTimePricingAndMaxReasoningMultiplier(t *testing.T) {
 	maxMultiplier := 1.5
 	pricing := &routing.ModelPricingEntry{
@@ -2459,7 +2971,10 @@ func TestDisplayPricingCarriesConfigTimePricingAndMaxReasoningMultiplier(t *test
 
 	display := service.DisplayPricingWithResolvedMultipliers("claude-sonnet-4", 2, resolved)
 
-	// Display base rates at 1x; expose time schedules and Max multipliers separately for the UI.
+	// Apply the supplied user factor to base display amounts while leaving
+	// schedule and reasoning factors as metadata. Their later time/effort
+	// selections do not inflate this default displayed bucket.
+	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, 10e-6, display.InputPricePerToken, 1e-15)
 	require.NotNil(t, display.MaxReasoningEffortMultiplier)
 	require.Equal(t, 1.5, *display.MaxReasoningEffortMultiplier)
@@ -2467,6 +2982,9 @@ func TestDisplayPricingCarriesConfigTimePricingAndMaxReasoningMultiplier(t *test
 	require.NotSame(t, pricing.TimePricing, display.TimePricing)
 }
 
+// TestDisplayPricingOmitsNeutralModifiers supplies a unit reasoning factor and
+// an overlapping time schedule. Display must omit both modifier fields,
+// matching their neutral or invalid contribution to the selected price view.
 func TestDisplayPricingOmitsNeutralModifiers(t *testing.T) {
 	neutral := 1.0
 	resolved := &billingpricing.ResolvedPricing{
@@ -2497,6 +3015,10 @@ func TestDisplayPricingOmitsNeutralModifiers(t *testing.T) {
 	require.Nil(t, display.TimePricing)
 }
 
+// TestCalculateCostUnified_UsesContinuousMediaUnits supplies one and a half
+// usage units to a fixed request-price card. The base total must use the
+// fractional quantity and supplied unit rate rather than an integer request
+// default.
 func TestCalculateCostUnified_UsesContinuousMediaUnits(t *testing.T) {
 	bs := testkit.ResolverCalculator()
 	price := 0.08
@@ -2510,28 +3032,45 @@ func TestCalculateCostUnified_UsesContinuousMediaUnits(t *testing.T) {
 		UsageUnits: 1.5, RateMultiplier: 1, Resolver: r,
 	})
 	require.NoError(t, err)
+	// Allow float arithmetic residue in these calculated component amounts.
 	require.InDelta(t, 0.12, cost.TotalCost, 1e-12)
 }
 
+// newTestCalculator builds the baseline historical/media fixture calculator
+// through newCalculator(nil). Construction starts no remote refresh work; each
+// call obtains fixture data for the calculation scenarios that need registered
+// prices.
 func newTestCalculator() *billing.Calculator {
 	return newCalculator(nil)
 }
 
+// newLadderCalculator builds a calculator from the OpenAI above-threshold JSON
+// fixture. Decoder and price validation failures terminate the test through
+// its helper path; ordinary calculation then uses that parsed catalog.
 func newLadderCalculator(t *testing.T) *billing.Calculator {
 	t.Helper()
 	return newCalculator(newStubCatalogFromJSON(t, openAILadderCatalogJSON))
 }
 
-// newTestPricingConfigServiceWithCache constructs a pricing service from the supplied cache snapshot.
+// newTestPricingConfigServiceWithCache writes current LoadedAt to a nonnil
+// caller fixture and constructs a configuration service. ModelConfigFromData
+// rebuilds rows without reading LoadedAt and can populate GroupPolicies; this
+// timestamp does not seed the production cache.
 func newTestPricingConfigServiceWithCache(t *testing.T, cache *routingtestkit.ModelConfigData) *routing.PricingConfigService {
 	t.Helper()
 
+	// LoadedAt is fixture bookkeeping here: ModelConfigFromData reconstructs
+	// configuration rows without reading it. The service's first cache load
+	// remains independent of this caller timestamp assignment.
 	cache.LoadedAt = time.Now()
 	cs := routingtestkit.ModelConfigFromData(cache)
 	return cs
 }
 
-// newStubCatalogFromJSON parses a catalog fixture through the production decoder and validator.
+// newStubCatalogFromJSON decodes and validates the supplied catalog-entry JSON
+// before constructing a snapshot service. Require failures terminate the test
+// helper; successful callers receive the parsed prices without starting a
+// remote catalog worker.
 func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	t.Helper()
 	raw, err := billingpricing.DecodeCatalogEntries([]byte(body))
@@ -2543,4 +3082,6 @@ func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	return service
 }
 
+// floatPtr returns independently addressed float storage for optional numeric
+// price fixtures.
 func floatPtr(v float64) *float64 { return &v }

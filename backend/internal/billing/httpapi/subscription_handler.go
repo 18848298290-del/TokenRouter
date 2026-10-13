@@ -12,47 +12,83 @@ import (
 	middleware2 "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// SubscriptionSummaryItem represents a subscription item in summary.
+// User subscription views derive their recipient from authentication rather
+// than a supplied query ID. Lists enrich group labels and resolve plan display
+// text, while progress pairs a listed view with a separate service read and
+// omits individual progress failures. The summary counts active views and
+// totals their monthly usage, so it is a window report rather than a
+// lifetime-consumption measure.
+//
+// Self-revocation parses a positive target ID and delegates
+// ownership/highest-quota validation and replacement-key rebinding to the
+// service. Handler replies keep the service result's revoked/replacement IDs
+// and rebound count together. Missing identity, malformed targets and service
+// failures follow their existing HTTP response paths, with authorization
+// middleware installed by the route owner.
+
+// SubscriptionSummaryItem carries one active-view grant's window amounts and
+// optional expiry text.
 type SubscriptionSummaryItem struct {
-	ID              int64   `json:"id"`
-	PlanID          int64   `json:"plan_id"`
-	PlanName        string  `json:"plan_name"`
-	Status          string  `json:"status"`
-	DailyUsedUSD    float64 `json:"daily_used_usd,omitempty"`
-	DailyLimitUSD   float64 `json:"daily_limit_usd,omitempty"`
-	WeeklyUsedUSD   float64 `json:"weekly_used_usd,omitempty"`
-	WeeklyLimitUSD  float64 `json:"weekly_limit_usd,omitempty"`
-	MonthlyUsedUSD  float64 `json:"monthly_used_usd,omitempty"`
-	MonthlyLimitUSD float64 `json:"monthly_limit_usd,omitempty"`
-	ExpiresAt       *string `json:"expires_at,omitempty"`
+	ID       int64  `json:"id"`        // listed grant record identifier
+	PlanID   int64  `json:"plan_id"`   // grant source plan identifier
+	PlanName string `json:"plan_name"` // localized current plan name
+	Status   string `json:"status"`    // listed subscription status label
+	// DailyUsedUSD, DailyLimitUSD, WeeklyUsedUSD, WeeklyLimitUSD, MonthlyUsedUSD
+	// and MonthlyLimitUSD retain each period's listed amounts. Nil source limits
+	// become zero, and zero values are omitted by summary JSON tags.
+	DailyUsedUSD    float64 `json:"daily_used_usd,omitempty"`    // USD
+	DailyLimitUSD   float64 `json:"daily_limit_usd,omitempty"`   // USD
+	WeeklyUsedUSD   float64 `json:"weekly_used_usd,omitempty"`   // USD
+	WeeklyLimitUSD  float64 `json:"weekly_limit_usd,omitempty"`  // USD
+	MonthlyUsedUSD  float64 `json:"monthly_used_usd,omitempty"`  // USD
+	MonthlyLimitUSD float64 `json:"monthly_limit_usd,omitempty"` // USD
+	// ExpiresAt is supplied for a nonzero source expiry using the
+	// seconds-and-offset timestamp layout. A zero source time leaves this
+	// optional string absent in summary JSON.
+	ExpiresAt *string `json:"expires_at,omitempty"` // optional offset-bearing expiry text
 }
 
-// SubscriptionProgressInfo represents subscription with progress info.
+// SubscriptionProgressInfo pairs the listed grant view with separately fetched
+// quota progress.
 type SubscriptionProgressInfo struct {
-	Subscription *UserSubscription             `json:"subscription"`
-	Progress     *billing.SubscriptionProgress `json:"progress"`
+	// Subscription and Progress identify the same grant but come from separate
+	// reads. GetProgress omits the pair if progress lookup fails and localizes
+	// only the listed subscription view here.
+	Subscription *UserSubscription             `json:"subscription"` // localized listed subscription view
+	Progress     *billing.SubscriptionProgress `json:"progress"`     // separately fetched quota progress
 }
 
-// RevokeSubscriptionResponse reports the revoked subscription, its replacement, and the number of rebound Keys.
+// RevokeSubscriptionResponse identifies the revoked grant, replacement and
+// rebound subscription-funded Keys.
 type RevokeSubscriptionResponse struct {
-	RevokedSubscriptionID     int64  `json:"revoked_subscription_id"`
-	ReplacementSubscriptionID *int64 `json:"replacement_subscription_id"`
-	ReboundAPIKeyCount        int    `json:"rebound_api_key_count"`
+	RevokedSubscriptionID int64 `json:"revoked_subscription_id"` // revoked grant record identifier
+	// ReplacementSubscriptionID and ReboundAPIKeyCount come from the completed
+	// revocation operation. Without a selected replacement, the ID is nil and the
+	// count stays zero; a replacement may still rebind zero Keys.
+	ReplacementSubscriptionID *int64 `json:"replacement_subscription_id"` // optional replacement grant identifier
+	ReboundAPIKeyCount        int    `json:"rebound_api_key_count"`       // reported subscription key rebind count
 }
 
-// SubscriptionHandler handles user subscription operations.
+// SubscriptionHandler exposes current-user grant lists, window displays and
+// quota-conditioned revocation.
 type SubscriptionHandler struct {
-	subscriptionService *billing.SubscriptionService
+	subscriptionService *billing.SubscriptionService // current-user subscription operation service
 }
 
-// NewSubscriptionHandler creates a new user subscription handler.
+// NewSubscriptionHandler binds a caller-supplied subscription service without
+// reading grants or starting work. The caller mounts initialized handlers with
+// authentication middleware; each request derives the current recipient from
+// that context.
 func NewSubscriptionHandler(subscriptionService *billing.SubscriptionService) *SubscriptionHandler {
 	return &SubscriptionHandler{
 		subscriptionService: subscriptionService,
 	}
 }
 
-// List handles listing current user's subscriptions
+// List returns the authenticated user's subscription views and enriches plan
+// group labels before mapping. Missing identity yields unauthorized; service
+// errors use shared mapping, and successful plan text is localized using the
+// request context language.
 // GET /api/v1/subscriptions
 func (h *SubscriptionHandler) List(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -75,7 +111,10 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// GetActive handles getting current user's active subscriptions
+// GetActive returns the authenticated user's service-selected active grant
+// views with enriched plan groups. Missing identity yields unauthorized;
+// service errors use shared mapping, and the user DTO resolves
+// request-language plan display text.
 // GET /api/v1/subscriptions/active
 func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -98,7 +137,16 @@ func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// GetProgress handles getting subscription progress for current user
+// GetProgress returns listed active grant views paired with individually
+// fetched progress for the authenticated user. Missing identity yields
+// unauthorized, and failure of the initial list uses the shared error
+// response. Individual progress failures omit that item while other grants
+// remain in the result.
+//
+// The list view and progress query are separate observations joined by
+// subscription ID, so the pair need not represent one atomic stored snapshot.
+// The subscription portion uses request-language mapping, while the service
+// constructs progress from its own current read.
 // GET /api/v1/subscriptions/progress
 func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -118,7 +166,9 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 		sub := &subscriptions[i]
 		progress, err := h.subscriptionService.GetSubscriptionProgress(c.Request.Context(), sub.ID)
 		if err != nil {
-			// Skip subscriptions with errors
+			// A failed progress read omits this pair while keeping other successfully
+			// read grant/progress items, so one unavailable detail does not fail the
+			// complete active list.
 			continue
 		}
 		result = append(result, SubscriptionProgressInfo{
@@ -130,7 +180,15 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// GetSummary handles getting a summary of current user's subscription status
+// GetSummary returns active-view count, per-grant quota data and the sum of
+// monthly usage for the authenticated user. Missing identity or list failure
+// returns before construction; nil limits map to zero and expiry text is
+// omitted for a zero timestamp.
+//
+// The total uses monthly usage alone, not an addition of day/week/month
+// observations that can cover the same charge. It is this active-view monthly
+// sum rather than lifetime user consumption. Plan names use request-language
+// localization, and each item retains the listed grant's amounts and status.
 // GET /api/v1/subscriptions/summary
 func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -166,20 +224,26 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 		}
 
 		if !sub.ExpiresAt.IsZero() {
+			// Emit seconds precision while retaining the source time's zone offset.
 			formatted := sub.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
 			item.ExpiresAt = &formatted
 		}
 
-		// The summary's total_used field sums monthly usage across active subscriptions.
+		// Monthly usage is this summary's reporting bucket; summing the daily and
+		// weekly observations too would combine overlapping period amounts for the
+		// same grant.
 		totalUsed += sub.MonthlyUsageUSD
 
 		items = append(items, item)
 	}
 
 	summary := struct {
-		ActiveCount   int                       `json:"active_count"`
-		TotalUsedUSD  float64                   `json:"total_used_usd"`
-		Subscriptions []SubscriptionSummaryItem `json:"subscriptions"`
+		// ActiveCount, TotalUsedUSD and Subscriptions describe this one active-view
+		// list. The count includes every listed grant, and the total adds only their
+		// monthly usage amounts.
+		ActiveCount   int                       `json:"active_count"`   // listed active grant count
+		TotalUsedUSD  float64                   `json:"total_used_usd"` // USD
+		Subscriptions []SubscriptionSummaryItem `json:"subscriptions"`  // constructed grant summary items
 	}{
 		ActiveCount:   len(subscriptions),
 		TotalUsedUSD:  totalUsed,
@@ -189,7 +253,10 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 	response.Success(c, summary)
 }
 
-// Revoke revokes the current user's subscription when its highest configured quota is exhausted.
+// Revoke parses a positive subscription ID and asks the service to revoke the
+// authenticated user's highest-quota-exhausted active grant. Missing identity
+// or invalid ID stops the request; the service owns locked eligibility, chain
+// shifts and key rebinding, and success returns its replacement/count result.
 // POST /api/v1/subscriptions/:id/revoke
 func (h *SubscriptionHandler) Revoke(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -222,6 +289,9 @@ func (h *SubscriptionHandler) Revoke(c *gin.Context) {
 	})
 }
 
+// valueOrZero returns a supplied quota amount unchanged and uses zero for an
+// absent pointer. Summary JSON omits zero amounts, so this mapping merges
+// missing and zero limits while retaining other supplied numeric values.
 func valueOrZero(value *float64) float64 {
 	if value == nil {
 		return 0

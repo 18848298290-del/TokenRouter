@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// TestRedeemService_BatchUpdate_PartialFields submits status, expiry and notes
+// with a repeated target ID. It checks deduplicated IDs, the reported count
+// and the captured supplied fields while core-change pointers remain absent.
 func TestRedeemService_BatchUpdate_PartialFields(t *testing.T) {
 	status := billing.StatusDisabled
 	notes := "maintenance window"
@@ -33,6 +36,9 @@ func TestRedeemService_BatchUpdate_PartialFields(t *testing.T) {
 	require.Equal(t, []int64{1, 2}, repo.batchUpdateIDs)
 	require.Equal(t, &status, repo.batchUpdateFields.Status)
 	require.True(t, repo.batchUpdateFields.ExpiresAt.Set)
+	// The request supplies this expiry pointer directly; the one-second
+	// comparison checks the captured time with the test's existing timestamp
+	// tolerance.
 	require.WithinDuration(t, expiresAt, *repo.batchUpdateFields.ExpiresAt.Value, time.Second)
 	require.Equal(t, &notes, repo.batchUpdateFields.Notes)
 	require.Nil(t, repo.batchUpdateFields.Type)
@@ -41,6 +47,9 @@ func TestRedeemService_BatchUpdate_PartialFields(t *testing.T) {
 	require.Nil(t, repo.batchUpdateFields.PlanID)
 }
 
+// TestRedeemService_BatchUpdate_RejectsInvalidID includes zero among requested
+// IDs with an ordinary notes change. It checks a bad-request error, nil result
+// and no repository batch call.
 func TestRedeemService_BatchUpdate_RejectsInvalidID(t *testing.T) {
 	repo := &redeemRepoStub{}
 	svc := billing.NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil, billing.RedeemRuntime{})
@@ -57,6 +66,9 @@ func TestRedeemService_BatchUpdate_RejectsInvalidID(t *testing.T) {
 	require.False(t, repo.batchUpdateCalled)
 }
 
+// TestRedeemService_BatchUpdate_RejectsCoreFields attempts to replace a
+// credential value through the batch endpoint. It checks rejection as a bad
+// request before the repository batch update is invoked.
 func TestRedeemService_BatchUpdate_RejectsCoreFields(t *testing.T) {
 	repo := &redeemRepoStub{}
 	svc := billing.NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil, billing.RedeemRuntime{})

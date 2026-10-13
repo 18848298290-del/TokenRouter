@@ -13,16 +13,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
+// RedeemCacheSuite exercises attempt counters and code exclusion against the
+// Redis container fixture.
 type RedeemCacheSuite struct {
-	rediscontainer.Suite
-	cache *RedeemCache
+	// Suite owns Redis fixture setup, context and cleanup for these cases.
+	// Embedded methods remain available to establish isolated clients and assert
+	// TTL bounds.
+	rediscontainer.Suite // inherited Redis fixture lifecycle
+	// cache is rebound after the inherited per-test setup using that fixture's
+	// Redis client. Its lifetime ends with the owning suite test.
+	cache *RedeemCache // current test redemption cache
 }
 
+// SetupTest invokes the embedded Redis fixture setup and binds a redemption
+// cache to its RDB. The suite owns fixture cleanup, and the cache reuses that
+// client for the current test's counter and lock operations.
 func (s *RedeemCacheSuite) SetupTest() {
 	s.Suite.SetupTest()
 	s.cache = NewRedeemCache(s.RDB)
 }
 
+// TestGetRedeemAttemptCount_Missing reads an absent user counter through the
+// Redis fixture. It checks the cache returns zero with no error for that
+// missing key.
 func (s *RedeemCacheSuite) TestGetRedeemAttemptCount_Missing() {
 	missingUserID := int64(99999)
 	count, err := s.cache.GetRedeemAttemptCount(s.Ctx, missingUserID)
@@ -30,6 +43,9 @@ func (s *RedeemCacheSuite) TestGetRedeemAttemptCount_Missing() {
 	require.Equal(s.T(), 0, count, "expected zero count for missing key")
 }
 
+// TestIncrementAndGetRedeemAttemptCount records one attempt and reads its
+// stored counter. It checks count one and a positive remaining TTL bounded by
+// twenty-four hours.
 func (s *RedeemCacheSuite) TestIncrementAndGetRedeemAttemptCount() {
 	userID := int64(1)
 	key := fmt.Sprintf("%s%d", "redeem:ratelimit:", userID)
@@ -44,6 +60,9 @@ func (s *RedeemCacheSuite) TestIncrementAndGetRedeemAttemptCount() {
 	s.AssertTTLWithin(ttl, 1*time.Second, (24 * time.Hour))
 }
 
+// TestMultipleIncrements records three attempts for one user through the Redis
+// fixture. It checks the saved counter reaches three after those sequential
+// increments.
 func (s *RedeemCacheSuite) TestMultipleIncrements() {
 	userID := int64(2)
 
@@ -56,6 +75,9 @@ func (s *RedeemCacheSuite) TestMultipleIncrements() {
 	require.Equal(s.T(), 3, count, "count after 3 increments")
 }
 
+// TestAcquireAndReleaseRedeemLock acquires a code key, attempts a second
+// acquisition, releases it and acquires again. It checks the held key excludes
+// the second acquisition and release permits the next.
 func (s *RedeemCacheSuite) TestAcquireAndReleaseRedeemLock() {
 	ok, err := s.cache.AcquireRedeemLock(s.Ctx, "CODE", 10*time.Second)
 	require.NoError(s.T(), err, "AcquireRedeemLock")
@@ -75,6 +97,9 @@ func (s *RedeemCacheSuite) TestAcquireAndReleaseRedeemLock() {
 	require.True(s.T(), ok)
 }
 
+// TestAcquireRedeemLock_TTL acquires a code key with a fifteen-second
+// lifetime. It checks acquisition and a positive Redis TTL no larger than the
+// supplied duration.
 func (s *RedeemCacheSuite) TestAcquireRedeemLock_TTL() {
 	lockKey := "redeem:lock:" + "CODE2"
 	lockTTL := 15 * time.Second
@@ -88,6 +113,9 @@ func (s *RedeemCacheSuite) TestAcquireRedeemLock_TTL() {
 	s.AssertTTLWithin(ttl, 1*time.Second, lockTTL)
 }
 
+// TestReleaseRedeemLock_Idempotent deletes a missing key, then acquires and
+// deletes another key twice. It checks those sequential releases succeed in
+// the exercised absence/release states.
 func (s *RedeemCacheSuite) TestReleaseRedeemLock_Idempotent() {
 	// Release a lock that doesn't exist should not error
 	require.NoError(s.T(), s.cache.ReleaseRedeemLock(s.Ctx, "NONEXISTENT"))
@@ -100,6 +128,9 @@ func (s *RedeemCacheSuite) TestReleaseRedeemLock_Idempotent() {
 	require.NoError(s.T(), s.cache.ReleaseRedeemLock(s.Ctx, "IDEMPOTENT"), "second release should be idempotent")
 }
 
+// TestRedeemCacheSuite runs the Redis-backed redemption suite with its
+// inherited fixture lifecycle. It dispatches the counter, TTL and sequential
+// lock cases against the fixture server.
 func TestRedeemCacheSuite(t *testing.T) {
 	suite.Run(t, new(RedeemCacheSuite))
 }

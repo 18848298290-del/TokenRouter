@@ -8,19 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUsageBillingCommandQuantizesAPIKeyCountersIdentically covers the rounding discrepancy in #5229:
-//
-//	balance    = balance - $1
-//	quota_used = quota_used + $1
-//
-// Both columns use NUMERIC(20,8), with half-away-from-zero rounding of each result.
-// When the ninth decimal is a tie, subtraction and addition can round in opposite directions,
-// making the balance and quota deltas differ by 1e-8.
-//
-// Quantizing the amount to eight decimals before either operation prevents that discrepancy.
+// Request fingerprints use raw captured amounts, while monetary counters
+// require eight-decimal storage precision. These scenarios isolate tie
+// rounding, sign symmetry, nonfinite pass-through and normalization order,
+// with decimal arithmetic modeling repeated balance and quota reconciliation.
+
+// TestUsageBillingCommandQuantizesAPIKeyCountersIdentically supplies the same
+// ninth-decimal tie to total and rolling Key counters. Normalize must return
+// equal amounts with at most eight decimal places; this test performs no
+// balance SQL.
 func TestUsageBillingCommandQuantizesAPIKeyCountersIdentically(t *testing.T) {
-	// 10 input tokens * 0.00000125 + 5 output tokens * 0.00001000 = 0.0000625.
-	// 0.0000625 * 1.25 (group rate) = 0.000078125.
+	// A charge of 0.0000625 USD scaled by 1.25 reaches this ninth-decimal tie,
+	// allowing counter precision to be checked independently of token
+	// calculation.
 	const actualCost = 0.000078125
 
 	cmd := &UsageBillingCommand{
@@ -39,11 +39,14 @@ func TestUsageBillingCommandQuantizesAPIKeyCountersIdentically(t *testing.T) {
 		"金额超过 NUMERIC(20,8) 刻度时 PostgreSQL 仍会在存储阶段舍入")
 }
 
-// TestQuantizeUsageBillingAmountBoundaries covers rounding around a ninth-decimal tie.
+// TestQuantizeUsageBillingAmountBoundaries samples values around an
+// eight-decimal rounding tie and a longer decimal tail. Results must match
+// decimal rounding, fit the stored scale and differ by at most half a stored
+// unit.
 func TestQuantizeUsageBillingAmountBoundaries(t *testing.T) {
 	cases := []struct {
-		name string
-		in   float64
+		name string  // sampled rounding case label
+		in   float64 // raw supplied USD amount
 	}{
 		{"below_half", 0.000078120},
 		{"just_below_half", 0.000078124},
@@ -60,17 +63,26 @@ func TestQuantizeUsageBillingAmountBoundaries(t *testing.T) {
 
 			require.LessOrEqual(t, decimalPlaces(got), int32(UsageBillingMonetaryScale))
 
+			// Compare with the decimal library's rounded float result; discard its
+			// exactness indicator because this API and the tested result both use
+			// float64.
 			want, _ := decimal.NewFromFloat(tc.in).Round(UsageBillingMonetaryScale).Float64()
 			require.Equal(t, want, got)
 
-			// Rounding error cannot exceed half an eight-decimal unit (5e-9).
+			// Half an eight-decimal unit bounds this rounding difference; the assertion
+			// compares the returned float to its original supplied finite amount.
 			require.LessOrEqual(t, math.Abs(got-tc.in), 5e-9)
 		})
 	}
 }
 
-// TestQuantizedAmountsReconcileExactlyOverManyApplications checks exact balance/quota parity after repeated charges.
+// TestQuantizedAmountsReconcileExactlyOverManyApplications repeats a quantized
+// tie charge in decimal arithmetic for four application counts. Computed
+// balance deductions and quota increments must remain equal and retain
+// eight-decimal storage precision.
 func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
+	// Reuse a ninth-decimal tie, so repetition tests reconciliation of the
+	// normalized unit instead of repeated independent result-side rounding.
 	const actualCost = 0.000078125
 
 	unit := decimal.NewFromFloat(QuantizeUsageBillingAmount(actualCost))
@@ -80,7 +92,9 @@ func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
 		balance := decimal.NewFromInt(10000).Sub(total)
 		quotaUsed := total
 
-		// Storing at NUMERIC(20,8) precision leaves both results unchanged.
+		// Model storage precision with decimal Round on both accumulated values.
+		// These exact arithmetic assertions check scale stability without issuing
+		// PostgreSQL updates.
 		require.True(t, balance.Equal(balance.Round(UsageBillingMonetaryScale)),
 			"n=%d 余额结果超出 NUMERIC(20,8) 刻度", n)
 		require.True(t, quotaUsed.Equal(quotaUsed.Round(UsageBillingMonetaryScale)),
@@ -92,8 +106,13 @@ func TestQuantizedAmountsReconcileExactlyOverManyApplications(t *testing.T) {
 	}
 }
 
-// TestNormalizeQuantizesStorageBoundMonetaryFields checks counter rounding while retaining settlement amount precision.
+// TestNormalizeQuantizesStorageBoundMonetaryFields supplies one long-tail
+// amount to all financial fields. The three directly stored counters must fit
+// eight decimals while billable and base amounts retain their supplied
+// precision.
 func TestNormalizeQuantizesStorageBoundMonetaryFields(t *testing.T) {
+	// Choose an amount finer than storage precision to distinguish the counters
+	// that normalize from the billable and base amounts retained for allocation.
 	const raw = 0.0000781234567
 
 	cmd := &UsageBillingCommand{
@@ -120,10 +139,14 @@ func TestNormalizeQuantizesStorageBoundMonetaryFields(t *testing.T) {
 	require.Equal(t, raw, cmd.BaseAmountUSD)
 }
 
-// TestNormalizeKeepsFingerprintDerivedFromRawAmounts checks that fingerprinting precedes quantization.
-// Reversing that order could change the fingerprint on a retry across an upgrade,
-// producing a false fingerprint conflict for the same request ID.
+// TestNormalizeKeepsFingerprintDerivedFromRawAmounts derives the expected
+// digest from a fresh raw tie-valued command before Normalize. The resulting
+// fingerprint must retain that pre-quantization identity for request replay
+// comparison.
 func TestNormalizeKeepsFingerprintDerivedFromRawAmounts(t *testing.T) {
+	// Choose a ninth-decimal tie whose raw and rounded representations differ,
+	// making fingerprint-before-quantization order observable in the expected
+	// digest.
 	const raw = 0.000078125
 
 	newCmd := func() *UsageBillingCommand {
@@ -144,7 +167,9 @@ func TestNormalizeKeepsFingerprintDerivedFromRawAmounts(t *testing.T) {
 	require.Equal(t, expected, cmd.RequestFingerprint)
 }
 
-// TestNormalizePreservesExplicitFingerprint checks that preset fingerprints survive storage-precision rounding.
+// TestNormalizePreservesExplicitFingerprint provides a preset digest alongside
+// a long-tail Key quota amount. Normalize must retain the supplied digest
+// verbatim while still rounding the monetary counter to storage precision.
 func TestNormalizePreservesExplicitFingerprint(t *testing.T) {
 	cmd := &UsageBillingCommand{
 		RequestID:          "req-5229-explicit",
@@ -157,6 +182,9 @@ func TestNormalizePreservesExplicitFingerprint(t *testing.T) {
 	require.LessOrEqual(t, decimalPlaces(cmd.APIKeyQuotaCost), int32(UsageBillingMonetaryScale))
 }
 
+// TestQuantizeUsageBillingAmountPassesThroughNonFinite supplies zero, NaN and
+// both infinities to precision normalization. Zero must remain zero, and the
+// returned nonfinite values must retain their respective classifications.
 func TestQuantizeUsageBillingAmountPassesThroughNonFinite(t *testing.T) {
 	require.Equal(t, 0.0, QuantizeUsageBillingAmount(0))
 	require.True(t, math.IsNaN(QuantizeUsageBillingAmount(math.NaN())))
@@ -164,9 +192,15 @@ func TestQuantizeUsageBillingAmountPassesThroughNonFinite(t *testing.T) {
 	require.True(t, math.IsInf(QuantizeUsageBillingAmount(math.Inf(-1)), -1))
 }
 
-// TestQuantizeUsageBillingAmountHandlesNegativeAmounts checks symmetric half-away-from-zero rounding for negative amounts.
+// TestQuantizeUsageBillingAmountHandlesNegativeAmounts rounds a negative
+// ninth-decimal tie using the decimal reference. Its result must equal that
+// reference and the negated rounded positive amount, protecting
+// half-away-from-zero symmetry.
 func TestQuantizeUsageBillingAmountHandlesNegativeAmounts(t *testing.T) {
 	got := QuantizeUsageBillingAmount(-0.000078125)
+	// Use the decimal library as the finite negative tie reference. Its Float64
+	// exactness indicator is irrelevant to comparing these returned monetary
+	// floats.
 	want, _ := decimal.NewFromFloat(-0.000078125).Round(UsageBillingMonetaryScale).Float64()
 
 	require.Equal(t, want, got)
@@ -174,8 +208,9 @@ func TestQuantizeUsageBillingAmountHandlesNegativeAmounts(t *testing.T) {
 		"正负金额必须对称量化")
 }
 
-// decimalPlaces returns the scale of the float's shortest decimal representation,
-// as used by decimal.NewFromFloat.
+// decimalPlaces reports the negated exponent of a float's shortest decimal
+// representation. The rounding tests use it as a scale check; callers supply
+// finite values suitable for decimal.NewFromFloat.
 func decimalPlaces(v float64) int32 {
 	return -decimal.NewFromFloat(v).Exponent()
 }

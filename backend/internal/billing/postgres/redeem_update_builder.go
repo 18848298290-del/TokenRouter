@@ -5,7 +5,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// redeemUpdateBuilder restores redemption snapshot fields for management updates and registration compensation.
+// Management edits and registration compensation restore the redemption
+// record's supplied fields as one update builder. Optional recipient, usage
+// time, plan and expiry pointers use set-or-clear operations, so a nil
+// snapshot value removes saved data instead of leaving a later value in place.
+
+// redeemUpdateBuilder stages redemption snapshot replacement on the supplied
+// client for a non-nil code. Nil optional pointers clear recipient, usage
+// time, plan or expiry; other fields are assigned from the snapshot. The
+// caller owns authorization, consistency checks and Save/transaction
+// completion.
 func redeemUpdateBuilder(client *dbent.Client, code *billing.RedeemCode) *dbent.RedeemCodeUpdateOne {
 	update := client.RedeemCode.UpdateOneID(code.ID).
 		SetCode(code.Code).
@@ -17,6 +26,9 @@ func redeemUpdateBuilder(client *dbent.Client, code *billing.RedeemCode) *dbent.
 		SetUsedCount(code.UsedCount).
 		SetNotes(code.Notes)
 
+	// Restore every optional snapshot field as set or clear, so compensation does
+	// not retain recipient/time/plan/expiry values absent from the supplied
+	// record.
 	if code.UsedBy != nil {
 		update.SetUsedBy(*code.UsedBy)
 	} else {

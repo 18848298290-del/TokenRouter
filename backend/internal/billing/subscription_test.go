@@ -9,15 +9,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestSubscriptionCalendarBoundaries checks daily resets on local calendar days across DST changes.
+// TestSubscriptionCalendarBoundaries supplies New York's spring and autumn
+// transition dates with stored daily anchors. It checks reset selection and
+// next-midnight display across twenty-three/twenty-five-hour days, including
+// the instant before and at reset.
 func TestSubscriptionCalendarBoundaries(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	calendar := timezone.NewCalendar(location)
 	for _, item := range []struct {
-		name  string
-		day   time.Time
-		hours time.Duration
+		name string // named transition scenario label
+		// day and hours pair each New York transition midnight with its expected
+		// next-midnight elapsed duration. The two fixtures exercise spring's shorter
+		// day and autumn's longer day.
+		day   time.Time     // selected transition date midnight
+		hours time.Duration // expected elapsed calendar-day duration
 	}{
 		{"spring", time.Date(2026, 3, 8, 0, 0, 0, 0, location), 23 * time.Hour},
 		{"autumn", time.Date(2026, 11, 1, 0, 0, 0, 0, location), 25 * time.Hour},
@@ -33,12 +39,17 @@ func TestSubscriptionCalendarBoundaries(t *testing.T) {
 			next := sub.DailyResetTime(calendar)
 			require.NotNil(t, next)
 			require.Equal(t, item.hours, next.Sub(item.day))
+			// The instant before next midnight stays in the earlier calendar day;
+			// equality moves daily maintenance into the new day.
 			require.False(t, sub.NeedsDailyResetAt(next.Add(-time.Nanosecond), calendar))
 			require.True(t, sub.NeedsDailyResetAt(*next, calendar))
 		})
 	}
 }
 
+// TestCalculateSubscriptionRemaining_IgnoresDisabledZeroLimit gives a zero
+// weekly limit with large recorded weekly use. Display remaining quota must
+// use the daily seven-dollar remainder rather than that disabled period.
 func TestCalculateSubscriptionRemaining_IgnoresDisabledZeroLimit(t *testing.T) {
 	sub := &UserSubscription{
 		DailyLimitUSD:   subscriptionLimitPtr(10),
@@ -52,6 +63,9 @@ func TestCalculateSubscriptionRemaining_IgnoresDisabledZeroLimit(t *testing.T) {
 	require.Equal(t, 7.0, SubscriptionRemainingForDisplay(sub))
 }
 
+// TestCalculateSubscriptionRemaining_NoPositiveLimitsReturnsUnlimited supplies
+// zero and absent limits to the display helper. It checks negative one
+// represents entirely unlimited quota instead of an exhausted zero remainder.
 func TestCalculateSubscriptionRemaining_NoPositiveLimitsReturnsUnlimited(t *testing.T) {
 	sub := &UserSubscription{
 		DailyLimitUSD:   subscriptionLimitPtr(0),
@@ -61,12 +75,15 @@ func TestCalculateSubscriptionRemaining_NoPositiveLimitsReturnsUnlimited(t *test
 	require.Equal(t, -1.0, SubscriptionRemainingForDisplay(sub))
 }
 
+// TestUserSubscriptionDaysRemainingAt evaluates expiry before, at and around
+// exact twenty-four-hour multiples from a fixed instant. It checks positive
+// partial days round upward while elapsed lifetimes return zero.
 func TestUserSubscriptionDaysRemainingAt(t *testing.T) {
 	now := time.Date(2026, time.July, 19, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name      string
-		expiresAt time.Time
-		want      int
+		name      string    // named expiry-rounding scenario label
+		expiresAt time.Time // supplied grant expiry instant
+		want      int       // expected upward-rounded day count
 	}{
 		{name: "expired", expiresAt: now.Add(-time.Nanosecond), want: 0},
 		{name: "expires now", expiresAt: now, want: 0},
@@ -88,6 +105,10 @@ func TestUserSubscriptionDaysRemainingAt(t *testing.T) {
 	}
 }
 
+// TestUserSubscriptionAvailableQuotaUSD_IgnoresDisabledZeroLimit combines
+// enabled daily/monthly quotas and a zero weekly quota with large recorded
+// use. It checks weekly remainder is nil and the smallest enabled remainder is
+// seven dollars.
 func TestUserSubscriptionAvailableQuotaUSD_IgnoresDisabledZeroLimit(t *testing.T) {
 	sub := &UserSubscription{
 		DailyLimitUSD:   quotaLimitPtr(10),
@@ -104,6 +125,9 @@ func TestUserSubscriptionAvailableQuotaUSD_IgnoresDisabledZeroLimit(t *testing.T
 	require.Equal(t, 7.0, sub.AvailableQuotaUSD())
 }
 
+// TestUserSubscriptionAvailableQuotaUSD_NoPositiveLimitsReturnsZero supplies
+// absent or zero limits to the arithmetic quota helper. All per-period
+// remainders must be nil and the selected numeric result zero.
 func TestUserSubscriptionAvailableQuotaUSD_NoPositiveLimitsReturnsZero(t *testing.T) {
 	sub := &UserSubscription{
 		DailyLimitUSD:   quotaLimitPtr(0),
@@ -116,6 +140,9 @@ func TestUserSubscriptionAvailableQuotaUSD_NoPositiveLimitsReturnsZero(t *testin
 	require.Equal(t, 0.0, sub.AvailableQuotaUSD())
 }
 
+// TestUserSubscriptionEffectiveStatus_DeletedAtReturnsRevoked places an
+// active-label grant inside its time interval with a deletion marker. Derived
+// status must be revoked and the stored-active predicate false.
 func TestUserSubscriptionEffectiveStatus_DeletedAtReturnsRevoked(t *testing.T) {
 	now := time.Now().UTC()
 	deletedAt := now.Add(-time.Minute)
@@ -130,10 +157,14 @@ func TestUserSubscriptionEffectiveStatus_DeletedAtReturnsRevoked(t *testing.T) {
 	require.False(t, sub.IsActive())
 }
 
+// subscriptionLimitPtr returns fresh scalar storage for a display-test quota
+// amount.
 func subscriptionLimitPtr(v float64) *float64 {
 	return &v
 }
 
+// quotaLimitPtr returns fresh scalar storage for a remainder-test quota
+// amount.
 func quotaLimitPtr(v float64) *float64 {
 	return &v
 }

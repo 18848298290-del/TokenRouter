@@ -20,12 +20,30 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// TestResolveCatalogAliasesPreserveConfigPricing checks that an unpriced alias can have an independent zero-price card.
+// Full request names select configured price cards before any required catalog
+// base lookup. These resolver scenarios distinguish unavailable amounts from
+// explicit zero, inherited buckets from configured image zeros, and manual
+// context intervals from independently toggled built-in tiers.
+
+// TestResolveCatalogAliasesPreserveConfigPricing compares custom-catalog and
+// default-fixture variants for full model names. An unpriced request spelling
+// must not borrow its base card, while its explicit zero card becomes
+// effective and leaves the base amount intact.
 func TestResolveCatalogAliasesPreserveConfigPricing(t *testing.T) {
+	// Save and restore the shared Grok default around these sequential alias
+	// scenarios. Changing it supplies fixture context while full-name price
+	// selection remains the behavior asserted.
 	previous := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(previous) })
 	xai.SetRuntimeDefaultTextModel("X-AI/GROK-4.6")
-	for _, tc := range []struct{ platform, base, alias string }{
+	for _, tc := range []struct {
+		// platform supplies group metadata while base and alias are distinct full
+		// model identities. The fixture prices base and requests alias to check card
+		// selection inside that group.
+		platform, // fixture group platform name
+		base, // separately priced full model
+		alias string // requested full model spelling
+	}{
 		{capability.PlatformGemini, "gemini-3.8-flash", "gemini-3.8-flash-tiered"},
 		{capability.PlatformGemini, "gemini-3.7-flash", "models/gemini-3.7-flash-medium"},
 		{capability.PlatformGrok, "grok-4.6", "grok-4.6-latest"},
@@ -57,24 +75,32 @@ func TestResolveCatalogAliasesPreserveConfigPricing(t *testing.T) {
 					continue
 				}
 
-				// An explicit zero price on the full request name takes precedence over the base name's price.
+				// An explicit zero price on the full request name takes precedence
+				// over the base name's price.
 				zero := 0.0
 				configPricing.ModelPricing = append(configPricing.ModelPricing, routing.ModelPricingEntry{
 					Models: []string{tc.alias}, BillingMode: routing.BillingModeToken, InputPrice: &zero,
 				})
 				repository.Values = []routingtestkit.Configuration{configPricing}
+				// Invalidate after replacing the fixture cards so the next resolution
+				// reads that replacement, rather than the previously loaded card selection
+				// for this group.
 				pricingConfigs.InvalidateCache()
 				resolved = resolver.Resolve(context.Background(), input)
 				require.True(t, resolved.HasEffectivePricing())
 				require.Zero(t, resolved.BasePricing.InputPricePerToken)
 				base := resolver.Resolve(context.Background(), billing.PricingInput{Model: tc.base, GroupID: &groupID})
+				// Allow binary representation residue in these per-token rate comparisons.
 				require.InDelta(t, pricingConfigPrice, base.BasePricing.InputPricePerToken, 1e-12)
 			}
 		})
 	}
 }
 
-// TestResolveCatalogAliasesUseUnifiedPricingConfig checks that base-name prices do not apply to suffixed models.
+// TestResolveCatalogAliasesUseUnifiedPricingConfig configures two Gemini
+// base-name cards and requests one suffixed model. Resolution must remain
+// unpriced, even though the fixture catalog contains the unsuffixed model's
+// token amount.
 func TestResolveCatalogAliasesUseUnifiedPricingConfig(t *testing.T) {
 	groupID := int64(999)
 	price := 9e-6
@@ -93,9 +119,18 @@ func TestResolveCatalogAliasesUseUnifiedPricingConfig(t *testing.T) {
 	require.True(t, resolved.IsUnpriced())
 }
 
-// TestGroupAndPricingCatalogAliasPrecedence checks full-name and wildcard cards and rejects base-name borrowing.
+// TestGroupAndPricingCatalogAliasPrecedence requests full aliases against a
+// base card, a blank exact card and explicit-zero exact/wildcard cards. The
+// first two stay unpriced, while matching zero cards return zero input price.
 func TestGroupAndPricingCatalogAliasPrecedence(t *testing.T) {
-	for _, tc := range []struct{ platform, base, alias string }{
+	for _, tc := range []struct {
+		// platform supplies group metadata while base and alias are distinct full
+		// model identities. The fixture prices base and requests alias to check card
+		// selection inside that group.
+		platform, // fixture group platform name
+		base, // separately priced full model
+		alias string // requested full model spelling
+	}{
 		{capability.PlatformOpenAI, "gpt-5.6-luna", "gpt-5.6-luna-high"},
 		{capability.PlatformGemini, "gemini-3.8-flash", "models/gemini-3.8-flash-tiered"},
 		{capability.PlatformGrok, "grok-4.6", "grok-4.6-latest"},
@@ -114,6 +149,9 @@ func TestGroupAndPricingCatalogAliasPrecedence(t *testing.T) {
 					configPricing := routingtestkit.Configuration{ID: 990, Status: billing.StatusActive, GroupIDs: []int64{group.ID}}
 					configPricing.ModelPricing = cards
 					repository.Values = []routingtestkit.Configuration{configPricing}
+					// Invalidate after replacing the fixture cards so the next resolution
+					// reads that replacement, rather than the previously loaded card
+					// selection for this group.
 					pricingConfigs.InvalidateCache()
 					return resolver.Resolve(context.Background(), billing.PricingInput{Model: tc.alias, GroupID: &group.ID})
 				}
@@ -133,6 +171,9 @@ func TestGroupAndPricingCatalogAliasPrecedence(t *testing.T) {
 	}
 }
 
+// TestResolve_NoGroupID omits configuration group selection for a catalogued
+// Claude model. Resolution must return its fixture input rate, token mode and
+// catalog source from the base lookup.
 func TestResolve_NoGroupID(t *testing.T) {
 	bs := billingtestkit.ResolverCalculator()
 	r := billingtestkit.PriceResolver(routingtestkit.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{
@@ -153,12 +194,17 @@ func TestResolve_NoGroupID(t *testing.T) {
 	require.NotNil(t, resolved)
 	require.Equal(t, routing.BillingModeToken, resolved.Mode)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
-	// ResolveBasePricing labels successful Calculator.GetModelPricing lookups as catalog prices,
-	// including prices supplied by the test catalog.
+	// The calculator obtains these amounts from the fixture catalog. Successful
+	// base lookup therefore reports catalog source even though the prices
+	// originate in test data.
 	require.Equal(t, "catalog", resolved.Source)
 }
 
+// TestResolve_UnknownModel requests an unregistered full model with no group
+// selection. Resolution must return a nonnil unpriced record with no base
+// pricing, keeping absence visible to consumers.
 func TestResolve_UnknownModel(t *testing.T) {
 	bs := billingtestkit.ResolverCalculator()
 	r := billingtestkit.PriceResolver(routingtestkit.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{
@@ -178,10 +224,13 @@ func TestResolve_UnknownModel(t *testing.T) {
 
 	require.NotNil(t, resolved)
 	require.Nil(t, resolved.BasePricing)
-	// Unknown models remain unpriced.
 	require.Equal(t, "unpriced", resolved.Source)
 }
 
+// TestGetIntervalPricing_NoIntervals supplies base pricing with no context
+// intervals. The helper must return that base value for the supplied token
+// count, keeping ordinary amount availability independent of interval
+// presence.
 func TestGetIntervalPricing_NoIntervals(t *testing.T) {
 	basePricing := &billingpricing.ModelPricing{InputPricePerToken: 5e-6}
 	resolved := &billingpricing.ResolvedPricing{
@@ -194,6 +243,10 @@ func TestGetIntervalPricing_NoIntervals(t *testing.T) {
 	require.Equal(t, basePricing, result)
 }
 
+// TestGetIntervalPricing_MatchesInterval selects short and long supplied
+// context ranges with distinct input/output rates. The returned short price
+// retains cache-breakdown support, and the long query returns its configured
+// higher input amount.
 func TestGetIntervalPricing_MatchesInterval(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode:                   routing.BillingModeToken,
@@ -207,6 +260,7 @@ func TestGetIntervalPricing_MatchesInterval(t *testing.T) {
 
 	result := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.NotNil(t, result)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 1e-6, result.InputPricePerToken, 1e-12)
 	require.InDelta(t, 2e-6, result.OutputPricePerToken, 1e-12)
 	require.True(t, result.SupportsCacheBreakdown)
@@ -216,6 +270,9 @@ func TestGetIntervalPricing_MatchesInterval(t *testing.T) {
 	require.InDelta(t, 3e-6, result2.InputPricePerToken, 1e-12)
 }
 
+// TestGetIntervalPricing_NoMatch_FallsBackToBase supplies one bounded interval
+// beginning above the requested context count. The helper must return the
+// available base pricing when that interval does not match.
 func TestGetIntervalPricing_NoMatch_FallsBackToBase(t *testing.T) {
 	basePricing := &billingpricing.ModelPricing{InputPricePerToken: 99e-6}
 	resolved := &billingpricing.ResolvedPricing{
@@ -230,6 +287,10 @@ func TestGetIntervalPricing_NoMatch_FallsBackToBase(t *testing.T) {
 	require.Equal(t, basePricing, result)
 }
 
+// TestGPT56ExplicitZeroCacheWritePriceIsPreserved constructs explicit-zero
+// cache-write rates through flat and interval overrides. Both paths must
+// retain the explicit marker and calculate zero cache-creation cost for the
+// supplied GPT-5.6 usage.
 func TestGPT56ExplicitZeroCacheWritePriceIsPreserved(t *testing.T) {
 	bs := newCalculatorWithPrices(nil, map[string]*billingpricing.ModelPricing{})
 	resolver := billingtestkit.PriceResolver(nil, bs)
@@ -276,6 +337,9 @@ func TestGPT56ExplicitZeroCacheWritePriceIsPreserved(t *testing.T) {
 	})
 }
 
+// TestGetRequestTierPrice resolves two labeled per-request tiers, including a
+// case-folded label. An unmatched label returns zero, and the value-bearing
+// lookup must separately report false for that missing tier.
 func TestGetRequestTierPrice(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode: routing.BillingModePerRequest,
@@ -285,6 +349,7 @@ func TestGetRequestTierPrice(t *testing.T) {
 		},
 	}
 
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.04, billingpricing.GetRequestTierPrice(resolved, "1K"), 1e-12)
 	require.InDelta(t, 0.04, billingpricing.GetRequestTierPrice(resolved, "1k"), 1e-12)
 	require.InDelta(t, 0.08, billingpricing.GetRequestTierPrice(resolved, "2K"), 1e-12)
@@ -295,6 +360,9 @@ func TestGetRequestTierPrice(t *testing.T) {
 	require.Zero(t, price)
 }
 
+// TestGetRequestTierPriceByContext selects supplied short and long unlabeled
+// request-price ranges. Positive matching counts return their respective
+// amounts, while zero context returns zero with an absent-match flag.
 func TestGetRequestTierPriceByContext(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode: routing.BillingModePerRequest,
@@ -304,6 +372,7 @@ func TestGetRequestTierPriceByContext(t *testing.T) {
 		},
 	}
 
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.05, billingpricing.GetRequestTierPriceByContext(resolved, 50000), 1e-12)
 	require.InDelta(t, 0.10, billingpricing.GetRequestTierPriceByContext(resolved, 200000), 1e-12)
 
@@ -312,6 +381,9 @@ func TestGetRequestTierPriceByContext(t *testing.T) {
 	require.Zero(t, price)
 }
 
+// TestGetRequestTierPrice_NilPerRequestPrice supplies a matching label whose
+// amount pointer is absent. The amount-only helper must return zero for that
+// missing price, without establishing an explicit free tier.
 func TestGetRequestTierPrice_NilPerRequestPrice(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode: routing.BillingModePerRequest,
@@ -320,9 +392,13 @@ func TestGetRequestTierPrice_NilPerRequestPrice(t *testing.T) {
 		},
 	}
 
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.0, billingpricing.GetRequestTierPrice(resolved, "1K"), 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_TokenFlat supplies manual input and
+// output amounts for a known model. Resolution must choose configuration
+// source, keep those rates and leave absent catalog priority prices unset.
 func TestResolve_WithPricingConfigOverride_TokenFlat(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -340,6 +416,7 @@ func TestResolve_WithPricingConfigOverride_TokenFlat(t *testing.T) {
 	require.Equal(t, routing.BillingModeToken, resolved.Mode)
 	require.Equal(t, "pricing_config", resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 10e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	// A standard-price override cannot invent a priority price missing from the catalog.
 	require.Zero(t, resolved.BasePricing.InputPricePerTokenPriority)
@@ -347,6 +424,10 @@ func TestResolve_WithPricingConfigOverride_TokenFlat(t *testing.T) {
 	require.Zero(t, resolved.BasePricing.OutputPricePerTokenPriority)
 }
 
+// TestResolve_WithPricingConfigOverride_TokenFlatPreservesNativeTierRatio
+// overrides three buckets whose fixture priority rates are twice standard.
+// Each resolved priority amount must retain that ratio after the standard
+// override.
 func TestResolve_WithPricingConfigOverride_TokenFlatPreservesNativeTierRatio(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	prices["gpt-5.4"] = &billingpricing.ModelPricing{
@@ -368,18 +449,20 @@ func TestResolve_WithPricingConfigOverride_TokenFlatPreservesNativeTierRatio(t *
 
 	resolved := r.Resolve(context.Background(), billing.PricingInput{Model: "gpt-5.4", GroupID: billingtestkit.GroupID()})
 	require.NotNil(t, resolved)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 14e-6, resolved.BasePricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 60e-6, resolved.BasePricing.OutputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 4e-6, resolved.BasePricing.CacheReadPricePerTokenPriority, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_TokenPartialOverride supplies only an
+// input amount on a known catalog model. The input changes to its manual rate,
+// while output inherits the available fixture amount.
 func TestResolve_WithPricingConfigOverride_TokenPartialOverride(t *testing.T) {
-	// The card overrides InputPrice; OutputPrice comes from the base pricing.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
 		InputPrice:  testPtrFloat64(20e-6),
-		// OutputPrice intentionally nil
 	}})
 
 	resolved := r.Resolve(context.Background(), billing.PricingInput{
@@ -390,12 +473,15 @@ func TestResolve_WithPricingConfigOverride_TokenPartialOverride(t *testing.T) {
 	require.NotNil(t, resolved)
 	require.Equal(t, "pricing_config", resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
-	// InputPrice overridden by configPricing
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 20e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
-	// OutputPrice kept from base (fallback: 15e-6)
 	require.InDelta(t, 15e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_PriceMultiplierOnlyIsIgnored stores a
+// card containing only the generic price factor. Resolution must retain
+// catalog source and fixture rates, with no effective selected configuration
+// price.
 func TestResolve_WithPricingConfigOverride_PriceMultiplierOnlyIsIgnored(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -408,15 +494,19 @@ func TestResolve_WithPricingConfigOverride_PriceMultiplierOnlyIsIgnored(t *testi
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// Invalid multiplier-only stored data leaves the default model price unchanged.
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceCatalog, resolved.Source)
 	require.False(t, resolved.HasEffectivePricing())
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 15e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_BlankConfigPricingIsIgnoredForNonQoder supplies a model card
+// with no amount fields. Resolution must keep catalog source and rates, report
+// no effective configuration price and leave the image explicit-price marker
+// false.
 func TestResolve_BlankConfigPricingIsIgnoredForNonQoder(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -432,11 +522,16 @@ func TestResolve_BlankConfigPricingIsIgnoredForNonQoder(t *testing.T) {
 	require.Equal(t, billingpricing.PricingSourceCatalog, resolved.Source)
 	require.False(t, resolved.HasEffectivePricing())
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 15e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 	require.False(t, resolved.BasePricing.ImageOutputPriceExplicit)
 }
 
+// TestResolve_QoderCustomAliasMappedToRouteKeyZerosMissingPartialConfigPricing
+// supplies an input card plus unrelated route-key metadata for an uncatalogued
+// full model. Its input rate resolves from configuration and its absent output
+// remains zero.
 func TestResolve_QoderCustomAliasMappedToRouteKeyZerosMissingPartialConfigPricing(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -463,10 +558,15 @@ func TestResolve_QoderCustomAliasMappedToRouteKeyZerosMissingPartialConfigPricin
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.Zero(t, resolved.BasePricing.OutputPricePerToken)
 }
 
+// TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialConfigPricing
+// supplies a manual input card and route-key metadata for a catalogued GPT
+// model. Input must use the card while output retains that full model's
+// catalog rate.
 func TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialConfigPricing(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -497,10 +597,15 @@ func TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialConfigPric
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, basePricing.OutputPricePerToken, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialIntervalPricing
+// supplies a partial context interval and route-key metadata for a catalogued
+// GPT model. Matching interval input changes, while its omitted output
+// inherits the model's available base rate.
 func TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialIntervalPricing(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -535,10 +640,15 @@ func TestResolve_QoderStandardModelMappedToRouteKeyKeepsBaseForPartialIntervalPr
 
 	intervalPricing := billingpricing.GetIntervalPricing(resolved, 100)
 	require.NotNil(t, intervalPricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, intervalPricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, basePricing.OutputPricePerToken, intervalPricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialConfigPricing
+// configures an input amount for an uncatalogued full Qoder model. Resolution
+// must select configuration pricing with that input rate and zero for the
+// absent output bucket.
 func TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialConfigPricing(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -564,10 +674,15 @@ func TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialConfigPricing(t *
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.Zero(t, resolved.BasePricing.OutputPricePerToken)
 }
 
+// TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialIntervalPricing
+// prices one input bucket in a matching interval without catalog base data.
+// Interval lookup must return the configured input amount while omitted output
+// stays zero.
 func TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialIntervalPricing(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -597,10 +712,15 @@ func TestResolve_QoderCustomAliasUnknownBaseZerosMissingPartialIntervalPricing(t
 
 	intervalPricing := billingpricing.GetIntervalPricing(resolved, 100)
 	require.NotNil(t, intervalPricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, intervalPricing.InputPricePerToken, 1e-12)
 	require.Zero(t, intervalPricing.OutputPricePerToken)
 }
 
+// TestResolve_QoderBlankRouteKeyPricingIsUnpricedButAliasManualPricingWorks
+// queries a blank route-label card and a separately priced full model. The
+// label remains unpriced with no base, while the model card resolves its
+// explicit input amount.
 func TestResolve_QoderBlankRouteKeyPricingIsUnpricedButAliasManualPricingWorks(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -638,10 +758,15 @@ func TestResolve_QoderBlankRouteKeyPricingIsUnpricedButAliasManualPricingWorks(t
 	require.NotNil(t, aliasResolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, aliasResolved.Source)
 	require.True(t, aliasResolved.HasEffectivePricing())
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, aliasResolved.BasePricing.InputPricePerToken, 1e-12)
 	require.Zero(t, aliasResolved.BasePricing.OutputPricePerToken)
 }
 
+// TestResolve_BlankWildcardPricingDoesNotMaskLaterEffectiveWildcard supplies
+// an earlier blank prefix card before a matching priced prefix. Resolution
+// must reach the effective input card and keep its uncatalogued output bucket
+// zero.
 func TestResolve_BlankWildcardPricingDoesNotMaskLaterEffectiveWildcard(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -679,10 +804,15 @@ func TestResolve_BlankWildcardPricingDoesNotMaskLaterEffectiveWildcard(t *testin
 	require.NotNil(t, resolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
 	require.True(t, resolved.HasEffectivePricing())
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.Zero(t, resolved.BasePricing.OutputPricePerToken)
 }
 
+// TestResolve_QoderPerRequestRouteKeyTokenOnlyIntervalIsUnpriced supplies an
+// invalid request-mode card containing a token-only interval. That route label
+// stays unpriced, while the separately configured token model retains its
+// effective manual input rate.
 func TestResolve_QoderPerRequestRouteKeyTokenOnlyIntervalIsUnpriced(t *testing.T) {
 	groupID := int64(100)
 	inputPrice := 20e-6
@@ -724,9 +854,13 @@ func TestResolve_QoderPerRequestRouteKeyTokenOnlyIntervalIsUnpriced(t *testing.T
 	require.NotNil(t, aliasResolved)
 	require.Equal(t, billingpricing.PricingSourceConfig, aliasResolved.Source)
 	require.True(t, aliasResolved.HasEffectivePricing())
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, inputPrice, aliasResolved.BasePricing.InputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_TokenWithIntervals configures two
+// token ranges for a known model. Resolution must retain both ranges, and
+// interval lookups must return each range's supplied input/output amounts.
 func TestResolve_WithPricingConfigOverride_TokenWithIntervals(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -746,9 +880,9 @@ func TestResolve_WithPricingConfigOverride_TokenWithIntervals(t *testing.T) {
 	require.Equal(t, "pricing_config", resolved.Source)
 	require.Len(t, resolved.Intervals, 2)
 
-	// GetIntervalPricing should use configPricing intervals
 	iv := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.NotNil(t, iv)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 2e-6, iv.InputPricePerToken, 1e-12)
 	require.InDelta(t, 8e-6, iv.OutputPricePerToken, 1e-12)
 
@@ -758,6 +892,10 @@ func TestResolve_WithPricingConfigOverride_TokenWithIntervals(t *testing.T) {
 	require.InDelta(t, 16e-6, iv2.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_PriceMultiplierScalesIntervalsAndFallbackFields
+// supplies a doubled partial interval on a known model. Matching input and
+// inherited output must both receive the card factor after their amount
+// selection.
 func TestResolve_WithPricingConfigOverride_PriceMultiplierScalesIntervalsAndFallbackFields(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -775,11 +913,17 @@ func TestResolve_WithPricingConfigOverride_PriceMultiplierScalesIntervalsAndFall
 
 	pricing := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.NotNil(t, pricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 4e-6, pricing.InputPricePerToken, 1e-12)
-	// An omitted interval output price inherits the model default before applying the multiplier.
+	// An omitted interval output price inherits the model default before
+	// applying the multiplier.
 	require.InDelta(t, 30e-6, pricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_FastModeMultiplierAppliesToIntervals
+// combines a price factor and Fast factor on a token interval. Interval
+// pricing retains the Fast factor, and calculated priority total must double
+// the selected standard total.
 func TestResolve_WithPricingConfigOverride_FastModeMultiplierAppliesToIntervals(t *testing.T) {
 	calculator := billingtestkit.ResolverCalculator()
 	r := billingtestkit.ResolverWithCards(t, calculator, []routing.ModelPricingEntry{{
@@ -824,12 +968,16 @@ func TestResolve_WithPricingConfigOverride_FastModeMultiplierAppliesToIntervals(
 		Resolved:    resolved,
 	})
 	require.NoError(t, err)
-	// The price multiplier applies first; the Fast multiplier scales the resulting standard price.
+	// The price multiplier applies first; the Fast multiplier scales the
+	// resulting standard price.
+	// Allow float multiplication residue when comparing the Fast charge ratio.
 	require.InDelta(t, standard.TotalCost*2, fast.TotalCost, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_TokenNilBasePricing supplies both text
+// amounts for an uncatalogued full model. Resolution must create usable base
+// pricing from those manual buckets and mark configuration as its source.
 func TestResolve_WithPricingConfigOverride_TokenNilBasePricing(t *testing.T) {
-	// For an unknown model, flat card prices supply the missing BasePricing.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"unknown-model-xyz"},
 		BillingMode: routing.BillingModeToken,
@@ -844,12 +992,15 @@ func TestResolve_WithPricingConfigOverride_TokenNilBasePricing(t *testing.T) {
 
 	require.NotNil(t, resolved)
 	require.Equal(t, "pricing_config", resolved.Source)
-	// ApplyTokenOverrides creates BasePricing from the explicit card prices.
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 7e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 21e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_PerRequest supplies a default request
+// amount and two context tiers. Resolution must preserve request mode,
+// configuration source, the default amount and both selected context prices.
 func TestResolve_WithPricingConfigOverride_PerRequest(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -869,14 +1020,17 @@ func TestResolve_WithPricingConfigOverride_PerRequest(t *testing.T) {
 	require.NotNil(t, resolved)
 	require.Equal(t, routing.BillingModePerRequest, resolved.Mode)
 	require.Equal(t, "pricing_config", resolved.Source)
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.05, resolved.DefaultPerRequestPrice, 1e-12)
 	require.Len(t, resolved.RequestTiers, 2)
 
-	// Verify tier lookups
 	require.InDelta(t, 0.03, billingpricing.GetRequestTierPriceByContext(resolved, 50000), 1e-12)
 	require.InDelta(t, 0.10, billingpricing.GetRequestTierPriceByContext(resolved, 200000), 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_PriceMultiplierScalesPerRequestPrices
+// supplies a doubled default request amount and context tier. Resolution must
+// scale both the default and the matching tier price by that factor.
 func TestResolve_WithPricingConfigOverride_PriceMultiplierScalesPerRequestPrices(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -893,12 +1047,18 @@ func TestResolve_WithPricingConfigOverride_PriceMultiplierScalesPerRequestPrices
 		GroupID: billingtestkit.GroupID(),
 	})
 
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.10, resolved.DefaultPerRequestPrice, 1e-12)
 	require.InDelta(t, 0.06, billingpricing.GetRequestTierPriceByContext(resolved, 50000), 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_PerRequestNilPrice omits the default
+// request amount while supplying a context-priced tier. Resolution must retain
+// request mode, a numeric zero default slot and the configured tier.
 func TestResolve_WithPricingConfigOverride_PerRequestNilPrice(t *testing.T) {
-	// PerRequestPrice nil → DefaultPerRequestPrice stays 0.
+	// Omit the default amount while retaining an effective context tier. The
+	// numeric zero default slot here does not establish a separately configured
+	// free request price.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModePerRequest,
@@ -915,10 +1075,14 @@ func TestResolve_WithPricingConfigOverride_PerRequestNilPrice(t *testing.T) {
 
 	require.NotNil(t, resolved)
 	require.Equal(t, routing.BillingModePerRequest, resolved.Mode)
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.0, resolved.DefaultPerRequestPrice, 1e-12)
 	require.Len(t, resolved.RequestTiers, 1)
 }
 
+// TestResolve_WithPricingConfigOverride_Image supplies image mode, a default
+// amount and three size tiers. Resolution must preserve image mode,
+// configuration source, that default amount and the complete tier count.
 func TestResolve_WithPricingConfigOverride_Image(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -939,10 +1103,14 @@ func TestResolve_WithPricingConfigOverride_Image(t *testing.T) {
 	require.NotNil(t, resolved)
 	require.Equal(t, routing.BillingModeImage, resolved.Mode)
 	require.Equal(t, "pricing_config", resolved.Source)
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.08, resolved.DefaultPerRequestPrice, 1e-12)
 	require.Len(t, resolved.RequestTiers, 3)
 }
 
+// TestResolve_WithPricingConfigOverride_ImageTierLabels supplies explicit
+// image amounts for three size labels. Label lookup must return each
+// configured rate and zero when the requested size has no matching tier.
 func TestResolve_WithPricingConfigOverride_ImageTierLabels(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -959,12 +1127,16 @@ func TestResolve_WithPricingConfigOverride_ImageTierLabels(t *testing.T) {
 		GroupID: billingtestkit.GroupID(),
 	})
 
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.04, billingpricing.GetRequestTierPrice(resolved, "1K"), 1e-12)
 	require.InDelta(t, 0.08, billingpricing.GetRequestTierPrice(resolved, "2K"), 1e-12)
 	require.InDelta(t, 0.16, billingpricing.GetRequestTierPrice(resolved, "4K"), 1e-12)
 	require.InDelta(t, 0.0, billingpricing.GetRequestTierPrice(resolved, "8K"), 1e-12) // not found
 }
 
+// TestResolve_WithPricingConfigOverride_SourceIsPricingConfig supplies one
+// input-rate card for the configured group and catalog model. Resolution must
+// report pricing_config as the source selected for that request.
 func TestResolve_WithPricingConfigOverride_SourceIsPricingConfig(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -980,8 +1152,10 @@ func TestResolve_WithPricingConfigOverride_SourceIsPricingConfig(t *testing.T) {
 	require.Equal(t, "pricing_config", resolved.Source)
 }
 
+// TestResolve_WithPricingConfigOverride_DefaultMode supplies an empty billing
+// mode with a manual input amount. Resolution must choose token mode,
+// configuration source and the provided input rate for the known model.
 func TestResolve_WithPricingConfigOverride_DefaultMode(t *testing.T) {
-	// PricingConfig pricing with empty BillingMode → defaults to BillingModeToken.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: "", // intentionally empty
@@ -996,11 +1170,14 @@ func TestResolve_WithPricingConfigOverride_DefaultMode(t *testing.T) {
 	require.Equal(t, "pricing_config", resolved.Source)
 	require.Equal(t, routing.BillingModeToken, resolved.Mode)
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 5e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 }
 
+// TestGetIntervalPricing_WithPricingConfigIntervals resolves two manual token
+// ranges over a catalog model. Lookups in each range must use the supplied
+// input and output amounts from the selected configuration interval.
 func TestGetIntervalPricing_WithPricingConfigIntervals(t *testing.T) {
-	// PricingConfig provides intervals that override the base pricing path.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
@@ -1015,26 +1192,28 @@ func TestGetIntervalPricing_WithPricingConfigIntervals(t *testing.T) {
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// Token count 50000 matches first interval
 	pricing := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.NotNil(t, pricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 1e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 5e-6, pricing.OutputPricePerToken, 1e-12)
 
-	// Token count 150000 matches second interval
 	pricing2 := billingpricing.GetIntervalPricing(resolved, 150000)
 	require.NotNil(t, pricing2)
 	require.InDelta(t, 2e-6, pricing2.InputPricePerToken, 1e-12)
 	require.InDelta(t, 10e-6, pricing2.OutputPricePerToken, 1e-12)
 }
 
+// TestGetIntervalPricing_PricingConfigIntervalsNoMatch queries below the
+// configured interval's lower bound. The helper must return the resolution's
+// base pricing and the available fixture input rate for that request.
 func TestGetIntervalPricing_PricingConfigIntervalsNoMatch(t *testing.T) {
-	// PricingConfig intervals don't match token count → falls back to BasePricing.
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: routing.BillingModeToken,
 		Intervals: []routing.PricingInterval{
-			// Only covers tokens > 50000
+			// Keep this lower bound above the requested context, making the result
+			// exercise base lookup instead of interval amount selection.
 			{MinTokens: 50000, MaxTokens: testPtrInt(200000), InputPrice: testPtrFloat64(9e-6)},
 		},
 	}})
@@ -1044,14 +1223,17 @@ func TestGetIntervalPricing_PricingConfigIntervalsNoMatch(t *testing.T) {
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// Token count 1000 doesn't match any interval (1000 <= 50000 minTokens)
 	pricing := billingpricing.GetIntervalPricing(resolved, 1000)
-	// Should fall back to BasePricing (from the billing service fallback)
 	require.NotNil(t, pricing)
 	require.Equal(t, resolved.BasePricing, pricing)
-	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12) // original base price
+	// Allow binary representation residue in these per-token rate comparisons.
+	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
 }
 
+// TestResolve_WithPricingConfigOverride_CacheError injects a repository
+// failure while building the configuration cache. Resolution must retain
+// usable fixture base pricing and avoid marking the failed lookup as
+// configuration-source amounts.
 func TestResolve_WithPricingConfigOverride_CacheError(t *testing.T) {
 	// A ListAll failure prevents PricingConfigService from building its cache.
 	// Resolve then uses the available base pricing.
@@ -1078,13 +1260,15 @@ func TestResolve_WithPricingConfigOverride_CacheError(t *testing.T) {
 	})
 
 	require.NotNil(t, resolved)
-	// The failed configuration lookup must not select configuration pricing.
 	require.NotEqual(t, "pricing_config", resolved.Source)
-	// The test catalog's base pricing remains available.
 	require.NotNil(t, resolved.BasePricing)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 3e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 }
 
+// TestGetRequestTierPriceByContext_EmptyTiers checks both nil and
+// allocated-empty request tier collections. The amount-only context lookup
+// must return zero for each, preserving their common missing-tier result.
 func TestGetRequestTierPriceByContext_EmptyTiers(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode:         routing.BillingModePerRequest,
@@ -1092,9 +1276,9 @@ func TestGetRequestTierPriceByContext_EmptyTiers(t *testing.T) {
 	}
 
 	price := billingpricing.GetRequestTierPriceByContext(resolved, 50000)
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.0, price, 1e-12)
 
-	// Also test with explicit empty slice
 	resolved2 := &billingpricing.ResolvedPricing{
 		Mode:         routing.BillingModePerRequest,
 		RequestTiers: []routing.PricingInterval{},
@@ -1104,6 +1288,9 @@ func TestGetRequestTierPriceByContext_EmptyTiers(t *testing.T) {
 	require.InDelta(t, 0.0, price2, 1e-12)
 }
 
+// TestGetRequestTierPriceByContext_ExactBoundary queries 128000 and the
+// immediately following token count. The upper-inclusive first tier must
+// charge the first amount, and the next count must select the second tier.
 func TestGetRequestTierPriceByContext_ExactBoundary(t *testing.T) {
 	resolved := &billingpricing.ResolvedPricing{
 		Mode: routing.BillingModePerRequest,
@@ -1113,24 +1300,28 @@ func TestGetRequestTierPriceByContext_ExactBoundary(t *testing.T) {
 		},
 	}
 
-	// totalContextTokens = 128000 exactly:
-	// FindMatchingInterval checks: totalTokens > MinTokens && totalTokens <= MaxTokens
-	// For first interval: 128000 > 0 (true) && 128000 <= 128000 (true) → matches first interval
+	// The shared matcher uses lower-exclusive and upper-inclusive ranges, so the
+	// exact upper endpoint still belongs to the short-context request tier.
 	price := billingpricing.GetRequestTierPriceByContext(resolved, 128000)
+	// Allow binary representation residue in these USD unit-price comparisons.
 	require.InDelta(t, 0.05, price, 1e-12)
 
-	// totalContextTokens = 128001 should match second interval
-	// For first interval: 128001 > 0 (true) && 128001 <= 128000 (false) → no match
-	// For second interval: 128001 > 128000 (true) && MaxTokens == nil → matches
+	// Advance one token beyond that endpoint to exercise the next range; this
+	// distinguishes threshold comparison from a price inherited through the
+	// default path.
 	price2 := billingpricing.GetRequestTierPriceByContext(resolved, 128001)
 	require.InDelta(t, 0.10, price2, 1e-12)
 }
 
+// TestFilterValidTokenIntervals supplies empty, token-bearing,
+// multiplier-bearing and request-only interval shapes. It checks retained
+// lengths, including dropping empty or request-only entries; this table does
+// not assert returned ownership or values.
 func TestFilterValidTokenIntervals(t *testing.T) {
 	tests := []struct {
-		name      string
-		intervals []routing.PricingInterval
-		wantLen   int
+		name      string                    // interval shape case label
+		intervals []routing.PricingInterval // supplied interval shape collection
+		wantLen   int                       // expected retained interval count
 	}{
 		{
 			name:      "empty list",
@@ -1205,11 +1396,14 @@ func TestFilterValidTokenIntervals(t *testing.T) {
 	}
 }
 
+// TestFilterValidRequestIntervals distinguishes request amount presence from
+// token-only or empty intervals. Retained lengths must include an explicit
+// zero request price while dropping shapes without a request amount pointer.
 func TestFilterValidRequestIntervals(t *testing.T) {
 	tests := []struct {
-		name      string
-		intervals []routing.PricingInterval
-		wantLen   int
+		name      string                    // interval shape case label
+		intervals []routing.PricingInterval // supplied interval shape collection
+		wantLen   int                       // expected retained interval count
 	}{
 		{
 			name: "all-nil interval filtered out",
@@ -1249,6 +1443,10 @@ func TestFilterValidRequestIntervals(t *testing.T) {
 	}
 }
 
+// TestModelPricingEntryHasEffectivePricingIsModeAware tests amount and
+// modifier presence across declared billing modes. Wrong-mode interval fields
+// are ineffective, while explicit zero amounts and the supplied token Fast
+// modifier qualify.
 func TestModelPricingEntryHasEffectivePricingIsModeAware(t *testing.T) {
 	require.False(t, (&routing.ModelPricingEntry{
 		BillingMode: routing.BillingModeToken,
@@ -1287,6 +1485,10 @@ func TestModelPricingEntryHasEffectivePricingIsModeAware(t *testing.T) {
 	}).HasEffectivePricing())
 }
 
+// TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit supplies manual
+// text prices while omitting image output. Resolution must mark image output
+// explicit with zero, retaining configuration absence as the selected zero
+// image rate.
 func TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -1305,6 +1507,10 @@ func TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit(t *testing.T) {
 	require.Equal(t, 0.0, resolved.BasePricing.ImageOutputPricePerToken)
 }
 
+// TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit supplies a
+// manual image-output amount alongside text rates. Resolution must retain the
+// explicit image marker and the supplied image price for subsequent token
+// calculation.
 func TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:           []string{"claude-sonnet-4"},
@@ -1319,9 +1525,14 @@ func TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit(t *testing.T) 
 	})
 
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 50e-6, resolved.BasePricing.ImageOutputPricePerToken, 1e-12)
 }
 
+// TestApplyTokenOverrides_FlatUsesPricingConfigImageInputPrice supplies a
+// manual image-input bucket with text input pricing. Resolution must select
+// configuration source and expose the configured image-input amount in its
+// base pricing.
 func TestApplyTokenOverrides_FlatUsesPricingConfigImageInputPrice(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:          []string{"claude-sonnet-4"},
@@ -1335,9 +1546,14 @@ func TestApplyTokenOverrides_FlatUsesPricingConfigImageInputPrice(t *testing.T) 
 	})
 
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 8e-6, resolved.BasePricing.ImageInputPricePerToken, 1e-12)
 }
 
+// TestIntervalToModelPricingWithBaseClearsUnsetPricingConfigImageInputPrice
+// supplies a base image-input amount but leaves that card bucket absent.
+// Interval conversion must clear the inherited image-input rate for
+// configuration-controlled image pricing.
 func TestIntervalToModelPricingWithBaseClearsUnsetPricingConfigImageInputPrice(t *testing.T) {
 	base := &billingpricing.ModelPricing{ImageInputPricePerToken: 99e-6}
 	pricing := billingpricing.IntervalToModelPricingWithBase(
@@ -1350,6 +1566,10 @@ func TestIntervalToModelPricingWithBaseClearsUnsetPricingConfigImageInputPrice(t
 	require.Zero(t, pricing.ImageInputPricePerToken)
 }
 
+// TestIntervalToModelPricingWithBaseAppliesMultipliersAndPreservesTierRatio
+// applies separate text and cache factors to base rates with doubled priority
+// buckets. Standard and priority results must retain each bucket's factor,
+// with supplied Fast/Flex metadata present.
 func TestIntervalToModelPricingWithBaseAppliesMultipliersAndPreservesTierRatio(t *testing.T) {
 	base := &billingpricing.ModelPricing{
 		InputPricePerToken:                 2e-6,
@@ -1373,6 +1593,8 @@ func TestIntervalToModelPricingWithBaseAppliesMultipliersAndPreservesTierRatio(t
 		base,
 	)
 
+	// Allow float multiplication residue in bucket rates and retained modifier
+	// factors.
 	require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 6e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 5e-6, pricing.OutputPricePerToken, 1e-12)
@@ -1387,6 +1609,9 @@ func TestIntervalToModelPricingWithBaseAppliesMultipliersAndPreservesTierRatio(t
 	require.InDelta(t, 0.25, *pricing.FlexMultiplier, 1e-12)
 }
 
+// TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit configures text
+// intervals with omitted image output. Both the resolution's base pricing and
+// its selected interval must retain an explicit zero image-output bucket.
 func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models:      []string{"claude-sonnet-4"},
@@ -1401,16 +1626,20 @@ func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) 
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// The base price records explicit image pricing for requests outside configured intervals.
+	// Keep explicit image zero in both the default and interval views; otherwise
+	// an absent image amount could borrow text-output pricing during calculation.
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
 	require.Equal(t, 0.0, resolved.BasePricing.ImageOutputPricePerToken)
 
-	// Interval pricing also records that the image output price is explicit.
 	pricing := billingpricing.GetIntervalPricing(resolved, 50000)
 	require.True(t, pricing.ImageOutputPriceExplicit)
 	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
 }
 
+// TestIntervalToModelPricingWithBaseClearsImageOutputWhenPricingConfigUnset
+// supplies a nonzero base image-output amount and no card replacement.
+// Interval conversion must produce explicit zero image output, making card
+// control visible.
 func TestIntervalToModelPricingWithBaseClearsImageOutputWhenPricingConfigUnset(t *testing.T) {
 	base := &billingpricing.ModelPricing{
 		ImageOutputPricePerToken: 99e-6,
@@ -1430,7 +1659,10 @@ func TestIntervalToModelPricingWithBaseClearsImageOutputWhenPricingConfigUnset(t
 	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
 }
 
-// TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices checks that overrides modify a BasePricing copy.
+// TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices resolves manual
+// text overrides over a supplied base-price map. The resolved rates change
+// while that map's text amounts and image explicit marker retain their initial
+// values.
 func TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	calculator := newCalculatorWithPrices(nil, prices)
@@ -1446,19 +1678,21 @@ func TestApplyTokenOverrides_FlatDoesNotPolluteFallbackPrices(t *testing.T) {
 		GroupID: billingtestkit.GroupID(),
 	})
 
-	// The resolved price uses the shared configuration override.
 	require.NotNil(t, resolved)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 10e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 50e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 
-	// Shared base prices remain 3e-6 and 15e-6.
 	fp := prices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fp.InputPricePerToken, 1e-12, "fallback InputPricePerToken polluted")
 	require.InDelta(t, 15e-6, fp.OutputPricePerToken, 1e-12, "fallback OutputPricePerToken polluted")
 	require.False(t, fp.ImageOutputPriceExplicit, "fallback ImageOutputPriceExplicit polluted")
 }
 
-// TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices checks that interval overrides copy base pricing.
+// TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices resolves a card
+// containing token intervals over a supplied base map. It checks the resolved
+// base image marker and unchanged stored text rates/marker, without querying
+// interval pricing.
 func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	calculator := newCalculatorWithPrices(nil, prices)
@@ -1478,13 +1712,16 @@ func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) 
 	require.NotNil(t, resolved)
 	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
 
-	// Shared base prices remain 3e-6 and 15e-6.
 	fp := prices["claude-sonnet-4"]
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 3e-6, fp.InputPricePerToken, 1e-12, "fallback InputPricePerToken polluted")
 	require.InDelta(t, 15e-6, fp.OutputPricePerToken, 1e-12, "fallback OutputPricePerToken polluted")
 	require.False(t, fp.ImageOutputPriceExplicit, "fallback ImageOutputPriceExplicit polluted")
 }
 
+// TestResolve_SharedPricingIsAuthoritative supplies explicit shared input and
+// output amounts for a known model. Resolution must report configuration
+// source and return both manual rates for that group request.
 func TestResolve_SharedPricingIsAuthoritative(t *testing.T) {
 	r := newResolverWithPricingConfig(t, []routing.ModelPricingEntry{{
 		Models: []string{"claude-sonnet-4"}, BillingMode: routing.BillingModeToken,
@@ -1494,10 +1731,15 @@ func TestResolve_SharedPricingIsAuthoritative(t *testing.T) {
 	resolved := r.Resolve(context.Background(), billing.PricingInput{Model: "claude-sonnet-4", GroupID: billingtestkit.GroupID()})
 
 	require.Equal(t, billingpricing.PricingSourceConfig, resolved.Source)
+	// Allow binary representation residue in these per-token rate comparisons.
 	require.InDelta(t, 10e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 20e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+// TestResolve_ConfigIntervalsOverridePresetRegardlessOfToggle supplies
+// built-in tier metadata plus manual intervals and flips the long-context
+// setting. The same configured long interval must remain selected while the
+// base threshold and input multiplier stay available.
 func TestResolve_ConfigIntervalsOverridePresetRegardlessOfToggle(t *testing.T) {
 	prices := billingtestkit.ResolverFallbackPrices()
 	prices["claude-sonnet-4"].LongContextInputThreshold = 200000
@@ -1520,9 +1762,14 @@ func TestResolve_ConfigIntervalsOverridePresetRegardlessOfToggle(t *testing.T) {
 	resolved := r.Resolve(context.Background(), billing.PricingInput{Model: "claude-sonnet-4", GroupID: billingtestkit.GroupID()})
 	require.False(t, resolved.LongContextPricingEnabled)
 	require.Len(t, resolved.Intervals, 2)
+	// Allow float residue when comparing selected rates and the retained input
+	// factor.
 	require.InDelta(t, 18e-6, billingpricing.GetIntervalPricing(resolved, 300000).InputPricePerToken, 1e-12)
 	require.Equal(t, 200000, resolved.BasePricing.LongContextInputThreshold)
 
+	// Change only the setting between resolutions, leaving manual intervals and
+	// catalog tier metadata fixed. The repeated quote therefore isolates
+	// enablement from configured interval precedence.
 	source.settings.LongContextPricingEnabled = true
 	resolved = r.Resolve(context.Background(), billing.PricingInput{Model: "claude-sonnet-4", GroupID: billingtestkit.GroupID()})
 	require.True(t, resolved.LongContextPricingEnabled)
@@ -1532,10 +1779,14 @@ func TestResolve_ConfigIntervalsOverridePresetRegardlessOfToggle(t *testing.T) {
 	require.InDelta(t, 2.0, resolved.BasePricing.LongContextInputMultiplier, 1e-12)
 }
 
-// testPtrInt returns a pointer to an interval endpoint.
+// testPtrInt returns independently addressed integer storage for context
+// interval endpoint fixtures.
 func testPtrInt(v int) *int { return &v }
 
-// newResolverWithPricingConfig combines the supplied cards with the resolver test catalog.
+// newResolverWithPricingConfig constructs the active group-100 card fixture
+// with a fresh Claude base calculator. It delegates to testkit and marks its
+// caller as a test helper; supplied cards remain stable while the repository
+// reads them.
 func newResolverWithPricingConfig(t *testing.T, pricing []routing.ModelPricingEntry) *billing.PriceResolver {
 	t.Helper()
 	return billingtestkit.ResolverWithCards(t, billingtestkit.ResolverCalculator(), pricing)

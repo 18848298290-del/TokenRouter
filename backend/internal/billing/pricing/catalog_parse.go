@@ -28,10 +28,16 @@ var ErrNoPricingEntries = errors.New("no valid pricing entries found")
 
 // CatalogDiagnostics describes parsing issues for the provider to report.
 type CatalogDiagnostics struct {
-	Skipped           int      // entry decoding failure count
-	InvalidEntries    []string // sorted publication rejection messages
-	OrphanCacheTiers, // cache tiers without positive bases
-	LopsidedLadders []string // asymmetric input/output context surcharge models
+	Skipped        int      // entry decoding failure count
+	InvalidEntries []string // sorted publication rejection messages
+	// OrphanCacheTiers identifies models with positive cache above-price keys
+	// lacking an accepted base. LopsidedLadders identifies models with a context
+	// surcharge increasing exactly one text side; after successful validation the
+	// loader reports both lists as warnings.
+	// OrphanCacheTiers: model-qualified orphan cache keys.
+	// LopsidedLadders: model-qualified one-sided text multipliers.
+	OrphanCacheTiers,
+	LopsidedLadders []string
 }
 
 // ValidationError returns one error containing every invalid-entry diagnostic.
@@ -74,10 +80,15 @@ func DecodeCatalogEntries(body []byte) (map[string]json.RawMessage, error) {
 	return entries, nil
 }
 
-// normalizeCatalogEntry returns an object with litellm_provider converted when
-// provider is absent. A present provider key wins even when empty or null.
-// Objects lacking the legacy field retain the supplied bytes; converted objects
-// are re-encoded.
+// normalizeCatalogEntry normalizes provider identity in one catalog object.
+// It rejects malformed JSON and null objects, while objects lacking the legacy
+// field return their supplied bytes. Callers retain those returned bytes as
+// read-only entry data until their catalog layer has been consumed.
+//
+// A present provider key wins even when its value is empty or null. The legacy
+// value fills only an absent current key, then its old spelling is removed
+// before re-encoding. Checking presence keeps an intentional empty provider
+// from acquiring a different identity during layer merging.
 func normalizeCatalogEntry(raw json.RawMessage) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -162,6 +173,8 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			invalidEntries = append(invalidEntries, fmt.Sprintf("%s: %v", modelName, err))
 			continue
 		}
+		// Reserved operation defaults need their own amount validation before
+		// publication, but they remain outside model lookup even when valid.
 		if modelName == BillingDefaultsKey {
 			var defaults OperationPrices
 			if err := json.Unmarshal(rawEntry, &defaults); err != nil {

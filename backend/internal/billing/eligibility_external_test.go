@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// TestCheckEffectiveSubscriptionEligibility_DailyTailUsesFiniteMonthlyLimit
+// supplies an exhausted old daily window, a two-hour lifetime tail and
+// remaining monthly quota. The effective hot-path check must accept the grant
+// after locally treating the eligible daily period as reset.
 func TestCheckEffectiveSubscriptionEligibility_DailyTailUsesFiniteMonthlyLimit(t *testing.T) {
 	now := time.Now().UTC()
 	dailyWindowStart := now.Add(-25 * time.Hour)

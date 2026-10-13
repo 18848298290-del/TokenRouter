@@ -13,42 +13,80 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AdminSubscriptionHandler handles administrator subscription operations.
+// Administrator grant operations use the subscription service for issued
+// limits, renewal chains and quota maintenance. The handlers bind HTTP inputs
+// and assignment identity, map service results to administrator DTOs and leave
+// authentication/auditing with route ownership. Optional list IDs tolerate
+// malformed text, while path IDs fail parsing before service calls.
+//
+// The extend route sets a target duration through the command executor using
+// path and body identity, so replay handling remains tied to that request.
+// Other service maintenance rules retain their own transaction ownership.
+// Progress failures map to the existing not-found response, while ordinary
+// operations use shared error mapping; request validation should not be
+// mistaken for a uniform positivity check on every ID.
+
+// AdminSubscriptionHandler exposes administrator grant queries and
+// subscription maintenance through the service.
 type AdminSubscriptionHandler struct {
-	idempotencyhttp.Executor
+	// Executor uses the app-bound coordinator for Extend replay handling. Bind
+	// before requests begin; an unbound fixture executes its callback directly
+	// using the executor's default TTL.
+	idempotencyhttp.Executor // administrator command replay execution
 
-	subscriptionService *billing.SubscriptionService
+	subscriptionService *billing.SubscriptionService // grant query and maintenance service
 }
 
-// AssignSubscriptionRequest supplies a subscription grant for one user.
+// AssignSubscriptionRequest supplies one recipient and plan with optional
+// validity and notes.
 type AssignSubscriptionRequest struct {
-	UserID       int64  `json:"user_id" binding:"required"`
-	PlanID       int64  `json:"plan_id" binding:"required"`
-	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string `json:"notes"`
+	UserID int64 `json:"user_id" binding:"required"` // requested grant recipient identifier
+	PlanID int64 `json:"plan_id" binding:"required"` // requested grant plan identifier
+	// ValidityDays is a positive override when supplied. Nonpositive values reach
+	// the service's plan/default selection, and JSON binding limits only the
+	// maximum configured duration.
+	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // optional positive duration override
+	Notes        string `json:"notes"`                                       // administrator grant reason text
 }
 
-// BulkAssignSubscriptionRequest supplies a subscription grant for multiple users.
+// BulkAssignSubscriptionRequest supplies a recipient sequence with common
+// plan, validity and notes.
 type BulkAssignSubscriptionRequest struct {
-	UserIDs      []int64 `json:"user_ids" binding:"required,min=1"`
-	PlanID       int64   `json:"plan_id" binding:"required"`
-	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string  `json:"notes"`
+	// UserIDs keeps supplied order and duplicates. The service processes each
+	// entry independently, so repeated IDs can request additional queued grants
+	// for the same recipient.
+	UserIDs []int64 `json:"user_ids" binding:"required,min=1"` // requested grant recipient sequence
+	PlanID  int64   `json:"plan_id" binding:"required"`        // common grant plan identifier
+	// ValidityDays is a positive override when supplied. Nonpositive values reach
+	// the service's plan/default selection, and JSON binding limits only the
+	// maximum configured duration.
+	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // optional positive duration override
+	Notes        string `json:"notes"`                                       // common administrator grant reason
 }
 
-// AdjustSubscriptionRequest sets the target subscription validity period.
+// AdjustSubscriptionRequest supplies the target validity duration for the
+// selected grant.
 type AdjustSubscriptionRequest struct {
-	Days int `json:"days" binding:"required,min=1,max=36500"` // Target days from now, or from the pending subscription's start.
+	// Days selects duration from current time or a pending subscription's start
+	// according to the service anchor. Binding requires one through
+	// thirty-six-thousand-five-hundred days.
+	Days int `json:"days" binding:"required,min=1,max=36500"` // target validity duration days
 }
 
-// ResetSubscriptionQuotaRequest selects the usage windows to reset.
+// ResetSubscriptionQuotaRequest selects independent day, week and month usage
+// resets.
 type ResetSubscriptionQuotaRequest struct {
-	Daily   bool `json:"daily"`
-	Weekly  bool `json:"weekly"`
-	Monthly bool `json:"monthly"`
+	// Daily, Weekly and Monthly select independently resettable usage windows.
+	// ResetQuota requires at least one flag, then delegates the selected
+	// combination to the subscription service in one operation.
+	Daily   bool `json:"daily"`   // reset daily usage window
+	Weekly  bool `json:"weekly"`  // reset weekly usage window
+	Monthly bool `json:"monthly"` // reset monthly usage window
 }
 
-// toResponsePagination converts pagination results for HTTP responses.
+// toResponsePagination copies page totals and bounds into the HTTP response
+// type. Nil metadata returns nil; callers use this companion with the mapped
+// grant rows, and successful copies retain the supplied scalar values.
 func toResponsePagination(p *pagination.PaginationResult) *response.PaginationResult {
 	if p == nil {
 		return nil
@@ -61,19 +99,27 @@ func toResponsePagination(p *pagination.PaginationResult) *response.PaginationRe
 	}
 }
 
-// NewAdminSubscriptionHandler constructs the administrator subscription handler.
+// NewAdminSubscriptionHandler binds the supplied service and leaves its
+// executor initially unbound. App construction binds the coordinator before
+// serving; standalone fixtures use direct callback execution, and route
+// ownership supplies administrator authorization.
 func NewAdminSubscriptionHandler(subscriptionService *billing.SubscriptionService) *AdminSubscriptionHandler {
 	return &AdminSubscriptionHandler{
 		subscriptionService: subscriptionService,
 	}
 }
 
-// List returns a filtered page of subscriptions.
+// List returns administrator grant views with pagination, optional IDs, status
+// and sorting inputs. Malformed optional ID text is ignored; sorting defaults
+// to created_at descending, platform reaches a concrete service that ignores
+// it, and service failures use shared error mapping.
 // GET /api/v1/admin/subscriptions
 func (h *AdminSubscriptionHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 
-	// Malformed optional IDs are ignored.
+	// An optional ID is used only after successful signed parsing; malformed
+	// query text drops that filter so the remaining list criteria can still be
+	// applied.
 	var userID, planID *int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
@@ -104,7 +150,10 @@ func (h *AdminSubscriptionHandler) List(c *gin.Context) {
 	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
-// GetByID returns a subscription by ID.
+// GetByID parses a signed decimal subscription path ID and returns the
+// administrator grant mapping. Malformed text yields bad request, while
+// zero/negative values reach service interpretation and service failures use
+// shared error mapping.
 // GET /api/v1/admin/subscriptions/:id
 func (h *AdminSubscriptionHandler) GetByID(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -122,7 +171,9 @@ func (h *AdminSubscriptionHandler) GetByID(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(subscription))
 }
 
-// GetProgress returns quota usage progress for a subscription.
+// GetProgress parses the signed target ID and returns service quota progress.
+// Malformed text yields bad request; every progress-service error is converted
+// to the existing not-found response instead of shared error classification.
 // GET /api/v1/admin/subscriptions/:id/progress
 func (h *AdminSubscriptionHandler) GetProgress(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -133,6 +184,9 @@ func (h *AdminSubscriptionHandler) GetProgress(c *gin.Context) {
 
 	progress, err := h.subscriptionService.GetSubscriptionProgress(c.Request.Context(), subscriptionID)
 	if err != nil {
+		// The progress endpoint maps every service failure to not-found here,
+		// retaining its existing response shape rather than exposing that error's
+		// shared classification.
 		response.NotFound(c, "Subscription not found")
 		return
 	}
@@ -140,7 +194,10 @@ func (h *AdminSubscriptionHandler) GetProgress(c *gin.Context) {
 	response.Success(c, progress)
 }
 
-// Assign grants a subscription to a user.
+// Assign binds one recipient/plan grant and records the authentication subject
+// ID as assigner metadata. Invalid JSON yields bad request; the route owner
+// supplies authorization, while service errors use shared mapping and success
+// returns the administrator DTO.
 // POST /api/v1/admin/subscriptions/assign
 func (h *AdminSubscriptionHandler) Assign(c *gin.Context) {
 	var req AssignSubscriptionRequest
@@ -166,7 +223,10 @@ func (h *AdminSubscriptionHandler) Assign(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(subscription))
 }
 
-// BulkAssign grants subscriptions to multiple users.
+// BulkAssign binds the recipient sequence and common grant terms, then returns
+// the service's per-user results. Invalid JSON yields bad request; individual
+// service failures can remain in a successful batch response, and assigner
+// metadata comes from the authentication subject.
 // POST /api/v1/admin/subscriptions/bulk-assign
 func (h *AdminSubscriptionHandler) BulkAssign(c *gin.Context) {
 	var req BulkAssignSubscriptionRequest
@@ -192,7 +252,11 @@ func (h *AdminSubscriptionHandler) BulkAssign(c *gin.Context) {
 	response.Success(c, BulkAssignResultFromService(result))
 }
 
-// Extend sets the subscription's target validity period.
+// Extend binds a positive target-day count and invokes
+// SetSubscriptionValidityDays through the administrator command executor. It
+// sets duration from the service's current/pending anchor rather than adding
+// that number of days; payload identity includes the path ID and bound body
+// for replay handling.
 // POST /api/v1/admin/subscriptions/:id/extend
 func (h *AdminSubscriptionHandler) Extend(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -208,8 +272,11 @@ func (h *AdminSubscriptionHandler) Extend(c *gin.Context) {
 	}
 
 	idempotencyPayload := struct {
-		SubscriptionID int64                     `json:"subscription_id"`
-		Body           AdjustSubscriptionRequest `json:"body"`
+		// SubscriptionID and Body define the command payload together, so identical
+		// bodies for different grant targets remain distinct replay identities. The
+		// command executor owns claim/replay handling.
+		SubscriptionID int64                     `json:"subscription_id"` // requested target grant identifier
+		Body           AdjustSubscriptionRequest `json:"body"`            // bound target duration request
 	}{
 		SubscriptionID: subscriptionID,
 		Body:           req,
@@ -223,7 +290,10 @@ func (h *AdminSubscriptionHandler) Extend(c *gin.Context) {
 	})
 }
 
-// ResetQuota resets the selected daily, weekly, or monthly usage windows.
+// ResetQuota binds window selection and requires at least one selected flag
+// before service mutation. Malformed ID/JSON yields bad request, service
+// failures use shared mapping and the updated grant uses the administrator
+// DTO.
 // POST /api/v1/admin/subscriptions/:id/reset-quota
 func (h *AdminSubscriptionHandler) ResetQuota(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -248,7 +318,10 @@ func (h *AdminSubscriptionHandler) ResetQuota(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(sub))
 }
 
-// Revoke revokes a subscription.
+// Revoke parses a signed target ID and delegates administrator revocation,
+// returning the existing success message after service completion. The route
+// supports both POST and DELETE spellings; malformed IDs and service failures
+// use their existing bad-request/shared-error paths.
 // POST /api/v1/admin/subscriptions/:id/revoke
 // DELETE /api/v1/admin/subscriptions/:id is also supported for compatibility.
 func (h *AdminSubscriptionHandler) Revoke(c *gin.Context) {
@@ -267,7 +340,10 @@ func (h *AdminSubscriptionHandler) Revoke(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Subscription revoked successfully"})
 }
 
-// Restore restores a revoked subscription.
+// Restore parses a signed target ID and delegates revoked-grant restoration
+// before mapping the administrator result. Malformed text yields bad request,
+// while eligibility/chain/persistence errors retain the service's shared HTTP
+// error classification.
 // POST /api/v1/admin/subscriptions/:id/restore
 func (h *AdminSubscriptionHandler) Restore(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -285,7 +361,10 @@ func (h *AdminSubscriptionHandler) Restore(c *gin.Context) {
 	response.Success(c, UserSubscriptionFromServiceAdmin(subscription))
 }
 
-// ListByPlan handles listing subscriptions for a plan.
+// ListByPlan parses a signed plan path ID and returns its administrator grant
+// page. Invalid numeric text yields bad request; service failures use shared
+// error mapping, and page metadata is converted to the HTTP response
+// structure.
 func (h *AdminSubscriptionHandler) ListByPlan(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -308,7 +387,10 @@ func (h *AdminSubscriptionHandler) ListByPlan(c *gin.Context) {
 	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
-// ListByUser returns a user's subscriptions.
+// ListByUser parses a signed user path ID and returns that user's
+// administrator grant views. Invalid text yields bad request; service failures
+// use shared error mapping, and the service supplies status/window
+// normalization before DTO conversion.
 // GET /api/v1/admin/users/:id/subscriptions
 func (h *AdminSubscriptionHandler) ListByUser(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -330,7 +412,9 @@ func (h *AdminSubscriptionHandler) ListByUser(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// adminID returns the authenticated administrator's audit identity, or zero when absent.
+// adminID returns the authentication subject's user ID or zero when absent. It
+// supplies assignment metadata only; administrator authorization is installed
+// by the route owner rather than checked by this helper.
 func adminID(c *gin.Context) int64 {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {

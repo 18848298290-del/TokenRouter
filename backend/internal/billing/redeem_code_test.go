@@ -9,17 +9,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// TestRedeemCodeExpirySemantics compares future/past expiry, invitation
+// expiry, partial use, explicit expiry and a disabled future code. It checks
+// IsExpired, effective status and CanUse for the six supplied records.
 func TestRedeemCodeExpirySemantics(t *testing.T) {
 	now := time.Now().UTC()
 	past := now.Add(-time.Hour)
 	future := now.Add(time.Hour)
 
 	tests := []struct {
-		name        string
-		code        billing.RedeemCode
-		wantStatus  string
-		wantExpired bool
-		wantCanUse  bool
+		name        string             // test case display name
+		code        billing.RedeemCode // supplied credential state record
+		wantStatus  string             // expected effective status label
+		wantExpired bool               // expected independent expiry predicate
+		wantCanUse  bool               // expected status-based use predicate
 	}{
 		{
 			name:        "未过期的未使用兑换码可用",

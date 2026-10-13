@@ -8,24 +8,38 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// RedeemHandler handles redeem code-related requests.
+// User redemption and history requests derive the recipient from the
+// authentication subject placed in Gin context. Binding and service errors
+// become HTTP responses, while successful credentials pass through the user
+// DTO mapping, including visible administrator adjustment reasons when the
+// record type permits them.
+
+// RedeemHandler exposes current-user redemption and receipt-history requests
+// through the billing service.
 type RedeemHandler struct {
-	redeemService *billing.RedeemService
+	redeemService *billing.RedeemService // current-user redemption and history service
 }
 
-// RedeemRequest represents the redeem code request payload.
+// RedeemRequest supplies the credential text submitted by the authenticated
+// recipient.
 type RedeemRequest struct {
-	Code string `json:"code" binding:"required"`
+	Code string `json:"code" binding:"required"` // submitted exact credential text
 }
 
-// NewRedeemHandler creates a new RedeemHandler.
+// NewRedeemHandler binds a redemption service without handling a request or
+// opening resources. The caller supplies a usable service and mounts methods
+// with authentication middleware so the handler can derive the current
+// recipient.
 func NewRedeemHandler(redeemService *billing.RedeemService) *RedeemHandler {
 	return &RedeemHandler{
 		redeemService: redeemService,
 	}
 }
 
-// Redeem handles redeeming a code
+// Redeem binds required credential text and uses the authenticated subject's
+// user ID for the service attempt. Missing identity yields unauthorized,
+// malformed JSON yields bad request, and service errors use the shared error
+// response; success maps the returned user receipt.
 // POST /api/v1/redeem
 func (h *RedeemHandler) Redeem(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -49,7 +63,10 @@ func (h *RedeemHandler) Redeem(c *gin.Context) {
 	response.Success(c, RedeemCodeFromService(result))
 }
 
-// GetHistory returns a page of the current user's redemption history.
+// GetHistory returns the authenticated user's paginated redemption/adjustment
+// views using parsed page and size. Missing identity yields unauthorized;
+// service errors use the shared response, and successful rows retain the user
+// mapper's per-type reason visibility.
 // GET /api/v1/redeem/history?page=1&page_size=20
 func (h *RedeemHandler) GetHistory(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)

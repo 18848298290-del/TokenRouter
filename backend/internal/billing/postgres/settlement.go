@@ -19,55 +19,127 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Completed gateway usage can exceed a pinned subscription's remaining quota,
+// while task submission requires a fully funded reservation before upstream
+// work starts. Ordinary settlement caps subscription usage and records
+// uncovered costs as wallet debt; task funding freezes available wallet money
+// and retains source allocations for capture or release. Both use a billing
+// action key plus API Key identity to detect repeats and conflicting inputs.
+//
+// Each write attempt owns a fresh SQL transaction, claims its financial
+// identity, locks the payer before subscriptions and commits funding with
+// counters and task metadata. PostgreSQL deadlocks restart the complete
+// attempt. Task allowance refunds use a savepoint so a failed refund can
+// retain conservative counts while completed funding remains committable.
+// Provider threshold crossings require an outbox write on that same
+// transaction; analysis logs and later notifications have separate delivery
+// lifetimes.
+
+// Task allowance stages determine whether submission holds counters,
+// completion keeps actual usage or cancellation returns previously reserved
+// usage.
 const (
-	taskAllowanceReserve taskAllowanceOperation = iota
-	taskAllowanceCapture
-	taskAllowanceRelease
+	taskAllowanceReserve taskAllowanceOperation = iota // reserve held Key and member usage
+	taskAllowanceCapture                               // retain actual usage at completion
+	taskAllowanceRelease                               // refund previously reserved allowance usage
 )
 
+// SettlementStore applies request and task funding through its caller-owned
+// database, with calendar accounting and registered transaction-bound task
+// writers.
 type SettlementStore struct {
-	db              *sql.DB
-	calendar        timezone.Calendar
-	providerOutbox  ProviderQuotaOutbox
-	taskProjections TaskProjectionFactories
+	// db remains usable for every funding attempt and unlocked subscription read.
+	// NewSettlementStore retains the caller-owned pool; its owner closes it after
+	// store operations finish.
+	db       *sql.DB           // caller-owned SQL connection pool
+	calendar timezone.Calendar // member accounting calendar rules
+	// providerOutbox is required when a post-update provider limit crosses from
+	// below. An absent writer fails that transaction; actions with no crossing
+	// can succeed with nil.
+	providerOutbox ProviderQuotaOutbox // provider threshold event writer
+	// taskProjections contains the constructor-copied registrations read by every
+	// task attempt. Keep the stored map immutable after publication; each factory
+	// receives that attempt's new transaction and task reference.
+	taskProjections TaskProjectionFactories // scope-indexed transaction writer factories
 }
 
-// ProviderQuotaOutbox writes a scheduling event in the billing transaction when provider usage crosses a quota limit.
+// ProviderQuotaOutbox writes a provider scheduling event on the supplied
+// billing transaction when a quota crosses its limit. The caller commits or
+// recovers that transaction; callback failures fail the funding attempt.
 type ProviderQuotaOutbox func(context.Context, *sql.Tx, int64) error
 
+// taskAllowanceOperation selects which task stage adjusts held Key and member
+// usage.
 type taskAllowanceOperation int
 
+// usageBillingSubscriptionRow holds scanned quota, lifetime and plan JSON
+// values before billing normalization or allocation.
 type usageBillingSubscriptionRow struct {
-	ID                          int64
-	PlanID                      int64
-	StartsAt                    time.Time
-	ExpiresAt                   time.Time
-	DailyWindowStart            sql.NullTime
-	WeeklyWindowStart           sql.NullTime
-	MonthlyWindowStart          sql.NullTime
-	DailyLimitUSD               sql.NullFloat64
-	WeeklyLimitUSD              sql.NullFloat64
-	MonthlyLimitUSD             sql.NullFloat64
-	DailyUsageUSD               float64
-	WeeklyUsageUSD              float64
-	MonthlyUsageUSD             float64
-	PlanGroupIDsRaw             []byte
-	PlanGroupRateMultipliersRaw []byte
+	ID     int64 // selected grant record identifier
+	PlanID int64 // selected source plan identifier
+	// StartsAt and ExpiresAt bound the selected grant lifetime. Queries establish
+	// current eligibility; window normalization uses both timestamps to determine
+	// one-time daily quota and expiry-tail reset fit.
+	StartsAt  time.Time // inclusive grant start time
+	ExpiresAt time.Time // exclusive grant expiry time
+	// DailyWindowStart, WeeklyWindowStart and MonthlyWindowStart retain SQL null
+	// presence. Normalization can activate or replace eligible windows in memory;
+	// allocation persists anchors only on rows receiving positive charges.
+	DailyWindowStart   sql.NullTime // nullable daily quota anchor
+	WeeklyWindowStart  sql.NullTime // nullable weekly quota anchor
+	MonthlyWindowStart sql.NullTime // nullable monthly quota anchor
+	// DailyLimitUSD, WeeklyLimitUSD, MonthlyLimitUSD and DailyUsageUSD,
+	// WeeklyUsageUSD, MonthlyUsageUSD describe overlapping quota counters. Every
+	// positive-limit period counts the same subscription charge, and their
+	// smallest remainder caps allocation. Null and nonpositive limits disable
+	// their corresponding capacity constraint.
+	DailyLimitUSD   sql.NullFloat64 // nullable daily quota USD
+	WeeklyLimitUSD  sql.NullFloat64 // nullable weekly quota USD
+	MonthlyLimitUSD sql.NullFloat64 // nullable monthly quota USD
+	DailyUsageUSD   float64         // recorded daily usage USD
+	WeeklyUsageUSD  float64         // recorded weekly usage USD
+	MonthlyUsageUSD float64         // recorded monthly usage USD
+	// PlanGroupIDsRaw is loaded by the unlocked resolver for the returned minimal
+	// plan. The allocation query omits it because SQL has already applied the
+	// needed coverage filter.
+	PlanGroupIDsRaw []byte // JSON plan group IDs
+	// PlanGroupRateMultipliersRaw is decoded afresh for pricing snapshots.
+	// Malformed JSON becomes an empty rate map, and consumers select positive
+	// configured overrides for the final group.
+	PlanGroupRateMultipliersRaw []byte // JSON group rate overrides
 }
 
-// TaskProjection persists task funding allocations and allowance reservation state in the billing transaction.
-//
+// TaskProjection writes a task's funding split and allowance flag using the
+// billing attempt's supplied SQL transaction. The billing owner completes that
+// transaction after funding and allowance changes succeed.
 // @project-doc docs/domains/routing_and_billing.md#usage_settlement
 type TaskProjection interface {
+	// SaveReservation persists the held wallet amount, subscription allocations,
+	// mixed hold and settlement estimate for this task on the supplied billing
+	// transaction. A write failure returns to the billing owner for whole-attempt
+	// recovery before upstream submission.
 	SaveReservation(context.Context, float64, []billing.BillingAllocation, float64, float64) error
+	// SetAllowanceReserved records whether task Key/member usage was reserved at
+	// submission on the supplied transaction. Billing sets it after reservation
+	// and clears it after capture or release; a write failure fails the funding
+	// attempt.
 	SetAllowanceReserved(context.Context, bool) error
 }
 type (
-	TaskProjectionFactory   func(*sql.Tx, billing.TaskReference) TaskProjection
+	// TaskProjectionFactory binds a task owner's metadata writer to one billing
+	// attempt's SQL transaction and opaque reference. Each attempt needs a usable
+	// participant; billing keeps completion ownership.
+	TaskProjectionFactory func(*sql.Tx, billing.TaskReference) TaskProjection
+	// TaskProjectionFactories registers the task scopes accepted by this funding
+	// store. NewSettlementStore merges copies of these maps; later registrations
+	// replace duplicate scope entries.
 	TaskProjectionFactories map[billing.TaskScope]TaskProjectionFactory
 )
 
-// NewSettlementStore constructs the funding store and copies the registered task factories.
+// NewSettlementStore retains the caller-owned database and calendar and merges
+// task factory registrations into a fresh map. Later maps replace duplicate
+// scopes; factory closures remain shared, and callers keep the database usable
+// for subsequent operations.
 func NewSettlementStore(sqlDB *sql.DB, calendar timezone.Calendar, outbox ProviderQuotaOutbox, factories ...TaskProjectionFactories) *SettlementStore {
 	projections := make(TaskProjectionFactories)
 	for _, set := range factories {
@@ -76,6 +148,11 @@ func NewSettlementStore(sqlDB *sql.DB, calendar timezone.Calendar, outbox Provid
 	return &SettlementStore{db: sqlDB, calendar: calendar, providerOutbox: outbox, taskProjections: projections}
 }
 
+// Apply normalizes an exclusively owned usage command and applies its funding
+// effects in a store-owned SQL transaction. Nil commands return an empty
+// result; a missing database or normalized empty action key fails.
+// Context-carried Ent transactions are independent, and SQLSTATE 40P01 permits
+// two complete retries under the caller's context.
 func (r *SettlementStore) Apply(ctx context.Context, cmd *billing.UsageBillingCommand) (_ *billing.UsageBillingApplyResult, err error) {
 	if cmd == nil {
 		return &billing.UsageBillingApplyResult{}, nil
@@ -89,24 +166,42 @@ func (r *SettlementStore) Apply(ctx context.Context, cmd *billing.UsageBillingCo
 		return nil, billing.ErrUsageBillingRequestIDRequired
 	}
 
+	// A deadlock aborts its transaction. RetryDeadlock creates at most two
+	// further complete attempts through applyOnce, while the supplied context
+	// governs their SQL and backoff.
 	return postgresinfra.RetryDeadlock(ctx, "usage_billing_apply", 0, func() (*billing.UsageBillingApplyResult, error) {
 		return r.applyOnce(ctx, cmd)
 	})
 }
 
-// applyOnce runs one billing transaction. Deadlock retries need a new transaction because PostgreSQL aborts the
-// failed one.
+// applyOnce claims and applies one normalized usage action on a newly opened
+// transaction. A matching live or archived identity returns Applied false
+// before payer and subscription work; a conflicting fingerprint fails. The
+// claim can insert a live row before discovering an archive match, so that
+// replay path leaves the attempt for deferred rollback.
+//
+// The payer lock precedes subscription locks, and funding, team/Key counters
+// and provider outbox writes precede commit. Failures return to cleanup with
+// the transaction retained. Successful commit clears that cleanup handle; a
+// commit error is reported without asserting whether the database's final
+// outcome is known.
 func (r *SettlementStore) applyOnce(ctx context.Context, cmd *billing.UsageBillingCommand) (_ *billing.UsageBillingApplyResult, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	// Keep cleanup registered until successful commit. Replay and failure paths
+	// can leave a live claim or earlier writes that need this attempt's rollback;
+	// cleanup errors do not replace the selected result.
 	defer func() {
 		if tx != nil {
 			_ = tx.Rollback()
 		}
 	}()
 
+	// Claim before payer or subscription changes so matching financial identities
+	// exit as replay. An archive match leaves this attempt's earlier live
+	// insertion for deferred rollback.
 	applied, err := r.claimUsageBillingKey(ctx, tx, cmd)
 	if err != nil {
 		return nil, err
@@ -123,6 +218,9 @@ func (r *SettlementStore) applyOnce(ctx context.Context, cmd *billing.UsageBilli
 		return nil, err
 	}
 
+	// Commit the claim with all completed funding and auxiliary writes. Clear the
+	// rollback handle only after commit succeeds, retaining cleanup for every
+	// returned failure.
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -130,10 +228,11 @@ func (r *SettlementStore) applyOnce(ctx context.Context, cmd *billing.UsageBilli
 	return result, nil
 }
 
-// lockUsageBillingUser serializes payer writes before subscription locks. NO KEY UPDATE permits the KEY SHARE
-// locks used by log foreign keys.
+// lockUsageBillingUser locks an undeleted positive payer before subscription
+// writes and returns ErrUserNotFound when that row is absent. Nonpositive IDs
+// skip locking for provider-only actions. FOR NO KEY UPDATE permits the KEY
+// SHARE locks used by usage-log foreign keys.
 func lockUsageBillingUser(ctx context.Context, tx *sql.Tx, userID int64) error {
-	// Provider-only maintenance operations may omit the payer and therefore skip this lock.
 	if userID <= 0 {
 		return nil
 	}
@@ -150,12 +249,18 @@ func lockUsageBillingUser(ctx context.Context, tx *sql.Tx, userID int64) error {
 	return err
 }
 
+// ResolveUsableSubscriptionForGroup returns the earliest-expiring currently
+// usable grant covering a positive group for a positive user. The read uses
+// the store database without reserving quota; callers perform transactional
+// allocation before relying on an amount remaining available.
 func (r *SettlementStore) ResolveUsableSubscriptionForGroup(ctx context.Context, userID, groupID int64) (*billing.UserSubscription, error) {
 	return r.resolveUsableSubscriptionForGroup(ctx, userID, groupID, nil)
 }
 
-// ResolvePreferredSubscriptionForGroup reads the pinned subscription for task pricing, keeping the Key's selected
-// funding source.
+// ResolvePreferredSubscriptionForGroup reads the selected grant for a positive
+// user, subscription and group. Invalid subscription IDs return
+// ErrSubscriptionNotFound; selection stays pinned, and the returned quota
+// snapshot needs transactional reservation before task submission.
 func (r *SettlementStore) ResolvePreferredSubscriptionForGroup(ctx context.Context, userID, subscriptionID, groupID int64) (*billing.UserSubscription, error) {
 	if subscriptionID <= 0 {
 		return nil, billing.ErrSubscriptionNotFound
@@ -163,6 +268,17 @@ func (r *SettlementStore) ResolvePreferredSubscriptionForGroup(ctx context.Conte
 	return r.resolveUsableSubscriptionForGroup(ctx, userID, groupID, &subscriptionID)
 }
 
+// resolveUsableSubscriptionForGroup reads eligible grant rows in expiry, start
+// and ID order using one Go observation time. Rows must belong to the positive
+// user, be undeleted, have stored active or pending status, contain that time
+// and cover the positive group through an unrestricted or matching plan. An
+// optional preferred ID narrows the same query.
+//
+// Each row's window counters are normalized in memory before the minimum
+// enabled remainder is checked. An unlimited row uses a positive sentinel, and
+// the first positive candidate is returned with minimal plan coverage data.
+// Exhausted or absent candidates return ErrSubscriptionNotFound; iteration
+// errors propagate. This database read leaves quota reservation to the caller.
 func (r *SettlementStore) resolveUsableSubscriptionForGroup(ctx context.Context, userID, groupID int64, preferredSubscriptionID *int64) (*billing.UserSubscription, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("usage billing repository db is nil")
@@ -231,6 +347,9 @@ func (r *SettlementStore) resolveUsableSubscriptionForGroup(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	// Retain cursor cleanup even when a positive candidate returns before
+	// iteration ends. Close failures are discarded here after the selected
+	// snapshot or primary read failure.
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
@@ -255,8 +374,13 @@ func (r *SettlementStore) resolveUsableSubscriptionForGroup(ctx context.Context,
 			return nil, err
 		}
 
-		// Normalize windows before checking remaining quota so rate selection and settlement use the same effective usage.
+		// Apply billing's in-memory window rules at the same time used for
+		// eligibility. Their effective counters determine whether task pricing can
+		// select this row before a later transactional reservation.
 		row = normalizeUsageBillingSubscriptionRow(row, now)
+		// An unlimited row uses a one-dollar sentinel because this lookup chooses a
+		// usable source by positivity; its later reservation computes the required
+		// amount.
 		available := usageBillingSubscriptionAvailable(
 			1,
 			windowRemaining(row.DailyLimitUSD, row.DailyUsageUSD),
@@ -273,11 +397,29 @@ func (r *SettlementStore) resolveUsableSubscriptionForGroup(ctx context.Context,
 	return nil, billing.ErrSubscriptionNotFound
 }
 
+// claimUsageBillingKey forwards the normalized command's action key, API Key
+// and fingerprint to the transactional deduplication check. Callers interpret
+// false as replay and leave this attempt uncommitted, including a possible
+// live insert preceding an archive match.
 func (r *SettlementStore) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *billing.UsageBillingCommand) (bool, error) {
 	return r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
 }
 
+// claimUsageBillingRequest claims the action-key/API-Key pair in the supplied
+// transaction and reports whether funding should proceed. A duplicate live
+// pair compares trimmed fingerprints; a mismatch returns
+// ErrUsageBillingRequestConflict, while an equal fingerprint returns false.
+// The action key itself is used as supplied.
+//
+// After a successful live insert, the archive is checked for the same identity
+// to prevent charging an aged-out action again. An archive match also compares
+// fingerprints and returns false or conflict. Because that path has already
+// inserted the live claim, the transaction owner rolls back replay and failure
+// attempts before publishing financial results.
 func (r *SettlementStore) claimUsageBillingRequest(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64, requestFingerprint string) (bool, error) {
+	// Stored fingerprints can retain surrounding whitespace through command
+	// normalization. Apply trimmed equality when either table already holds this
+	// identity, so those retained characters do not create a replay conflict.
 	var id int64
 	err := tx.QueryRowContext(ctx, `
 		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
@@ -302,6 +444,9 @@ func (r *SettlementStore) claimUsageBillingRequest(ctx context.Context, tx *sql.
 	if err != nil {
 		return false, err
 	}
+	// The live insert can succeed for an aged-out action. Compare its archive
+	// identity before funding, leaving the owner to roll back the inserted row on
+	// replay or conflict.
 	var archivedFingerprint string
 	err = tx.QueryRowContext(ctx, `
 		SELECT request_fingerprint
@@ -320,24 +465,49 @@ func (r *SettlementStore) claimUsageBillingRequest(ctx context.Context, tx *sql.
 	return true, nil
 }
 
+// Reserve applies a task's subscription-first reservation, wallet hold, task
+// funding metadata and allowance reservation through the selected scope
+// factory. Nil commands return an empty result. Command normalization precedes
+// transaction work; computed hold changes are published after the owned
+// attempt succeeds.
 func (r *SettlementStore) Reserve(ctx context.Context, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	return r.applyTaskBalanceHold(ctx, cmd, taskAllowanceReserve, func(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, projection TaskProjection) (*billing.TaskFundsResult, error) {
 		return reserveUsageBillingTaskBilling(ctx, tx, projection, cmd)
 	})
 }
 
+// Capture applies the supplied task funding snapshot to actual costs and
+// releases unused held amounts through the selected scope factory. The task
+// owner supplies its original reservation identity and metadata; this wrapper
+// delegates retries and transaction completion.
 func (r *SettlementStore) Capture(ctx context.Context, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	return r.applyTaskBalanceHold(ctx, cmd, taskAllowanceCapture, func(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, projection TaskProjection) (*billing.TaskFundsResult, error) {
 		return captureUsageBillingTaskBilling(ctx, tx, cmd)
 	})
 }
 
+// Release returns a task's recorded subscription and wallet reservations and
+// updates its allowance flag through the selected scope factory. The task
+// owner supplies the original reserve key; an absent hold claim makes the
+// funding refund an empty result.
 func (r *SettlementStore) Release(ctx context.Context, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	return r.applyTaskBalanceHold(ctx, cmd, taskAllowanceRelease, func(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, projection TaskProjection) (*billing.TaskFundsResult, error) {
 		return releaseUsageBillingTaskBilling(ctx, tx, cmd)
 	})
 }
 
+// applyTaskBalanceHold validates the task scope before normalizing an
+// exclusively owned command and starting any transaction. Nil input returns an
+// empty result; missing database, unregistered scope and empty normalized
+// action key fail. The initial normalization remains visible even when later
+// work fails.
+//
+// Every deadlock attempt starts from the same normalized snapshot, with a
+// separate allocation slice, so a failed attempt's computed hold or actual
+// amount cannot feed the next attempt. Optional allocation ID pointers remain
+// shared and need immutable use. Attempt changes replace the caller command
+// only after the complete transaction succeeds, including successful replay
+// reconstruction.
 func (r *SettlementStore) applyTaskBalanceHold(
 	ctx context.Context,
 	cmd *billing.TaskFundsCommand,
@@ -359,6 +529,9 @@ func (r *SettlementStore) applyTaskBalanceHold(
 	}
 	original := cloneTaskBalanceHoldCommand(cmd)
 
+	// Start each retry from the normalized input snapshot. Publish computed
+	// hold/actual fields only after an attempt succeeds, preventing rolled-back
+	// allocation changes from becoming retry inputs.
 	result, err := postgresinfra.RetryDeadlock(ctx, taskAllowanceOperationName(operation), 0, func() (*billing.TaskFundsResult, error) {
 		attemptCmd := cloneTaskBalanceHoldCommand(&original)
 		attemptResult, attemptErr := r.applyTaskBalanceHoldOnce(ctx, &attemptCmd, operation, apply)
@@ -370,7 +543,18 @@ func (r *SettlementStore) applyTaskBalanceHold(
 	return result, err
 }
 
-// applyTaskBalanceHoldOnce runs one complete task funding transaction.
+// applyTaskBalanceHoldOnce owns one task funding transaction and claims its
+// action identity before locking the payer. A replay reconstructs an
+// Applied-false result from the supplied funding snapshot and leaves the
+// transaction for rollback. A new action obtains a fresh transaction-bound
+// participant from its registered scope; a missing factory or nil participant
+// fails.
+//
+// The caller supplies a nonnil funding callback. That callback runs before
+// allowance bookkeeping, and both participant writes share the same commit as
+// balances, subscription counters and deduplication. A nil callback result
+// becomes an empty Applied-true result. Any error leaves cleanup active; only
+// successful commit clears the rollback handle.
 func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	ctx context.Context,
 	cmd *billing.TaskFundsCommand,
@@ -381,6 +565,9 @@ func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	if err != nil {
 		return nil, err
 	}
+	// Keep cleanup registered until successful commit. Replay and failure paths
+	// can leave a live claim or earlier writes that need this attempt's rollback;
+	// cleanup errors do not replace the selected result.
 	defer func() {
 		if tx != nil {
 			_ = tx.Rollback()
@@ -406,6 +593,9 @@ func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	if projection == nil {
 		return nil, errors.New("billing task projection is nil")
 	}
+	// Apply funding and task allocation writes before Key/member allowance
+	// bookkeeping. Both stages use the same participant and transaction, so a
+	// later failure prevents normal commit.
 	result, err := apply(ctx, tx, cmd, projection)
 	if err != nil {
 		return nil, err
@@ -418,6 +608,9 @@ func (r *SettlementStore) applyTaskBalanceHoldOnce(
 		return nil, err
 	}
 
+	// Commit the claim with all completed funding and auxiliary writes. Clear the
+	// rollback handle only after commit succeeds, retaining cleanup for every
+	// returned failure.
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -425,7 +618,10 @@ func (r *SettlementStore) applyTaskBalanceHoldOnce(
 	return result, nil
 }
 
-// cloneTaskBalanceHoldCommand isolates per-attempt mutations so retries start with the same input.
+// cloneTaskBalanceHoldCommand copies the outer command and allocation slice
+// for independent retry mutations. Nil input yields a zero command. Allocation
+// ID pointers and other optional pointers remain shared, so callers keep their
+// pointed-to values unchanged across attempts.
 func cloneTaskBalanceHoldCommand(cmd *billing.TaskFundsCommand) billing.TaskFundsCommand {
 	if cmd == nil {
 		return billing.TaskFundsCommand{}
@@ -435,7 +631,9 @@ func cloneTaskBalanceHoldCommand(cmd *billing.TaskFundsCommand) billing.TaskFund
 	return cloned
 }
 
-// taskAllowanceOperationName returns the operation label used in retry logs.
+// taskAllowanceOperationName returns the existing batch-image-prefixed retry
+// log label for reserve, capture or release. Unknown enum values receive the
+// unknown label; task scope does not change these diagnostic operation names.
 func taskAllowanceOperationName(operation taskAllowanceOperation) string {
 	switch operation {
 	case taskAllowanceReserve:
@@ -449,6 +647,19 @@ func taskAllowanceOperationName(operation taskAllowanceOperation) string {
 	}
 }
 
+// applyTaskAllowance adjusts Key and member counters after task funding
+// succeeds inside the same transaction. Nil or nonpositive hold-and-base
+// commands skip counters and participant flag changes. Reserve charges the
+// computed hold and records the allowance flag; a zero ReservedAt selects a
+// current time for Key reservation while member reservation observes its own
+// calendar time. That chosen Key time is not written back to cmd.ReservedAt;
+// task owners retain their original timestamp for later refunds.
+//
+// Capture with a recorded allowance refunds positive hold-minus-actual usage
+// under a savepoint. Older snapshots charge actual Key and eligible member
+// usage at capture instead. Release refunds the recorded hold when its flag is
+// set. Capture and release then clear that flag; successful savepoint recovery
+// can retain conservative counts even while the flag and funding commit.
 func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, operation taskAllowanceOperation, projection TaskProjection) error {
 	if cmd == nil || (cmd.HoldAmount <= 0 && cmd.BaseAmountUSD <= 0) {
 		return nil
@@ -459,6 +670,9 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 		if reservedAt.IsZero() {
 			reservedAt = time.Now()
 		}
+		// Reserve Key usage before member usage and the stored allowance flag. These
+		// writes follow funding within the same transaction, so any later error
+		// reaches whole-attempt recovery.
 		if err := reserveTaskAPIKeyAllowance(ctx, tx, cmd.APIKeyID, cmd.HoldAmount, reservedAt); err != nil {
 			return err
 		}
@@ -468,6 +682,9 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 		return projection.SetAllowanceReserved(ctx, true)
 	case taskAllowanceCapture:
 		if cmd.AllowanceReserved {
+			// The saved flag identifies allowance already counted at submission. Refund
+			// only unused held usage; savepoint recovery keeps completed funding
+			// committable when paired counter refunds fail.
 			adjustment := cmd.HoldAmount - cmd.ActualAmount
 			if adjustment > 0 {
 				if err := rollbackTaskAllowanceBestEffort(ctx, tx, cmd.Task.ID, func() error {
@@ -480,7 +697,9 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 				}
 			}
 		} else if cmd.ActualAmount > 0 {
-			// Tasks created before allowance reservation was recorded need their actual usage charged at capture.
+			// A snapshot without recorded allowance needs actual usage counted at
+			// capture. This compatibility path charges the original Key and current
+			// active member after the funding calculation.
 			if err := chargeLegacyTaskAPIKey(ctx, tx, cmd.APIKeyID, cmd.ActualAmount); err != nil {
 				return err
 			}
@@ -492,6 +711,9 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 		}
 		return projection.SetAllowanceReserved(ctx, false)
 	case taskAllowanceRelease:
+		// Refund this cancellation's full recorded hold beneath one allowance
+		// savepoint. Paired Key/member updates can otherwise retain different counts
+		// when the later refund fails.
 		if cmd.AllowanceReserved {
 			if err := rollbackTaskAllowanceBestEffort(ctx, tx, cmd.Task.ID, func() error {
 				if err := releaseTaskAPIKeyAllowance(ctx, tx, cmd.APIKeyID, cmd.HoldAmount, cmd.ReservedAt); err != nil {
@@ -508,14 +730,26 @@ func (r *SettlementStore) applyTaskAllowance(ctx context.Context, tx *sql.Tx, cm
 	}
 }
 
-// rollbackTaskAllowanceBestEffort isolates allowance-release failures with a savepoint.
-// A failed release retains conservative usage counts; savepoint recovery keeps completed balance settlement
-// committable.
+// rollbackTaskAllowanceBestEffort runs a nonnil allowance refund callback
+// beneath a fixed savepoint in the caller's transaction. A callback error
+// rolls back its partial Key/member changes and releases the savepoint.
+// Successful recovery logs that error and returns nil, allowing the caller's
+// previously completed funding updates to commit with conservative allowance
+// counts retained.
+//
+// Savepoint creation, rollback-to-savepoint and release failures propagate
+// because the caller can no longer assume isolated recovery succeeded. A
+// successful callback also releases its savepoint before returning. The
+// surrounding transaction owner decides commit or rollback and supplies
+// callback execution within the same transaction.
 func rollbackTaskAllowanceBestEffort(ctx context.Context, tx *sql.Tx, batchID string, rollback func() error) error {
 	const savepoint = "batch_image_allowance_rollback"
 	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+savepoint); err != nil {
 		return err
 	}
+	// A failed refund may have already changed the Key before member failure.
+	// Undo both to this savepoint, then suppress the callback error only after
+	// recovery and release succeed.
 	if err := rollback(); err != nil {
 		if _, rollbackErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+savepoint); rollbackErr != nil {
 			return rollbackErr
@@ -530,7 +764,9 @@ func rollbackTaskAllowanceBestEffort(ctx context.Context, tx *sql.Tx, batchID st
 	return err
 }
 
-// taskHoldClaimRequestID returns the reservation action ID supplied by the task owner.
+// taskHoldClaimRequestID returns the task owner's recorded reservation action
+// key verbatim. Nil input returns an empty string; billing uses this supplied
+// identity even when its prefix or task ID belongs to a different task scope.
 func taskHoldClaimRequestID(cmd *billing.TaskFundsCommand) string {
 	if cmd == nil {
 		return ""
@@ -538,10 +774,22 @@ func taskHoldClaimRequestID(cmd *billing.TaskFundsCommand) string {
 	return cmd.Task.ReserveRequestID
 }
 
+// reserveTaskAPIKeyAllowance atomically adds a task hold to an active,
+// undeleted Key with team_owner_disabled=false whose total and rolling limits
+// can cover it. Equality is accepted, and reaching a positive total quota stores
+// quota_exhausted. The caller supplies the reservation timestamp and a
+// validated monetary amount.
+//
+// Missing or expired rolling anchors select new usage; the five-hour anchor
+// uses reservedAt, while day and week anchors use database-session midnight.
+// No matching update triggers a diagnostic reread with its own current-time
+// observation, so the reported error can reflect a later window. Other SQL
+// errors propagate to the transaction owner.
 func reserveTaskAPIKeyAllowance(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64, reservedAt time.Time) error {
 	var id int64
-	// Reservation and release use the same timestamp; a later database NOW() could incorrectly place them in
-	// different windows.
+	// Use the supplied reservation time for rolling-limit guards and replacement
+	// anchors. Later refunds test that original time against current windows,
+	// keeping newer window usage attributable to its own reservations.
 	err := tx.QueryRowContext(ctx, `
 		UPDATE api_keys SET
 			quota_used = quota_used + $1,
@@ -565,9 +813,22 @@ func reserveTaskAPIKeyAllowance(ctx context.Context, tx *sql.Tx, apiKeyID int64,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	// A rejected guarded update has no direct reason code. Reread the Key to
+	// choose a quota, rolling-limit or availability error for the task owner.
 	return taskAPIKeyAllowanceError(ctx, tx, apiKeyID, amount)
 }
 
+// taskAPIKeyAllowanceError diagnoses a failed reservation by rereading the
+// undeleted Key. Missing, disabled-owner and non-active rows become
+// Key-not-found unless stored quota_exhausted selects the total-quota error.
+// Total quota is checked before five-hour, daily and weekly amounts.
+//
+// Rolling diagnostics use a fresh Go time rather than the reservation's
+// earlier timestamp, with absent or elapsed anchors contributing zero usage. A
+// boundary change can therefore remove the earlier failing limit from this
+// observation. If no current limit explains rejection, ErrAPIKeyNotFound
+// remains the result; the caller keeps the failed reservation transaction
+// uncommitted.
 func taskAPIKeyAllowanceError(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) error {
 	var status string
 	var ownerDisabled bool
@@ -593,6 +854,9 @@ func taskAPIKeyAllowanceError(ctx context.Context, tx *sql.Tx, apiKeyID int64, a
 	if quota > 0 && quotaUsed+amount > quota {
 		return billing.ErrAPIKeyQuotaExhausted
 	}
+	// Reevaluate elapsed windows at current Go time using the Key's fixed
+	// five-hour, twenty-four-hour and seven-day durations. A changed boundary can
+	// remove the earlier guarded update's failing limit.
 	now := time.Now()
 	if limit5h > 0 && effectiveSQLWindowUsage(usage5h, start5h, 5*time.Hour, now)+amount > limit5h {
 		return billing.ErrAPIKeyRateLimit5hExceeded
@@ -606,6 +870,10 @@ func taskAPIKeyAllowanceError(ctx context.Context, tx *sql.Tx, apiKeyID int64, a
 	return billing.ErrAPIKeyNotFound
 }
 
+// effectiveSQLWindowUsage returns zero for an absent anchor or a duration
+// ending at or before now. Otherwise it returns usage unchanged, including
+// future anchors and signed values; callers provide the window duration
+// appropriate to their Key limit.
 func effectiveSQLWindowUsage(usage float64, start sql.NullTime, duration time.Duration, now time.Time) float64 {
 	if !start.Valid || !start.Time.Add(duration).After(now) {
 		return 0
@@ -613,6 +881,17 @@ func effectiveSQLWindowUsage(usage float64, start sql.NullTime, duration time.Du
 	return usage
 }
 
+// reserveTaskMemberAllowance adds the held amount to an active member's
+// calendar day, week and month counters when a team actor differs from the
+// payer. Missing teams, nonpositive actors and owner-as-actor commands skip
+// this step. Positive limits require the post-reservation amounts to fit, with
+// equality accepted.
+//
+// Calendar starts come from a fresh Go observation and the store calendar,
+// independently of cmd.ReservedAt. Absent or older anchors reset the matching
+// counter. A rejected update is reread for ordered limit diagnosis; an owner
+// role in that reread returns success without a member counter write. The
+// transaction owner completes or recovers the funding sequence.
 func (r *SettlementStore) reserveTaskMemberAllowance(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, amount float64) error {
 	if cmd.TeamID == nil || cmd.ActorUserID <= 0 || cmd.ActorUserID == cmd.UserID {
 		return nil
@@ -642,9 +921,23 @@ func (r *SettlementStore) reserveTaskMemberAllowance(ctx context.Context, tx *sq
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	// The guarded member update can miss for role, membership or limit reasons.
+	// Reread with these same calendar starts so the task receives the first
+	// observed limit error.
 	return taskMemberAllowanceError(ctx, tx, *cmd.TeamID, cmd.ActorUserID, amount, dailyStart, weeklyStart, monthlyStart)
 }
 
+// taskMemberAllowanceError rereads current team membership after a held-amount
+// update finds no eligible row. Missing active membership returns
+// ErrTeamMembershipRequired, while an owner returns nil. For other roles,
+// positive daily, weekly and monthly limits are checked in that order using
+// the supplied calendar starts.
+//
+// An absent or older stored anchor contributes zero usage; anchors at or after
+// the expected start retain their counters. The first exceeded limit chooses
+// its specific error. If these observed limits fit but the update was still
+// rejected, membership-required remains the result, and the caller's
+// transaction handles the failed reservation.
 func taskMemberAllowanceError(ctx context.Context, tx *sql.Tx, teamID, userID int64, amount float64, dailyStart, weeklyStart, monthlyStart time.Time) error {
 	var role string
 	var dailyLimit, weeklyLimit, monthlyLimit, dailyUsage, weeklyUsage, monthlyUsage float64
@@ -661,6 +954,9 @@ func taskMemberAllowanceError(ctx context.Context, tx *sql.Tx, teamID, userID in
 	if err != nil {
 		return err
 	}
+	// A current owner row is outside the member-only guarded update. Accept this
+	// diagnosis as success so a changed role does not reject the already prepared
+	// funding.
 	if role == "owner" {
 		return nil
 	}
@@ -676,6 +972,10 @@ func taskMemberAllowanceError(ctx context.Context, tx *sql.Tx, teamID, userID in
 	return billing.ErrTeamMembershipRequired
 }
 
+// effectiveNaturalWindowUsage returns zero when the stored calendar anchor is
+// absent or older than expectedStart. Anchors at or after that start retain
+// usage unchanged; future anchors and signed usage are left for the caller's
+// domain validation.
 func effectiveNaturalWindowUsage(usage float64, window sql.NullTime, expectedStart time.Time) float64 {
 	if !window.Valid || window.Time.Before(expectedStart) {
 		return 0
@@ -683,6 +983,16 @@ func effectiveNaturalWindowUsage(usage float64, window sql.NullTime, expectedSta
 	return usage
 }
 
+// releaseTaskAPIKeyAllowance decreases total Key usage and the rolling windows
+// that still contain the original reservation timestamp, clamping refunded
+// counters at zero. It targets the original ID even after deletion, and an
+// absent row is a successful no-op.
+//
+// A stored quota_exhausted Key can reactivate when team_owner_disabled=false
+// and its reduced total falls below the quota or the quota is unlimited. Other
+// statuses remain as stored. The caller supplies the previously reserved
+// amount and timestamp and wraps paired member refunds in a savepoint to
+// recover partial allowance writes.
 func releaseTaskAPIKeyAllowance(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64, reservedAt time.Time) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE api_keys SET
@@ -696,6 +1006,16 @@ func releaseTaskAPIKeyAllowance(ctx context.Context, tx *sql.Tx, apiKeyID int64,
 	return err
 }
 
+// releaseTaskMemberAllowance refunds the actor's recorded team usage when the
+// command has a team and a positive actor distinct from the payer. Membership
+// must have existed at ReservedAt; its current role does not restrict the
+// refund. Missing matching rows are successful no-ops.
+//
+// Each calendar counter decreases only when its current day, week or month
+// interval contains that reservation time, so a later window keeps its own
+// usage. Refunded values clamp at zero. The caller uses its transaction and
+// allowance savepoint to keep this update consistent with the preceding Key
+// refund.
 func releaseTaskMemberAllowance(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, amount float64) error {
 	if cmd.TeamID == nil || cmd.ActorUserID <= 0 || cmd.ActorUserID == cmd.UserID {
 		return nil
@@ -711,6 +1031,17 @@ func releaseTaskMemberAllowance(ctx context.Context, tx *sql.Tx, cmd *billing.Ta
 	return err
 }
 
+// chargeLegacyTaskAPIKey charges actual usage for task snapshots whose
+// allowance was not reserved at submission. It updates the original Key ID
+// without admission or deletion filters, and a missing row is a successful
+// no-op. Rolling windows use database NOW for their expiration and replacement
+// anchors.
+//
+// Reaching a positive total quota stores quota_exhausted when the stored
+// team_owner_disabled flag is false, including a row with another status. This differs from
+// ordinary request quota transitions, which require an active undeleted row
+// for status changes. The caller executes this compatibility charge in the
+// same transaction as capture and member accounting.
 func chargeLegacyTaskAPIKey(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE api_keys SET
@@ -727,6 +1058,19 @@ func chargeLegacyTaskAPIKey(ctx context.Context, tx *sql.Tx, apiKeyID int64, amo
 	return err
 }
 
+// applyUsageBillingEffects allocates completed usage to locked subscriptions,
+// then deducts uncovered wallet cost even when the wallet becomes negative.
+// Base-priced commands convert uncovered base at the balance rate; legacy
+// commands use the uncovered billable amount directly. The returned
+// allocations record actual subscription charges and the wallet's quantized
+// deduction.
+//
+// Team member totals use the combined actual charge. Positive Key quota and
+// rolling-cost fields enable their writes, with base-priced commands replacing
+// those amounts by the combined charge. Positive provider cost is counted for
+// API Key and Bedrock provider types. All writes and any threshold outbox
+// event use the caller's transaction, which recovers earlier effects after a
+// later error.
 func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *billing.UsageBillingCommand, result *billing.UsageBillingApplyResult) error {
 	remainingAmount, subscriptionAmount, allocations, err := allocateUsageBillingSubscriptions(ctx, tx, cmd)
 	if err != nil {
@@ -735,8 +1079,9 @@ func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.
 	result.BillingAllocations = allocations
 	result.SubscriptionAmountUSD = subscriptionAmount
 
-	// Upstream work has completed. Cap the pinned subscription at its quota and charge the remaining admitted usage
-	// to balance, allowing debt.
+	// Completed upstream usage needs a full monetary settlement. The planner caps
+	// subscription counters, and uncovered base uses the wallet rate even when
+	// the payer's available balance becomes debt.
 	balanceAmount := remainingAmount
 	if usageBillingUsesBaseAmount(cmd) {
 		balanceAmount = remainingAmount * usageBillingNonNegativeRate(cmd.BalanceRateMultiplier)
@@ -799,7 +1144,16 @@ func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.
 	return nil
 }
 
-// incrementUsageBillingTeamMember accumulates calendar-window usage in the charging transaction.
+// incrementUsageBillingTeamMember counts positive completed usage in an active
+// member's natural calendar windows. Nonpositive amounts return success; the
+// caller supplies the observation time and owns the transaction. Missing or
+// older anchors reset their counters before charging.
+//
+// A member that left or became owner while upstream work ran produces no
+// matching update, and affected-row count is deliberately unexamined. Funding
+// can therefore finish even when member usage is no longer counted. Current
+// active members receive each daily, weekly and monthly increment using starts
+// derived from the store calendar.
 func (r *SettlementStore) incrementUsageBillingTeamMember(ctx context.Context, tx *sql.Tx, teamID, actorUserID int64, amount float64, now time.Time) error {
 	if amount <= 0 {
 		return nil
@@ -821,11 +1175,17 @@ func (r *SettlementStore) incrementUsageBillingTeamMember(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	// A member may leave or become owner in flight. Complete funding even when no active member row remains to count
-	// usage.
+	// An actor can leave or become owner while upstream work runs. SQL failure
+	// still propagates, but a missing active-member match is accepted so
+	// completed funding can commit.
 	return nil
 }
 
+// usageBillingSubscriptionRowToService constructs an active service grant from
+// a row already selected for current eligibility. Nullable times and limits
+// become fresh optional values, and plan group collections are decoded afresh.
+// The attached plan contains its ID and coverage/rates, so consumers needing
+// other plan metadata perform a separate read.
 func usageBillingSubscriptionRowToService(userID int64, row usageBillingSubscriptionRow) *billing.UserSubscription {
 	return &billing.UserSubscription{
 		ID:                 row.ID,
@@ -851,27 +1211,50 @@ func usageBillingSubscriptionRowToService(userID int64, row usageBillingSubscrip
 	}
 }
 
+// parseInt64JSONSlice decodes stored plan group IDs into a new slice. Empty,
+// malformed or JSON-null input returns nil; decoded IDs are retained as
+// supplied, so callers establish any positive-ID and coverage validation
+// separately.
 func parseInt64JSONSlice(data []byte) []int64 {
 	if len(data) == 0 {
 		return nil
 	}
 	var out []int64
+	// Malformed stored coverage becomes absent group data in the returned minimal
+	// plan. Eligibility has already been selected by SQL, and this decoder has no
+	// independent admission role.
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil
 	}
 	return out
 }
 
+// parseInt64Float64JSONMap decodes plan rates into a new integer-keyed map and
+// returns an allocated empty map for absent, malformed or JSON-null input.
+// Unparseable and nonpositive keys are skipped; decoded float values remain
+// unchanged.
+//
+// String keys are converted in base ten, so aliases such as "01" and "1"
+// address the same integer ID. If both occur, Go map iteration chooses the
+// later assignment, with no deterministic alias preference. Consumers apply
+// their own rate normalization; this conversion retains stored values for
+// those decisions.
 func parseInt64Float64JSONMap(data []byte) map[int64]float64 {
 	if len(data) == 0 {
 		return map[int64]float64{}
 	}
 	var raw map[string]float64
+	// Treat malformed rate metadata as an empty override map, letting later
+	// source-rate selection use its configured default rather than failing the
+	// funding snapshot conversion.
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return map[int64]float64{}
 	}
 	out := make(map[int64]float64, len(raw))
 	for key, value := range raw {
+		// Keep positive numeric group keys for rate lookup. String aliases can
+		// collapse onto one integer identity, so stored inputs should use canonical
+		// keys to avoid iteration-dependent replacement.
 		id, err := strconv.ParseInt(key, 10, 64)
 		if err != nil || id <= 0 {
 			continue
@@ -881,6 +1264,9 @@ func parseInt64Float64JSONMap(data []byte) map[int64]float64 {
 	return out
 }
 
+// usageBillingNullableTimePtr returns nil for an invalid SQL time and a
+// pointer to a copied time for a valid value. The resulting optional value is
+// detached from the caller's SQL wrapper.
 func usageBillingNullableTimePtr(v sql.NullTime) *time.Time {
 	if !v.Valid {
 		return nil
@@ -888,6 +1274,9 @@ func usageBillingNullableTimePtr(v sql.NullTime) *time.Time {
 	return &v.Time
 }
 
+// usageBillingNullableFloat64Ptr returns nil for an invalid SQL number and a
+// pointer to a copied value otherwise. Zero and negative configured limits
+// remain represented so billing's positive-limit rule can interpret them.
 func usageBillingNullableFloat64Ptr(v sql.NullFloat64) *float64 {
 	if !v.Valid {
 		return nil
@@ -895,6 +1284,18 @@ func usageBillingNullableFloat64Ptr(v sql.NullFloat64) *float64 {
 	return &v.Float64
 }
 
+// allocateUsageBillingSubscriptions locks eligible payer subscriptions in
+// expiry, start and ID order and applies billing's ordered allocation plan.
+// The caller locks the payer first and supplies a normalized command. Balance
+// mode or a nonpositive basis skips this query; an optional preferred ID
+// narrows the eligible rows.
+//
+// Positive groups require an unrestricted or matching plan, while pinned mode
+// without a group requires an unrestricted plan. Rows use database NOW for
+// eligibility; the planner observes Go time after rows close for effective
+// windows and source rates. Each planned counter update is persisted in order
+// on the same transaction, so a later failure requires owner rollback before
+// exposing any allocation.
 func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *billing.UsageBillingCommand) (float64, float64, []billing.BillingAllocation, error) {
 	amountUSD, querySubscriptions, err := billing.SubscriptionAllocationRequest(cmd)
 	if err != nil {
@@ -961,7 +1362,9 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 `
 		args = append(args, *cmd.GroupID)
 	} else if cmd.APIKeyBillingMode == billing.APIKeyBillingModeSubscription {
-		// Without a final group, a pinned subscription can be charged only if its plan has no group restrictions.
+		// Pinned funding without a final positive group can select unrestricted
+		// plans. A restricted plan has no matching group observation here, so
+		// require its mapping table to be empty.
 		query += `
 			AND NOT EXISTS (
 				SELECT 1
@@ -978,6 +1381,9 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 	if err != nil {
 		return 0, 0, nil, err
 	}
+	// Read every locked snapshot and close its cursor before issuing counter
+	// updates on this connection. Early read failures discard secondary close
+	// errors while retaining the primary failure.
 	subscriptions := make([]usageBillingSubscriptionRow, 0)
 	for rows.Next() {
 		var row usageBillingSubscriptionRow
@@ -1018,6 +1424,9 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 	if err != nil {
 		return 0, 0, nil, err
 	}
+	// Persist the planner's ordered quota replacements after all snapshots are
+	// collected. The transaction owner recovers preceding rows if a later update
+	// fails, preventing partial allocation publication.
 	for _, row := range plan.Updates {
 		if err := updateUsageBillingSubscription(ctx, tx, row.ID, row.DailyWindowStart, row.WeeklyWindowStart, row.MonthlyWindowStart, row.DailyUsageUSD, row.WeeklyUsageUSD, row.MonthlyUsageUSD); err != nil {
 			return 0, 0, nil, err
@@ -1026,15 +1435,24 @@ func allocateUsageBillingSubscriptions(ctx context.Context, tx *sql.Tx, cmd *bil
 	return plan.Remaining, plan.SubscriptionAmount, plan.Allocations, nil
 }
 
-// usageBillingUsesBaseAmount reports whether allocation uses the unmultiplied base amount.
+// usageBillingUsesBaseAmount delegates selection of the unmultiplied
+// allocation basis to billing. A positive BaseAmountUSD selects base pricing;
+// nil or nonpositive base input uses legacy billable amounts, independently of
+// the command's supplied rate values.
 func usageBillingUsesBaseAmount(cmd *billing.UsageBillingCommand) bool {
 	return billing.UsesBaseAmount(cmd)
 }
 
-// usageBillingNonNegativeRate normalizes the allocation multiplier through billing rules.
+// usageBillingNonNegativeRate delegates signed multiplier normalization to
+// billing.NonNegativeRate. Negative inputs become zero, while other values
+// remain available to the allocation calculation; callers validate nonfinite
+// pricing values before persistent use.
 func usageBillingNonNegativeRate(rate float64) float64 { return billing.NonNegativeRate(rate) }
 
-// normalizeUsageBillingSubscriptionRow applies billing's effective quota-window rules to a database row.
+// normalizeUsageBillingSubscriptionRow returns a row copy with billing's
+// effective window anchors and counters at the supplied time. It delegates
+// lifetime, outer-limit and elapsed-window decisions, retains the row's raw
+// plan data, and performs no database update.
 func normalizeUsageBillingSubscriptionRow(row usageBillingSubscriptionRow, now time.Time) usageBillingSubscriptionRow {
 	normalized := billing.NormalizeSettlementSubscription(settlementSubscriptionSnapshot(row), now)
 	row.DailyWindowStart = nullTimePtr(normalized.DailyWindowStart)
@@ -1046,16 +1464,27 @@ func normalizeUsageBillingSubscriptionRow(row usageBillingSubscriptionRow, now t
 	return row
 }
 
-// windowRemaining converts nullable SQL limits to billing's remaining-window amount.
+// windowRemaining interprets a nullable SQL limit through billing's
+// positive-limit rule and subtracts observed usage. Nil or nonpositive limits
+// return nil for unlimited; finite remaining values clamp at zero for
+// exhausted windows.
 func windowRemaining(limit sql.NullFloat64, used float64) *float64 {
 	return billing.RemainingWindowAmount(usageBillingNullableFloat64Ptr(limit), used)
 }
 
-// usageBillingSubscriptionAvailable computes available quota across the supplied windows.
+// usageBillingSubscriptionAvailable delegates selection of the minimum
+// supplied remainder to billing. Nil window values mean unlimited, and
+// unlimitedAmount is returned when every window is unlimited; callers choose a
+// suitable positive read sentinel or requested allocation basis.
 func usageBillingSubscriptionAvailable(unlimitedAmount float64, values ...*float64) float64 {
 	return billing.SubscriptionAvailableAmount(unlimitedAmount, values...)
 }
 
+// updateUsageBillingSubscription writes all three optional anchors and usage
+// counters to an undeleted subscription on the caller's transaction. Nil
+// anchors become SQL nulls; zero affected rows return ErrSubscriptionNotFound.
+// Callers supply a locked snapshot and recover prior allocation writes after
+// an error.
 func updateUsageBillingSubscription(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1093,6 +1522,9 @@ func updateUsageBillingSubscription(
 	return nil
 }
 
+// nullTimePtr converts an optional time to a nullable SQL value. Nil becomes
+// an invalid wrapper; nonnil values are copied with Valid true, including a
+// supplied zero time, so SQL arguments retain the caller's presence choice.
 func nullTimePtr(value *time.Time) sql.NullTime {
 	if value == nil {
 		return sql.NullTime{}
@@ -1100,12 +1532,20 @@ func nullTimePtr(value *time.Time) sql.NullTime {
 	return sql.NullTime{Time: *value, Valid: true}
 }
 
-// deductUsageBillingBalance charges the full completed request cost, allowing a negative balance as debt.
-// Keep NO KEY UPDATE: upgrading after subscription locks can create a lock cycle with usage_logs user foreign-key
-// checks.
+// deductUsageBillingBalance subtracts completed request cost from an undeleted
+// payer and returns the new balance and actual quantized deduction. Wallet
+// debt is permitted, and a missing payer returns ErrUserNotFound. The caller
+// owns the transaction and locks the payer before subscription work.
+//
+// The CTE retains FOR NO KEY UPDATE so a later wallet write does not upgrade
+// to a lock conflicting with usage-log foreign-key checks. Amounts use
+// billing's decimal eight-place rounding before NUMERIC arithmetic.
+// ScanSingleRow closes its result before subsequent SQL and reports cleanup
+// errors alongside row failures.
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, float64, error) {
-	// Quantize before subtracting from NUMERIC(20,8) so balance subtraction and quota addition cannot round in
-	// opposite directions.
+	// Quantize before subtracting from NUMERIC(20,8) so wallet subtraction and
+	// Key addition receive one eight-place amount rather than independently
+	// rounding the same raw half tie.
 	amount = billing.QuantizeUsageBillingAmount(amount)
 	const query = `
 		WITH locked_user AS (
@@ -1139,7 +1579,19 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 	return newBalance, deductedAmount, nil
 }
 
-// reserveUsageBillingTaskBilling reserves subscription quota first, then freezes balance for uncovered usage.
+// reserveUsageBillingTaskBilling reserves eligible subscription quota, freezes
+// uncovered wallet money and stores their task funding split on the caller's
+// transaction. Nil or nonpositive hold-and-base input returns an empty result.
+// A pinned mode rejects any remaining basis beyond its small tolerance;
+// subscription writes may already have occurred, so the owner recovers that
+// failure before submission.
+//
+// Versioned pricing retains covered base and source rates and calculates the
+// capture estimate from the resulting split. The computed mixed hold replaces
+// cmd.HoldAmount before allowance charging, after the action fingerprint has
+// been claimed. SaveReservation persists the same split and estimate before
+// the outer transaction can commit; its failure also requires recovery of
+// preceding quota and wallet writes.
 func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection TaskProjection, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	result := &billing.TaskFundsResult{}
 	if cmd == nil || (cmd.HoldAmount <= 0 && cmd.BaseAmountUSD <= 0) {
@@ -1163,6 +1615,9 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 	if err != nil {
 		return nil, err
 	}
+	// Subscription allocation may already have written counters. A pinned hold
+	// rejects remaining basis beyond this tolerance before wallet freezing,
+	// requiring transaction rollback before task submission.
 	if allocationCommand.APIKeyBillingMode == billing.APIKeyBillingModeSubscription && remainingBase > 1e-10 {
 		return nil, billing.ErrPreferredSubscriptionInsufficient
 	}
@@ -1170,6 +1625,9 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 	if usageBillingUsesBaseAmount(allocationCommand) {
 		balanceAmount = remainingBase * usageBillingNonNegativeRate(cmd.BalanceRateMultiplier)
 	}
+	// Normalize the wallet portion at its eight-place storage precision before
+	// freezing it, so the saved funding split uses the same amount as the guarded
+	// balance update.
 	balanceAmount = normalizeTaskBalanceAmount(balanceAmount)
 
 	balanceCommand := *cmd
@@ -1206,8 +1664,9 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 		}
 		result.EstimatedAmountUSD = plan.ActualAmountUSD
 	}
-	// Version-two fingerprints exclude the final hold amount, allowing allowance reservation to use the computed
-	// mixed-source hold after claiming.
+	// Versioned base fingerprints omit the final mixed hold, allowing this
+	// computed total to replace it after claim. Save the funding split before the
+	// outer allowance stage uses that total.
 	cmd.HoldAmount = result.HoldAmountUSD
 	if err := projection.SaveReservation(ctx, balanceAmount, allocations, result.HoldAmountUSD, result.EstimatedAmountUSD); err != nil {
 		return nil, err
@@ -1215,10 +1674,23 @@ func reserveUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, projection 
 	return result, nil
 }
 
-// captureUsageBillingTaskBilling records actual costs and releases unused subscription and balance reservations.
+// captureUsageBillingTaskBilling plans actual task charges from the supplied
+// reservation snapshot, refunds unused subscription usage and settles the held
+// wallet portion in that order. The outer wrapper supplies a nonnil command
+// and an owned transaction with the payer locked. Snapshots with positive
+// holds and recorded allowance or source metadata require the owner's
+// reserve-key/API-Key claim; legacy frozen-only snapshots bypass that lookup.
+//
+// PlanTaskCapture determines retained charges and refunds before SQL changes
+// begin. Its actual amount updates cmd, and the returned result combines
+// retained allocations with wallet observations. A later wallet or refund
+// error can follow earlier subscription writes, so the transaction owner
+// recovers the whole attempt before publishing success.
 func captureUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
-	// Tasks with reservation metadata require a committed hold claim. Legacy frozen-balance tasks without that
-	// metadata bypass this check.
+	// Recorded source or allowance metadata makes capture depend on the supplied
+	// reserve-key/API-Key pair being visible. Legacy frozen-only snapshots bypass
+	// this identity check, leaving the owner responsible for their held wallet
+	// amount.
 	if cmd != nil && cmd.HoldAmount > 0 && (cmd.AllowanceReserved || cmd.BalanceHoldAmount > 0 || len(cmd.SubscriptionHoldAllocations) > 0) {
 		held, err := taskHoldClaimExists(ctx, tx, taskHoldClaimRequestID(cmd), cmd.APIKeyID)
 		if err != nil {
@@ -1233,6 +1705,9 @@ func captureUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 		return nil, err
 	}
 	cmd.ActualAmount = plan.ActualAmountUSD
+	// Refund unused subscription counters before wallet capture. Both use the
+	// same transaction, so a later frozen-wallet failure requires rollback of
+	// these preceding counter changes.
 	if err := releaseTaskSubscriptionAllocations(ctx, tx, cmd, plan.SubscriptionReleases); err != nil {
 		return nil, err
 	}
@@ -1256,7 +1731,17 @@ func captureUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 	return balanceResult, nil
 }
 
-// releaseUsageBillingTaskBilling releases a failed or canceled task's reservations when its hold claim exists.
+// releaseUsageBillingTaskBilling refunds a task's recorded subscription split
+// and effective wallet hold when its reserve-key/API-Key claim is visible. Nil
+// input and an absent live/archive claim return an empty result; the
+// absent-claim path logs the skip before any financial refund.
+//
+// Subscription refunds run before frozen wallet release on the supplied
+// transaction, using the original reservation timestamp for window
+// attribution. The task owner supplies correct funding metadata and
+// reservation identity because this lookup does not compare task ID, payer or
+// fingerprint. A later refund error requires owner recovery of earlier writes;
+// the outer allowance stage separately handles its recorded flag.
 func releaseUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	if cmd == nil {
 		return &billing.TaskFundsResult{}, nil
@@ -1265,10 +1750,16 @@ func releaseUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 	if err != nil {
 		return nil, err
 	}
+	// An absent reserve identity prevents a refund from consuming aggregate
+	// frozen money attributed to other tasks. Return an empty funding result; the
+	// outer allowance stage still handles its supplied flag.
 	if !held {
 		logger.LegacyPrintf("repository.usage_billing", "[BatchImage] release skipped, hold was never reserved: batch=%s", cmd.Task.ID)
 		return &billing.TaskFundsResult{}, nil
 	}
+	// Return recorded subscription usage before releasing the effective wallet
+	// hold. A later wallet failure leaves earlier counter refunds for the
+	// surrounding transaction owner to recover.
 	if err := releaseTaskSubscriptionAllocations(ctx, tx, cmd, cmd.SubscriptionHoldAllocations); err != nil {
 		return nil, err
 	}
@@ -1276,11 +1767,25 @@ func releaseUsageBillingTaskBilling(ctx context.Context, tx *sql.Tx, cmd *billin
 	return releaseUsageBillingTaskFrozenBalance(ctx, tx, cmd.UserID, balanceAmount)
 }
 
-// releaseTaskSubscriptionAllocations refunds subscription usage only within the window that contained the reservation.
+// releaseTaskSubscriptionAllocations refunds positive subscription entries
+// with present IDs for the command's payer. Nil commands skip work, as do
+// other allocation types, missing IDs and nonpositive amounts. It processes
+// supplied order in the caller's transaction; zero matched rows return
+// ErrSubscriptionNotFound.
+//
+// Each current positive-limit window decreases only when its interval contains
+// ReservedAt, and usage clamps at zero. The ID/payer predicate permits refunds
+// after soft deletion or status changes, while a later window retains its own
+// usage. A later entry failure can follow earlier refunds, so the transaction
+// owner recovers the complete funding attempt.
 func releaseTaskSubscriptionAllocations(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand, allocations []billing.BillingAllocation) error {
 	if cmd == nil {
 		return nil
 	}
+	// Attribute refunds to SQL intervals of twenty-four hours, seven days or
+	// thirty days containing ReservedAt. Day-based timestamptz additions follow
+	// the database session calendar across offset changes; later windows retain
+	// their own usage when the reservation lies outside those intervals.
 	for _, allocation := range allocations {
 		if allocation.Type != billing.BillingAllocationTypeSubscription || allocation.SubscriptionID == nil || allocation.AmountUSD <= 0 {
 			continue
@@ -1316,6 +1821,17 @@ func releaseTaskSubscriptionAllocations(ctx context.Context, tx *sql.Tx, cmd *bi
 	return nil
 }
 
+// taskBillingResultForCommand reconstructs an Applied-false replay result from
+// the caller's task snapshot. Nil, release and unknown-operation commands
+// return an empty result. Capture uses PlanTaskCapture; a planning error is
+// suppressed into that empty replay result because this path applies no new
+// funds.
+//
+// Reserve totals positive subscription entries and the effective wallet hold,
+// retaining their optional allocation pointers. Versioned base pricing may
+// recompute its estimate through a capture plan; a failed estimate leaves the
+// hold-based default. These figures describe supplied funding metadata and do
+// not reread current balances or validate recorded allocation identities.
 func taskBillingResultForCommand(cmd *billing.TaskFundsCommand, operation taskAllowanceOperation) *billing.TaskFundsResult {
 	result := &billing.TaskFundsResult{Applied: false}
 	if cmd == nil {
@@ -1323,6 +1839,9 @@ func taskBillingResultForCommand(cmd *billing.TaskFundsCommand, operation taskAl
 	}
 	if operation == taskAllowanceCapture {
 		plan, err := billing.PlanTaskCapture(cmd)
+		// A replay applies no new funding writes. A failed capture reconstruction is
+		// suppressed into Applied false with empty amounts, so callers do not
+		// mistake it for a newly charged result.
 		if err != nil {
 			return result
 		}
@@ -1355,6 +1874,9 @@ func taskBillingResultForCommand(cmd *billing.TaskFundsCommand, operation taskAl
 	if cmd.PricingSnapshotVersion >= 2 && cmd.BaseAmountUSD > 0 {
 		captureCommand := *cmd
 		captureCommand.ActualBaseAmountUSD = cmd.BaseAmountUSD
+		// Recompute versioned estimates from the recorded split when planning
+		// succeeds. A planning error retains the hold-based estimate because this
+		// replay path cannot replace already stored funding metadata.
 		if plan, err := billing.PlanTaskCapture(&captureCommand); err == nil {
 			result.EstimatedAmountUSD = plan.ActualAmountUSD
 		}
@@ -1362,6 +1884,17 @@ func taskBillingResultForCommand(cmd *billing.TaskFundsCommand, operation taskAl
 	return result
 }
 
+// reserveUsageBillingTaskBalance transfers a positive task hold from an
+// undeleted payer's available wallet to frozen balance and returns both
+// resulting values. Nonpositive holds return an empty result. The caller
+// supplies a nonnil command and a previously normalized hold, locks the payer,
+// and owns transaction completion.
+//
+// The guarded update requires available balance to cover the full hold. When
+// it matches no row, a second query distinguishes an absent undeleted payer
+// from insufficient funds; other SQL errors propagate. This helper can run
+// after subscription updates, so the owner rolls back the surrounding
+// reservation on either failure.
 func reserveUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &billing.TaskFundsResult{}, nil
@@ -1381,6 +1914,9 @@ func reserveUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billin
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	// A guarded wallet update cannot distinguish a missing undeleted payer from
+	// insufficient funds. Keep database lookup failures visible before selecting
+	// the corresponding funding error.
 	if exists, existsErr := userExistsForBilling(ctx, tx, cmd.UserID); existsErr != nil {
 		return nil, existsErr
 	} else if !exists {
@@ -1389,12 +1925,30 @@ func reserveUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billin
 	return nil, billing.ErrTaskInsufficientBalance
 }
 
+// captureUsageBillingTaskBalance converts a recorded wallet hold into actual
+// cost, returning the available and frozen values after releasing any unused
+// difference. The caller supplies a nonnil command and owns the transaction.
+// Hold and actual amounts use scaled-binary eight-place rounding; wholly
+// nonpositive inputs return an empty result.
+//
+// A rounded actual-minus-hold difference greater than 1e-8 fails before SQL.
+// Otherwise the update removes the full hold from frozen funds and adjusts
+// available balance by their difference, requiring enough frozen money. A
+// missing update is classified by a payer reread as missing user or
+// insufficient frozen balance, leaving the owner to recover preceding funding
+// writes.
 func captureUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {
+	// Round both task wallet operands before the excess check and frozen-balance
+	// adjustment. The comparison therefore uses the same eight-place amounts sent
+	// to wallet SQL.
 	holdAmount := normalizeTaskBalanceAmount(cmd.HoldAmount)
 	actualAmount := normalizeTaskBalanceAmount(cmd.ActualAmount)
 	if holdAmount <= 0 && actualAmount <= 0 {
 		return &billing.TaskFundsResult{}, nil
 	}
+	// Compare the rounded difference with an absolute 1e-8 tolerance before
+	// consuming frozen funds; binary floating-point subtraction still governs
+	// this test.
 	if actualAmount-holdAmount > 0.00000001 {
 		return nil, billing.ErrTaskSettlementCostExceedsHold
 	}
@@ -1415,6 +1969,9 @@ func captureUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billin
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	// A guarded wallet update cannot distinguish a missing undeleted payer from
+	// insufficient funds. Keep database lookup failures visible before selecting
+	// the corresponding funding error.
 	if exists, existsErr := userExistsForBilling(ctx, tx, cmd.UserID); existsErr != nil {
 		return nil, existsErr
 	} else if !exists {
@@ -1423,7 +1980,20 @@ func captureUsageBillingTaskBalance(ctx context.Context, tx *sql.Tx, cmd *billin
 	return nil, errors.New("batch image frozen balance is insufficient")
 }
 
+// releaseUsageBillingTaskFrozenBalance returns a rounded positive held amount
+// from an undeleted payer's frozen wallet to available balance. Nonpositive
+// amounts return an empty result. The caller establishes the reservation's
+// identity before this helper and owns transaction completion.
+//
+// The update requires frozen balance to cover the full refund, returning both
+// post-update values. A failed row match triggers an undeleted-payer check to
+// distinguish missing user from insufficient frozen funds. This helper does
+// not identify an individual task within aggregate frozen balance, so callers
+// supply the previously recorded effective hold and recover earlier
+// subscription refunds on failure.
 func releaseUsageBillingTaskFrozenBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (*billing.TaskFundsResult, error) {
+	// Round the task refund to eight fractional dollars before its frozen-fund
+	// guard; saved wallet amounts use that precision.
 	amount = normalizeTaskBalanceAmount(amount)
 	if amount <= 0 {
 		return &billing.TaskFundsResult{}, nil
@@ -1443,6 +2013,9 @@ func releaseUsageBillingTaskFrozenBalance(ctx context.Context, tx *sql.Tx, userI
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	// A guarded wallet update cannot distinguish a missing undeleted payer from
+	// insufficient funds. Keep database lookup failures visible before selecting
+	// the corresponding funding error.
 	if exists, existsErr := userExistsForBilling(ctx, tx, userID); existsErr != nil {
 		return nil, existsErr
 	} else if !exists {
@@ -1451,14 +2024,21 @@ func releaseUsageBillingTaskFrozenBalance(ctx context.Context, tx *sql.Tx, userI
 	return nil, errors.New("batch image frozen balance is insufficient")
 }
 
-// normalizeTaskBalanceAmount matches users.balance DECIMAL(20,8) precision so floating-point tails do not break
-// frozen-balance comparisons.
+// normalizeTaskBalanceAmount rounds a task wallet amount to eight decimal
+// places after binary floating-point scaling. Capture and release use it
+// before frozen-balance comparisons; ordinary request amounts instead use
+// billing's decimal quantizer, and callers validate finiteness separately.
 func normalizeTaskBalanceAmount(amount float64) float64 {
+	// Eight fractional dollar places match users.balance and users.frozen_balance
+	// storage used by guarded task wallet comparisons.
 	return math.Round(amount*1e8) / 1e8
 }
 
-// taskHoldClaimExists checks the deduplication and archive tables for the reservation's billing key and API Key.
-// A matching claim proves that the task's reservation transaction committed.
+// taskHoldClaimExists reports whether the original reserve-key/API-Key pair is
+// visible in the live or archive deduplication table on this transaction. It
+// reads live first and tries archive only after no rows. The task owner
+// supplies the matching reservation identity and funding metadata; this lookup
+// does not compare fingerprint, payer or task ID.
 func taskHoldClaimExists(ctx context.Context, tx *sql.Tx, holdRequestID string, apiKeyID int64) (bool, error) {
 	var exists int
 	err := tx.QueryRowContext(ctx, `
@@ -1472,6 +2052,9 @@ func taskHoldClaimExists(ctx context.Context, tx *sql.Tx, holdRequestID string, 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
+	// Archived action identities remain relevant after live deduplication
+	// retention. Try archive only after a successful live lookup reports no
+	// matching pair, keeping other SQL failures visible.
 	err = tx.QueryRowContext(ctx, `
 		SELECT 1
 		FROM usage_billing_dedup_archive
@@ -1486,6 +2069,10 @@ func taskHoldClaimExists(ctx context.Context, tx *sql.Tx, holdRequestID string, 
 	return false, err
 }
 
+// userExistsForBilling checks whether an undeleted payer is visible in the
+// supplied transaction. No rows returns false without error; SQL failures
+// propagate so guarded wallet writes do not misclassify a failed read as
+// insufficient funds.
 func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, error) {
 	var exists int
 	err := tx.QueryRowContext(ctx, `
@@ -1502,9 +2089,21 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 	return true, nil
 }
 
+// incrementUsageBillingAPIKeyQuota adds decimal-quantized completed usage to
+// the original Key ID, including soft-deleted rows. A missing Key returns
+// ErrAPIKeyNotFound. Its returned boolean reports a positive total quota
+// crossing from below, even when the row's status or deletion marker prevents
+// a status transition.
+//
+// The stored status changes to quota_exhausted only for an active undeleted
+// Key crossing that limit. Other statuses, credentials and deletion markers
+// remain as stored while usage is counted. The caller uses the same
+// transaction as wallet and subscription writes, so a failure here requires
+// recovery of those preceding effects.
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
-	// Charge admitted usage to its Key even if the Key was soft-deleted while the request was in flight.
-	// Quota and balance columns share eight-decimal precision; quantize derived amounts before SQL arithmetic.
+	// Charge the admitted request's original Key after soft deletion too. Use the
+	// wallet's decimal eight-place amount before quota addition so the two sides
+	// cannot round a raw half tie differently.
 	amount = billing.QuantizeUsageBillingAmount(amount)
 	var exhausted bool
 	err := tx.QueryRowContext(ctx, `
@@ -1531,9 +2130,14 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 	return exhausted, nil
 }
 
-// incrementUsageBillingAPIKeyRateLimit records in-flight usage for soft-deleted Keys so deletion does not roll
-// back settlement.
+// incrementUsageBillingAPIKeyRateLimit adds decimal-quantized completed usage
+// to the original Key's rolling counters, including soft-deleted records. It
+// uses the shared SQL window rules and reports ErrAPIKeyNotFound for zero
+// affected rows; the caller owns the charging transaction and its recovery.
 func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, cost float64) error {
+	// Use the same decimal eight-place amount as wallet and total-quota
+	// arithmetic, preventing opposite rounding directions from splitting the
+	// recorded financial effect across counters.
 	cost = billing.QuantizeUsageBillingAmount(cost)
 	res, err := tx.ExecContext(ctx, `
 		UPDATE api_keys SET
@@ -1553,6 +2157,18 @@ func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKe
 	return nil
 }
 
+// incrementUsageBillingProviderQuota increments an undeleted provider's total
+// usage and configured positive daily/weekly counters using their stored
+// expiration rules. It returns the post-update quota state or
+// ErrProviderNotFound for no row. The caller supplies the normalized provider
+// cost and owns the transaction containing this update.
+//
+// After the result cursor closes, each positive limit crossing compares
+// post-usage with post-minus-amount. A reset starts that comparison from zero.
+// Any crossing requires a same-transaction outbox callback so scheduling can
+// observe exhaustion; absent callbacks or enqueue failures return errors and
+// the owner recovers the funding attempt. Later scheduler publication and
+// notification delivery have their own lifetimes.
 func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, providerID int64, amount float64, outbox ProviderQuotaOutbox) (*billing.ProviderQuotaState, error) {
 	rows, err := tx.QueryContext(ctx,
 		`UPDATE providers SET extra = (
@@ -1602,6 +2218,9 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 		return nil, err
 	}
 
+	// Collect the returned quota state and close the cursor before the outbox
+	// issues more SQL. Failed reads discard secondary close errors and return
+	// their selected primary failure.
 	var state billing.ProviderQuotaState
 	if rows.Next() {
 		if err := rows.Scan(
@@ -1630,10 +2249,9 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	// Refresh scheduling snapshots when any quota limit is crossed. Otherwise cached
-	// usage can keep the provider eligible for subsequent requests despite exhaustion.
-	// For a daily or weekly reset, post-usage equals amount, so
-	// (post-amount) < limit still detects a crossing from zero usage.
+	// Enqueue a same-transaction scheduling event when a positive limit moves
+	// from below to at least its threshold. For a daily or weekly reset,
+	// post-usage equals this amount, so the prior comparison starts at zero.
 
 	crossedTotal := state.TotalLimit > 0 && state.TotalUsed >= state.TotalLimit && (state.TotalUsed-amount) < state.TotalLimit
 	crossedDaily := state.DailyLimit > 0 && state.DailyUsed >= state.DailyLimit && (state.DailyUsed-amount) < state.DailyLimit
@@ -1650,7 +2268,10 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 	return &state, nil
 }
 
-// settlementSubscriptionSnapshot converts nullable SQL fields and JSON rates into a billing subscription snapshot.
+// settlementSubscriptionSnapshot converts one selected SQL row into billing's
+// allocation snapshot. Nullable times and limits become fresh optional values
+// and JSON rates become a new map; plan coverage filtering and eligibility
+// remain the storage caller's responsibility before allocation.
 func settlementSubscriptionSnapshot(row usageBillingSubscriptionRow) billing.SettlementSubscription {
 	return billing.SettlementSubscription{ID: row.ID, PlanID: row.PlanID, StartsAt: row.StartsAt, ExpiresAt: row.ExpiresAt, DailyWindowStart: usageBillingNullableTimePtr(row.DailyWindowStart), WeeklyWindowStart: usageBillingNullableTimePtr(row.WeeklyWindowStart), MonthlyWindowStart: usageBillingNullableTimePtr(row.MonthlyWindowStart), DailyLimitUSD: usageBillingNullableFloat64Ptr(row.DailyLimitUSD), WeeklyLimitUSD: usageBillingNullableFloat64Ptr(row.WeeklyLimitUSD), MonthlyLimitUSD: usageBillingNullableFloat64Ptr(row.MonthlyLimitUSD), DailyUsageUSD: row.DailyUsageUSD, WeeklyUsageUSD: row.WeeklyUsageUSD, MonthlyUsageUSD: row.MonthlyUsageUSD, PlanGroupRateMultipliers: parseInt64Float64JSONMap(row.PlanGroupRateMultipliersRaw)}
 }

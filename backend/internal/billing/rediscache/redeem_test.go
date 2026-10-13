@@ -7,11 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestRedeemRateLimitKey formats positive, zero, negative and maximum int64
+// user IDs. It checks the exact attempt-counter namespace and decimal identity
+// for each supplied case.
 func TestRedeemRateLimitKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		userID   int64
-		expected string
+		name     string // test case display name
+		userID   int64  // supplied user key identifier
+		expected string // expected complete Redis key
 	}{
 		{
 			name:     "normal_user_id",
@@ -43,11 +46,14 @@ func TestRedeemRateLimitKey(t *testing.T) {
 	}
 }
 
+// TestRedeemLockKey formats ordinary, empty and punctuation-bearing code text.
+// It checks the lock prefix is followed by that exact supplied text without
+// code normalization.
 func TestRedeemLockKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		code     string
-		expected string
+		name     string // test case display name
+		code     string // supplied exact code text
+		expected string // expected complete Redis key
 	}{
 		{
 			name:     "normal_code",

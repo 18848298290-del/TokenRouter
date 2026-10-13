@@ -8,6 +8,9 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
+// TestSubscriptionPlanEntityToServiceMapsGroupIDs converts a plan with two
+// selected group IDs into a domain view. It mutates the source slice afterward
+// and checks the converted IDs retain independent collection storage.
 func TestSubscriptionPlanEntityToServiceMapsGroupIDs(t *testing.T) {
 	plan := &dbent.SubscriptionPlan{
 		ID:       1,

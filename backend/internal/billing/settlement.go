@@ -14,14 +14,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// A financial operation key identifies a settlement independently of the local
+// request displayed in usage records. Fingerprints retain supplied funding and
+// usage facts before storage-bound counters are rounded, so ordinary request
+// replay compares the raw charge while wallet and Key arithmetic share
+// eight-decimal amounts.
+//
+// Tasks retain their reservation sources for later capture. Legacy snapshots
+// spend held monetary amounts; versioned snapshots convert completed base
+// dollars through each recorded source rate. Subscription entries are consumed
+// in their supplied order, unused portions become release records above the
+// monetary tolerance, and balance coverage is capped by the recorded hold.
+// These calculations return plans for storage to apply in its transaction;
+// command normalization itself mutates caller-owned data.
+
 const (
 	// UsageBillingMonetaryScale is the decimal scale for balance and API key monetary counters,
 	// matching NUMERIC(20,8) columns such as users.balance and api_keys.quota_used.
 	UsageBillingMonetaryScale = 8
 
+	// taskCostEpsilon bounds monetary release and excess comparisons during
+	// capture; smaller residuals remain within the accepted held-funds tolerance.
 	taskCostEpsilon = 0.00000001
 )
 
+// Task and request settlement errors distinguish missing financial identities,
+// conflicting replays, unavailable task pricing and reservation failures for
+// the store and its callers.
 var (
 	ErrTaskInsufficientBalance       = apperror.New(apperror.Category(402), "BATCH_IMAGE_INSUFFICIENT_BALANCE", "insufficient balance for batch image hold")
 	ErrTaskNotFound                  = apperror.New(apperror.CategoryNotFound, "BATCH_IMAGE_JOB_NOT_FOUND", "batch image job not found")
@@ -34,135 +53,290 @@ var (
 	ErrImageTaskPricingMissing = apperror.New(apperror.CategoryBadRequest, "BATCH_IMAGE_SETTLEMENT_PRICING_MISSING", "batch image settlement pricing is missing")
 )
 
-// UsageBillingCommand describes one billable request that must be applied at most once.
+// UsageBillingCommand records one request financial identity, payer and
+// captured usage for transactional settlement. Callers retain its optional
+// pointers and give Normalize exclusive access to the command while storage
+// uses it.
 type UsageBillingCommand struct {
-	RequestID          string
-	APIKeyID           int64
-	RequestFingerprint string
-	RequestPayloadHash string
-	// APIKeyBillingMode and PreferredSubscriptionID record the funding choice at gateway admission.
-	APIKeyBillingMode       string
-	PreferredSubscriptionID *int64
+	// RequestID is trimmed by Normalize. SettlementStore rejects an empty key for
+	// a nonnil command before starting financial transaction work.
+	RequestID string // financial operation key
+	APIKeyID  int64  // credential accounting identity
+	// RequestFingerprint remains verbatim when nonblank. Normalize computes a
+	// missing digest before rounding monetary counters, using the captured raw
+	// amount facts.
+	RequestFingerprint string // financial replay digest
+	// RequestPayloadHash contributes trimmed nonempty text to an automatically
+	// computed fingerprint. Normalize leaves the stored field unchanged, so
+	// callers supply any payload hashing themselves.
+	RequestPayloadHash string // optional request payload digest
+	// APIKeyBillingMode and PreferredSubscriptionID preserve admission funding
+	// together. Normalize defaults unsupported or omitted modes to auto and
+	// clears the pinned identity outside subscription mode.
+	APIKeyBillingMode       string // captured request funding mode
+	PreferredSubscriptionID *int64 // optional pinned grant identity
 
-	UserID                          int64
-	ActorUserID                     int64
-	TeamID                          *int64
-	ProviderID                      int64
-	GroupID                         *int64
-	BillableAmountUSD               float64
-	BaseAmountUSD                   float64
-	SubscriptionRateMultiplier      float64
-	SubscriptionRateMultiplierScale float64
-	BalanceRateMultiplier           float64
-	// Batch reservations can disable plan rate overrides and request base-amount details for later settlement.
-	DisablePlanGroupRateMultiplier bool
-	IncludeAllocationPricing       bool
-	ProviderType                   string
-	Model                          string
-	ServiceTier                    string
-	ReasoningEffort                string
-	BillingType                    int8
-	InputTokens                    int
-	OutputTokens                   int
-	CacheCreationTokens            int
-	CacheReadTokens                int
-	ImageCount                     int
-	MediaType                      string
+	// UserID pays the charge, while ActorUserID and TeamID retain the actor.
+	// PostgreSQL accumulates member usage only for a present TeamID and positive
+	// actor distinct from the payer.
+	UserID      int64  // financial payer user identity
+	ActorUserID int64  // request acting user identity
+	TeamID      *int64 // optional acting team identity
+	ProviderID  int64  // executing provider record identity
+	// GroupID selects subscription coverage and plan rate overrides when
+	// positive. The request fingerprint omits this field; callers retain the
+	// captured final-group selection.
+	GroupID *int64 // optional final funding group
+	// BillableAmountUSD and BaseAmountUSD select the allocation basis. A positive
+	// BaseAmountUSD drives rate-dependent source coverage; otherwise
+	// BillableAmountUSD supplies the monetary amount directly.
+	BillableAmountUSD float64 // USD
+	BaseAmountUSD     float64 // USD
+	// SubscriptionRateMultiplier and SubscriptionRateMultiplierScale choose
+	// subscription cost, while BalanceRateMultiplier prices uncovered base usage.
+	// The scale applies to selected plan overrides; the supplied default
+	// subscription factor is already scaled.
+	SubscriptionRateMultiplier      float64 // default subscription charge factor
+	SubscriptionRateMultiplierScale float64 // plan override scaling factor
+	BalanceRateMultiplier           float64 // uncovered balance charge factor
+	// DisablePlanGroupRateMultiplier selects the supplied subscription factor
+	// even when a plan group override exists. Task reservation uses it to retain
+	// its selected pricing policy.
+	DisablePlanGroupRateMultiplier bool // plan override suppression flag
+	// IncludeAllocationPricing asks AllocateSubscriptions to retain covered base
+	// amount and chosen factor on returned subscription allocations. Request
+	// fingerprinting omits this storage-detail flag.
+	IncludeAllocationPricing bool // allocation pricing detail flag
+	// ProviderType is fingerprinted after trimming. PostgreSQL quota writes
+	// compare the supplied value to API Key and Bedrock types ignoring case,
+	// without trimming that comparison.
+	ProviderType        string // captured executing provider type
+	Model               string // captured full billing model
+	ServiceTier         string // captured billing service tier
+	ReasoningEffort     string // captured final reasoning effort
+	BillingType         int8   // usage record billing category
+	InputTokens         int    // reported input token count
+	OutputTokens        int    // reported output token count
+	CacheCreationTokens int    // reported aggregate cache writes
+	CacheReadTokens     int    // reported cache read count
+	ImageCount          int    // reported generated image count
+	MediaType           string // captured billed media category
 
-	APIKeyQuotaCost     float64
-	APIKeyRateLimitCost float64
-	ProviderQuotaCost   float64
+	// APIKeyQuotaCost, APIKeyRateLimitCost and ProviderQuotaCost are rounded
+	// after fingerprinting. Their positive values enable respective writes; base
+	// allocation substitutes the final user charge for the two Key amounts.
+	APIKeyQuotaCost     float64 // USD
+	APIKeyRateLimitCost float64 // USD
+	ProviderQuotaCost   float64 // USD
 }
 
-// ProviderQuotaState holds the post-increment quota state returned by the DB transaction.
-// All values are post-update (i.e., already include the increment).
+// ProviderQuotaState contains post-increment provider usage and configured
+// limits returned from the funding transaction.
 type ProviderQuotaState struct {
-	TotalUsed   float64
-	TotalLimit  float64
-	DailyUsed   float64
-	DailyLimit  float64
-	WeeklyUsed  float64
-	WeeklyLimit float64
+	// TotalUsed and TotalLimit describe cumulative quota, DailyUsed and
+	// DailyLimit the daily window, and WeeklyUsed and WeeklyLimit the weekly
+	// window. Positive limits govern threshold-crossing notifications against
+	// these post-update observations.
+	TotalUsed   float64 // USD
+	TotalLimit  float64 // USD
+	DailyUsed   float64 // USD
+	DailyLimit  float64 // USD
+	WeeklyUsed  float64 // USD
+	WeeklyLimit float64 // USD
 }
 
+// UsageBillingApplyResult reports whether request funding was newly applied
+// and the resulting source charges and quota observations.
 type UsageBillingApplyResult struct {
-	Applied                 bool
-	APIKeyQuotaExhausted    bool
-	NewBalance              *float64            // post-deduction balance (nil = no balance deduction)
-	QuotaState              *ProviderQuotaState // post-increment quota state (nil = no quota increment)
-	SubscriptionAmountUSD   float64
-	BalanceAmountUSD        float64
-	BillingAllocations      []BillingAllocation
-	EffectiveRateMultiplier *float64
+	// Applied distinguishes newly committed financial work from a matching
+	// replay. Settlement effects are triggered by the owning caller after
+	// examining this application result.
+	Applied bool // new financial application flag
+	// APIKeyQuotaExhausted reports a positive Key quota crossing returned by SQL.
+	// It can report the crossing while a soft-deleted Key keeps its stored
+	// status.
+	APIKeyQuotaExhausted bool // new quota crossing observation
+	// NewBalance is present for a positive deducted balance amount. Nil leaves
+	// callers without a new wallet observation, including matching replay
+	// results.
+	NewBalance *float64 // optional resulting wallet balance
+	// QuotaState is present after an eligible positive provider increment. Nil
+	// causes notification consumers to use their separate repository-read path
+	// when needed.
+	QuotaState            *ProviderQuotaState // optional updated provider quota
+	SubscriptionAmountUSD float64             // USD
+	BalanceAmountUSD      float64             // USD
+	// BillingAllocations lists subscription sources before any positive balance
+	// charge. Each returned record retains its pricing detail only when requested
+	// during allocation.
+	BillingAllocations []BillingAllocation // ordered committed funding records
+	// EffectiveRateMultiplier is the combined billed amount divided by a positive
+	// BaseAmountUSD. Legacy monetary allocation leaves this optional factor
+	// absent.
+	EffectiveRateMultiplier *float64 // optional effective source factor
 }
 
-// TaskFundsCommand describes an idempotent task-funding operation.
+// TaskFundsCommand carries one reserve, capture or release identity and the
+// task funding snapshot. Its mutable allowance and allocation metadata support
+// storage reconciliation; callers keep shared optional pointers unchanged
+// during the operation.
 type TaskFundsCommand struct {
-	RequestID          string
-	APIKeyID           int64
-	RequestFingerprint string
-	RequestPayloadHash string
-	UserID             int64
-	ActorUserID        int64
-	TeamID             *int64
-	GroupID            *int64
-	// APIKeyBillingMode and PreferredSubscriptionID freeze submission-time funding so later key edits cannot redirect settlement.
-	APIKeyBillingMode       string
-	PreferredSubscriptionID *int64
-	Task                    TaskReference
-	HoldAmount              float64
-	ActualAmount            float64
-	// Version 2 snapshots allocate base amounts so subscription and balance funding can use different rates.
-	PricingSnapshotVersion          int
-	BaseAmountUSD                   float64
-	ActualBaseAmountUSD             float64
-	SubscriptionRateMultiplier      float64
-	SubscriptionRateMultiplierScale float64
-	BalanceRateMultiplier           float64
-	SettlementRateScale             float64
-	DisablePlanGroupRateMultiplier  bool
-	// BalanceHoldAmount and SubscriptionHoldAllocations are the persisted submission-time holds.
-	// When both are absent, legacy tasks treat all of HoldAmount as a balance hold.
-	BalanceHoldAmount           float64
-	SubscriptionHoldAllocations []BillingAllocation
-	// AllowanceReserved indicates whether the task pre-recorded allowance usage, including during rolling upgrades.
-	AllowanceReserved bool
-	// ReservedAt identifies the original windows when releasing reserved allowance usage.
-	ReservedAt time.Time
+	// RequestID is trimmed by Normalize and identifies this reserve, capture or
+	// release action with APIKeyID. Storage rejects an empty nonnil-command key.
+	RequestID string // financial task action key
+	APIKeyID  int64  // credential accounting identity
+	// RequestFingerprint remains verbatim when nonblank. A missing digest uses
+	// the snapshot-version encoding before storage updates mutable hold or actual
+	// amounts.
+	RequestFingerprint string // financial task replay digest
+	// RequestPayloadHash contributes trimmed nonempty text to the generated
+	// digest. Batch-image and creative command producers supply their recorded
+	// request payload identity here.
+	RequestPayloadHash string // optional task payload digest
+	// UserID pays the task, while ActorUserID and TeamID identify its member
+	// usage. PostgreSQL updates member allowance for a present team and a
+	// positive actor distinct from the payer.
+	UserID      int64  // financial payer user identity
+	ActorUserID int64  // task acting user identity
+	TeamID      *int64 // optional acting team identity
+	// GroupID selects subscription coverage when reserving funds. Capture and
+	// release use recorded allocations, and task fingerprint encoding omits this
+	// group field.
+	GroupID *int64 // optional reservation funding group
+	// APIKeyBillingMode and PreferredSubscriptionID retain submission funding for
+	// later calls. Normalize chooses auto for unsupported modes and clears the
+	// pinned ID outside subscription mode; v3 fingerprints both selected values.
+	APIKeyBillingMode       string        // captured submission funding mode
+	PreferredSubscriptionID *int64        // optional pinned grant identity
+	Task                    TaskReference // registered task funding reference
+	// HoldAmount and ActualAmount carry monetary estimates and completed charges
+	// for legacy capture. Versioned reservation can replace HoldAmount with the
+	// mixed-source hold, and capture replaces ActualAmount with its planned
+	// retained charge.
+	HoldAmount   float64 // USD
+	ActualAmount float64 // USD
+	// PricingSnapshotVersion selects monetary fingerprints below two and
+	// base/rate fingerprints from two. Version three additionally fingerprints
+	// the captured funding mode and pinned subscription.
+	PricingSnapshotVersion int // stored pricing format version
+	// BaseAmountUSD and ActualBaseAmountUSD carry unmultiplied reservation and
+	// completed cost. Positive BaseAmountUSD with version at least two selects
+	// per-source base capture; otherwise monetary ActualAmount drives capture.
+	BaseAmountUSD       float64 // USD
+	ActualBaseAmountUSD float64 // USD
+	// SubscriptionRateMultiplier and SubscriptionRateMultiplierScale choose
+	// reservation subscription rates, while BalanceRateMultiplier prices
+	// uncovered reservation base. Captured allocation rates then combine with
+	// SettlementRateScale for the completed task.
+	SubscriptionRateMultiplier      float64 // default reservation subscription factor
+	SubscriptionRateMultiplierScale float64 // reservation plan override factor
+	BalanceRateMultiplier           float64 // reservation balance charge factor
+	// SettlementRateScale multiplies recorded source rates during versioned
+	// capture. Negative values become zero; a zero balance rate can leave base
+	// usage with no balance charge.
+	SettlementRateScale float64 // capture reservation price factor
+	// DisablePlanGroupRateMultiplier makes reservation use the supplied
+	// subscription factor. Its value is included in generated
+	// version-two-and-later task fingerprints with the rate snapshot.
+	DisablePlanGroupRateMultiplier bool // plan override suppression flag
+	// BalanceHoldAmount and SubscriptionHoldAllocations record the reserved
+	// funding split. Positive balance hold or any allocation entry selects split
+	// interpretation; when both are absent, positive HoldAmount is treated as a
+	// legacy balance hold.
+	BalanceHoldAmount float64 // USD
+	// SubscriptionHoldAllocations remains input storage until capture reads it.
+	// PostgreSQL retry cloning copies the entries but keeps their optional ID
+	// pointers shared; callers leave those values unchanged during an operation.
+	SubscriptionHoldAllocations []BillingAllocation // recorded subscription hold entries
+	// AllowanceReserved tells PostgreSQL capture and release to reconcile
+	// pre-recorded Key and member usage. It is mutable operation state and
+	// excluded from task fingerprints.
+	AllowanceReserved bool // persisted allowance reservation flag
+	// ReservedAt identifies allowance and subscription windows eligible for
+	// release. Fingerprinting uses its UTC RFC3339Nano representation; the
+	// reservation path can substitute current time for its Key write when zero.
+	ReservedAt time.Time // original reservation window instant
 }
 
+// TaskFundsResult reports task funding application, wallet observations and
+// allocations reconstructed or returned by storage.
 type TaskFundsResult struct {
-	Applied               bool
-	NewBalance            *float64
-	FrozenBalance         *float64
-	HoldAmountUSD         float64
-	EstimatedAmountUSD    float64
-	ActualAmountUSD       float64
-	SubscriptionAmountUSD float64
-	BalanceAmountUSD      float64
-	BillingAllocations    []BillingAllocation
+	// Applied is true after a new task funding transaction commits. Matching
+	// replays can contain reconstructed allocations with false, so callers
+	// inspect application independently of amounts.
+	Applied bool // new financial application flag
+	// NewBalance and FrozenBalance are wallet observations returned by balance
+	// SQL. Empty or reconstructed replay results may omit both; consumers retain
+	// their prior wallet state when these pointers are nil.
+	NewBalance    *float64 // optional resulting wallet balance
+	FrozenBalance *float64 // optional resulting frozen balance
+	// HoldAmountUSD reports the summed source reservation for reserve and capture
+	// results. Empty release results can omit this amount even when wallet funds
+	// were returned.
+	HoldAmountUSD float64 // USD
+	// EstimatedAmountUSD includes settlement scaling in versioned reservation
+	// estimates. Capture results and matching capture replays report their
+	// retained actual charge here.
+	EstimatedAmountUSD float64 // USD
+	// ActualAmountUSD reports the retained capture plan charge. Reservation
+	// results can leave it zero while returning a nonzero hold and estimated
+	// charge.
+	ActualAmountUSD       float64 // USD
+	SubscriptionAmountUSD float64 // USD
+	BalanceAmountUSD      float64 // USD
+	// BillingAllocations can be reconstructed from the command on replay. Task
+	// owners copy the returned records when retaining a reservation snapshot for
+	// subsequent capture or release.
+	BillingAllocations []BillingAllocation // ordered task funding records
 }
 
-// TaskCapturePlan splits actual task costs across held funds and records subscription releases.
+// TaskCapturePlan describes retained task charges and subscription amounts to
+// release when storage captures the reservation.
 type TaskCapturePlan struct {
-	BalanceHoldAmount     float64
-	ActualAmountUSD       float64
-	SubscriptionAmountUSD float64
-	BalanceAmountUSD      float64
-	BillingAllocations    []BillingAllocation
-	SubscriptionReleases  []BillingAllocation
+	BalanceHoldAmount     float64 // USD
+	ActualAmountUSD       float64 // USD
+	SubscriptionAmountUSD float64 // USD
+	BalanceAmountUSD      float64 // USD
+	// BillingAllocations retains consumed sources in their supplied subscription
+	// order before balance, while SubscriptionReleases records unused positive
+	// subscription holds above taskCostEpsilon. Returned subscription and plan ID
+	// pointers are cloned.
+	BillingAllocations   []BillingAllocation // retained ordered funding records
+	SubscriptionReleases []BillingAllocation // unused subscription hold records
 }
 
-// TaskScope identifies a registered task type so funding operations can select its store.
+// TaskScope identifies the task family registered with the funding store for
+// transaction participation.
 type TaskScope string
 
-// TaskReference carries the task and original reserve request IDs; Scope and ReserveRequestID are excluded from fingerprints.
+// TaskReference identifies the task record and its original reservation action
+// for the registered store. Funding fingerprints include ID, while Scope and
+// ReserveRequestID remain lookup information supplied by the task owner.
 type TaskReference struct {
-	Scope            TaskScope
-	ID               string
-	ReserveRequestID string
+	// Scope selects the registered transaction participant in SettlementStore.
+	// Funds requires a nonempty scope for nonnil task commands; fingerprint
+	// construction omits it.
+	Scope TaskScope // registered task family identity
+	// ID identifies the task row to its participant and contributes trimmed text
+	// to generated task fingerprints. Normalize trims the stored field without
+	// imposing nonempty validation.
+	ID string // opaque task record identity
+	// ReserveRequestID supplies the hold lookup key for later capture or release.
+	// Funds requires a nonempty value, while generated fingerprints omit this
+	// owner-supplied lookup identity.
+	ReserveRequestID string // original financial reservation key
 }
 
+// Normalize trims the financial key, resolves funding mode and prepares
+// request replay data in place. Nil commands return immediately, unsupported
+// modes select auto, and the pinned ID survives only subscription funding.
+//
+// A supplied nonblank fingerprint remains verbatim. For a missing one, a
+// shallow command copy keeps an omitted mode empty for compatibility while
+// supplied modes use their normalized value; raw amounts enter the digest
+// before the three storage-bound counters are quantized. Callers supply
+// exclusive command access and retain the raw captured values when
+// constructing another replay command.
 func (c *UsageBillingCommand) Normalize() {
 	if c == nil {
 		return
@@ -170,11 +344,16 @@ func (c *UsageBillingCommand) Normalize() {
 	c.RequestID = strings.TrimSpace(c.RequestID)
 	rawMode := strings.TrimSpace(c.APIKeyBillingMode)
 	mode, ok := NormalizeAPIKeyBillingMode(c.APIKeyBillingMode)
+	// Unsupported funding text selects auto allocation, so later mode handling
+	// clears the unrelated pinned identity instead of treating invalid text as
+	// subscription-only funding.
 	if !ok {
 		mode = APIKeyBillingModeAuto
 	}
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
-		// Keep an omitted mode empty in the fingerprint for retry compatibility; normalize supplied modes.
+		// Build the digest from a shallow raw-amount copy. Keeping omitted mode text
+		// empty lets historical auto-mode retries retain their established financial
+		// identity encoding.
 		fingerprintCommand := *c
 		if rawMode == "" {
 			fingerprintCommand.APIKeyBillingMode = ""
@@ -190,52 +369,48 @@ func (c *UsageBillingCommand) Normalize() {
 	if mode != APIKeyBillingModeSubscription {
 		c.PreferredSubscriptionID = nil
 	}
-	// Compute the fingerprint from raw amounts before quantizing so retries across upgrades
-	// do not conflict solely because storage precision changed.
+	// Round storage counters after retaining their raw fingerprint facts.
+	// Reversing these phases can turn an unchanged captured request into a replay
+	// conflict across precision changes.
 	c.quantizeMonetaryFields()
 }
 
-// quantizeMonetaryFields rounds counters written directly to NUMERIC(20,8) columns.
-// BillableAmountUSD and BaseAmountUSD retain precision for subscription settlement and usage facts;
-// the repository separately rounds the final balance deduction before SQL.
-//
-// Without prior rounding, PostgreSQL rounds the results of the two operations independently:
-//
-//	balance    = balance - $1    // Round the remaining balance.
-//	quota_used = quota_used + $1 // Round accumulated usage.
-//
-// NUMERIC rounds ties away from zero. For a ninth-decimal tie, such as
-// 10 input tokens * 0.00000125 + 5 output tokens * 0.00001000,
-// scaled by 1.25 to 0.000078125, the deltas differ:
-//
-//	balance:    10000 - 0.000078125 = 9999.999921875 -> 9999.99992188 (delta 0.00007812)
-//	quota_used:     0 + 0.000078125 =    0.000078125 ->    0.00007813 (delta 0.00007813)
-//
-// The 1e-8 difference accumulates across requests and prevents exact reconciliation
-// between balance deductions, API key counters, and usage records.
-//
-// Rounding the amount before SQL puts both operations on the same eight-decimal scale,
-// so storing their results does not introduce opposite rounding deltas.
+// quantizeMonetaryFields rounds the three directly stored monetary counters to
+// UsageBillingMonetaryScale on a nonnil command. Normalize calls it after
+// fingerprinting; billable and base amounts retain their precision, and
+// PostgreSQL rounds the eventual balance deduction after allocation.
 func (c *UsageBillingCommand) quantizeMonetaryFields() {
 	c.APIKeyQuotaCost = QuantizeUsageBillingAmount(c.APIKeyQuotaCost)
 	c.APIKeyRateLimitCost = QuantizeUsageBillingAmount(c.APIKeyRateLimitCost)
 	c.ProviderQuotaCost = QuantizeUsageBillingAmount(c.ProviderQuotaCost)
 }
 
-// QuantizeUsageBillingAmount rounds to UsageBillingMonetaryScale decimal places
-// using half-away-from-zero rounding, as PostgreSQL NUMERIC does.
-//
-// Decimal arithmetic avoids the extra binary rounding from math.Round(v*1e8)/1e8
-// near a tie. decimal.NewFromFloat uses the float's shortest decimal representation
-// before rounding. Zero and nonfinite values pass through unchanged.
+// QuantizeUsageBillingAmount rounds finite nonzero amounts to eight decimals
+// with decimal half-away-from-zero arithmetic. Zero, NaN and either infinity
+// pass through unchanged; callers perform financial validity checks separately
+// from precision normalization.
 func QuantizeUsageBillingAmount(v float64) float64 {
 	if v == 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return v
 	}
+	// Use the float's shortest decimal representation before rounding. The
+	// conversion's exactness result is discarded because the public result
+	// remains a float64 monetary amount.
 	quantized, _ := decimal.NewFromFloat(v).Round(UsageBillingMonetaryScale).Float64()
 	return quantized
 }
 
+// buildUsageBillingFingerprint returns a SHA-256 hex digest of the supplied
+// request funding and usage facts. Nil input returns empty text; absent team
+// and pinned identities encode as zero. Selected text fields and an optional
+// payload digest are trimmed, while amounts use ten digits after the decimal
+// point.
+//
+// Normalize supplies the compatibility mode and raw counters before storage
+// rounding. The financial key, final GroupID and allocation-detail flags are
+// excluded, so callers keep those request facts consistent when retrying the
+// same key. Callers supply valid captured financial facts; selected text
+// fields use the established pipe-delimited encoding before hashing.
 func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 	if c == nil {
 		return ""
@@ -248,6 +423,9 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 	if c.PreferredSubscriptionID != nil {
 		preferredSubscriptionID = *c.PreferredSubscriptionID
 	}
+	// Encode amounts to ten decimal places for the established request identity.
+	// Smaller differences can collapse to the same text, while crossing a printed
+	// rounding boundary still changes it.
 	raw := fmt.Sprintf(
 		"%d|%d|%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f",
 		c.UserID,
@@ -283,6 +461,9 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HashUsageRequestPayload hashes the supplied nonempty payload bytes with
+// SHA-256 and returns lowercase hex. Empty input returns empty text, letting
+// callers omit payload identity from their financial fingerprint.
 func HashUsageRequestPayload(payload []byte) string {
 	if len(payload) == 0 {
 		return ""
@@ -291,6 +472,17 @@ func HashUsageRequestPayload(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Normalize trims the action key and task ID, resolves funding mode and
+// supplies a task fingerprint in place. Nil input returns immediately;
+// unsupported modes become auto, and a pinned subscription remains only for
+// subscription funding.
+//
+// A nonblank fingerprint is retained verbatim. A missing one uses a shallow
+// copy that keeps an omitted mode empty for versioned compatibility and clears
+// unrelated pinned identity before encoding. Snapshot version selects which
+// captured amount and rate facts participate; mutable allowance state and held
+// allocations are excluded so storage can reconcile them after claiming the
+// financial action.
 func (c *TaskFundsCommand) Normalize() {
 	if c == nil {
 		return
@@ -299,11 +491,16 @@ func (c *TaskFundsCommand) Normalize() {
 	c.Task.ID = strings.TrimSpace(c.Task.ID)
 	rawMode := strings.TrimSpace(c.APIKeyBillingMode)
 	mode, ok := NormalizeAPIKeyBillingMode(c.APIKeyBillingMode)
+	// Unsupported funding text selects auto allocation, so later mode handling
+	// clears the unrelated pinned identity instead of treating invalid text as
+	// subscription-only funding.
 	if !ok {
 		mode = APIKeyBillingModeAuto
 	}
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
-		// Keep an omitted mode empty for versioned fingerprint compatibility; normalize supplied modes.
+		// Keep the omitted mode spelling empty in the fingerprint copy.
+		// Version-three serialization thereby remains compatible with prior task
+		// actions while runtime funding still selects auto.
 		fingerprintCommand := *c
 		if rawMode == "" {
 			fingerprintCommand.APIKeyBillingMode = ""
@@ -321,6 +518,17 @@ func (c *TaskFundsCommand) Normalize() {
 	}
 }
 
+// buildTaskFundsFingerprint returns a SHA-256 hex digest using the command's
+// snapshot-version encoding. Nil input returns empty text. Versions below two
+// encode HoldAmount and ActualAmount; later versions encode the version, base
+// amounts, source rates, settlement scale and plan-override policy.
+//
+// Version three adds funding mode and pinned subscription identity, with
+// absent optional IDs encoded as zero. Every version includes the payer,
+// actor, team, Key, trimmed task ID and UTC RFC3339Nano reservation instant,
+// plus any trimmed nonempty payload digest. Scope, reserve key, mutable
+// allowance flag and split hold details are omitted so task reconciliation can
+// reuse its historical identity encoding.
 func buildTaskFundsFingerprint(c *TaskFundsCommand) string {
 	if c == nil {
 		return ""
@@ -330,6 +538,9 @@ func buildTaskFundsFingerprint(c *TaskFundsCommand) string {
 		teamID = *c.TeamID
 	}
 	var raw string
+	// Choose the established version encoding before hashing. Later base-price
+	// snapshots omit mutable monetary hold results while legacy snapshots retain
+	// their original hold and actual amounts.
 	if c.PricingSnapshotVersion >= 2 {
 		raw = fmt.Sprintf(
 			"%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%t|%s",
@@ -375,7 +586,15 @@ func buildTaskFundsFingerprint(c *TaskFundsCommand) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// EffectiveTaskBalanceHoldAmount returns the balance hold, treating legacy unsplit holds as entirely balance-funded.
+// EffectiveTaskBalanceHoldAmount returns the nonnegative balance portion of a
+// task reservation. Nil input yields zero. A positive BalanceHoldAmount or any
+// SubscriptionHoldAllocations entry selects the recorded split, so a zero
+// balance field remains zero even if HoldAmount is positive.
+//
+// With neither split indicator, the legacy HoldAmount becomes the balance hold
+// and is clamped at zero. Callers supply finite financial inputs; the presence
+// check does not validate allocation type, IDs or positive subscription
+// amounts before deciding that the command has split metadata.
 func EffectiveTaskBalanceHoldAmount(cmd *TaskFundsCommand) float64 {
 	if cmd == nil {
 		return 0
@@ -383,10 +602,22 @@ func EffectiveTaskBalanceHoldAmount(cmd *TaskFundsCommand) float64 {
 	if cmd.BalanceHoldAmount > 0 || len(cmd.SubscriptionHoldAllocations) > 0 {
 		return math.Max(cmd.BalanceHoldAmount, 0)
 	}
+	// No recorded split was selected; treat the legacy total as balance capacity
+	// for older task snapshots whose stored metadata lacks separate source hold
+	// amounts.
 	return math.Max(cmd.HoldAmount, 0)
 }
 
-// TotalTaskHoldAmount sums positive subscription holds and the effective balance hold.
+// TotalTaskHoldAmount sums the effective balance hold and positive
+// subscription-type allocation amounts, returning zero for nil input. Callers
+// supply finite reservation data; this calculation does not require IDs on
+// entries whose amounts contribute to the total.
+//
+// EffectiveTaskBalanceHoldAmount first decides whether split metadata replaces
+// the legacy total. Any allocation entry selects that split, even when this
+// loop later omits its type or nonpositive amount. The result therefore counts
+// usable supplied source amounts rather than validating that every hold entry
+// names a persisted subscription reservation.
 func TotalTaskHoldAmount(cmd *TaskFundsCommand) float64 {
 	if cmd == nil {
 		return 0
@@ -400,7 +631,19 @@ func TotalTaskHoldAmount(cmd *TaskFundsCommand) float64 {
 	return total
 }
 
-// PlanTaskCapture allocates actual costs to subscriptions first and computes unused subscription releases.
+// PlanTaskCapture builds retained task charges and subscription releases
+// without writing storage. Nil input returns an empty plan. Snapshot version
+// at least two with positive BaseAmountUSD delegates to per-source base
+// capture; other inputs use nonnegative ActualAmount as the monetary target.
+//
+// Legacy capture visits positive subscription entries with IDs in supplied
+// order, keeping each amount up to the remaining charge and recording its
+// unused part above taskCostEpsilon. Balance covers the remaining charge up to
+// the effective hold. Excess beyond the same tolerance returns
+// ErrTaskSettlementCostExceedsHold; accepted residuals within tolerance can
+// make the retained total slightly smaller than the target. Input amounts and
+// ID pointers remain unchanged. Callers validate finite amount and rate inputs
+// before planning.
 func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	plan := &TaskCapturePlan{}
 	if cmd == nil {
@@ -409,12 +652,16 @@ func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	if cmd.PricingSnapshotVersion >= 2 && cmd.BaseAmountUSD > 0 {
 		return planTaskBaseAmountCapture(cmd)
 	}
+	// Negative completed costs retain no charge from the recorded monetary holds.
 	actualAmount := math.Max(cmd.ActualAmount, 0)
 	remaining := actualAmount
 	for _, allocation := range cmd.SubscriptionHoldAllocations {
 		if allocation.Type != BillingAllocationTypeSubscription || allocation.AmountUSD <= 0 || allocation.SubscriptionID == nil {
 			continue
 		}
+		// Consume these stored monetary holds in input order. Earlier subscription
+		// coverage reduces the charge available to later entries before any balance
+		// funds are retained.
 		kept := math.Min(allocation.AmountUSD, remaining)
 		if kept > 0 {
 			keptAllocation := CloneBillingAllocation(allocation, kept)
@@ -422,11 +669,17 @@ func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 			plan.SubscriptionAmountUSD += kept
 			remaining -= kept
 		}
+		// Emit unused monetary releases above taskCostEpsilon, so sub-tolerance
+		// residue is not refunded through an additional source update in the capture
+		// plan.
 		if released := allocation.AmountUSD - kept; released > taskCostEpsilon {
 			plan.SubscriptionReleases = append(plan.SubscriptionReleases, CloneBillingAllocation(allocation, released))
 		}
 	}
 
+	// After subscription coverage, the effective recorded balance hold caps the
+	// final charge. A larger residual beyond tolerance rejects the whole plan
+	// before storage receives it.
 	plan.BalanceHoldAmount = EffectiveTaskBalanceHoldAmount(cmd)
 	if remaining-plan.BalanceHoldAmount > taskCostEpsilon {
 		return nil, ErrTaskSettlementCostExceedsHold
@@ -442,9 +695,23 @@ func PlanTaskCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	return plan, nil
 }
 
-// planTaskBaseAmountCapture covers actual base cost using the rates recorded for each reserved source.
+// planTaskBaseAmountCapture allocates nonnegative completed base cost through
+// the reservation's recorded source rates. Its caller supplies a nonnil
+// versioned command with positive BaseAmountUSD. SettlementRateScale
+// multiplies each subscription allocation rate; a nonpositive selected rate
+// skips that entry, including its release calculation.
+//
+// Positive-rate entries consume base in supplied order up to their held
+// monetary amount and produce cloned retained IDs and unused monetary releases
+// above tolerance. The nonnegative balance rate covers remaining base up to
+// its effective hold. Excess balance cost or remaining base above tolerance
+// with a positive balance rate rejects capture; a zero balance rate can leave
+// base uncovered with zero charge. The result describes storage work and
+// leaves the reservation command unchanged.
 func planTaskBaseAmountCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) {
 	plan := &TaskCapturePlan{BalanceHoldAmount: EffectiveTaskBalanceHoldAmount(cmd)}
+	// Clamp negative completed base cost and settlement scale before source-rate
+	// conversion, leaving either value with no positive charge contribution.
 	remainingBase := math.Max(cmd.ActualBaseAmountUSD, 0)
 	settlementScale := math.Max(cmd.SettlementRateScale, 0)
 	for _, allocation := range cmd.SubscriptionHoldAllocations {
@@ -452,9 +719,15 @@ func planTaskBaseAmountCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) 
 			continue
 		}
 		rate := allocation.RateMultiplier * settlementScale
+		// A nonpositive scaled subscription rate bypasses both retention and refund
+		// calculation for this entry. The input hold remains outside this capture
+		// plan's releases.
 		if rate <= 0 {
 			continue
 		}
+		// Translate remaining base dollars into this source's scaled monetary rate,
+		// then divide the kept charge back to base before advancing to later held
+		// sources.
 		kept := math.Min(allocation.AmountUSD, remainingBase*rate)
 		if kept > 0 {
 			keptAllocation := CloneBillingAllocation(allocation, kept)
@@ -464,11 +737,17 @@ func planTaskBaseAmountCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) 
 			plan.SubscriptionAmountUSD += kept
 			remainingBase -= kept / rate
 		}
+		// Emit unused monetary releases above taskCostEpsilon, so sub-tolerance
+		// residue is not refunded through an additional source update in the capture
+		// plan.
 		if released := allocation.AmountUSD - kept; released > taskCostEpsilon {
 			plan.SubscriptionReleases = append(plan.SubscriptionReleases, CloneBillingAllocation(allocation, released))
 		}
 	}
 
+	// Price the remaining base with the recorded balance factor and settlement
+	// scale. A zero selected factor permits that residual base to produce no
+	// balance charge.
 	balanceRate := math.Max(cmd.BalanceRateMultiplier, 0) * settlementScale
 	balanceAmount := remainingBase * balanceRate
 	if balanceAmount-plan.BalanceHoldAmount > taskCostEpsilon {
@@ -495,9 +774,16 @@ func planTaskBaseAmountCapture(cmd *TaskFundsCommand) (*TaskCapturePlan, error) 
 	return plan, nil
 }
 
+// CloneBillingAllocation copies an allocation, replaces its monetary AmountUSD
+// and clones present subscription and plan ID pointers. BaseAmountUSD and
+// RateMultiplier remain copied as supplied, so this helper does not rescale
+// pricing detail to the replacement amount.
 func CloneBillingAllocation(allocation BillingAllocation, amount float64) BillingAllocation {
 	cloned := allocation
 	cloned.AmountUSD = amount
+	// Clone optional source IDs before returning the replacement allocation,
+	// allowing callers to retain its identity pointers independently while scalar
+	// pricing detail remains as supplied.
 	if allocation.SubscriptionID != nil {
 		value := *allocation.SubscriptionID
 		cloned.SubscriptionID = &value

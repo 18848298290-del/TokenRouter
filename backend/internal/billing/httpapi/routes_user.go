@@ -2,8 +2,15 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes registers billing endpoints on a group with authentication, rate limits, and auditing
-// installed by the caller.
+// User billing routes select redemption and subscription actions under an
+// authenticated group owned by app wiring. History, active/progress/summary
+// queries and quota-conditioned self-revocation share that group, while caller
+// middleware supplies authentication, request admission and auditing.
+
+// RegisterUserRoutes binds redemption and subscription methods below the
+// caller's authenticated group. The caller supplies initialized endpoint
+// dependencies and the surrounding authentication, rate-limit and auditing
+// policy; handlers obtain current user identity from that installed context.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, redeemEndpoint *RedeemHandler, subscriptionEndpoint *SubscriptionHandler) {
 	redeem := authenticated.Group("/redeem")
 	{

@@ -87,10 +87,15 @@ func TestContextTierImageOverrides(t *testing.T) {
 	}
 	before := MultiplyModelPricing(base, 1)
 	for _, tc := range []struct {
-		name        string            // subtest display case label
-		config      ModelPricingEntry // supplied model-card price overrides
-		imageInput, // expected displayed image-input rate
-		imageOutput float64 // expected displayed image-output rate
+		name   string            // subtest display case label
+		config ModelPricingEntry // supplied model-card price overrides
+		// imageInput and imageOutput are expected displayed image-token prices for
+		// the same card case. Cost assertions use ordinary input pricing when
+		// imageInput is zero, while imageOutput zero expects no image-output charge.
+		// imageInput: expected image-input display rate.
+		// imageOutput: expected image-output display rate.
+		imageInput,
+		imageOutput float64
 	}{
 		{"custom", ModelPricingEntry{ImageInputPrice: &imageInput, ImageOutputPrice: &imageOutput}, 1e-6, 3e-6},
 		{"scaled", ModelPricingEntry{ImageInputPrice: &imageInput, ImageOutputPrice: &imageOutput, PriceMultiplier: &multiplier}, 2e-6, 6e-6},
@@ -112,6 +117,8 @@ func TestContextTierImageOverrides(t *testing.T) {
 				})
 				require.NoError(t, err)
 				inputPrice := tc.imageInput
+				// A zero displayed image-input rate still charges the reported image-input
+				// tokens at the configured ordinary input rate in this card scenario.
 				if inputPrice == 0 {
 					inputPrice = input
 				}

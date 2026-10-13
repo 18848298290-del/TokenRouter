@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// TestUserSubscriptionNeedsDailyReset_DailyCardKeepsOneTimeQuota gives a
+// one-day lifetime with an established daily anchor and usage. Crossing the
+// next midnight must keep reset eligibility false for that one-time allowance.
 func TestUserSubscriptionNeedsDailyReset_DailyCardKeepsOneTimeQuota(t *testing.T) {
 	start := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	dailyWindowStart := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
@@ -25,6 +28,9 @@ func TestUserSubscriptionNeedsDailyReset_DailyCardKeepsOneTimeQuota(t *testing.T
 	require.False(t, sub.NeedsDailyResetAt(dailyWindowStart.Add(25*time.Hour), timezone.NewCalendar(time.UTC)), "日卡应作为一次性配额，跨 0 点后不再刷新日额度")
 }
 
+// TestUserSubscriptionNeedsDailyReset_MultiDaySubscriptionStillRefreshes gives
+// a two-day UTC lifetime and stored daily anchor. It checks the lifetime is
+// not one-time and a full next-day window can reset.
 func TestUserSubscriptionNeedsDailyReset_MultiDaySubscriptionStillRefreshes(t *testing.T) {
 	start := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	dailyWindowStart := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
@@ -38,6 +44,9 @@ func TestUserSubscriptionNeedsDailyReset_MultiDaySubscriptionStillRefreshes(t *t
 	require.True(t, sub.NeedsDailyResetAt(dailyWindowStart.Add(24*time.Hour), timezone.NewCalendar(time.UTC)), "多日订阅仍应在次日零点刷新")
 }
 
+// TestUserSubscriptionNeedsDailyReset_LegacyAnchorHealsAtNextMidnight stores
+// an afternoon anchor inside a longer UTC lifetime. Reset eligibility stays
+// false that night and becomes true just after the next calendar midnight.
 func TestUserSubscriptionNeedsDailyReset_LegacyAnchorHealsAtNextMidnight(t *testing.T) {
 	base := timezone.NewCalendar(time.UTC).
 		StartOfDay(time.Now().UTC())
@@ -52,6 +61,9 @@ func TestUserSubscriptionNeedsDailyReset_LegacyAnchorHealsAtNextMidnight(t *test
 	require.True(t, sub.NeedsDailyResetAt(base.AddDate(0, 0, 1).Add(time.Minute), timezone.NewCalendar(time.UTC)), "旧的非零点锚点应在下一个零点后自愈")
 }
 
+// TestUserSubscriptionNeedsDailyReset_SkipsExpiryTailWindow reaches a new
+// daily boundary with less than eight hours before expiry and no outer limit.
+// The helper must reject granting another full unprotected daily period.
 func TestUserSubscriptionNeedsDailyReset_SkipsExpiryTailWindow(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -66,6 +78,10 @@ func TestUserSubscriptionNeedsDailyReset_SkipsExpiryTailWindow(t *testing.T) {
 	require.False(t, sub.NeedsDailyResetAt(now, timezone.NewCalendar(time.UTC)), "到期当天不足完整日窗口时不应额外刷新 daily usage")
 }
 
+// TestUserSubscriptionNeedsDailyReset_ExpiryTailUsesFiniteOuterLimit tests a
+// short expiry tail with positive weekly/monthly protection, zero protection
+// and no protection. Only the supplied positive outer cases permit daily
+// reset.
 func TestUserSubscriptionNeedsDailyReset_ExpiryTailUsesFiniteOuterLimit(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -76,10 +92,13 @@ func TestUserSubscriptionNeedsDailyReset_ExpiryTailUsesFiniteOuterLimit(t *testi
 	unlimited := 0.0
 
 	tests := []struct {
-		name         string
-		weeklyLimit  *float64
-		monthlyLimit *float64
-		want         bool
+		name string // named quota scenario label
+		// weeklyLimit and monthlyLimit supply alternative outer protection for this
+		// daily tail. Positive supplied limits permit a reset; zero and absent
+		// pointers keep the candidate unprotected.
+		weeklyLimit  *float64 // USD
+		monthlyLimit *float64 // USD
+		want         bool     // expected quota eligibility result
 	}{
 		{name: "有限周额度", weeklyLimit: &outerLimit, want: true},
 		{name: "有限月额度", monthlyLimit: &outerLimit, want: true},
@@ -103,6 +122,10 @@ func TestUserSubscriptionNeedsDailyReset_ExpiryTailUsesFiniteOuterLimit(t *testi
 	}
 }
 
+// TestUserSubscriptionNeedsWeeklyReset_ExpiryTailUsesFiniteMonthlyLimit
+// reaches a seven-day anchor boundary with less than eight hours remaining.
+// Weekly reset succeeds under a positive monthly limit and fails when that
+// pointer is removed.
 func TestUserSubscriptionNeedsWeeklyReset_ExpiryTailUsesFiniteMonthlyLimit(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -123,6 +146,10 @@ func TestUserSubscriptionNeedsWeeklyReset_ExpiryTailUsesFiniteMonthlyLimit(t *te
 	require.False(t, sub.NeedsWeeklyResetAt(now), "周额度没有外层保护时仍须容纳完整周窗口")
 }
 
+// TestUserSubscriptionNeedsDailyReset_DailyCardIgnoresFiniteOuterLimit crosses
+// midnight during a one-day grant with daily and monthly limits. The
+// established daily quota must remain one-time despite positive outer
+// protection.
 func TestUserSubscriptionNeedsDailyReset_DailyCardIgnoresFiniteOuterLimit(t *testing.T) {
 	start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	dailyWindowStart := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
@@ -139,6 +166,9 @@ func TestUserSubscriptionNeedsDailyReset_DailyCardIgnoresFiniteOuterLimit(t *tes
 	require.False(t, sub.NeedsDailyResetAt(time.Date(2026, 5, 31, 0, 5, 0, 0, time.UTC), timezone.NewCalendar(time.UTC)), "1 日卡始终只有一份日额度")
 }
 
+// TestUserSubscriptionNeedsMonthlyReset_SkipsExpiryTailWindow reaches thirty
+// elapsed days since its anchor shortly before grant expiry. It checks the
+// remaining time cannot admit another full monthly period.
 func TestUserSubscriptionNeedsMonthlyReset_SkipsExpiryTailWindow(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -153,6 +183,9 @@ func TestUserSubscriptionNeedsMonthlyReset_SkipsExpiryTailWindow(t *testing.T) {
 	require.False(t, sub.NeedsMonthlyResetAt(now), "到期当天不足完整月窗口时不应额外刷新 monthly usage")
 }
 
+// TestUserSubscriptionDailyResetTime_DailyCardReturnsExpiry asks for display
+// timing on a one-day lifetime with a stored daily anchor. The returned nonnil
+// quota end must equal subscription expiry.
 func TestUserSubscriptionDailyResetTime_DailyCardReturnsExpiry(t *testing.T) {
 	start := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	dailyWindowStart := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
@@ -168,6 +201,10 @@ func TestUserSubscriptionDailyResetTime_DailyCardReturnsExpiry(t *testing.T) {
 	require.Equal(t, expiresAt, *resetAt, "日卡展示的日额度结束时间应为订阅过期时间")
 }
 
+// TestUserSubscriptionDailyResetTime_LegacyAnchorReturnsNextMidnight uses an
+// afternoon stored anchor in a longer UTC lifetime. It checks the displayed
+// daily reset is the next calendar midnight, not twenty-four hours after that
+// anchor.
 func TestUserSubscriptionDailyResetTime_LegacyAnchorReturnsNextMidnight(t *testing.T) {
 	base := timezone.NewCalendar(time.UTC).
 		StartOfDay(time.Now().UTC())
@@ -183,6 +220,9 @@ func TestUserSubscriptionDailyResetTime_LegacyAnchorReturnsNextMidnight(t *testi
 	require.Equal(t, base.AddDate(0, 0, 1), *resetAt, "旧的非零点锚点应展示其所在日的下一个零点")
 }
 
+// TestUserSubscriptionMonthlyResetTime_TailWindowReturnsExpiry reaches the
+// final monthly period with only a short lifetime tail after its candidate.
+// The nonnil display deadline must become subscription expiry.
 func TestUserSubscriptionMonthlyResetTime_TailWindowReturnsExpiry(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -198,6 +238,10 @@ func TestUserSubscriptionMonthlyResetTime_TailWindowReturnsExpiry(t *testing.T) 
 	require.Equal(t, expiresAt, *resetAt, "到期尾段展示的月额度结束时间应为订阅过期时间")
 }
 
+// TestUserSubscriptionDailyResetTime_TailWindowUsesFiniteMonthlyLimit supplies
+// positive monthly protection near the final daily boundary. It checks the
+// daily display keeps its ordinary next reset instant despite the shorter
+// lifetime tail.
 func TestUserSubscriptionDailyResetTime_TailWindowUsesFiniteMonthlyLimit(t *testing.T) {
 	start := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
 	expiresAt := time.Date(2026, 5, 30, 8, 0, 0, 0, time.UTC)
@@ -215,6 +259,10 @@ func TestUserSubscriptionDailyResetTime_TailWindowUsesFiniteMonthlyLimit(t *test
 	require.Equal(t, dailyWindowStart.Add(billing.SubscriptionDailyWindow), *resetAt, "有限月额度保护下应展示尾段日窗口的实际刷新时间")
 }
 
+// TestUserSubscriptionWindowActivation_MixedDailyMonthlyTailActivatesOnlyDaily
+// supplies missing daily/monthly anchors and a two-hour lifetime tail.
+// Positive monthly protection permits daily activation while weekly and
+// monthly selections stay false.
 func TestUserSubscriptionWindowActivation_MixedDailyMonthlyTailActivatesOnlyDaily(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	dailyLimit := 10.0
@@ -236,6 +284,10 @@ func TestUserSubscriptionWindowActivation_MixedDailyMonthlyTailActivatesOnlyDail
 	require.False(t, activation.Monthly, "不足完整月窗口时不应顺带激活月额度窗口")
 }
 
+// TestUserSubscriptionWindowActivation_MixedWeeklyMonthlyTailActivatesOnlyWeekly
+// supplies missing weekly/monthly anchors and a two-hour lifetime tail. The
+// positive monthly limit protects weekly activation, while daily and monthly
+// selections remain false.
 func TestUserSubscriptionWindowActivation_MixedWeeklyMonthlyTailActivatesOnlyWeekly(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	weeklyLimit := 50.0
@@ -257,16 +309,24 @@ func TestUserSubscriptionWindowActivation_MixedWeeklyMonthlyTailActivatesOnlyWee
 	require.False(t, activation.Monthly, "月额度没有更高层保护，不应在尾段激活")
 }
 
+// TestUserSubscriptionHighestQuotaExhaustedUsesHighestConfiguredWindow
+// combines outer/lower quota exhaustion, absent limits and positive infinity.
+// It checks monthly-then-weekly-then-daily precedence, with available outer
+// quotas, all-absent limits and the supplied infinite limit denying the
+// predicate.
 func TestUserSubscriptionHighestQuotaExhaustedUsesHighestConfiguredWindow(t *testing.T) {
 	tests := []struct {
-		name       string
-		monthly    *float64
-		monthlyUse float64
-		weekly     *float64
-		weeklyUse  float64
-		daily      *float64
-		dailyUse   float64
-		want       bool
+		name string // named quota scenario label
+		// monthly, weekly, daily and monthlyUse, weeklyUse, dailyUse are copied into
+		// each grant's limit/counter pairs. Nil removes a configured period, and the
+		// infinity case cannot authorize self-revocation.
+		monthly    *float64 // USD
+		monthlyUse float64  // USD
+		weekly     *float64 // USD
+		weeklyUse  float64  // USD
+		daily      *float64 // USD
+		dailyUse   float64  // USD
+		want       bool     // expected quota eligibility result
 	}{
 		{name: "monthly exhausted", monthly: quotaPointer(100), monthlyUse: 100, weekly: quotaPointer(10), weeklyUse: 10, daily: quotaPointer(1), dailyUse: 1, want: true},
 		{name: "monthly available blocks lower exhausted windows", monthly: quotaPointer(100), monthlyUse: 99, weekly: quotaPointer(10), weeklyUse: 10, daily: quotaPointer(1), dailyUse: 1, want: false},

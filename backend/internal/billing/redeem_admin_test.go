@@ -11,31 +11,56 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// redeemCreateRecorder captures codes submitted by the administration service.
+// redeemCreateRecorder captures shallow credential copies submitted by
+// administrator generation.
 type redeemCreateRecorder struct {
-	RedeemCodeRepository
-	created []RedeemCode
+	// RedeemCodeRepository supplies unused fixture methods through a nil embedded
+	// interface. These tests call only the overridden methods; another embedded
+	// call would panic.
+	RedeemCodeRepository // unused repository fixture methods
+	// created owns the appended record slice, but its optional field pointers
+	// remain those supplied by the caller. Tests inspect captured values before
+	// changing those inputs.
+	created []RedeemCode // captured shallow credential records
 }
 
+// redeemRepoStubForAdminList captures administrator listing inputs and
+// supplies configured page results.
 type redeemRepoStubForAdminList struct {
-	RedeemCodeRepository
+	// RedeemCodeRepository supplies unused fixture methods through a nil embedded
+	// interface. These tests call only the overridden methods; another embedded
+	// call would panic.
+	RedeemCodeRepository // unused repository fixture methods
 
-	listWithFiltersCalls  int
-	listWithFiltersParams pagination.PaginationParams
-	listWithFiltersType   string
-	listWithFiltersStatus string
-	listWithFiltersSearch string
-	listWithFiltersCodes  []RedeemCode
-	listWithFiltersResult *pagination.PaginationResult
-	listWithFiltersErr    error
+	// listWithFiltersCalls, listWithFiltersParams, listWithFiltersType,
+	// listWithFiltersStatus and listWithFiltersSearch retain the current request
+	// before its configured result is returned. The synchronous test inspects one
+	// captured call.
+	listWithFiltersCalls  int                         // captured administrator list call count
+	listWithFiltersParams pagination.PaginationParams // captured pagination and sort fields
+	listWithFiltersType   string                      // captured credential type filter
+	listWithFiltersStatus string                      // captured credential status filter
+	listWithFiltersSearch string                      // captured code or recipient search
+	// listWithFiltersCodes and listWithFiltersResult supply successful returns
+	// when listWithFiltersErr is nil. Their slice/pointer storage remains shared,
+	// and a missing result is synthesized from the rows.
+	listWithFiltersCodes  []RedeemCode                 // configured returned credential rows
+	listWithFiltersResult *pagination.PaginationResult // optional configured page metadata
+	// listWithFiltersErr takes precedence over configured rows and page metadata.
+	// A non-nil error makes the method return nil companion results after
+	// capturing the request.
+	listWithFiltersErr error // injected administrator listing error
 }
 
-// TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength covers Han, mixed text, and supplementary-plane code points.
+// TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength submits Han, Latin,
+// mixed and supplementary-plane text below, at and above thirty-two code points. It
+// checks trimming, stored valid inputs and rejected overlong inputs before
+// creation.
 func TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength(t *testing.T) {
 	tests := []struct {
-		name    string
-		code    string
-		tooLong bool
+		name    string // test case display name
+		code    string // supplied Unicode credential text
+		tooLong bool   // expected code-point length rejection
 	}{
 		{name: "中文未满上限", code: strings.Repeat("兑", 11)},
 		{name: "中文达到上限", code: strings.Repeat("兑", 32)},
@@ -74,12 +99,18 @@ func TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength(t *testing.T) {
 	}
 }
 
-// Create copies the code so tests can inspect the repository input.
+// Create appends a shallow copy of the supplied non-nil credential and returns
+// success. Optional pointers remain shared with the caller, so this fixture
+// checks captured values rather than independent nested ownership.
 func (r *redeemCreateRecorder) Create(_ context.Context, code *RedeemCode) error {
 	r.created = append(r.created, *code)
 	return nil
 }
 
+// TestAdminService_ListRedeemCodes_WithSearch supplies type/status/search and
+// sort parameters for an administrator page. It checks one captured request,
+// forwarded pagination fields and the configured rows/total returned by the
+// fixture.
 func TestAdminService_ListRedeemCodes_WithSearch(t *testing.T) {
 	t.Run("search 参数正常传递到 repository 层", func(t *testing.T) {
 		repo := &redeemRepoStubForAdminList{
@@ -101,6 +132,10 @@ func TestAdminService_ListRedeemCodes_WithSearch(t *testing.T) {
 	})
 }
 
+// ListWithFilters captures the listing request before returning configured
+// error or data. Missing result metadata is synthesized from the fixture slice
+// length and supplied page parameters; returned rows and configured page
+// pointer remain shared with the stub.
 func (s *redeemRepoStubForAdminList) ListWithFilters(_ context.Context, params pagination.PaginationParams, codeType, status, search string) ([]RedeemCode, *pagination.PaginationResult, error) {
 	s.listWithFiltersCalls++
 	s.listWithFiltersParams = params
@@ -114,6 +149,8 @@ func (s *redeemRepoStubForAdminList) ListWithFilters(_ context.Context, params p
 
 	result := s.listWithFiltersResult
 	if result == nil {
+		// No page pointer was configured, so synthesize the fixture total from
+		// captured rows while keeping this request's supplied page and size.
 		result = &pagination.PaginationResult{
 			Total:    int64(len(s.listWithFiltersCodes)),
 			Page:     params.Page,
@@ -124,10 +161,16 @@ func (s *redeemRepoStubForAdminList) ListWithFilters(_ context.Context, params p
 	return s.listWithFiltersCodes, result, nil
 }
 
+// ListByUserPaginated panics if the administrator-list fixture is used for
+// individual history. These cases expect ListWithFilters, so this method
+// identifies an unexpected user-history read before returning data.
 func (s *redeemRepoStubForAdminList) ListByUserPaginated(_ context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]RedeemCode, *pagination.PaginationResult, error) {
 	panic("unexpected ListByUserPaginated call")
 }
 
+// SumPositiveBalanceByUser panics if administrator-list cases attempt
+// balance-history aggregation. The fixture supplies listing results only, so
+// this call identifies an unexpected total query outside their exercised path.
 func (s *redeemRepoStubForAdminList) SumPositiveBalanceByUser(_ context.Context, userID int64) (float64, error) {
 	panic("unexpected SumPositiveBalanceByUser call")
 }

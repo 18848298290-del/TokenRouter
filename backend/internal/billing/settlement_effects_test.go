@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSyncBalanceCacheAfterDeductionInvalidatesExhaustedBalance provides a
+// negative committed balance with a previously eligible cached amount. It
+// checks invalidation replaces queue deduction, then one repository reload
+// yields insufficient-balance admission.
 func TestSyncBalanceCacheAfterDeductionInvalidatesExhaustedBalance(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{
 		balance:                  0.50,
@@ -34,6 +38,9 @@ func TestSyncBalanceCacheAfterDeductionInvalidatesExhaustedBalance(t *testing.T)
 	require.Equal(t, int64(1), userRepo.calls.Load())
 }
 
+// TestSyncBalanceCacheAfterDeductionInvalidatesWhenBalanceFallsBelowReserve
+// provides a positive new balance below the configured one-cent reserve. It
+// checks one invalidation occurs and no queued deduction is issued.
 func TestSyncBalanceCacheAfterDeductionInvalidatesWhenBalanceFallsBelowReserve(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{balance: 0.50}
 	cfg := &EligibilityOptions{}
@@ -52,6 +59,10 @@ func TestSyncBalanceCacheAfterDeductionInvalidatesWhenBalanceFallsBelowReserve(t
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
 
+// TestSyncBalanceCacheAfterDeductionQueuesDeductWhenBalanceStillEligible keeps
+// the new balance above the reserve with workers running. It checks
+// invalidation stays absent and a queued cache deduction is eventually
+// observed once.
 func TestSyncBalanceCacheAfterDeductionQueuesDeductWhenBalanceStillEligible(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{balance: 1}
 	cfg := &EligibilityOptions{}
@@ -67,6 +78,9 @@ func TestSyncBalanceCacheAfterDeductionQueuesDeductWhenBalanceStillEligible(t *t
 	})
 
 	require.Equal(t, int64(0), cache.invalidateCalls.Load())
+	// The worker consumes this queued deduction asynchronously; poll its atomic
+	// call counter within a bounded interval rather than assuming completion at
+	// enqueue return.
 	require.Eventually(t, func() bool {
 		return cache.deductCalls.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond)

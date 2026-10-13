@@ -1,11 +1,28 @@
 package postgres
 
+// Provider daily and weekly quota periods can roll from their recorded starts
+// or reset at configured local calendar points. Expiry expressions treat only
+// fixed mode as calendar scheduling; other or absent modes use the rolling
+// duration. Missing start/reset timestamps use the epoch, making an enabled
+// period eligible for initialization.
+//
+// After a fixed reset, the next timestamp is selected from the current
+// configured local date and returned as UTC text. A provider inactive across
+// several periods therefore advances to the next future point directly. These
+// expressions cast stored JSON text and use supplied time-zone names, so
+// malformed values can fail the owning SQL statement; callers validate
+// configuration before persistence.
+
 const (
-	// NowUTC is a SQL expression to generate a UTC RFC3339 timestamp string.
+	// NowUTC formats PostgreSQL transaction time as UTC timestamp text for
+	// provider JSON quota starts, retaining microsecond precision in the stored
+	// representation.
 	NowUTC = `to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
 
-	// DailyExpiredExpr is a SQL expression that evaluates to TRUE when daily quota period has expired.
-	// Supports both rolling (24h from start) and fixed (pre-computed reset_at) modes.
+	// DailyExpiredExpr selects whether the provider daily period is due at
+	// transaction time. Fixed mode compares its saved reset timestamp; other
+	// modes compare start plus twenty-four hours, and absent timestamps select
+	// the epoch for initialization.
 	DailyExpiredExpr = `(
 	CASE WHEN COALESCE(extra->>'quota_daily_reset_mode', 'rolling') = 'fixed'
 	THEN NOW() >= COALESCE((extra->>'quota_daily_reset_at')::timestamptz, '1970-01-01'::timestamptz)
@@ -14,7 +31,10 @@ const (
 	END
 )`
 
-	// WeeklyExpiredExpr is a SQL expression that evaluates to TRUE when weekly quota period has expired.
+	// WeeklyExpiredExpr selects whether the provider weekly period is due at
+	// transaction time. Fixed mode compares its saved reset timestamp; other
+	// modes compare start plus one hundred sixty-eight hours, and absent
+	// timestamps select the epoch.
 	WeeklyExpiredExpr = `(
 	CASE WHEN COALESCE(extra->>'quota_weekly_reset_mode', 'rolling') = 'fixed'
 	THEN NOW() >= COALESCE((extra->>'quota_weekly_reset_at')::timestamptz, '1970-01-01'::timestamptz)
@@ -23,9 +43,11 @@ const (
 	END
 )`
 
-	// NextDailyResetAtExpr is a SQL expression to compute the next daily reset_at when a reset occurs.
-	// For fixed mode: computes the next future reset time based on NOW(), timezone, and configured hour.
-	// This correctly handles long-inactive providers by jumping directly to the next valid reset point.
+	// NextDailyResetAtExpr formats the next future fixed daily reset in UTC
+	// seconds, or returns SQL NULL for other modes. It uses the configured local
+	// day/hour, advancing to tomorrow when transaction time has reached today's
+	// point. Absent timezone and hour select UTC and zero; supplied invalid
+	// values can fail SQL evaluation.
 	NextDailyResetAtExpr = `(
 	CASE WHEN COALESCE(extra->>'quota_daily_reset_mode', 'rolling') = 'fixed'
 	THEN to_char((
@@ -50,9 +72,11 @@ const (
 	ELSE NULL END
 )`
 
-	// NextWeeklyResetAtExpr is a SQL expression to compute the next weekly reset_at when a reset occurs.
-	// For fixed mode: computes the next future reset time based on NOW(), timezone, configured day and hour.
-	// This correctly handles long-inactive providers by jumping directly to the next valid reset point.
+	// NextWeeklyResetAtExpr formats the next future fixed weekly reset in UTC
+	// seconds, or returns SQL NULL for other modes. It advances by PostgreSQL
+	// weekday difference and, on the target weekday at/past its hour, by seven
+	// calendar days. Absent day/hour/zone select Monday, zero and UTC; supplied
+	// invalid cast/zone text can fail SQL evaluation.
 	NextWeeklyResetAtExpr = `(
 	CASE WHEN COALESCE(extra->>'quota_weekly_reset_mode', 'rolling') = 'fixed'
 	THEN to_char((

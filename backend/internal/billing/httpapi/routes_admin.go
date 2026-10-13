@@ -4,8 +4,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterRedeemCodeRoutes registers administrator redemption routes. The caller installs authentication, rate
-// limits, and auditing.
+// Administrator billing routes expose credential management and subscription
+// maintenance below the group supplied by app wiring. Subscription lookup also
+// mounts plan/user-specific paths, and revocation retains both POST and DELETE
+// spellings; caller middleware supplies authentication, request limits and
+// auditing.
+
+// RegisterRedeemCodeRoutes binds credential list/export, generation,
+// adjustment and mutation methods below the supplied administrator group. The
+// caller provides initialized dependencies and authentication, request limits
+// and auditing middleware; selected write methods use the handler's own
+// command executor.
 func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandler) {
 	codes := admin.Group("/redeem-codes")
 	{
@@ -22,8 +31,10 @@ func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandl
 	}
 }
 
-// RegisterSubscriptionRoutes registers administrator subscription routes. The caller installs authentication, rate
-// limits, and auditing.
+// RegisterSubscriptionRoutes binds subscription maintenance below the supplied
+// administrator group, plus plan/user lookup paths. Revocation uses both POST
+// and DELETE for compatibility; the caller installs authentication, request
+// policy and auditing and supplies initialized endpoints.
 func RegisterSubscriptionRoutes(admin *gin.RouterGroup, endpoint *AdminSubscriptionHandler) {
 	subscriptions := admin.Group("/subscriptions")
 	{

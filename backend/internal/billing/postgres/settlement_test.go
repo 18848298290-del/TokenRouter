@@ -16,12 +16,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// Task reservations require available funds before submission, while completed
+// ordinary usage can create wallet debt after a pinned grant is capped. SQL
+// mocks check the selected statements, their transaction completion and
+// supplied return values; fixed-time quota cases separately check lifetime and
+// outer-protection decisions.
+
+// Wallet SQL patterns cover guarded available/frozen transfers and the
+// payer-existence reread used to classify a rejected update. Their arguments
+// and supplied result rows drive task helper assertions.
 const (
 	reserveBatchImageHoldSQL = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
 	captureBatchImageHoldSQL = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	releaseBatchImageHoldSQL = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	userExistsForBillingSQL  = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
 
+	// Usage SQL patterns recognize action claiming, archived identities, payer
+	// locking, decimal wallet deduction and Key quota addition. Deadlock and
+	// rounding tests use them to check the ordered calls.
 	usageBillingClaimSQL         = `(?s)INSERT INTO usage_billing_dedup.*ON CONFLICT.*RETURNING id`
 	usageBillingArchiveSQL       = `(?s)SELECT request_fingerprint.*FROM usage_billing_dedup_archive`
 	usageBillingUserLockSQL      = `(?s)SELECT id\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL\s+FOR NO KEY UPDATE`
@@ -29,10 +41,16 @@ const (
 	usageBillingAPIKeyQuotaSQL   = `(?s)UPDATE api_keys.*quota_used = quota_used \+ \$1.*RETURNING quota > 0`
 )
 
+// TestReserveUsageBillingBatchImageBalance_MovesAvailableToFrozen supplies a
+// 2.5-dollar hold and mocked post-update wallet values. Reservation must pass
+// that amount to the guarded SQL update, return 7.5 available and 2.5 frozen,
+// and complete the fixture transaction.
 func TestReserveUsageBillingBatchImageBalance_MovesAvailableToFrozen(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after checking the held wallet values and commit order.
+	// Pool shutdown errors are discarded after those operation assertions.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
@@ -47,16 +65,28 @@ func TestReserveUsageBillingBatchImageBalance_MovesAvailableToFrozen(t *testing.
 	require.NoError(t, err)
 	require.NotNil(t, result.NewBalance)
 	require.NotNil(t, result.FrozenBalance)
+	// Allow one millionth dollar of absolute error in these available and frozen
+	// wallet observations.
 	require.InDelta(t, 7.5, *result.NewBalance, 0.000001)
 	require.InDelta(t, 2.5, *result.FrozenBalance, 0.000001)
+	// Complete the caller-owned mock transaction after inspecting both wallet
+	// values. The expectation check also verifies the reservation used the
+	// required guarded update and commit sequence.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestReserveUsageBillingBatchImageBalance_InsufficientBalance makes the
+// guarded ten-dollar hold match no row while the payer lookup succeeds. The
+// helper must classify insufficient balance and leave the caller to roll back
+// the fixture transaction.
 func TestReserveUsageBillingBatchImageBalance_InsufficientBalance(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the rejected hold, payer-existence diagnosis and
+	// owner rollback are checked. Pool shutdown errors are discarded after the
+	// insufficient-balance assertion.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
@@ -72,14 +102,26 @@ func TestReserveUsageBillingBatchImageBalance_InsufficientBalance(t *testing.T) 
 
 	_, err = reserveUsageBillingTaskBalance(ctx, tx, &billing.TaskFundsCommand{UserID: 42, HoldAmount: 10})
 	require.ErrorIs(t, err, billing.ErrTaskInsufficientBalance)
+	// End the rejected hold attempt through caller rollback before checking SQL
+	// expectations. The mock requires the payer-existence diagnosis after the
+	// guarded update returns no row.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestReserveUsageBillingBatchImageBilling_UsesBalanceRateAfterPartialSubscription
+// supplies a group override with only 0.2 subscription dollars remaining. The
+// versioned hold must report 0.2 subscription plus 1.2 wallet dollars, retain
+// its covered base/rate metadata and estimate capture at 0.4. The task metadata
+// statement is required with unrestricted value arguments, so this case does
+// not assert its exact persisted split values.
 func TestReserveUsageBillingBatchImageBilling_UsesBalanceRateAfterPartialSubscription(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the mixed funding split, participant write and commit
+	// are checked. Discard shutdown errors after the hold and estimated-cost
+	// assertions.
 	defer func() { _ = db.Close() }()
 
 	now := time.Now().UTC()
@@ -125,6 +167,9 @@ func TestReserveUsageBillingBatchImageBilling_UsesBalanceRateAfterPartialSubscri
 		SettlementRateScale:             0.5,
 	})
 	require.NoError(t, err)
+	// The 1e-6 allowance covers floating arithmetic in source dollars, covered
+	// base dollars and the chosen multiplier; allocation count retains its exact
+	// assertion.
 	require.InDelta(t, 0.2, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 1.2, result.BalanceAmountUSD, 0.000001)
 	require.InDelta(t, 1.4, result.HoldAmountUSD, 0.000001)
@@ -132,14 +177,24 @@ func TestReserveUsageBillingBatchImageBilling_UsesBalanceRateAfterPartialSubscri
 	require.Len(t, result.BillingAllocations, 2)
 	require.InDelta(t, 0.4, result.BillingAllocations[0].BaseAmountUSD, 0.000001)
 	require.InDelta(t, 0.5, result.BillingAllocations[0].RateMultiplier, 0.000001)
+	// Commit only after the subscription split, wallet result and stored task
+	// metadata have succeeded. The ordered mock expectations require their writes
+	// to precede this transaction completion.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestReserveUsageBillingBatchImageBilling_StrictSubscriptionRejectsPartialHold
+// pins a 0.5-dollar reservation to a grant with 0.2 remaining. SQL first caps
+// its counters, then the helper must reject insufficient preferred funding and
+// require caller rollback before wallet or task metadata writes.
 func TestReserveUsageBillingBatchImageBilling_StrictSubscriptionRejectsPartialHold(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after preferred-funding rejection and owner rollback are
+	// checked. Pool shutdown errors are discarded after the scenario's
+	// capped-counter write expectations.
 	defer func() { _ = db.Close() }()
 
 	now := time.Now().UTC()
@@ -161,7 +216,9 @@ func TestReserveUsageBillingBatchImageBilling_StrictSubscriptionRejectsPartialHo
 			1.0, 1.0, 1.0,
 			0.8, 0.8, 0.8, `{}`,
 		))
-	// Tasks reserve quota before upstream submission and reject insufficient quota.
+	// The planner writes capped subscription counters before the pinned
+	// reservation detects its uncovered amount. Expect owner rollback and no
+	// wallet hold or task metadata update after rejection.
 	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET.*WHERE id = \$7`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1.0, 1.0, 1.0, preferredID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -176,14 +233,25 @@ func TestReserveUsageBillingBatchImageBilling_StrictSubscriptionRejectsPartialHo
 	})
 
 	require.ErrorIs(t, err, billing.ErrPreferredSubscriptionInsufficient)
+	// Roll back the caller-owned attempt after its capped counter update and
+	// preferred-insufficient error. The mock requires this recovery before any
+	// wallet or task metadata write.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance
+// supplies completed base usage beyond a pinned grant's remaining quota.
+// Settlement must report capped subscription dollars, rate-converted wallet
+// debt, both allocation amounts and the combined effective multiplier from the
+// mocked wallet result.
 func TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after capped quota, wallet debt and commit order are
+	// checked. Pool shutdown errors are discarded after the allocation and
+	// multiplier assertions.
 	defer func() { _ = db.Close() }()
 
 	now := time.Now().UTC()
@@ -205,7 +273,9 @@ func TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance(t *
 			1.0, 1.0, 1.0,
 			0.8, 0.8, 0.8, `{}`,
 		))
-	// The pinned subscription stops at its quota; remaining base usage becomes balance debt at the balance multiplier.
+	// The completed request uses 0.2 subscription dollars to cover 0.4 base
+	// dollars. The remaining 0.6 base at wallet rate two becomes 1.2 dollars of
+	// recorded debt.
 	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET.*WHERE id = \$7`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1.0, 1.0, 1.0, preferredID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -227,6 +297,8 @@ func TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance(t *
 	}, result)
 
 	require.NoError(t, err)
+	// Compare floating allocations and effective rate within 1e-6, while the
+	// selected subscription ID retains its exact assertion.
 	require.InDelta(t, 0.2, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 1.2, result.BalanceAmountUSD, 0.000001)
 	require.NotNil(t, result.NewBalance)
@@ -238,21 +310,34 @@ func TestApplyUsageBillingEffects_StrictSubscriptionChargesOverflowToBalance(t *
 	require.InDelta(t, 1.4, *result.EffectiveRateMultiplier, 0.000001)
 	require.NotNil(t, result.BillingAllocations[0].SubscriptionID)
 	require.Equal(t, preferredID, *result.BillingAllocations[0].SubscriptionID)
+	// Complete this caller-owned fixture transaction after validating capped
+	// subscription funding and wallet debt. The mock enforces their update order
+	// before the commit expectation.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyUsageBillingEffects_StrictSubscriptionWithoutGroupFiltersRestrictedPlans
+// supplies pinned funding without a final group and an empty selected-row
+// result. The SQL must contain the unrestricted-plan predicate, and missing
+// eligible rows must produce the preferred-insufficient error before any
+// wallet charge.
 func TestApplyUsageBillingEffects_StrictSubscriptionWithoutGroupFiltersRestrictedPlans(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the unrestricted-plan SQL and preferred-funding error
+	// are checked. Pool shutdown errors are discarded after owner rollback and
+	// the absent-wallet-write expectations.
 	defer func() { _ = db.Close() }()
 
 	preferredID := int64(11)
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	// Without a final group, the pinned subscription query requires an unrestricted plan.
+	// The regex checks the unrestricted-plan predicate for a pinned request
+	// lacking a final group. An empty mocked row set then exercises
+	// preferred-funding insufficiency before wallet charging.
 	mock.ExpectQuery(`(?s)SELECT\s+id,\s+plan_id,.*FROM user_subscriptions.*AND NOT EXISTS\s*\(\s*SELECT 1\s+FROM subscription_plan_groups.*FOR UPDATE`).
 		WithArgs(int64(42), billing.SubscriptionStatusActive, billing.SubscriptionStatusPending, preferredID).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -271,14 +356,24 @@ func TestApplyUsageBillingEffects_StrictSubscriptionWithoutGroupFiltersRestricte
 	}, &billing.UsageBillingApplyResult{})
 
 	require.ErrorIs(t, err, billing.ErrPreferredSubscriptionInsufficient)
+	// Roll back the caller-owned attempt after the unrestricted-plan selection
+	// returns no candidates. The mock permits no later counter or wallet effect
+	// for that preferred-insufficient result.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestCaptureUsageBillingBatchImageBalance_ReleasesRemainder supplies a
+// one-dollar hold with 0.25 actual wallet cost. Capture must pass both amounts
+// to the guarded update and return the mocked 9.75 available balance with no
+// frozen remainder.
 func TestCaptureUsageBillingBatchImageBalance_ReleasesRemainder(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after partial-cost capture and commit order are checked.
+	// Pool shutdown errors are discarded after available and frozen wallet
+	// observations.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
@@ -291,16 +386,27 @@ func TestCaptureUsageBillingBatchImageBalance_ReleasesRemainder(t *testing.T) {
 
 	result, err := captureUsageBillingTaskBalance(ctx, tx, &billing.TaskFundsCommand{UserID: 42, HoldAmount: 1, ActualAmount: 0.25})
 	require.NoError(t, err)
+	// Allow one millionth dollar of absolute error when comparing the available
+	// and frozen capture results.
 	require.InDelta(t, 9.75, *result.NewBalance, 0.000001)
 	require.InDelta(t, 0.0, *result.FrozenBalance, 0.000001)
+	// Complete the fixture capture transaction after inspecting the returned
+	// available and frozen amounts. The mock requires the full recorded hold to
+	// reach the guarded capture SQL first.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestCaptureUsageBillingBatchImageBalance_RejectsActualCostOverHold supplies
+// a half-dollar hold with one dollar of actual cost. The helper must reject
+// excess cost before a wallet SQL update and leave the fixture transaction for
+// caller rollback.
 func TestCaptureUsageBillingBatchImageBalance_RejectsActualCostOverHold(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after excess-cost rejection and owner rollback are checked.
+	// Discard shutdown errors after verifying no wallet update was expected.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
@@ -310,14 +416,24 @@ func TestCaptureUsageBillingBatchImageBalance_RejectsActualCostOverHold(t *testi
 
 	_, err = captureUsageBillingTaskBalance(ctx, tx, &billing.TaskFundsCommand{UserID: 42, HoldAmount: 0.5, ActualAmount: 1})
 	require.ErrorIs(t, err, billing.ErrTaskSettlementCostExceedsHold)
+	// Close the rejected capture attempt by caller rollback. No wallet update is
+	// expected because the excess actual amount fails validation before frozen
+	// funds can be consumed.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestReleaseUsageBillingBatchImageBalance_ReturnsFrozenToAvailable supplies a
+// visible original reserve-key/API-Key pair and a one-dollar wallet hold.
+// Release must query that identity, refund through guarded wallet SQL and
+// return the mocked ten-dollar available balance with zero frozen.
 func TestReleaseUsageBillingBatchImageBalance_ReturnsFrozenToAvailable(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the original reserve identity, wallet refund and
+	// commit are checked. Pool shutdown errors are discarded after the
+	// returned-balance assertions.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
@@ -333,23 +449,36 @@ func TestReleaseUsageBillingBatchImageBalance_ReturnsFrozenToAvailable(t *testin
 
 	result, err := releaseUsageBillingTaskBilling(ctx, tx, &billing.TaskFundsCommand{UserID: 42, APIKeyID: 7, Task: batchimage.FundingReference("imgbatch_release"), HoldAmount: 1})
 	require.NoError(t, err)
+	// Compare refunded wallet observations within one millionth dollar; the
+	// reserve-key/API-Key lookup keeps its exact SQL argument matching.
 	require.InDelta(t, 10.0, *result.NewBalance, 0.000001)
 	require.InDelta(t, 0.0, *result.FrozenBalance, 0.000001)
+	// Complete the fixture release after the original reserve identity and
+	// guarded wallet refund have been observed. The ordered expectations require
+	// lookup before any returned funds.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved makes
+// both live and archive reserve-key lookups return no rows. Release must issue
+// no wallet refund and return nil balance observations while the caller can
+// still complete the empty fixture transaction.
 func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after both reserve lookups miss and the empty release
+	// commits. Discard shutdown errors after nil-wallet observations and the
+	// absent-refund expectations.
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	// No hold claim in either deduplication table means the task never committed a reservation.
-	// Skip release so another task's frozen funds cannot become available balance.
+	// Both supplied reserve-key lookups miss, so the release helper cannot
+	// identify this task's hold. Omit refund SQL to keep aggregate frozen funds
+	// from being returned through that missing identity.
 	mock.ExpectQuery(`SELECT 1\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
 		WithArgs(("batch_image_hold:" + "imgbatch_phantom"), int64(7)).
 		WillReturnError(sql.ErrNoRows)
@@ -362,10 +491,17 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	require.NoError(t, err)
 	require.Nil(t, result.NewBalance)
 	require.Nil(t, result.FrozenBalance)
+	// Complete the empty release attempt after both reserve identities miss. The
+	// mock has no refund statement, so an attempted wallet return would fail its
+	// ordered expectations.
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestNormalizeUsageBillingWindow_ExpiryTailKeepsMonthlyUsage evaluates a
+// fixed May observation several hours before expiry with an elapsed monthly
+// anchor. The unprotected thirty-day replacement cannot fit, so the existing
+// anchor and ninety dollars of use must remain.
 func TestNormalizeUsageBillingWindow_ExpiryTailKeepsMonthlyUsage(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
@@ -379,6 +515,10 @@ func TestNormalizeUsageBillingWindow_ExpiryTailKeepsMonthlyUsage(t *testing.T) {
 	require.Equal(t, 90.0, used, "到期尾段不足完整月窗口时不应清零 monthly usage")
 }
 
+// TestNormalizeUsageBillingWindow_ExpiryTailMissingMonthlyWindowStaysNil
+// supplies the same short monthly expiry tail with an absent anchor.
+// Normalization must keep that absence and ninety dollars of recorded use when
+// a complete replacement period cannot fit.
 func TestNormalizeUsageBillingWindow_ExpiryTailMissingMonthlyWindowStaysNil(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
@@ -390,6 +530,10 @@ func TestNormalizeUsageBillingWindow_ExpiryTailMissingMonthlyWindowStaysNil(t *t
 	require.Equal(t, 90.0, used)
 }
 
+// TestNormalizeUsageBillingWindow_DailyCardDoesNotResetAfterMidnight observes
+// an exactly one-day grant after the anchor's next midnight. Even with outer
+// protection supplied, its established one-time daily anchor and ten dollars
+// of use must remain.
 func TestNormalizeUsageBillingWindow_DailyCardDoesNotResetAfterMidnight(t *testing.T) {
 	now := time.Date(2026, 5, 31, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
@@ -403,6 +547,10 @@ func TestNormalizeUsageBillingWindow_DailyCardDoesNotResetAfterMidnight(t *testi
 	require.Equal(t, 10.0, used, "1 日卡跨 0 点后不应刷新第二份 daily quota")
 }
 
+// TestNormalizeUsageBillingWindow_MultiDayDailyStillResetsWhenFullWindowFits
+// gives a multiday grant an elapsed daily anchor and sufficient lifetime for
+// another day. Normalization must select the supplied UTC midnight and clear
+// the ten-dollar usage counter.
 func TestNormalizeUsageBillingWindow_MultiDayDailyStillResetsWhenFullWindowFits(t *testing.T) {
 	now := time.Date(2026, 5, 29, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
@@ -417,6 +565,10 @@ func TestNormalizeUsageBillingWindow_MultiDayDailyStillResetsWhenFullWindowFits(
 	require.Equal(t, 0.0, used, "多日订阅仍应在可覆盖完整日窗口时重置 daily usage")
 }
 
+// TestNormalizeUsageBillingWindow_DailyTailResetsWithFiniteOuterLimit supplies
+// an elapsed daily anchor near expiry and a true outer-protection flag.
+// Normalization must accept the supplied replacement midnight and clear usage
+// although a full day cannot fit.
 func TestNormalizeUsageBillingWindow_DailyTailResetsWithFiniteOuterLimit(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
@@ -431,6 +583,10 @@ func TestNormalizeUsageBillingWindow_DailyTailResetsWithFiniteOuterLimit(t *test
 	require.Equal(t, 0.0, used, "有限周或月额度存在时，订阅尾段仍应刷新日额度")
 }
 
+// TestNormalizeUsageBillingWindow_WeeklyTailResetsWithFiniteMonthlyLimit
+// supplies an elapsed weekly anchor near expiry and a true monthly-protection
+// flag. The helper must choose the supplied midnight and clear usage despite
+// insufficient lifetime for seven more days.
 func TestNormalizeUsageBillingWindow_WeeklyTailResetsWithFiniteMonthlyLimit(t *testing.T) {
 	now := time.Date(2026, 5, 30, 0, 5, 0, 0, time.UTC)
 	startsAt := time.Date(2026, 4, 30, 8, 0, 0, 0, time.UTC)
@@ -445,11 +601,15 @@ func TestNormalizeUsageBillingWindow_WeeklyTailResetsWithFiniteMonthlyLimit(t *t
 	require.Equal(t, 0.0, used, "有限月额度存在时，订阅尾段仍应刷新周额度")
 }
 
+// TestHasFiniteUsageBillingLimit_RequiresPositiveConfiguredLimit converts
+// absent, zero, negative and positive SQL limits into optional billing values.
+// Only the positive configured case must report a finite protecting quota; the
+// other three cases report false.
 func TestHasFiniteUsageBillingLimit_RequiresPositiveConfiguredLimit(t *testing.T) {
 	tests := []struct {
-		name  string
-		limit sql.NullFloat64
-		want  bool
+		name  string          // configured limit scenario label
+		limit sql.NullFloat64 // nullable SQL quota input
+		want  bool            // expected positive-limit protection result
 	}{
 		{name: "未配置", limit: sql.NullFloat64{}, want: false},
 		{name: "零表示无限", limit: sql.NullFloat64{Float64: 0, Valid: true}, want: false},
@@ -464,9 +624,16 @@ func TestHasFiniteUsageBillingLimit_RequiresPositiveConfiguredLimit(t *testing.T
 	}
 }
 
+// TestUsageBillingRepositoryApply_DeadlockRestartsWholeTransaction injects two
+// payer-lock deadlocks before a successful zero-cost action. Every attempt
+// must open a fresh transaction and claim/check archive again, with rollback
+// for the first two and a final Applied-true commit.
 func TestUsageBillingRepositoryApply_DeadlockRestartsWholeTransaction(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after all three attempts and final Applied success are
+	// checked. Pool shutdown errors are discarded after the rollback and commit
+	// expectations.
 	defer func() {
 		_ = db.Close()
 	}()
@@ -477,6 +644,9 @@ func TestUsageBillingRepositoryApply_DeadlockRestartsWholeTransaction(t *testing
 		APIKeyID:           7,
 		UserID:             42,
 	}
+	// Two permitted retries require three complete claim/archive/lock sequences.
+	// Inject deadlocks before effects on the first two; after its claim checks,
+	// the third zero-cost attempt has a successful payer lock and commit.
 	for attempt := 1; attempt <= 3; attempt++ {
 		mock.ExpectBegin()
 		mock.ExpectQuery(usageBillingClaimSQL).
@@ -504,9 +674,16 @@ func TestUsageBillingRepositoryApply_DeadlockRestartsWholeTransaction(t *testing
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestLockUsageBillingUser_ReturnsUserNotFound makes a positive payer's
+// undeleted-row lock query return no rows. The helper must return the billing
+// user-not-found error, and the caller must close that failed fixture attempt
+// by rollback.
 func TestLockUsageBillingUser_ReturnsUserNotFound(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the missing-payer error and owner rollback are
+	// checked. Pool shutdown errors are discarded after the single lock-query
+	// expectation.
 	defer func() {
 		_ = db.Close()
 	}()
@@ -521,13 +698,24 @@ func TestLockUsageBillingUser_ReturnsUserNotFound(t *testing.T) {
 
 	err = lockUsageBillingUser(context.Background(), tx, 42)
 	require.ErrorIs(t, err, billing.ErrUserNotFound)
+	// Roll back the caller-owned transaction after its payer lock query finds no
+	// undeleted row. The mock checks that no funding statement follows this
+	// missing-user result.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestDeductUsageBillingBalance_KeepsForeignKeyCompatibleUserLock matches the
+// deduction CTE containing FOR NO KEY UPDATE. A 1.25-dollar charge must return
+// the supplied 8.75 balance and 1.25 deduction; these SQL expectations
+// establish the lock clause rather than running a concurrent foreign-key
+// scenario.
 func TestDeductUsageBillingBalance_KeepsForeignKeyCompatibleUserLock(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the lock-clause match, deduction result and owner
+	// rollback are checked. Pool shutdown errors are discarded after the
+	// statement expectations.
 	defer func() {
 		_ = db.Close()
 	}()
@@ -542,18 +730,33 @@ func TestDeductUsageBillingBalance_KeepsForeignKeyCompatibleUserLock(t *testing.
 
 	newBalance, deductedAmount, err := deductUsageBillingBalance(context.Background(), tx, 42, 1.25)
 	require.NoError(t, err)
+	// Compare returned numeric wallet observations within one millionth dollar,
+	// independently of the deduction SQL's exact supplied parameters.
 	require.InDelta(t, 8.75, newBalance, 0.000001)
 	require.InDelta(t, 1.25, deductedAmount, 0.000001)
+	// Close this caller-owned statement fixture with rollback after reading its
+	// mocked numeric result. The SQL regex checks lock compatibility while no
+	// concurrent database workload runs here.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageBillingMonetaryEffectsQuantizeBeforeSQL supplies a raw decimal
+// rounding tie to wallet subtraction and Key quota addition. Both statements
+// must receive the shared quantized amount, and the deduction result must
+// equal it under the fixture's mocked numeric return.
 func TestUsageBillingMonetaryEffectsQuantizeBeforeSQL(t *testing.T) {
+	// Choose a decimal half tie at the ninth place, where independent NUMERIC
+	// addition and subtraction could otherwise round the financial effect
+	// differently.
 	const rawAmount = 0.000078125
 	wantAmount := billing.QuantizeUsageBillingAmount(rawAmount)
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after wallet/quota parameters and owner rollback are
+	// checked. Pool shutdown errors are discarded after the shared rounded-amount
+	// assertion.
 	defer func() {
 		_ = db.Close()
 	}()
@@ -574,14 +777,22 @@ func TestUsageBillingMonetaryEffectsQuantizeBeforeSQL(t *testing.T) {
 	_, err = incrementUsageBillingAPIKeyQuota(context.Background(), tx, 7, rawAmount)
 	require.NoError(t, err)
 	require.Equal(t, wantAmount, deductedAmount)
+	// Close the caller-owned rounding fixture with rollback after both monetary
+	// statements receive the same decimal amount. The ordered mock assertions
+	// keep wallet and quota parameters comparable.
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestTaskProjectionRequiresRegisteredScope checks that unknown task scopes fail before beginning a transaction.
+// TestTaskProjectionRequiresRegisteredScope supplies a task scope absent from
+// constructor registrations. Reserve must return an error before beginning a
+// SQL transaction, leaving the mock with no funding expectations to satisfy.
 func TestTaskProjectionRequiresRegisteredScope(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Close this mock after the unregistered-scope error is checked. Discard
+	// shutdown errors after confirming the scenario required no transaction or
+	// funding statements.
 	defer func() { _ = db.Close() }()
 	store := NewSettlementStore(db, timezone.NewCalendar(time.Local), nil)
 	_, err = store.Reserve(context.Background(), &billing.TaskFundsCommand{Task: billing.TaskReference{Scope: "unknown", ID: "opaque", ReserveRequestID: "hold:opaque"}, RequestID: "hold:opaque"})
@@ -589,7 +800,9 @@ func TestTaskProjectionRequiresRegisteredScope(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchImageHoldClaimRequestID checks that billing uses the reservation ID supplied by the task.
+// TestBatchImageHoldClaimRequestID supplies nil input and two recorded reserve
+// keys with different task prefixes. Nil must return empty, and both nonnil
+// keys must return verbatim independently of the opaque task ID.
 func TestBatchImageHoldClaimRequestID(t *testing.T) {
 	require.Empty(t, taskHoldClaimRequestID(nil))
 	for _, id := range []string{"batch_image_hold:imgbatch_x", "creative_hold:crun_x"} {

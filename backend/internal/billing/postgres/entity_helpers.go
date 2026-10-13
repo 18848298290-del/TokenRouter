@@ -12,14 +12,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// sqlExecutor supplies the SQL operations used by persistence adapters.
+// Billing persistence adapters can join an Ent transaction passed in context
+// or use their configured client. These shared helpers select that connection,
+// translate known missing/unique errors to application errors, and map billing
+// user data while keeping undecodable notification contacts empty.
+//
+// User mapping carries the scalar billing fields and retained optional
+// pointers from the Ent entity; group permission slices are populated by other
+// readers. Database error mapping keeps the original cause when a supplied
+// application error matches, and unrelated failures stay available to the
+// caller.
+
+// sqlExecutor provides SQL execution and row queries for billing persistence
+// adapters.
 type sqlExecutor interface {
+	// ExecContext executes caller SQL with supplied arguments and returns its
+	// affected-row result. The owning adapter decides whether absence is a domain
+	// error and owns transaction lifecycle.
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	// QueryContext executes caller SQL and returns rows for the owning adapter to
+	// consume. That caller closes the rows, checks scan/iteration errors and
+	// interprets empty results.
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-// clientFromContext returns the transaction client from ent.NewTxContext,
-// or defaultClient when the context has no transaction.
+// clientFromContext returns the Ent transaction client from ctx when present,
+// otherwise defaultClient. Both connections remain caller-owned; this helper
+// performs no transaction creation, commit or rollback and requires a usable
+// context.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -46,6 +66,9 @@ func translatePersistenceError(err error, notFound, conflict *apperror.Applicati
 	return err
 }
 
+// uniquePositiveInt64s returns distinct positive IDs in their first-supplied
+// order. Empty input yields nil; a nonempty input containing no usable IDs
+// yields an allocated empty slice for the owning query helper.
 func uniquePositiveInt64s(ids []int64) []int64 {
 	if len(ids) == 0 {
 		return nil
@@ -65,6 +88,9 @@ func uniquePositiveInt64s(ids []int64) []int64 {
 	return out
 }
 
+// derefString returns the pointed-to text or an empty string for nil.
+// Redemption and subscription conversion use it for optional stored notes,
+// making absent notes and an explicitly empty value share the domain string.
 func derefString(s *string) string {
 	if s == nil {
 		return ""
@@ -72,7 +98,10 @@ func derefString(s *string) string {
 	return *s
 }
 
-// userSummaryFromEntity extracts billing data from a user entity, returning nil for nil input.
+// userSummaryFromEntity maps billing user data or returns nil for nil input.
+// Optional timestamps and threshold pointers remain shared with the entity;
+// notification contacts are parsed from saved text, while group permission
+// slices are left for other reader paths.
 func userSummaryFromEntity(u *dbent.User) *billing.UserSummary {
 	if u == nil {
 		return nil
@@ -102,11 +131,14 @@ func userSummaryFromEntity(u *dbent.User) *billing.UserSummary {
 	return out
 }
 
+// paginationResultFromTotal delegates page metadata construction using the
+// supplied count and parameters.
 func paginationResultFromTotal(total int64, params pagination.PaginationParams) *pagination.PaginationResult {
 	return pagination.ResultFromTotal(total, params)
 }
 
-// isUniqueConstraintViolation reports whether a database error is a PostgreSQL uniqueness violation.
+// isUniqueConstraintViolation delegates recognition of PostgreSQL uniqueness
+// failures for billing error mapping.
 func isUniqueConstraintViolation(err error) bool {
 	return postgresinfra.IsUniqueConstraintViolation(err)
 }

@@ -1,7 +1,5 @@
 package httpapi
 
-// These tests cover removed platform-quota endpoints across user and administrator route registration.
-
 import (
 	"net/http"
 	"net/http/httptest"
@@ -11,12 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRemovedPlatformQuotaRoutesReturnNotFound checks that both sets of platform-quota endpoints return 404.
+// Removed endpoint cases compare both billing route registration functions
+// against the supplied former platform-quota paths.
+
+// TestRemovedPlatformQuotaRoutesReturnNotFound registers the user/admin
+// billing route families with empty handlers. It checks the four supplied
+// former platform-quota paths return 404 for their GET, PUT and POST methods.
 func TestRemovedPlatformQuotaRoutesReturnNotFound(t *testing.T) {
 	router := gin.New()
 	RegisterUserRoutes(router.Group("/api/v1"), &RedeemHandler{}, &SubscriptionHandler{})
 	RegisterSubscriptionRoutes(router.Group("/api/v1/admin"), &AdminSubscriptionHandler{})
-	for _, item := range []struct{ method, path string }{
+	for _, item := range []struct {
+		// method and path identify each removed endpoint together; the registered
+		// route families must leave that exact HTTP request unmatched by any handler.
+		method, path string // method: requested HTTP verb; path: former endpoint URL
+	}{
 		{http.MethodGet, "/api/v1/user/platform-quotas"},
 		{http.MethodGet, "/api/v1/admin/users/1/platform-quotas"},
 		{http.MethodPut, "/api/v1/admin/users/1/platform-quotas"},
