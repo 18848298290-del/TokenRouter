@@ -9,11 +9,15 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// TestCountGeminiInlineImageOutputs compares camel/snake image fields, mixed
+// parts, MIME variants, empty payloads, and malformed/error JSON. The returned
+// count matches each fixture while non-image and empty-data parts contribute
+// zero.
 func TestCountGeminiInlineImageOutputs(t *testing.T) {
 	cases := []struct {
-		name    string
-		payload string
-		want    int
+		name    string // table scenario name
+		payload string // upstream response fixture JSON
+		want    int    // expected inline image count
 	}{
 		{
 			name: "camelCase inlineData",
@@ -24,7 +28,8 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 		},
 
 		{
-			// Accept snake_case fields returned by SDKs and compatible gateways.
+			// Accept snake_case fields returned by SDKs and
+			// compatible gateways.
 
 			name: "snake_case inline_data",
 
@@ -66,7 +71,8 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 		},
 
 		{
-			// Non-image attachments, such as audio, do not count as images.
+			// Non-image attachments, such as audio, do not count as
+			// images.
 
 			name: "non image mime type",
 
@@ -97,8 +103,10 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 	}
 }
 
-// TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount covers repeated images in cumulative SSE chunks.
-// The counter uses the largest image count in one payload to prevent duplicate billing.
+// TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount observes the
+// same one-image payload four times through fresh attempt state. The retained
+// image count remains one, protecting maximum-payload observation against
+// cumulative stream repetition.
 func TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	c.Images = 0
@@ -111,6 +119,9 @@ func TestObserveGeminiImageOutputs_CumulativeChunksDoNotDoubleCount(t *testing.T
 	require.Equal(t, 1, c.Images)
 }
 
+// TestObserveGeminiImageOutputs_KeepsLargestChunk observes text, a two-image
+// payload, and trailing usage-only input. The retained counter stays at the
+// largest payload count after the smaller trailing observation.
 func TestObserveGeminiImageOutputs_KeepsLargestChunk(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	c.Images = 0
@@ -119,14 +130,17 @@ func TestObserveGeminiImageOutputs_KeepsLargestChunk(t *testing.T) {
 	c.ObserveImagesForTest([]byte(geminiImageResponse(
 		`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}},` +
 			`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`)))
-	// A usage-only trailing chunk leaves the observed image count unchanged.
+	// A usage-only trailing chunk leaves the observed image count
+	// unchanged.
 	c.ObserveImagesForTest([]byte(`{"usageMetadata":{"promptTokenCount":9}}`))
 
 	require.Equal(t, 2, c.Images)
 }
 
-// TestBeginGeminiImageOutputObservation_ResetsPerForward checks reset before another forwarding attempt.
-// Images from a failed provider must not enter the next provider's bill.
+// TestBeginGeminiImageOutputObservation_ResetsPerForward manually resets a
+// populated attempt counter before observing another payload. The assertions
+// check direct reset and new observation; this fixture does not invoke a
+// forwarding entry.
 func TestBeginGeminiImageOutputObservation_ResetsPerForward(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	oneImage := []byte(geminiImageResponse(`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`))
@@ -141,9 +155,10 @@ func TestBeginGeminiImageOutputObservation_ResetsPerForward(t *testing.T) {
 	require.Equal(t, 1, c.Images)
 }
 
-// TestResolveGeminiImageCount covers image output under custom model identifiers.
-// Observed inline images must trigger per-image billing even when neither
-// the client model nor the mapped model is a known image-model name.
+// TestResolveGeminiImageCount compares observed images under custom names with
+// recognized-name inference and text-only input. Observed counts win,
+// mapped/request names supply the estimate when applicable, and unmatched text
+// models return zero.
 func TestResolveGeminiImageCount(t *testing.T) {
 	oneImage := []byte(geminiImageResponse(`{"inlineData":{"mimeType":"image/png","data":"` + geminiTestPNG + `"}}`))
 	textOnly := []byte(geminiImageResponse(`{"text":"hello"}`))

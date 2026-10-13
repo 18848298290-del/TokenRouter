@@ -26,18 +26,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// anthropicHTTPUpstreamRecorder captures request state before returning
+// configured transport results.
 type anthropicHTTPUpstreamRecorder struct {
-	lastReq  *http.Request
-	lastBody []byte
-	resp     *http.Response
-	err      error
+	// lastReq retains the exchanged request and lastBody captures its read
+	// bytes. resp is handed to the executor for response cleanup when err
+	// is nil; a configured err returns no response while leaving request
+	// evidence recorded.
+	lastReq  *http.Request  // last borrowed HTTP request
+	lastBody []byte         // last captured request bytes
+	resp     *http.Response // configured upstream response pointer
+	err      error          // configured upstream exchange error
 }
 
-// deferredActivityRepository records batched last-used updates for assertions.
+// deferredActivityRepository records concurrent batched provider activity
+// updates for assertions.
 type deferredActivityRepository struct {
-	updates sync.Map
+	// updates is written by the deferred service and read by assertions
+	// after StopContext drains the service; sync.Map coordinates those
+	// accesses.
+	updates sync.Map // provider activity observation map
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuccess
+// returns a successful native Anthropic body with cache usage variants. The
+// client body remains exact while completion observations normalize cached
+// tokens and both cache creation buckets.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := newPrivateHTTPFixture(rec)
@@ -69,6 +83,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuc
 	require.Equal(t, upstreamJSON, rec.Body.String())
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_InvalidTokenType
+// invokes API key passthrough with an OAuth provider token. The call returns no
+// result and a credential-kind error identifying that passthrough requires an
+// API key.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_InvalidTokenType(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := newPrivateHTTPFixture(rec)
@@ -93,6 +111,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_InvalidTokenTyp
 	require.Contains(t, err.Error(), "requires apikey token")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequestError
+// fails the transport before response output for an API key provider. The
+// result is nil, failover requests another provider, and the fixture writer
+// remains unstarted.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequestError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := newPrivateHTTPFixture(rec)
@@ -113,10 +135,15 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, failoverErr.ShouldRetryNextProvider())
-	// The handler owns failover after transport errors, so this attempt leaves the response unwritten.
+	// The handler owns failover after transport errors, so this attempt
+	// leaves the response unwritten.
 	require.False(t, c.Writer.Written())
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody
+// returns HTTP success with a nil upstream body. Passthrough returns no
+// completion result and an error reporting the empty response required by the
+// exchange reader.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := newPrivateHTTPFixture(rec)
@@ -139,6 +166,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBo
 	require.Contains(t, err.Error(), "empty response")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_TransportErrorRecordsOllamaActivity
+// compares an Ollama provider and another API key provider after transport
+// failure. Draining deferred writes records activity for the eligible Ollama
+// provider and omits the other.
 func TestGatewayService_AnthropicAPIKeyPassthrough_TransportErrorRecordsOllamaActivity(t *testing.T) {
 	deferred, activity := newDeferredActivityRecorder(t)
 	upstream := &anthropicHTTPUpstreamRecorder{err: errors.New("dial tcp timeout")}
@@ -177,6 +208,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_TransportErrorRecordsOllamaAc
 	require.False(t, ok, "non-Ollama Anthropic passthrough transport error must not record Ollama activity")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ContextCanceledSkipsOllamaActivity
+// fails an eligible Ollama exchange with context.Canceled. After deferred
+// service drain, the activity recorder contains no update for that cancelled
+// provider request.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ContextCanceledSkipsOllamaActivity(t *testing.T) {
 	deferred, activity := newDeferredActivityRecorder(t)
 	upstream := &anthropicHTTPUpstreamRecorder{err: context.Canceled}
@@ -204,9 +239,14 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ContextCanceledSkipsOllamaAct
 	require.False(t, ok, "context.Canceled on Anthropic passthrough must not count as Ollama activity")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_Non2xxRecordsOllamaActivity
+// returns a terminal invalid-request response for an eligible Ollama provider.
+// Error handling schedules activity, which is visible after the deferred
+// service has been drained.
 func TestGatewayService_AnthropicAPIKeyPassthrough_Non2xxRecordsOllamaActivity(t *testing.T) {
 	deferred, activity := newDeferredActivityRecorder(t)
-	// The default API key policy sends a 400 to error handling instead of retrying or failing over.
+	// The default API key policy sends a 400 to error handling instead of
+	// retrying or failing over.
 	upstream := &anthropicHTTPUpstreamRecorder{
 		resp: &http.Response{
 			StatusCode: http.StatusBadRequest,
@@ -237,6 +277,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_Non2xxRecordsOllamaActivity(t
 	require.True(t, ok, "Anthropic passthrough non-2xx on Ollama provider must record activity via handleErrorResponse")
 }
 
+// newPrivateRuntimeFixture retains test dependencies and selects a default 128
+// MiB response cap. Supplied options replace that complete default value, so
+// tests install any read limit they need.
 func newPrivateRuntimeFixture(options *Options, deps Dependencies, _ any) *Runtime {
 	value := Options{ResponseReadLimit: 128 * 1024 * 1024}
 	if options != nil {
@@ -245,15 +288,21 @@ func newPrivateRuntimeFixture(options *Options, deps Dependencies, _ any) *Runti
 	return NewRuntime(deps, value)
 }
 
+// newPrivateHealthFixture constructs a health observer using default internal
+// test options.
 func newPrivateHealthFixture() *provideradapter.UpstreamHealth {
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{})
 }
 
-// passthroughFixture builds the input and runs credential validation and the upstream exchange.
+// passthroughFixture supplies model, body, stream mode, and timing to native
+// execution. The runtime validates API key credentials and returns the selected
+// path observations or failure for fixture assertions.
 func passthroughFixture(runtime *Runtime, ctx context.Context, output HTTPBoundary, target *gatewayprovider.ExecutionProvider, body []byte, model, original string, stream bool, started time.Time) (*forwardcore.Result, error) {
 	return runtime.passthrough(ctx, output, target, forwardcore.APIKeyInput{Body: body, RequestModel: model, OriginalModel: original, RequestStream: stream, StartTime: started})
 }
 
+// newAnthropicAPIKeyProviderForTest creates a schedulable Anthropic API key
+// passthrough target.
 func newAnthropicAPIKeyProviderForTest() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -275,9 +324,15 @@ func newAnthropicAPIKeyProviderForTest() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// Do captures the borrowed request and rebuilds its body from available fixture
+// bytes. Configured errors return no response; otherwise the supplied response
+// pointer is returned for execution and closure.
 func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	u.lastReq = req
 	if req != nil && req.Body != nil {
+		// Capture available fixture bytes and rebuild the request
+		// reader so later wire assertions can reread the body after
+		// this stub inspection.
 		b, _ := io.ReadAll(req.Body)
 		u.lastBody = b
 		_ = req.Body.Close()
@@ -289,10 +344,13 @@ func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, p
 	return u.resp, nil
 }
 
+// DoWithTLS delegates recording to Do and ignores the fixture TLS profile.
 func (u *anthropicHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// BatchUpdateLastUsed stores provider activity times in the concurrent fixture
+// observation map.
 func (r *deferredActivityRepository) BatchUpdateLastUsed(_ context.Context, updates map[int64]time.Time) error {
 	for id, ts := range updates {
 		r.updates.Store(id, ts)
@@ -300,11 +358,17 @@ func (r *deferredActivityRepository) BatchUpdateLastUsed(_ context.Context, upda
 	return nil
 }
 
+// newDeferredActivityRecorder creates a timed provider activity service and its
+// synchronized recorder. The returned map is observed after draining, and test
+// cleanup stops the service when the test ends.
 func newDeferredActivityRecorder(t *testing.T) (*providercore.DeferredService, *sync.Map) {
 	t.Helper()
 	wheel := timingwheel.New()
 	repo := &deferredActivityRepository{}
 	svc := providercore.NewDeferredService(repo, wheel, providercore.DeferredOptions{Interval: time.Second, Now: time.Now, Observe: log.Printf})
+	// Register cleanup to drain the deferred service even when an assertion
+	// ends early, keeping queued fixture work within the test resource
+	// lifetime.
 	t.Cleanup(func() { require.NoError(t, svc.StopContext(context.Background())) })
 	return svc, &repo.updates
 }

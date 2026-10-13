@@ -11,7 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/searchtools"
 )
 
-// shouldEmulate asks the search emulator whether the request requires search emulation.
+// Messages requests containing emulated search can complete through the search
+// service before a model exchange. Provider mode and group policy decide
+// admission, and a search proxy failure is converted into a gateway failover
+// signal for the outer provider loop.
+
+// shouldEmulate asks the shared search emulator whether provider mode and group
+// policy enable this request. The selected target and emulator must be
+// available before this decision is invoked.
 func (r *Runtime) shouldEmulate(ctx context.Context, target *gatewayadapter.ExecutionProvider, group *int64, body []byte) bool {
 	return r.dependencies.Search.ShouldEmulate(ctx, searchtools.PolicyInput{
 		Body:     body,
@@ -21,6 +28,9 @@ func (r *Runtime) shouldEmulate(ctx context.Context, target *gatewayadapter.Exec
 	})
 }
 
+// emulate executes search using the parsed request and selected provider proxy,
+// forwarding acceptance and output callbacks. ProxyFailure becomes a gateway
+// failover signal; other errors pass back to the caller.
 func (r *Runtime) emulate(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest) (*forward.Result, error) {
 	proxyURL := ""
 	if target.Record.ProxyID != nil && target.Record.Proxy != nil {
@@ -32,6 +42,9 @@ func (r *Runtime) emulate(ctx context.Context, output HTTPBoundary, target *gate
 		ProxyURL: proxyURL, OnAccepted: parsed.OnUpstreamAccepted,
 	}, output.SearchOutput())
 	if err != nil {
+		// A proxy failure names an unusable selected path, so expose a
+		// gateway failover signal for the outer loop to choose another
+		// provider.
 		if _, ok := errors.AsType[*searchtools.ProxyFailure](err); ok {
 			return nil, &forward.UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: []byte(err.Error())}
 		}

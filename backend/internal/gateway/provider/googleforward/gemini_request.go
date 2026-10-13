@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// Gemini credential variants share a request plan while obtaining provider
+// token and project at build time. API key bases pass through URL validation,
+// and Vertex targets supply their project, model location, and action to a
+// separate URL callback.
+
+// geminiRequestPlan retains provider inputs in build-time credential and
+// endpoint callbacks. Client and upstream stream modes stay separate,
+// forceAIStudio selects its request route, and unavailable token services
+// return a build error.
 func (s *Gemini) geminiRequestPlan(value *gatewayprovider.ExecutionProvider, model, action string, native, clientStream, upstreamStream, forceAIStudio bool) gemininative.RequestPlan {
 	plan := gemininative.RequestPlan{
 		Mode:           gemininative.CredentialMode(value.Record.Type),

@@ -34,32 +34,57 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// gatewayTTLSettingRepo supplies test settings and embeds the unused repository methods.
+// gatewayTTLSettingRepo supplies mutable setting strings for external
+// forwarding tests.
 type gatewayTTLSettingRepo struct {
-	settings.Repository
-	data map[string]string
+	// Repository embeds unused settings methods; external runtime fixtures
+	// implement the requested reads and expose unexpected repository calls
+	// through nil dispatch.
+	settings.Repository // unused settings repository methods
+	// data retains the test map; changing its entries takes effect after
+	// the corresponding runtime settings reader is invalidated by the
+	// caller.
+	data map[string]string // mutable setting fixture map
 }
 
+// gatewayForwardErrorPolicyRepoStub records health persistence operations from
+// external Messages attempts.
 type gatewayForwardErrorPolicyRepoStub struct {
-	gatewayprovider.ExecutionProviderStore
+	// ExecutionProviderStore embeds unused provider methods; partial-stream
+	// fixtures record the exercised health writes and expose unexpected
+	// repository calls through nil dispatch.
+	gatewayprovider.ExecutionProviderStore // unused provider repository methods
 
-	tempCalls           int
-	overloadCalls       int
+	tempCalls     int // provider temporary exclusion count
+	overloadCalls int // global overload observation count
+	// recorded model cooldown writes
 	modelRateLimitCalls []gatewayForwardModelRateLimitCall
 }
 
+// gatewayForwardModelRateLimitCall identifies one recorded provider and model
+// cooldown operation.
 type gatewayForwardModelRateLimitCall struct {
-	providerID int64
-	scope      string
+	providerID int64  // observed execution provider identifier
+	scope      string // observed model cooldown scope
 }
 
+// anthropicHTTPUpstreamRecorder captures wire requests before returning
+// configured exchange results.
 type anthropicHTTPUpstreamRecorder struct {
-	lastReq  *http.Request
-	lastBody []byte
-	resp     *http.Response
-	err      error
+	// lastReq retains the exchanged request and lastBody captures its read
+	// bytes. resp is handed to the executor for response cleanup when err
+	// is nil; a configured err returns no response while leaving request
+	// evidence recorded.
+	lastReq  *http.Request  // last borrowed HTTP request
+	lastBody []byte         // last captured request bytes
+	resp     *http.Response // configured upstream response pointer
+	err      error          // configured upstream exchange error
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAndAuthReplacement
+// forwards a mapped native API key stream with inbound credentials and
+// cache-token aliases. Provider authentication replaces client secrets, headers
+// are filtered, and client cached_tokens spelling remains intact.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAndAuthReplacement(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -144,6 +169,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	require.Empty(t, rec.Header().Get("Set-Cookie"), "响应头应经过安全过滤")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBody
+// forwards native counting with provider mapping and inbound secrets. The wire
+// model and authentication use the provider values, counting JSON is returned,
+// and response cookies are filtered.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -208,13 +237,17 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases compares
+// absent, empty, unmatched, exact, and wildcard mapping on generation and
+// counting. Every exercised request carries the selected expected upstream
+// model after preparation.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		modelMapping  map[string]any // nil means no model mapping.
-		expectedModel string
-		endpoint      string // "messages" or "count_tokens"
+		name          string         // table scenario name
+		model         string         // client request model identifier
+		modelMapping  map[string]any // provider model mapping values
+		expectedModel string         // expected upstream model identifier
+		endpoint      string         // selected HTTP fixture endpoint
 	}{
 		{
 			name:          "Forward: 无映射配置时不改写模型",
@@ -359,12 +392,17 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 	}
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFields
+// maps native counting while supplying structured system, thinking, and message
+// input. The selected model changes, input fields remain present, and
+// generation max_tokens is removed.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
 
-	// Exercise model rewriting with structured system, thinking, and message fields.
+	// Exercise model rewriting with structured system, thinking, and
+	// message fields.
 	body := []byte(`{"model":"claude-sonnet-4-20250514","system":[{"type":"text","text":"You are a helpful assistant."}],"messages":[{"role":"user","content":[{"type":"text","text":"hello world"}]}],"thinking":{"type":"enabled","budget_tokens":5000},"max_tokens":1024}`)
 	parsed := &requeststate.ParsedRequest{
 		Body:  requeststate.NewRequestBodyRef(body),
@@ -414,6 +452,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingPreservesOtherFie
 	require.False(t, gjson.GetBytes(sentBody, "max_tokens").Exists(), "count_tokens 不应携带 max_tokens")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensFiltersGenerationFields
+// supplies native counting with sampling, streaming, stopping, and
+// generation-limit controls. Those generation controls disappear while model,
+// system, messages, tools, and thinking remain available in the wire body.
 func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensFiltersGenerationFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -454,6 +496,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensFiltersGenerationF
 	require.Equal(t, "enabled", gjson.GetBytes(sentBody, "thinking.type").String(), "thinking 应保留")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping supplies
+// counting without a model against a wildcard mapping. The upstream body stays
+// byte-identical and the counting call succeeds with the configured response.
 func TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -502,12 +547,16 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_EmptyModelSkipsMapping(t *tes
 	require.Equal(t, body, upstream.lastBody, "空模型名时请求体不应被修改")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotError
+// compares missing counting-route 404 with generic missing resources, invalid
+// input, and server errors. The supported compatibility case returns 404
+// successfully, while other failures retain their selected error paths.
 func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotError(t *testing.T) {
 	tests := []struct {
-		name            string
-		statusCode      int
-		respBody        string
-		wantPassthrough bool
+		name            string // table scenario name
+		statusCode      int    // upstream HTTP status
+		respBody        string // upstream response fixture bytes
+		wantPassthrough bool   // expected unsupported-count route result
 	}{
 		{
 			name:            "404 endpoint not found passes through as 404",
@@ -582,7 +631,8 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 			err := svc.ForwardCountTokens(context.Background(), c, provider, parsed)
 
 			if tt.wantPassthrough {
-				// An unsupported counting endpoint returns an Anthropic 404 response with no Go error.
+				// An unsupported counting endpoint returns an
+				// Anthropic 404 response with no Go error.
 				require.NoError(t, err)
 				require.Equal(t, http.StatusNotFound, rec.Code)
 				var errResp map[string]any
@@ -592,7 +642,8 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 				require.True(t, ok)
 				require.Equal(t, "not_found_error", errObj["type"])
 			} else if tt.statusCode >= http.StatusInternalServerError {
-				// Before output starts, upstream server errors let the handler select another provider.
+				// Before output starts, upstream server errors
+				// let the handler select another provider.
 				var failoverErr *forwardcore.UpstreamFailoverError
 				require.ErrorAs(t, err, &failoverErr)
 				require.Equal(t, tt.statusCode, failoverErr.StatusCode)
@@ -605,6 +656,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 	}
 }
 
+// TestGatewayService_QoderCountTokensUnsupported invokes counting on a Qoder
+// target with a transport recorder available. The client receives a
+// not_found_error response and the recorder confirms no upstream request was
+// made.
 func TestGatewayService_QoderCountTokensUnsupported(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -643,6 +698,10 @@ func TestGatewayService_QoderCountTokensUnsupported(t *testing.T) {
 	require.Equal(t, "not_found_error", errObj["type"])
 }
 
+// TestGatewayService_AnthropicOAuth_AppliesProviderMappingBeforeNormalization
+// forwards a third-party client alias through an OAuth target mapping. Both
+// completion UpstreamModel and captured request model identify the mapped
+// provider target after preparation.
 func TestGatewayService_AnthropicOAuth_AppliesProviderMappingBeforeNormalization(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -685,14 +744,21 @@ func TestGatewayService_AnthropicOAuth_AppliesProviderMappingBeforeNormalization
 	require.Equal(t, "claude-sonnet-4-5", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestGatewayService_AnthropicOAuthMimic_RewritesSystemWithBillingBlock
+// forwards third-party OAuth system strings and arrays, including Haiku cache
+// annotations. The prepared identity blocks and headers match mimic defaults,
+// and client instructions move into message history.
 func TestGatewayService_AnthropicOAuthMimic_RewritesSystemWithBillingBlock(t *testing.T) {
 	tests := []struct {
-		name                       string
-		body                       string
+		name string // table scenario name
+		// inbound protocol fixture bytes
+		body string
+		// expected client model identifier
 		wantModel                  string
-		wantOriginalSystem         string
-		wantOriginalSystemCacheTTL string
-		wantMetadataUserID         string
+		wantOriginalSystem         string // expected moved system text
+		wantOriginalSystemCacheTTL string // expected moved cache TTL
+		// expected metadata identity text
+		wantMetadataUserID string
 	}{
 		{
 			name:               "sonnet system array",
@@ -791,7 +857,8 @@ func TestGatewayService_AnthropicOAuthMimic_RewritesSystemWithBillingBlock(t *te
 			require.Equal(t, claude.ClaudeCodeSystemPromptExpansion, arr[2].Get("text").String())
 			require.Equal(t, "ephemeral", arr[2].Get("cache_control.type").String())
 
-			// The client's system prompt moves into the messages array.
+			// The client's system prompt moves into the messages
+			// array.
 			messages := gjson.GetBytes(upstream.lastBody, "messages")
 			require.True(t, messages.IsArray())
 			firstMsg := messages.Array()[0]
@@ -812,6 +879,10 @@ func TestGatewayService_AnthropicOAuthMimic_RewritesSystemWithBillingBlock(t *te
 	}
 }
 
+// TestGatewayService_AnthropicOAuthRealClaudeCodeHaiku_PreservesClientHeadersAndBody
+// forwards an identified Claude Code Haiku request through OAuth. Client
+// identity headers, beta set, system/messages, and metadata remain observable
+// while mimic billing and request-ID injection stay absent.
 func TestGatewayService_AnthropicOAuthRealClaudeCodeHaiku_PreservesClientHeadersAndBody(t *testing.T) {
 	metadataUserID := claude.FormatMetadataUserID(
 		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -867,6 +938,10 @@ func TestGatewayService_AnthropicOAuthRealClaudeCodeHaiku_PreservesClientHeaders
 	require.NotContains(t, string(upstream.lastBody), "x-anthropic-billing-header:")
 }
 
+// TestGatewayService_AnthropicOAuthProxiedClaudeCode_PreservesSystemCachePrefix
+// forwards a proxied Claude Code body with a generic Go user agent. The
+// existing system cache prefix, messages, metadata, and client headers remain
+// visible in prepared wire state.
 func TestGatewayService_AnthropicOAuthProxiedClaudeCode_PreservesSystemCachePrefix(t *testing.T) {
 	metadataUserID := claude.FormatMetadataUserID(
 		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -913,6 +988,10 @@ func TestGatewayService_AnthropicOAuthProxiedClaudeCode_PreservesSystemCachePref
 	require.Equal(t, metadataUserID, gjson.GetBytes(upstream.lastBody, "metadata.user_id").String())
 }
 
+// TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled disables
+// OAuth system injection before forwarding a third-party request. The captured
+// system string stays client-provided and contains neither billing attribution
+// nor injected system instructions.
 func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -967,7 +1046,9 @@ func TestGatewayService_AnthropicOAuth_SystemPromptInjectionCanBeDisabled(t *tes
 	require.NotContains(t, string(upstream.lastBody), "[System Instructions]")
 }
 
-// newHTTPRuntimeFixture constructs the runtime and HTTP adapter with test options.
+// newHTTPRuntimeFixture constructs HTTP forwarding using the supplied
+// dependencies, options, and header filter. It replaces Search with the default
+// test emulator and uses a 128 MiB read cap when options are absent.
 func newHTTPRuntimeFixture(options *messageforward.Options, deps messageforward.Dependencies, filter *egress.CompiledHeaderFilter) *gatewayhttp.MessagesExecutor {
 	value := messageforward.Options{ResponseReadLimit: 128 * 1024 * 1024}
 	if options != nil {
@@ -977,6 +1058,9 @@ func newHTTPRuntimeFixture(options *messageforward.Options, deps messageforward.
 	return gatewayhttp.NewMessagesExecutor(messageforward.NewRuntime(deps, value), filter)
 }
 
+// compileResponseHeaderFilter returns the default compiled response policy when
+// options exist. Nil options return nil, allowing external fixtures to exercise
+// native and converted default filtering separately.
 func compileResponseHeaderFilter(options *messageforward.Options) *egress.CompiledHeaderFilter {
 	if options == nil {
 		return nil
@@ -984,6 +1068,9 @@ func compileResponseHeaderFilter(options *messageforward.Options) *egress.Compil
 	return egress.CompileHeaderFilter(egress.ResponseHeaderOptions{})
 }
 
+// GetValue returns the configured fixture string or ErrSettingNotFound for
+// missing input. The data map remains borrowed so tests can change settings
+// before invalidating the corresponding runtime reader.
 func (r *gatewayTTLSettingRepo) GetValue(_ context.Context, key string) (string, error) {
 	if value, ok := r.data[key]; ok {
 		return value, nil
@@ -991,6 +1078,9 @@ func (r *gatewayTTLSettingRepo) GetValue(_ context.Context, key string) (string,
 	return "", settings.ErrSettingNotFound
 }
 
+// GetMultiple returns a fresh map of configured strings for requested keys.
+// Missing keys are omitted, allowing runtime settings to apply defaults after
+// the fixture values are changed.
 func (r *gatewayTTLSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, key := range keys {
@@ -1001,17 +1091,24 @@ func (r *gatewayTTLSettingRepo) GetMultiple(_ context.Context, keys []string) (m
 	return out, nil
 }
 
+// newRuntimeSettingsFixture constructs runtime settings through a settings
+// service wrapper with Anthropic beta defaults. The caller retains repository
+// fixture state and invalidates readers after changing their values.
 func newRuntimeSettingsFixture(repo settings.Repository) *gateway.RuntimeSettings {
 	return gateway.NewRuntimeSettings(settings.New(repo), settings.ErrSettingNotFound, func() *gateway.BetaPolicySettings {
 		return gatewayprovider.GatewayBetaPolicy(claude.DefaultBetaPolicySettings())
 	})
 }
 
-// strconvQuote quotes fixture strings and escapes their backslashes and double quotes.
+// strconvQuote escapes backslashes and quotes for fixture JSON string literals.
 func strconvQuote(value string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`) + `"`
 }
 
+// TestGatewayServiceForwardCountTokensAppliesOAuthProviderMappingBeforeNormalization
+// maps an OAuth counting alias before normalization. The parsed request model
+// and captured upstream body both carry the provider target selected for the
+// count request.
 func TestGatewayServiceForwardCountTokensAppliesOAuthProviderMappingBeforeNormalization(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -1053,11 +1150,16 @@ func TestGatewayServiceForwardCountTokensAppliesOAuthProviderMappingBeforeNormal
 	require.Equal(t, "claude-sonnet-4-5", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestGatewayServiceAnthropicCompatibilityForwardersUseFinalOAuthModel compares
+// Chat and Responses OAuth conversion against a mapped alias and upstream
+// error. Both paths capture the final provider model in the request sent
+// upstream.
 func TestGatewayServiceAnthropicCompatibilityForwardersUseFinalOAuthModel(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body []byte
+		name string // table scenario name
+		path string // HTTP fixture request path
+		body []byte // inbound protocol fixture bytes
+		// selected protocol fixture invocation
 		call func(*gatewayhttp.MessagesExecutor, context.Context, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) error
 	}{
 		{
@@ -1119,26 +1221,36 @@ func TestGatewayServiceAnthropicCompatibilityForwardersUseFinalOAuthModel(t *tes
 	}
 }
 
+// SetTempUnschedulable records the provider-wide exclusion count for external
+// health assertions.
 func (r *gatewayForwardErrorPolicyRepoStub) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	r.tempCalls++
 	return nil
 }
 
+// SetModelRateLimit saves provider identity and model scope for external health
+// assertions.
 func (r *gatewayForwardErrorPolicyRepoStub) SetModelRateLimit(_ context.Context, id int64, scope string, _ time.Time, _ ...string) error {
 	r.modelRateLimitCalls = append(r.modelRateLimitCalls, gatewayForwardModelRateLimitCall{providerID: id, scope: scope})
 	return nil
 }
 
+// SetOverloaded records the global overload observation count for stream-error
+// assertions.
 func (r *gatewayForwardErrorPolicyRepoStub) SetOverloaded(context.Context, int64, time.Time) error {
 	r.overloadCalls++
 	return nil
 }
 
-// newForwardPartialUsageServiceForTest constructs forwarding dependencies for partial-usage tests.
+// newForwardPartialUsageServiceForTest creates forwarding with the supplied
+// partial-stream transport recorder.
 func newForwardPartialUsageServiceForTest(upstream *anthropicHTTPUpstreamRecorder) *messageforward.Runtime {
 	return newPartialRuntime(upstream, nil)
 }
 
+// newPartialRuntime builds ordinary Messages forwarding with default test
+// search, health, and response limits. The optional provider store receives
+// health writes, and the supplied transport is retained through the attempt.
 func newPartialRuntime(upstream *anthropicHTTPUpstreamRecorder, store gatewayprovider.ExecutionProviderStore) *messageforward.Runtime {
 	return messageforward.NewRuntime(messageforward.Dependencies{
 		Transport: upstream,
@@ -1148,6 +1260,8 @@ func newPartialRuntime(upstream *anthropicHTTPUpstreamRecorder, store gatewaypro
 	}, messageforward.Options{Configured: true, MaxLineSize: 500 * 1024 * 1024, ResponseReadLimit: 128 * 1024 * 1024, PreserveContentType: true})
 }
 
+// newAnthropicOAuthProviderForPartialUsageTest creates a schedulable OAuth
+// target with fixed test credentials.
 func newAnthropicOAuthProviderForPartialUsageTest() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1165,6 +1279,10 @@ func newAnthropicOAuthProviderForPartialUsageTest() *gatewayprovider.ExecutionPr
 	}
 }
 
+// TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage
+// disconnects an ordinary Fast stream after usage and content before stop. The
+// partial result retains input/cache/output usage, speed, request ID, stream
+// mode, and first-token observation beside the error.
 func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1175,7 +1293,8 @@ func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *te
 	parsed, err := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), capability.PlatformAnthropic)
 	require.NoError(t, err)
 
-	// Simulate an aggregator that reports usage in start/delta events and disconnects before stop.
+	// Simulate an aggregator that reports usage in start/delta events and
+	// disconnects before stop.
 	upstreamSSE := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-latest","content":[],"usage":{"input_tokens":11,"cache_read_input_tokens":7}}}`,
@@ -1212,6 +1331,10 @@ func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *te
 	require.NotNil(t, result.FirstTokenMs)
 }
 
+// TestGatewayService_Forward_StreamReadErrorAfterOutputPreservesPartialUsage
+// returns unexpected EOF after a complete usage event reaches output. The
+// resulting stream error carries observed input and cache-creation counts for
+// later completion processing.
 func TestGatewayService_Forward_StreamReadErrorAfterOutputPreservesPartialUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1238,6 +1361,10 @@ func TestGatewayService_Forward_StreamReadErrorAfterOutputPreservesPartialUsage(
 	require.Equal(t, 4, result.Usage.CacheCreationInputTokens)
 }
 
+// TestGatewayService_Forward_StreamErrorWithoutUsageReturnsNilResult ends a
+// ping-only stream without terminal completion. The missing-terminal error
+// returns no completion result when those frames provide no usage observation
+// for the interrupted attempt.
 func TestGatewayService_Forward_StreamErrorWithoutUsageReturnsNilResult(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1259,6 +1386,10 @@ func TestGatewayService_Forward_StreamErrorWithoutUsageReturnsNilResult(t *testi
 	require.Nil(t, result, "无已观测 usage 时不应生成零用量记录")
 }
 
+// TestGatewayService_Forward_FailoverErrorKeepsNilResult fails the upstream
+// stream before output and usage observation. The typed failover error returns
+// no result, keeping that unsuccessful attempt out of partial completion
+// processing.
 func TestGatewayService_Forward_FailoverErrorKeepsNilResult(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1283,6 +1414,10 @@ func TestGatewayService_Forward_FailoverErrorKeepsNilResult(t *testing.T) {
 	require.Nil(t, result, "failover 错误必须保持结果为 nil，防止重试成功后双重计费")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamMissingTerminalPreservesPartialUsage
+// ends a native API key stream after usage without a terminal event. The
+// returned partial result retains input/cache/output buckets, original model,
+// and stream mode with the error.
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamMissingTerminalPreservesPartialUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1318,6 +1453,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamMissingTerminalP
 	require.Equal(t, "claude-3-7-sonnet-20250219", result.Model)
 }
 
+// TestGatewayService_Forward_PreOutputSSEOverloadedErrorUsesSemantic529
+// receives an overloaded SSE error before client output despite HTTP status
+// 200. Failover reports semantic 529, records global overload once, and keeps
+// model-specific writes and output absent.
 func TestGatewayService_Forward_PreOutputSSEOverloadedErrorUsesSemantic529(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1350,6 +1489,10 @@ func TestGatewayService_Forward_PreOutputSSEOverloadedErrorUsesSemantic529(t *te
 	require.Empty(t, rec.Body.String(), "pre-output overload must remain eligible for provider failover")
 }
 
+// TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus
+// receives an overloaded SSE error after message_start reaches output. The
+// returned typed event retains raw error JSON, and the recorder contains the
+// earlier lifecycle bytes.
 func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1375,6 +1518,8 @@ func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(
 	require.Contains(t, rec.Body.String(), "message_start")
 }
 
+// newAnthropicAPIKeyProviderForTest creates a schedulable Anthropic API key
+// passthrough test target.
 func newAnthropicAPIKeyProviderForTest() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1396,9 +1541,15 @@ func newAnthropicAPIKeyProviderForTest() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// Do captures the request and rebuilds its body from available fixture bytes. A
+// configured error returns no response; otherwise the shared configured
+// response is handed to the executor.
 func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	u.lastReq = req
 	if req != nil && req.Body != nil {
+		// Capture available body evidence and rebuild the reader so
+		// wire assertions can consume the prepared request again after
+		// transport-stub inspection.
 		b, _ := io.ReadAll(req.Body)
 		u.lastBody = b
 		_ = req.Body.Close()
@@ -1410,10 +1561,15 @@ func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, p
 	return u.resp, nil
 }
 
+// DoWithTLS delegates recording to Do while ignoring the fixture TLS profile.
 func (u *anthropicHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// TestMaxReasoningPricing_AnthropicForwardReportsOutboundEffort compares xhigh
+// and max across Chat and Responses requests. Recorded effort and prepared
+// Anthropic output_config.effort retain their separate requested values in
+// every exercised case.
 func TestMaxReasoningPricing_AnthropicForwardReportsOutboundEffort(t *testing.T) {
 	for _, protocol := range []string{"responses", "chat"} {
 		for _, effort := range []string{"xhigh", "max"} {
@@ -1442,16 +1598,24 @@ func TestMaxReasoningPricing_AnthropicForwardReportsOutboundEffort(t *testing.T)
 	}
 }
 
-// TestAnthropicConversionPreservesResponseModel distinguishes client aliases, outbound models, and response declarations on all four paths.
+// TestAnthropicConversionPreservesResponseModel crosses Chat/Responses,
+// stream/buffered modes, and present/absent upstream declarations with a client
+// alias. Result and completion capture retain the upstream declaration while
+// client output uses the alias.
 func TestAnthropicConversionPreservesResponseModel(t *testing.T) {
 	const clientModel = "client-alias"
 	const sentModel = "claude-fable-5-1"
 	for _, wire := range []string{"responses", "chat"} {
 		for _, stream := range []bool{false, true} {
 			for _, declaration := range []struct {
-				name  string
-				value any
-				want  string
+				name string // table scenario name
+				// value supplies the upstream model
+				// declaration; nil omits the field so the
+				// result retains its absent-observation
+				// representation in this table case.
+				value any // upstream declaration fixture value
+				// expected upstream declaration text
+				want string
 			}{
 				{name: "different", value: " claude-runtime-version ", want: "claude-runtime-version"},
 				{name: "same", value: sentModel, want: sentModel},
@@ -1513,7 +1677,9 @@ func TestAnthropicConversionPreservesResponseModel(t *testing.T) {
 					captured := gatewayprovider.ProjectMessagesCompletionResult(result, &target.Record)
 					require.Equal(t, declaration.want, captured.UpstreamResponseModel)
 
-					// The client sees its alias; the upstream declaration is saved in the completion result.
+					// The client sees its alias; the
+					// upstream declaration is saved in the
+					// completion result.
 					if !stream {
 						require.Equal(t, clientModel, gjson.Get(recorder.Body.String(), "model").String())
 					} else {

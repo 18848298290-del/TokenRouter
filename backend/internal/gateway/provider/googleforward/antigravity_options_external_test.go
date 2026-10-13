@@ -12,18 +12,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// TestAntigravityUpstreamErrorBodyReadLimit_RespectsDiagnosticLimit configures
+// a logging cap larger than the standard error inspection cap. The selected
+// read limit equals that diagnostic cap; the test inspects selection without
+// reading a response.
 func TestAntigravityUpstreamErrorBodyReadLimit_RespectsDiagnosticLimit(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{LogErrorBody: true, LogErrorBodyMaxBytes: int(int64(512<<10)) + 1024})
 
 	require.Equal(t, int64(svc.Options.LogErrorBodyMaxBytes), googleforward.ErrorBodyLimitForTest(svc))
 }
 
+// TestResolveAntigravityProjectID compares automatic, credential fallback,
+// legacy extra fallback, and missing project values. The resolver returns the
+// trimmed selected project or the missing-project sentinel for the exercised
+// inputs.
 func TestResolveAntigravityProjectID(t *testing.T) {
 	tests := []struct {
-		name     string
+		name string // table scenario name
+		// provider project fixture value
 		provider *gatewayprovider.ExecutionProvider
-		want     string
-		wantErr  bool
+		want     string // expected resolved project identifier
+		wantErr  bool   // expected missing-project error flag
 	}{
 		{
 			name: "优先使用自动回填的 project_id",

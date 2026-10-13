@@ -1,4 +1,7 @@
-// Package googleforward executes Gemini and Antigravity attempts and same-provider recovery.
+// Package googleforward executes selected-provider Gemini and Antigravity attempts.
+// Each request retains its own tool and image observations while injected provider
+// services supply credentials, transport, and health feedback for platform retry
+// and recovery. HTTP presentation remains synchronous with the calling request.
 //
 // Start with:
 //   - gemini_attempts.go: Gemini Messages and GenerateContent entry points.

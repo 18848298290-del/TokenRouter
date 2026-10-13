@@ -33,29 +33,49 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// errorRulesFixtureRepo supplies fixed presentation rules to Gemini HTTP error
+// tests.
 type errorRulesFixtureRepo struct {
-	errorpolicy.ErrorPassthroughRepository
+	// ErrorPassthroughRepository embeds unused methods; these fixtures
+	// supply List and expose unexpected rule repository operations through
+	// the nil embedded implementation.
+	errorpolicy.ErrorPassthroughRepository // unused rule repository methods
+	// rules retains the supplied slice and pointers; List returns those
+	// references while the presentation service and test share the
+	// configured rule values.
+	//
+	// borrowed error presentation rules
 	rules []*errorpolicy.ErrorPassthroughRule
 }
 
+// geminiErrorPolicyRepo counts provider policy writes for Gemini forwarding
+// assertions.
 type geminiErrorPolicyRepo struct {
-	gatewaytestkit.ErrorPolicyStore
-	setErrorCalls            int
-	setRateLimitedCalls      int
-	setTempCalls             int
-	setModelRateLimitedCalls int
-	lastModelScope           string
+	gatewaytestkit.ErrorPolicyStore        // remaining provider policy methods
+	setErrorCalls                   int    // provider error write count
+	setRateLimitedCalls             int    // provider cooldown write count
+	setTempCalls                    int    // provider temporary exclusion count
+	setModelRateLimitedCalls        int    // model cooldown write count
+	lastModelScope                  string // last model cooldown scope
 }
 
+// rateLimit429ProviderRepoStub records provider cooldown writes and their
+// selected deadline.
 type rateLimit429ProviderRepoStub struct {
-	gatewaytestkit.ErrorPolicyStore
-	rateLimitCalls     int
-	lastRateLimitID    int64
-	lastRateLimitReset time.Time
+	gatewaytestkit.ErrorPolicyStore           // remaining provider policy methods
+	rateLimitCalls                  int       // provider cooldown write count
+	lastRateLimitID                 int64     // last cooled provider identifier
+	lastRateLimitReset              time.Time // last cooldown expiration time
 }
 
+// TestParseGeminiRateLimitResetTime_QuotaResetDelay_RoundsUp parses a
+// fractional quota reset delay away from a Unix-second edge. The resulting
+// reset is exactly one second after the captured base timestamp for this
+// fixture.
 func TestParseGeminiRateLimitResetTime_QuotaResetDelay_RoundsUp(t *testing.T) {
-	// Avoid flakiness around Unix second boundaries.
+	// Begin the subsecond reset check before the final fifth of a Unix
+	// second so rounding plus fixture scheduling remains comparable with
+	// the recorded base second.
 	for {
 		now := time.Now()
 		if now.Nanosecond() < 800*1e6 {
@@ -70,6 +90,10 @@ func TestParseGeminiRateLimitResetTime_QuotaResetDelay_RoundsUp(t *testing.T) {
 	require.Equal(t, baseUnix+1, *ts, "fractional seconds should be rounded up to the next second")
 }
 
+// TestGeminiForwardNative_PoolModeSkipped400PassthroughRealStatus forwards
+// native input to a pool provider returning status 400. The failure remains
+// terminal and the client receives the exact upstream body and status without
+// typed failover.
 func TestGeminiForwardNative_PoolModeSkipped400PassthroughRealStatus(t *testing.T) {
 	upstreamBody := geminiSkippedTestUpstreamBody()
 	svc, _ := newGeminiErrorFixture(http.StatusBadRequest, upstreamBody)
@@ -86,6 +110,9 @@ func TestGeminiForwardNative_PoolModeSkipped400PassthroughRealStatus(t *testing.
 	require.Equal(t, upstreamBody, rec.Body.String(), "响应体应原样透传")
 }
 
+// TestGeminiForwardNative_PoolModeSkipped503Failover forwards native input to a
+// pool provider returning status 503. The result is nil, typed failover retains
+// that status, and the recorder receives no client body.
 func TestGeminiForwardNative_PoolModeSkipped503Failover(t *testing.T) {
 	svc, _ := newGeminiErrorFixture(http.StatusServiceUnavailable, `{"error":{"message":"Upstream service temporarily unavailable"}}`)
 	c, rec := newGeminiNativeTestContext(t)
@@ -99,6 +126,9 @@ func TestGeminiForwardNative_PoolModeSkipped503Failover(t *testing.T) {
 	require.Zero(t, rec.Body.Len(), "换号场景不应写客户端响应")
 }
 
+// TestGeminiForwardNative_CustomCodesMiss400HiddenAs500 returns status 400
+// outside an enabled custom-code set. The native client receives a generic
+// status-500 message and the upstream fixture detail is absent from output.
 func TestGeminiForwardNative_CustomCodesMiss400HiddenAs500(t *testing.T) {
 	svc, _ := newGeminiErrorFixture(http.StatusBadRequest, geminiSkippedTestUpstreamBody())
 	c, rec := newGeminiNativeTestContext(t)
@@ -118,6 +148,9 @@ func TestGeminiForwardNative_CustomCodesMiss400HiddenAs500(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), geminiSkippedTestUpstreamMsg, "上游细节不应透传给客户端")
 }
 
+// TestGeminiForwardNative_CustomCodesMiss500Failover returns server status 500
+// outside an enabled custom-code set. The result is nil, typed failover retains
+// that status, same-provider replay is false, and client output is empty.
 func TestGeminiForwardNative_CustomCodesMiss500Failover(t *testing.T) {
 	svc, _ := newGeminiErrorFixture(http.StatusInternalServerError, `{"error":{"message":"internal"}}`)
 	c, rec := newGeminiNativeTestContext(t)
@@ -132,6 +165,9 @@ func TestGeminiForwardNative_CustomCodesMiss500Failover(t *testing.T) {
 	require.Zero(t, rec.Body.Len())
 }
 
+// TestWriteGeminiMappedError_400KeepsUpstreamMessage presents a mapped Gemini
+// status-400 error through Messages HTTP output. The selected status remains
+// 400 and the decoded client message equals the captured upstream fixture text.
 func TestWriteGeminiMappedError_400KeepsUpstreamMessage(t *testing.T) {
 	svc := newGeminiFixture(geminiDependencies{cfg: &googleforward.Options{}})
 	rec := httptest.NewRecorder()
@@ -149,13 +185,16 @@ func TestWriteGeminiMappedError_400KeepsUpstreamMessage(t *testing.T) {
 	require.Equal(t, geminiSkippedTestUpstreamMsg, errObj["message"], "应回传上游 message")
 }
 
+// TestShouldFailoverGeminiUpstreamError compares authentication, quota, server,
+// and ordinary client-error statuses. The classifier accepts each exercised
+// replay status and rejects the tested status-400/404/422 inputs.
 func TestShouldFailoverGeminiUpstreamError(t *testing.T) {
 	svc := newGeminiFixture(geminiDependencies{})
 
 	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
+		name       string // table scenario name
+		statusCode int    // upstream HTTP status
+		expected   bool   // expected provider policy result
 	}{
 		{"401_failover", 401, true},
 
@@ -186,13 +225,19 @@ func TestShouldFailoverGeminiUpstreamError(t *testing.T) {
 	}
 }
 
+// TestCheckErrorPolicy_GeminiProviders compares custom-code and temporary-rule
+// configurations across Gemini provider fixtures. The returned policy follows
+// tested matches, misses, repeat authorization handling, and custom-code
+// precedence.
 func TestCheckErrorPolicy_GeminiProviders(t *testing.T) {
 	tests := []struct {
-		name       string
+		name string // table scenario name
+		// selected provider policy fixture
 		provider   *gatewayprovider.ExecutionProvider
-		statusCode int
-		body       []byte
-		expected   providercore.ErrorPolicyResult
+		statusCode int    // upstream HTTP status
+		body       []byte // upstream error fixture bytes
+		// expected provider policy result
+		expected providercore.ErrorPolicyResult
 	}{
 		{
 			name: "gemini_apikey_custom_codes_hit",
@@ -391,16 +436,23 @@ func TestCheckErrorPolicy_GeminiProviders(t *testing.T) {
 	}
 }
 
+// TestGeminiErrorPolicyIntegration locally simulates policy-result branches
+// after querying health policy and default observation. Assertions check
+// simulated replay/observer flags and model-scoped writes; the fixture does not
+// execute a forwarding entry.
 func TestGeminiErrorPolicyIntegration(t *testing.T) {
 	tests := []struct {
-		name                 string
-		provider             *gatewayprovider.ExecutionProvider
-		statusCode           int
-		respBody             []byte
-		expectFailover       bool // expect UpstreamFailoverError
-		expectHandleError    bool // expect handleGeminiUpstreamError to be called
-		expectShouldFailover bool // for None path, whether shouldFailover triggers
-		expectModelScope     string
+		name string // table scenario name
+		// selected provider policy fixture
+		provider       *gatewayprovider.ExecutionProvider
+		statusCode     int    // upstream HTTP status
+		respBody       []byte // upstream response fixture bytes
+		expectFailover bool   // expected simulated failover choice
+		// expected simulated observer invocation
+		expectHandleError bool
+		// expected default status classification
+		expectShouldFailover bool
+		expectModelScope     string // expected persisted model scope
 	}{
 		{
 			name: "custom_codes_matched_429_failover",
@@ -560,8 +612,9 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 			c, _ := gin.CreateTestContext(writer)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-			// Exercise the policy-result branches with a local simulation.
-			// This fixture handles CustomSkipped directly; production failover is tested separately.
+			// Simulate the selected policy branch after querying
+			// Health so observer counts and the local gotFailover
+			// flag can be compared with table expectations.
 			var handleErrorCalled bool
 			var gotFailover bool
 
@@ -575,7 +628,11 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 				policy := svc.Health.CheckErrorPolicy(ctx, gatewayprovider.ExecutionRecord(provider), gatewayprovider.HealthObservationFromContext(ctx, statusCode, nil, respBody, []string{"gemini-2.5-pro"}))
 				switch policy {
 				case providercore.ErrorPolicyCustomSkipped:
-					// This simulation returns on CustomSkipped without health handling or failover.
+					// CustomSkipped ends this local branch
+					// simulation before default
+					// observation, leaving its failover
+					// flag false for the table expectation
+					// checked below.
 					gotFailover = false
 					handleErrorCalled = false
 					goto verify
@@ -591,7 +648,10 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 				}
 			}
 
-			// With no policy match, observe health and check the status for failover.
+			// The unmatched-policy simulation observes default
+			// health before checking status-based replay, allowing
+			// model scope and cooldown assertions to inspect that
+			// separate branch.
 			svc.Errors.Observe(ctx, gatewayprovider.ExecutionRecord(provider), statusCode, headers, respBody, gatewayprovider.HealthObservationFromContext(ctx, statusCode, headers, respBody, nil))
 			handleErrorCalled = true
 			if googleforward.GeminiFailoverForTest(svc, statusCode) {
@@ -616,13 +676,18 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 	}
 }
 
+// TestGeminiErrorPolicy_NilRateLimitService constructs a Gemini adapter with no
+// explicit health policy observer. Status-based replay remains available, and
+// the separate default error observer accepts the exercised failure without
+// panic.
 func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 	svc := newGeminiFixture(geminiDependencies{
 		healthObserver: nil,
 	})
 
-	// A missing health policy observer leaves status-based failover available.
-	// The separate error observer must tolerate that missing dependency.
+	// A missing health policy observer leaves status-based failover
+	// available. The separate error observer must tolerate that missing
+	// dependency.
 
 	ctx := context.Background()
 	provider := &gatewayprovider.ExecutionProvider{
@@ -655,6 +720,10 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 	})
 }
 
+// TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown
+// observes Google One capacity exhaustion with a known tier and persistence
+// recorder. One provider cooldown write selects the tested five-minute window
+// around observation time.
 func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown(t *testing.T) {
 	repo := &rateLimit429ProviderRepoStub{}
 	quotaSvc := providercore.NewGeminiQuotaService(providercore.GeminiQuotaOptions{})
@@ -691,11 +760,16 @@ func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown(t 
 
 	require.Equal(t, 1, repo.rateLimitCalls)
 	require.Equal(t, int64(511), repo.lastRateLimitID)
+	// Allow observer work and clock sampling around the captured deadline.
 	require.WithinDuration(t, before.Add(5*time.Minute), repo.lastRateLimitReset, 2*time.Second)
 	require.True(t, repo.lastRateLimitReset.After(before))
 	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
 }
 
+// TestHandleGeminiUpstreamError_ThirdPartyAPIKeyIgnoresOfficialQuotaMessage
+// observes daily-quota-like text on a third-party API key provider. One
+// provider cooldown write selects the tested generic five-minute window rather
+// than a daily reset.
 func TestHandleGeminiUpstreamError_ThirdPartyAPIKeyIgnoresOfficialQuotaMessage(t *testing.T) {
 	repo := &rateLimit429ProviderRepoStub{}
 	quotaSvc := providercore.NewGeminiQuotaService(providercore.GeminiQuotaOptions{})
@@ -729,13 +803,16 @@ func TestHandleGeminiUpstreamError_ThirdPartyAPIKeyIgnoresOfficialQuotaMessage(t
 
 	require.Equal(t, 1, repo.rateLimitCalls)
 	require.Equal(t, int64(512), repo.lastRateLimitID)
+	// Allow observer work and clock sampling around the captured deadline.
 	require.WithinDuration(t, before.Add(5*time.Minute), repo.lastRateLimitReset, 2*time.Second)
 	require.True(t, repo.lastRateLimitReset.After(before))
 	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
 }
 
-// TestGeminiPoolMode429BypassesLocalRateLimit checks the dedicated pool bypass result
-// and confirms that default Gemini 429 handling does not persist a cooldown.
+// TestGeminiPoolMode429BypassesLocalRateLimit applies status-429 policy to a
+// pool API key provider. The result reports pool bypass and same-provider
+// replay, while cooldown, temporary exclusion, and provider error write counts
+// stay zero.
 func TestGeminiPoolMode429BypassesLocalRateLimit(t *testing.T) {
 	repo := &geminiErrorPolicyRepo{}
 	healthObserver := newUpstreamHealthForTest(repo, &googleforward.Options{}, nil, providercore.HealthOptions{}, nil)
@@ -765,12 +842,17 @@ func TestGeminiPoolMode429BypassesLocalRateLimit(t *testing.T) {
 	require.Zero(t, repo.setErrorCalls)
 }
 
+// TestHandleGeminiUpstreamError_PoolMode429SkipsProviderLimit compares pool
+// quota handling, custom-code matches/misses, and a normal provider. Recorded
+// cooldown write counts reflect the exercised policy precedence for each
+// provider fixture.
 func TestHandleGeminiUpstreamError_PoolMode429SkipsProviderLimit(t *testing.T) {
 	body := []byte(`{"error":{"code":429,"message":"capacity exhausted"}}`)
 	tests := []struct {
-		name      string
+		name string // table scenario name
+		// selected provider policy fixture
 		provider  *gatewayprovider.ExecutionProvider
-		wantCalls int
+		wantCalls int // expected provider cooldown writes
 	}{
 		{
 			name: "池模式跳过默认提供商限流",
@@ -852,8 +934,9 @@ func TestHandleGeminiUpstreamError_PoolMode429SkipsProviderLimit(t *testing.T) {
 	}
 }
 
-// TestGeminiCustomNonFailoverStatusStopsScheduling checks that custom policy
-// can mark a provider unhealthy for a status outside the default failover set.
+// TestGeminiCustomNonFailoverStatusStopsScheduling configures status 422 as a
+// custom error on a pool provider. Policy stops scheduling, writes provider
+// error once, and leaves same-provider replay and default cooldown unavailable.
 func TestGeminiCustomNonFailoverStatusStopsScheduling(t *testing.T) {
 	repo := &geminiErrorPolicyRepo{}
 	healthObserver := newUpstreamHealthForTest(repo, &googleforward.Options{}, nil, providercore.HealthOptions{}, nil)
@@ -887,6 +970,9 @@ func TestGeminiCustomNonFailoverStatusStopsScheduling(t *testing.T) {
 	require.Zero(t, repo.setRateLimitedCalls)
 }
 
+// TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault presents a Gemini schema
+// failure with no bound error rule. Messages output uses the tested status-400
+// invalid_request_error envelope and generic client-safe message.
 func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -907,6 +993,9 @@ func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
 	assert.Equal(t, "Upstream request failed", errField["message"])
 }
 
+// TestGeminiWriteGeminiMappedError_AppliesRuleFor422 binds a schema-error
+// presentation rule for upstream status 422. The client receives the configured
+// teapot status and custom message under an upstream_error envelope.
 func TestGeminiWriteGeminiMappedError_AppliesRuleFor422(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -930,6 +1019,10 @@ func TestGeminiWriteGeminiMappedError_AppliesRuleFor422(t *testing.T) {
 	assert.Equal(t, "Gemini上游失败", errField["message"])
 }
 
+// TestGeminiWriteGeminiMappedError_SetsResponseCommitted presents an ordinary
+// mapped Gemini status-400 failure before output. The HTTP request records
+// semantic commitment, protecting outer error handling from issuing another
+// response.
 func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -943,7 +1036,10 @@ func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
 	assert.True(t, gatewayhttp.IsResponseCommitted(c), "Gemini path must mark response committed")
 }
 
-// TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping checks OAuth model mapping in the Messages entry.
+// TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping
+// forwards Messages through an OAuth provider alias mapping. Completion keeps
+// the client model and mapped UpstreamModel, while captured wire bytes carry
+// the provider target.
 func TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping(t *testing.T) {
 	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]} ,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -1000,7 +1096,10 @@ func TestGeminiMessagesCompatServiceForward_OAuthAppliesProviderModelMapping(t *
 	require.Equal(t, "oauth-upstream-model", gjson.GetBytes(sentBody, "model").String())
 }
 
-// TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping checks OAuth model mapping in the native entry.
+// TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping
+// forwards native input through an OAuth provider alias mapping. Completion
+// keeps client and upstream names separate, and the captured envelope carries
+// the mapped provider target.
 func TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMapping(t *testing.T) {
 	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}}` + "\n\n" +
 		"data: [DONE]\n\n"
@@ -1057,6 +1156,10 @@ func TestGeminiMessagesCompatServiceForwardNative_OAuthAppliesProviderModelMappi
 	require.Equal(t, "oauth-upstream-model", gjson.GetBytes(sentBody, "model").String())
 }
 
+// TestGeminiMessagesCompatServiceForward_StreamingClosesToolUseBeforeText reads
+// a function-call payload followed by text through Messages conversion. Parsed
+// output events close tool block zero before opening text block one for the
+// later content.
 func TestGeminiMessagesCompatServiceForward_StreamingClosesToolUseBeforeText(t *testing.T) {
 	upstreamBody := `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"query":"weather"}}}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}}` + "\n\n" +
 		`data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}` + "\n\n" +
@@ -1109,6 +1212,10 @@ func TestGeminiMessagesCompatServiceForward_StreamingClosesToolUseBeforeText(t *
 	require.Greater(t, textStart, toolStop, "文本块必须在 tool_use 块关闭后开始")
 }
 
+// TestGeminiMessagesCompatServiceForward_PreservesRequestedModelAndMappedUpstreamModel
+// forwards a mapped Messages request through an API key provider. Completion
+// names remain separate, client text is delivered, and the captured endpoint
+// selects the mapped model.
 func TestGeminiMessagesCompatServiceForward_PreservesRequestedModelAndMappedUpstreamModel(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1152,6 +1259,10 @@ func TestGeminiMessagesCompatServiceForward_PreservesRequestedModelAndMappedUpst
 	require.Contains(t, httpStub.lastReq.URL.String(), "/models/claude-sonnet-4-20250514:")
 }
 
+// TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio
+// converts a Messages function tool alongside server web search. Captured AI
+// Studio input uses the expected search spelling and keeps that search object
+// separate from function declarations.
 func TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1205,6 +1316,10 @@ func TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio(t
 	require.False(t, hasFuncDecl)
 }
 
+// TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToolUse
+// converts assistant tool history lacking a signature through the native
+// bridge. The output contains a functionCall and the compatibility
+// thoughtSignature sentinel for the exercised history.
 func TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToolUse(t *testing.T) {
 	claudeReq := map[string]any{
 		"model": "claude-haiku-4-5-20251001",
@@ -1253,6 +1368,9 @@ func TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToo
 			},
 		},
 	}
+	// The constructed history contains JSON-compatible maps, slices,
+	// strings, and integers, so marshaling supplies the bytes checked by
+	// the converter.
 	b, _ := json.Marshal(claudeReq)
 
 	out, err := googleforward.ConvertClaudeForTest(b)
@@ -1268,6 +1386,10 @@ func TestConvertClaudeMessagesToGeminiGenerateContent_AddsThoughtSignatureForToo
 	}
 }
 
+// TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing supplies
+// native function-call history without its signature property. The returned
+// request contains the configured compatibility sentinel required by the
+// missing-signature preparation path.
 func TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing(t *testing.T) {
 	geminiReq := map[string]any{
 		"contents": []any{
@@ -1285,6 +1407,9 @@ func TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing(t *testing
 			},
 		},
 	}
+	// The constructed history contains JSON-compatible maps, slices, and
+	// strings, so marshaling supplies the native bytes inspected by the
+	// signature helper.
 	b, _ := json.Marshal(geminiReq)
 	out := googleforward.EnsureSignatureForTest(b)
 	s := string(out)
@@ -1293,13 +1418,19 @@ func TestEnsureGeminiFunctionCallThoughtSignatures_InsertsWhenMissing(t *testing
 	}
 }
 
+// TestEstimateGeminiCountTokens compares system/content text, empty parts,
+// nontext parts, and whitespace-only text. Estimates are positive for the
+// exercised text inputs and exactly zero for the remaining fixtures.
 func TestEstimateGeminiCountTokens(t *testing.T) {
 	zero := 0
 	tests := []struct {
-		name      string
-		input     string
-		wantGt0   bool // Require a positive estimate.
-		wantExact *int // Exact expected count when non-nil.
+		name    string // table scenario name
+		input   string // native counting request JSON
+		wantGt0 bool   // expected positive estimate flag
+		// wantExact takes precedence when nonnil; otherwise wantGt0
+		// selects positive or zero classification, allowing text
+		// fixtures to avoid promising a specific estimated count.
+		wantExact *int // optional exact token estimate
 	}{
 		{
 			name: "含 systemInstruction 和 contents",
@@ -1366,12 +1497,18 @@ func TestEstimateGeminiCountTokens(t *testing.T) {
 	}
 }
 
+// TestParseGeminiRateLimitResetTime compares structured, daily, text-pattern,
+// malformed, and unmatched reset evidence. Results are absent or future/reset-
+// offset values within the stated fixture wall-clock tolerance.
 func TestParseGeminiRateLimitResetTime(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		wantNil     bool
-		approxDelta int64 // Approximate reset offset from now, in seconds.
+		name    string // table scenario name
+		input   string // rate-limit response fixture text
+		wantNil bool   // expected missing-reset result flag
+		// approxDelta uses seconds for wall-clock comparison; minus one
+		// selects a future-time presence check rather than a specific
+		// offset for daily reset fixtures.
+		approxDelta int64 // expected offset in seconds
 	}{
 		{
 			name: "正常 quotaResetDelay",
@@ -1441,7 +1578,8 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 				t.Fatalf("期望返回非 nil，实际返回 nil")
 			}
 
-			// An offset of -1 denotes a future reset whose exact time is not fixed by the fixture.
+			// An offset of -1 denotes a future reset whose exact
+			// time is not fixed by the fixture.
 			if tt.approxDelta == -1 {
 				if *got < now {
 					t.Errorf("期望返回的时间戳 >= now(%d)，实际 %d", now, *got)
@@ -1449,7 +1587,8 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 				return
 			}
 
-			// Allow two seconds of clock tolerance.
+			// Allow two seconds for wall-clock sampling and test
+			// execution between the measured timestamps.
 			delta := *got - now
 			if delta < tt.approxDelta-2 || delta > tt.approxDelta+2 {
 				t.Errorf("期望 delta 约为 %d 秒（+/-2），实际 delta = %d 秒（返回值=%d, now=%d）",
@@ -1459,14 +1598,22 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 	}
 }
 
+// buildGeminiRateLimitBody encodes a supplied quotaResetDelay string into error
+// fixture bytes.
 func buildGeminiRateLimitBody(delay string) []byte {
 	return []byte(fmt.Sprintf(`{"error":{"message":"too many requests","details":[{"metadata":{"quotaResetDelay":%q}}]}}`, delay))
 }
 
+// List returns the supplied presentation-rule slice and rule pointers for
+// Gemini fixtures. The service reads these shared values, so tests retain them
+// unchanged while matching HTTP errors.
 func (r errorRulesFixtureRepo) List(context.Context) ([]*errorpolicy.ErrorPassthroughRule, error) {
 	return r.rules, nil
 }
 
+// newErrorRulesTestService starts a presentation service using the supplied
+// rule pointers. Startup failure panics in the fixture, and rule values remain
+// caller-owned while the service matches HTTP errors.
 func newErrorRulesTestService(rules []*errorpolicy.ErrorPassthroughRule) *errorpolicy.ErrorPassthroughService {
 	s := errorpolicy.NewErrorPassthroughService(errorRulesFixtureRepo{rules: rules}, nil, gatewaytelemetry.ErrorRules)
 	if err := s.StartContext(context.Background()); err != nil {
@@ -1475,6 +1622,8 @@ func newErrorRulesTestService(rules []*errorpolicy.ErrorPassthroughRule) *errorp
 	return s
 }
 
+// newGeminiNativeTestContext constructs a native request context and response
+// recorder for error assertions.
 func newGeminiNativeTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -1483,27 +1632,38 @@ func newGeminiNativeTestContext(t *testing.T) (*gin.Context, *httptest.ResponseR
 	return c, rec
 }
 
+// SetError increments the fixture provider-error persistence counter for policy
+// assertions.
 func (r *geminiErrorPolicyRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// SetRateLimited increments the fixture provider-cooldown persistence counter
+// for policy assertions.
 func (r *geminiErrorPolicyRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
 	r.setRateLimitedCalls++
 	return nil
 }
 
+// SetTempUnschedulable increments the fixture provider-exclusion persistence
+// counter for policy assertions.
 func (r *geminiErrorPolicyRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.setTempCalls++
 	return nil
 }
 
+// SetModelRateLimit increments the model-write count and saves its scope for
+// assertions.
 func (r *geminiErrorPolicyRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, _ time.Time, _ ...string) error {
 	r.setModelRateLimitedCalls++
 	r.lastModelScope = scope
 	return nil
 }
 
+// newNonFailoverPassthroughRule returns an all-keyword rule with custom client
+// status and message. The returned rule remains adjustable by the caller before
+// the presentation service starts using it.
 func newNonFailoverPassthroughRule(statusCode int, keyword string, respCode int, customMessage string) *errorpolicy.ErrorPassthroughRule {
 	return &errorpolicy.ErrorPassthroughRule{
 		ID: 1,
@@ -1530,6 +1690,9 @@ func newNonFailoverPassthroughRule(statusCode int, keyword string, respCode int,
 	}
 }
 
+// parseSSEEventsForTest collects JSON event objects from simple blank-separated
+// fixture frames. It keeps the last data line in each frame, skips DONE/empty
+// data, and records event names for ordering assertions.
 func parseSSEEventsForTest(t *testing.T, stream string) []map[string]any {
 	t.Helper()
 	chunks := strings.Split(stream, "\n\n")
@@ -1549,6 +1712,9 @@ func parseSSEEventsForTest(t *testing.T, stream string) []map[string]any {
 				dataLine = strings.TrimSpace(after)
 			}
 		}
+		// Skip empty data and DONE markers because this helper collects
+		// JSON event objects for block ordering assertions rather than
+		// the complete protocol stream.
 		if dataLine == "" || dataLine == "[DONE]" {
 			continue
 		}
@@ -1560,6 +1726,9 @@ func parseSSEEventsForTest(t *testing.T, stream string) []map[string]any {
 	return events
 }
 
+// findSSEEventForTest returns the first matching fixture event position or
+// minus one. Numeric index is checked when present, and a nonempty blockType
+// additionally matches the decoded content_block type.
 func findSSEEventForTest(events []map[string]any, event string, index int, blockType string) int {
 	for i, data := range events {
 		if data["_event"] != event {
@@ -1579,6 +1748,8 @@ func findSSEEventForTest(events []map[string]any, event string, index int, block
 	return -1
 }
 
+// SetRateLimited records the provider identifier and selected cooldown
+// expiration for assertions.
 func (r *rateLimit429ProviderRepoStub) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitCalls++
 	r.lastRateLimitID = id
@@ -1586,6 +1757,10 @@ func (r *rateLimit429ProviderRepoStub) SetRateLimited(_ context.Context, id int6
 	return nil
 }
 
+// TestGeminiMessagesForwardsThinkingBudget maps Messages input to a budget-
+// capable Gemini model with an explicit thinking budget. Captured
+// thinkingConfig retains that budget and includeThoughts while response text
+// reaches the client.
 func TestGeminiMessagesForwardsThinkingBudget(t *testing.T) {
 	stub := &geminiCompatHTTPUpstreamStub{response: &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}`))}}
 	svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
@@ -1603,6 +1778,10 @@ func TestGeminiMessagesForwardsThinkingBudget(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "answer")
 }
 
+// TestGeminiForwardNativeSamplingFieldSpellings crosses both config and topP
+// spellings with known support enabled/disabled. Captured topP presence follows
+// capability, temperature remains, and the original client body retains its
+// sampling value.
 func TestGeminiForwardNativeSamplingFieldSpellings(t *testing.T) {
 	for _, config := range []string{"generationConfig", "generation_config"} {
 		for _, field := range []string{"topP", "top_p"} {

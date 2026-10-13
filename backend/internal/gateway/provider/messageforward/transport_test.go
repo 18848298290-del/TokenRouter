@@ -15,20 +15,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Fixed expectations check the cooldown duration and client error body.
+// gatewayTransportErrorTempUnschedDuration fixes the expected
+// persistent-failure cooldown window used by the transport health assertions
+// for this test fixture.
 const gatewayTransportErrorTempUnschedDuration = 10 * time.Minute
+
+// gatewayTransportFailoverBody fixes the client-safe Anthropic payload expected
+// when a transport failure requests another provider attempt.
 
 var gatewayTransportFailoverBody = []byte(`{"type":"error","error":{"type":"upstream_error","message":"Upstream request failed"}}`)
 
+// transportTempUnschedRepoStub records transport cooldown writes for the
+// selected test provider.
 type transportTempUnschedRepoStub struct {
-	gatewayprovider.ExecutionProviderStore
+	// ExecutionProviderStore embeds unused repository methods; transport
+	// fixtures implement the exclusion write and expose unexpected
+	// repository operations through nil dispatch.
+	gatewayprovider.ExecutionProviderStore // unused provider repository methods
 
-	calls      int
-	lastID     int64
-	lastUntil  time.Time
-	lastReason string
+	calls      int       // recorded exclusion write count
+	lastID     int64     // last excluded provider identifier
+	lastUntil  time.Time // last cooldown expiration time
+	lastReason string    // last exclusion diagnostic text
 }
 
+// SetTempUnschedulable records one exclusion write and its provider, deadline,
+// and reason values.
 func (r *transportTempUnschedRepoStub) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
 	r.calls++
 	r.lastID = id
@@ -37,6 +49,8 @@ func (r *transportTempUnschedRepoStub) SetTempUnschedulable(_ context.Context, i
 	return nil
 }
 
+// newTransportErrorFixture creates a recording Messages boundary with an
+// inbound request.
 func newTransportErrorFixture(t *testing.T) *privateHTTPBoundary {
 	t.Helper()
 
@@ -45,8 +59,10 @@ func newTransportErrorFixture(t *testing.T) *privateHTTPBoundary {
 	return c
 }
 
-// TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction checks transient EOF handling.
-// The attempt requests failover, leaves the provider schedulable, and leaves HTTP output to the handler.
+// TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction supplies
+// transient EOF before response output with a persistence recorder. The result
+// requests another provider using the safe body, and no exclusion write or
+// client output occurs.
 func TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -77,8 +93,10 @@ func TestHandleUpstreamTransportError_TransientFailsOverWithoutEviction(t *testi
 	}
 }
 
-// TestHandleUpstreamTransportError_PersistentEvictsProvider checks that connection refusal
-// requests failover and temporarily unschedules the provider for the transport cooldown.
+// TestHandleUpstreamTransportError_PersistentEvictsProvider supplies connection
+// refusal before output with a persistence recorder. Failover is returned and
+// one exclusion write records the provider, expected cooldown window, and
+// transport diagnostic prefix.
 func TestHandleUpstreamTransportError_PersistentEvictsProvider(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -107,8 +125,10 @@ func TestHandleUpstreamTransportError_PersistentEvictsProvider(t *testing.T) {
 	}
 }
 
-// TestHandleUpstreamTransportError_ClientCanceledNoFailover checks that cancellation
-// returns directly and leaves the provider schedulable.
+// TestHandleUpstreamTransportError_ClientCanceledNoFailover supplies
+// context.Canceled to transport handling with an available persistence adapter.
+// The cancellation error remains inspectable and no provider exclusion or typed
+// failover signal is produced.
 func TestHandleUpstreamTransportError_ClientCanceledNoFailover(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})
@@ -129,8 +149,9 @@ func TestHandleUpstreamTransportError_ClientCanceledNoFailover(t *testing.T) {
 	}
 }
 
-// TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver checks that an upstream timeout
-// with a live request context requests failover and leaves the provider schedulable.
+// TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver supplies a
+// deadline error while the request context remains live. The result is typed
+// failover and the recorder receives no persistent transport exclusion write.
 func TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := NewRuntime(Dependencies{ProviderState: repo}, Options{})

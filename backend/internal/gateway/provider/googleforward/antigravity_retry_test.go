@@ -13,8 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// TestResolveAntigravityForwardBaseURL temporarily replaces platform endpoints
+// and compares paid/free/malformed plans with environment overrides. The
+// selected endpoint follows the tested precedence, and shared endpoints are
+// restored after the cases.
 func TestResolveAntigravityForwardBaseURL(t *testing.T) {
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
+	// Restore the shared endpoint slice after all cases so later package
+	// tests select their configured platform routes rather than these
+	// fixture-only URLs.
 	defer func() {
 		antigravity.BaseURLs = oldBaseURLs
 	}()
@@ -24,10 +31,11 @@ func TestResolveAntigravityForwardBaseURL(t *testing.T) {
 	antigravity.BaseURLs = []string{prodURL, dailyURL}
 
 	tests := []struct {
-		name     string
-		env      string
+		name string // table scenario name
+		env  string // endpoint override fixture value
+		// provider plan fixture value
 		provider *gatewayprovider.ExecutionProvider
-		want     string
+		want     string // expected selected endpoint URL
 	}{
 		{
 			name:     "pro defaults to daily",

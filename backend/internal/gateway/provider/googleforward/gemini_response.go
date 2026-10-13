@@ -7,6 +7,14 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// Gemini response callbacks connect native readers and compatibility converters
+// to the same request output. Bounded body reading and header filtering remain
+// HTTP operations, while the attempt receives image observations and restores
+// tool names during synchronous response adaptation.
+
+// geminiResponseAdapter binds provider response reading to this attempt image
+// and tool state. The executor owns response-body closure; callbacks borrow
+// its reader for bounded reads and apply the injected HTTP header policy.
 func (s *Gemini) geminiResponseAdapter(c *attempt) *gemininative.ResponseAdapter {
 	return &gemininative.ResponseAdapter{Options: gemininative.ResponseOptions{
 		GoogleError: func(status int, message string) error { return c.GoogleError(status, message) },

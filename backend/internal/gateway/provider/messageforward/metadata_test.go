@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID supplies a
+// fingerprint identity while provider metadata omits account identity. The
+// generated string matches the legacy pattern with a nonempty client component
+// and empty account field.
 func TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID(t *testing.T) {
 	parsed := &requeststate.ParsedRequest{
 		Model:          "claude-sonnet-4-5",
@@ -34,11 +38,15 @@ func TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID(t *testing.T) {
 	got := metadataUserID(parsed, provider, fp)
 	require.NotEmpty(t, got)
 
-	// The legacy format leaves the missing account field empty.
+	// The supplied fingerprint has no CLI version, so the legacy-format
+	// matcher checks the empty account segment and derived session UUID.
 	re := regexp.MustCompile(`^user_[a-zA-Z0-9]+_account__session_[a-f0-9-]{36}$`)
 	require.True(t, re.MatchString(got), "unexpected user_id format: %s", got)
 }
 
+// TestBuildOAuthMetadataUserID_UsesAccountUUIDWhenPresent supplies provider
+// client identity and an account UUID with no fingerprint. The legacy metadata
+// string contains both configured identity components and a session UUID.
 func TestBuildOAuthMetadataUserID_UsesAccountUUIDWhenPresent(t *testing.T) {
 	parsed := &requeststate.ParsedRequest{
 		Model:          "claude-sonnet-4-5",
@@ -66,8 +74,9 @@ func TestBuildOAuthMetadataUserID_UsesAccountUUIDWhenPresent(t *testing.T) {
 	require.True(t, re.MatchString(got), "unexpected user_id format: %s", got)
 }
 
-// TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns checks stable metadata as messages accumulate.
-// The provider, fingerprint, and UA stay fixed, so comparing the complete user_id also checks session_id.
+// TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns appends conversation
+// turns while provider and fingerprint inputs stay fixed. The complete metadata
+// identity stays equal across turns and differs for another opening message.
 func TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 777, Type: capability.ProviderTypeOAuth, Extra: map[string]any{"account_uuid": "acc-uuid"}}}
 	fp := &anthropic.Fingerprint{ClientID: "clientid777", UserAgent: "claude-cli/2.1.161 (external, cli)"}

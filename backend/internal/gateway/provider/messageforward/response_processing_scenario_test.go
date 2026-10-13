@@ -1,7 +1,5 @@
 package messageforward_test
 
-// These scenarios cover response options, upstream exchange handling, and passthrough output.
-
 import (
 	"bufio"
 	"bytes"
@@ -33,26 +31,41 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// nonJSONTempUnschedProviderRepo records default and model-scoped writes for
+// invalid-response tests.
 type nonJSONTempUnschedProviderRepo struct {
-	gatewayprovider.ExecutionProviderStore
+	// ExecutionProviderStore embeds unused fixture methods;
+	// invalid-response tests record exclusion operations and expose any
+	// unexpected repository method through nil dispatch.
+	gatewayprovider.ExecutionProviderStore // unused provider repository methods
 
-	tempUnschedCalls    int
-	tempReason          string
-	modelRateLimitCalls int
-	modelScope          string
-	modelReason         string
+	tempUnschedCalls    int    // provider exclusion write count
+	tempReason          string // provider exclusion diagnostic text
+	modelRateLimitCalls int    // model exclusion write count
+	modelScope          string // last excluded model scope
+	modelReason         string // last model diagnostic text
 }
 
+// failWriteResponseWriter rejects client writes while retaining other Gin
+// writer operations.
 type failWriteResponseWriter struct {
-	gin.ResponseWriter
+	// ResponseWriter forwards headers and other writer operations while
+	// Write and WriteString reject bytes, modeling disconnect after HTTP
+	// response setup has succeeded.
+	gin.ResponseWriter // borrowed HTTP response writer
 }
 
+// SetTempUnschedulable records provider-wide exclusion count and the supplied
+// diagnostic reason.
 func (r *nonJSONTempUnschedProviderRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
 	r.tempUnschedCalls++
 	r.tempReason = reason
 	return nil
 }
 
+// SetModelRateLimit records model scope and the first supplied reason in this
+// fixture. Missing reasons leave the previously saved reason unchanged,
+// allowing assertions to inspect observed writes.
 func (r *nonJSONTempUnschedProviderRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, _ time.Time, reason ...string) error {
 	r.modelRateLimitCalls++
 	r.modelScope = scope
@@ -62,6 +75,10 @@ func (r *nonJSONTempUnschedProviderRepo) SetModelRateLimit(_ context.Context, _ 
 	return nil
 }
 
+// TestHandleNonStreamingResponse_NonJSON2xxTriggersFailover returns HTTP
+// success carrying non-JSON error bytes and an upstream request ID. The reader
+// returns typed 502 failover with the same body/identity and leaves output
+// unstarted.
 func TestHandleNonStreamingResponse_NonJSON2xxTriggersFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -91,6 +108,9 @@ func TestHandleNonStreamingResponse_NonJSON2xxTriggersFailover(t *testing.T) {
 	require.False(t, c.Writer.Written(), "invalid upstream response must not be committed before failover")
 }
 
+// TestHandleNonStreamingResponse_ValidJSONUnchanged returns a valid Anthropic
+// success body with input and output usage. The reader reports those counts and
+// presents equivalent JSON to the client.
 func TestHandleNonStreamingResponse_ValidJSONUnchanged(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -115,6 +135,10 @@ func TestHandleNonStreamingResponse_ValidJSONUnchanged(t *testing.T) {
 	require.JSONEq(t, string(body), rec.Body.String())
 }
 
+// TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_NonJSON2xxTriggersFailover
+// returns non-JSON HTTP success through native API key response handling. The
+// result has no usage, carries a typed 502 failover body, and leaves output
+// unstarted.
 func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_NonJSON2xxTriggersFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -138,6 +162,10 @@ func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_NonJSON2xxTriggers
 	require.False(t, c.Writer.Written(), "invalid passthrough response must not be committed before failover")
 }
 
+// TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ValidJSONUnchanged
+// returns valid Anthropic HTTP success through native API key response
+// handling. Usage is extracted and the client receives JSON equivalent to the
+// upstream fixture.
 func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ValidJSONUnchanged(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -160,11 +188,15 @@ func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ValidJSONUnchanged
 	require.JSONEq(t, string(body), rec.Body.String())
 }
 
+// TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ForceCacheBillingResponse
+// presents input usage under forced cache-billing mode, including genuine cache
+// reads and zero input. Client buckets are rewritten while returned local
+// observations retain their upstream values.
 func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ForceCacheBillingResponse(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want string
+		name string // table scenario name
+		body string // upstream fixture response JSON
+		want string // expected client response JSON
 	}{
 		{
 			name: "converts input tokens for downstream billing",
@@ -205,6 +237,10 @@ func TestHandleNonStreamingResponseAnthropicAPIKeyPassthrough_ForceCacheBillingR
 	}
 }
 
+// TestHandleNonStreamingResponse_NonJSON2xxMatchesModelScopedTempUnschedulableRule
+// classifies non-JSON HTTP success as synthetic status 502 matching a temporary
+// rule. One model-scoped write records the mapped model and diagnostic keyword,
+// with no provider-wide exclusion.
 func TestHandleNonStreamingResponse_NonJSON2xxMatchesModelScopedTempUnschedulableRule(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -253,6 +289,9 @@ func TestHandleNonStreamingResponse_NonJSON2xxMatchesModelScopedTempUnschedulabl
 	require.Contains(t, repo.modelReason, `"matched_keyword":"upstream request failed"`)
 }
 
+// TestAnthropicPriorHeartbeatPreservesReadFailureBoundary writes an earlier
+// heartbeat and header before the upstream reader fails. The result remains an
+// ordinary stream error with partial state, and the earlier header survives.
 func TestAnthropicPriorHeartbeatPreservesReadFailureBoundary(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 	rec := httptest.NewRecorder()
@@ -272,14 +311,22 @@ func TestAnthropicPriorHeartbeatPreservesReadFailureBoundary(t *testing.T) {
 	require.Equal(t, "prior", c.Writer.Header().Get("X-Fixture"))
 }
 
+// Write rejects client bytes with zero delivery and the fixture disconnect
+// error.
 func (w *failWriteResponseWriter) Write(data []byte) (int, error) {
 	return 0, errors.New("client disconnected")
 }
 
+// WriteString rejects client text with zero delivery and the fixture disconnect
+// error.
 func (w *failWriteResponseWriter) WriteString(_ string) (int, error) {
 	return 0, errors.New("client disconnected")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAfterClientDisconnect
+// cancels the inbound request before reading a complete passthrough stream.
+// Reading still returns the supplied input and output usage through the
+// independent processing context.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAfterClientDisconnect(t *testing.T) {
 	// Cancel the request context to simulate a disconnected client.
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -316,6 +363,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAf
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsError
+// ends passthrough input after usage events without DONE or a stop event. The
+// reader returns an incomplete-stream error together with its retained result.
 func TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -342,6 +392,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_MissingTerminalEventReturnsEr
 	require.NotNil(t, result)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingErrTooLong supplies a
+// line exceeding initial scanner capacity under a small configured limit. The
+// returned error matches bufio.ErrTooLong and still carries a stream result.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingErrTooLong(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -349,11 +402,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingErrTooLong(t *testin
 
 	svc := newResponseRuntimeFixture(
 		&messageforward.Options{Configured: true, PreserveContentType: true, ResponseReadLimit: 134217728, MaxLineSize: 32}, messageforward.
-
-			// Exceed the scanner's 64 KiB initial buffer to trigger bufio.ErrTooLong.
 			Dependencies{}, nil,
 	)
 
+	// Exceed the scanner's 64 KiB initial buffer to trigger
+	// bufio.ErrTooLong.
 	longLine := "data: " + strings.Repeat("x", 80*1024)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -367,6 +420,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingErrTooLong(t *testin
 	require.NotNil(t, result)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingDataIntervalTimeout
+// keeps an upstream pipe idle beyond the configured data interval. The result
+// reports timeout with an existing stream result and no client-disconnect
+// observation.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingDataIntervalTimeout(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -393,6 +450,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingDataIntervalTimeout(
 	require.False(t, result.ClientDisconnect)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuringIdle
+// delays the first passthrough frame beyond the heartbeat interval. Client
+// output contains a ping and the final DONE while response reading completes
+// successfully.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuringIdle(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -410,9 +471,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuring
 	}
 
 	done := make(chan struct{})
+	// Delay the first fixture event beyond the heartbeat interval while the
+	// reader waits on the pipe, then close the producer to deliver a
+	// complete EOF.
 	go func() {
 		defer close(done)
-		// Delay the first upstream SSE event to check downstream ping keepalives.
+		// Delay the first upstream SSE event to check downstream ping
+		// keepalives.
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte(strings.Join([]string{
 			`data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
@@ -435,6 +500,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuring
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInterleavePartialEvent
+// holds an SSE frame open across the keepalive interval. Client output contains
+// the final DONE and no ping inserted into the partial frame.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInterleavePartialEvent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -452,9 +520,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	}
 
 	done := make(chan struct{})
+	// Hold the fixture frame between its data line and blank delimiter
+	// across the heartbeat interval so any misplaced ping would split that
+	// incomplete frame.
 	go func() {
 		defer close(done)
-		// Leave an SSE event incomplete to check that keepalives cannot split it.
+		// Leave an SSE event incomplete to check that keepalives cannot
+		// split it.
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}` + "\n"))
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte("\n"))
@@ -474,6 +546,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	require.Contains(t, body, "data: [DONE]")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError fails the
+// upstream reader before a passthrough event. The returned error reports stream
+// reading failure, retains a result, and leaves client disconnection false.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -498,6 +573,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing
 	require.False(t, result.ClientDisconnect)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDisconnect
+// fails client writes after initial input usage and then times out upstream.
+// The incomplete-disconnect result retains the observed input count and marks
+// ClientDisconnect.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDisconnect(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -516,10 +595,14 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	}
 
 	done := make(chan struct{})
+	// Provide initial input usage before holding the pipe idle after
+	// downstream writes fail, so interval timeout returns the previously
+	// observed usage.
 	go func() {
 		defer close(done)
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}` + "\n"))
-		// Keep the upstream connection idle to trigger the data interval timeout.
+		// Keep the upstream connection idle to trigger the data
+		// interval timeout.
 		time.Sleep(1500 * time.Millisecond)
 		_ = pw.Close()
 	}()
@@ -535,6 +618,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	require.Equal(t, 9, result.Usage.InputTokens)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingContextCanceled
+// returns context.Canceled from the passthrough upstream reader. The result
+// reports incomplete usage and marks the client disconnected while preserving a
+// stream result.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingContextCanceled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -559,6 +646,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingContextCanceled(t *t
 	require.True(t, result.ClientDisconnect)
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAfterClientDisconnect
+// fails client writes after a usage event and then returns unexpected EOF. The
+// reader reports incomplete usage after disconnect and retains the observed
+// input count.
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAfterClientDisconnect(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -586,7 +677,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAft
 	require.Equal(t, 8, result.Usage.InputTokens)
 }
 
-// newResponseRuntimeFixture combines HTTP output, test options, and the platform response reader.
+// newResponseRuntimeFixture selects a default 128 MiB response cap or the
+// complete supplied options. Dependencies are retained by the runtime, and the
+// optional filter argument is unused in this fixture.
 func newResponseRuntimeFixture(options *messageforward.Options, deps messageforward.Dependencies, _ *egress.CompiledHeaderFilter) *messageforward.Runtime {
 	value := messageforward.Options{ResponseReadLimit: 128 * 1024 * 1024}
 	if options != nil {
@@ -595,35 +688,54 @@ func newResponseRuntimeFixture(options *messageforward.Options, deps messageforw
 	return messageforward.NewRuntime(deps, value)
 }
 
+// nonStreamResponseFixture invokes ordinary Anthropic reading with runtime
+// response options and HTTP output. The supplied response remains caller-owned,
+// and original/mapped models are passed separately to presentation.
 func nonStreamResponseFixture(runtime *messageforward.Runtime, ctx context.Context, response *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, original, mapped string) (*upstream.TokenUsage, error) {
 	boundary := gatewayhttp.NewMessageForwardBoundary(c, nil)
 	options := messageforward.ResponseOptionsForTest(runtime, ctx, boundary, target, mapped, false)
 	return claude.NonStreamResponse(ctx, response, upstream.NewOutputContext(boundary.Sink()), options, original, mapped)
 }
 
+// passthroughResponseFixture invokes native Anthropic reading with runtime
+// passthrough response options. The supplied response remains caller-owned, and
+// forced cache-billing presentation is selected from the processing context.
 func passthroughResponseFixture(runtime *messageforward.Runtime, ctx context.Context, response *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider) (*upstream.TokenUsage, error) {
 	boundary := gatewayhttp.NewMessageForwardBoundary(c, nil)
 	options := messageforward.ResponseOptionsForTest(runtime, ctx, boundary, target, "", true)
 	return claude.NonStreamResponsePassthrough(ctx, response, upstream.NewOutputContext(boundary.Sink()), options)
 }
 
-// newStreamingRuntimeFixture sets the keepalive interval before constructing the runtime.
+// newStreamingRuntimeFixture constructs ordinary stream options with the
+// supplied heartbeat interval. It installs default health observation and a
+// normal line limit; individual tests can supply independent pipe responses.
 func newStreamingRuntimeFixture(keepalive time.Duration) *messageforward.Runtime {
 	return messageforward.NewRuntime(messageforward.Dependencies{Health: newPartialHealthFixture()}, messageforward.Options{Configured: true, MaxLineSize: defaultMaxLineSize, StreamKeepalive: keepalive})
 }
 
+// streamResponseFixture invokes ordinary Anthropic stream reading using runtime
+// response options. The caller owns the response and upstream pipe, while
+// returned stream observations accompany any reader error.
 func streamResponseFixture(runtime *messageforward.Runtime, ctx context.Context, response *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, started time.Time, original, mapped string, mimic bool) (*claude.StreamResult, error) {
 	boundary := gatewayhttp.NewMessageForwardBoundary(c, nil)
 	options := messageforward.ResponseOptionsForTest(runtime, ctx, boundary, target, mapped, false)
 	return claude.StreamResponse(ctx, response, upstream.NewOutputContext(boundary.Sink()), options.StreamOptions, started, original, mapped, mimic)
 }
 
+// passthroughStreamFixture invokes native Anthropic stream reading using
+// runtime passthrough options. The caller owns the response and upstream pipe,
+// while returned observations retain usage collected during disconnect
+// handling.
 func passthroughStreamFixture(runtime *messageforward.Runtime, ctx context.Context, response *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, started time.Time, model string) (*claude.StreamResult, error) {
 	boundary := gatewayhttp.NewMessageForwardBoundary(c, nil)
 	options := messageforward.ResponseOptionsForTest(runtime, ctx, boundary, target, model, true)
 	return claude.StreamResponsePassthrough(ctx, response, upstream.NewOutputContext(boundary.Sink()), options.StreamOptions, started, model)
 }
 
+// TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage feeds
+// start, delta, and terminal frames through a pipe-backed ordinary stream. The
+// returned input/output counts are checked; this fixture makes no allocation
+// assertion.
 func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -634,6 +746,9 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed start usage, final output usage, and DONE through the blocking
+	// pipe concurrently, then close the producer so the reader completes
+	// before token assertions.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		// A minimal SSE event exercises usage parsing.
@@ -651,6 +766,9 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 	require.Equal(t, 7, result.Usage.OutputTokens)
 }
 
+// TestGatewayService_StreamingKeepaliveUsesIdleTimer leaves an ordinary
+// upstream stream idle between start and stop events. Response reading succeeds
+// and downstream bytes contain the configured ping heartbeat event.
 func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
 	svc := newStreamingRuntimeFixture(time.Second)
 
@@ -661,6 +779,9 @@ func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Pause between start and stop events beyond the configured heartbeat
+	// interval so the reader emits a ping while the upstream pipe remains
+	// open.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
@@ -675,6 +796,9 @@ func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "event: ping")
 }
 
+// TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVersion
+// keeps a text block open for the selected Claude CLI version during idle. The
+// downstream stream contains an empty text_delta heartbeat for that block.
 func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVersion(t *testing.T) {
 	svc := newStreamingRuntimeFixture(time.Second)
 
@@ -686,6 +810,9 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVers
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Keep a text block open across the idle interval for the selected
+	// Claude CLI version so the reader can emit its empty text delta
+	// heartbeat.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
@@ -704,6 +831,10 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVers
 	require.Contains(t, body, `"delta":{"type":"text_delta","text":""}`)
 }
 
+// TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedClaudeCodeVersion
+// keeps tool block index one open for the selected Claude CLI version. The
+// downstream heartbeat carries that index and an empty input_json_delta
+// fragment.
 func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedClaudeCodeVersion(t *testing.T) {
 	svc := newStreamingRuntimeFixture(time.Second)
 
@@ -715,6 +846,9 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedC
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Keep tool block index one open across the idle interval so the
+	// selected Claude CLI version receives an empty input_json_delta using
+	// that active index.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
@@ -734,6 +868,9 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedC
 	require.Contains(t, body, `"delta":{"type":"input_json_delta","partial_json":""}`)
 }
 
+// TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion keeps
+// an older Claude CLI request idle between lifecycle events. Downstream output
+// contains ping and omits the empty text_delta form used by another version.
 func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *testing.T) {
 	svc := newStreamingRuntimeFixture(time.Second)
 
@@ -745,6 +882,9 @@ func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Keep an older Claude CLI request idle between start and stop events
+	// so its heartbeat remains the ordinary ping under version-dependent
+	// presentation.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
@@ -763,6 +903,9 @@ func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *
 	require.NotContains(t, body, `"delta":{"type":"text_delta","text":""}`)
 }
 
+// TestHandleStreamingResponse_CacheTokens supplies cache creation and read
+// counts at message_start and output tokens at message_delta. The returned
+// result retains all four token buckets after terminal completion.
 func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -773,6 +916,9 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed separate start and delta usage observations through the blocking
+	// pipe and then DONE, so final assertions can inspect each cache token
+	// bucket.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":20,\"cache_read_input_tokens\":30}}}\n\n"))
@@ -791,6 +937,9 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	require.Equal(t, 30, result.Usage.CacheReadInputTokens)
 }
 
+// TestHandleStreamingResponse_EmptyStream closes the upstream stream before any
+// event is received. The reader reports a missing terminal event and returns
+// its stream result for error handling.
 func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -801,6 +950,9 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Close the producer before delivering any frame so the upstream reader
+	// observes EOF without a terminal event and reports the incomplete
+	// stream.
 	go func() {
 		// Close an empty stream.
 		_ = pw.Close()
@@ -813,6 +965,10 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	require.NotNil(t, result)
 }
 
+// TestHandleStreamingResponse_SpecialCharactersInJSON supplies text containing
+// escaped quotes, newline, and Unicode before usage and terminal events. The
+// returned token counts match the fixture and output contains a forwarded delta
+// event.
 func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -823,9 +979,13 @@ func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed text with escaped quotes, newline, and Unicode before usage
+	// events so parsing and forwarding can complete while retaining
+	// observable token counts.
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// Exercise quotes, newlines, and Unicode inside content_block_delta.
+		// Exercise quotes, newlines, and Unicode inside
+		// content_block_delta.
 		_, _ = pw.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello \\\"world\\\"\\n你好\"}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n"))
@@ -844,8 +1004,10 @@ func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 	require.Contains(t, body, "content_block_delta", "响应应包含转发的 SSE 事件")
 }
 
-// TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover checks unexpected EOF before client output.
-// The typed error lets the outer handler retry or select another provider.
+// TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover
+// fails with unexpected EOF before a frame reaches client output. The result is
+// nil and typed failover carries safe Anthropic diagnostics with same-provider
+// retry enabled.
 func TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -869,20 +1031,23 @@ func TestHandleStreamingResponse_StreamReadErrorBeforeOutput_TriggersFailover(t 
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, failoverErr.RetryableOnSameProvider, "GOAWAY 类错误应允许同提供商重试")
 
-	// The failover body uses the Anthropic error format so exhaustion handling and Ops
-	// can extract error.message and identify error.type as upstream_disconnected.
+	// The failover body uses the Anthropic error format so exhaustion
+	// handling and Ops can extract error.message and identify error.type as
+	// upstream_disconnected.
 	extractedMsg := upstream.ExtractErrorMessage(failoverErr.ResponseBody)
 	require.NotEmpty(t, extractedMsg, "ExtractUpstreamErrorMessage 必须从 ResponseBody 取到非空 message，否则 ops 日志会丢失诊断信息")
 	require.Contains(t, extractedMsg, "upstream stream disconnected")
 	require.Contains(t, string(failoverErr.ResponseBody), `"type":"error"`)
 	require.Contains(t, string(failoverErr.ResponseBody), `"upstream_disconnected"`)
 
-	// The handler decides the final response after failover; this attempt emits no stream error.
+	// The handler decides the final response after failover; this attempt
+	// emits no stream error.
 	require.NotContains(t, rec.Body.String(), "stream_read_error")
 }
 
-// TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough checks read failures after client output starts.
-// The response ends with a stream_read_error event.
+// TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough fails
+// with unexpected EOF after a complete usage event reaches the client. The
+// retained result accompanies a stream_read_error event and no failover signal.
 func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -890,7 +1055,8 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-	// The first read supplies a complete SSE event; the second returns unexpected EOF.
+	// The first read supplies a complete SSE event; the second returns
+	// unexpected EOF.
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -910,8 +1076,8 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	var failoverErr *forwardcore.UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "已经向客户端写过字节时不能再 failover")
 
-	// The Anthropic SSE error includes a machine-readable stream_read_error type
-	// and a diagnostic message for clients to display.
+	// The Anthropic SSE error includes a machine-readable stream_read_error
+	// type and a diagnostic message for clients to display.
 	body := rec.Body.String()
 	require.Contains(t, body, "event: error\n", "必须按 Anthropic SSE 标准发送 error 事件帧")
 	require.Contains(t, body, `"type":"error"`, "data 必须含 type:error 顶层字段（Anthropic 标准）")
@@ -919,7 +1085,10 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	require.Contains(t, body, "upstream stream disconnected", "error.message 必须包含具体根因，Claude Code 等客户端才能显示有效错误文案")
 }
 
-// TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses checks redaction of internal and upstream addresses from net.OpError.
+// TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses fails before
+// output using net.OpError with private source and upstream destination
+// addresses. The failover body retains the connection-reset cause while
+// omitting address and port fragments.
 func TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -959,8 +1128,10 @@ func TestHandleStreamingResponse_FailoverBodyDoesNotLeakAddresses(t *testing.T) 
 	require.Contains(t, body, "upstream stream disconnected")
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData checks raw data from an error event in an HTTP 200 stream.
-// Forward uses that data for the failover response body and Ops diagnostics.
+// TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData
+// receives an overloaded error as the first HTTP-success stream frame. The
+// result is nil and the typed error retains exact raw JSON for diagnostic
+// extraction.
 func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -973,6 +1144,9 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed an overloaded error as the first complete frame and close the
+	// producer so the reader returns raw error data before any content
+	// output.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: error\ndata: " + errorJSON + "\n\n"))
@@ -991,7 +1165,9 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	require.Equal(t, "Anthropic upstream is overloaded", upstream.ExtractErrorMessage([]byte(sseErr.RawData)))
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine checks typed errors for events without data.
+// TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine receives an error
+// event with no data line before EOF. Event recognition returns the typed
+// stream error with empty RawData for outer classification.
 func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -1002,6 +1178,8 @@ func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed an error event with no data line and close the pipe so typed
+	// event recognition is exercised with an empty RawData value.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: error\n\n"))
@@ -1016,8 +1194,10 @@ func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	require.Equal(t, "", sseErr.RawData)
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput checks that raw error data survives partial output.
-// The handler stops failover after the client response has started.
+// TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput receives a
+// usage event before a rate-limit error frame. The typed error retains exact
+// raw data and the recorder confirms earlier message_start bytes reached
+// output.
 func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -1030,6 +1210,8 @@ func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testi
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed message_start before the rate-limit error so the downstream
+	// writer has begun when the reader returns the later typed raw error.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}` + "\n\n"))
@@ -1047,7 +1229,9 @@ func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testi
 	require.Contains(t, rec.Body.String(), "message_start")
 }
 
-// TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine checks that RawData accepts non-JSON errors.
+// TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine receives plain-text
+// data in a complete error frame. RawData retains that text while error-message
+// extraction returns empty and remains safe to invoke.
 func TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine(t *testing.T) {
 	svc := newStreamingRuntimeFixture(0)
 
@@ -1058,6 +1242,9 @@ func TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine(t *testing.T) {
 	pr, pw := io.Pipe()
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
+	// Feed a complete error frame carrying plain text and close the pipe so
+	// RawData extraction can be checked separately from JSON message
+	// parsing.
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: error\ndata: not-a-json-payload\n\n"))

@@ -31,13 +31,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// stubIdentityCache supplies fingerprints for gateway header construction.
+// stubIdentityCache records copied fingerprint values for OAuth header
+// preparation tests.
 type stubIdentityCache struct {
-	fingerprint *anthropic.Fingerprint
-	setCalls    int
-	lastSet     *anthropic.Fingerprint
+	// fingerprint and lastSet share the outer copy saved by SetFingerprint;
+	// setCalls counts those replacements. GetFingerprint returns another
+	// outer copy, and nil storage reports no cached identity.
+	fingerprint *anthropic.Fingerprint // current stored fingerprint value
+	setCalls    int                    // recorded fingerprint write count
+	lastSet     *anthropic.Fingerprint // last written fingerprint copy
 }
 
+// newVertexBetaTestContext installs the supplied beta in a preparation request
+// fixture. Empty beta input leaves the header absent, allowing tests to
+// exercise body-implied feature handling and builder defaults.
 func newVertexBetaTestContext(t *testing.T, anthropicBeta string) *requestBoundaryFixture {
 	t.Helper()
 
@@ -49,6 +56,8 @@ func newVertexBetaTestContext(t *testing.T, anthropicBeta string) *requestBounda
 	return c
 }
 
+// newVertexServiceAccount creates an Anthropic Vertex target with test project
+// and location.
 func newVertexServiceAccount(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -63,7 +72,10 @@ func newVertexServiceAccount(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens checks removal of betas rejected by Vertex (issue #3358).
+// TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens constructs a Vertex
+// request with client identity and supported feature betas together. The
+// outgoing header omits the listed unsupported tokens and retains both
+// allowlisted features.
 func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 	c := newVertexBetaTestContext(t,
 		"claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,"+
@@ -88,7 +100,8 @@ func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 		"prompt-caching-scope-2026-01-05",
 		"redact-thinking-2026-02-12",
 		"thinking-token-count-2026-05-13",
-		// Client identity betas are absent from the Vertex service account allowlist.
+		// Client identity betas are absent from the Vertex service
+		// account allowlist.
 		"claude-code-20250219",
 		"oauth-2025-04-20",
 	} {
@@ -106,7 +119,9 @@ func TestVertexBetaFilter_StripsUnsupportedClaudeCodeTokens(t *testing.T) {
 	}
 }
 
-// TestVertexBetaFilter_DropsHeaderWhenAllUnsupported checks omission of an empty outgoing beta header.
+// TestVertexBetaFilter_DropsHeaderWhenAllUnsupported constructs a Vertex
+// request whose client betas all fail its allowlist. The resulting request has
+// an empty outgoing anthropic-beta header after filtering finishes.
 func TestVertexBetaFilter_DropsHeaderWhenAllUnsupported(t *testing.T) {
 	c := newVertexBetaTestContext(t,
 		"prompt-caching-scope-2026-01-05,redact-thinking-2026-02-12")
@@ -124,7 +139,9 @@ func TestVertexBetaFilter_DropsHeaderWhenAllUnsupported(t *testing.T) {
 		"所有 token 被剥离后不应残留 anthropic-beta header")
 }
 
-// TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta checks removal of body fields whose final beta token is absent.
+// TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta supplies a context-
+// management body field with a client beta filtered by Vertex. The outgoing
+// body removes that field and the final beta header is empty.
 func TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta(t *testing.T) {
 	c := newVertexBetaTestContext(t, "prompt-caching-scope-2026-01-05")
 
@@ -143,7 +160,9 @@ func TestVertexBetaFilter_BodySanitizeKeysOnFinalBeta(t *testing.T) {
 	require.Empty(t, anthropic.GetHeaderRaw(req.Header, "anthropic-beta"))
 }
 
-// TestVertexBetaFilter_BlocksViaBetaPolicy checks rejection of a blocked beta on Vertex requests.
+// TestVertexBetaFilter_BlocksViaBetaPolicy constructs a Vertex request with a
+// feature blocked by current settings. Construction returns BetaBlockedError
+// and the configured message for the selected feature token.
 func TestVertexBetaFilter_BlocksViaBetaPolicy(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -174,7 +193,9 @@ func TestVertexBetaFilter_BlocksViaBetaPolicy(t *testing.T) {
 	require.Equal(t, "context management is blocked", err.Error())
 }
 
-// TestFilterVertexBetaTokens checks the allowlist, removal set, deduplication, and empty input.
+// TestFilterVertexBetaTokens compares Vertex allowlist filtering, an additional
+// drop set, duplicate tokens, and empty input. The returned header contains the
+// admitted unique tokens in the exercised order.
 func TestFilterVertexBetaTokens(t *testing.T) {
 	t.Run("whitelist filters unsupported", func(t *testing.T) {
 		out := vertex.FilterBetaTokens(
@@ -206,6 +227,10 @@ func TestFilterVertexBetaTokens(t *testing.T) {
 	})
 }
 
+// TestGatewayService_BuildAnthropicVertexServiceAccountRequest prepares a
+// service-account request with inbound authorization and Anthropic headers. The
+// wire URL selects the configured Vertex project/location, bearer token
+// replaces client auth, and body carries the Vertex version.
 func TestGatewayService_BuildAnthropicVertexServiceAccountRequest(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -252,6 +277,9 @@ func TestGatewayService_BuildAnthropicVertexServiceAccountRequest(t *testing.T) 
 	require.Equal(t, "hello", gjson.GetBytes(got, "messages.0.content").String())
 }
 
+// readRequestBodyForTest consumes prepared request bytes and fails the test on
+// missing body or read failure. It retains caller ownership of closing the
+// request reader after assertions finish.
 func readRequestBodyForTest(t *testing.T, req *http.Request) []byte {
 	t.Helper()
 	require.NotNil(t, req.Body)
@@ -260,7 +288,10 @@ func readRequestBodyForTest(t *testing.T, req *http.Request) []byte {
 	return body
 }
 
-// TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing checks body/header consistency.
+// TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing
+// supplies context-management edits while the incoming beta header omits their
+// feature token. Vertex output removes the body field and keeps its outgoing
+// beta set consistent.
 func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManagementWhenBetaMissing(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -272,7 +303,8 @@ func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManageme
 			Credentials: map[string]any{"project_id": "vertex-proj", "location": "us-east5"},
 		},
 	}
-	// The body can carry context_management from the client or an earlier normalization step.
+	// The body can carry context_management from the client or an earlier
+	// normalization step.
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"messages":[{"role":"user","content":"hi"}]}`)
 
 	svc := NewRuntime(Dependencies{}, Options{})
@@ -291,7 +323,10 @@ func TestGatewayService_BuildAnthropicVertexServiceAccount_StripsContextManageme
 		"与 body 对称：outgoing anthropic-beta header 也不含 context-management beta")
 }
 
-// TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent checks the allowed-beta path.
+// TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent
+// supplies a permitted context-management beta and its body edits. Vertex
+// request construction retains both the field and its corresponding feature
+// token in the final header.
 func TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManagementWhenBetaPresent(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -320,6 +355,10 @@ func TestGatewayService_BuildAnthropicVertexServiceAccount_PreservesContextManag
 		"与 body 对称：outgoing anthropic-beta header 同步含 context-management beta")
 }
 
+// TestGatewayService_AnthropicAPIKeyPassthrough_BearerAuthScheme selects API
+// key bearer authentication for both Messages and counting. The outgoing
+// requests use the provider token and paths and omit inbound cookie/API-key
+// credentials. The Messages wire bytes retain the supplied JSON body.
 func TestGatewayService_AnthropicAPIKeyPassthrough_BearerAuthScheme(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -367,7 +406,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BearerAuthScheme(t *testing.T
 	require.Empty(t, anthropic.GetHeaderRaw(countReq.Header, "cookie"))
 }
 
-// TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL checks upstream URL validation.
+// TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL
+// supplies a malformed provider base URL to native API key construction. The
+// builder reports an error for this URL, protecting validation in the native
+// request construction path.
 func TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBaseURL(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -388,6 +430,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBas
 	require.Error(t, err)
 }
 
+// TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle sets
+// the passthrough extra on an OAuth target. The provider remains in the OAuth
+// path and construction supplies bearer authentication with the OAuth beta
+// token.
 func TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -411,13 +457,17 @@ func TestGatewayService_AnthropicOAuth_NotAffectedByAPIKeyPassthroughToggle(t *t
 	require.Contains(t, anthropic.GetHeaderRaw(req.Header, "anthropic-beta"), anthropic.BetaOAuth, "OAuth 链路仍应按原逻辑补齐 oauth beta")
 }
 
+// TestBuildOAuthRequest_BillingMatchesWireUserAgent compares mimic and cached
+// fingerprint headers across Messages and counting. The billing text uses the
+// final user-agent version and fingerprint, and returned wire bytes match the
+// request reader.
 func TestBuildOAuthRequest_BillingMatchesWireUserAgent(t *testing.T) {
 	for _, endpoint := range []string{"messages", "count_tokens"} {
 		for _, tc := range []struct {
-			name      string
-			mimic     bool
-			identity  bool
-			disableFP bool
+			name      string // table scenario name
+			mimic     bool   // Claude Code mimic switch
+			identity  bool   // fingerprint service installation flag
+			disableFP bool   // fingerprint unification disable flag
 		}{
 			{name: "mimic_overrides_cached_version", mimic: true, identity: true},
 			{name: "mimic_without_identity", mimic: true},
@@ -477,6 +527,8 @@ func TestBuildOAuthRequest_BillingMatchesWireUserAgent(t *testing.T) {
 	}
 }
 
+// newAnthropicAPIKeyPassthroughProviderForBetaTest creates a schedulable native
+// API key target for beta tests.
 func newAnthropicAPIKeyPassthroughProviderForBetaTest() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -494,6 +546,9 @@ func newAnthropicAPIKeyPassthroughProviderForBetaTest() *gatewayprovider.Executi
 	}
 }
 
+// readUpstreamBodyForTest consumes the constructed upstream body and fails on
+// unavailable bytes. It reports helper location through t.Helper, while callers
+// retain responsibility for closing the reader.
 func readUpstreamBodyForTest(t *testing.T, req *http.Request) []byte {
 	t.Helper()
 	require.NotNil(t, req.Body)
@@ -502,6 +557,10 @@ func readUpstreamBodyForTest(t *testing.T, req *http.Request) []byte {
 	return b
 }
 
+// TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsContextManagementWhenClientHeaderMissingBeta
+// supplies native Messages context-management edits without their client beta.
+// The prepared API key request removes the unsupported body field before the
+// upstream receives it.
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsContextManagementWhenClientHeaderMissingBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -520,6 +579,10 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsContextManagementW
 		"API-key passthrough + 客户端未带 context-management beta → strip body 字段")
 }
 
+// TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesContextManagementWhenClientHeaderHasBeta
+// supplies native Messages context-management edits with the matching client
+// beta. API key passthrough keeps that body field available in the prepared
+// upstream request.
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesContextManagementWhenClientHeaderHasBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -537,6 +600,10 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesContextManageme
 		"API-key passthrough + 客户端带 context-management beta → 字段保留（不过度删除）")
 }
 
+// TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_StripsContextManagementWhenClientHeaderMissingBeta
+// supplies context-management edits to native counting without their beta. The
+// prepared counting request removes that field while using the API key
+// passthrough builder.
 func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_StripsContextManagementWhenClientHeaderMissingBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -554,6 +621,10 @@ func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_StripsContextManageme
 		"count_tokens passthrough + 客户端未带 context-management beta → strip")
 }
 
+// TestBuildUpstreamRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd
+// builds a Haiku OAuth mimic request with context-management edits. Prepared
+// body retains the feature while outgoing betas include context-management and
+// the Claude Code identity token.
 func TestBuildUpstreamRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -566,7 +637,8 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd
 			Schedulable: true,
 		},
 	}
-	// Haiku mimicry sends the full beta set, including context-management, so the body field stays.
+	// Haiku mimicry sends the full beta set, including context-management,
+	// so the body field stays.
 	body := []byte(`{"model":"claude-haiku-4-5","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildRequest(
@@ -588,6 +660,10 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd
 		"Haiku mimic 必须携带 claude-code beta")
 }
 
+// TestBuildUpstreamRequest_APIKeyHaiku_RemainsUnmimicked builds an API key
+// Haiku request carrying client system text and thinking. The prepared system
+// remains client-owned, API key beta selection applies, and OAuth billing text
+// is absent.
 func TestBuildUpstreamRequest_APIKeyHaiku_RemainsUnmimicked(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -616,6 +692,10 @@ func TestBuildUpstreamRequest_APIKeyHaiku_RemainsUnmimicked(t *testing.T) {
 	require.NotContains(t, string(outBody), "x-anthropic-billing-header:")
 }
 
+// TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndToEnd
+// builds a Sonnet OAuth mimic request with context-management edits. The
+// outgoing body and beta header both retain that feature under the full mimic
+// beta set.
 func TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndToEnd(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -628,8 +708,8 @@ func TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndTo
 			Schedulable: true,
 		},
 	}
-	// Sonnet mimicry sends FullClaudeCodeMimicryBetas, including context-management,
-	// so the corresponding body field stays.
+	// Sonnet mimicry sends FullClaudeCodeMimicryBetas, including
+	// context-management, so the corresponding body field stays.
 	body := []byte(`{"model":"claude-sonnet-4-6","context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
 	svc := NewRuntime(Dependencies{}, Options{Configured: true})
 	req, _, err := svc.buildRequest(
@@ -649,9 +729,13 @@ func TestBuildUpstreamRequest_OAuthMimicNonHaiku_PreservesContextManagementEndTo
 		"对称约束：outgoing anthropic-beta header 同时含 context-management beta")
 }
 
+// TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField
+// builds a transparent Haiku OAuth request with a real client context-
+// management beta. Both the outgoing beta and body feature remain present after
+// request preparation.
 func TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField(t *testing.T) {
-	// A real Claude Code client supplies the context-management beta for Haiku.
-	// Passing the beta through must also keep its body field.
+	// A real Claude Code client supplies the context-management beta for
+	// Haiku. Passing the beta through must also keep its body field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -684,9 +768,14 @@ func TestBuildUpstreamRequest_OAuthTransparentHaikuWithRealCCBeta_PreservesField
 		"回归保护：真 CC + haiku + 客户端带 beta token 时，clear_thinking_20251015 功能不能静默失效")
 }
 
+// TestBuildCountTokensRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd
+// builds Haiku counting through OAuth mimic preparation with context-
+// management edits. The final request retains that feature together with
+// context-management and token-counting beta tokens.
 func TestBuildCountTokensRequest_OAuthMimicHaiku_PreservesContextManagementEndToEnd(t *testing.T) {
 	// Counting injects BetaContextManagement and BetaTokenCounting.
-	// Sanitization keeps the body field because the final header contains its beta token.
+	// Sanitization keeps the body field because the final header contains
+	// its beta token.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -719,8 +808,13 @@ func TestBuildCountTokensRequest_OAuthMimicHaiku_PreservesContextManagementEndTo
 		"count_tokens 路径必须含 token-counting beta")
 }
 
+// TestBuildCountTokensRequest_OAuthMimic_DropsInjectedMaxTokens first
+// normalizes an OAuth generation request with its default max_tokens. Counting
+// preparation removes that generation parameter from the outgoing request body
+// before sending it.
 func TestBuildCountTokensRequest_OAuthMimic_DropsInjectedMaxTokens(t *testing.T) {
-	// OAuth normalization injects max_tokens=128000 for generation; count_tokens rejects that field.
+	// OAuth normalization injects max_tokens=128000 for generation;
+	// count_tokens rejects that field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -750,8 +844,13 @@ func TestBuildCountTokensRequest_OAuthMimic_DropsInjectedMaxTokens(t *testing.T)
 		"count_tokens 上游请求体不得包含 max_tokens")
 }
 
+// TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd
+// builds Haiku API key counting with context-management edits and an unrelated
+// beta. Prepared counting bytes omit the field because its feature token is
+// absent.
 func TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd(t *testing.T) {
-	// API key counting strips context_management when the client omits its beta token.
+	// API key counting strips context_management when the client omits its
+	// beta token.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -779,6 +878,10 @@ func TestBuildCountTokensRequest_APIKeyHaiku_StripsContextManagementEndToEnd(t *
 		"count_tokens API-key + 客户端未带 beta token → body strip")
 }
 
+// TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_PreservesContextManagementWhenClientHeaderHasBeta
+// builds native API key counting with context- management beta and edits
+// together. The prepared outgoing body retains that field under the
+// client-selected feature header.
 func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_PreservesContextManagementWhenClientHeaderHasBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
@@ -796,9 +899,13 @@ func TestBuildCountTokensRequestAnthropicAPIKeyPassthrough_PreservesContextManag
 		"count_tokens passthrough + 客户端带 context-management beta → 字段保留")
 }
 
+// TestBuildUpstreamRequest_APIKeyHaikuWithContextManagement_StripsField builds
+// an API key Haiku generation request with context-management edits and an
+// unrelated beta. The prepared body removes the unsupported feature before
+// reaching upstream transport.
 func TestBuildUpstreamRequest_APIKeyHaikuWithContextManagement_StripsField(t *testing.T) {
-	// The API key request carries context_management without its beta token.
-	// Sanitization must remove the body field.
+	// The API key request carries context_management without its beta
+	// token. Sanitization must remove the body field.
 
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -826,6 +933,10 @@ func TestBuildUpstreamRequest_APIKeyHaikuWithContextManagement_StripsField(t *te
 		"API-key + haiku + 客户端未带 beta token → body 字段必须被 strip")
 }
 
+// TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd supplies a
+// default fallbacks value to Haiku OAuth mimic construction. The outgoing body
+// omits fallbacks and its beta while keeping the mimic context-management
+// token.
 func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -861,6 +972,10 @@ func TestBuildUpstreamRequest_OAuthMimicHaiku_StripsFallbacksEndToEnd(t *testing
 		"mimic beta 集合本身不受影响")
 }
 
+// TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsFallbacksWhenClientHeaderMissingBeta
+// supplies native API key fallbacks without the client feature beta. The
+// prepared Messages body removes that field before the upstream request is
+// constructed.
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsFallbacksWhenClientHeaderMissingBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -879,6 +994,9 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_StripsFallbacksWhenClien
 		"API-key passthrough + 客户端未带 fallback beta → strip body 字段")
 }
 
+// TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesFallbacksWhenClientHeaderHasBeta
+// supplies native API key fallback models with their client beta. The prepared
+// body retains both entries and their order in the upstream array.
 func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesFallbacksWhenClientHeaderHasBeta(t *testing.T) {
 	c := &requestBoundaryFixture{}
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -903,6 +1021,9 @@ func TestBuildUpstreamRequestAnthropicAPIKeyPassthrough_PreservesFallbacksWhenCl
 	require.Equal(t, "claude-sonnet-4-6", fallbacks[1].String())
 }
 
+// TestClaudeAPIKeyFastModeCannotBypassSystemFilter forces Fast mode while the
+// attempt filter removes its beta. Request construction leaves both body speed
+// and Fast header token absent after the policy is applied.
 func TestClaudeAPIKeyFastModeCannotBypassSystemFilter(t *testing.T) {
 	svc := NewRuntime(Dependencies{Prices: fastModeTestResolver()}, Options{Configured: true})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeAPIKey}}
@@ -918,12 +1039,16 @@ func TestClaudeAPIKeyFastModeCannotBypassSystemFilter(t *testing.T) {
 	require.False(t, anthropic.ContainsBetaToken(anthropic.GetHeaderRaw(req.Header, "anthropic-beta"), anthropic.BetaFastMode))
 }
 
+// fastModeTestContext installs Fast policy, group identity, and model values in
+// context.
 func fastModeTestContext(policy, model string) context.Context {
 	ctx := apikey.WithFastModePolicy(context.Background(), policy)
 	ctx = requeststate.WithGroup(ctx, &routing.Group{ID: 11})
 	return context.WithValue(ctx, telemetry.Model, model)
 }
 
+// fastModeTestResolver builds offline price fixtures supporting the tested Fast
+// mode requests.
 func fastModeTestResolver() *billing.PriceResolver {
 	pricing := catalogprovider.NewServiceFromSnapshot(catalogprovider.Options{ModelLookupCandidates: modelidentity.CandidatesFactory}, nil, catalogprovider.Snapshot{Data: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.5": {
@@ -943,6 +1068,9 @@ func fastModeTestResolver() *billing.PriceResolver {
 	return billingtestkit.PriceResolver(nil, billing)
 }
 
+// GetFingerprint returns an outer value copy of the stored fixture fingerprint.
+// A missing fingerprint returns nil, allowing request preparation to exercise
+// fingerprint creation or default header selection.
 func (s *stubIdentityCache) GetFingerprint(_ context.Context, _ int64) (*anthropic.Fingerprint, error) {
 	if s.fingerprint == nil {
 		return nil, nil
@@ -951,6 +1079,9 @@ func (s *stubIdentityCache) GetFingerprint(_ context.Context, _ int64) (*anthrop
 	return &clone, nil
 }
 
+// SetFingerprint counts the write and saves an outer copy for current and last-
+// set assertions. The supplied fingerprint must exist, and both saved pointers
+// reference the same copied value.
 func (s *stubIdentityCache) SetFingerprint(_ context.Context, _ int64, fingerprint *anthropic.Fingerprint) error {
 	s.setCalls++
 	clone := *fingerprint
@@ -959,10 +1090,16 @@ func (s *stubIdentityCache) SetFingerprint(_ context.Context, _ int64, fingerpri
 	return nil
 }
 
+// GetMaskedSessionID returns an empty identity with success in this header
+// fixture. Session masking persistence is outside these assertions, so callers
+// receive its missing-value result during request preparation.
 func (s *stubIdentityCache) GetMaskedSessionID(_ context.Context, _ int64) (string, error) {
 	return "", nil
 }
 
+// SetMaskedSessionID accepts session identity writes with success for this
+// header fixture. The fixture records fingerprint writes separately, and these
+// tests do not retain masked-session values for later reads.
 func (s *stubIdentityCache) SetMaskedSessionID(_ context.Context, _ int64, _ string) error {
 	return nil
 }

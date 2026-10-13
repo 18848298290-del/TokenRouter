@@ -17,11 +17,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ErrorForTest exposes handleError to external tests.
+// ErrorForTest runs the runtime error handler with fresh attempt state for
+// external tests. The supplied response remains caller-owned, including any
+// body rebuilt during health or error inspection.
 func ErrorForTest(runtime *Runtime, ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, response *http.Response, retry bool, models ...string) (*forward.Result, error) {
 	return runtime.handleError(ctx, output, &AttemptState{}, target, response, retry, models...)
 }
 
+// TestGatewayFailoverSideEffects_BedrockUsesMappedModel observes a Bedrock
+// maintenance error with a model-specific temporary rule. Health stops
+// scheduling and records the mapped model scope, while provider-wide temporary
+// writes stay absent.
 func TestGatewayFailoverSideEffects_BedrockUsesMappedModel(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	healthObserver := gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{Store: repo, Options: providercore.HealthOptions{}})

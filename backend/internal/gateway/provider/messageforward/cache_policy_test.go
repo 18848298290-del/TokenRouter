@@ -15,6 +15,10 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// TestGatewayCacheTTLGlobalSetting_TargetResolution enables global cache
+// injection before adding a provider usage override. The resolved bucket
+// changes from five minutes to one hour, protecting provider override
+// precedence.
 func TestGatewayCacheTTLGlobalSetting_TargetResolution(t *testing.T) {
 	repo := &betaSettingsFixture{values: map[string]string{
 		gateway.SettingKeyEnableAnthropicCacheTTL1hInjection: "true",
@@ -35,6 +39,9 @@ func TestGatewayCacheTTLGlobalSetting_TargetResolution(t *testing.T) {
 	require.Equal(t, claude.CacheTTLTarget1h, target)
 }
 
+// TestGatewayCacheTTLGlobalSetting_RequestInjectionScope compares Anthropic
+// OAuth, Setup Token, API key, and another platform under the enabled setting.
+// Invalidating changed settings disables previously eligible request injection.
 func TestGatewayCacheTTLGlobalSetting_RequestInjectionScope(t *testing.T) {
 	repo := &betaSettingsFixture{values: map[string]string{
 		gateway.SettingKeyEnableAnthropicCacheTTL1hInjection: "true",
@@ -47,10 +54,17 @@ func TestGatewayCacheTTLGlobalSetting_RequestInjectionScope(t *testing.T) {
 	require.False(t, svc.injectTTL(context.Background(), &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}))
 
 	repo.values[gateway.SettingKeyEnableAnthropicCacheTTL1hInjection] = "false"
+	// Invalidate the settings snapshot after changing the fixture value so
+	// the next eligibility check reads the updated flag during the same
+	// test.
 	svc.dependencies.Settings.InvalidateForwarding()
 	require.False(t, svc.injectTTL(context.Background(), &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeOAuth}}))
 }
 
+// TestRewriteMessageCacheControlIfEnabled_DefaultKeepsClientAnchors passes
+// existing client message cache annotations through an unconfigured runtime.
+// Both one-hour and five-minute TTL values remain present in the returned JSON
+// body.
 func TestRewriteMessageCacheControlIfEnabled_DefaultKeepsClientAnchors(t *testing.T) {
 	body := []byte(`{"messages":[
 		{"role":"user","content":[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
@@ -65,6 +79,10 @@ func TestRewriteMessageCacheControlIfEnabled_DefaultKeepsClientAnchors(t *testin
 	require.Equal(t, "5m", gjson.GetBytes(out, "messages.2.content.0.cache_control.ttl").String())
 }
 
+// TestRewriteMessageCacheControlIfEnabled_OptInPreservesLegacyRewrite enables
+// message breakpoint rewriting for a history carrying client TTL annotations.
+// The chosen first and last breakpoints receive five-minute TTLs while the
+// intermediate anchor disappears.
 func TestRewriteMessageCacheControlIfEnabled_OptInPreservesLegacyRewrite(t *testing.T) {
 	body := []byte(`{"messages":[
 		{"role":"user","content":[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}}]},

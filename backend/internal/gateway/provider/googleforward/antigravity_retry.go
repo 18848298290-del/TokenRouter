@@ -11,7 +11,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// antigravityRetryAdapter binds the current attempt to the shared provider retry service.
+// Antigravity platform retry receives a provider record view while transport
+// and health callbacks use the execution target. A callback can replace Extra
+// on that target, so the retry view needs the resulting reference before it
+// considers another model window or signature recovery.
+//
+// Transport and health callbacks refresh the view after their work, while the
+// retry service's Changed callback copies Extra back to the execution target.
+// These are synchronous reference assignments within an attempt. Credential
+// selection occurs before retry binding; each request keeps the application
+// services, prepared bytes, context, and diagnostic output usable until retries
+// and response processing finish.
+
+// antigravityRetryAdapter binds one attempt to the shared provider retry
+// service. Callers keep the selected provider, output, context, prepared bytes,
+// transport, and reached observation callbacks usable through synchronous
+// retry.
+//
+// The retry service receives a record view distinct from the execution target.
+// Do and HandleError refresh that view's Extra reference after their callbacks;
+// Changed publishes the retry service's Extra reference back to the target.
+// Replacing a model-window map during transport therefore affects later
+// recovery prechecks instead of leaving them on the earlier map.
 func (s *Antigravity) antigravityRetryAdapter(p antigravityRetryLoopParams) (*antigravity.RetryAdapter, antigravity.RetryInput) {
 	value := gatewayprovider.ExecutionRecord(p.provider)
 	factory := s.Retry
@@ -32,7 +53,10 @@ func (s *Antigravity) antigravityRetryAdapter(p antigravityRetryLoopParams) (*an
 		PolicyModelFallback: requeststate.HealthModel(p.ctx, nil),
 
 		Do: func(req *http.Request) (*http.Response, error) {
-			// Exchange may update quota windows; synchronize them before signature recovery retries.
+			// Transport callbacks can update execution quota
+			// windows; copy the current Extra reference back into
+			// the retry view before later signature recovery
+			// inspects those windows.
 			resp, err := p.httpUpstream.Do(req, p.proxyURL, p.provider.Record.ID, p.provider.Record.Concurrency)
 			value.Extra = gatewayprovider.ExecutionRecord(p.provider).Extra
 			return resp, err

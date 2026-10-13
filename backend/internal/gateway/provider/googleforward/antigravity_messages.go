@@ -23,11 +23,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Forward converts Claude requests to Gemini and executes them through Antigravity.
+// Antigravity Messages resolves the thinking-qualified final model before
+// converting Claude input into v1internal Gemini bytes. The selected model is
+// retained as completion upstream metadata while the response uses the original
+// client model name and requested output mode.
 //
-// The shared retry adapter handles provider cooldowns and bounded retries.
-// Provider-switch signals become UpstreamFailoverError for the caller.
+// Both buffered and streaming clients use the upstream streaming action. The
+// shared retry service runs before Claude signature or budget recovery, and
+// provider-switch signals are translated for the outer gateway. Prompt-too-long
+// errors retain typed body and request identity before ordinary health
+// handling; project configuration and qualifying status errors can request
+// replay before response presentation. The platform executor closes the
+// selected successful response after synchronous adaptation.
+
+// Forward executes one Claude request through a selected Antigravity OAuth
+// provider and returns Messages completion metadata. Final model selection
+// includes thinking state before whitelist and capability checks.
 //
+// Both client modes consume the streaming upstream action, with output
+// adaptation collecting a buffered reply when requested. The shared provider
+// retry service precedes signature and budget recovery. Prompt-length failures
+// return typed evidence, provider switches retain sticky billing hints, and
+// other HTTP errors use health observation and client presentation before
+// completion data is returned.
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_native_execution
 func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, body []byte, isStickySession bool) (*forwardcore.MessagesResult, error) {
 	c := &attempt{Output: output}
@@ -46,7 +64,9 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	}
 
 	originalModel := claudeReq.Model
-	// Include thinking in final-model resolution so eligibility and execution use the same model.
+	// Resolve the final whitelist model with this request thinking flag so
+	// capability preparation, upstream identity, and admission refer to the
+	// same selected model variant.
 	thinkingEnabled := claudeReq.Thinking != nil && (claudeReq.Thinking.Type == "enabled" || claudeReq.Thinking.Type == "adaptive")
 	modelCtx := requeststate.WithThinkingEnabled(ctx, thinkingEnabled)
 	mappedModel := gatewayprovider.ExecutionModelPolicy(provider).FinalAntigravityModel(modelCtx, claudeReq.Model)
@@ -79,7 +99,9 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		proxyURL = provider.Record.Proxy.URL()
 	}
 
-	// Antigravity requests include the configured identity prompt.
+	// Resolve transform controls for the selected final model before
+	// converting the Claude body, then send the Antigravity identity patch
+	// along with that prepared request.
 	transformOpts := s.getClaudeTransformOptions(ctx)
 	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
 	if attributesErr != nil {
@@ -91,15 +113,19 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
 	transformOpts.ThinkingResolved = true
-	transformOpts.EnableIdentityPatch = true // Required by the Antigravity request format.
+	// This forwarding path enables identity injection after reading
+	// transform settings so its prepared Antigravity request includes the
+	// platform identity patch for every call.
+	transformOpts.EnableIdentityPatch = true
 
 	geminiBody, err := antigravity.TransformClaudeToGeminiWithOptions(&claudeReq, projectID, mappedModel, transformOpts)
 	if err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", "Invalid request")
 	}
 
-	// Use the upstream streaming endpoint for both client response modes.
-	// Non-streaming clients receive the collected and converted stream.
+	// Both client modes consume the v1internal streaming action; response
+	// adaptation emits Claude events for streaming callers and collects
+	// those events for a buffered reply.
 	action := "streamGenerateContent"
 
 	retry, params := s.antigravityRetryAdapter(antigravityRetryLoopParams{
@@ -145,7 +171,10 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	target.Exchange = func(context.Context) (*http.Response, error) {
 		result, err := retry.AntigravityRetryLoop(params)
 		if err != nil {
-			// Convert the switch signal so the handler can select another provider.
+			// Translate the platform provider-switch signal into
+			// the gateway error type so the outer selection loop
+			// receives the sticky cache-billing hint for another
+			// attempt.
 			if switchErr, ok := antigravity.IsAntigravityProviderSwitchError(err); ok {
 				return nil, &forwardcore.UpstreamFailoverError{
 					StatusCode: http.StatusServiceUnavailable,
@@ -153,7 +182,10 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 					ForceCacheBilling: switchErr.IsStickySession,
 				}
 			}
-			// Report client cancellation separately from upstream failure.
+			// Inspect the active inbound request after retry
+			// failure so client disconnection uses its own
+			// presentation error before the generic
+			// exhausted-upstream failure is chosen.
 			if c.RequestContext().Err() != nil {
 				return nil, c.ClaudeError(http.StatusBadGateway, "client_disconnected", "Client disconnected before upstream response")
 			}
@@ -199,7 +231,10 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		}
 		respBody := s.readUpstreamErrorBody(resp)
 		if resp.StatusCode >= 400 {
-			// Return a typed prompt-length error for the caller's fallback path.
+			// Prompt-length failure returns captured bytes and
+			// request identity in its typed error before ordinary
+			// health handling, allowing the caller to select its
+			// configured prompt fallback.
 			if resp.StatusCode == http.StatusBadRequest && antigravity.IsPromptTooLongError(respBody) {
 				upstreamMsg := strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody))
 				upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
@@ -236,7 +271,10 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 
 			s.handleUpstreamError(ctx, prefix, provider, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", isStickySession)
 
-			// Recognized project configuration errors allow same-provider retry and failover.
+			// Recognized project configuration status 400 returns
+			// replay permission after health observation, leaving
+			// the outer provider loop to retry or choose another
+			// selected target.
 			if resp.StatusCode == http.StatusBadRequest {
 				msg := strings.ToLower(strings.TrimSpace(googlewire.ExtractPlatformMessage(respBody)))
 				if upstream.IsGoogleProjectConfigError(msg) {

@@ -26,11 +26,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// TestAntigravityCompatOAuthUsesNativeTokenAndRoute compares Chat and Responses
+// with a fixed cached OAuth token. Captured authorization uses that token and
+// v1internal streaming, while client output and completion usage retain the
+// expected protocol values.
 func TestAntigravityCompatOAuthUsesNativeTokenAndRoute(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body []byte
+		name string // table scenario name
+		path string // HTTP fixture request path
+		body []byte // client request fixture bytes
+		// selected compatibility fixture invocation
 		call func(*googleforward.Antigravity, context.Context, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
 	}{
 		{
@@ -99,12 +104,15 @@ func TestAntigravityCompatOAuthUsesNativeTokenAndRoute(t *testing.T) {
 	}
 }
 
-// TestAntigravityCompatResponsesRestoresNamespaceTools checks restoration of Codex namespace tools.
+// TestAntigravityCompatResponsesRestoresNamespaceTools compares buffered and
+// streaming Responses namespace-tool requests. The captured upstream flattened
+// name is restored to client name and namespace, and the flattened spelling is
+// absent from output.
 func TestAntigravityCompatResponsesRestoresNamespaceTools(t *testing.T) {
 	tests := []struct {
-		name   string
-		stream bool
-		body   []byte
+		name   string // table scenario name
+		stream bool   // client streaming fixture flag
+		body   []byte // client request fixture bytes
 	}{
 		{
 			name: "non-streaming",
@@ -148,12 +156,15 @@ func TestAntigravityCompatResponsesRestoresNamespaceTools(t *testing.T) {
 	}
 }
 
-// TestAntigravityCompatChatRestoresForkToolNames checks tool-name rewriting in both directions.
+// TestAntigravityCompatChatRestoresForkToolNames compares buffered and
+// streaming Chat requests with a rewritten session tool. Captured upstream
+// bytes use the selected rewrite while client output restores the requested
+// tool name.
 func TestAntigravityCompatChatRestoresForkToolNames(t *testing.T) {
 	tests := []struct {
-		name   string
-		stream bool
-		body   []byte
+		name   string // table scenario name
+		stream bool   // client streaming fixture flag
+		body   []byte // client request fixture bytes
 	}{
 		{
 			name: "non-streaming",
@@ -197,12 +208,17 @@ func TestAntigravityCompatChatRestoresForkToolNames(t *testing.T) {
 	}
 }
 
+// TestAntigravityCompatRejectsUnsupportedProviderType supplies upstream and
+// Setup Token targets to Chat or Responses compatibility. Preparation returns
+// no result and local status 400 identifying the required Antigravity OAuth
+// provider kind.
 func TestAntigravityCompatRejectsUnsupportedProviderType(t *testing.T) {
 	tests := []struct {
-		name         string
-		path         string
-		providerType string
-		call         func(*googleforward.Antigravity, context.Context, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
+		name         string // table scenario name
+		path         string // HTTP fixture request path
+		providerType string // selected provider credential kind
+		// selected compatibility fixture invocation
+		call func(*googleforward.Antigravity, context.Context, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
 	}{
 		{
 			name: "chat completions upstream",
@@ -244,12 +260,16 @@ func TestAntigravityCompatRejectsUnsupportedProviderType(t *testing.T) {
 	}
 }
 
+// TestBuildAntigravityCompatGeminiBody_ConfiguresMixedToolInvocations compares
+// mixed server/client tools against either category alone. The wrapped native
+// request adds camelCase server-side invocation configuration for the mixed
+// case and omits it otherwise.
 func TestBuildAntigravityCompatGeminiBody_ConfiguresMixedToolInvocations(t *testing.T) {
 	svc := newAntigravityFixture(antigravityDependencies{})
 	tests := []struct {
-		name      string
-		tools     string
-		wantField bool
+		name      string // table scenario name
+		tools     string // input tool fixture JSON
+		wantField bool   // expected invocation-option presence flag
 	}{
 		{
 			name: "mixed server and client tools",
@@ -293,6 +313,10 @@ func TestBuildAntigravityCompatGeminiBody_ConfiguresMixedToolInvocations(t *test
 	}
 }
 
+// TestAntigravityCompatChatMixedBuiltInToolsEnableServerSideInvocations
+// converts Chat function, search, and code-execution tools together through a
+// Claude-family route. Captured upstream bytes retain both function
+// declarations and built-in tools with server-side invocation configuration.
 func TestAntigravityCompatChatMixedBuiltInToolsEnableServerSideInvocations(t *testing.T) {
 	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
 	svc := newAntigravityCompatibilityFixture(googleforward.Options{MaxLineSize: 500 * 1024 * 1024}, upstream)
@@ -321,11 +345,15 @@ func TestAntigravityCompatChatMixedBuiltInToolsEnableServerSideInvocations(t *te
 	require.True(t, gjson.GetBytes(requestBody, "request.tools.2.codeExecution").Exists())
 }
 
+// TestAntigravityCompatPreservesChatTokenLimit compares positive Chat limits,
+// completion-limit precedence, and values around the platform ceiling. Captured
+// Gemini maxOutputTokens reflects the requested positive limit capped at 64000
+// after precedence selection.
 func TestAntigravityCompatPreservesChatTokenLimit(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want int64
+		name string // table scenario name
+		body string // client request fixture bytes
+		want int64  // expected max-output token value
 	}{
 		{
 			name: "legacy max_tokens below bridge floor",
@@ -385,9 +413,14 @@ func TestAntigravityCompatPreservesChatTokenLimit(t *testing.T) {
 	}
 }
 
+// TestPreserveChatCompletionTokenLimitIgnoresAbsentAndNonPositiveValues
+// supplies absent and nonpositive limits to the token-limit helper, including
+// completion-limit precedence. The existing Anthropic max_tokens value remains
+// unchanged for each exercised input.
 func TestPreserveChatCompletionTokenLimitIgnoresAbsentAndNonPositiveValues(t *testing.T) {
 	tests := []struct {
-		name    string
+		name string // table scenario name
+		// Chat token-limit fixture value
 		request protocolopenai.ChatCompletionsRequest
 	}{
 		{name: "absent"},
@@ -409,10 +442,14 @@ func TestPreserveChatCompletionTokenLimitIgnoresAbsentAndNonPositiveValues(t *te
 	}
 }
 
+// TestAntigravityCompatRoutesByMappedModelFamily compares Gemini and Claude-
+// family selected models during Chat compatibility. Captured v1internal model
+// matches the input and sessionId presence follows the exercised model-family
+// transform branch.
 func TestAntigravityCompatRoutesByMappedModelFamily(t *testing.T) {
 	tests := []struct {
-		model         string
-		wantSessionID bool
+		model         string // selected route model identifier
+		wantSessionID bool   // expected native session presence
 	}{
 		{model: "gemini-3.1-pro-high", wantSessionID: false},
 
@@ -437,6 +474,10 @@ func TestAntigravityCompatRoutesByMappedModelFamily(t *testing.T) {
 	}
 }
 
+// TestAntigravityCompatUnauthorizedIsCredentialFailure returns upstream status
+// 401 with correlation identity before output. Typed failover carries provider-
+// auth scope/reason, next-provider action, safe status/message, and the
+// correlation header while the client body remains empty.
 func TestAntigravityCompatUnauthorizedIsCredentialFailure(t *testing.T) {
 	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{{
 		StatusCode: http.StatusUnauthorized,
@@ -464,11 +505,16 @@ func TestAntigravityCompatUnauthorizedIsCredentialFailure(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+// TestAntigravityCompatUsageOnlyNonStreamingTriggersFailover supplies usage-
+// only upstream events to buffered Chat and Responses requests. Both return
+// retryable failover with nil result and leave response body and content-type
+// header unstarted.
 func TestAntigravityCompatUsageOnlyNonStreamingTriggersFailover(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body []byte
+		name string // table scenario name
+		path string // HTTP fixture request path
+		body []byte // client request fixture bytes
+		// selected compatibility fixture invocation
 		call func(*googleforward.Antigravity, context.Context, *gin.Context, *gatewayprovider.ExecutionProvider, []byte) (*forwardcore.MessagesResult, error)
 	}{
 		{
@@ -528,6 +574,9 @@ func TestAntigravityCompatUsageOnlyNonStreamingTriggersFailover(t *testing.T) {
 	}
 }
 
+// newAntigravityCompatProvider creates a test target with the supplied provider
+// kind. It carries a stale record token, project, and selected identity
+// mappings so compatibility fixtures can observe cached-token replacement.
 func newAntigravityCompatProvider(providerType string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -561,6 +610,9 @@ func newAntigravityCompatProvider(providerType string) *gatewayprovider.Executio
 	}
 }
 
+// antigravityCompatSuccessResponse creates a fresh stream response containing
+// text, terminal reason, and usage. Its reader is handed to platform execution
+// for response consumption and closure during each fixture call.
 func antigravityCompatSuccessResponse() *http.Response {
 	body := `data: {"response":{"responseId":"resp_3757","candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":3}}}` + "\n\n"
 	return &http.Response{
@@ -575,4 +627,6 @@ func antigravityCompatSuccessResponse() *http.Response {
 	}
 }
 
+// antigravityCompatIntPtr returns a pointer to the supplied fixture token-limit
+// value.
 func antigravityCompatIntPtr(v int) *int { return &v }

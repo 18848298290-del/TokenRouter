@@ -1,4 +1,7 @@
-// Package messageforward prepares Messages upstream requests, forwards and converts them, and handles responses and failures.
+// Package messageforward executes selected-provider Anthropic requests for native
+// Messages, counting, and OpenAI conversion. Each attempt retains its own beta,
+// tool restoration, and response state while injected application services provide
+// credentials, transport, health policy, and request-time settings.
 //
 // Reading entry points:
 //   - runtime.go: Messages, token counting, and Chat/Responses conversion entry points.

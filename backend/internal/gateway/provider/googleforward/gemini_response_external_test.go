@@ -18,15 +18,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// structuredLogCaptureMu serializes fixtures that replace the process logger
+// sink so one test restore cannot remove another test capture.
 var structuredLogCaptureMu sync.Mutex
 
+// inMemoryLogSink records shallow-copied structured events for response
+// diagnostic assertions.
 type inMemoryLogSink struct {
-	mu     sync.Mutex
-	events []*logging.LogEvent
+	// mu protects events during append and message scanning. WriteLogEvent
+	// copies the outer event and field map before publication; mutable
+	// values within that map remain shared.
+	mu     sync.Mutex          // event collection access mutex
+	events []*logging.LogEvent // captured structured event pointers
 }
 
-// TestHandleNativeNonStreamingResponse_FeedsImageCounter checks that native generateContent
-// response bodies reach image observation so returned images are available for billing.
+// TestHandleNativeNonStreamingResponse_FeedsImageCounter reads a native
+// response containing an inline image under a custom alias. The attempt counter
+// and returned count selection both recognize that observed image.
 func TestHandleNativeNonStreamingResponse_FeedsImageCounter(t *testing.T) {
 	c := newGeminiImageTestContext(t)
 	c.Images = 0
@@ -49,6 +57,10 @@ func TestHandleNativeNonStreamingResponse_FeedsImageCounter(t *testing.T) {
 	require.Equal(t, 1, c.ImageCountForTest("nana-banana-2", "nana-banana-2"))
 }
 
+// TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLogs
+// reads native JSON with response headers while debug output is disabled. The
+// body is presented successfully and captured structured messages contain no
+// Gemini header-log prefix.
 func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLogs(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
 	defer restore()
@@ -79,6 +91,9 @@ func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLo
 	require.False(t, logSink.ContainsMessage("[GeminiAPI]"), "debug 关闭时不应输出 Gemini 响应头日志")
 }
 
+// WriteLogEvent copies a nonnil event and its outer field map before appending
+// under the mutex. Callers keep the source stable during copying; nested
+// mutable field values remain shared.
 func (s *inMemoryLogSink) WriteLogEvent(event *logging.LogEvent) {
 	if event == nil {
 		return
@@ -88,11 +103,17 @@ func (s *inMemoryLogSink) WriteLogEvent(event *logging.LogEvent) {
 		cloned.Fields = make(map[string]any, len(event.Fields))
 		maps.Copy(cloned.Fields, event.Fields)
 	}
+	// Publish the copied event under the same mutex used by message lookup
+	// so assertions scan a stable collection while logging can append
+	// another observation.
 	s.mu.Lock()
 	s.events = append(s.events, &cloned)
 	s.mu.Unlock()
 }
 
+// ContainsMessage scans captured nonnil events under the collection mutex for a
+// substring. The lock pairs with append, letting assertions use one stable
+// event collection during each search.
 func (s *inMemoryLogSink) ContainsMessage(substr string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,8 +125,21 @@ func (s *inMemoryLogSink) ContainsMessage(substr string) bool {
 	return false
 }
 
+// captureStructuredLog installs a process logger sink and returns it with a
+// restore callback. Successful callers invoke restore after synchronous capture
+// assertions; the callback clears the sink before releasing the package mutex.
+//
+// The mutex stays held across initialization, sink publication, and the
+// caller's observations so another capture cannot replace that sink before this
+// test clears it. Initialization failure ends the test before a restore
+// callback is returned. Captured events use their separate collection mutex for
+// append and lookup while this outer mutex governs ownership of the process
+// sink.
 func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 	t.Helper()
+	// Hold the package capture mutex until the returned restore clears the
+	// process sink, preventing overlapping fixture ownership of global
+	// logging output.
 	structuredLogCaptureMu.Lock()
 
 	err := logging.Init(logging.InitOptions{
@@ -129,6 +163,9 @@ func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 	sink := &inMemoryLogSink{}
 	logging.SetSink(sink)
 	return sink, func() {
+		// Clear this fixture sink before releasing capture ownership so
+		// the next test cannot install a sink that this restore would
+		// remove.
 		logging.SetSink(nil)
 		structuredLogCaptureMu.Unlock()
 	}

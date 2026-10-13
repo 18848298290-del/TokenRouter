@@ -15,7 +15,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// exchangeOptions configures Anthropic's request exchange and retries for one provider.
+// Anthropic exchanges rebuild requests with the current attempt state and
+// selected provider. Signature and budget recovery are implemented by the
+// upstream exchange, while these callbacks supply model rules, bounded retry
+// settings, transport routing, and request diagnostics.
+
+// exchangeOptions binds one provider exchange to Messages builders, transport,
+// diagnostics, and retry settings. Callback readers borrow target and attempt
+// state during execution; replace receives request bodies selected by recovery.
 func (r *Runtime) exchangeOptions(output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, token, tokenType, model string, stream, mimic bool, proxy string, profile *tlsfingerprint.Profile, replace func([]byte) error) anthropic.ExchangeOptions {
 	options := anthropic.ExchangeOptions{
 		ProviderID: target.Record.ID, ProviderName: target.Record.Name, Platform: target.Record.Platform,
@@ -62,6 +69,10 @@ func (r *Runtime) exchangeOptions(output HTTPBoundary, state *AttemptState, targ
 	return options
 }
 
+// passthroughExchange replaces ordinary construction with API key passthrough
+// building and retains shared exchange settings. Parsed inputs synchronize body
+// replacement into Parsed and input.Body, which stay mutable through the
+// exchange.
 func (r *Runtime) passthroughExchange(output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, token, proxy string, input *forward.APIKeyInput) anthropic.ExchangeOptions {
 	options := r.exchangeOptions(output, state, target, token, "apikey", input.RequestModel, input.RequestStream, false, proxy, nil, func(body []byte) error {
 		if input.Parsed != nil {
@@ -92,13 +103,18 @@ func (r *Runtime) passthroughExchange(output HTTPBoundary, state *AttemptState, 
 	return options
 }
 
-// shouldRectify checks the initial signature error and feature flags; later retries use signaturePattern.
+// shouldRectify checks model eligibility and current switches for initial
+// signature recovery. API key targets require both rectifier switches and may
+// use configured patterns; other targets use the standard signature switch.
 func (r *Runtime) shouldRectify(ctx context.Context, target *gatewayadapter.ExecutionProvider, body []byte, model string) bool {
 	if !modelidentity.ShouldRectifyThinkingSignatureError(model) {
 		return false
 	}
 	if target.Record.Type == capability.ProviderTypeAPIKey {
 		settings, err := r.dependencies.Settings.GetRectifierSettings(ctx)
+		// Unavailable settings leave API key recovery disabled here,
+		// preventing a custom pattern from initiating recovery without
+		// both enabling switches for this provider.
 		if err != nil || !settings.Enabled || !settings.APIKeySignatureEnabled {
 			return false
 		}
@@ -107,12 +123,18 @@ func (r *Runtime) shouldRectify(ctx context.Context, target *gatewayadapter.Exec
 	return thinkingSignatureError(body) && r.dependencies.Settings.IsSignatureRectifierEnabled(ctx)
 }
 
+// signaturePattern recognizes the standard signature error or API key patterns
+// during later recovery. Failed pattern settings reads return false; other
+// credential kinds rely on the standard matcher result.
 func (r *Runtime) signaturePattern(ctx context.Context, target *gatewayadapter.ExecutionProvider, body []byte) bool {
 	if thinkingSignatureError(body) {
 		return true
 	}
 	if target.Record.Type == capability.ProviderTypeAPIKey {
 		settings, err := r.dependencies.Settings.GetRectifierSettings(ctx)
+		// Unavailable later pattern settings return no custom match,
+		// leaving the exchange recovery decision dependent on its
+		// already evaluated standard signature checks.
 		if err != nil {
 			return false
 		}
@@ -121,6 +143,8 @@ func (r *Runtime) signaturePattern(ctx context.Context, target *gatewayadapter.E
 	return false
 }
 
+// thinkingSignatureError recognizes Anthropic thinking signature messages and
+// logs matcher diagnostics.
 func thinkingSignatureError(body []byte) bool {
 	matched, diagnostic := anthropic.IsThinkingBlockSignatureError(upstream.ExtractErrorMessage(body))
 	if diagnostic != "" {

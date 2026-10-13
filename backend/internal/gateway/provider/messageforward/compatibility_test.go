@@ -6,12 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsCountTokensUnsupported404 compares counting-route errors against
+// generic 404 and status-400 responses. The classifier recognizes the two
+// counting-route messages and rejects empty or unrelated missing-resource
+// messages.
 func TestIsCountTokensUnsupported404(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		want       bool
+		name       string // table scenario name
+		statusCode int    // upstream HTTP status
+		body       string // upstream error JSON
+		want       bool   // expected unsupported-route classification
 	}{
 		{
 			name:       "exact endpoint not found",

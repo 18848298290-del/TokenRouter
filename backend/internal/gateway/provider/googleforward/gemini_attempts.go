@@ -32,30 +32,61 @@ import (
 	geminicli "github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// Gemini Messages and native actions use one selected-provider exchange while
+// keeping the client model and upstream model separate. Project-bearing OAuth
+// generation can request an upstream stream for a buffered client, and native
+// counting can return an estimate when the OAuth token lacks the required
+// scope.
+//
+// Temporary error rules can be applied inside the retry loop before final
+// presentation. An internal response marker carries that completed decision so
+// final policy handling does not repeat its persistence step. Captured error
+// bytes are rebuilt for later inspection, while successful response handling
+// combines upstream usage with request-size and attempt image observations.
+// Local counting estimates return empty usage, distinguishing them from
+// observed upstream tokens.
+
+// These values bound provider retry count, carry applied temporary policy
+// between error stages, and identify compatibility request and presentation
+// values.
 const (
-	geminiMaxRetries = 5
+	geminiMaxRetries = 5 // same-provider retry count cap
 
-	geminiAppliedTempPolicyHeader = "X-TokenRouter-Internal-Temp-Policy-Applied"
+	geminiAppliedTempPolicyHeader = "X-TokenRouter-Internal-Temp-Policy-Applied" // applied temporary-policy marker
 
-	// Fill missing functionCall thought signatures with the compatibility sentinel.
+	// Missing functionCall thought signatures receive this sentinel through the
+	// shared bridge so converted tool history can use the compatibility request
+	// representation.
 	// Protocol reference: https://ai.google.dev/gemini-api/docs/thought-signatures
 	geminiDummyThoughtSignature = "skip_thought_signature_validator"
 
-	geminiCustomCodeSkippedClientMessage = "Upstream gateway error"
+	geminiCustomCodeSkippedClientMessage = "Upstream gateway error" // custom-code miss client message
 )
 
+// readUpstreamErrorBody returns available diagnostic bytes up to the error
+// inspection cap. Missing bodies return nil and reading errors are discarded;
+// callers retain responsibility for closing or rebuilding the response.
 func (s *Gemini) readUpstreamErrorBody(resp *http.Response) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
+	// Keep policy and presentation diagnostics within a default 512 KiB
+	// prefix.
 	limit := int64(512 << 10)
 	if s != nil && s.Options.Configured && s.Options.LogErrorBody && s.Options.LogErrorBodyMaxBytes > int(limit) {
 		limit = int64(s.Options.LogErrorBodyMaxBytes)
 	}
+	// Retain the bounded prefix even after a source read failure because
+	// policy and client presentation still classify the available upstream
+	// error evidence.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
 	return body
 }
 
+// validateUpstreamBaseURL normalizes a provider endpoint under the configured
+// URL policy. Configured disabled allowlisting uses format validation;
+// otherwise the allowed-host policy is required and failures return wrapped URL
+// errors.
 func (s *Gemini) validateUpstreamBaseURL(raw string) (string, error) {
 	if s.Options.Configured && !s.Options.URLAllowlistEnabled {
 		normalized, err := egress.ValidateURLFormat(raw, s.Options.AllowInsecureHTTP)
@@ -77,7 +108,15 @@ func (s *Gemini) validateUpstreamBaseURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// Forward prepares one Messages-to-Gemini attempt; the outer gateway selects replacement providers.
+// Forward converts one selected-provider Messages request into Gemini and
+// returns separate client and wire model metadata. It resolves model attributes
+// before conversion controls and builds fresh attempt image state.
+//
+// Project-bearing OAuth can use an upstream stream for a buffered client.
+// Signature recovery retains the original Claude body for cleanup and
+// reconversion, while later policy and HTTP presentation classify the selected
+// response before output. Successful completion combines actual token usage
+// with request image-size hints and per-attempt image count selection.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, body []byte) (*forwardcore.MessagesResult, error) {
 	c := &attempt{Output: output}
@@ -86,8 +125,8 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	startTime := time.Now()
 
 	var req struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+		Model  string `json:"model"`  // client request model identifier
+		Stream bool   `json:"stream"` // client streaming response flag
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("parse request: %w", err)
@@ -97,7 +136,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	}
 
 	originalModel := req.Model
-	// Apply model mappings for every credential type so OAuth execution agrees with selection and catalog resolution.
+	// Resolve provider mapping before conversion capabilities and request
+	// planning so OAuth, API key, and service-account attempts send the
+	// same selected wire model.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
 	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(body)
@@ -127,6 +168,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 		return nil, fmt.Errorf("unsupported provider type: %s", provider.Record.Type)
 	}
 	useUpstreamStream := req.Stream
+	// Project-bearing OAuth can collect upstream events for a buffered
+	// Messages client, so the request plan tracks client and upstream
+	// stream choices separately.
 	if provider.Record.Type == capability.ProviderTypeOAuth && !req.Stream && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
 		useUpstreamStream = true
 	}
@@ -151,6 +195,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 			return nil, err
 		}
 		converted, err = applyGeminiModelParameters(converted, stripped, attributes, false)
+		// After signature cleanup and reconversion succeed, disable
+		// thinking when the resolved toggle permits it so recovery
+		// sends the stripped history with compatible controls.
 		if err == nil && attributes.Attributes.HasReasoningOption("toggle") {
 			converted, err = sjson.SetBytes(converted, "generationConfig.thinkingConfig", bridge.GeminiThinkingConfig{BudgetSet: true})
 		}
@@ -271,7 +318,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	usage := &result.Usage
 	firstTokenMs := result.FirstTokenMs
 
-	// Resolve image count and size for billing.
+	// Combine request size hints with the attempt observation after
+	// reading; observed image counts take precedence over model-name
+	// inference in completion metadata.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)
@@ -302,6 +351,17 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	}, nil
 }
 
+// ForwardNative executes generateContent, streamGenerateContent, or countTokens
+// for a selected provider. Missing model, action, or body receives a local
+// Google error, and native part/signature cleanup precedes attribute
+// preparation.
+//
+// Project-bearing OAuth generation can use an upstream stream independently of
+// client mode. Insufficient OAuth counting scope selects a local estimate with
+// empty result usage, before custom error policy handling. Other HTTP failures
+// use provider policy and protocol presentation, while successful generation
+// returns separate logical model, wire model, token usage, and image
+// observations.
 func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, originalModel string, action string, stream bool, body []byte) (*forwardcore.MessagesResult, error) {
 	c := &attempt{Output: output}
 
@@ -318,22 +378,26 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return nil, c.GoogleError(http.StatusBadRequest, "Request body is empty")
 	}
 
-	// Gemini rejects messages with empty parts.
+	// Use filtered native parts when JSON cleanup succeeds; failed cleanup
+	// retains the supplied body so its remaining validation stays with
+	// subsequent request preparation.
 	if filteredBody, err := gemini.FilterEmptyParts(body); err == nil {
 		body = filteredBody
 	}
 
 	switch action {
 	case "generateContent", "streamGenerateContent", "countTokens":
-		// ok
 	default:
 		return nil, c.GoogleError(http.StatusNotFound, "Unsupported action: "+action)
 	}
 
-	// Supply the compatibility sentinel for function calls missing a thought signature.
+	// Supply the bridge compatibility signature for missing functionCall
+	// history before model attribute preparation, leaving existing
+	// signature values available to platform handling.
 	body = ensureGeminiFunctionCallThoughtSignatures(body)
 
-	// Resolve the group-mapped model through provider mappings for every credential type.
+	// Resolve the group-mapped model through provider mappings for every
+	// credential type.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), originalModel, provideradapter.ModelDefaults())
 	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
 	if err != nil {
@@ -352,7 +416,9 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	useUpstreamStream := stream
 	upstreamAction := action
 	if provider.Record.Type == capability.ProviderTypeOAuth && !stream && action == "generateContent" && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
-		// Collect the upstream stream because Code Assist may return an empty non-streaming response.
+		// Project-bearing OAuth generation uses an upstream stream
+		// collected into the client response; keep the original client
+		// mode separate from this request action selection.
 		useUpstreamStream = true
 		upstreamAction = "streamGenerateContent"
 	}
@@ -406,8 +472,11 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 
 			if resp.StatusCode >= 400 {
 				respBody := s.readUpstreamErrorBody(resp)
-				// Estimate countTokens when OAuth lacks AI Studio scope.
-				// This check precedes custom error policy evaluation.
+				// Insufficient OAuth counting scope selects a
+				// local estimate before error policy, and
+				// returned usage stays empty so this
+				// compatibility response does not imply an
+				// upstream token observation.
 				if action == "countTokens" && isOAuth && gemininative.IsGeminiInsufficientScope(resp.Header, respBody) {
 					estimated := gemininative.EstimateGeminiCountTokens(body)
 					c.Count(estimated)
@@ -524,7 +593,9 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	usage := &result.Usage
 	firstTokenMs := result.FirstTokenMs
 
-	// Resolve image count and size for billing.
+	// Combine request size hints with the attempt observation after
+	// reading; observed image counts take precedence over model-name
+	// inference in completion metadata.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)
@@ -555,15 +626,24 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	}, nil
 }
 
-// checkErrorPolicyInLoop evaluates error policy before retrying.
-// A match tells the caller to stop retrying. The returned response body is readable
-// after policy inspection; responses that need no inspection are returned unchanged.
+// checkErrorPolicyInLoop inspects failures before another Gemini retry and
+// returns a readable response body afterward. Success statuses and missing
+// Health return the original response unchanged.
+//
+// For inspected failures, captured bytes replace the closed source reader and
+// headers are cloned into the replacement response. A temporary rule adds the
+// internal applied marker so final handling can reuse its persistence decision.
+// Any selected policy stops this platform retry loop, leaving outer provider
+// and pool replay with the handler budget.
 func (s *Gemini) checkErrorPolicyInLoop(
 	ctx context.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, mappedModel string,
 ) (matched bool, rebuilt *http.Response) {
 	if resp.StatusCode < 400 || s.Health == nil {
 		return false, resp
 	}
+	// Retain the inspected prefix before closing the network reader, then
+	// clone headers and rebuild the body so final error handling can read
+	// that evidence.
 	body := s.readUpstreamErrorBody(resp)
 	_ = resp.Body.Close()
 	rebuilt = &http.Response{
@@ -573,26 +653,35 @@ func (s *Gemini) checkErrorPolicyInLoop(
 	}
 	policy := s.Health.CheckErrorPolicy(ctx, gatewayprovider.ExecutionRecord(provider), gatewayprovider.HealthObservationFromContext(ctx, resp.StatusCode, nil, body, []string{mappedModel}))
 	if policy == providercore.ErrorPolicyTempUnscheduled {
-		// Mark the temporary scheduling policy as applied
-		// so final error handling does not repeat the database update.
+		// Carry the applied temporary-policy marker on the rebuilt
+		// response so final error handling recognizes the persisted
+		// decision before attempting the same state update again.
 		rebuilt.Header.Set(geminiAppliedTempPolicyHeader, "1")
 	}
-	// Pool retries use the handler budget; do not add Gemini retries after a policy match.
+	// Any selected policy ends this platform retry loop, allowing the outer
+	// handler budget to decide pool replay after the response is returned.
 	return policy != providercore.ErrorPolicyNone, rebuilt
 }
 
+// shouldRetryGeminiUpstreamError selects quota and server retries plus Code
+// Assist status 403. OAuth records with missing oauth_type and a project ID
+// select legacy Code Assist mode for that decision.
 func (s *Gemini) shouldRetryGeminiUpstreamError(provider *gatewayprovider.ExecutionProvider, statusCode int) bool {
 	switch statusCode {
 	case 429, 500, 502, 503, 504, 529:
 		return true
 	case 403:
-		// Code Assist activation or quota propagation can produce a transient 403.
+		// Restrict status-403 retries to Code Assist credentials,
+		// including the legacy project-bearing form, so other OAuth
+		// modes proceed to final provider policy.
 		if provider == nil || provider.Record.Type != capability.ProviderTypeOAuth {
 			return false
 		}
 		oauthType := strings.ToLower(strings.TrimSpace(provider.View().GetCredential("oauth_type")))
 		if oauthType == "" && strings.TrimSpace(provider.View().GetCredential("project_id")) != "" {
-			// Older Code Assist records identify the mode through project_id alone.
+			// A populated project_id with no oauth_type selects
+			// legacy Code Assist mode, keeping historical records
+			// eligible for the same status-403 retry branch.
 			oauthType = "code_assist"
 		}
 		return oauthType == "code_assist"
@@ -601,6 +690,8 @@ func (s *Gemini) shouldRetryGeminiUpstreamError(provider *gatewayprovider.Execut
 	}
 }
 
+// shouldFailoverGeminiUpstreamError recognizes authentication, quota, and
+// server statuses for provider switching.
 func (s *Gemini) shouldFailoverGeminiUpstreamError(statusCode int) bool {
 	switch statusCode {
 	case 401, 403, 429, 529:
@@ -610,8 +701,10 @@ func (s *Gemini) shouldFailoverGeminiUpstreamError(statusCode int) bool {
 	}
 }
 
-// skippedErrorPolicyFailoverError permits failover when custom policy skips health changes.
-// Pool mode allows same-provider retry only for configured statuses.
+// skippedErrorPolicyFailoverError returns a failover signal when the status
+// qualifies despite skipped health handling. Other statuses return nil; pool
+// mode supplies same-provider replay permission only for configured retryable
+// statuses.
 func (s *Gemini) skippedErrorPolicyFailoverError(c *attempt, provider *gatewayprovider.ExecutionProvider, statusCode int, respBody []byte, upstreamRequestID string) *forwardcore.UpstreamFailoverError {
 	if !s.shouldFailoverGeminiUpstreamError(statusCode) {
 		return nil
@@ -643,7 +736,9 @@ func (s *Gemini) skippedErrorPolicyFailoverError(c *attempt, provider *gatewaypr
 	}
 }
 
-// upstreamErrorDetail truncates the upstream error body according to logging settings.
+// upstreamErrorDetail returns a bounded UTF-8 error prefix under enabled
+// configured logging. Nil runtime or disabled logging returns empty, and
+// nonpositive configured limits select the 2048-byte diagnostic cap.
 func (s *Gemini) upstreamErrorDetail(body []byte) string {
 	if s == nil || !s.Options.Configured || !s.Options.LogErrorBody {
 		return ""
@@ -655,6 +750,10 @@ func (s *Gemini) upstreamErrorDetail(body []byte) string {
 	return logredact.TruncateUTF8(string(body), maxBytes)
 }
 
+// ForwardAIStudioGET reads one selected-provider model resource through the
+// native model reader. Nil provider returns an error; transport and token
+// callbacks use current provider inputs, and response headers follow the
+// injected filter.
 func (s *Gemini) ForwardAIStudioGET(ctx context.Context, provider *gatewayprovider.ExecutionProvider, path string) (*gemininative.HTTPResult, error) {
 	if provider == nil {
 		return nil, errors.New("provider is nil")
@@ -684,8 +783,15 @@ func (s *Gemini) ForwardAIStudioGET(ctx context.Context, provider *gatewayprovid
 	return gemininative.ReadAIStudioModel(ctx, path, options)
 }
 
-// applyGeminiUpstreamErrorPolicy applies custom and default handling across Gemini entry points.
-// Pool bypass skips the default observer so a 429 does not create a local cooldown.
+// applyGeminiUpstreamErrorPolicy selects explicit policy before the default
+// Gemini observer. An applied temporary marker is consumed first and returns
+// the persisted scheduling decision from the retry loop.
+//
+// Fresh custom matches and temporary rules stop scheduling; custom skips and
+// pool bypass return directly. Only the remaining path invokes default health
+// observation, so pool quota handling does not add a local default cooldown.
+// The returned decision remains paired with the selected provider policy for
+// outer retry and presentation choices.
 func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -698,6 +804,9 @@ func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 	if s == nil || provider == nil {
 		return decision
 	}
+	// Consume the internal applied marker before normal policy evaluation
+	// so a temporary rule already persisted in the exchange loop is
+	// returned without another update.
 	if headers != nil && headers.Get(geminiAppliedTempPolicyHeader) == "1" {
 		headers.Del(geminiAppliedTempPolicyHeader)
 		decision.Policy = providercore.ErrorPolicyTempUnscheduled
@@ -719,24 +828,41 @@ func (s *Gemini) applyGeminiUpstreamErrorPolicy(
 	return decision
 }
 
-// ensureGeminiFunctionCallThoughtSignatures fills missing function-call signatures through the protocol adapter.
+// ensureGeminiFunctionCallThoughtSignatures delegates missing function-call
+// signature compatibility to the native bridge. It supplies the configured
+// sentinel while the bridge owns JSON parsing and returned byte-slice handling.
 func ensureGeminiFunctionCallThoughtSignatures(body []byte) []byte {
 	return bridge.NativeEnsureGeminiFunctionCallThoughtSignatures(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
 }
 
-// convertClaudeMessagesToGeminiGenerateContent converts a Claude body using the Gemini protocol adapter.
+// convertClaudeMessagesToGeminiGenerateContent delegates Messages conversion
+// using native Gemini bridge options. The compatibility signature is supplied
+// to the converter, and conversion errors return before an upstream request is
+// planned.
 func convertClaudeMessagesToGeminiGenerateContent(body []byte) ([]byte, error) {
 	return bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{DummyThoughtSignature: geminiDummyThoughtSignature}, body)
 }
 
+// extractImageInputSize returns the trimmed camelCase request image-size hint.
+// Malformed JSON or absent generation/image configuration returns empty,
+// leaving billing-tier defaults to the caller normalizer after extraction.
 func (s *Gemini) extractImageInputSize(body []byte) string {
 	var req struct {
-		GenerationConfig *struct {
-			ImageConfig *struct {
-				ImageSize string `json:"imageSize"`
+		// GenerationConfig is optional in the JSON view; absent
+		// configuration leaves image-size extraction empty for the
+		// caller normalizer to interpret.
+		GenerationConfig *struct { // request generation option object
+			// ImageConfig is optional within GenerationConfig; a
+			// missing object leaves the image-size hint absent
+			// while other generation options remain irrelevant to
+			// extraction.
+			ImageConfig *struct { // request image option object
+				ImageSize string `json:"imageSize"` // request image-size hint
 			} `json:"imageConfig"`
 		} `json:"generationConfig"`
 	}
+	// Treat malformed JSON as an absent size hint so the caller
+	// billing-tier normalizer can apply its default after extraction.
 	if err := json.Unmarshal(body, &req); err != nil {
 		return ""
 	}
@@ -748,7 +874,10 @@ func (s *Gemini) extractImageInputSize(body []byte) string {
 	return ""
 }
 
-// observeHealth evaluates the response and copies updated credentials and extra state into the execution target.
+// observeHealth delegates default Gemini error observation using the selected
+// execution record. When the observer returns updated data, credential and
+// extra references are assigned back into the target for later attempt
+// decisions.
 func (s *Gemini) observeHealth(ctx context.Context, target *gatewayprovider.ExecutionProvider, status int, headers http.Header, body []byte) {
 	record := gatewayprovider.ExecutionRecord(target)
 	updated := s.Errors.Observe(ctx, record, status, headers, body, gatewayprovider.HealthObservationFromContext(ctx, status, headers, body, nil))

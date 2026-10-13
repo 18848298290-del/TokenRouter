@@ -11,6 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Native Antigravity Gemini forwarding retains the original model and client
+// stream mode while the shared flow prepares the selected upstream request.
+// Optional group/session values supply sticky deletion context, and each call
+// starts with fresh image and response state.
+
+// ForwardGemini executes a native Google request through one selected
+// Antigravity provider. It installs client protocol and optional attribute
+// context, applies supplied session options in order, and returns per-attempt
+// completion observations.
 func (s *Antigravity) ForwardGemini(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, originalModel string, action string, stream bool, body []byte, isStickySession bool, options ...forwardcore.GeminiSessionOption) (*forwardcore.MessagesResult, error) {
 	ctx = requeststate.WithClientProtocol(ctx, protocol.ProtocolGeminiGenerateContent)
 	if routing.ModelAttributesFromContext(ctx) == nil {

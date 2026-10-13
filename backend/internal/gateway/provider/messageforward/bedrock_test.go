@@ -13,6 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// TestResolveBedrockBetaTokensForRequest_BlocksOnOriginalAnthropicToken
+// supplies an Anthropic beta that policy blocks before Bedrock conversion.
+// Request preparation returns the configured block message even though the
+// platform later translates tokens.
 func TestResolveBedrockBetaTokensForRequest_BlocksOnOriginalAnthropicToken(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -47,6 +51,10 @@ func TestResolveBedrockBetaTokensForRequest_BlocksOnOriginalAnthropicToken(t *te
 	}
 }
 
+// TestResolveBedrockBetaTokensForRequest_FiltersAfterBedrockTransform filters
+// the Bedrock tool-search token produced from an Anthropic beta. The translated
+// removal target disappears from the result while request preparation completes
+// successfully.
 func TestResolveBedrockBetaTokensForRequest_FiltersAfterBedrockTransform(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -82,9 +90,9 @@ func TestResolveBedrockBetaTokensForRequest_FiltersAfterBedrockTransform(t *test
 	}
 }
 
-// TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedComputerUse checks
-// that the block rule also applies when the header omits computer-use
-// and the tool in the body causes the beta token to be injected.
+// TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedComputerUse
+// supplies a computer-use tool with an empty beta header. Preparation returns
+// the policy block message for the beta inferred from the body tool.
 func TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedComputerUse(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -120,9 +128,9 @@ func TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedComputerUse(t 
 	}
 }
 
-// TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedToolSearch checks
-// that a blocked tool-search beta is rejected even when it is inferred
-// from the request body rather than supplied in the header.
+// TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedToolSearch
+// supplies a tool-search body tool with an empty beta header. The configured
+// block message is returned for the platform token inferred during preparation.
 func TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedToolSearch(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{
@@ -158,8 +166,10 @@ func TestResolveBedrockBetaTokensForRequest_BlocksBodyAutoInjectedToolSearch(t *
 	}
 }
 
-// TestResolveBedrockBetaTokensForRequest_PassesWhenNoBlockRuleMatches checks
-// that an injected token passes when its beta has no matching block rule.
+// TestResolveBedrockBetaTokensForRequest_PassesWhenNoBlockRuleMatches blocks
+// context-1m while the body requests a computer-use tool. The resolved
+// computer-use beta remains in the result because its token has no matching
+// block rule.
 func TestResolveBedrockBetaTokensForRequest_PassesWhenNoBlockRuleMatches(t *testing.T) {
 	settings := &anthropic.BetaPolicySettings{
 		Rules: []anthropic.BetaPolicyRule{

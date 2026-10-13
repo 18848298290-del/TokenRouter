@@ -25,8 +25,29 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// ForwardAsResponses serves OpenAI Responses requests through Gemini.
-// It shares Gemini execution, retry, and error policy with Chat Completions.
+// OpenAI compatibility uses an Anthropic request as an intermediate form before
+// preparing Gemini input. Original client bytes remain available for final-
+// route reasoning controls and recorded effort, while logical client model and
+// mapped upstream model remain separate in response and completion metadata.
+//
+// Responses tool adaptation retains a restoration mapping for namespaces, and
+// Chat carries its include_usage stream choice into the response target.
+// Project-bearing OAuth can read an upstream stream into a buffered client
+// response. HTTP failure policy runs before response adaptation, using the
+// selected client envelope. Successful compatibility image metadata currently
+// uses the original client model-name estimate, while native and Messages
+// execution consult their own attempt image counter.
+
+// ForwardAsResponses converts one OpenAI Responses body through Anthropic into
+// a selected Gemini attempt. It validates input and retains client tool
+// adaptation for response restoration.
+//
+// The original body supplies reasoning controls when final-model attributes are
+// applied, so intermediate protocol conversion does not choose those controls
+// by itself. Client model and stream mode are retained separately from provider
+// mapping and upstream exchange mode. Successful output returns Responses
+// presentation and Messages completion metadata through the synchronous HTTP
+// adapter.
 func (s *Gemini) ForwardAsResponses(
 	ctx context.Context,
 	output Output,
@@ -75,8 +96,15 @@ func (s *Gemini) ForwardAsResponses(
 	)
 }
 
-// ForwardAsChatCompletions serves OpenAI Chat Completions through Gemini.
-// The upstream uses Gemini endpoints and the client receives Chat Completions output.
+// ForwardAsChatCompletions converts one Chat request through Responses and
+// Anthropic into Gemini input. It retains the original model, client stream
+// choice, and requested usage-chunk flag.
+//
+// Original Chat bytes remain available for reasoning controls after final
+// provider model resolution. Project-bearing OAuth can use a streaming upstream
+// exchange for a buffered client, while the response target selects Chat
+// framing. Completion returns the client model beside the mapped wire model and
+// records effort from the original request.
 func (s *Gemini) ForwardAsChatCompletions(
 	ctx context.Context,
 	output Output,
@@ -130,6 +158,16 @@ func (s *Gemini) ForwardAsChatCompletions(
 	)
 }
 
+// forwardClaudeBodyAsOpenAICompat prepares and executes the intermediate
+// Anthropic body for one selected Gemini provider. Original client bytes supply
+// model-attribute controls and recorded reasoning effort; protocol and tool
+// mapping select response presentation.
+//
+// Provider policy classifies HTTP failures before output adaptation, and a
+// successful result retains separate client and upstream models. Upstream
+// streaming can differ from client mode for project-bearing OAuth. Image
+// metadata uses the original client model-name estimate on this path,
+// independently of the per-attempt counter used by other Gemini entries.
 func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	ctx context.Context,
 	c *attempt,
@@ -144,8 +182,8 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	clientToolMapping protocolbridge.ResponsesClientToolMapping,
 ) (*protocolforward.MessagesResult, error) {
 	var req struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+		Model  string `json:"model"`  // converted request model identifier
+		Stream bool   `json:"stream"` // converted request stream flag
 	}
 	if err := json.Unmarshal(claudeBody, &req); err != nil {
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -154,7 +192,9 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", "model is required")
 	}
 
-	// Both compatibility entries apply provider mappings, including OAuth providers.
+	// Resolve the provider wire model before capability filtering so OpenAI
+	// controls from the original body are applied to the same Gemini target
+	// sent upstream.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
 	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
@@ -233,7 +273,8 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 			} else {
 				reasoningEffort = protocolforward.ExtractEffort(originalBody, true, capability.NormalizeRecordedOpenAIEffortForModel, mappedModel)
 			}
-			// Supply a display effort when a CN model enables thinking without an explicit effort.
+			// Supply a display effort when a CN model enables
+			// thinking without an explicit effort.
 			reasoningEffort = gatewayprovider.ApplyThinkingEnabledFallback(reasoningEffort, originalBody, mappedModel)
 
 			if resp.StatusCode >= 400 {
@@ -306,6 +347,9 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	imageCount := 0
 	imageInputSize := s.extractImageInputSize(geminiReq)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
+	// This compatibility result uses the client model name for its
+	// single-image estimate; native and Messages paths consult their
+	// separate per-attempt image observation counter.
 	if antigravity.IsImageGenerationModel(originalModel) {
 		imageCount = 1
 	}
@@ -340,6 +384,10 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	}, nil
 }
 
+// buildGeminiChatCompletionsUpstreamRequestFunc retains the prepared bytes and
+// provider plan in a build callback. The caller keeps those inputs usable until
+// exchange finishes; token and project callbacks read provider state during
+// builds.
 func (s *Gemini) buildGeminiChatCompletionsUpstreamRequestFunc(
 	provider *gatewayprovider.ExecutionProvider,
 	mappedModel string,
