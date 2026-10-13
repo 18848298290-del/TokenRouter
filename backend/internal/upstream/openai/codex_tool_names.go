@@ -9,28 +9,55 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// OAuth Responses reserves the python tool name, so caller-defined Python tools
+// use an alias on the upstream request. Declarations, selected tool choices,
+// and historical function calls must agree on that alias or a response could
+// refer to the wrong client tool.
+//
+// Before mutating request objects, aliasing checks every collected name for
+// collisions and chooses the legacy alias when existing history requires it.
+// The resulting reverse map follows the attempt into response restoration.
+// Restoration visits recognized tool-bearing protocol locations rather than
+// replacing arbitrary strings, so argument text and unrelated metadata retain
+// their contents. Byte-level wrappers decode numbers losslessly and return the
+// supplied bytes when no supported field needs a change.
+
+// These names distinguish the reserved OAuth Python tool from the current and
+// legacy client aliases used when replaying declarations and function-call history.
 const (
 	CodexReservedPythonToolName = "python"
 	CodexPythonToolAlias        = "python__tokenrouter"
 	legacyCodexPythonToolAlias  = "python__sub2api"
 )
 
+// CodexToolNameField identifies one mutable tool-name location in a decoded
+// request.
 type CodexToolNameField struct {
+	// object references the decoded map containing key; aliasing and restoration
+	// mutate that original map after validating the collected names.
 	object map[string]any
-	key    string
-	name   string
+	key    string // tool-name object field key
+	name   string // collected original tool-name value
 }
 
-// AliasOpenAIOAuthReservedToolNames rewrites Codex-reserved tool names.
-// It validates all declarations and references before mutation to prevent partial rewrites on collisions.
+// AliasOpenAIOAuthReservedToolNames rewrites reserved names in reqBody and
+// returns an alias-to-original map. The decoded maps are mutated in place only
+// after all collected names pass collision checks. Nil input and requests
+// requiring no rewrite return no map and changed=false.
+//
+// Legacy function-call history selects the legacy alias when that name has no
+// explicit declaration, allowing continuation to reference the same tool. A
+// caller declaration already owning an alias remains a distinct name and can
+// trigger a collision. Validating the complete set before mutation prevents an
+// error from leaving declarations and historical references partially renamed.
 func AliasOpenAIOAuthReservedToolNames(reqBody map[string]any) (map[string]string, bool, error) {
 	if reqBody == nil {
 		return nil, false, nil
 	}
 
 	fields := CollectOpenAIResponsesToolNameFields(reqBody)
-	// Reuse the legacy alias when history already contains calls under that name.
-	// An explicit declaration of the same name remains a caller-defined tool.
+	// Historical legacy calls need their existing alias when no declaration owns
+	// that spelling. An explicit declaration makes the name a separate caller tool.
 	alias := CodexPythonToolAlias
 	legacyCall, legacyDeclaration := false, false
 	for _, field := range fields {
@@ -74,6 +101,8 @@ func AliasOpenAIOAuthReservedToolNames(reqBody map[string]any) (map[string]strin
 	if len(reverse) == 0 {
 		return nil, false, nil
 	}
+	// All name owners have passed collision checks. Rewrite the collected maps
+	// together so declarations and history cannot diverge after a validation failure.
 	for _, field := range fields {
 		if aliased := aliasName(field.name); aliased != field.name {
 			field.object[field.key] = aliased
@@ -82,6 +111,10 @@ func AliasOpenAIOAuthReservedToolNames(reqBody map[string]any) (map[string]strin
 	return reverse, true, nil
 }
 
+// CollectOpenAIResponsesToolNameFields locates nonblank function names in
+// declarations, nested namespaces, tool choices, session updates, and input
+// history. Returned objects reference the original decoded maps, so callers can
+// mutate those specific fields after validation.
 func CollectOpenAIResponsesToolNameFields(reqBody map[string]any) []CodexToolNameField {
 	fields := make([]CodexToolNameField, 0, 8)
 	appendName := func(object map[string]any, key string) {
@@ -158,6 +191,10 @@ func CollectOpenAIResponsesToolNameFields(reqBody map[string]any) []CodexToolNam
 	return fields
 }
 
+// AliasOpenAIOAuthReservedToolNamesBody decodes and aliases reserved OAuth
+// names when an ASCII-folded Python marker may be present. It returns the
+// supplied bytes on errors or unchanged requests, and number-preserving
+// decoding protects large numeric fields during a rewrite.
 func AliasOpenAIOAuthReservedToolNamesBody(body []byte) ([]byte, map[string]string, bool, error) {
 	if len(body) == 0 || !ContainsASCIIFold(body, []byte(CodexReservedPythonToolName)) {
 		return body, nil, false, nil
@@ -177,6 +214,9 @@ func AliasOpenAIOAuthReservedToolNamesBody(body []byte) ([]byte, map[string]stri
 	return normalized, reverse, true, nil
 }
 
+// ContainsASCIIFold reports whether needle occurs in haystack with ASCII letter
+// case ignored. An empty needle returns false, and bytes outside the ASCII
+// uppercase range are compared directly.
 func ContainsASCIIFold(haystack, needle []byte) bool {
 	if len(needle) == 0 || len(haystack) < len(needle) {
 		return false
@@ -185,6 +225,8 @@ func ContainsASCIIFold(haystack, needle []byte) bool {
 		matched := true
 		for j := range needle {
 			a, b := haystack[i+j], needle[j]
+			// Fold ASCII letters for the reserved-name precheck; other bytes retain
+			// exact comparisons so the search does not interpret UTF-8 request text.
 			if a >= 'A' && a <= 'Z' {
 				a += 'a' - 'A'
 			}
@@ -203,6 +245,9 @@ func ContainsASCIIFold(haystack, needle []byte) bool {
 	return false
 }
 
+// MergeCodexToolNameReverseMaps copies base and overlay into a new reverse-name
+// map. Overlay values take precedence for duplicate aliases, and callers can
+// mutate the returned map independently of both inputs.
 func MergeCodexToolNameReverseMaps(base, overlay map[string]string) map[string]string {
 	merged := make(map[string]string, len(base)+len(overlay))
 	maps.Copy(merged, base)
@@ -210,11 +255,19 @@ func MergeCodexToolNameReverseMaps(base, overlay map[string]string) map[string]s
 	return merged
 }
 
+// RestoreCodexToolNamesInJSON restores supported response tool fields using
+// reverse. Invalid JSON, absent mappings, unchanged objects, and failed
+// encoding return the supplied bytes, while decoded numbers retain their
+// numeric precision during restoration.
 func RestoreCodexToolNamesInJSON(data []byte, reverse map[string]string) []byte {
 	if len(data) == 0 || len(reverse) == 0 || !json.Valid(data) {
 		return data
 	}
+	// Restore through parsed tool locations with UseNumber decoding so alias
+	// repair does not replace unrelated string content or round large numeric metadata.
 	var decoded any
+	// Response repair is best effort; unreadable data remains available to the
+	// downstream response path instead of being lost because optional restoration failed.
 	if err := wirejson.DecodeUseNumber(data, &decoded); err != nil {
 		return data
 	}
@@ -222,12 +275,25 @@ func RestoreCodexToolNamesInJSON(data []byte, reverse map[string]string) []byte 
 		return data
 	}
 	restored, err := json.Marshal(decoded)
+	// Keep upstream bytes if the repaired object cannot be encoded, so optional
+	// tool-name restoration cannot discard a response that remains usable downstream.
 	if err != nil {
 		return data
 	}
 	return restored
 }
 
+// RestoreCodexToolNameFields restores matching aliases in supported response
+// objects and reports whether any field changed. The object maps are modified
+// in place, and reverse keys match the emitted name exactly. Nonobject roots
+// return false.
+//
+// Responses lifecycle items, completed output, Chat function calls, Messages
+// tool-use blocks, and session tool declarations each expose names in different
+// locations. The traversal follows those locations and nested namespace
+// declarations while leaving tool argument payloads untouched. This keeps the
+// original name available to the downstream client without interpreting
+// arbitrary strings as tool identity.
 func RestoreCodexToolNameFields(value any, reverse map[string]string) bool {
 	root, ok := value.(map[string]any)
 	if !ok {

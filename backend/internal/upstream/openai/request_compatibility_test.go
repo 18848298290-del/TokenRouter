@@ -9,10 +9,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// benchmarkIntSink retains empty-Base64 candidate counts from benchmarks.
+// benchmarkIntSink retains positive image-precheck counts across benchmark iterations,
+// keeping observed classification results available beyond each timed loop execution.
 var benchmarkIntSink int
 
-// TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem checks whole-item removal on cross-mode retry.
+// TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem switches
+// mode with encrypted reasoning between messages. It checks removal of the
+// complete reasoning item, its identifier and summary, while two messages
+// remain.
 func TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[` +
 		`{"type":"message","role":"user","content":"hi"},` +
@@ -30,6 +34,9 @@ func TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem(t *tes
 	require.Equal(t, int64(2), gjson.GetBytes(sanitized, "input.#").Int())
 }
 
+// TestSanitizeOpenAICrossModeFailoverReasoning_NoEncryptedIsNoop supplies
+// plaintext reasoning summary with no ciphertext. It checks unchanged bytes and
+// false change status, protecting portable history during mode switching.
 func TestSanitizeOpenAICrossModeFailoverReasoning_NoEncryptedIsNoop(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"t"}]}]}`)
 	sanitized, changed, err := SanitizeOpenAICrossModeFailoverReasoning(body)
@@ -38,6 +45,9 @@ func TestSanitizeOpenAICrossModeFailoverReasoning_NoEncryptedIsNoop(t *testing.T
 	require.Equal(t, string(body), string(sanitized))
 }
 
+// TestSanitizeOpenAICrossModeFailoverReasoning_NoInputIsNoop supplies a
+// model-only request without history. It checks unchanged bytes and false
+// change status so absent replay input does not trigger reconstruction.
 func TestSanitizeOpenAICrossModeFailoverReasoning_NoInputIsNoop(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1"}`)
 	sanitized, changed, err := SanitizeOpenAICrossModeFailoverReasoning(body)
@@ -46,6 +56,9 @@ func TestSanitizeOpenAICrossModeFailoverReasoning_NoInputIsNoop(t *testing.T) {
 	require.Equal(t, string(body), string(sanitized))
 }
 
+// TestSanitizeOpenAICrossModeFailoverReasoning_PreservesLargeIntegers removes
+// encrypted reasoning beside a tool schema containing a large integer. It
+// checks successful cleanup retains that exact numeric literal.
 func TestSanitizeOpenAICrossModeFailoverReasoning_PreservesLargeIntegers(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[` +
 		`{"type":"reasoning","id":"rs_kiro_1","encrypted_content":"ENC"},` +
@@ -59,6 +72,10 @@ func TestSanitizeOpenAICrossModeFailoverReasoning_PreservesLargeIntegers(t *test
 		"清理请求体不能将 JSON 大整数转换为 float64")
 }
 
+// TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplay mixes encrypted and
+// server-only reasoning with references under store=false. It checks stale
+// reasoning/reference removal, portable cipher retention, stripped server IDs,
+// empty summary repair, and large-integer preservation.
 func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplay(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","store":false,"input":[` +
 		`{"type":"reasoning","id":"rs_encrypted","call_id":"remove","encrypted_content":"cipher","summary":null,"opaque":9007199254740993},` +
@@ -82,6 +99,9 @@ func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplay(t *testing.T) {
 	require.Equal(t, "message", gjson.GetBytes(normalized, "input.2.type").String())
 }
 
+// TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRequiresExplicitStoreFalse
+// supplies absent and true storage settings with server reasoning history. It
+// checks both requests remain byte-identical and report no change.
 func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRequiresExplicitStoreFalse(t *testing.T) {
 	for _, body := range []string{
 		`{"input":[{"type":"reasoning","id":"rs_keep"}]}`,
@@ -94,6 +114,9 @@ func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRequiresExplicitStoreFals
 	}
 }
 
+// TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayKnownCompactMode supplies
+// server reasoning without a storage flag but enables compact mode. It checks
+// the server-only item is dropped and the user message survives.
 func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayKnownCompactMode(t *testing.T) {
 	body := []byte(`{"input":[{"type":"reasoning","id":"rs_drop","summary":[]},{"type":"message","content":"continue"}]}`)
 
@@ -105,6 +128,10 @@ func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayKnownCompactMode(t *testi
 	require.Equal(t, "message", gjson.GetBytes(normalized, "input.0.type").String())
 }
 
+// TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRejectsEmptyEncryptedContent
+// varies null, empty, blank, and numeric ciphertext values under store=false.
+// Each unusable reasoning item must be dropped while its neighboring message
+// remains.
 func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRejectsEmptyEncryptedContent(t *testing.T) {
 	for _, encrypted := range []string{"null", `""`, `"   "`, "123"} {
 		body := []byte(`{"store":false,"input":[{"type":"reasoning","id":"rs_drop","encrypted_content":` + encrypted + `},{"type":"message","content":"continue"}]}`)
@@ -116,6 +143,9 @@ func TestNormalizeOpenAIAPIKeyStoreFalseReasoningReplayRejectsEmptyEncryptedCont
 	}
 }
 
+// TestNormalizeOpenAIParallelToolCallsWithoutTools compares requests with and
+// without a top-level tool declaration. It retains the flag and bytes with
+// tools but removes the irrelevant flag from a tool-less ordinary request.
 func TestNormalizeOpenAIParallelToolCallsWithoutTools(t *testing.T) {
 	withTools := []byte(`{"tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`)
 	normalized, changed, err := NormalizeOpenAIParallelToolCallsWithoutTools(withTools, false)
@@ -130,7 +160,10 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 }
 
-// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools checks nested Lite declarations.
+// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools
+// compares populated input tools, empty input tools, and a tool-less Lite flag.
+// It checks meaningful nested declarations and Lite mode retain false while an
+// ordinary empty declaration permits removal.
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
 	normalized, changed, err := NormalizeOpenAIParallelToolCallsWithoutTools(liteBody, false)
@@ -153,7 +186,10 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAddition
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
 }
 
-// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression checks nested Lite declarations.
+// TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression
+// repeats nested, empty, and tool-less Lite fixtures. It protects retained
+// false flags for meaningful or Lite declarations and removal for an ordinary
+// empty declaration.
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalToolsUpstreamRegression(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
 	normalized, changed, err := NormalizeOpenAIParallelToolCallsWithoutTools(liteBody, false)
@@ -176,6 +212,10 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAddition
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
 }
 
+// TestNormalizeOpenAIResponsesReasoningContentReplayStripsCrossProviderArray
+// replays visible reasoning content after messages and tool history. It checks
+// content removal while summary, large integer metadata, item position, and
+// later assistant text survive.
 func TestNormalizeOpenAIResponsesReasoningContentReplayStripsCrossProviderArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":[` +
 		`{"type":"message","role":"user","content":"one"},` +
@@ -198,6 +238,10 @@ func TestNormalizeOpenAIResponsesReasoningContentReplayStripsCrossProviderArray(
 	require.Equal(t, "answer", gjson.GetBytes(normalized, "input.6.content.0.text").String())
 }
 
+// TestNormalizeOpenAIResponsesReasoningContentReplayKeepsPortableShapes
+// supplies absent/empty reasoning content and ordinary message content. It
+// checks no change and JSON equivalence, protecting those portable replay
+// forms.
 func TestNormalizeOpenAIResponsesReasoningContentReplayKeepsPortableShapes(t *testing.T) {
 	for _, body := range []string{
 		`{"input":[{"type":"reasoning","summary":[]}]}`,
@@ -211,6 +255,10 @@ func TestNormalizeOpenAIResponsesReasoningContentReplayKeepsPortableShapes(t *te
 	}
 }
 
+// BenchmarkOpenAIResponses_LargeInputEmptyBase64Guard measures image prechecks
+// over text-only bodies from four to thirty-two MiB targets. Fixture
+// construction is outside timing, and iterations report bytes/allocations while
+// retaining positive guard counts.
 func BenchmarkOpenAIResponses_LargeInputEmptyBase64Guard(b *testing.B) {
 	for _, size := range benchmarkBodySizes() {
 		b.Run(size.name, func(b *testing.B) {
@@ -228,14 +276,16 @@ func BenchmarkOpenAIResponses_LargeInputEmptyBase64Guard(b *testing.B) {
 	}
 }
 
-// benchmarkBodySizes lists target input sizes for image-field prechecks.
+// benchmarkBodySizes returns the four large-input target sizes and their
+// display labels. Values are byte counts used by the fixture builder; the
+// completed JSON can exceed its target by framing and tool metadata.
 func benchmarkBodySizes() []struct {
-	name  string
-	bytes int
+	name  string // benchmark size display label
+	bytes int    // bytes
 } {
 	return []struct {
-		name  string
-		bytes int
+		name  string // benchmark size display label
+		bytes int    // bytes
 	}{
 		{name: "4MB", bytes: 4 << 20},
 		{name: "8MB", bytes: 8 << 20},
@@ -244,9 +294,12 @@ func benchmarkBodySizes() []struct {
 	}
 }
 
-// buildLargeOpenAIResponsesBody builds a text request with function tool definitions.
+// buildLargeOpenAIResponsesBody creates text history until the positive target
+// byte count is reached, then appends tool JSON. The generated body can exceed
+// targetBytes; callers allocate it before timing the image-field precheck.
 func buildLargeOpenAIResponsesBody(targetBytes int) []byte {
 	var builder strings.Builder
+	// Reserve estimated space for history plus trailing request metadata.
 	builder.Grow(targetBytes + 1024)
 	_, _ = builder.WriteString(`{"model":"gpt-5.4","stream":true,"prompt_cache_key":"session-benchmark","input":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {

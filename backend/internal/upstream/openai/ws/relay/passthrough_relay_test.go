@@ -15,54 +15,120 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// MetricsSnapshot counts usage parsing failures.
+// Responses terminal observation can precede client delivery or arrive during a
+// disconnect drain. Local frame fixtures and controlled read gates exercise
+// those timing differences alongside turn usage selection, response identity,
+// model/tier evidence, and token-latency predicates; assertions distinguish
+// settled observations from captured transport writes.
+//
+// A cancelled context can be observed before a blocked reader has returned. The
+// probe holds a separate release gate while a result channel observes Relay
+// completion, letting the fixture keep those milestones distinct. Delayed reads
+// and EOF substitution separate transport closure from identified turn
+// completion, while synthetic clocks place token observation before terminal
+// duration in supplied local event sequences.
+
+// MetricsSnapshot holds process-wide usage rejection evidence sampled for relay
+// test assertions.
 type MetricsSnapshot struct {
-	UsageParseFailureTotal int64
+	UsageParseFailureTotal int64 // process-wide rejected usage count
 }
 
+// delayedReadFrameConn delays one delegated read to model terminal arrival
+// after client closure.
 type delayedReadFrameConn struct {
-	base       FrameConn
-	firstDelay time.Duration
-	once       sync.Once
+	// base, firstDelay, and once combine a shared transport with one synthetic
+	// first-read pause. once owns that pause while later reads and all writes
+	// continue through the same base transport.
+	//
+	// base supplies delegated I/O and closure; nil base or receiver makes
+	// reads/writes return EOF and cleanup return nil.
+	base FrameConn // shared fixture frame transport
+	// firstDelay pauses the first read when positive; context cancellation ends
+	// that pause before the same context reaches base.
+	firstDelay time.Duration // first-read synthetic delay duration
+	once       sync.Once     // initial read delay guard
 }
+
+// readStartSpyFrameConn signals reader entry before delegating to a shared test
+// transport.
 type readStartSpyFrameConn struct {
-	base      FrameConn
-	started   chan struct{}
-	startOnce sync.Once
+	// base is the shared delegated transport; callers initialize it before invoking
+	// the readiness wrapper's read, write, or close methods.
+	base FrameConn
+	// started and startOnce publish reader entry once before delegation. The signal
+	// establishes that reading has begun, while the base transport can still wait
+	// for a frame or cancellation.
+	//
+	// started is initialized as an open channel by the fixture and closed by
+	// ReadFrame before entering base.
+	started   chan struct{} // reader entry signal channel
+	startOnce sync.Once     // reader entry signal guard
 }
+
+// closeSpyFrameConn counts cleanup calls while its reads wait solely for
+// context cancellation.
 type closeSpyFrameConn struct {
-	closeCalls atomic.Int32
+	closeCalls atomic.Int32 // synthetic cleanup invocation count
 }
+
+// eofReplacementFrameConn substitutes a chosen close error for delegated EOF
+// reads.
 type eofReplacementFrameConn struct {
+	// FrameConn supplies delegated frame I/O and closure; ReadFrame substitutes
+	// matching EOF while preserving this transport's frame type and bytes.
 	FrameConn
+	// err replaces any base error matching io.EOF, including wrapped EOF; a nil
+	// replacement is returned as a nil error.
 	err error
 }
+
+// cancelJoinProbeFrameConn separates reader entry, cancellation observation,
+// and fixture-controlled completion for join assertions.
 type cancelJoinProbeFrameConn struct {
-	readStarted  chan struct{}
-	readCanceled chan struct{}
-	allowReturn  chan struct{}
-	readReturned chan struct{}
-	startOnce    sync.Once
-	cancelOnce   sync.Once
-	returnOnce   sync.Once
+	// readStarted, readCanceled, allowReturn, and readReturned separate read entry,
+	// cancellation notice, release, and return milestones. The probe can observe
+	// cancellation while still blocking on fixture release, which lets Relay's join
+	// be tested independently.
+	readStarted  chan struct{} // reader entry milestone channel
+	readCanceled chan struct{} // cancellation observation milestone channel
+	// allowReturn belongs to the fixture, which closes it after cancellation to
+	// release the held read; Close leaves it untouched.
+	allowReturn chan struct{} // fixture-controlled reader release channel
+	// readReturned closes immediately before the read method returns after release;
+	// authoritative worker completion still comes from Relay's upstreamDone join.
+	readReturned chan struct{} // reader return milestone channel
+	// startOnce, cancelOnce, and returnOnce guard their corresponding milestone
+	// channel closures across read invocations. The shared gates remain valid even
+	// if a transport method is called more than once.
+	startOnce  sync.Once // reader entry closure guard
+	cancelOnce sync.Once // cancellation notice closure guard
+	returnOnce sync.Once // return milestone closure guard
 }
 
-// errorOnWriteFrameConn fails every write to test first-frame failure handling.
+// errorOnWriteFrameConn rejects every write to isolate initial upstream write
+// failure.
 type errorOnWriteFrameConn struct{}
 
-// SnapshotMetrics returns the current passthrough usage-parse failure count.
+// SnapshotMetrics samples the process-wide rejected-usage counter for relay
+// test assertions.
 func SnapshotMetrics() MetricsSnapshot {
 	return MetricsSnapshot{
 		UsageParseFailureTotal: passthroughUsageParseFailureTotal.Load(),
 	}
 }
 
+// TestRunClientToUpstream_ErrorPaths exercises client EOF and failed upstream
+// writes with direct worker calls. It checks exit stage/gracefulness,
+// successful forwarding count, and trace callback activity.
 func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
 	t.Run("read client eof", func(t *testing.T) {
 		t.Parallel()
 
+		// Give this directly invoked worker a buffered final-signal slot, because the
+		// fixture begins receiving only after the forwarding call has returned.
 		exitCh := make(chan relayExitSignal, 1)
 		runClientToUpstream(
 			context.Background(),
@@ -82,6 +148,8 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 	t.Run("write upstream failed", func(t *testing.T) {
 		t.Parallel()
 
+		// Give this directly invoked worker a buffered final-signal slot, because the
+		// fixture begins receiving only after the forwarding call has returned.
 		exitCh := make(chan relayExitSignal, 1)
 		runClientToUpstream(
 			context.Background(),
@@ -103,6 +171,8 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 	t.Run("forwarded counter and trace callback", func(t *testing.T) {
 		t.Parallel()
 
+		// Give this directly invoked worker a buffered final-signal slot, because the
+		// fixture begins receiving only after the forwarding call has returned.
 		exitCh := make(chan relayExitSignal, 1)
 		forwarded := &atomic.Int64{}
 		traces := make([]RelayTraceEvent, 0, 2)
@@ -127,12 +197,17 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 	})
 }
 
+// TestRunUpstreamToClient_ErrorAndDropPaths exercises upstream EOF, client
+// write failure, and terminal draining with downstream drops enabled. It checks
+// exit stages, graceful drain termination, and the dropped-frame count.
 func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 	t.Parallel()
 
 	t.Run("read upstream eof", func(t *testing.T) {
 		t.Parallel()
 
+		// Buffer the direct worker's exit so EOF, rejection, or drain completion can
+		// return before the fixture starts inspecting its signal.
 		exitCh := make(chan relayExitSignal, 1)
 		drop := &atomic.Bool{}
 		drop.Store(false)
@@ -165,6 +240,8 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 	t.Run("write client failed", func(t *testing.T) {
 		t.Parallel()
 
+		// Buffer the direct worker's exit so EOF, rejection, or drain completion can
+		// return before the fixture starts inspecting its signal.
 		exitCh := make(chan relayExitSignal, 1)
 		drop := &atomic.Bool{}
 		drop.Store(false)
@@ -198,6 +275,8 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 	t.Run("drop downstream and stop on terminal", func(t *testing.T) {
 		t.Parallel()
 
+		// Buffer the direct worker's exit so EOF, rejection, or drain completion can
+		// return before the fixture starts inspecting its signal.
 		exitCh := make(chan relayExitSignal, 1)
 		drop := &atomic.Bool{}
 		drop.Store(true)
@@ -235,6 +314,9 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 	})
 }
 
+// TestRunIdleWatchdog_NoTimeoutWhenDisabled starts a watchdog with a zero idle
+// budget. No exit signal may arrive during the observation window, confirming
+// disabled idle detection.
 func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -244,6 +326,9 @@ func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Run disabled detection with an available exit slot while observing for
+	// unexpected publication; the configured zero budget should end this worker
+	// without a signal.
 	go runIdleWatchdog(ctx, time.Now, 0, lastActivity, nil, exitCh)
 	select {
 	case <-exitCh:
@@ -252,6 +337,9 @@ func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestHelperFunctionsCoverage supplies representative trace labels, disconnect
+// errors, token names, durations, exit-channel waits, and numeric usage fields.
+// It checks their concrete mapped results and rejection/default cases.
 func TestHelperFunctionsCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -280,6 +368,8 @@ func TestHelperFunctionsCoverage(t *testing.T) {
 	require.Equal(t, 5*time.Second, minDuration(0, 5*time.Second))
 	require.Equal(t, 2*time.Second, minDuration(2*time.Second, 0))
 
+	// Queue signals before each helper call so supplied and default wait budgets
+	// can read immediately, then leave the channel empty to test timeout.
 	ch := make(chan relayExitSignal, 1)
 	ch <- relayExitSignal{stage: "ok"}
 	sig, ok := waitRelayExit(ch, 10*time.Millisecond)
@@ -304,6 +394,10 @@ func TestHelperFunctionsCoverage(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestParseUsageAndEnrichCoverage supplies malformed, missing, and complete
+// usage snapshots before finalization. Assertions check zero session totals
+// before finalization, five valid finalized buckets, duration copying, and
+// later progress remaining outside input totals.
 func TestParseUsageAndEnrichCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -350,6 +444,10 @@ func TestParseUsageAndEnrichCoverage(t *testing.T) {
 	enrichResult(nil, state, 0)
 }
 
+// TestParseUsageAndAccumulateIncludesIndependentReasoningTokens compares output
+// excluding reasoning with output already including it under the same total.
+// The parsed output adds the independent count and leaves inclusive output
+// unchanged.
 func TestParseUsageAndAccumulateIncludesIndependentReasoningTokens(t *testing.T) {
 	t.Parallel()
 
@@ -373,6 +471,9 @@ func TestParseUsageAndAccumulateIncludesIndependentReasoningTokens(t *testing.T)
 	require.Equal(t, 119, got.OutputTokens, "inclusive Responses output must not double-count reasoning")
 }
 
+// TestParseUsageAndAccumulateAcceptsChatUsageAliases supplies prompt/completion
+// counters and detail aliases in a done event. Parsed input, output,
+// cache-read, and image counters must equal the finalized session snapshot.
 func TestParseUsageAndAccumulateAcceptsChatUsageAliases(t *testing.T) {
 	t.Parallel()
 
@@ -391,6 +492,9 @@ func TestParseUsageAndAccumulateAcceptsChatUsageAliases(t *testing.T) {
 	require.Equal(t, got, state.usage)
 }
 
+// TestRelayUsageTerminalWithoutUsageKeepsFallback supplies positive progress
+// usage followed by a completed event with no usage object. Finalized turn and
+// session counts must retain that earlier snapshot.
 func TestRelayUsageTerminalWithoutUsageKeepsFallback(t *testing.T) {
 	t.Parallel()
 
@@ -403,6 +507,9 @@ func TestRelayUsageTerminalWithoutUsageKeepsFallback(t *testing.T) {
 	require.Equal(t, turnUsage, state.usage)
 }
 
+// TestRelayUsageTerminalZeroKeepsFallback follows positive progress usage with
+// an all-zero completed snapshot. Both returned turn usage and accumulated
+// session usage must keep the earlier positive counts.
 func TestRelayUsageTerminalZeroKeepsFallback(t *testing.T) {
 	t.Parallel()
 
@@ -414,6 +521,10 @@ func TestRelayUsageTerminalZeroKeepsFallback(t *testing.T) {
 	require.Equal(t, Usage{InputTokens: 9, OutputTokens: 4}, state.usage)
 }
 
+// TestRelayUsageTerminalNonZeroReplacesFallbackAsWhole follows positive
+// input/output/cache progress with a terminal containing input alone and zeros
+// elsewhere. Whole-snapshot replacement must clear earlier output and cache
+// counts.
 func TestRelayUsageTerminalNonZeroReplacesFallbackAsWhole(t *testing.T) {
 	t.Parallel()
 
@@ -425,6 +536,10 @@ func TestRelayUsageTerminalNonZeroReplacesFallbackAsWhole(t *testing.T) {
 	require.Equal(t, Usage{InputTokens: 3}, state.usage)
 }
 
+// TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce binds
+// a bare error to an active response while another start remains pending.
+// Explicit settlement clears active state, retains the next start, and avoids
+// adding prior usage after another empty error.
 func TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce(t *testing.T) {
 	t.Parallel()
 
@@ -464,6 +579,9 @@ func TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce(t *
 	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 1}, state.usage)
 }
 
+// TestObserveUpstreamMessageErrorThenFailedSettlesUsageOnce holds an error
+// after progress usage and then observes an identified failed snapshot. The
+// failed terminal alone settles its counters and clears the pending error.
 func TestObserveUpstreamMessageErrorThenFailedSettlesUsageOnce(t *testing.T) {
 	t.Parallel()
 
@@ -499,6 +617,9 @@ func TestObserveUpstreamMessageErrorThenFailedSettlesUsageOnce(t *testing.T) {
 	require.Nil(t, state.pendingBareError)
 }
 
+// TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns
+// explicitly settles an ID-less error before a later identified completion.
+// Each turn retains its own usage and the session sums both snapshots.
 func TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns(t *testing.T) {
 	t.Parallel()
 
@@ -531,6 +652,9 @@ func TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns(t *tes
 	require.Equal(t, Usage{InputTokens: 8, OutputTokens: 3}, state.usage)
 }
 
+// TestOpenAICacheCreationTokensFromUsageNestedZeroWins supplies a present
+// nested zero alongside a positive top-level cache-creation counter. Selection
+// must return zero because nested presence has precedence.
 func TestOpenAICacheCreationTokensFromUsageNestedZeroWins(t *testing.T) {
 	t.Parallel()
 
@@ -538,6 +662,10 @@ func TestOpenAICacheCreationTokensFromUsageNestedZeroWins(t *testing.T) {
 	require.Zero(t, openAICacheCreationTokensFromUsage(usage))
 }
 
+// TestEmitTurnCompleteCoverage exercises callback eligibility for progress,
+// ID-less completion, bare error, and identified completion. It checks call
+// counts, retained terminal usage/identity, and empty request model with nil
+// state.
 func TestEmitTurnCompleteCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -562,8 +690,9 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 	})
 	require.Equal(t, 0, called)
 
-	// Bare error legitimately has no response_id; it must still settle the turn
-	// or a later completed turn would suppress the adapter's aggregate fallback.
+	// An ID-less error still reaches the completion callback with its own usage.
+	// Keep it eligible before the later identified completion so this fixture can
+	// inspect both notifications.
 	var bareError RelayTurnResult
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
@@ -597,6 +726,9 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 	require.Equal(t, "", got.RequestModel)
 }
 
+// TestIsDisconnectErrorCoverage_CloseStatusesAndMessageBranches supplies
+// normal, absent-status, and abnormal WebSocket closes plus reset and blank
+// errors. Recognized close/reset inputs qualify, while a blank error does not.
 func TestIsDisconnectErrorCoverage_CloseStatusesAndMessageBranches(t *testing.T) {
 	t.Parallel()
 
@@ -607,6 +739,9 @@ func TestIsDisconnectErrorCoverage_CloseStatusesAndMessageBranches(t *testing.T)
 	require.False(t, isDisconnectError(errors.New("   ")))
 }
 
+// TestIsTokenEventCoverageBranches supplies content, audio, reasoning, and tool
+// event names to the timing predicate. Delta suffixes and selected done names
+// qualify; structural progress and other done names do not.
 func TestIsTokenEventCoverageBranches(t *testing.T) {
 	t.Parallel()
 
@@ -625,6 +760,9 @@ func TestIsTokenEventCoverageBranches(t *testing.T) {
 	require.False(t, isTokenEvent("response.done"))
 }
 
+// TestTerminalAndTokenEventSetsAreDisjoint iterates completion, failure,
+// incomplete, and both cancellation spellings. Each name must qualify as
+// terminal while remaining outside the token-timing predicate.
 func TestTerminalAndTokenEventSetsAreDisjoint(t *testing.T) {
 	t.Parallel()
 
@@ -641,6 +779,9 @@ func TestTerminalAndTokenEventSetsAreDisjoint(t *testing.T) {
 	}
 }
 
+// TestShouldParseUsageTerminalEvents iterates the completion, failure,
+// incomplete, and cancellation names accepted for terminal accounting. Each
+// qualifies for usage parsing, while a text delta and empty name do not.
 func TestShouldParseUsageTerminalEvents(t *testing.T) {
 	t.Parallel()
 
@@ -658,6 +799,9 @@ func TestShouldParseUsageTerminalEvents(t *testing.T) {
 	require.False(t, shouldParseUsage(""))
 }
 
+// TestRelayTurnTimingHelpersCoverage creates, reuses, and deletes one
+// identified timing record alongside nil-state cases. Repeated lookup retains
+// its initial start, deletion returns that start, and a second deletion fails.
 func TestRelayTurnTimingHelpersCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -684,12 +828,17 @@ func TestRelayTurnTimingHelpersCoverage(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestObserveUpstreamMessage_ResponseIDFallbackPolicy compares an event-level
+// ID on a delta with a top-level terminal response ID. The delta creates no
+// response identity, while the terminal fallback is retained.
 func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	t.Parallel()
 
 	state := &relayState{requestModel: "gpt-5"}
 	startAt := time.Unix(0, 0)
 	now := startAt
+	// Each callback advances five milliseconds for distinct event observation
+	// timestamps.
 	nowFn := func() time.Time {
 		now = now.Add(5 * time.Millisecond)
 		return now
@@ -720,12 +869,17 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	require.Equal(t, "resp_fallback", observed.responseID)
 }
 
+// TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents sends an
+// early priority echo followed by a default terminal tier. Completion and
+// aggregate tier use default, and a later untiered turn reports empty.
 func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *testing.T) {
 	t.Parallel()
 
 	state := &relayState{requestModel: "gpt-5.6-sol"}
 	startAt := time.Unix(0, 0)
 	now := startAt
+	// Each callback advances five milliseconds for distinct tier observation
+	// timestamps.
 	nowFn := func() time.Time {
 		now = now.Add(5 * time.Millisecond)
 		return now
@@ -774,7 +928,9 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 	require.Equal(t, "", second.responseServiceTier)
 }
 
-// TestRelayResponseModelsAreIsolated checks per-turn model tracking and terminal model corrections.
+// TestRelayResponseModelsAreIsolated interleaves two response IDs and corrects
+// one model at completion. Each result retains its matching model, callback
+// output carries the correction, and a later undeclared model stays empty.
 func TestRelayResponseModelsAreIsolated(t *testing.T) {
 	state := &relayState{requestModel: "sent"}
 	start := time.Now()
@@ -795,18 +951,35 @@ func TestRelayResponseModelsAreIsolated(t *testing.T) {
 	require.Empty(t, c.responseModel)
 }
 
+// ReadFrame delegates frame reading and substitutes err when the base error
+// matches io.EOF. Frame type and payload are retained, other errors pass
+// through, and a nil replacement can produce a nil read error.
 func (c *eofReplacementFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	msgType, payload, err := c.FrameConn.ReadFrame(ctx)
+	// Preserve the delegated frame while changing EOF classification, letting the
+	// fixture model a normal WebSocket handshake close after an unfinished
+	// response.
 	if errors.Is(err, io.EOF) {
 		return msgType, payload, c.err
 	}
 	return msgType, payload, err
 }
 
+// ReadFrame delays the first delegated read through sync.Once and then reads
+// from base. Nil receiver or base returns EOF. The first positive-delay call
+// requires nonnil ctx; cancellation ends the pause but still reaches the base
+// read with that context.
+//
+// The first caller owns the delay, and another reader entering sync.Once waits
+// for that phase to finish. The drain fixture uses this pause to give client
+// closure time to select draining while subsequent reads are immediate. Closing
+// delegates to base and does not interrupt the delay timer by itself.
 func (c *delayedReadFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if c == nil || c.base == nil {
 		return coderws.MessageText, nil, io.EOF
 	}
+	// Delay one read to model terminal arrival after prompt client closure; the
+	// context can end the pause, and subsequent reads avoid this synthetic wait.
 	c.once.Do(func() {
 		if c.firstDelay > 0 {
 			timer := time.NewTimer(c.firstDelay)
@@ -820,6 +993,9 @@ func (c *delayedReadFrameConn) ReadFrame(ctx context.Context) (coderws.MessageTy
 	return c.base.ReadFrame(ctx)
 }
 
+// WriteFrame delegates writes immediately, independently of the first-read
+// delay. Nil receiver or base returns EOF; the base transport receives the
+// supplied context, frame type, and payload.
 func (c *delayedReadFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
 	if c == nil || c.base == nil {
 		return io.EOF
@@ -827,6 +1003,9 @@ func (c *delayedReadFrameConn) WriteFrame(ctx context.Context, msgType coderws.M
 	return c.base.WriteFrame(ctx, msgType, payload)
 }
 
+// Close delegates cleanup to the shared base transport and returns its error.
+// Nil receiver or base returns nil, and the wrapper's first-delay timer remains
+// controlled by its read context.
 func (c *delayedReadFrameConn) Close() error {
 	if c == nil || c.base == nil {
 		return nil
@@ -834,27 +1013,43 @@ func (c *delayedReadFrameConn) Close() error {
 	return c.base.Close()
 }
 
+// ReadFrame closes the readiness channel once before delegating its read.
+// Callers provide a nonnil base and open started channel; readiness means
+// reader entry even when the base still blocks.
 func (c *readStartSpyFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	// Expose reader entry before base can block, so the preamble assertion observes
+	// startup even when the client has supplied no additional frame.
 	c.startOnce.Do(func() { close(c.started) })
 	return c.base.ReadFrame(ctx)
 }
 
+// WriteFrame delegates the supplied frame and context to the shared base
+// transport.
 func (c *readStartSpyFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
 	return c.base.WriteFrame(ctx, msgType, payload)
 }
 
+// Close delegates transport cleanup to base and returns the same cleanup error.
 func (c *readStartSpyFrameConn) Close() error {
 	return c.base.Close()
 }
 
+// ReadFrame waits for context cancellation and returns that error with an empty
+// text frame. Nil context selects Background; Close counts calls but does not
+// release this context-controlled read.
 func (c *closeSpyFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Keep read termination tied to context cancellation, allowing Close-call
+	// evidence to stay independent of whether this synthetic reader has finished.
 	<-ctx.Done()
 	return coderws.MessageText, nil, ctx.Err()
 }
 
+// WriteFrame reports cancellation when already observed, otherwise succeeds
+// without capturing bytes. Nil context selects Background; this stub lets relay
+// tests count closures independently of actual frame delivery.
 func (c *closeSpyFrameConn) WriteFrame(ctx context.Context, _ coderws.MessageType, _ []byte) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -867,13 +1062,21 @@ func (c *closeSpyFrameConn) WriteFrame(ctx context.Context, _ coderws.MessageTyp
 	}
 }
 
+// Close increments the synthetic close-call counter and returns nil. A nil
+// receiver also returns nil; pending reads remain controlled by their context
+// so tests can observe relay cancellation separately.
 func (c *closeSpyFrameConn) Close() error {
 	if c != nil {
+		// Use invocation count as evidence for repeated relay cleanup; the fake leaves
+		// its reader blocked until context cancellation regardless of this increment.
 		c.closeCalls.Add(1)
 	}
 	return nil
 }
 
+// CloseCalls samples how many synthetic cleanup calls reached this stub. Nil
+// receivers report zero, and the atomic count describes method invocation
+// rather than a transport read-unblocking guarantee.
 func (c *closeSpyFrameConn) CloseCalls() int32 {
 	if c == nil {
 		return 0
@@ -881,6 +1084,9 @@ func (c *closeSpyFrameConn) CloseCalls() int32 {
 	return c.closeCalls.Load()
 }
 
+// newCancelJoinProbeFrameConn creates separate entry, cancellation, release,
+// and completion gates for one probe. The fixture cancels the read context and
+// closes allowReturn to let Relay's upstream join finish.
 func newCancelJoinProbeFrameConn() *cancelJoinProbeFrameConn {
 	return &cancelJoinProbeFrameConn{
 		readStarted:  make(chan struct{}),
@@ -890,7 +1096,20 @@ func newCancelJoinProbeFrameConn() *cancelJoinProbeFrameConn {
 	}
 }
 
+// ReadFrame announces entry, observes cancellation, and waits for the fixture's
+// release before returning the context error. Callers supply a nonnil context
+// and initialize every signal channel. The once guards let each milestone be
+// observed through one channel closure.
+//
+// Close leaves this read blocked, so cancellation notice and reader completion
+// remain separate observations. Closing allowReturn permits the return
+// milestone immediately before the method returns. This exposes a held read to
+// Relay's upstreamDone join while the fixture checks notifications and result
+// arrival separately.
 func (c *cancelJoinProbeFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	// Publish entry before waiting for cancellation, then hold the reader behind
+	// allowReturn after cancellation notice. The separate return milestone lets the
+	// fixture compare notification with Relay's joined completion.
 	c.startOnce.Do(func() { close(c.readStarted) })
 	<-ctx.Done()
 	c.cancelOnce.Do(func() { close(c.readCanceled) })
@@ -899,6 +1118,9 @@ func (c *cancelJoinProbeFrameConn) ReadFrame(ctx context.Context) (coderws.Messa
 	return coderws.MessageText, nil, ctx.Err()
 }
 
+// WriteFrame succeeds until the supplied context has already been cancelled,
+// using Background for nil. It captures no bytes, keeping the fixture focused
+// on read cancellation and join ordering.
 func (c *cancelJoinProbeFrameConn) WriteFrame(ctx context.Context, _ coderws.MessageType, _ []byte) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -910,7 +1132,16 @@ func (c *cancelJoinProbeFrameConn) WriteFrame(ctx context.Context, _ coderws.Mes
 		return nil
 	}
 }
+
+// Close returns nil while leaving the cancellation probe's gates unchanged. The
+// test releases allowReturn after cancelling the context; transport cleanup
+// alone cannot finish the held reader in this fixture.
 func (c *cancelJoinProbeFrameConn) Close() error { return nil }
+
+// TestRelay_BasicRelayAndUsage sends one prepared request and one completed
+// upstream frame through local transports. It checks raw frame type/JSON,
+// request identity, terminal usage, absent token latency, and direction
+// counters.
 func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	t.Parallel()
 
@@ -950,6 +1181,9 @@ func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	require.JSONEq(t, `{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":7,"output_tokens":3,"input_tokens_details":{"cached_tokens":2}}}}`, string(clientWrites[0].payload))
 }
 
+// TestRelay_FunctionCallOutputBytesPreserved sends a function result containing
+// escaped JSON through the initial request path. The captured upstream frame
+// must retain its text type and exact payload bytes.
 func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {
 	t.Parallel()
 
@@ -974,6 +1208,9 @@ func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {
 	require.Equal(t, firstPayload, upstreamWrites[0].payload)
 }
 
+// TestRelay_UpstreamDisconnect closes upstream before any response ID
+// establishes an active turn. Relay must return a nil exit and retain the
+// initial model in its aggregate result.
 func TestRelay_UpstreamDisconnect(t *testing.T) {
 	t.Parallel()
 
@@ -991,6 +1228,9 @@ func TestRelay_UpstreamDisconnect(t *testing.T) {
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
+// TestRelay_UpstreamNormalCloseBeforeTerminalIsFailure replaces EOF with a
+// normal WebSocket close after identified progress frames. Relay reports
+// read_upstream failure, prior downstream writes, and no terminal observation.
 func TestRelay_UpstreamNormalCloseBeforeTerminalIsFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1023,6 +1263,9 @@ func TestRelay_UpstreamNormalCloseBeforeTerminalIsFailure(t *testing.T) {
 	require.Len(t, clientConn.Writes(), 2)
 }
 
+// TestRelay_ClientDisconnect gives the client immediate EOF while upstream
+// remains blocked. Relay must return an observable client_disconnected exit and
+// retain the initial request model.
 func TestRelay_ClientDisconnect(t *testing.T) {
 	t.Parallel()
 
@@ -1040,6 +1283,9 @@ func TestRelay_ClientDisconnect(t *testing.T) {
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
+// TestRelay_ClientDisconnect_DrainCapturesLateUsage delays a completed frame
+// until after immediate client EOF. Draining retains terminal identity and
+// usage while counting one dropped frame and zero downstream deliveries.
 func TestRelay_ClientDisconnect_DrainCapturesLateUsage(t *testing.T) {
 	t.Parallel()
 
@@ -1050,6 +1296,9 @@ func TestRelay_ClientDisconnect_DrainCapturesLateUsage(t *testing.T) {
 			payload: []byte(`{"type":"response.completed","response":{"id":"resp_drain","usage":{"input_tokens":6,"output_tokens":4,"input_tokens_details":{"cached_tokens":1}}}}`),
 		},
 	}, true)
+	// The eighty-millisecond first-read pause gives client EOF time to select
+	// draining; the four-hundred-millisecond drain budget admits the supplied
+	// terminal afterward.
 	upstreamConn := &delayedReadFrameConn{
 		base:       upstreamBase,
 		firstDelay: 80 * time.Millisecond,
@@ -1074,6 +1323,9 @@ func TestRelay_ClientDisconnect_DrainCapturesLateUsage(t *testing.T) {
 	require.Equal(t, int64(1), result.DroppedDownstreamFrames)
 }
 
+// TestRelay_IdleTimeout leaves both peers without more frames and advances its
+// supplied clock past the idle budget. The returned exit must identify
+// idle_timeout and retain the initial model.
 func TestRelay_IdleTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -1085,7 +1337,9 @@ func TestRelay_IdleTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Advance the clock after initialization to trigger the watchdog quickly.
+	// Keep the first five clock samples at startup time; later samples advance an
+	// hour, so watchdog polling can observe timeout without waiting that wall-clock
+	// duration.
 	now := time.Now()
 	callCount := 0
 	nowFn := func() time.Time {
@@ -1105,6 +1359,9 @@ func TestRelay_IdleTimeout(t *testing.T) {
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
+// TestRelay_IdleTimeoutDoesNotCloseClientOnError triggers idle shutdown using
+// context-controlled close spies. It checks an idle_timeout exit, at least one
+// upstream close call, and zero client close calls.
 func TestRelay_IdleTimeoutDoesNotCloseClientOnError(t *testing.T) {
 	t.Parallel()
 
@@ -1115,6 +1372,8 @@ func TestRelay_IdleTimeoutDoesNotCloseClientOnError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Keep initial clock samples at startup time and advance later samples an hour,
+	// allowing the watchdog to trigger while both fake reads remain blocked.
 	now := time.Now()
 	callCount := 0
 	nowFn := func() time.Time {
@@ -1135,6 +1394,9 @@ func TestRelay_IdleTimeoutDoesNotCloseClientOnError(t *testing.T) {
 	require.GreaterOrEqual(t, upstreamConn.CloseCalls(), int32(1))
 }
 
+// TestRelay_JoinsUpstreamReaderBeforeReturning holds the upstream reader after
+// cancellation notice. It checks no early result during its observation window,
+// then cancellation after reader release with client closure untouched.
 func TestRelay_JoinsUpstreamReaderBeforeReturning(t *testing.T) {
 	t.Parallel()
 
@@ -1143,6 +1405,8 @@ func TestRelay_JoinsUpstreamReaderBeforeReturning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan *RelayExit, 1)
 
+	// Run Relay beside the fixture so read entry, cancellation notice, and release
+	// can be controlled separately while its result waits in a buffered channel.
 	go func() {
 		_, relayExit := Relay(
 			ctx,
@@ -1159,18 +1423,25 @@ func TestRelay_JoinsUpstreamReaderBeforeReturning(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("upstream reader did not start")
 	}
+	// Cancel after upstream read entry, then wait for the probe's cancellation
+	// notice before checking whether the relay call has returned early.
 	cancel()
 	select {
 	case <-upstreamConn.readCanceled:
 	case <-time.After(time.Second):
 		t.Fatal("upstream reader did not observe relay cancellation")
 	}
+	// Observe fifty milliseconds of result-channel silence while allowReturn
+	// remains unreleased; the next phase separately checks return after reader
+	// release.
 	select {
 	case <-resultCh:
 		t.Fatal("Relay returned before the upstream reader exited")
 	case <-time.After(50 * time.Millisecond):
 	}
 
+	// Release the held read after the silence check, allowing its return milestone
+	// and Relay's upstream join to precede result-channel completion.
 	close(upstreamConn.allowReturn)
 	select {
 	case relayExit := <-resultCh:
@@ -1187,6 +1458,9 @@ func TestRelay_JoinsUpstreamReaderBeforeReturning(t *testing.T) {
 	require.Zero(t, clientConn.CloseCalls(), "错误路径不应提前关闭客户端连接")
 }
 
+// TestRelay_NilConnections passes a nil client or upstream transport with a
+// prepared request. Both cases must return relay_init and an error message
+// identifying the missing connection.
 func TestRelay_NilConnections(t *testing.T) {
 	t.Parallel()
 
@@ -1210,6 +1484,9 @@ func TestRelay_NilConnections(t *testing.T) {
 	})
 }
 
+// TestRelay_MultipleUpstreamMessages relays two text deltas followed by a
+// completed usage frame. It checks all three client writes, terminal
+// identity/counters, and observed first-token latency.
 func TestRelay_MultipleUpstreamMessages(t *testing.T) {
 	t.Parallel()
 
@@ -1247,6 +1524,9 @@ func TestRelay_MultipleUpstreamMessages(t *testing.T) {
 	require.Len(t, clientWrites, 3)
 }
 
+// TestRelay_OnTurnComplete_PerTerminalEvent supplies one completed and one
+// failed response with separate IDs. It checks ordered callback identity/usage
+// and aggregate input/output equal to their sums.
 func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	t.Parallel()
 
@@ -1286,6 +1566,9 @@ func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
+// TestRelay_OnTurnComplete_BareErrorWithoutIDBeforeLaterCompleted supplies an
+// unassociated bare error followed by a distinct completion. Both callbacks
+// retain their terminal usage and the session totals include both turns.
 func TestRelay_OnTurnComplete_BareErrorWithoutIDBeforeLaterCompleted(t *testing.T) {
 	t.Parallel()
 
@@ -1323,6 +1606,10 @@ func TestRelay_OnTurnComplete_BareErrorWithoutIDBeforeLaterCompleted(t *testing.
 	require.Equal(t, Usage{InputTokens: 8, OutputTokens: 3}, result.Usage)
 }
 
+// TestRelay_OnTurnComplete_AuxiliaryFrameDoesNotSettleBareErrorBeforeFailed
+// inserts a rate-limit update between error and response.failed. One callback
+// reports the identified failed snapshot, which also supplies the aggregate
+// usage.
 func TestRelay_OnTurnComplete_AuxiliaryFrameDoesNotSettleBareErrorBeforeFailed(t *testing.T) {
 	t.Parallel()
 
@@ -1348,6 +1635,9 @@ func TestRelay_OnTurnComplete_AuxiliaryFrameDoesNotSettleBareErrorBeforeFailed(t
 	require.Equal(t, turns[0].Usage, result.Usage)
 }
 
+// TestRelay_OnTurnComplete_UsesCurrentResponseCreateModel supplies a
+// warning-shaped bare error to the event observer. Its assertions check the
+// error event type and JSON delivered to OnUpstreamEvent.
 func TestRelay_OnTurnComplete_UsesCurrentResponseCreateModel(t *testing.T) {
 	t.Parallel()
 
@@ -1373,6 +1663,9 @@ func TestRelay_OnTurnComplete_UsesCurrentResponseCreateModel(t *testing.T) {
 	require.JSONEq(t, string(errorEvent), string(gotPayload))
 }
 
+// TestRelay_OnUpstreamError_ReportsFailedEvent supplies a failed response
+// containing a warning message to the event observer. It checks the
+// response.failed type and callback JSON payload.
 func TestRelay_OnUpstreamError_ReportsFailedEvent(t *testing.T) {
 	t.Parallel()
 
@@ -1398,6 +1691,9 @@ func TestRelay_OnUpstreamError_ReportsFailedEvent(t *testing.T) {
 	require.JSONEq(t, string(failedEvent), string(gotPayload))
 }
 
+// TestRelay_OnTurnComplete_ProvidesTurnMetrics supplies an identified delta and
+// completion under an advancing clock. Callback and session metrics retain
+// token observation and positive duration alongside terminal identity.
 func TestRelay_OnTurnComplete_ProvidesTurnMetrics(t *testing.T) {
 	t.Parallel()
 
@@ -1418,6 +1714,8 @@ func TestRelay_OnTurnComplete_ProvidesTurnMetrics(t *testing.T) {
 	defer cancel()
 
 	base := time.Unix(0, 0)
+	// Assign clock steps atomically across relay workers; five milliseconds per
+	// sample gives the metric assertions distinct token and terminal observations.
 	var nowTick atomic.Int64
 	nowFn := func() time.Time {
 		step := nowTick.Add(1)
@@ -1441,6 +1739,9 @@ func TestRelay_OnTurnComplete_ProvidesTurnMetrics(t *testing.T) {
 	require.Greater(t, result.Duration.Milliseconds(), int64(0))
 }
 
+// TestRelay_OnTurnCompleteUsesExplicitFirstTurnStart supplies a fixed accepted
+// start for the initial response.create while the clock is later. Completion
+// must report that supplied start.
 func TestRelay_OnTurnCompleteUsesExplicitFirstTurnStart(t *testing.T) {
 	t.Parallel()
 
@@ -1463,6 +1764,10 @@ func TestRelay_OnTurnCompleteUsesExplicitFirstTurnStart(t *testing.T) {
 	require.Equal(t, startedAt, turn.StartedAt)
 }
 
+// TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart completes one
+// response before injecting a later request under a controlled clock. The
+// second callback uses that request's start and the call finishes after
+// cancellation.
 func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 	t.Parallel()
 
@@ -1477,6 +1782,8 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
+	// Run the relay alongside sequenced fixture injection; buffered turn callbacks
+	// let the test wait for completion before advancing the accepted-request clock.
 	go func() {
 		defer close(done)
 		_, _ = Relay(ctx, clientConn, upstreamConn,
@@ -1488,6 +1795,9 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 			})
 	}()
 	require.Eventually(t, func() bool { return len(upstreamConn.Writes()) == 1 }, time.Second, time.Millisecond)
+	// Complete the initial request before changing the clock, so the later pending
+	// start belongs to the subsequent client frame rather than initial response
+	// observation.
 	upstreamConn.readCh <- passthroughTestFrame{
 		msgType: coderws.MessageText,
 		payload: []byte(`{"type":"response.completed","response":{"id":"resp_first","usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -1498,12 +1808,17 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 		t.Fatal("first turn did not complete")
 	}
 
+	// Publish the second request's acceptance time before injecting
+	// response.create; its pending timing must be captured before the later
+	// response clock is selected.
 	now.Store(secondStartedAt.UnixNano())
 	clientConn.readCh <- passthroughTestFrame{
 		msgType: coderws.MessageText,
 		payload: []byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
 	}
 	require.Eventually(t, func() bool { return len(upstreamConn.Writes()) == 2 }, time.Second, time.Millisecond)
+	// Wait for the second upstream write before advancing to response time,
+	// separating its accepted start from the terminal event that consumes timing.
 	now.Store(secondResponseAt.UnixNano())
 	upstreamConn.readCh <- passthroughTestFrame{
 		msgType: coderws.MessageText,
@@ -1517,6 +1832,8 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 	}
 	require.Equal(t, secondStartedAt, secondTurn.StartedAt)
 
+	// Cancel the ongoing relay after collecting the second turn, then wait for its
+	// call to return before this fixture scope ends.
 	cancel()
 	select {
 	case <-done:
@@ -1525,6 +1842,9 @@ func TestRelay_OnTurnCompleteUsesSubsequentResponseCreateStart(t *testing.T) {
 	}
 }
 
+// TestRelay_BinaryFramePassthrough forwards a short binary payload through
+// local transports. The client receives one binary frame with identical bytes
+// and aggregate input usage remains zero.
 func TestRelay_BinaryFramePassthrough(t *testing.T) {
 	t.Parallel()
 
@@ -1552,6 +1872,9 @@ func TestRelay_BinaryFramePassthrough(t *testing.T) {
 	require.Equal(t, binaryPayload, clientWrites[0].payload)
 }
 
+// TestRelay_BinaryJSONFrameSkipsObservation supplies completed-response JSON
+// carried as a binary frame. Forwarding retains binary type while usage,
+// request identity, and terminal observation stay empty.
 func TestRelay_BinaryJSONFrameSkipsObservation(t *testing.T) {
 	t.Parallel()
 
@@ -1578,6 +1901,9 @@ func TestRelay_BinaryJSONFrameSkipsObservation(t *testing.T) {
 	require.Equal(t, coderws.MessageBinary, clientWrites[0].msgType)
 }
 
+// TestRelay_UpstreamErrorEventPassthroughRaw supplies a bare invalid-request
+// error frame to the local upstream reader. The client receives one text frame
+// with exact bytes and Relay returns nil exit.
 func TestRelay_UpstreamErrorEventPassthroughRaw(t *testing.T) {
 	t.Parallel()
 
@@ -1603,6 +1929,9 @@ func TestRelay_UpstreamErrorEventPassthroughRaw(t *testing.T) {
 	require.Equal(t, errorEvent, clientWrites[0].payload)
 }
 
+// TestRelay_PreservesFirstMessageType configures the prepared request as a
+// binary frame despite its JSON payload. The captured upstream write must
+// retain binary type and exact bytes.
 func TestRelay_PreservesFirstMessageType(t *testing.T) {
 	t.Parallel()
 
@@ -1624,6 +1953,10 @@ func TestRelay_PreservesFirstMessageType(t *testing.T) {
 	require.Equal(t, firstPayload, upstreamWrites[0].payload)
 }
 
+// TestRelay_UsageParseFailureDoesNotBlockRelay supplies valid JSON whose
+// terminal usage value is a string. The frame is delivered, terminal
+// observation survives with zero input usage, and shared failure count
+// increases.
 func TestRelay_UsageParseFailureDoesNotBlockRelay(t *testing.T) {
 	baseline := SnapshotMetrics().UsageParseFailureTotal
 
@@ -1651,10 +1984,15 @@ func TestRelay_UsageParseFailureDoesNotBlockRelay(t *testing.T) {
 	require.GreaterOrEqual(t, SnapshotMetrics().UsageParseFailureTotal, baseline+1)
 }
 
+// TestRelay_WriteUpstreamFirstMessageFails supplies a writer that rejects the
+// prepared initial request. Relay must report write_upstream before any ongoing
+// forwarding work is needed.
 func TestRelay_WriteUpstreamFirstMessageFails(t *testing.T) {
 	t.Parallel()
 
 	upstreamConn := newPassthroughTestFrameConn(nil, true)
+	// The helper queue was auto-closed; Close tolerates that fixture state, and the
+	// separate rejecting writer remains the upstream transport used by Relay.
 	_ = upstreamConn.Close()
 
 	// Use the failing writer for the relay's first upstream frame.
@@ -1670,6 +2008,9 @@ func TestRelay_WriteUpstreamFirstMessageFails(t *testing.T) {
 	require.Equal(t, "write_upstream", relayExit.Stage)
 }
 
+// TestRelay_ContextCanceled cancels the request context before invoking Relay
+// with the prepared initial frame and local transports. Its assertion requires
+// a nonnil exit.
 func TestRelay_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
@@ -1686,6 +2027,10 @@ func TestRelay_ContextCanceled(t *testing.T) {
 	require.NotNil(t, relayExit)
 }
 
+// TestRelay_DownstreamPreambleStartsClientReader enables delayed client reading
+// and injects a structural response.created preamble. Successful preamble
+// delivery starts the reader, and terminal plus upstream closure finishes
+// normally.
 func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 	clientBase := newPassthroughTestFrameConn(nil, false)
 	clientConn := &readStartSpyFrameConn{base: clientBase, started: make(chan struct{})}
@@ -1694,6 +2039,9 @@ func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	// Run the relay while the fixture injects a structural preamble; the spy
+	// channel observes reader entry after successful delivery without requiring
+	// another client message.
 	go func() {
 		_, relayExit := Relay(
 			ctx,
@@ -1707,6 +2055,9 @@ func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 		resultCh <- relayExit
 	}()
 
+	// Deliver response.created before terminal completion so the readiness
+	// assertion tests a structural preamble as the physical write that enables
+	// client reading.
 	upstreamConn.readCh <- passthroughTestFrame{
 		msgType: coderws.MessageText,
 		payload: []byte(`{"type":"response.created","response":{"id":"resp_semantic_gate"}}`),
@@ -1722,6 +2073,8 @@ func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 		msgType: coderws.MessageText,
 		payload: []byte(`{"type":"response.completed","response":{"id":"resp_semantic_gate","usage":{"input_tokens":1,"output_tokens":1}}}`),
 	}
+	// Close the fixture queue after enqueueing its terminal frame; queued bytes
+	// remain readable before EOF lets the relay select normal completion.
 	_ = upstreamConn.Close()
 	select {
 	case relayExit := <-resultCh:
@@ -1731,6 +2084,9 @@ func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 	}
 }
 
+// TestRelay_TraceEvents_ContainsLifecycleStages captures diagnostics while one
+// completed frame is relayed. The synchronized snapshot must contain
+// relay_start, initial-write success, first_exit, and relay_complete stages.
 func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	t.Parallel()
 
@@ -1746,6 +2102,9 @@ func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	// Collect worker diagnostics under stagesMu and copy under the same lock after
+	// Relay; late callback activity cannot alter the captured slice used for
+	// assertions.
 	stages := make([]string, 0, 8)
 	var stagesMu sync.Mutex
 	_, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{
@@ -1765,6 +2124,9 @@ func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	require.Contains(t, capturedStages, "relay_complete")
 }
 
+// TestRelay_TraceEvents_IdleTimeout advances the supplied clock while both
+// frame readers remain idle. Its synchronized diagnostic snapshot contains
+// timeout detection and relay_exit alongside the returned idle stage.
 func TestRelay_TraceEvents_IdleTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -1775,6 +2137,8 @@ func TestRelay_TraceEvents_IdleTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Keep startup samples at the base time, then move later samples an hour
+	// forward so the idle trace is produced at a watchdog polling tick.
 	now := time.Now()
 	callCount := 0
 	nowFn := func() time.Time {
@@ -1785,6 +2149,8 @@ func TestRelay_TraceEvents_IdleTimeout(t *testing.T) {
 		return now.Add(time.Hour)
 	}
 
+	// Protect diagnostic append and snapshot copying with stagesMu because relay
+	// workers can emit traces independently of the controlling goroutine's return.
 	stages := make([]string, 0, 8)
 	var stagesMu sync.Mutex
 	_, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{
@@ -1805,19 +2171,33 @@ func TestRelay_TraceEvents_IdleTimeout(t *testing.T) {
 	require.Contains(t, capturedStages, "relay_exit")
 }
 
+// ReadFrame waits for a nonnil context's cancellation and returns its error
+// with an empty text frame. Close does not release this stub, and the
+// first-write fixture normally returns before reading.
 func (c *errorOnWriteFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	// This stub has no input queue; cancellation supplies its observable read
+	// termination path even though Close itself leaves the fake unchanged.
 	<-ctx.Done()
 	return coderws.MessageText, nil, ctx.Err()
 }
 
+// WriteFrame returns the fixed synthetic connection-refused error used by
+// initial-write tests. Context and frame arguments are ignored, allowing Relay
+// to classify the failure directly at its write stage.
 func (c *errorOnWriteFrameConn) WriteFrame(_ context.Context, _ coderws.MessageType, _ []byte) error {
 	return errors.New("write failed: connection refused")
 }
 
+// Close returns nil and supplies no additional cleanup effects for this
+// context-controlled stub.
 func (c *errorOnWriteFrameConn) Close() error {
 	return nil
 }
 
+// TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil sends structural
+// progress and done frames followed by either completed or done. All five
+// frames are delivered while callback and session first-token values remain
+// nil.
 func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
 	t.Parallel()
 
@@ -1871,12 +2251,18 @@ func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
 	}
 }
 
+// TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal supplies
+// full text or tool arguments through selected done events under an advancing
+// clock. Callback and session token latency must precede terminal duration.
 func TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		donePayload string
+		// name and donePayload select the done event placed between created and
+		// completed frames. Each case supplies content while the same advancing clock
+		// compares token observation against terminal duration.
+		name        string // named done-event fixture case
+		donePayload string // complete done-event JSON bytes
 	}{
 		{
 			name:        "output text done",
@@ -1899,6 +2285,9 @@ func TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal(t *testing
 			}, true)
 
 			base := time.Unix(0, 0)
+			// Use atomic ten-millisecond clock steps because several relay workers can
+			// request time; the supplied done frame precedes terminal observation in the
+			// upstream sequence.
 			var nowTick atomic.Int64
 			nowFn := func() time.Time {
 				return base.Add(time.Duration(nowTick.Add(1)) * 10 * time.Millisecond)
@@ -1924,6 +2313,10 @@ func TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal(t *testing
 	}
 }
 
+// TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs uses local
+// created/delta/completed fixtures and an advancing clock. Callback and session
+// latency are observed, and callback first-token time remains below terminal
+// duration.
 func TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs(t *testing.T) {
 	t.Parallel()
 
@@ -1956,6 +2349,8 @@ func TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs(t *testing.T) {
 	defer cancel()
 
 	base := time.Unix(0, 0)
+	// Use atomic ten-millisecond clock steps for concurrent relay time reads; the
+	// local delta sequence records token timing before its later completed frame.
 	var nowTick atomic.Int64
 	nowFn := func() time.Time {
 		step := nowTick.Add(1)

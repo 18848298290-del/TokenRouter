@@ -12,13 +12,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// Invalid encrypted reasoning state is identified by a SHA-256 digest of the
+// ciphertext returned in request history. The collector accepts reasoning and
+// compaction types handled by the protocol sanitizer, so lineage tracking does
+// not repeatedly decode unsupported items that it cannot remove.
+//
+// Decoded requests compact their input slices in place and can share item maps
+// with callers. Replay-byte requests instead decode candidate items into
+// separate maps, keep unmatched bodies shared, and encode replacements only
+// when sanitization succeeds. Raw payloads probe for a digest match before
+// decoding the complete object. Those paths keep valid ciphertext available and
+// report how many items changed, while compaction removal and reasoning-shell
+// retention follow the shared protocol sanitizer.
+
+// OpenAIEncryptedContentDigest returns the lowercase SHA-256 hex digest of
+// ciphertext bytes.
 func OpenAIEncryptedContentDigest(encrypted string) string {
 	sum := sha256.Sum256([]byte(encrypted))
 	return hex.EncodeToString(sum[:])
 }
 
-// OpenAIEncryptedLineageItemType matches the types handled by wire.SanitizeEncryptedReasoningInputItem.
-// Collecting digests for other types would repeatedly trigger decoding of content that cannot be stripped.
+// OpenAIEncryptedLineageItemType reports whether the trimmed type supports
+// encrypted-replay sanitization. Reasoning, compaction, and compaction_summary
+// qualify; other types are excluded from collection because the shared
+// sanitizer cannot remove their ciphertext.
 func OpenAIEncryptedLineageItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
 	case "reasoning", "compaction", "compaction_summary":
@@ -28,8 +45,9 @@ func OpenAIEncryptedLineageItemType(itemType string) bool {
 	}
 }
 
-// CollectOpenAIEncryptedContentDigestsRaw collects ciphertext digests from supported input types.
-// Keep payload immutable during the call: parsing uses a zero-copy string view.
+// CollectOpenAIEncryptedContentDigestsRaw collects nonempty string ciphertext
+// digests from supported input items. Arrays and a single object are accepted;
+// callers keep payload immutable while its zero-copy string view is parsed.
 func CollectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	if len(payload) == 0 {
 		return nil
@@ -61,9 +79,18 @@ func CollectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	return digests
 }
 
-// StripOpenAIInvalidEncryptedContentItems sanitizes input items whose ciphertext digest is invalid.
-// Reasoning loses encrypted_content, null content and empty shells; compaction and
-// compaction_summary items are removed. The return value counts changed items.
+// StripOpenAIInvalidEncryptedContentItems sanitizes matching ciphertext in
+// reqBody and returns the changed-item count. It mutates the request map,
+// compacts an input slice on its existing backing storage, and can mutate
+// shared reasoning maps. Callers isolate that mutable state before passing it
+// here.
+//
+// Digest matches select the protocol sanitizer, which drops encrypted
+// compaction items and removes ciphertext and literal nil content from
+// reasoning. A reasoning item survives when attributes besides its type remain.
+// Empty filtered input is deleted from the request; unsupported shapes and
+// unmatched digests leave the request unchanged, keeping fresh history
+// available for the next attempt.
 func StripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map[string]struct{}) int {
 	if len(reqBody) == 0 || len(invalid) == 0 {
 		return 0
@@ -85,10 +112,14 @@ func StripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 		if _, hit := invalid[OpenAIEncryptedContentDigest(encrypted)]; !hit {
 			return item, false, true
 		}
+		// Apply the shared type-specific rule after the digest matches; valid
+		// ciphertext and unsupported item types retain their history for later replay.
 		return wire.SanitizeEncryptedReasoningInputItem(item)
 	}
 	switch input := inputValue.(type) {
 	case []any:
+		// Compact on the existing backing array after each retention decision;
+		// callers needing an independent history must isolate slice and map storage first.
 		filtered := input[:0]
 		for _, item := range input {
 			nextItem, changed, keep := stripItem(item)
@@ -129,8 +160,10 @@ func StripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 	}
 }
 
-// OpenAIRawPayloadHasInvalidEncryptedContent checks input ciphertext against invalid digests.
-// Keep payload immutable during the call: parsing uses a zero-copy string view.
+// OpenAIRawPayloadHasInvalidEncryptedContent reports whether input contains a
+// nonempty ciphertext matching invalid. It probes arrays or one object without
+// filtering item types; keep payload immutable while its zero-copy view is
+// parsed.
 func OpenAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[string]struct{}) bool {
 	if len(payload) == 0 || len(invalid) == 0 {
 		return false
@@ -164,9 +197,17 @@ func OpenAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[stri
 	return false
 }
 
-// StripOpenAIInvalidEncryptedContentFromReplayItems sanitizes matching replay items.
-// Changes produce a new slice and replacement bodies; unmatched bodies are shared.
-// It returns the original slice when nothing changes and never mutates input bodies.
+// StripOpenAIInvalidEncryptedContentFromReplayItems returns sanitized replay
+// bytes and a changed-item count. Input bodies are read through zero-copy views
+// and must remain immutable during the call. Changed items receive encoded
+// replacement bytes, unmatched bodies remain shared, and a no-change result
+// returns the input slice.
+//
+// A digest probe avoids decoding when no item can match. Candidate maps are
+// decoded with number preservation before the shared sanitizer decides
+// retention. Decode or encode failures keep that individual body and exclude it
+// from the changed count; successful compaction removal and reasoning rewriting
+// can still proceed for other items.
 func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, invalid map[string]struct{}) ([]json.RawMessage, int) {
 	if len(items) == 0 || len(invalid) == 0 {
 		return items, 0
@@ -189,6 +230,8 @@ func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	next := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
 		var decoded map[string]any
+		// Keep unreadable replay bytes in sequence so optional ciphertext recovery
+		// does not discard client history that the shared sanitizer cannot interpret.
 		if err := wirejson.DecodeUseNumber(item, &decoded); err != nil {
 			next = append(next, item)
 			continue
@@ -212,6 +255,8 @@ func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 			continue
 		}
 		rebuilt, err := wirejson.Marshal(nextItem)
+		// A failed replacement encoding keeps the original item and rolls back
+		// its changed count, while other successfully sanitized replay items remain installed.
 		if err != nil {
 			next = append(next, item)
 			stripped--
@@ -225,8 +270,10 @@ func StripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	return next, stripped
 }
 
-// StripOpenAIInvalidEncryptedContentRaw probes for invalid ciphertext before decoding and rewriting.
-// It returns the changed-item count, or the original payload when nothing changes.
+// StripOpenAIInvalidEncryptedContentRaw rewrites a complete request only after
+// its input contains an invalid digest. Decoding preserves numbers; unchanged
+// requests and failed rebuilding return the supplied payload, with failures
+// reported separately and successful results reporting changed items.
 func StripOpenAIInvalidEncryptedContentRaw(payload []byte, invalid map[string]struct{}) ([]byte, int, error) {
 	if !OpenAIRawPayloadHasInvalidEncryptedContent(payload, invalid) {
 		return payload, 0, nil

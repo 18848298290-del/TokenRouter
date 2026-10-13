@@ -20,61 +20,170 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// CompatResponseResult records the upstream response and usage; the inbound handler supplies billing-model context.
+// Responses-to-Chat conversion can observe protocol progress before producing a
+// client chunk. Large-request silent-refusal detection retains converted chunks
+// until content evidence permits release, keeping a refusal eligible for
+// recovery before semantic client output. Terminal response usage overrides
+// top-level event usage, and tool names are restored before typed decoding and
+// observation.
+//
+// Header creation is deferred until actual conversion output, an error, or an
+// allowed heartbeat needs it. HTTP header commitment and the local
+// clientOutputStarted flag can therefore differ. A failed sink write stops
+// delivery while upstream events continue through accounting until a terminal
+// or another exit. Timed reading uses a bounded queue and an upstream arrival
+// clock; returning releases sends, while the response owner closes the body to
+// unblock a pending scan.
+
+// CompatResponseResult carries reader-specific usage and upstream/request
+// metadata for inbound result adaptation.
 type CompatResponseResult struct {
-	ReasoningEffort, ResolvedTier                *string
-	ResponseID                                   string
-	ClientDisconnect                             bool
+	// ReasoningEffort is the optional request reasoning level. ResolvedTier is the
+	// optional request tier. Both can share caller-owned string storage; readers
+	// lacking these annotations leave them nil, and consumers keep pointed-to values stable.
+	ReasoningEffort, ResolvedTier *string
+	// ResponseID is a Responses turn ID when the selected reader records it;
+	// readers omitting turn identity leave this field empty.
+	ResponseID string
+	// ClientDisconnect is populated by Messages stream conversions; the Responses
+	// Messages reader also sets it for policy-forced output halt, while Chat
+	// readers leave it zero.
+	ClientDisconnect bool
+	// RequestID is the upstream HTTP request identity. Model is the client model.
+	// UpstreamModel is the selected upstream request model. ServiceTier is the
+	// observed upstream response tier. These describe the same attempt independently
+	// of ResponseID and the inbound handler's separately selected billing model.
 	RequestID, Model, UpstreamModel, ServiceTier string
-	UpstreamHeaders                              http.Header
-	Usage                                        wire.ForwardUsage
-	Stream                                       bool
-	Duration                                     time.Duration
-	FirstTokenMs                                 *int
-	SearchCount                                  int
+	// UpstreamHeaders shares the response header map with the executor; callers
+	// clone it before edits that would alter another consumer's observation.
+	UpstreamHeaders http.Header
+	Usage           wire.ForwardUsage // observed upstream billing usage
+	Stream          bool              // client streaming response mode
+	Duration        time.Duration     // total response handling duration
+	// FirstTokenMs measures milliseconds from the supplied start time to a
+	// reader-specific first event; nil means that event was not observed.
+	FirstTokenMs *int
+	SearchCount  int // observed native search calls
 }
+
+// ChatFailure selects pre-output recovery or client error presentation for
+// compatibility response readers.
 type ChatFailure struct {
-	Failover      error
-	Status        int
+	// Failover takes precedence over client error fields when nonnil; readers
+	// return it through their output-state and observed-usage handling.
+	Failover error
+	// Status supplies the HTTP status passed to WriteError when Failover is nil and
+	// the client error needs presentation before output.
+	Status int
+	// Type is the client error category. Message is the client error description.
+	// They accompany Status only when Failover is nil; the policy callback supplies
+	// their protocol spelling and redaction before a reader invokes client output.
 	Type, Message string
 }
 
-// ChatResponseOptions configures Chat conversion, output, reading and error handling.
+// ChatResponseOptions binds protocol conversion to one attempt's reading,
+// observations, and output policy.
 type ChatResponseOptions struct {
-	Runtime                           bridge.Runtime
-	RequestContext                    context.Context
-	ReadBuffered                      func() (*wire.ResponsesResponse, wire.ForwardUsage, *bridge.BufferedResponseAccumulator, error)
-	BufferedReadFailure               func(error) error
-	BufferedFailure                   func(*wire.ResponsesResponse, wire.ForwardUsage) error
-	ObserveFinal                      func(*wire.ResponsesResponse)
-	MissingUsage                      func(*wire.ResponsesResponse, wire.ForwardUsage) error
-	Headers                           func(http.Header, http.Header)
-	WriteError                        func(int, string, string)
-	ServiceTier                       func() string
-	CountSearch                       bool
-	JSONSearch                        func([]byte) int
-	StreamSearch                      func([]byte, map[string]struct{}) int
-	Scanner                           func(io.Reader) *bufio.Scanner
+	Runtime bridge.Runtime // conversion clock and random source
+	// RequestContext supplies the Chat scanner-error logger context; network
+	// cancellation depends on the response body and its caller-owned request
+	// lifecycle.
+	RequestContext context.Context
+	// ReadBuffered returns this attempt's terminal, usage, and accumulator; gateway
+	// bindings capture the same response whose headers the reader reports.
+	ReadBuffered func() (*wire.ResponsesResponse, wire.ForwardUsage, *bridge.BufferedResponseAccumulator, error)
+	// BufferedReadFailure translates Chat buffered read errors; the Messages
+	// buffered reader instead unwraps CompatBufferedReadError directly before
+	// returning its cause.
+	BufferedReadFailure func(error) error
+	// BufferedFailure handles failed buffered terminals before JSON conversion,
+	// using the terminal and usage observed by the caller's buffered reader.
+	BufferedFailure func(*wire.ResponsesResponse, wire.ForwardUsage) error
+	// ObserveFinal runs before failed-terminal and usage policy; gateway binding
+	// records response model/tier observations even when conversion subsequently
+	// returns an error.
+	ObserveFinal func(*wire.ResponsesResponse)
+	// MissingUsage can reject a Chat buffered terminal before output;
+	// MessagesResponseOptions shadows this field with a separate void observation
+	// callback.
+	MissingUsage func(*wire.ResponsesResponse, wire.ForwardUsage) error
+	// Headers copies approved upstream headers for buffered output or the first
+	// stream-header invocation; the readers then select their client content type.
+	Headers func(http.Header, http.Header)
+	// WriteError presents selected status/type/message before client content
+	// starts; readers treat its invocation as output and do not inspect a write
+	// result.
+	WriteError func(int, string, string)
+	// ServiceTier supplies observed upstream tier when building a result; the
+	// gateway getter reads request-local response observations rather than the
+	// selected model name.
+	ServiceTier func() string
+	// CountSearch enables JSONSearch and StreamSearch observation; when false,
+	// those optional callbacks are skipped and SearchCount remains its default
+	// value.
+	CountSearch bool
+	// JSONSearch observes a successfully serialized buffered terminal when
+	// CountSearch is true; only a positive returned count populates the result.
+	JSONSearch func([]byte) int
+	// StreamSearch receives each restored data payload before typed decoding plus
+	// an attempt-local seen map, allowing search observations to deduplicate
+	// repeated events.
+	StreamSearch func([]byte, map[string]struct{}) int
+	// Scanner builds the upstream line scanner under caller limits; the executor
+	// retains response-body ownership after synchronous or timed reading exits.
+	Scanner func(io.Reader) *bufio.Scanner
+	// StreamInterval is the upstream read-idle budget. KeepaliveInterval is the
+	// client heartbeat spacing after consumed upstream lines. Both callbacks are
+	// queried at stream entry; positive results enable their respective timer work,
+	// and the producer arrival clock remains independent of downstream conversion.
 	StreamInterval, KeepaliveInterval func() time.Duration
-	RestoreToolNames                  func([]byte) []byte
-	Observe                           func([]byte, string)
-	CyberForwarded                    error
-	MarkCyber                         func(CyberObservation)
-	Truncate                          func(string, int) string
-	BuildStreamError                  func(string, string) string
-	StreamFailure                     func([]byte, string, bool) ChatFailure
-	SilentRefusal                     func() error
-	ReadFailure                       func(error) error
+	// RestoreToolNames transforms each stream payload before first-data timing,
+	// search counts, typed decoding, usage observation, and protocol conversion
+	// occur.
+	RestoreToolNames func([]byte) []byte
+	// Observe receives restored payloads after successful typed decoding, before
+	// terminal usage and error policy; gateway binding updates service-tier
+	// observations.
+	Observe func([]byte, string)
+	// CyberForwarded is the required nonnil policy sentinel after a cyber
+	// rejection; finalization uses it to stop ordinary successful stream closure.
+	CyberForwarded error
+	// MarkCyber records policy code/message, bounded payload text, HTTP stream
+	// status, and usage seen before client error presentation is attempted.
+	MarkCyber func(CyberObservation)
+	// Truncate limits cyber diagnostic text at the requested length; the gateway
+	// supplies TruncateUTF8 for the reader's 4096-byte diagnostic budget.
+	Truncate func(string, int) string
+	// BuildStreamError produces the client's protocol error frame; Chat and
+	// Messages gateway bindings select their own SSE envelope for the same policy
+	// call.
+	BuildStreamError func(string, string) string
+	// StreamFailure classifies Chat error/failed payloads with the local
+	// client-output flag; physical heartbeat commitment is handled separately when
+	// returning its Failover error.
+	StreamFailure func([]byte, string, bool) ChatFailure
+	// SilentRefusal supplies pre-output recovery after the Chat detector classifies
+	// a held terminal; it is required on paths where that detection is enabled.
+	SilentRefusal func() error
+	// ReadFailure translates Chat scanner failures after excluding cancellation,
+	// deadline expiration, and known client disconnection; Messages scanner errors
+	// use their own incomplete wrapper.
+	ReadFailure func(error) error
 }
 
-// NewCompatStreamHeaderWriter returns a one-shot header writer to invoke at first output.
-// Creating the closure does not commit the response.
+// NewCompatStreamHeaderWriter returns a closure that commits filtered HTTP 200
+// SSE headers on its first invocation. Construction retains headers and the
+// required filter without writing. Serialize closure calls: its ordinary
+// boolean is set before filtering/writing, and repeated calls perform no
+// further header work.
 func NewCompatStreamHeaderWriter(c *upstream.OutputContext, headers http.Header, filter func(http.Header, http.Header)) func() {
 	written := false
 	return func() {
 		if written {
 			return
 		}
+		// Claim this serialized closure before filtering and committing headers,
+		// so later conversion chunks cannot repeat the first-output header side effects.
 		written = true
 		filter(c.Writer.Header(), headers)
 		c.Header("Content-Type", "text/event-stream")
@@ -85,7 +194,17 @@ func NewCompatStreamHeaderWriter(c *upstream.OutputContext, headers http.Header,
 	}
 }
 
-// ReadChatBuffered collects the Responses terminal result and converts it to Chat JSON.
+// ReadChatBuffered converts the terminal Responses object to Chat JSON after
+// caller-provided buffered reading and usage policy. Supply callbacks used for
+// reads, failure handling, observation, headers, and service tier. The executor
+// owns closing resp.Body.
+//
+// Missing terminal data produces a client 502; failed terminals and
+// missing-usage policy can prevent conversion. The accumulator supplements an
+// empty output before the bridge creates client JSON, and forwarded SSE content
+// type is replaced for that representation. Optional search accounting uses
+// serialized terminal data when available. ResponseID and ClientDisconnect
+// remain unpopulated in this reader's returned result.
 func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options ChatResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -107,8 +226,9 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 		return nil, err
 	}
 
-	// When the terminal event has an empty output array, reconstruct from
-	// accumulated delta events so the client receives the full content.
+	// Supplement empty terminal output from accumulated deltas before protocol
+	// conversion, retaining terminal metadata while making earlier content
+	// available to the Chat bridge.
 	acc.SupplementResponseOutput(finalResponse)
 
 	chatResp := bridge.ResponsesToChatCompletions(options.Runtime, finalResponse, originalModel)
@@ -130,7 +250,8 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 		Stream:          false,
 		Duration:        time.Since(startTime),
 	}
-	// Grok chat bridge: bill native search tools found in the terminal Responses body.
+	// Optional search billing uses the terminal JSON when marshaling succeeds;
+	// failure leaves SearchCount zero while client conversion has already completed.
 	if options.CountSearch && finalResponse != nil {
 		if body, err := json.Marshal(finalResponse); err == nil {
 			if n := options.JSONSearch(body); n > 0 {
@@ -141,15 +262,27 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 	return result, nil
 }
 
-// ReadChatStreaming converts Responses events to a Chat stream and collects usage.
+// ReadChatStreaming converts Responses SSE to Chat chunks while retaining usage
+// and optional search observations. Supply stream callbacks and keep the
+// response body owned by the executor. FirstTokenMs records the first
+// dispatched data payload before JSON validity, while result ClientDisconnect
+// and ResponseID remain unpopulated.
+//
+// Tool-name restoration precedes decoding; nested terminal response usage wins
+// over event usage. Large-request refusal detection can hold converted output
+// until release or terminal classification. Recovery before physical writer
+// commitment can return a nil result; later errors return observed usage. A
+// timed producer is signaled to stop sends on return, but blocked scanning
+// still needs body closure. Missing terminal, read failure, and idle timeout
+// retain their separate outcomes.
 func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options ChatResponseOptions, originalModel, upstreamModel string, startTime time.Time, requestBodyLen int) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
 
 	state := bridge.NewResponsesEventToChatState(options.Runtime)
 	state.Model = originalModel
-	// Include usage even when the client did not request it so chained billing proxies
-	// receive token counts, matching the direct Chat forwarding path.
+	// Request usage chunks from the bridge even when the client omitted them,
+	// allowing downstream billing proxies to observe token totals at stream completion.
 	state.IncludeUsage = true
 
 	var usage wire.ForwardUsage
@@ -162,7 +295,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 	var streamFailoverErr error
 	var streamNonFailoverErr error
 	var cyberPolicyErr error
-	// Deduplicate native search calls across Responses events for Grok search billing.
+	// Keep one attempt-local search identity set across events, so repeated
+	// lifecycle copies can be counted once by the supplied search observer.
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := options.CountSearch
@@ -200,6 +334,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 
 	processDataLine := func(payload string) bool {
 		payload = string(options.RestoreToolNames([]byte(payload)))
+		// Time the first dispatched data before JSON decoding; malformed or
+		// lifecycle data can therefore establish this reader's first-data observation.
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -221,6 +357,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 		refusalDetector.ObservePayload([]byte(payload))
 
 		isTerminalEvent := IsCompatResponsesTerminalEvent(event.Type)
+		// Terminal nested response usage is applied last, overriding top-level
+		// event usage as a whole even when its token totals are zero.
 		if isTerminalEvent {
 			if event.Usage != nil {
 				usage = wire.CopyForwardUsage(event.Usage)
@@ -233,6 +371,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			payloadBytes := []byte(payload)
 			message := ExtractOpenAISSEErrorMessage(payloadBytes)
 			if hit, code, msg := DetectOpenAICyberPolicy(payloadBytes); hit {
+				// Capture up to four KiB of policy evidence with terminal usage before
+				// client error delivery, so failed delivery does not discard those observations.
 				options.MarkCyber(CyberObservation{
 					Code:           code,
 					Message:        msg,
@@ -257,6 +397,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 				cyberPolicyErr = options.CyberForwarded
 				return true
 			}
+			// Keep failure policy ahead of chunk conversion, so a retryable error
+			// can return while held content still leaves the attempt eligible for recovery.
 			failure := options.StreamFailure(payloadBytes, message, clientOutputStarted)
 			if failure.Failover != nil {
 				streamFailoverErr = failure.Failover
@@ -264,6 +406,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			}
 			defaultStatus, defaultErrType, defaultMsg := failure.Status, failure.Type, failure.Message
 
+			// This envelope contains selected string scalars, which JSON supports;
+			// error formatting advances independently of subsequent client write failure.
 			errorPayload, _ := json.Marshal(map[string]any{
 				"error": map[string]any{
 					"type":    defaultErrType,
@@ -288,12 +432,16 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			return true
 		}
 
+		// Advance conversion and refusal observation before sink writes, retaining
+		// upstream accounting even when this or an earlier chunk cannot reach the client.
 		chunks := bridge.ResponsesEventToChatChunks(&event, state)
 		for _, chunk := range chunks {
 			refusalDetector.ObserveChatChunk(chunk)
 		}
 		if !clientDisconnected {
 			for _, chunk := range chunks {
+				// A failed chunk encoding is skipped after bridge state advances;
+				// later observations and terminal accounting continue through this attempt.
 				sse, err := bridge.ChatChunkToSSE(chunk)
 				if err != nil {
 					logger.L().Warn("openai chat_completions stream: failed to marshal chunk",
@@ -302,6 +450,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 					)
 					continue
 				}
+				// Hold converted chunks while the large-request detector lacks release
+				// evidence, keeping possible silent refusal ahead of semantic client commitment.
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
 					continue
@@ -357,10 +507,14 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 		}
 		if len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {
+				// A failed chunk encoding is skipped after bridge state advances;
+				// later observations and terminal accounting continue through this attempt.
 				sse, err := bridge.ChatChunkToSSE(chunk)
 				if err != nil {
 					continue
 				}
+				// Hold converted chunks while the large-request detector lacks release
+				// evidence, keeping possible silent refusal ahead of semantic client commitment.
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
 					continue
@@ -391,6 +545,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 				}
 			}
 		}
+		// Resolve held output after bridge finalization, allowing refusal policy
+		// to reject an empty attempt before headers or a DONE frame are written.
 		if !clientDisconnected && !clientOutputStarted {
 			if refusalDetector.IsSilentRefusal() {
 				return nil, options.SilentRefusal()
@@ -410,7 +566,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 				clientOutputStarted = !clientDisconnected
 			}
 		}
-		// Send [DONE] sentinel
+		// A recognized terminal closes the Chat stream with DONE after held
+		// content has been settled; disconnect suppresses delivery while usage remains available.
 		if !clientDisconnected {
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
@@ -446,10 +603,12 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 		return processDataLine(payload)
 	}
 
-	// Determine keepalive interval
+	// Read heartbeat policy once for this stream attempt; upstream line
+	// consumption determines heartbeat idleness independently of the producer arrival clock.
 	keepaliveInterval := options.KeepaliveInterval()
 
-	// No keepalive: fast synchronous path
+	// With both timers disabled, direct scanning uses the same frame parser
+	// and terminal requirement while avoiding read-ahead and a producer goroutine.
 	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		var parser wire.OpenAICompatSSEFrameParser
 		for scanner.Scan() {
@@ -483,11 +642,14 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 		return missingTerminalErr()
 	}
 
-	// Read upstream asynchronously so keepalive and timeout handling can run while reads block.
+	// scanEvent carries a scanner line or failure to the timed consumer.
+	// The producer supplies one of line or err per event and owns channel closure.
 	type scanEvent struct {
-		line string
-		err  error
+		line string // upstream scanner line
+		err  error  // upstream scanner failure
 	}
+	// Bound queued read-ahead while conversion or client writes run; done
+	// releases pending sends after terminal processing or another consumer exit.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	var lastReadAt int64
@@ -500,6 +662,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			return false
 		}
 	}
+	// Publish actual scan arrival before queueing, so a slow client consumer
+	// does not make recently read upstream lines appear idle to timeout policy.
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
@@ -512,6 +676,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			_ = sendEvent(scanEvent{err: err})
 		}
 	}()
+	// Stop producer sends on return; a scanner blocked in Body.Read still
+	// depends on the executor closing that response body to finish its goroutine.
 	defer close(done)
 
 	var keepaliveTicker *time.Ticker
@@ -576,6 +742,9 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
+			// Held refusal candidates postpone heartbeat commitment. Elsewhere a
+			// heartbeat writes headers while leaving clientOutputStarted unchanged until
+			// converted content.
 			if clientDisconnected {
 				continue
 			}
@@ -585,7 +754,8 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			// Send SSE comment as keepalive
+			// A comment heartbeat maintains the client connection after idle line
+			// consumption; failed delivery latches disconnection and leaves upstream observation active.
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",

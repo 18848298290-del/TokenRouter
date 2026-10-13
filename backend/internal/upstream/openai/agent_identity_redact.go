@@ -2,8 +2,20 @@ package openai
 
 import "strings"
 
-// RedactAgentIdentityBody replaces known credentials and AgentAssertion values in a body copy.
-// The caller supplies credential lookup; the input bytes remain unchanged.
+// Agent diagnostics can contain stored credentials or a freshly generated
+// AgentAssertion value. Redaction replaces known credential substrings and then
+// scans assertion tokens independently, so a per-request signature can be
+// hidden even when credential lookup does not contain it.
+
+// RedactAgentIdentityBody returns a body copy with known credentials and
+// assertion tokens replaced. The credential callback is required and supplies
+// each stored value; blank values are ignored. Redaction is textual, so
+// embedded occurrences are replaced even outside JSON fields.
+//
+// Assertions are scanned after stored values, with delimiters marking the token
+// end. Advancing past each replacement prevents the inserted redaction label
+// from being rescanned. The original byte slice stays available to the caller
+// for response handling.
 func RedactAgentIdentityBody(body []byte, credential func(string) string) []byte {
 	redacted := string(body)
 	for _, key := range []string{
@@ -21,6 +33,8 @@ func RedactAgentIdentityBody(body []byte, credential func(string) string) []byte
 			redacted = strings.ReplaceAll(redacted, value, "[redacted]")
 		}
 	}
+	// Assertion values vary per request, so redact their delimited token even
+	// when the provider credential lookup has no matching stored signature.
 	const assertionPrefix = "AgentAssertion "
 	for offset := 0; offset < len(redacted); {
 		relativeStart := strings.Index(redacted[offset:], assertionPrefix)

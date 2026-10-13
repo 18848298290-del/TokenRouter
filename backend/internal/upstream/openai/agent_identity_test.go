@@ -17,6 +17,9 @@ import (
 	"golang.org/x/crypto/nacl/box"
 )
 
+// newTestAgentIdentityKey creates fresh Ed25519 credentials and a PKCS#8 Base64
+// fixture. Random generation and encoding failures fail the calling test, and
+// the returned key includes fixed runtime and task identifiers.
 func newTestAgentIdentityKey(t *testing.T) (AgentIdentityKey, string) {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -30,6 +33,10 @@ func newTestAgentIdentityKey(t *testing.T) (AgentIdentityKey, string) {
 	}, base64.StdEncoding.EncodeToString(der)
 }
 
+// TestBuildAgentAssertionMatchesCodexEnvelopeAndSignature signs a fixed
+// timestamp supplied in a non-UTC zone. It decodes both envelope layers and
+// verifies the UTC fields and Ed25519 signature over the exact
+// runtime/task/timestamp payload.
 func TestBuildAgentAssertionMatchesCodexEnvelopeAndSignature(t *testing.T) {
 	key, _ := newTestAgentIdentityKey(t)
 	now := time.Date(2026, 7, 14, 8, 9, 10, 0, time.FixedZone("UTC+8", 8*60*60))
@@ -41,10 +48,10 @@ func TestBuildAgentAssertionMatchesCodexEnvelopeAndSignature(t *testing.T) {
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	require.NoError(t, err)
 	var envelope struct {
-		AgentRuntimeID string `json:"agent_runtime_id"`
-		TaskID         string `json:"task_id"`
-		Timestamp      string `json:"timestamp"`
-		Signature      string `json:"signature"`
+		AgentRuntimeID string `json:"agent_runtime_id"` // signed agent runtime identifier
+		TaskID         string `json:"task_id"`          // signed registered task identifier
+		Timestamp      string `json:"timestamp"`        // RFC3339
+		Signature      string `json:"signature"`        // base64
 	}
 	require.NoError(t, json.Unmarshal(decoded, &envelope))
 	require.Equal(t, "runtime-test", envelope.AgentRuntimeID)
@@ -57,11 +64,16 @@ func TestBuildAgentAssertionMatchesCodexEnvelopeAndSignature(t *testing.T) {
 	require.True(t, ed25519.Verify(publicKey, []byte("runtime-test:task-test:2026-07-14T00:09:10Z"), signature))
 }
 
+// TestDecryptAgentTaskIDSupportsCodexSealedBoxResponse encrypts a task
+// identifier to the seed-derived X25519 public key. Decryption must recover the
+// plaintext identifier with the matching agent Ed25519 credentials.
 func TestDecryptAgentTaskIDSupportsCodexSealedBoxResponse(t *testing.T) {
 	key, _ := newTestAgentIdentityKey(t)
 	digest := sha512.Sum512(key.PrivateKey.Seed())
 	var curvePrivate [32]byte
 	copy(curvePrivate[:], digest[:32])
+	// Derive the recipient through the same Ed25519-seed conversion used by
+	// registration decryption, so this fixture exercises sealed-box interoperability.
 	curvePrivate[0] &= 248
 	curvePrivate[31] &= 127
 	curvePrivate[31] |= 64
@@ -76,6 +88,9 @@ func TestDecryptAgentTaskIDSupportsCodexSealedBoxResponse(t *testing.T) {
 	require.Equal(t, "task-sealed", got)
 }
 
+// TestOpenAIWSAgentIdentityRecoveryRequiresTaskInvalidBody compares two
+// unauthorized handshake bodies with different error codes. A signature failure
+// must remain ineligible for task recovery while invalid_task_id enables it.
 func TestOpenAIWSAgentIdentityRecoveryRequiresTaskInvalidBody(t *testing.T) {
 	require.False(t, IsAgentTaskInvalidWSDialError(&WSDialError{
 		StatusCode:   http.StatusUnauthorized,

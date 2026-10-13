@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// Codex base instructions are embedded with dedicated prompts for GPT-5.1 and
+// GPT-5.2 and a latest prompt for other models. A model name containing codex
+// selects the Codex prompt before version-prefix matching, so names such as
+// gpt-5.2-codex retain that model family's instructions.
+
+// Probe models select ordinary inference and quota-query compatibility targets;
+// callers may override the inference model when testing a configured provider.
 const (
 	// DefaultTestModel is the default model for OpenAI provider probes.
 	DefaultTestModel = "gpt-5.4"
@@ -13,6 +20,8 @@ const (
 	CodexUsageProbeModel = "codex-auto-review"
 )
 
+// Embedded instruction strings retain their authored contents; model selection
+// checks availability and returns the prompt appropriate to the requested family.
 var (
 	// DefaultInstructions contains the embedded GPT-5-Codex base prompt.
 	//
@@ -32,17 +41,22 @@ var (
 	instructionsGPT55 string
 )
 
-// latestCodexInstructions returns the GPT-5.5 prompt, falling back to DefaultInstructions if blank.
+// latestCodexInstructions returns the latest embedded prompt, selecting
+// DefaultInstructions when it is blank. The selected string is returned as
+// embedded, so whitespace checking does not rewrite prompt content.
 func latestCodexInstructions() string {
 	if v := strings.TrimSpace(instructionsGPT55); v != "" {
 		return instructionsGPT55
 	}
+	// A blank latest prompt still needs usable synthesized instructions; the
+	// Codex base prompt supplies that recovery value without altering embedded text.
 	return DefaultInstructions
 }
 
-// CodexBaseInstructionsForModel selects embedded Codex instructions by model name.
-// Names containing codex use DefaultInstructions; gpt-5.1 and gpt-5.2 use dedicated
-// prompts when nonblank. Other models and missing dedicated prompts use latestCodexInstructions.
+// CodexBaseInstructionsForModel selects an embedded prompt from the trimmed,
+// lowercased model name. Codex-containing names take precedence over version
+// prefixes; missing dedicated prompts and unknown names use
+// latestCodexInstructions.
 func CodexBaseInstructionsForModel(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
 	switch {
@@ -59,5 +73,7 @@ func CodexBaseInstructionsForModel(model string) string {
 			return instructionsGPT51
 		}
 	}
+	// Unknown families and blank dedicated prompts use the latest available
+	// instruction body so synthesized OAuth requests receive a non-family-specific default.
 	return latestCodexInstructions()
 }

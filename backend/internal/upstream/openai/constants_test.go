@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// firstLine returns the first line of trimmed embedded prompt text. Missing
+// newlines return the complete trimmed value, keeping failure output short for
+// both one-line and multiline fixtures.
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -13,11 +16,13 @@ func firstLine(s string) string {
 	return s
 }
 
-// TestCodexBaseInstructionsForModel checks model-specific prompt selection.
+// TestCodexBaseInstructionsForModel checks Codex-containing names, dedicated
+// version prefixes, casing, whitespace, and unknown models. Every case must
+// return nonblank instructions with the expected embedded prompt heading.
 func TestCodexBaseInstructionsForModel(t *testing.T) {
 	cases := []struct {
-		model    string
-		wantHead string
+		model    string // requested model name fixture
+		wantHead string // expected embedded prompt prefix
 	}{
 		{"gpt-5-codex", "You are Codex, based on GPT-5"},
 		{"gpt-5.3-codex", "You are Codex, based on GPT-5"},

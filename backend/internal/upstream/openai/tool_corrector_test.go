@@ -7,6 +7,9 @@ import (
 	"testing"
 )
 
+// TestMayContainToolCallPayload compares an ordinary text event with a literal
+// tool_calls object. It checks the precheck avoids text parsing and recognizes
+// the supported tool-field marker.
 func TestMayContainToolCallPayload(t *testing.T) {
 	if mayContainToolCallPayload([]byte(`{"type":"response.output_text.delta","delta":"hello"}`)) {
 		t.Fatalf("plain text event should not trigger tool-call parsing")
@@ -16,14 +19,20 @@ func TestMayContainToolCallPayload(t *testing.T) {
 	}
 }
 
+// TestCorrectToolCallsInSSEData covers empty, invalid, already-canonical,
+// nested, multiple-call, and camel-case fixtures. It checks change flags,
+// unchanged-string retention, and the mapped names at supported response
+// locations.
 func TestCorrectToolCallsInSSEData(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
 	tests := []struct {
-		name            string
-		input           string
-		expectCorrected bool
-		checkFunc       func(t *testing.T, result string)
+		name            string // tool correction case description
+		input           string // supplied tool response fixture
+		expectCorrected bool   // expected accepted correction flag
+		// checkFunc optionally inspects corrected payload shape when provided; cases
+		// without it still check the change flag and unchanged-byte rule in the loop.
+		checkFunc func(t *testing.T, result string)
 	}{
 		{
 			name:            "empty string",
@@ -243,11 +252,14 @@ func TestCorrectToolCallsInSSEData(t *testing.T) {
 	}
 }
 
+// TestCorrectToolName compares registered underscore/camel-case aliases with
+// unknown and canonical names. It checks exact mapped values and the boolean
+// distinguishing a mapping from unchanged direct lookup.
 func TestCorrectToolName(t *testing.T) {
 	tests := []struct {
-		input     string
-		expected  string
-		corrected bool
+		input     string // supplied tool response fixture
+		expected  string // expected mapped or unchanged tool name
+		corrected bool   // expected alias lookup result
 	}{
 		{"apply_patch", "edit", true},
 		{"applyPatch", "edit", true},
@@ -287,6 +299,9 @@ func TestCorrectToolName(t *testing.T) {
 	}
 }
 
+// TestGetToolNameMapping checks selected aliases in the test-only mapping
+// accessor. Mutating the returned map must leave a subsequent mapping copy
+// independent of that change.
 func TestGetToolNameMapping(t *testing.T) {
 	mapping := GetToolNameMapping()
 
@@ -311,6 +326,9 @@ func TestGetToolNameMapping(t *testing.T) {
 	}
 }
 
+// TestCorrectorStats records repeated apply_patch and update_plan rewrites
+// after checking initial counters. It asserts total and per-name counts, then
+// verifies the test-only reset clears both collections.
 func TestCorrectorStats(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
@@ -349,6 +367,9 @@ func TestCorrectorStats(t *testing.T) {
 	}
 }
 
+// TestComplexSSEData supplies a nested Chat delta with platform metadata and
+// encoded function arguments. It decodes the repaired response and checks the
+// function name becomes edit.
 func TestComplexSSEData(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
@@ -417,14 +438,16 @@ func TestComplexSSEData(t *testing.T) {
 	}
 }
 
-// TestCorrectToolParameters checks OpenCode argument key conversion.
+// TestCorrectToolParameters supplies bash directory and edit path/text aliases
+// encoded inside JSON strings. It checks correction occurred and asserts
+// canonical key presence plus removal of the selected aliases.
 func TestCorrectToolParameters(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
 	tests := []struct {
-		name     string
-		input    string
-		expected map[string]bool // parameter name -> expected presence
+		name     string          // tool correction case description
+		input    string          // supplied tool response fixture
+		expected map[string]bool // required presence of argument keys
 	}{
 		{
 			name: "rename work_dir to workdir in bash tool",
@@ -513,7 +536,9 @@ func TestCorrectToolParameters(t *testing.T) {
 	}
 }
 
-// ResetStats clears the tool rename counters under the statistics lock.
+// ResetStats clears test-visible rename totals and replaces the count map under
+// the statistics lock. Subsequent snapshots start empty and can record further
+// initialized rename observations.
 func (c *CodexToolCorrector) ResetStats() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -522,22 +547,26 @@ func (c *CodexToolCorrector) ResetStats() {
 	c.stats.CorrectionsByTool = make(map[string]int)
 }
 
-// GetToolNameMapping returns an independent copy of the tool-name mappings.
+// GetToolNameMapping returns a fresh map containing the static alias table for
+// assertions. Callers can mutate that returned map independently because both
+// its keys and values are immutable strings.
 func GetToolNameMapping() map[string]string {
 	mapping := make(map[string]string, len(codexToolNameMapping))
 	maps.Copy(mapping, codexToolNameMapping)
 	return mapping
 }
 
-// TestOpenAIGatewayService_ToolCorrection checks response-body tool renames and unchanged payloads.
+// TestOpenAIGatewayService_ToolCorrection repairs mapped names through the
+// buffered-body entry and leaves a canonical name unchanged. It checks expected
+// name text and byte equality/change for the respective fixtures.
 func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
 	tests := []struct {
-		name     string
-		input    []byte
-		expected string
-		changed  bool
+		name     string // tool correction case description
+		input    []byte // supplied tool response fixture
+		expected string // required returned name substring
+		changed  bool   // expected response byte-change flag
 	}{
 		{
 			name: "correct apply_patch in response body",
@@ -595,7 +624,9 @@ func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 	}
 }
 
-// TestOpenAIGatewayService_ToolCorrectorInitialization verifies that a fresh corrector can rename a tool.
+// TestOpenAIGatewayService_ToolCorrectorInitialization constructs a fresh
+// corrector and repairs an apply_patch call. It checks nonnil construction,
+// changed status, and returned edit text using initialized statistics storage.
 func TestOpenAIGatewayService_ToolCorrectorInitialization(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 
@@ -615,7 +646,9 @@ func TestOpenAIGatewayService_ToolCorrectorInitialization(t *testing.T) {
 	}
 }
 
-// TestToolCorrectionStats checks total and per-rename counts across repeated tools.
+// TestToolCorrectionStats feeds three calls with one repeated source name into
+// a fresh corrector. It checks total three and the expected two/one
+// original-to-final rename counts.
 func TestToolCorrectionStats(t *testing.T) {
 	corrector := NewCodexToolCorrector()
 

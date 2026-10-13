@@ -16,9 +16,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MaxResponsesRejectedFieldRetries bounds field repairs to six attempts per shared budget.
+// Responses compatibility repair follows explicit upstream 400 evidence instead
+// of removing optional request fields before they fail. Recognized rejection
+// codes, indexed parameters, and message paths select narrow repairs;
+// inconsistent parameter evidence leaves the body ineligible for retry.
+//
+// Each request state remembers body hashes while a separate budget can be
+// shared across derived states. Allow checks novelty and consumes one of six
+// tickets under ordered locks, preventing repeated bodies and separate
+// compatibility paths from independently resetting the retry allowance. Field
+// repairs retain the request outside their selected paths. Same-type status
+// cleanup can repair several indexed items in one body, while null reasoning
+// content and message content use different replacements. The caller owns
+// sending the eligible replacement and applying health/retry policy.
+
+// MaxResponsesRejectedFieldRetries caps admitted field repairs across states sharing
+// one budget, preventing separate request-normalization paths from restarting their own retry allowance.
 const MaxResponsesRejectedFieldRetries = 6
 
+// Rejection patterns recognize supported upstream parameter paths and precise
+// message evidence before the selector attempts compatibility repair of the original request.
 var (
 	openAIResponsesRejectedNamespaceParamPattern  = regexp.MustCompile(`(?i)^input\[(\d+)\]\.namespace$`)
 	openAIResponsesRejectedStatusParamPattern     = regexp.MustCompile(`(?i)^input\[(\d+)\]\.status$`)
@@ -32,21 +49,37 @@ var (
 	openAIResponsesMissingSchemaTypePattern       = regexp.MustCompile(`(?i)\bgot\s+["']?type\s*:\s*["']?none["']?`)
 )
 
+// ResponsesRejectedFieldRetryState records body hashes against an optionally
+// shared field-repair budget.
 type ResponsesRejectedFieldRetryState struct {
-	mu             sync.Mutex
-	budget         *ResponsesRejectedFieldRetryBudget
-	seenBodyHashes map[[sha256.Size]byte]struct{}
+	// mu protects seenBodyHashes, and Allow acquires budget.mu afterward to
+	// consume a shared ticket. budget can participate in several states whose
+	// local body histories differ while their retry allowance remains combined.
+	mu             sync.Mutex                         // retry state synchronization mutex
+	budget         *ResponsesRejectedFieldRetryBudget // shared field-repair admission budget
+	seenBodyHashes map[[sha256.Size]byte]struct{}     // remembered attempted body hashes
 }
 
+// ResponsesRejectedFieldRetryBudget counts admitted field-repair retries across
+// participating request states.
 type ResponsesRejectedFieldRetryBudget struct {
-	mu       sync.Mutex
-	attempts int
+	// mu protects attempts across all states sharing this handle. Allow checks
+	// the cap and increments attempts while holding that lock after its state lock.
+	mu       sync.Mutex // retry state synchronization mutex
+	attempts int        // admitted shared repair count
 }
 
+// NewOpenAIResponsesRejectedFieldRetryState creates a ready state with its own
+// six-retry budget. A nonempty initial body is remembered before later Allow
+// calls, preventing repair from repeating that already-attempted payload.
 func NewOpenAIResponsesRejectedFieldRetryState(initialBody []byte) *ResponsesRejectedFieldRetryState {
 	return NewOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody, &ResponsesRejectedFieldRetryBudget{})
 }
 
+// NewOpenAIResponsesRejectedFieldRetryStateWithBudget creates a state sharing
+// the supplied budget and records a nonempty initial body. Nil budget retains
+// hash tracking but disables Allow; callers reuse a budget across derived
+// request states when retries share one allowance.
 func NewOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody []byte, budget *ResponsesRejectedFieldRetryBudget) *ResponsesRejectedFieldRetryState {
 	state := &ResponsesRejectedFieldRetryState{
 		budget:         budget,
@@ -56,10 +89,22 @@ func NewOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody []byte, bud
 	return state
 }
 
+// Allow records a novel nonempty body and consumes a shared retry ticket before
+// returning true. Use a constructed state so its hash map is initialized, and
+// keep nextBody immutable while hashing. Nil states, nil budgets, empty bodies,
+// remembered hashes, and exhausted budgets return false.
+//
+// The state mutex precedes the budget mutex, keeping duplicate detection and
+// shared allowance consumption in one admitted operation. A repeated body
+// consumes no ticket, while two different states sharing a budget still count
+// against the same total. Callers send only after true and retain the
+// reservation even if that later transport attempt fails.
 func (s *ResponsesRejectedFieldRetryState) Allow(nextBody []byte) bool {
 	if s == nil || s.budget == nil || len(nextBody) == 0 {
 		return false
 	}
+	// Acquire the state lock before the shared budget lock so hash novelty
+	// and ticket consumption publish together, while other states retain the same lock ordering.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bodyHash := sha256.Sum256(nextBody)
@@ -76,6 +121,9 @@ func (s *ResponsesRejectedFieldRetryState) Allow(nextBody []byte) bool {
 	return true
 }
 
+// Remember records a nonempty body hash without consuming a retry ticket. Nil
+// states and empty bodies are ignored; it initializes missing hash storage
+// under the state mutex so later duplicate checking can reuse that observation.
 func (s *ResponsesRejectedFieldRetryState) Remember(body []byte) {
 	if s == nil || len(body) == 0 {
 		return
@@ -85,6 +133,9 @@ func (s *ResponsesRejectedFieldRetryState) Remember(body []byte) {
 	s.rememberLocked(body)
 }
 
+// rememberLocked records body in the state hash map, initializing storage when
+// absent. Callers hold s.mu and keep body immutable while hashing; this
+// operation records history without changing the shared retry count.
 func (s *ResponsesRejectedFieldRetryState) rememberLocked(body []byte) {
 	if s.seenBodyHashes == nil {
 		s.seenBodyHashes = make(map[[sha256.Size]byte]struct{}, MaxResponsesRejectedFieldRetries+1)
@@ -92,8 +143,19 @@ func (s *ResponsesRejectedFieldRetryState) rememberLocked(body []byte) {
 	s.seenBodyHashes[sha256.Sum256(body)] = struct{}{}
 }
 
-// NormalizeOpenAIResponsesRejectedFieldRetryBody repairs recognized fields after an explicit upstream 400 rejection.
-// Repairs follow field-specific rules, including same-type status cleanup and tool schema normalization.
+// NormalizeOpenAIResponsesRejectedFieldRetryBody returns a repaired request,
+// reason, and eligibility after explicit upstream 400 evidence. Other statuses,
+// missing bodies, unsupported rejections, or already-compatible target fields
+// return nil bytes with false. Callers check eligibility before using returned
+// bytes as a retry request.
+//
+// Tool-schema, cache-breakpoint, namespace/status, null-content, and
+// reasoning-length rejections use distinct evidence rules. A provided parameter
+// and captured message path must agree where that rule requires both,
+// preventing one item's failure from rewriting another path. Repairs apply to
+// recognized field shapes and return errors on failed splicing; shared
+// retry-state admission remains separate so the caller can enforce body novelty
+// and the overall ticket budget.
 func NormalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, responseBody []byte) ([]byte, string, bool, error) {
 	if statusCode != http.StatusBadRequest || len(body) == 0 || len(responseBody) == 0 {
 		return nil, "", false, nil
@@ -179,6 +241,10 @@ func NormalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 	return nil, "", false, nil
 }
 
+// IsExplicitOpenAIResponsesFieldRejection recognizes supported parameter codes
+// or known message phrases. Callers provide normalized lowercase evidence; code
+// whitespace is trimmed here, and unrecognized wording alone cannot select an
+// indexed field repair.
 func IsExplicitOpenAIResponsesFieldRejection(code, message string) bool {
 	switch strings.TrimSpace(code) {
 	case "unknown_parameter", "unsupported_parameter":
@@ -188,6 +254,10 @@ func IsExplicitOpenAIResponsesFieldRejection(code, message string) bool {
 		strings.Contains(message, "unsupported parameter")
 }
 
+// OpenAIResponsesRejectedParamFromMessage extracts a supported field path from
+// unknown/unsupported parameter wording. Matching ignores case and returns
+// trimmed lowercase text; unrelated paths or unusable capture shapes return
+// empty text.
 func OpenAIResponsesRejectedParamFromMessage(message string) string {
 	match := openAIResponsesRejectedMessageParamPattern.FindStringSubmatch(strings.TrimSpace(message))
 	if len(match) != 2 {
@@ -196,6 +266,10 @@ func OpenAIResponsesRejectedParamFromMessage(message string) string {
 	return strings.ToLower(strings.TrimSpace(match[1]))
 }
 
+// OpenAIResponsesMaxZeroContentParamFromMessage extracts an indexed content
+// path from an array-too-long/zero-maximum message. Matching ignores case and
+// returns lowercase text; absent matching evidence returns empty for the repair
+// selector.
 func OpenAIResponsesMaxZeroContentParamFromMessage(message string) string {
 	match := openAIResponsesMaxZeroContentMessagePattern.FindStringSubmatch(strings.TrimSpace(message))
 	if len(match) != 2 {
@@ -204,6 +278,9 @@ func OpenAIResponsesMaxZeroContentParamFromMessage(message string) string {
 	return strings.ToLower(strings.TrimSpace(match[1]))
 }
 
+// OpenAIResponsesInvalidTypeParamFromMessage extracts an indexed content path
+// rejected as null. Matching ignores case and returns lowercase text; unrelated
+// invalid-type messages produce no path for null-content repair.
 func OpenAIResponsesInvalidTypeParamFromMessage(message string) string {
 	match := openAIResponsesInvalidTypeMessageParamPattern.FindStringSubmatch(strings.TrimSpace(message))
 	if len(match) != 2 {
@@ -212,6 +289,10 @@ func OpenAIResponsesInvalidTypeParamFromMessage(message string) string {
 	return strings.ToLower(strings.TrimSpace(match[1]))
 }
 
+// OpenAIResponsesCacheModelRejectionParamFromMessage extracts a
+// model-unsupported cache-breakpoint path. It accepts top-level or indexed
+// input spellings case-insensitively and returns normalized text, while
+// unrelated model rejection wording returns empty.
 func OpenAIResponsesCacheModelRejectionParamFromMessage(message string) string {
 	match := openAIResponsesCacheModelRejectionPattern.FindStringSubmatch(strings.TrimSpace(message))
 	if len(match) != 2 {
@@ -220,28 +301,50 @@ func OpenAIResponsesCacheModelRejectionParamFromMessage(message string) string {
 	return strings.ToLower(strings.TrimSpace(match[1]))
 }
 
+// IsExplicitOpenAIResponsesNullContentRejection recognizes normalized
+// invalid-type, invalid-request, or empty-code evidence with explicit
+// null-content wording. Other codes or unmatched messages return false,
+// preventing a broad content rewrite from generic validation errors.
 func IsExplicitOpenAIResponsesNullContentRejection(code, message string) bool {
 	code = strings.TrimSpace(code)
 	return (code == "invalid_type" || code == "invalid_request_error" || code == "") &&
 		openAIResponsesInvalidTypeMessageParamPattern.MatchString(strings.TrimSpace(message))
 }
 
+// OpenAIResponsesRejectedNamespaceIndex parses an input[N].namespace parameter
+// with the shared index validator. Surrounding whitespace and case are
+// accepted; false distinguishes unmatched or overflowed paths from a valid
+// index zero.
 func OpenAIResponsesRejectedNamespaceIndex(param string) (int, bool) {
 	return OpenAIResponsesRejectedInputIndex(openAIResponsesRejectedNamespaceParamPattern, param)
 }
 
+// OpenAIResponsesRejectedStatusIndex parses an input[N].status parameter with
+// the shared index validator. Surrounding whitespace and case are accepted;
+// false distinguishes unmatched or overflowed paths from a valid index zero.
 func OpenAIResponsesRejectedStatusIndex(param string) (int, bool) {
 	return OpenAIResponsesRejectedInputIndex(openAIResponsesRejectedStatusParamPattern, param)
 }
 
+// OpenAIResponsesRejectedContentIndex parses an input[N].content parameter with
+// the shared index validator. Surrounding whitespace and case are accepted;
+// false distinguishes unmatched or overflowed paths from a valid index zero.
 func OpenAIResponsesRejectedContentIndex(param string) (int, bool) {
 	return OpenAIResponsesRejectedInputIndex(openAIResponsesRejectedContentParamPattern, param)
 }
 
+// OpenAIResponsesRejectedCacheIndex parses an input[N].prompt_cache_breakpoint
+// parameter with the shared index validator. Surrounding whitespace and case
+// are accepted; false distinguishes unmatched or overflowed paths from a valid
+// index zero.
 func OpenAIResponsesRejectedCacheIndex(param string) (int, bool) {
 	return OpenAIResponsesRejectedInputIndex(openAIResponsesRejectedCacheParamPattern, param)
 }
 
+// OpenAIResponsesRejectedInputIndex parses a nonnegative index from one capture
+// in the supplied pattern. The pattern is required, param is trimmed, and
+// shape/overflow failures return zero with false so callers do not accidentally
+// target index zero.
 func OpenAIResponsesRejectedInputIndex(pattern *regexp.Regexp, param string) (int, bool) {
 	match := pattern.FindStringSubmatch(strings.TrimSpace(param))
 	if len(match) != 2 {
@@ -254,9 +357,17 @@ func OpenAIResponsesRejectedInputIndex(pattern *regexp.Regexp, param string) (in
 	return 0, false
 }
 
-// RemoveOpenAIResponsesRejectedStatusAtIndex removes rejected status fields from the named item
-// and other input items of the same type. Cleaning them together avoids exhausting
-// the retry budget one index at a time. Other item types retain their status.
+// RemoveOpenAIResponsesRejectedStatusAtIndex returns a request with rejected
+// status fields removed and a repair reason. A missing object or status at
+// index returns nil bytes with false. The original body supplies the array
+// positions used for selection.
+//
+// When the rejected object has a nonblank type, all object items with that same
+// trimmed type lose status together, keeping repeated indexed failures within
+// one repair attempt. Field deletion preserves array positions and other types
+// retain their status. If no same-type cleanup occurs, only the named item is
+// repaired; failed splicing reports an error before publishing an eligible
+// replacement.
 func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	rejected := gjson.GetBytes(body, itemPath)
@@ -271,7 +382,8 @@ func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte,
 	cleared := 0
 	rejectedType := strings.TrimSpace(rejected.Get("type").String())
 	if input := gjson.GetBytes(body, "input"); rejectedType != "" && input.IsArray() {
-		// Deleting fields leaves array indexes stable while reading positions from the original body.
+		// Field deletion retains input positions, so the original array can identify
+		// every same-type status path while the progressively repaired body supplies field existence.
 		for itemIndex, item := range input.Array() {
 			if !item.IsObject() || strings.TrimSpace(item.Get("type").String()) != rejectedType {
 				continue
@@ -289,7 +401,8 @@ func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte,
 		}
 	}
 	if cleared == 0 {
-		// Without a matching item type, clear only the index named by upstream.
+		// Missing type evidence cannot justify broad cleanup. Repair the named index
+		// alone so unrelated item statuses remain available to their upstream protocol consumers.
 		next, err := sjson.DeleteBytes(retryBody, itemPath+".status")
 		if err != nil {
 			return nil, "", false, fmt.Errorf("delete rejected status at input[%d]: %w", index, err)
@@ -299,6 +412,10 @@ func RemoveOpenAIResponsesRejectedStatusAtIndex(body []byte, index int) ([]byte,
 	return retryBody, "indexed status parameter rejection", true, nil
 }
 
+// RemoveOpenAIResponsesRejectedCacheAtIndex deletes one existing
+// cache-breakpoint field from an object input item. Missing or incompatible
+// shapes return nil/false; successful deletion returns a repair reason and
+// keeps other request fields for retry.
 func RemoveOpenAIResponsesRejectedCacheAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	if !gjson.GetBytes(body, itemPath).IsObject() {
@@ -315,6 +432,10 @@ func RemoveOpenAIResponsesRejectedCacheAtIndex(body []byte, index int) ([]byte, 
 	return retryBody, "indexed prompt_cache_breakpoint parameter rejection", true, nil
 }
 
+// NormalizeOpenAIResponsesRejectedNullContentAtIndex repairs only an object
+// whose content is explicitly null. Reasoning loses content, while messages or
+// role-bearing items receive an empty string; other item kinds return nil/false
+// for the retry selector.
 func NormalizeOpenAIResponsesRejectedNullContentAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	item := gjson.GetBytes(body, itemPath)
@@ -328,12 +449,16 @@ func NormalizeOpenAIResponsesRejectedNullContentAtIndex(body []byte, index int) 
 	contentPath := itemPath + ".content"
 	switch {
 	case itemType == "reasoning":
+		// Null reasoning content can be omitted while its summary and ciphertext
+		// remain available; deleting this field keeps the rest of the replay item intact.
 		retryBody, err := sjson.DeleteBytes(body, contentPath)
 		if err != nil {
 			return nil, "", false, fmt.Errorf("delete rejected null content at input[%d]: %w", index, err)
 		}
 		return retryBody, "indexed reasoning null content rejection", true, nil
 	case itemType == "message" || role != "":
+		// Message-shaped items retain an explicit content string after null rejection,
+		// so their role and neighboring replay fields remain usable in the retried request.
 		retryBody, err := sjson.SetBytes(body, contentPath, "")
 		if err != nil {
 			return nil, "", false, fmt.Errorf("normalize rejected null content at input[%d]: %w", index, err)
@@ -344,6 +469,11 @@ func NormalizeOpenAIResponsesRejectedNullContentAtIndex(body []byte, index int) 
 	}
 }
 
+// RemoveOpenAIResponsesRejectedReasoningContentAtIndex deletes nonempty array
+// content from a reasoning item. Missing, empty, or differently shaped fields
+// return nil/false. Call after NormalizeOpenAIResponsesRejectedFieldRetryBody
+// has matched the upstream zero-maximum rejection; this helper checks the
+// selected item shape rather than inspecting error evidence.
 func RemoveOpenAIResponsesRejectedReasoningContentAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	item := gjson.GetBytes(body, itemPath)
@@ -358,10 +488,15 @@ func RemoveOpenAIResponsesRejectedReasoningContentAtIndex(body []byte, index int
 	return retryBody, "indexed reasoning content maximum-length rejection", true, nil
 }
 
+// RemoveOpenAIResponsesRejectedNamespaceAtIndex deletes namespace from
+// recognized historical tool-call kinds. Missing namespace or other item types
+// return nil/false; an eligible result includes the reason and keeps unrelated
+// request fields.
 func RemoveOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
 	itemType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, itemPath+".type").String()))
-	// Remove namespace only from known tool calls; ordinary message fields retain their meaning.
+	// Namespace stripping is defined for these historical tool-call shapes. Keep
+	// other item fields intact because their meanings are not established by this tool compatibility repair.
 	switch itemType {
 	case "function_call", "tool_call", "custom_tool_call", "mcp_tool_call":
 	default:
@@ -379,7 +514,9 @@ func RemoveOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]by
 	return retryBody, "indexed namespace parameter rejection", true, nil
 }
 
-// Budget returns the shared retry-budget handle; its counters and locking remain internal.
+// Budget returns this state shared retry-budget pointer or nil for nil states.
+// Callers pass the handle into another constructed state to share admission;
+// budget counters and mutex access remain internal.
 func (s *ResponsesRejectedFieldRetryState) Budget() *ResponsesRejectedFieldRetryBudget {
 	if s == nil {
 		return nil

@@ -9,7 +9,10 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// TestOpenAIChatReasoningAliasForkConsumers verifies that reasoning aliases prevent silent-refusal detection.
+// TestOpenAIChatReasoningAliasForkConsumers decodes a Chat chunk using the
+// compatible reasoning alias and stop finish. It checks bridge output-start
+// recognition and detector output release while preventing silent-refusal
+// classification.
 func TestOpenAIChatReasoningAliasForkConsumers(t *testing.T) {
 	payload := `{"id":"chatcmpl-alias","model":"reasoning-model","choices":[{"index":0,"delta":{"reasoning":"fork reasoning"},"finish_reason":"stop"}]}`
 	var chunk protocolopenai.ChatCompletionsChunk

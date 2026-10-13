@@ -2,6 +2,11 @@ package openai
 
 import "strings"
 
+// A configured Codex client preset needs both a matching originator and all
+// required User-Agent markers. Blank requirements reject the preset, so a
+// stored allowlist cannot accidentally reduce client admission to a single
+// caller-controlled header.
+
 // Provider codex_cli_only_allowed_clients settings select these preset IDs.
 // Matching rules are fixed in the registry so configuration cannot broaden them.
 const (
@@ -9,10 +14,10 @@ const (
 	AllowedClientClaudeCode = "claude_code"
 )
 
-// allowedClientRegistry defines the signatures for named client presets.
-// The Claude Code plugin initializes app-server with clientInfo.name="Claude Code",
-// which supplies both the originator and the "Claude Code/" User-Agent prefix.
-// Update this entry if the plugin changes that name.
+// allowedClientRegistry defines the paired headers recognized by named presets.
+// The Claude Code entry requires its exact originator plus the Claude Code/
+// User-Agent substring; these checks identify the configured format alongside
+// the gateway's separate API-key authentication.
 var allowedClientRegistry = map[string]AllowedClientEntry{
 	AllowedClientClaudeCode: {
 		Originator: "Claude Code",
@@ -20,16 +25,21 @@ var allowedClientRegistry = map[string]AllowedClientEntry{
 	},
 }
 
-// AllowedClientEntry describes an additional non-official Codex client signature.
-// Originator must match exactly after normalization. Every UAContains marker
-// must be nonblank and present in the User-Agent; an empty list is invalid.
+// AllowedClientEntry holds the originator and User-Agent markers required by a
+// client preset.
 type AllowedClientEntry struct {
+	// Originator requires an exact trimmed, case-insensitive match; it is checked
+	// together with UAContains before a caller is admitted by this preset.
 	Originator string
+	// UAContains requires every trimmed, case-insensitive substring in User-Agent;
+	// an empty list or any blank entry invalidates the preset.
 	UAContains []string
 }
 
-// IsAllowedClientMatch checks the normalized originator and every required UA marker.
-// Missing originator or UA requirements make the entry fail closed.
+// IsAllowedClientMatch compares a trimmed, case-folded originator and every
+// required User-Agent marker. An empty originator, empty marker list, or blank
+// marker rejects the entry; UA matching uses substrings after the same
+// normalization.
 func IsAllowedClientMatch(userAgent, originator string, entry AllowedClientEntry) bool {
 	wantOriginator := normalizeCodexClientHeader(entry.Originator)
 	if wantOriginator == "" {
@@ -56,8 +66,9 @@ func IsAllowedClientMatch(userAgent, originator string, entry AllowedClientEntry
 	return true
 }
 
-// MatchAllowedClients checks whether the headers match any named preset.
-// Unknown IDs are ignored; an empty list denies access.
+// MatchAllowedClients reports whether either header pair matches a registered
+// preset ID. IDs are trimmed and case-folded, unknown IDs are skipped, and an
+// empty or entirely unknown list rejects the request.
 func MatchAllowedClients(userAgent, originator string, clientIDs []string) bool {
 	for _, id := range clientIDs {
 		entry, ok := allowedClientRegistry[normalizeCodexClientHeader(id)]

@@ -17,44 +17,85 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openAIWSFakeDialer returns successful in-memory sockets without consulting
+// request parameters.
 type openAIWSFakeDialer struct{}
 
+// openAIWSFirstDialBlockingCaptureDialer captures headers/sockets while holding
+// its first dial for controlled publication tests.
 type openAIWSFirstDialBlockingCaptureDialer struct {
-	mu           sync.Mutex
-	dialCount    int
-	headers      []http.Header
-	connections  []*openAIWSFakeConn
+	mu        sync.Mutex // captured dial state mutex
+	dialCount int        // observed dial attempt count
+	// headers stores cloned request header snapshots under mu; callers inspect that
+	// slice under the same lock while dials may append.
+	headers []http.Header
+	// connections stores shared fake pointers after successful creation; inspect
+	// the slice under mu and each socket state under its own mutex.
+	connections []*openAIWSFakeConn
+	// firstStarted closes once when the first counted dial begins waiting, letting
+	// the test change provider state before releasing that captured dial.
 	firstStarted chan struct{}
+	// releaseFirst is the fixture-owned first-dial gate; cleanup closes it once or
+	// cancels the dial context before waiting for pool resources.
 	releaseFirst chan struct{}
 }
 
+// openAIWSAlwaysFailDialer records attempts and returns a fixed transport
+// failure.
 type openAIWSAlwaysFailDialer struct {
-	mu        sync.Mutex
-	dialCount int
+	mu        sync.Mutex // captured dial state mutex
+	dialCount int        // observed dial attempt count
 }
+
+// openAIWSPingBlockingConn tracks simultaneous probes until cancellation or
+// test release.
 type openAIWSPingBlockingConn struct {
-	current       *atomic.Int32
-	maxConcurrent *atomic.Int32
-	release       <-chan struct{}
+	// current counts active probes and maxConcurrent remembers their peak across
+	// all fixture sockets. Ping updates both atomics and returns current in a
+	// defer after either release or cancellation completes this probe.
+	current       *atomic.Int32 // shared active probe counter
+	maxConcurrent *atomic.Int32 // shared peak overlapping probes
+	// release ends held ping probes when closed; this stub's Close does not signal
+	// it, so fixture owners release or cancel pending probes.
+	release <-chan struct{}
 }
+
+// openAIWSIdlePingUnsupportedConn exposes the shared fake socket with
+// reader-dependent ping capability.
 type openAIWSIdlePingUnsupportedConn struct {
+	// openAIWSFakeConn supplies ordinary read/write/close behavior while the outer
+	// fixture overrides idle-ping capability for retirement checks.
 	openAIWSFakeConn
 }
 
+// openAIWSBlockingConn delays reads under context while permitting immediate
+// writes and ping.
 type openAIWSBlockingConn struct {
-	readDelay time.Duration
+	readDelay time.Duration // configured fake read delay
 }
 
+// openAIWSWriteBlockingConn waits for write cancellation while other operations
+// return immediately.
 type openAIWSWriteBlockingConn struct{}
 
+// openAIWSPingFailConn returns fixed messages and fails every health probe.
 type openAIWSPingFailConn struct{}
 
+// openAIWSContextProbeConn retains the context supplied by a serialized write.
 type openAIWSContextProbeConn struct {
+	// lastWriteCtx retains the supplied write context without locking; the test
+	// reads it after the connection wrapper has completed its serialized write.
 	lastWriteCtx context.Context
 }
 
+// openAIWSNilConnDialer reports HTTP success while returning no transport
+// object.
 type openAIWSNilConnDialer struct{}
 
+// TestPoolShrinkKeepsActiveLeaseAndRejectsUpdatesAfterClose shrinks capacity
+// around one busy and one idle socket. The busy lease survives, release
+// reclaims it under zero-idle policy, and later option publication fails after
+// shutdown.
 func TestPoolShrinkKeepsActiveLeaseAndRejectsUpdatesAfterClose(t *testing.T) {
 	pool := NewWSConnPool(&WSPoolOptions{MaxConnsPerProvider: 4, MinIdlePerProvider: 0, MaxIdlePerProvider: 4})
 	provider := pool.getOrCreateProviderPool(1)
@@ -74,9 +115,14 @@ func TestPoolShrinkKeepsActiveLeaseAndRejectsUpdatesAfterClose(t *testing.T) {
 	require.Error(t, pool.UpdateOptions(WSPoolOptions{MaxConnsPerProvider: 2}))
 }
 
+// TestPoolConcurrentOptionsPublication runs concurrent option updates and
+// hard-cap reads through four joined workers. It exercises completion of those
+// operations without asserting a consistent multi-field option tuple.
 func TestPoolConcurrentOptionsPublication(t *testing.T) {
 	pool := NewWSConnPool(&WSPoolOptions{MaxConnsPerProvider: 4})
 	defer pool.Close()
+	// Join publication/read workers before deferred pool Close, keeping shutdown
+	// outside the concurrent option-update interval exercised by this fixture.
 	var workers sync.WaitGroup
 	for range 4 {
 		workers.Go(func() {
@@ -89,10 +135,17 @@ func TestPoolConcurrentOptionsPublication(t *testing.T) {
 	workers.Wait()
 }
 
-// TestPrewarmUpdatesDuringDial checks late connections and unused dial reservations when capacity shrinks.
+// TestPrewarmUpdatesDuringDial blocks the first prewarm dial while changing
+// idle/capacity demand and unrelated reservations. Assertions retain busy
+// leases, return unused batch slots, and accept or close the late socket
+// according to updated need.
 func TestPrewarmUpdatesDuringDial(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                      string
+		name string // prewarm demand scenario label
+		// minimum is the idle floor, maximum the idle ceiling, capacity the total
+		// cap, busy the retained leased count, otherCreating another dial's reserved
+		// slots, and wantIdle the accepted late idle count. Together they change
+		// demand while the first captured dial remains held by the test gate.
 		minimum, maximum, capacity, busy, otherCreating, wantIdle int
 	}{
 		{name: "zero_idle", capacity: 4},
@@ -110,6 +163,8 @@ func TestPrewarmUpdatesDuringDial(t *testing.T) {
 			t.Cleanup(pool.Close)
 			dialer := newOpenAIWSFirstDialBlockingCaptureDialer()
 			pool.SetClientDialerForTest(dialer)
+			// Normal test completion and cleanup share one release latch, so either can
+			// unblock the held first dial before pool shutdown waits.
 			var releaseOnce sync.Once
 			releaseDial := func() { releaseOnce.Do(func() { close(dialer.releaseFirst) }) }
 			t.Cleanup(releaseDial)
@@ -176,6 +231,10 @@ func TestPrewarmUpdatesDuringDial(t *testing.T) {
 	}
 }
 
+// BenchmarkOpenAIWSPoolAcquire warms a bounded pool before measuring parallel
+// acquire/release allocations and throughput. It retries the closed-resource
+// sentinel up to three times and fails unexpected acquisition outcomes, with no
+// latency-budget assertion.
 func BenchmarkOpenAIWSPoolAcquire(b *testing.B) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 8
@@ -208,6 +267,8 @@ func BenchmarkOpenAIWSPoolAcquire(b *testing.B) {
 				got        *WSConnLease
 				acquireErr error
 			)
+			// Bound the measured loop's closed-resource recovery; other errors leave
+			// their selected result for benchmark failure reporting instead of consuming another retry.
 			for range 3 {
 				got, acquireErr = pool.Acquire(ctx, req)
 				if acquireErr == nil {
@@ -225,11 +286,15 @@ func BenchmarkOpenAIWSPoolAcquire(b *testing.B) {
 	})
 }
 
-// TestWSPoolConstructionDoesNotStartWorkers checks that construction leaves worker startup to Start.
+// TestWSPoolConstructionDoesNotStartWorkers constructs an unused pool and waits
+// on its worker group. Startup stays false and the wait completes before the
+// fixture timeout, protecting lazy periodic-worker registration.
 func TestWSPoolConstructionDoesNotStartWorkers(t *testing.T) {
 	pool := NewWSConnPool(nil)
 	t.Cleanup(pool.Close)
 	require.False(t, pool.started)
+	// Observe worker-group completion through a channel so the fixture can detect
+	// accidental constructor startup without starting those workers itself.
 	finished := make(chan struct{})
 	go func() {
 		pool.workerWg.Wait()
@@ -242,9 +307,13 @@ func TestWSPoolConstructionDoesNotStartWorkers(t *testing.T) {
 	}
 }
 
-// TestWSPoolRepeatedStartAndClose checks concurrent idempotent startup and rejects acquisition after shutdown.
+// TestWSPoolRepeatedStartAndClose calls startup and shutdown concurrently from
+// several callers. The pool records one started/closed lifecycle and rejects
+// subsequent acquisition with the closed-resource sentinel.
 func TestWSPoolRepeatedStartAndClose(t *testing.T) {
 	pool := NewWSConnPool(nil)
+	// Join each caller batch before the next lifecycle phase, isolating concurrent
+	// Start and concurrent Close from the final rejected-acquisition assertion.
 	var callers sync.WaitGroup
 	for range 16 {
 		callers.Go(pool.Start)
@@ -264,7 +333,9 @@ func TestWSPoolRepeatedStartAndClose(t *testing.T) {
 	require.ErrorIs(t, err, openai.ErrWSConnClosed)
 }
 
-// TestWSPoolCloseBeforeStart checks that closing an unused pool prevents later startup.
+// TestWSPoolCloseBeforeStart closes a constructed pool before periodic workers
+// are launched. A later Start keeps started false and retains the published
+// closed state.
 func TestWSPoolCloseBeforeStart(t *testing.T) {
 	pool := NewWSConnPool(nil)
 	pool.Close()
@@ -273,7 +344,10 @@ func TestWSPoolCloseBeforeStart(t *testing.T) {
 	require.True(t, pool.closed)
 }
 
-// TestWSPoolExpiredConnectionIsRetiredBeforeHandoff checks ordinary and required waiters after expiry.
+// TestWSPoolExpiredConnectionIsRetiredBeforeHandoff ages a busy socket while
+// ordinary or forced continuation waits. Active work remains usable, then
+// ordinary selection redials and forced selection returns unavailable after
+// release.
 func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		name := "ordinary"
@@ -301,6 +375,8 @@ func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 				synctest.Wait()
 				_, waiters, _ := pool.ProviderPoolLoad(req.Provider.ID)
 				require.Equal(t, 1, waiters)
+				// Advance the synthetic clock past expiry while the existing lease remains
+				// active, then release it to test the queued handoff decision.
 				time.Sleep(2 * time.Millisecond)
 				// An active lease can finish its work even after the connection reaches its age limit.
 				require.NoError(t, first.WriteJSONContext(ctx, map[string]string{"type": "response.create"}))
@@ -321,7 +397,9 @@ func TestWSPoolExpiredConnectionIsRetiredBeforeHandoff(t *testing.T) {
 	}
 }
 
-// TestWSPoolChecksAgeBetweenCleanupSweeps checks expiry before the next periodic cleanup.
+// TestWSPoolChecksAgeBetweenCleanupSweeps crosses the socket lifetime limit
+// immediately after release. The next acquisition replaces its ID before
+// periodic cleanup could supply that retirement.
 func TestWSPoolChecksAgeBetweenCleanupSweeps(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -330,6 +408,8 @@ func TestWSPoolChecksAgeBetweenCleanupSweeps(t *testing.T) {
 		require.NoError(t, err)
 		first.Conn.createdAtNano.Store(time.Now().Add(-WSConnMaxAge + time.Millisecond).UnixNano())
 		first.Release()
+		// Cross the lifetime threshold before another acquire while staying short of
+		// the foreground cleanup interval, exposing its per-selection age check.
 		time.Sleep(time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -340,13 +420,18 @@ func TestWSPoolChecksAgeBetweenCleanupSweeps(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledAcquireDoesNotWaitForClose checks prompt cancellation during a blocked close handshake.
+// TestWSPoolCanceledAcquireDoesNotWaitForClose cancels a waiting acquisition
+// while idle socket closure blocks. Cancellation returns its slot promptly,
+// background close begins, and pool shutdown waits until that close is
+// released.
 func TestWSPoolCanceledAcquireDoesNotWaitForClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
 		pool.Start()
 		defer pool.Close()
 		slow := &delayedCloseConn{entered: make(chan struct{}), release: make(chan struct{})}
+		// Normal completion and deferred cleanup can both unblock the delayed transport
+		// close; one latch prevents duplicate gate closure during either outcome.
 		var release sync.Once
 		unblock := func() { release.Do(func() { close(slow.release) }) }
 		defer unblock()
@@ -396,13 +481,17 @@ func TestWSPoolCanceledAcquireDoesNotWaitForClose(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledDeliveryClosesInBackground checks cancellation after acquisition but before delivery.
+// TestWSPoolCanceledDeliveryClosesInBackground gives delivery an already
+// canceled context and a selected token. Delivery returns nil lease/canceled
+// error while background cleanup starts the blocked idle close.
 func TestWSPoolCanceledDeliveryClosesInBackground(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
 		pool.Start()
 		defer pool.Close()
 		slow := &delayedCloseConn{entered: make(chan struct{}), release: make(chan struct{})}
+		// Keep delayed close blocked through delivery assertions, then release it
+		// before deferred pool Close waits for the background cleanup worker.
 		defer close(slow.release)
 		conn := NewWSConn("undelivered", req.Provider.ID, slow, nil, nil, "")
 		conn.compatibility = wsCompatibilityForRequest(req)
@@ -432,7 +521,9 @@ func TestWSPoolCanceledDeliveryClosesInBackground(t *testing.T) {
 	})
 }
 
-// TestWSPoolShutdownCloseDoesNotBlockWaiterExit checks that waiters exit during a blocked shutdown close.
+// TestWSPoolShutdownCloseDoesNotBlockWaiterExit blocks an idle close while a
+// forced continuation waits. The waiter receives the closed-resource error
+// before the fixture permits pool shutdown to finish.
 func TestWSPoolShutdownCloseDoesNotBlockWaiterExit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -441,6 +532,8 @@ func TestWSPoolShutdownCloseDoesNotBlockWaiterExit(t *testing.T) {
 		require.NoError(t, err)
 		defer first.Release()
 		slow := &delayedCloseConn{entered: make(chan struct{}), release: make(chan struct{})}
+		// Hold shutdown close until the waiting request exits, and share one gate latch
+		// between ordinary completion and fixture cleanup.
 		var release sync.Once
 		unblock := func() { release.Do(func() { close(slow.release) }) }
 		defer unblock()
@@ -475,7 +568,9 @@ func TestWSPoolShutdownCloseDoesNotBlockWaiterExit(t *testing.T) {
 	})
 }
 
-// TestWSPoolHandoffPrecedesIdleClose checks lease delivery while surplus idle connections close.
+// TestWSPoolHandoffPrecedesIdleClose releases two sockets together for an
+// ordinary or required waiter under zero-idle retention. The selected lease is
+// delivered and usable while another idle handshake closes in the background.
 func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		name := "ordinary"
@@ -488,6 +583,9 @@ func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 				pool.Start()
 				defer pool.Close()
 				slow := &delayedCloseConn{entered: make(chan struct{}), release: make(chan struct{})}
+				// Keep one idle handshake blocked while delivery is checked; normal and
+				// deferred completion share one release action before pool shutdown joins
+				// cleanup.
 				unblock := sync.OnceFunc(func() { close(slow.release) })
 				defer unblock()
 				first := NewWSConn("available", req.Provider.ID, &openAIWSFakeConn{}, nil, nil, "")
@@ -507,7 +605,8 @@ func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 				defer cancel()
 				result := acquireWSInBackground(pool, ctx, req)
 				synctest.Wait()
-				// Release both leases under the pool lock so the waiter sees both available at its next wakeup.
+				// Release both leases under the pool lock so the waiter sees both available
+				// at its next wakeup.
 				ap.mu.Lock()
 				first.release()
 				second.release()
@@ -545,7 +644,9 @@ func TestWSPoolHandoffPrecedesIdleClose(t *testing.T) {
 	}
 }
 
-// TestWSPoolUnchangedDestinationReusesConnection checks whitespace normalization of dial parameters.
+// TestWSPoolUnchangedDestinationReusesConnection adds surrounding whitespace to
+// URL/proxy after a first acquisition. Trimming keeps the same socket ID
+// eligible and the second lease reports reuse.
 func TestWSPoolUnchangedDestinationReusesConnection(t *testing.T) {
 	pool, req := newWSReuseTestPool(1, 1)
 	defer pool.Close()
@@ -562,7 +663,10 @@ func TestWSPoolUnchangedDestinationReusesConnection(t *testing.T) {
 	require.True(t, second.Reused())
 }
 
-// TestWSPoolDestinationCompatibility checks selection after a destination or proxy change.
+// TestWSPoolDestinationCompatibility changes destination or proxy under
+// ordinary, preferred, and required selection. Ordinary/preferred requests
+// create another socket, while required continuation rejects its incompatible
+// prior ID.
 func TestWSPoolDestinationCompatibility(t *testing.T) {
 	for _, destination := range []string{"url", "proxy"} {
 		for _, preference := range []string{"ordinary", "preferred", "required"} {
@@ -597,7 +701,9 @@ func TestWSPoolDestinationCompatibility(t *testing.T) {
 	}
 }
 
-// TestWSPoolDestinationChangeKeepsActiveLease checks that a destination change leaves active work usable.
+// TestWSPoolDestinationChangeKeepsActiveLease acquires a second destination
+// while the first lease remains busy. The new socket ID differs and the earlier
+// lease still accepts a context-bound write.
 func TestWSPoolDestinationChangeKeepsActiveLease(t *testing.T) {
 	pool, req := newWSReuseTestPool(2, 2)
 	defer pool.Close()
@@ -612,7 +718,9 @@ func TestWSPoolDestinationChangeKeepsActiveLease(t *testing.T) {
 	require.NoError(t, first.WriteJSONContext(context.Background(), map[string]string{"type": "response.create"}))
 }
 
-// TestWSPoolPrewarmDropsChangedDestination checks late prewarm results after destination or proxy changes.
+// TestWSPoolPrewarmDropsChangedDestination holds old-target prewarming while
+// acquiring a new URL/proxy target. The late socket closes, the selected new
+// socket stays open, and only that connection remains recorded.
 func TestWSPoolPrewarmDropsChangedDestination(t *testing.T) {
 	for _, destination := range []string{"url", "proxy"} {
 		t.Run(destination, func(t *testing.T) {
@@ -620,6 +728,9 @@ func TestWSPoolPrewarmDropsChangedDestination(t *testing.T) {
 			defer pool.Close()
 			dialer := newOpenAIWSFirstDialBlockingCaptureDialer()
 			pool.SetClientDialerForTest(dialer)
+			// Gate the old-target first dial across the new acquire, with idempotent
+			// release available during cleanup so a failed assertion cannot leave prewarm
+			// held.
 			var release sync.Once
 			unblock := func() { release.Do(func() { close(dialer.releaseFirst) }) }
 			defer unblock()
@@ -657,7 +768,9 @@ func TestWSPoolPrewarmDropsChangedDestination(t *testing.T) {
 	}
 }
 
-// TestWSPoolWaiterUsesAnyCompatibleConnection checks handoff when another session finishes first.
+// TestWSPoolWaiterUsesAnyCompatibleConnection queues behind two busy compatible
+// sockets. Releasing the newer socket wakes and supplies the waiter even though
+// the other socket has an older last-used timestamp.
 func TestWSPoolWaiterUsesAnyCompatibleConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -689,7 +802,9 @@ func TestWSPoolWaiterUsesAnyCompatibleConnection(t *testing.T) {
 	})
 }
 
-// TestWSPoolIdleLimitExcludesLeasedConnections checks idle retention while other connections are busy.
+// TestWSPoolIdleLimitExcludesLeasedConnections creates twenty-two leases and
+// releases two under a larger idle budget. Twenty busy leases remain counted,
+// and both idle sockets stay recorded alongside them.
 func TestWSPoolIdleLimitExcludesLeasedConnections(t *testing.T) {
 	pool, req := newWSReuseTestPool(128, 12)
 	defer pool.Close()
@@ -708,10 +823,16 @@ func TestWSPoolIdleLimitExcludesLeasedConnections(t *testing.T) {
 	require.Equal(t, 22, state.Connections)
 }
 
-// TestWSPoolShrinkRespectsBusyAndIdleLimits checks idle counts and eviction order while retaining active leases.
+// TestWSPoolShrinkRespectsBusyAndIdleLimits updates total/idle limits around
+// one busy socket and ordered idle entries. Assertions retain active work,
+// close the oldest reclaimable socket, and reach the final idle limit after
+// release.
 func TestWSPoolShrinkRespectsBusyAndIdleLimits(t *testing.T) {
 	for _, tc := range []struct {
-		name                 string
+		name string // idle shrinking scenario label
+		// capacity is the total limit, idle the retained idle limit, and want
+		// the expected map count before releasing busy work. Their shared fixture
+		// keeps one busy socket while eligible idle entries are ordered for removal.
 		capacity, idle, want int
 	}{
 		{name: "idle_limit", capacity: 4, idle: 2, want: 3},
@@ -753,7 +874,9 @@ func TestWSPoolShrinkRespectsBusyAndIdleLimits(t *testing.T) {
 	}
 }
 
-// TestWSPoolZeroIdleHandsConnectionToWaiter checks lease handoff when idle retention is disabled.
+// TestWSPoolZeroIdleHandsConnectionToWaiter queues a request behind one busy
+// socket with zero idle retention. Release hands that same ID to the waiter,
+// then the final release removes its record.
 func TestWSPoolZeroIdleHandsConnectionToWaiter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 0)
@@ -779,6 +902,9 @@ func TestWSPoolZeroIdleHandsConnectionToWaiter(t *testing.T) {
 	})
 }
 
+// TestOpenAIWSConnPool_CleanupStaleAndTrimIdle supplies an over-age socket and
+// two idle timestamps. Cleanup removes stale and oldest excess entries while
+// retaining the newer idle socket under the configured ceiling.
 func TestOpenAIWSConnPool_CleanupStaleAndTrimIdle(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxIdlePerProvider = 1
@@ -809,6 +935,9 @@ func TestOpenAIWSConnPool_CleanupStaleAndTrimIdle(t *testing.T) {
 	require.NotNil(t, ap.conns["idle_new"], "newer idle should be kept")
 }
 
+// TestOpenAIWSConnPool_NextConnIDFormat generates two IDs for one provider in a
+// fresh pool. Their prefix, exact first sequences, and distinct values protect
+// pool-local monotonically increasing naming.
 func TestOpenAIWSConnPool_NextConnIDFormat(t *testing.T) {
 	pool := newStartedWSConnPoolForTest(&WSPoolOptions{})
 	id1 := pool.nextConnID(42)
@@ -821,11 +950,17 @@ func TestOpenAIWSConnPool_NextConnIDFormat(t *testing.T) {
 	require.Equal(t, "oa_ws_42_2", id2)
 }
 
+// TestOpenAIWSConnPool_AcquireCleanupInterval reads the fixed foreground
+// cleanup interval. It asserts three seconds and a shorter interval than the
+// periodic background sweep ticker.
 func TestOpenAIWSConnPool_AcquireCleanupInterval(t *testing.T) {
 	require.Equal(t, 3*time.Second, openAIWSAcquireCleanupInterval)
 	require.Less(t, openAIWSAcquireCleanupInterval, openAIWSBackgroundSweepTicker)
 }
 
+// TestNormalizeOpenAIWSRoutingAffinityPrefersCanonicalAndSortsVariants supplies
+// blank/nonblank canonical values and an uppercase variant. The canonical
+// nonblank value wins, and deleting that key permits the variant value.
 func TestNormalizeOpenAIWSRoutingAffinityPrefersCanonicalAndSortsVariants(t *testing.T) {
 	headers := http.Header{
 		"X-CODEX-ROUTING-HINT": []string{" variant-uppercase "},
@@ -838,6 +973,9 @@ func TestNormalizeOpenAIWSRoutingAffinityPrefersCanonicalAndSortsVariants(t *tes
 	require.Equal(t, "variant-uppercase", normalizeOpenAIWSRoutingAffinity(headers))
 }
 
+// TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard changes routing,
+// TLS key, and beta values independently. Target equality survives the hint
+// change and fails for each hard transport identity change.
 func TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard(t *testing.T) {
 	baseHeaders := http.Header{
 		"X-Codex-Beta-Features":      {"responses_websockets_v2"},
@@ -863,6 +1001,9 @@ func TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard(t *testing.T) {
 	require.False(t, sameOpenAIWSPrewarmTarget(base, betaChanged), "beta feature 变化必须使预热拨号失效")
 }
 
+// TestOpenAIWSConnLease_WriteJSONAndGuards writes through a retained fake
+// connection with nonpositive timeout. Nil leases and missing connections
+// reject contextual writes through the closed-resource sentinel.
 func TestOpenAIWSConnLease_WriteJSONAndGuards(t *testing.T) {
 	conn := NewWSConn("lease_write", 1, &openAIWSFakeConn{}, nil, nil, "")
 	lease := &WSConnLease{Conn: conn}
@@ -876,6 +1017,9 @@ func TestOpenAIWSConnLease_WriteJSONAndGuards(t *testing.T) {
 	require.ErrorIs(t, err, errOpenAIWSConnClosed)
 }
 
+// TestOpenAIWSConn_WriteJSONWithTimeout_NilParentContextUsesBackground
+// supplies context.Background to the write helper. Its assertions check
+// successful output and a nonnil context reaching the probe transport.
 func TestOpenAIWSConn_WriteJSONWithTimeout_NilParentContextUsesBackground(t *testing.T) {
 	probe := &openAIWSContextProbeConn{}
 	conn := NewWSConn("ctx_probe", 1, probe, nil, nil, "")
@@ -883,6 +1027,9 @@ func TestOpenAIWSConn_WriteJSONWithTimeout_NilParentContextUsesBackground(t *tes
 	require.NotNil(t, probe.lastWriteCtx)
 }
 
+// TestOpenAIWSConnPool_TargetConnCountAdaptive combines two occupied tokens and
+// two forced waiters under half utilization. The target reaches the cap, then
+// returns to the idle floor after those observations are cleared.
 func TestOpenAIWSConnPool_TargetConnCountAdaptive(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 6
@@ -913,6 +1060,9 @@ func TestOpenAIWSConnPool_TargetConnCountAdaptive(t *testing.T) {
 	require.Equal(t, 1, target, "低负载时应缩回到最小空闲连接")
 }
 
+// TestOpenAIWSConnPool_TargetConnCountMinIdleZero uses an idle floor of zero
+// with no recorded demand. Target calculation returns zero, protecting the
+// configured empty-pool case.
 func TestOpenAIWSConnPool_TargetConnCountMinIdleZero(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 4
@@ -926,6 +1076,9 @@ func TestOpenAIWSConnPool_TargetConnCountMinIdleZero(t *testing.T) {
 	require.Equal(t, 0, target, "min_idle=0 且无负载时应允许缩容到 0")
 }
 
+// TestOpenAIWSConnPool_EnsureTargetIdleAsync installs a retained provider
+// request and an idle target of two. The pool eventually records both sockets
+// and counts at least two reserved scale-up slots.
 func TestOpenAIWSConnPool_EnsureTargetIdleAsync(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 4
@@ -963,6 +1116,9 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsync(t *testing.T) {
 	require.GreaterOrEqual(t, metrics.ScaleUpTotal, int64(2))
 }
 
+// TestOpenAIWSConnPool_EnsureTargetIdleAsyncCooldown finishes a first batch,
+// removes one socket, and probes the cooldown window. Dial count stays fixed
+// before expiry and rises after a later eligible request.
 func TestOpenAIWSConnPool_EnsureTargetIdleAsyncCooldown(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 4
@@ -999,7 +1155,8 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsyncCooldown(t *testing.T) {
 	firstDialCount := dialer.DialCount()
 	require.GreaterOrEqual(t, firstDialCount, 2)
 
-	// Remove a connection to create demand for another prewarm batch.
+	// Remove an idle entry after the first batch settles, producing new
+	// demand while retaining its cooldown timestamp for the next admission check.
 	ap, ok := pool.getProviderPool(providerID)
 	require.True(t, ok)
 	require.NotNil(t, ap)
@@ -1021,6 +1178,9 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsyncCooldown(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 }
 
+// TestOpenAIWSConnPool_EnsureTargetIdleAsyncFailureSuppress uses an
+// always-failing dialer for two one-slot batches. The next admission attempt
+// stays suppressed and the observed dial count remains two.
 func TestOpenAIWSConnPool_EnsureTargetIdleAsyncFailureSuppress(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1067,12 +1227,16 @@ func TestOpenAIWSConnPool_EnsureTargetIdleAsyncFailureSuppress(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 	require.Equal(t, 2, dialer.DialCount())
 
-	// Consecutive failures at the threshold suppress another prewarm attempt.
+	// Two completed failed batches leave recent suppression evidence; another
+	// admission call must not increase the dial count while that failure state remains current.
 	pool.ensureTargetIdleAsync(providerID)
 	time.Sleep(120 * time.Millisecond)
 	require.Equal(t, 2, dialer.DialCount())
 }
 
+// TestOpenAIWSConnPool_AcquireQueueWaitMetrics releases a busy socket after an
+// injected queue delay. Reuse reports measurable waiting, and lifetime
+// queue-entry/time plus pick counters record that acquisition.
 func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1095,6 +1259,8 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	}
 	ap.mu.Unlock()
 
+	// Delay token return to create actual queue residence, then let the acquisition
+	// measure that wait independently of ordinary pick and dial work.
 	go func() {
 		time.Sleep(60 * time.Millisecond)
 		(&WSConnLease{pool: pool, ProviderID: provider.ID, Conn: conn}).Release()
@@ -1116,6 +1282,10 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	require.GreaterOrEqual(t, metrics.ConnPickTotal, int64(1))
 }
 
+// TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNotLoseLease
+// queues during a held dial, then cancels the waiter. Its reservation exits,
+// the successful prewarm target stays unchanged, and a later acquire receives
+// the released token.
 func TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNotLoseLease(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1129,10 +1299,14 @@ func TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNot
 	provider := &WSPoolProvider{ID: 991, Type: "oauth"}
 	req := WSAcquireRequest{Provider: provider, WSURL: "wss://example.com/v1/responses"}
 
+	// result transfers one background acquisition's lease/error outcome to its
+	// controlled handoff fixture without sharing result mutation after delivery.
 	type result struct {
-		lease *WSConnLease
-		err   error
+		lease *WSConnLease // background acquired connection lease
+		err   error        // background acquisition failure value
 	}
+	// Buffer acquisition outcomes so each producer can finish independently while
+	// the fixture inspects waiter state and cancels the second request.
 	firstCh := make(chan result, 1)
 	go func() {
 		lease, err := pool.Acquire(context.Background(), req)
@@ -1185,6 +1359,10 @@ func TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNot
 	third.Release()
 }
 
+// TestOpenAIWSConnPool_PrewarmHintChangeDoesNotInvalidateHealthyDial changes
+// only routing preference during a held prewarm. One dial remains admitted with
+// its captured old affinity, protecting advisory hints from becoming hard
+// compatibility.
 func TestOpenAIWSConnPool_PrewarmHintChangeDoesNotInvalidateHealthyDial(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1209,10 +1387,13 @@ func TestOpenAIWSConnPool_PrewarmHintChangeDoesNotInvalidateHealthyDial(t *testi
 	}
 	ap.mu.Unlock()
 
+	// Hold first prewarm after capturing its hint, then replace only the retained
+	// request preference to test compatibility admission of that late result.
 	pool.ensureTargetIdleAsync(provider.ID)
 	<-dialer.firstStarted
 
-	// A routing hint change during prewarming still allows an otherwise compatible connection into the pool.
+	// A routing hint change during prewarming still allows an otherwise compatible
+	// connection into the pool.
 	ap.mu.Lock()
 	ap.lastAcquire = &WSAcquireRequest{
 		Provider: provider,
@@ -1236,6 +1417,9 @@ func TestOpenAIWSConnPool_PrewarmHintChangeDoesNotInvalidateHealthyDial(t *testi
 	require.Equal(t, 1, dialer.DialCount(), "routing-hint-only changes must not turn advisory metadata into hard reconnects")
 }
 
+// TestOpenAIWSConnPool_ClearProviderWakesIncompatibleTopologyWaiter blocks a
+// new beta target behind a busy incompatible socket. Clearing wakes the request
+// to create its own compatible socket and increases the dial count once.
 func TestOpenAIWSConnPool_ClearProviderWakesIncompatibleTopologyWaiter(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1256,10 +1440,15 @@ func TestOpenAIWSConnPool_ClearProviderWakesIncompatibleTopologyWaiter(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 1, dialer.DialCount())
 
+	// result transfers one background acquisition's lease/error outcome to its
+	// controlled handoff fixture without sharing result mutation after delivery.
 	type result struct {
-		lease *WSConnLease
-		err   error
+		lease *WSConnLease // background acquired connection lease
+		err   error        // background acquisition failure value
 	}
+	// Run incompatible-target selection separately so provider clearing can wake
+	// it; a buffered outcome prevents result delivery from holding that acquisition
+	// open.
 	resultCh := make(chan result, 1)
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), time.Second)
 	defer cancelWait()
@@ -1280,6 +1469,10 @@ func TestOpenAIWSConnPool_ClearProviderWakesIncompatibleTopologyWaiter(t *testin
 	busy.Release()
 }
 
+// TestOpenAIWSConnPool_ClearProviderDoesNotReviveInFlightDialGeneration resets
+// provider state while its first dial is held. The old result is discarded, a
+// second-generation socket is returned, and its successful request restores the
+// target.
 func TestOpenAIWSConnPool_ClearProviderDoesNotReviveInFlightDialGeneration(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1292,10 +1485,14 @@ func TestOpenAIWSConnPool_ClearProviderDoesNotReviveInFlightDialGeneration(t *te
 	provider := &WSPoolProvider{ID: 994, Type: "oauth"}
 	req := WSAcquireRequest{Provider: provider, WSURL: "wss://example.com/v1/responses"}
 
+	// result transfers one background acquisition's lease/error outcome to its
+	// controlled handoff fixture without sharing result mutation after delivery.
 	type result struct {
-		lease *WSConnLease
-		err   error
+		lease *WSConnLease // background acquired connection lease
+		err   error        // background acquisition failure value
 	}
+	// Capture first acquisition while its dial is held, clear its generation, and
+	// release the gate before inspecting the replacement dial result.
 	resultCh := make(chan result, 1)
 	go func() {
 		lease, err := pool.Acquire(context.Background(), req)
@@ -1321,6 +1518,9 @@ func TestOpenAIWSConnPool_ClearProviderDoesNotReviveInFlightDialGeneration(t *te
 	got.lease.Release()
 }
 
+// TestOpenAIWSConnPool_ForceNewConnSkipsReuse releases a usable socket before a
+// forced-new request. The fake dialer records a second dial, protecting the
+// request mode from ordinary idle reuse.
 func TestOpenAIWSConnPool_ForceNewConnSkipsReuse(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1353,6 +1553,9 @@ func TestOpenAIWSConnPool_ForceNewConnSkipsReuse(t *testing.T) {
 	require.Equal(t, 2, dialer.DialCount(), "ForceNewConn=true 时应跳过空闲连接复用并新建连接")
 }
 
+// TestOpenAIWSConnPool_AcquirePassesTLSProfile supplies an OAuth TLS profile
+// object during acquisition. The transport dialer receives that same pointer,
+// documenting shared profile forwarding rather than a profile clone.
 func TestOpenAIWSConnPool_AcquirePassesTLSProfile(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1375,6 +1578,9 @@ func TestOpenAIWSConnPool_AcquirePassesTLSProfile(t *testing.T) {
 	require.Same(t, profile, dialer.LastTLSProfile(), "OpenAI WS 建连应透传 TLS profile")
 }
 
+// TestOpenAIWSConnPool_ReusesPreferredConnWithStableRandomTLSProfileKey changes
+// randomized profile objects while keeping one supplied key. Preferred
+// acquisition retains its socket ID/reuse flag and performs only one dial.
 func TestOpenAIWSConnPool_ReusesPreferredConnWithStableRandomTLSProfileKey(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1410,7 +1616,9 @@ func TestOpenAIWSConnPool_ReusesPreferredConnWithStableRandomTLSProfileKey(t *te
 	require.Equal(t, 1, dialer.DialCount())
 }
 
-// TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures checks normalization and reuse of handshake features.
+// TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures compares absent,
+// reordered, and required beta handshakes. Equivalent feature sets reuse their
+// socket, while forced continuation rejects the incompatible plain socket.
 func TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1467,6 +1675,9 @@ func TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures(t *testing.T) {
 	require.Equal(t, 2, dialer.DialCount())
 }
 
+// TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures changes
+// beta identity in a one-slot pool after release. The old idle socket is
+// replaced and the new lease has another ID with a second dial.
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1499,7 +1710,9 @@ func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *te
 	require.Equal(t, 2, dialer.DialCount())
 }
 
-// TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS checks TLS compatibility independently of beta features.
+// TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS
+// keeps beta constant while changing TLS profile identity in a full idle pool.
+// Selection returns a fresh different socket and records a second dial.
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1537,6 +1750,9 @@ func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithMatchingBetaButDifferentTLS
 	require.Equal(t, 2, dialer.DialCount())
 }
 
+// TestOpenAIWSConnPool_AcquireWaitsForBusyIncompatibleConnection holds an
+// incompatible one-slot socket while another request waits. That request
+// remains pending before release, then creates a distinct compatible socket.
 func TestOpenAIWSConnPool_AcquireWaitsForBusyIncompatibleConnection(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -1553,11 +1769,16 @@ func TestOpenAIWSConnPool_AcquireWaitsForBusyIncompatibleConnection(t *testing.T
 	require.NoError(t, err)
 	plainConnID := plainLease.ConnID()
 
+	// acquireResult transfers a background incompatible-target acquisition outcome
+	// to the waiting fixture after its selected socket becomes available.
 	type acquireResult struct {
-		lease *WSConnLease
-		err   error
+		lease *WSConnLease // background acquired connection lease
+		err   error        // background acquisition failure value
 	}
 	resultCh := make(chan acquireResult, 1)
+	// Track background completion atomically while the incompatible lease remains
+	// occupied, allowing the fixture to distinguish waiting from early result
+	// delivery.
 	var done atomic.Bool
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -1581,6 +1802,9 @@ func TestOpenAIWSConnPool_AcquireWaitsForBusyIncompatibleConnection(t *testing.T
 	require.Equal(t, 2, dialer.DialCount())
 }
 
+// TestOpenAIWSConnPool_AcquireReplacesIncompatibleIdleWhenMatchingBusy fills a
+// two-slot pool with idle plain and busy beta sockets. Another beta request
+// replaces the incompatible idle entry with a third dial.
 func TestOpenAIWSConnPool_AcquireReplacesIncompatibleIdleWhenMatchingBusy(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1614,6 +1838,10 @@ func TestOpenAIWSConnPool_AcquireReplacesIncompatibleIdleWhenMatchingBusy(t *tes
 	require.Equal(t, 3, dialer.DialCount())
 }
 
+// TestOpenAIWSConnPool_AcquireForcePreferredConnUnavailable supplies blank and
+// missing required IDs despite another recorded socket. Both requests return
+// preferred-unavailable, protecting forced continuation from drifting to that
+// other connection.
 func TestOpenAIWSConnPool_AcquireForcePreferredConnUnavailable(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1644,6 +1872,10 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, openai.ErrOpenAIWSPreferredConnUnavailable)
 }
 
+// TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly delays
+// release of a required busy socket while another compatible socket is idle.
+// The request waits, receives its required ID, and leaves the other token
+// available.
 func TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1665,6 +1897,8 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly(t *test
 	ap.lastCleanupAt = time.Now()
 	ap.mu.Unlock()
 
+	// Delay required-token return while the other compatible token stays idle,
+	// isolating strict continuation waiting from ordinary route selection.
 	go func() {
 		time.Sleep(60 * time.Millisecond)
 		(&WSConnLease{pool: pool, ProviderID: provider.ID, Conn: preferredConn}).Release()
@@ -1687,6 +1921,9 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly(t *test
 	otherConn.release()
 }
 
+// TestOpenAIWSConnPool_AcquireForcePreferredConnDirectAndQueueFull checks idle
+// direct selection and a saturated required queue. Required identity is
+// selected when free, and queue-full fails despite another recorded socket.
 func TestOpenAIWSConnPool_AcquireForcePreferredConnDirectAndQueueFull(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1730,6 +1967,9 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnDirectAndQueueFull(t *testing
 	preferredConn.release()
 }
 
+// TestOpenAIWSConnPool_CleanupSkipsPinnedConn pins one idle socket under
+// zero-idle cleanup. That socket survives while its peer closes, then becomes
+// reclaimable after its pin is released.
 func TestOpenAIWSConnPool_CleanupSkipsPinnedConn(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1765,6 +2005,9 @@ func TestOpenAIWSConnPool_CleanupSkipsPinnedConn(t *testing.T) {
 	require.False(t, pinnedExists, "解绑后连接应可被正常回收")
 }
 
+// TestOpenAIWSConnPool_PinUnpinConnBranches tests invalid selections and two
+// pins on one recorded socket. Matching unpins decrement/remove the entry, and
+// extra or invalid unpins are accepted.
 func TestOpenAIWSConnPool_PinUnpinConnBranches(t *testing.T) {
 	var nilPool *WSConnPool
 	require.False(t, nilPool.PinConn(1, "x"))
@@ -1811,6 +2054,9 @@ func TestOpenAIWSConnPool_PinUnpinConnBranches(t *testing.T) {
 	pool.UnpinConn(999, conn.id)
 }
 
+// TestOpenAIWSConnPool_EffectiveMaxConnsByProvider combines hard cap, provider
+// type factors, and concurrency values. Assertions protect bounded dynamic
+// capacity, minimum one, and hard-cap selection for nil/unlimited providers.
 func TestOpenAIWSConnPool_EffectiveMaxConnsByProvider(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 8
@@ -1838,6 +2084,10 @@ func TestOpenAIWSConnPool_EffectiveMaxConnsByProvider(t *testing.T) {
 	require.Equal(t, 8, pool.effectiveMaxConnsByProvider(nil), "缺少提供商上下文应回退到全局硬上限")
 }
 
+// TestOpenAIWSConnPool_EffectiveMaxConnsDisabledFallbackHardCap disables
+// concurrency-based sizing for a low-concurrency provider. Its effective
+// connection capacity remains the configured hard cap instead of a scaled
+// value.
 func TestOpenAIWSConnPool_EffectiveMaxConnsDisabledFallbackHardCap(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 8
@@ -1850,6 +2100,9 @@ func TestOpenAIWSConnPool_EffectiveMaxConnsDisabledFallbackHardCap(t *testing.T)
 	require.Equal(t, 8, pool.effectiveMaxConnsByProvider(provider), "关闭动态模式后应保持旧行为")
 }
 
+// TestOpenAIWSConnPool_EffectiveMaxConnsByProvider_DynamicLimitRespectsFactorAndHardCap
+// supplies distinct provider factors and nonpositive concurrency. It asserts
+// the scaled OAuth result and hard-cap choice for unlimited API-key admission.
 func TestOpenAIWSConnPool_EffectiveMaxConnsByProvider_DynamicLimitRespectsFactorAndHardCap(t *testing.T) {
 	cfg := &WSPoolOptions{}
 
@@ -1867,6 +2120,10 @@ func TestOpenAIWSConnPool_EffectiveMaxConnsByProvider_DynamicLimitRespectsFactor
 	require.Equal(t, 8, pool.effectiveMaxConnsByProvider(nonPositive))
 }
 
+// TestOpenAIWSConnLease_ReadMessageWithContextTimeout_PerRead uses delayed fake
+// reads with shorter/longer budgets and canceled parent. Outcomes distinguish
+// timeout, successful completion payload, and parent cancellation for separate
+// calls.
 func TestOpenAIWSConnLease_ReadMessageWithContextTimeout_PerRead(t *testing.T) {
 	conn := NewWSConn("timeout", 1, &openAIWSBlockingConn{readDelay: 80 * time.Millisecond}, nil, nil, "")
 	lease := &WSConnLease{Conn: conn}
@@ -1886,11 +2143,17 @@ func TestOpenAIWSConnLease_ReadMessageWithContextTimeout_PerRead(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestOpenAIWSConnLease_WriteJSONWithContextTimeout_RespectsParentContext
+// cancels a blocked write before its large timeout. The write returns
+// context.Canceled within the fixture margin, checking transport parent-context
+// propagation.
 func TestOpenAIWSConnLease_WriteJSONWithContextTimeout_RespectsParentContext(t *testing.T) {
 	conn := NewWSConn("write_timeout_ctx", 1, &openAIWSWriteBlockingConn{}, nil, nil, "")
 	lease := &WSConnLease{Conn: conn}
 
 	parentCtx, cancel := context.WithCancel(context.Background())
+	// Cancel the parent during the deliberately blocked transport write, checking
+	// its propagation before the larger per-operation timeout can expire.
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
@@ -1905,6 +2168,9 @@ func TestOpenAIWSConnLease_WriteJSONWithContextTimeout_RespectsParentContext(t *
 	require.Less(t, elapsed, 200*time.Millisecond)
 }
 
+// TestOpenAIWSConnLease_PingWithTimeout probes a valid fake socket and a nil
+// lease. The first succeeds while the second returns the shared closed-resource
+// sentinel.
 func TestOpenAIWSConnLease_PingWithTimeout(t *testing.T) {
 	conn := NewWSConn("ping_ok", 1, &openAIWSFakeConn{}, nil, nil, "")
 	lease := &WSConnLease{Conn: conn}
@@ -1915,16 +2181,22 @@ func TestOpenAIWSConnLease_PingWithTimeout(t *testing.T) {
 	require.ErrorIs(t, err, errOpenAIWSConnClosed)
 }
 
+// TestOpenAIWSConn_ReadAndWriteCanProceedConcurrently starts a delayed read
+// then invokes ping. Ping completes within its margin while the read finishes
+// successfully, exercising separate read/write locks through that probe.
 func TestOpenAIWSConn_ReadAndWriteCanProceedConcurrently(t *testing.T) {
 	conn := NewWSConn("full_duplex", 1, &openAIWSBlockingConn{readDelay: 120 * time.Millisecond}, nil, nil, "")
 
+	// Retain the delayed read outcome independently while timing ping, so read
+	// completion can be joined after the direction-lock assertion.
 	readDone := make(chan error, 1)
 	go func() {
 		_, err := conn.readMessageWithContextTimeout(context.Background(), 200*time.Millisecond)
 		readDone <- err
 	}()
 
-	// Give the reader time to acquire readMu before testing the independent write lock.
+	// Start the delayed read before timing ping, so the fixture measures
+	// write-direction independence while that read is expected to hold readMu.
 	time.Sleep(20 * time.Millisecond)
 
 	start := time.Now()
@@ -1936,6 +2208,9 @@ func TestOpenAIWSConn_ReadAndWriteCanProceedConcurrently(t *testing.T) {
 	require.NoError(t, <-readDone)
 }
 
+// TestOpenAIWSConnPool_BackgroundPingSweep_EvictsDeadIdleConn records an
+// upstream socket whose ping fails. A direct background sweep removes its
+// provider-map entry, checking failure-driven idle eviction.
 func TestOpenAIWSConnPool_BackgroundPingSweep_EvictsDeadIdleConn(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1956,6 +2231,9 @@ func TestOpenAIWSConnPool_BackgroundPingSweep_EvictsDeadIdleConn(t *testing.T) {
 	require.False(t, exists, "后台 ping 失败的空闲连接应被回收")
 }
 
+// TestOpenAIWSConnPool_BackgroundCleanupSweep_WithoutAcquire supplies an
+// over-age idle socket and runs cleanup directly. The socket leaves provider
+// state even when no new acquisition triggers foreground retirement.
 func TestOpenAIWSConnPool_BackgroundCleanupSweep_WithoutAcquire(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -1979,6 +2257,9 @@ func TestOpenAIWSConnPool_BackgroundCleanupSweep_WithoutAcquire(t *testing.T) {
 	require.False(t, exists, "后台清理应在无新 acquire 时也回收过期连接")
 }
 
+// TestOpenAIWSConnPool_RecyclesUnsupportedIdlePingConnection supplies a
+// reader-dependent idle socket past its recycle threshold. Background cleanup
+// removes its record and publishes its closed channel.
 func TestOpenAIWSConnPool_RecyclesUnsupportedIdlePingConnection(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -2005,6 +2286,10 @@ func TestOpenAIWSConnPool_RecyclesUnsupportedIdlePingConnection(t *testing.T) {
 	}
 }
 
+// TestOpenAIWSConnPool_BackgroundWorkerGuardBranches invokes
+// nil/missing-channel worker paths and closes active worker stop channels.
+// Guarded calls avoid panic and both started loops exit before their fixture
+// deadlines.
 func TestOpenAIWSConnPool_BackgroundWorkerGuardBranches(t *testing.T) {
 	var nilPool *WSConnPool
 	require.NotPanics(t, func() {
@@ -2022,6 +2307,8 @@ func TestOpenAIWSConnPool_BackgroundWorkerGuardBranches(t *testing.T) {
 	})
 
 	poolStopPing := &WSConnPool{workerStopCh: make(chan struct{})}
+	// Observe each worker exit after stop closure through its completion channel,
+	// keeping the test deadline separate from normal ticker activity.
 	pingDone := make(chan struct{})
 	go func() {
 		poolStopPing.runBackgroundPingWorker()
@@ -2048,6 +2335,9 @@ func TestOpenAIWSConnPool_BackgroundWorkerGuardBranches(t *testing.T) {
 	}
 }
 
+// TestOpenAIWSConnPool_SnapshotIdleConnsForPing_SkipsInvalidEntries mixes
+// malformed provider values and nil, occupied, waited, and idle sockets. Only
+// the usable idle connection appears in the returned candidate list.
 func TestOpenAIWSConnPool_SnapshotIdleConnsForPing_SkipsInvalidEntries(t *testing.T) {
 	pool := &WSConnPool{}
 	pool.providers.Store("invalid-key", &openAIWSProviderPool{})
@@ -2076,6 +2366,10 @@ func TestOpenAIWSConnPool_SnapshotIdleConnsForPing_SkipsInvalidEntries(t *testin
 	require.Equal(t, idle.id, candidates[0].conn.id)
 }
 
+// TestOpenAIWSConnPool_RunBackgroundCleanupSweep_SkipsInvalidAndUsesProviderCap
+// combines invalid provider storage, nil socket, and stale connection under
+// dynamic limits. Cleanup avoids panic, removes invalid/stale entries, and
+// records the supplied cleanup time.
 func TestOpenAIWSConnPool_RunBackgroundCleanupSweep_SkipsInvalidAndUsesProviderCap(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 4
@@ -2118,6 +2412,10 @@ func TestOpenAIWSConnPool_RunBackgroundCleanupSweep_SkipsInvalidAndUsesProviderC
 	require.Equal(t, now, lastCleanupAt)
 }
 
+// TestOpenAIWSConnPool_QueueLimitPerConn_DefaultAndConfigured reads queue
+// limits from nil and zero options, then publishes a configured value.
+// Assertions protect default capacity and visibility of the replacement
+// setting.
 func TestOpenAIWSConnPool_QueueLimitPerConn_DefaultAndConfigured(t *testing.T) {
 	var nilPool *WSConnPool
 	require.Equal(t, 256, nilPool.queueLimitPerConn())
@@ -2131,6 +2429,9 @@ func TestOpenAIWSConnPool_QueueLimitPerConn_DefaultAndConfigured(t *testing.T) {
 	require.Equal(t, 9, pool.queueLimitPerConn())
 }
 
+// TestOpenAIWSConnPool_Close stops a started pool and inspects its worker stop
+// channel. Repeated shutdown and a nil receiver are accepted, checking the
+// public close guard.
 func TestOpenAIWSConnPool_Close(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	pool := newStartedWSConnPoolForTest(cfg)
@@ -2151,6 +2452,9 @@ func TestOpenAIWSConnPool_Close(t *testing.T) {
 	nilPool.Close()
 }
 
+// TestOpenAIWSDialError_ErrorAndUnwrap constructs status-bearing, status-free,
+// and nil dial errors. Error text and underlying errors remain inspectable,
+// while nil receiver formatting/unwrap returns empty outcomes.
 func TestOpenAIWSDialError_ErrorAndUnwrap(t *testing.T) {
 	baseErr := errors.New("boom")
 	dialErr := &openai.WSDialError{StatusCode: 502, Err: baseErr}
@@ -2165,6 +2469,10 @@ func TestOpenAIWSDialError_ErrorAndUnwrap(t *testing.T) {
 	require.NoError(t, nilDialErr.Unwrap())
 }
 
+// TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats exercises context/budget
+// wrappers, retained handshake text, activity clocks, and missing connections.
+// Successful fake operations update/read metadata and guarded nil wrappers
+// return the closed sentinel.
 func TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats(t *testing.T) {
 	conn := NewWSConn("helper_conn", 1, &openAIWSFakeConn{}, http.Header{
 		"X-Test": []string{" value "},
@@ -2202,6 +2510,10 @@ func TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats(t *testing.T) {
 	require.ErrorIs(t, err, errOpenAIWSConnClosed)
 }
 
+// TestOpenAIWSConnPool_PickOldestIdleAndProviderPoolLoad records differently
+// aged idle sockets and one occupied/waited socket. Selection chooses the
+// oldest eligible idle entry and public/private load counts agree for the
+// fixture.
 func TestOpenAIWSConnPool_PickOldestIdleAndProviderPoolLoad(t *testing.T) {
 	pool := &WSConnPool{}
 	providerID := int64(404)
@@ -2239,8 +2551,14 @@ func TestOpenAIWSConnPool_PickOldestIdleAndProviderPoolLoad(t *testing.T) {
 	require.Equal(t, 0, zeroConns)
 }
 
+// TestOpenAIWSConnPool_Close_WaitsWorkerGroupAndNilStopChannel installs a held
+// worker on a pool lacking a stop channel. It observes no Close result for
+// thirty milliseconds while the worker is held, then releases it and waits
+// for completion within the fixture deadline.
 func TestOpenAIWSConnPool_Close_WaitsWorkerGroupAndNilStopChannel(t *testing.T) {
 	pool := &WSConnPool{}
+	// Register held work without a stop channel, then close the pool in another
+	// goroutine so the fixture can inspect shutdown join ordering.
 	release := make(chan struct{})
 	pool.workerWg.Go(func() {
 		<-release
@@ -2266,6 +2584,9 @@ func TestOpenAIWSConnPool_Close_WaitsWorkerGroupAndNilStopChannel(t *testing.T) 
 	}
 }
 
+// TestOpenAIWSConnPool_Close_ClosesOnlyIdleConnections shuts down recorded idle
+// and occupied sockets alongside invalid storage. The idle closed signal
+// arrives while the occupied socket remains open at the checked point.
 func TestOpenAIWSConnPool_Close_ClosesOnlyIdleConnections(t *testing.T) {
 	pool := &WSConnPool{
 		workerStopCh: make(chan struct{}),
@@ -2302,6 +2623,9 @@ func TestOpenAIWSConnPool_Close_ClosesOnlyIdleConnections(t *testing.T) {
 	pool.Close()
 }
 
+// TestOpenAIWSConnPool_RunBackgroundPingSweep_ConcurrencyLimit holds
+// twenty-five fake ping candidates on one release gate. At least ten probes
+// overlap, all finish after release, and recorded maximum never exceeds ten.
 func TestOpenAIWSConnPool_RunBackgroundPingSweep_ConcurrencyLimit(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	pool := newStartedWSConnPoolForTest(cfg)
@@ -2310,6 +2634,8 @@ func TestOpenAIWSConnPool_RunBackgroundPingSweep_ConcurrencyLimit(t *testing.T) 
 
 	var current atomic.Int32
 	var maxConcurrent atomic.Int32
+	// Share one release gate across all probe transports so overlap reaches the
+	// sweep limit before any probe can complete normally.
 	release := make(chan struct{})
 	for range 25 {
 		conn := NewWSConn(pool.nextConnID(providerID), providerID, &openAIWSPingBlockingConn{
@@ -2342,6 +2668,10 @@ func TestOpenAIWSConnPool_RunBackgroundPingSweep_ConcurrencyLimit(t *testing.T) 
 	require.LessOrEqual(t, maxConcurrent.Load(), int32(10))
 }
 
+// TestOpenAIWSConnLease_BasicGetterBranches inspects nil and populated leases
+// with stored timings and handshake data. Zero defaults, exact observations,
+// protocol-prewarm marking, and tolerated release are checked independently of
+// acquisition.
 func TestOpenAIWSConnLease_BasicGetterBranches(t *testing.T) {
 	var nilLease *WSConnLease
 	require.Equal(t, "", nilLease.ConnID())
@@ -2371,6 +2701,10 @@ func TestOpenAIWSConnLease_BasicGetterBranches(t *testing.T) {
 	lease.Release()
 }
 
+// TestOpenAIWSConnPool_UtilityBranches exercises independent metrics, policy
+// defaults, failure suppression/reset, typed lookup, and health eligibility.
+// Assertions describe those helper outcomes; the fixture does not require one
+// consistent concurrent state snapshot.
 func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	var nilPool *WSConnPool
 	require.Equal(t, WSPoolMetricsSnapshot{}, nilPool.SnapshotMetrics())
@@ -2440,6 +2774,9 @@ func TestOpenAIWSConnPool_UtilityBranches(t *testing.T) {
 	require.False(t, pool.shouldHealthCheckConn(unsafeConn))
 }
 
+// TestOpenAIWSConn_LeaseAndTimeHelpers_NilAndClosedBranches checks nil
+// timestamp/token helpers and one constructed socket. Its token occupancy
+// changes on release, and marked closure rejects another acquisition.
 func TestOpenAIWSConn_LeaseAndTimeHelpers_NilAndClosedBranches(t *testing.T) {
 	var nilConn *WSConn
 	nilConn.touch()
@@ -2460,6 +2797,9 @@ func TestOpenAIWSConn_LeaseAndTimeHelpers_NilAndClosedBranches(t *testing.T) {
 	require.False(t, conn.tryAcquire())
 }
 
+// TestOpenAIWSConnLease_ReadWriteNilConnBranches supplies a lease without
+// transport association to each read/write wrapper. Every checked operation
+// returns the shared closed-resource sentinel before transport work.
 func TestOpenAIWSConnLease_ReadWriteNilConnBranches(t *testing.T) {
 	lease := &WSConnLease{}
 	require.ErrorIs(t, lease.WriteJSON(map[string]any{"k": "v"}, time.Second), errOpenAIWSConnClosed)
@@ -2472,6 +2812,9 @@ func TestOpenAIWSConnLease_ReadWriteNilConnBranches(t *testing.T) {
 	require.ErrorIs(t, err, errOpenAIWSConnClosed)
 }
 
+// TestOpenAIWSConnLease_ReleasedLeaseGuards releases one fake lease twice after
+// a successful ping. Subsequent read/write/ping entry points all reject that
+// released lease through the same closed-resource error.
 func TestOpenAIWSConnLease_ReleasedLeaseGuards(t *testing.T) {
 	conn := NewWSConn("released_guard", 1, &openAIWSFakeConn{}, nil, nil, "")
 	lease := &WSConnLease{Conn: conn}
@@ -2495,6 +2838,9 @@ func TestOpenAIWSConnLease_ReleasedLeaseGuards(t *testing.T) {
 	require.ErrorIs(t, lease.PingWithTimeout(50*time.Millisecond), errOpenAIWSConnClosed)
 }
 
+// TestOpenAIWSConnLease_MarkBrokenAfterRelease_NoEviction releases a recorded
+// lease before marking it broken. The provider entry remains, protecting the
+// sequential released-lease guard from evicting reusable pool capacity.
 func TestOpenAIWSConnLease_MarkBrokenAfterRelease_NoEviction(t *testing.T) {
 	conn := NewWSConn("released_markbroken", 7, &openAIWSFakeConn{}, nil, nil, "")
 	ap := &openAIWSProviderPool{
@@ -2520,6 +2866,10 @@ func TestOpenAIWSConnLease_MarkBrokenAfterRelease_NoEviction(t *testing.T) {
 	require.True(t, exists, "released lease should not evict active pool connection")
 }
 
+// TestOpenAIWSConn_AdditionalGuardBranches covers nil/closed/missing
+// transports, nonpositive budgets, zero clocks, header cloning, and closing
+// lists. Assertions protect selected helper defaults and error outcomes, with
+// supplied context cases described literally.
 func TestOpenAIWSConn_AdditionalGuardBranches(t *testing.T) {
 	var nilConn *WSConn
 	require.False(t, nilConn.tryAcquire())
@@ -2571,6 +2921,9 @@ func TestOpenAIWSConn_AdditionalGuardBranches(t *testing.T) {
 	closeOpenAIWSConns([]*WSConn{nil, connOK})
 }
 
+// TestOpenAIWSConnLease_MarkBrokenEvictsConn marks a retained active
+// association broken. Its provider entry disappears and the connection token
+// cannot be acquired again after disposal.
 func TestOpenAIWSConnLease_MarkBrokenEvictsConn(t *testing.T) {
 	pool := newStartedWSConnPoolForTest(&WSPoolOptions{})
 	providerID := int64(5001)
@@ -2594,6 +2947,10 @@ func TestOpenAIWSConnLease_MarkBrokenEvictsConn(t *testing.T) {
 	require.False(t, conn.tryAcquire(), "被标记为 broken 的连接应被关闭")
 }
 
+// TestOpenAIWSConnPool_TargetConnCountAndPrewarmBranches supplies invalid
+// capacity, bounded idle floor, waiters, absent providers, and failed prewarm.
+// Assertions protect target limits and failure evidence after a reserved fake
+// dial fails.
 func TestOpenAIWSConnPool_TargetConnCountAndPrewarmBranches(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -2643,6 +3000,9 @@ func TestOpenAIWSConnPool_TargetConnCountAndPrewarmBranches(t *testing.T) {
 	apFail.mu.Unlock()
 }
 
+// TestOpenAIWSConnPool_Acquire_ErrorBranches tests invalid pool/URL, nil
+// recorded entries, and saturated waiters. Invalid requests fail, nil entries
+// yield fresh capacity, and full queue state returns the queue sentinel.
 func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	var nilPool *WSConnPool
 	_, err := nilPool.Acquire(context.Background(), WSAcquireRequest{})
@@ -2693,6 +3053,10 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	require.ErrorIs(t, err, openai.ErrOpenAIWSConnQueueFull)
 }
 
+// Dial returns a new shared fake connection with zero status and no
+// headers/error. It ignores context, URL, proxy, profile, and request headers;
+// use it for pool mechanics, not transport validation or cancellation
+// assertions.
 func (d *openAIWSFakeDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -2708,6 +3072,10 @@ func (d *openAIWSFakeDialer) Dial(
 	return &openAIWSFakeConn{}, 0, nil, nil
 }
 
+// newOpenAIWSFirstDialBlockingCaptureDialer creates fresh first-start and
+// release gates for a capturing dialer. Callers eventually release the first
+// gate or cancel its context, and inspect captured state under the dialer
+// mutex.
 func newOpenAIWSFirstDialBlockingCaptureDialer() *openAIWSFirstDialBlockingCaptureDialer {
 	return &openAIWSFirstDialBlockingCaptureDialer{
 		firstStarted: make(chan struct{}),
@@ -2715,23 +3083,41 @@ func newOpenAIWSFirstDialBlockingCaptureDialer() *openAIWSFirstDialBlockingCaptu
 	}
 }
 
+// SupportsIdlePingWithoutReader reports false for the reader-dependent
+// idle-ping fixture.
 func (c *openAIWSIdlePingUnsupportedConn) SupportsIdlePingWithoutReader() bool {
 	return false
 }
 
+// WriteJSON returns successful fixture output without retaining payload or
+// modeling cancellation.
 func (c *openAIWSPingBlockingConn) WriteJSON(context.Context, any) error {
 	return nil
 }
 
+// ReadMessage returns the fixed completed-response bytes used by the ping
+// concurrency fixture.
 func (c *openAIWSPingBlockingConn) ReadMessage(context.Context) ([]byte, error) {
 	return []byte(`{"type":"response.completed","response":{"id":"resp_blocking_ping"}}`), nil
 }
 
+// Ping increments shared overlap counters, updates the observed maximum, and
+// waits for context or release when counters exist. Missing counters return
+// success immediately. Callers share the same atomics across all candidates and
+// eventually release the gate.
+//
+// The maximum uses compare-and-swap while active count is returned in a defer,
+// so cancellation and ordinary release both stop counting this probe. Close is
+// a no-op and cannot release the wait; pool tests therefore own the gate or
+// context lifetime. This exposes actual overlapping probe calls rather than
+// total scheduled candidates.
 func (c *openAIWSPingBlockingConn) Ping(ctx context.Context) error {
 	if c.current == nil || c.maxConcurrent == nil {
 		return nil
 	}
 
+	// Count active entry before waiting and return it on either outcome; retain the
+	// peak so overlap remains observable after the shared release.
 	now := c.current.Add(1)
 	for {
 		prev := c.maxConcurrent.Load()
@@ -2749,10 +3135,23 @@ func (c *openAIWSPingBlockingConn) Ping(ctx context.Context) error {
 	}
 }
 
+// Close returns nil for the ping fixture and does not release its gate.
+// Existing Ping calls still depend on caller context or release-channel
+// completion; use the fixture shutdown gate before waiting for them.
 func (c *openAIWSPingBlockingConn) Close() error {
 	return nil
 }
 
+// Dial counts attempts and clones supplied headers under its mutex, holding
+// only the first call on the fixture gate. The first-start channel closes
+// before waiting; cancellation returns its error without recording a new
+// connection.
+//
+// Other dial calls can complete while that first request is held. Successfully
+// created fake pointers are appended under the mutex after the gate releases.
+// Captured headers remain stable copies, while connection objects are shared
+// references whose own state needs their mutex. Callers release/cancel the held
+// first request before fixture cleanup waits for pool resources.
 func (d *openAIWSFirstDialBlockingCaptureDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -2763,6 +3162,8 @@ func (d *openAIWSFirstDialBlockingCaptureDialer) Dial(
 	_ = wsURL
 	_ = proxyURL
 	_ = profile
+	// Count and clone headers before first-start publication, letting concurrent
+	// dials proceed while the fixture holds the first request on its gate.
 	d.mu.Lock()
 	d.dialCount++
 	dialNumber := d.dialCount
@@ -2783,12 +3184,19 @@ func (d *openAIWSFirstDialBlockingCaptureDialer) Dial(
 	return conn, 0, nil, nil
 }
 
+// DialCount reads the captured attempt count under the fixture mutex. It can
+// count a canceled first call before any socket is appended, so consumers
+// distinguish attempts from recorded connection objects.
 func (d *openAIWSFirstDialBlockingCaptureDialer) DialCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.dialCount
 }
 
+// Dial increments its synchronized attempt count and returns nil transport,
+// HTTP 503, and the fixed dial failure. Request parameters/context are ignored;
+// this fixture models suppression evidence rather than transport cancellation
+// behavior.
 func (d *openAIWSAlwaysFailDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -2801,24 +3209,35 @@ func (d *openAIWSAlwaysFailDialer) Dial(
 	_ = headers
 	_ = proxyURL
 	_ = profile
+	// Record the failed attempt under the same lock used by DialCount before
+	// returning its fixed error for later suppression assertions.
 	d.mu.Lock()
 	d.dialCount++
 	d.mu.Unlock()
 	return nil, 503, nil, errors.New("dial failed")
 }
 
+// DialCount returns the synchronized number of always-failing dial attempts.
+// The counter advances before each fixed error is returned, allowing admission
+// tests to inspect completed or currently observed attempt evidence.
 func (d *openAIWSAlwaysFailDialer) DialCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.dialCount
 }
 
+// WriteJSON succeeds immediately for the delayed-read fixture while ignoring
+// context and value.
 func (c *openAIWSBlockingConn) WriteJSON(ctx context.Context, value any) error {
 	_ = ctx
 	_ = value
 	return nil
 }
 
+// ReadMessage waits for its configured delay or caller cancellation, then
+// returns the fixed completed response. Nonpositive delay selects ten
+// milliseconds. Close does not release this wait, so tests retain context/timer
+// ownership until reading finishes.
 func (c *openAIWSBlockingConn) ReadMessage(ctx context.Context) ([]byte, error) {
 	delay := c.readDelay
 	if delay <= 0 {
@@ -2835,65 +3254,100 @@ func (c *openAIWSBlockingConn) ReadMessage(ctx context.Context) ([]byte, error) 
 	}
 }
 
+// Ping succeeds immediately for the delayed-read fixture, independently of its
+// pending read.
 func (c *openAIWSBlockingConn) Ping(ctx context.Context) error {
 	_ = ctx
 	return nil
 }
 
+// Close returns nil for the delayed-read fixture and leaves pending reads to
+// their timer/context. It provides no transport-unblocking effect, so callers
+// cannot infer real socket close behavior from this stub.
 func (c *openAIWSBlockingConn) Close() error {
 	return nil
 }
 
+// WriteJSON waits exclusively for the supplied context to finish and returns
+// its error. Pass a nonnil cancelable context; Close is a no-op, so fixture
+// owners cancel or set a deadline before waiting for write completion.
 func (c *openAIWSWriteBlockingConn) WriteJSON(ctx context.Context, _ any) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
+// ReadMessage returns fixed completed-response bytes independently of the
+// blocked-write fixture state.
 func (c *openAIWSWriteBlockingConn) ReadMessage(context.Context) ([]byte, error) {
 	return []byte(`{"type":"response.completed","response":{"id":"resp_write_block"}}`), nil
 }
 
+// Ping reports immediate success for the write-cancellation fixture without
+// consulting context.
 func (c *openAIWSWriteBlockingConn) Ping(context.Context) error {
 	return nil
 }
 
+// Close returns nil for the write-cancellation fixture and does not unblock
+// WriteJSON. The caller owns the write context that eventually releases its
+// wait; this stub models cancellation rather than socket disposal.
 func (c *openAIWSWriteBlockingConn) Close() error {
 	return nil
 }
 
+// WriteJSON reports successful fixture output while leaving the failing-ping
+// state unchanged.
 func (c *openAIWSPingFailConn) WriteJSON(context.Context, any) error {
 	return nil
 }
 
+// ReadMessage returns the fixed response used independently of failed
+// health-probe assertions.
 func (c *openAIWSPingFailConn) ReadMessage(context.Context) ([]byte, error) {
 	return []byte(`{"type":"response.completed","response":{"id":"resp_ping_fail"}}`), nil
 }
 
+// Ping returns the fixed probe error for every failing-health fixture
+// invocation.
 func (c *openAIWSPingFailConn) Ping(context.Context) error {
 	return errors.New("ping failed")
 }
 
+// Close returns nil after failing health probes without modeling a transport
+// resource.
 func (c *openAIWSPingFailConn) Close() error {
 	return nil
 }
 
+// WriteJSON stores its supplied context and reports successful fixture output.
+// Callers serialize probe access through the connection wrapper before
+// inspecting lastWriteCtx, because the fixture itself has no mutex.
 func (c *openAIWSContextProbeConn) WriteJSON(ctx context.Context, _ any) error {
 	c.lastWriteCtx = ctx
 	return nil
 }
 
+// ReadMessage returns fixed completed-response bytes for the write-context
+// capture fixture.
 func (c *openAIWSContextProbeConn) ReadMessage(context.Context) ([]byte, error) {
 	return []byte(`{"type":"response.completed","response":{"id":"resp_ctx_probe"}}`), nil
 }
 
+// Ping returns successful health status for the context-capture fixture without
+// inspecting context.
 func (c *openAIWSContextProbeConn) Ping(context.Context) error {
 	return nil
 }
 
+// Close returns nil for the context probe without clearing captured write
+// context.
 func (c *openAIWSContextProbeConn) Close() error {
 	return nil
 }
 
+// Dial returns nil transport with HTTP 200 and nil error, ignoring request
+// inputs. It models the inconsistent dialer outcome that acquisition must
+// reject rather than a successful usable WebSocket.
 func (d *openAIWSNilConnDialer) Dial(
 	ctx context.Context,
 	wsURL string,
@@ -2909,6 +3363,9 @@ func (d *openAIWSNilConnDialer) Dial(
 	return nil, 200, nil, nil
 }
 
+// TestOpenAIWSConnPool_DialConnNilConnection installs a dialer returning nil
+// transport with HTTP 200 and no error. Acquisition turns that inconsistent
+// result into an error containing the nil-connection diagnostic.
 func TestOpenAIWSConnPool_DialConnNilConnection(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 2
@@ -2926,6 +3383,9 @@ func TestOpenAIWSConnPool_DialConnNilConnection(t *testing.T) {
 	require.Contains(t, err.Error(), "nil connection")
 }
 
+// TestOpenAIWSConnPool_SnapshotTransportMetrics requests proxy clients for
+// repeated and distinct URLs. The pool exposes one hit, two misses, and a
+// one-third reuse ratio within the specified float tolerance.
 func TestOpenAIWSConnPool_SnapshotTransportMetrics(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	pool := newStartedWSConnPoolForTest(cfg)
@@ -2943,15 +3403,24 @@ func TestOpenAIWSConnPool_SnapshotTransportMetrics(t *testing.T) {
 	snapshot := pool.SnapshotTransportMetrics()
 	require.Equal(t, int64(1), snapshot.ProxyClientCacheHits)
 	require.Equal(t, int64(2), snapshot.ProxyClientCacheMisses)
+	// Float tolerance applies to the derived reuse ratio; integer hit/miss
+	// counters above establish the three-request fixture independently of rounding in that ratio.
 	require.InDelta(t, 1.0/3.0, snapshot.TransportReuseRatio, 0.0001)
 }
 
+// newStartedWSConnPoolForTest constructs a pool and starts its periodic workers
+// before returning it. It installs no automatic test cleanup; fixture owners
+// call Close when they need worker/resource completion before their test ends.
 func newStartedWSConnPoolForTest(options *WSPoolOptions) *WSConnPool {
 	p := NewWSConnPool(options)
 	p.Start()
 	return p
 }
 
+// TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded
+// generates authorization inside a direct prewarm dial. Clearing advances
+// generation and removes target/sockets, then an old-generation batch cannot
+// reenter provider state.
 func TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded(t *testing.T) {
 	cfg := &WSPoolOptions{}
 	cfg.MaxConnsPerProvider = 1
@@ -2970,6 +3439,9 @@ func TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded(t *t
 		WSURL:    "wss://example.com/v1/responses",
 		HeadersFactory: func(_ context.Context, headers http.Header) (http.Header, error) {
 			factoryCalls++
+			// Generate one character of fake authorization identity for the first
+			// asserted dial, keeping this fixture focused on factory invocation rather
+			// than real signing.
 			latestHeader = "AgentAssertion dial-" + string(rune('0'+factoryCalls))
 			if headers == nil {
 				headers = make(http.Header)
@@ -2994,7 +3466,8 @@ func TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded(t *t
 	require.Equal(t, generation+1, ap.generation)
 	ap.mu.Unlock()
 
-	// A prewarm batch captured before ClearProvider cannot reenter the pool after credentials recover.
+	// Reuse the captured old generation after clearing its target, checking
+	// that delayed prewarm work cannot publish sockets into the replacement provider state.
 	pool.prewarmConns(providerID, req, 1, generation)
 	ap.mu.Lock()
 	require.Empty(t, ap.conns)

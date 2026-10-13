@@ -18,29 +18,57 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// OAuth code exchange and refresh submit form-encoded requests to the
+// configured token endpoint. A supplied TLS profile selects the shared
+// provider-aware HTTP transport; requests with only a User-Agent option keep
+// the shared req client path with its two-minute timeout.
+//
+// The first request-options value controls identity and TLS selection. An
+// explicit User-Agent is sent without a generated originator, while absent UA
+// uses the canonical paired authentication identity. Direct transport failures
+// can produce a proxy-selection hint when no proxy is configured and the
+// context is still live; caller cancellation retains its ordinary error
+// handling.
+
+// OAuthClient holds the token endpoint and optional provider-aware HTTP
+// transport.
 type OAuthClient struct {
-	tokenURL     string
-	httpUpstream OAuthHTTPUpstream
+	tokenURL     string            // selected OAuth token endpoint
+	httpUpstream OAuthHTTPUpstream // provider-aware TLS exchange transport
 }
 
-// OAuthTokenRequestOptions holds identity and TLS settings for one token exchange.
+// OAuthTokenRequestOptions selects client identity and TLS settings for one
+// token exchange.
 type OAuthTokenRequestOptions struct {
-	UserAgent           string
+	// UserAgent is trimmed when supplied and sent without a generated originator; a
+	// blank value selects the canonical paired authentication identity.
+	UserAgent string
+	// TLSProfile selects the provider-aware transport when nonnil; absent profiles
+	// keep the shared req client path even when other options are supplied.
 	TLSProfile          *tlsfingerprint.Profile
-	ProviderID          int64
-	ProviderConcurrency int
+	ProviderID          int64 // transport isolation provider identifier
+	ProviderConcurrency int   // provider transport concurrency value
 }
 
-// OAuthHTTPUpstream supplies the shared HTTP pool with caller-resolved provider and TLS settings.
+// OAuthHTTPUpstream sends requests through caller-selected provider and TLS
+// transport resources.
 type OAuthHTTPUpstream interface {
+	// DoWithTLS sends a request using proxy, provider capacity, and the selected
+	// TLS profile. Callers close successful response bodies after their consumer
+	// finishes reading to release transport ownership.
 	DoWithTLS(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 }
 
-// NewOAuthClient creates a new OpenAI OAuth client.
+// NewOAuthClient creates an OAuth client using TokenURL and the supplied
+// transport. A nil transport is sufficient for the req path; exchanges
+// selecting a TLS profile require the provider-aware transport.
 func NewOAuthClient(httpUpstream OAuthHTTPUpstream) *OAuthClient {
 	return &OAuthClient{tokenURL: TokenURL, httpUpstream: httpUpstream}
 }
 
+// ExchangeCode submits an authorization code and PKCE verifier for token
+// exchange. Empty redirect and trimmed-empty client ID use compiled defaults;
+// only the first options value is used, and ctx controls the request.
 func (s *OAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
 	if redirectURI == "" {
 		redirectURI = DefaultRedirectURI
@@ -60,10 +88,17 @@ func (s *OAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, redi
 	return s.postTokenForm(ctx, formData, proxyURL, "OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED", "token exchange failed", options...)
 }
 
+// RefreshToken refreshes tokens using the default OpenAI OAuth client ID. It
+// delegates request construction and accepts the same optional identity/TLS
+// settings; callers persist returned credentials through their provider use
+// case.
 func (s *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
 	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, "", options...)
 }
 
+// RefreshTokenWithClientID submits a refresh using the trimmed supplied client
+// ID. Blank IDs use ClientID, and the first optional request setting controls
+// identity and whether the provider-aware TLS path is selected.
 func (s *OAuthClient) RefreshTokenWithClientID(ctx context.Context, refreshToken, proxyURL string, clientID string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
 	// Use the supplied client ID; legacy records without one use the OpenAI default.
 	clientID = strings.TrimSpace(clientID)
@@ -73,6 +108,9 @@ func (s *OAuthClient) RefreshTokenWithClientID(ctx context.Context, refreshToken
 	return s.refreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID, options...)
 }
 
+// refreshTokenWithClientID builds the refresh grant with RefreshScopes and
+// delegates sending. The caller resolves clientID first; scope excludes
+// offline_access while the response remains the token endpoint response value.
 func (s *OAuthClient) refreshTokenWithClientID(ctx context.Context, refreshToken, proxyURL, clientID string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
 	formData := url.Values{}
 	formData.Set("grant_type", "refresh_token")
@@ -83,9 +121,15 @@ func (s *OAuthClient) refreshTokenWithClientID(ctx context.Context, refreshToken
 	return s.postTokenForm(ctx, formData, proxyURL, "OPENAI_OAUTH_TOKEN_REFRESH_FAILED", "token refresh failed", options...)
 }
 
+// postTokenForm selects the first option and sends through its TLS path or the
+// shared req client. It returns decoded success credentials; status failures
+// use the supplied reason/message and eligible direct transport failures
+// receive the proxy hint.
 func (s *OAuthClient) postTokenForm(ctx context.Context, formData url.Values, proxyURL, failureReason, failureMessage string, options ...OAuthTokenRequestOptions) (*TokenResponse, error) {
 	option := firstOpenAIOAuthTokenRequestOption(options)
 	if option.TLSProfile != nil {
+		// A TLS profile requires the shared provider-aware pool so the selected
+		// fingerprint, proxy, and provider isolation accompany the token exchange together.
 		return s.postTokenFormWithTLS(ctx, formData, proxyURL, failureReason, failureMessage, option)
 	}
 
@@ -107,6 +151,8 @@ func (s *OAuthClient) postTokenForm(ctx context.Context, formData url.Values, pr
 	}
 	resp, err := request.Post(s.tokenURL)
 	if err != nil {
+		// Direct failures with a live caller context receive proxy-selection guidance;
+		// configured proxy failures and cancellation remain in their normal request-error path.
 		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {
 			return nil, newOpenAINoProxyHintError(err)
 		}
@@ -120,6 +166,10 @@ func (s *OAuthClient) postTokenForm(ctx context.Context, formData url.Values, pr
 	return &tokenResp, nil
 }
 
+// postTokenFormWithTLS sends a form request through the provider-aware HTTP
+// pool and closes its response body. A configured pool is required; provider
+// ID, concurrency, proxy, and TLS profile select the transport resources used
+// for this exchange.
 func (s *OAuthClient) postTokenFormWithTLS(ctx context.Context, formData url.Values, proxyURL, failureReason, failureMessage string, option OAuthTokenRequestOptions) (*TokenResponse, error) {
 	if s.httpUpstream == nil {
 		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_OAUTH_CLIENT_INIT_FAILED", "HTTP upstream is not configured")
@@ -139,11 +189,15 @@ func (s *OAuthClient) postTokenFormWithTLS(ctx context.Context, formData url.Val
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, option.ProviderID, option.ProviderConcurrency, option.TLSProfile)
 	if err != nil {
+		// Direct failures with a live caller context receive proxy-selection guidance;
+		// configured proxy failures and cancellation remain in their normal request-error path.
 		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {
 			return nil, newOpenAINoProxyHintError(err)
 		}
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "request failed: %v", err)
 	}
+	// Release pool ownership on body read, status, and decode exits so failed
+	// token exchanges cannot retain provider capacity through an acquired response body.
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
@@ -161,6 +215,10 @@ func (s *OAuthClient) postTokenFormWithTLS(ctx context.Context, formData url.Val
 	return &tokenResp, nil
 }
 
+// CreateOAuthReqClient returns the shared req client configured for proxyURL
+// and a two-minute timeout. The client belongs to the shared HTTP
+// infrastructure, so callers use request-local options and leave its cached
+// configuration unchanged.
 func CreateOAuthReqClient(proxyURL string) (*req.Client, error) {
 	return httpclient.GetSharedReqClient(httpclient.ReqClientOptions{
 		ProxyURL: proxyURL,
@@ -168,6 +226,9 @@ func CreateOAuthReqClient(proxyURL string) (*req.Client, error) {
 	})
 }
 
+// firstOpenAIOAuthTokenRequestOption returns the first value or empty default
+// settings. Later variadic options are ignored, keeping one identity and TLS
+// configuration active for each OAuth token request.
 func firstOpenAIOAuthTokenRequestOption(options []OAuthTokenRequestOptions) OAuthTokenRequestOptions {
 	if len(options) == 0 {
 		return OAuthTokenRequestOptions{}
@@ -175,6 +236,10 @@ func firstOpenAIOAuthTokenRequestOption(options []OAuthTokenRequestOptions) OAut
 	return options[0]
 }
 
+// resolveOpenAIOAuthTokenIdentity trims an explicit User-Agent and pairs it
+// with an empty originator. Missing UA returns the canonical auth identity,
+// allowing token requests to distinguish configured UA from generated Codex
+// identity.
 func resolveOpenAIOAuthTokenIdentity(option OAuthTokenRequestOptions) (string, string) {
 	if ua := strings.TrimSpace(option.UserAgent); ua != "" {
 		return ua, ""
@@ -182,6 +247,10 @@ func resolveOpenAIOAuthTokenIdentity(option OAuthTokenRequestOptions) (string, s
 	return CodexCanonicalAuthIdentity()
 }
 
+// shouldReturnOpenAINoProxyHint reports whether a direct request failure
+// warrants a proxy-selection hint. A configured proxy, nil error, cancelled
+// context, or context.Canceled cause suppresses the hint; other live direct
+// failures qualify.
 func shouldReturnOpenAINoProxyHint(ctx context.Context, proxyURL string, err error) bool {
 	if strings.TrimSpace(proxyURL) != "" || err == nil {
 		return false
@@ -192,6 +261,10 @@ func shouldReturnOpenAINoProxyHint(ctx context.Context, proxyURL string, err err
 	return !errors.Is(err, context.Canceled)
 }
 
+// newOpenAINoProxyHintError wraps a direct OAuth failure with proxy-selection
+// guidance. It attaches cause to the BadGateway application error so callers
+// can retain the transport failure while reporting the specific recovery
+// message.
 func newOpenAINoProxyHintError(cause error) error {
 	return infraerrors.New(
 		http.StatusBadGateway,

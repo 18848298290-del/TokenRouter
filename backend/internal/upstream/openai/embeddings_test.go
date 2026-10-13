@@ -17,27 +17,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// embeddingsTestSink records synchronous response headers and bytes for
+// embedding assertions.
 type embeddingsTestSink struct {
-	head upstream.OutputHead
-	body bytes.Buffer
+	head upstream.OutputHead // captured synchronous response head
+	body bytes.Buffer        // captured response event bytes
 }
 
+// embeddingsTestBody counts closure of the original acquired HTTP response
+// body.
 type embeddingsTestBody struct {
-	io.ReadCloser
-	closed *atomic.Int32
+	io.ReadCloser               // wrapped acquired response body
+	closed        *atomic.Int32 // original response close counter
 }
 
+// Begin records the embedding response head for later assertions.
 func (s *embeddingsTestSink) Begin(head upstream.OutputHead) error { s.head = head; return nil }
 
+// Emit appends event bytes to the fixture response buffer.
 func (s *embeddingsTestSink) Emit(event upstream.OutputEvent) error {
 	_, err := s.body.Write(event.Data)
 	return err
 }
 
+// Close increments the fixture close count before delegating body closure.
 func (b *embeddingsTestBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 
-// TestEmbeddingsExecutorLocalTLSAndResourceOwnership checks local TLS requests, synchronous output,
-// and response-body closure before activity registration is released.
+// TestEmbeddingsExecutorLocalTLSAndResourceOwnership serves success and
+// rate-limit responses from a local TLS endpoint. It checks request bytes and
+// header precedence, usage and model results, redacted diagnostics, and body
+// closure before activity release.
 func TestEmbeddingsExecutorLocalTLSAndResourceOwnership(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -61,6 +70,8 @@ func TestEmbeddingsExecutorLocalTLSAndResourceOwnership(t *testing.T) {
 				w.WriteHeader(status)
 				_, _ = io.WriteString(w, responseBody)
 			}))
+			// Close the local TLS fixture after the attempt and resource assertions,
+			// ensuring this case releases its listener before the next status fixture runs.
 			defer server.Close()
 			failure := errors.New("fixture classified response")
 			target := &EmbeddingsTarget{

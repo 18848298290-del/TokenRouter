@@ -9,6 +9,10 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// TestNormalizeOpenAIResponsesLiteTools_MovesNamespacesAndKeepsSupportedTools
+// mixes ordinary tools and a namespace already declared in input. It checks
+// supported top-level retention, namespace deduplication, and unchanged
+// namespace tool-choice identity.
 func TestNormalizeOpenAIResponsesLiteTools_MovesNamespacesAndKeepsSupportedTools(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.6-terra",
@@ -50,6 +54,9 @@ func TestNormalizeOpenAIResponsesLiteTools_MovesNamespacesAndKeepsSupportedTools
 	require.Equal(t, map[string]any{"type": "namespace", "name": "collaboration"}, reqBody["tool_choice"])
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_PreservesDeferredFlagsWithToolSearch
+// supplies tool search beside a deferred function declaration. It checks both
+// tool-search presence and defer_loading retention after Lite normalization.
 func TestNormalizeOpenAIResponsesLiteTools_PreservesDeferredFlagsWithToolSearch(t *testing.T) {
 	reqBody := map[string]any{
 		"tools": []any{
@@ -65,6 +72,9 @@ func TestNormalizeOpenAIResponsesLiteTools_PreservesDeferredFlagsWithToolSearch(
 	require.Equal(t, true, testassert.MustType[map[string]any](tools[1])["defer_loading"])
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingAdditionalTool gives
+// one namespace different nested definitions at top level and in input. The
+// merge must fail and retain top-level tools for caller error handling.
 func TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingAdditionalTool(t *testing.T) {
 	reqBody := map[string]any{
 		"tools": []any{map[string]any{
@@ -89,6 +99,9 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingAdditionalTool(t *t
 	require.Len(t, reqBody["tools"], 1, "conflicts must not partially remove top-level tools")
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_DeduplicatesAcrossAdditionalToolItems
+// declares the migrated namespace in the second input tool item. Top-level
+// removal must leave both existing items at their original lengths.
 func TestNormalizeOpenAIResponsesLiteTools_DeduplicatesAcrossAdditionalToolItems(t *testing.T) {
 	namespace := map[string]any{
 		"type":  "namespace",
@@ -119,6 +132,9 @@ func TestNormalizeOpenAIResponsesLiteTools_DeduplicatesAcrossAdditionalToolItems
 	require.Len(t, testassert.MustType[map[string]any](input[1])["tools"], 1)
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_ConvertsStringInput moves a namespace
+// when input is plain text. It checks preservation as a user message followed
+// by an additional-tools item and removal of top-level namespace tools.
 func TestNormalizeOpenAIResponsesLiteTools_ConvertsStringInput(t *testing.T) {
 	reqBody := map[string]any{
 		"input": "hello",
@@ -140,6 +156,9 @@ func TestNormalizeOpenAIResponsesLiteTools_ConvertsStringInput(t *testing.T) {
 	require.Equal(t, "additional_tools", testassert.MustType[map[string]any](input[1])["type"])
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools starts with
+// already-correct reasoning and parallel settings plus supported tools.
+// Normalization must report no change and retain all four declarations.
 func TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools(t *testing.T) {
 	reqBody := map[string]any{
 		"reasoning":           map[string]any{"context": "all_turns"},
@@ -160,10 +179,13 @@ func TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools(t *testin
 	require.Equal(t, false, reqBody["parallel_tool_calls"])
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse covers
+// top-level tools and input-only additional-tools declarations. Both requests
+// must report changes and end with parallel tool calls disabled.
 func TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse(t *testing.T) {
 	tests := []struct {
-		name string
-		body map[string]any
+		name string         // Lite normalization case description
+		body map[string]any // decoded Lite request fixture
 	}{
 		{
 			name: "top-level tools",
@@ -194,6 +216,10 @@ func TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse(t *testi
 	}
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_RejectsNonBooleanParallelToolCalls
+// supplies several nonboolean and null parallel values. It checks validation
+// errors and retained invalid values, preventing implicit truth conversion
+// during full Lite normalization.
 func TestNormalizeOpenAIResponsesLiteTools_RejectsNonBooleanParallelToolCalls(t *testing.T) {
 	for _, value := range []any{"false", float64(0), nil, map[string]any{}} {
 		reqBody := map[string]any{
@@ -214,6 +240,9 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsNonBooleanParallelToolCalls(t 
 	require.False(t, changed)
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_ParallelToolCallsIsIdempotent
+// normalizes a request whose parallel flag is initially enabled. The first call
+// must disable it and the second must report no further change.
 func TestNormalizeOpenAIResponsesLiteTools_ParallelToolCallsIsIdempotent(t *testing.T) {
 	reqBody := map[string]any{
 		"reasoning":           map[string]any{"context": "all_turns"},
@@ -233,12 +262,16 @@ func TestNormalizeOpenAIResponsesLiteTools_ParallelToolCallsIsIdempotent(t *test
 	require.Equal(t, false, reqBody["parallel_tool_calls"])
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_DisablesParallelToolCalls varies
+// missing, enabled, disabled, null, and string flag inputs. Valid forms end as
+// boolean false with correct change flags, while invalid supplied values remain
+// for the error path.
 func TestNormalizeOpenAIResponsesLiteTools_DisablesParallelToolCalls(t *testing.T) {
 	tests := []struct {
-		name        string
-		value       any
-		setValue    bool
-		wantChanged bool
+		name        string // Lite normalization case description
+		value       any    // supplied parallel-call flag value
+		setValue    bool   // flag presence fixture selector
+		wantChanged bool   // expected normalization change result
 	}{
 		{name: "missing", wantChanged: true},
 		{name: "enabled", value: true, setValue: true, wantChanged: true},
@@ -272,10 +305,13 @@ func TestNormalizeOpenAIResponsesLiteTools_DisablesParallelToolCalls(t *testing.
 	}
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_EnsuresReasoningContext covers missing
+// reasoning and existing objects with absent or different context. It checks
+// all_turns, disabled parallel calls, and retention of supplied effort.
 func TestNormalizeOpenAIResponsesLiteTools_EnsuresReasoningContext(t *testing.T) {
 	tests := []struct {
-		name      string
-		reasoning any
+		name      string // Lite normalization case description
+		reasoning any    // supplied reasoning object fixture
 	}{
 		{name: "missing"},
 		{name: "missing context", reasoning: map[string]any{"effort": "high"}},
@@ -303,6 +339,9 @@ func TestNormalizeOpenAIResponsesLiteTools_EnsuresReasoningContext(t *testing.T)
 	}
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_RejectsNonObjectReasoning supplies a
+// string instead of a reasoning object. It expects a typed field error,
+// retained reasoning, and no parallel flag assignment after validation fails.
 func TestNormalizeOpenAIResponsesLiteTools_RejectsNonObjectReasoning(t *testing.T) {
 	reqBody := map[string]any{"reasoning": "high"}
 
@@ -314,11 +353,14 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsNonObjectReasoning(t *testing.
 	require.NotContains(t, reqBody, "parallel_tool_calls")
 }
 
+// TestNormalizeOpenAIResponsesLiteTools_RejectsUnsupportedTools supplies hosted
+// search and image-generation declarations. It checks rejection messages and
+// retained tools with no parallel-call assignment after failed validation.
 func TestNormalizeOpenAIResponsesLiteTools_RejectsUnsupportedTools(t *testing.T) {
 	tests := []struct {
-		name string
-		tool map[string]any
-		want string
+		name string         // Lite normalization case description
+		tool map[string]any // unsupported hosted tool fixture
+		want string         // expected validation error fragment
 	}{
 		{name: "hosted web search", tool: map[string]any{"type": "web_search"}, want: `top-level tool type "web_search"`},
 		{name: "hosted image generation", tool: map[string]any{"type": "image_generation"}, want: `top-level tool type "image_generation"`},
@@ -336,6 +378,10 @@ func TestNormalizeOpenAIResponsesLiteTools_RejectsUnsupportedTools(t *testing.T)
 	}
 }
 
+// TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape
+// rewrites raw create-frame JSON with a namespace and large integer metadata.
+// It checks protocol shape, disabled parallel calls, moved tools, tool choice,
+// and exact integer precision.
 func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t *testing.T) {
 	body := []byte(`{
 		"type":"response.create",

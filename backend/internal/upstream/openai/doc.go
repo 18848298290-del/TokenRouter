@@ -1,4 +1,13 @@
-// Package openai handles OpenAI and ChatGPT authentication, request conversion, response reading and usage queries.
+// Package openai executes OpenAI and ChatGPT exchanges after gateway code has
+// selected a provider and prepared its policy. HTTP response bodies, first-output
+// staging, protocol dispatch, and auxiliary calls retain their own cleanup and
+// error rules so callers can distinguish delivered output from served results.
+//
+// Request builders receive identity, transport, and header callbacks from the
+// gateway adapters. Response readers preserve model and tool identities across
+// Responses, Chat, and Messages conversions through the shared protocol packages.
+// Provider registration and quota state stay with their owning use cases; this
+// package supplies the vendor exchanges and the values those callers consume.
 //
 // Reading entry points:
 //   - request_headers.go builds Responses HTTP requests and headers.

@@ -4,6 +4,9 @@ import (
 	"testing"
 )
 
+// TestCreateOpenAICompactionTestPayload_NativeV2Shape compares native and
+// legacy compaction probe requests. It checks streaming/store flags, the
+// terminal V2 trigger, and the single-message legacy input shape.
 func TestCreateOpenAICompactionTestPayload_NativeV2Shape(t *testing.T) {
 	payload := CompactionTestPayload("gpt-5.6-sol", true)
 	if payload["stream"] != true || payload["store"] != false {
@@ -25,6 +28,9 @@ func TestCreateOpenAICompactionTestPayload_NativeV2Shape(t *testing.T) {
 	}
 }
 
+// TestOpenAICompactionTestHasOutput supplies an SSE compaction item and
+// ordinary JSON message output. It accepts the compaction evidence and rejects
+// ordinary output as proof of compaction support.
 func TestOpenAICompactionTestHasOutput(t *testing.T) {
 	sse := []byte("data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"compaction\",\"id\":\"cmp_1\"}}\n\n")
 	if !CompactionTestHasOutput(sse) {

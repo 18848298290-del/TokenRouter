@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestRunEntry_DelegatesRelay gives the entry wrapper an initial create frame
+// and completed upstream response. It checks successful relay completion and
+// the observed response identifier returned through the wrapper.
 func TestRunEntry_DelegatesRelay(t *testing.T) {
 	t.Parallel()
 

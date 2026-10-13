@@ -21,38 +21,54 @@ import (
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Skip when the environment cannot listen on a local port.
+// oauthTestListenerCheck caches the first local-listener probe so restricted
+// environments skip endpoint fixtures with one consistent failure reason.
 var oauthTestListenerCheck struct {
-	once sync.Once
-	err  error
+	// once publishes the initial listener-probe err after closing its temporary
+	// socket. Later fixtures reuse that observation for a consistent environment skip.
+	once sync.Once // cached listener probe guard
+	err  error     // cached listener probe failure
 }
 
+// OpenAIOAuthServiceSuite checks OAuth grants using local endpoints and
+// transport recorders.
 type OpenAIOAuthServiceSuite struct {
-	suite.Suite
-	ctx      context.Context
-	srv      *httptest.Server
-	svc      *OAuthClient
-	received chan url.Values
+	suite.Suite                  // testify suite assertion support
+	ctx         context.Context  // suite request context fixture
+	srv         *httptest.Server // owned local endpoint server
+	svc         *OAuthClient     // OAuth client under test
+	received    chan url.Values  // buffered observed form channel
 }
 
+// openAIOAuthHTTPUpstreamRecorder captures TLS-pool request settings and
+// returns configured token fixtures.
 type openAIOAuthHTTPUpstreamRecorder struct {
-	calledDo            bool
-	calledDoWithTLS     bool
-	req                 *http.Request
-	proxyURL            string
-	providerID          int64
-	providerConcurrency int
-	profile             *tlsfingerprint.Profile
-	form                url.Values
-	statusCode          int
-	responseBody        string
+	calledDo            bool                    // unexpected ordinary transport flag
+	calledDoWithTLS     bool                    // selected TLS transport flag
+	req                 *http.Request           // captured token HTTP request
+	proxyURL            string                  // captured proxy selection value
+	providerID          int64                   // captured transport provider identifier
+	providerConcurrency int                     // captured provider capacity value
+	profile             *tlsfingerprint.Profile // captured TLS fingerprint profile
+	form                url.Values              // captured token grant form
+	// statusCode overrides the fixture response status when nonzero; zero selects
+	// HTTP 200 for successful token-exchange tests using this recorder.
+	statusCode int
+	// responseBody overrides fixture bytes when nonempty; empty text selects the
+	// successful access-token and refresh-token JSON used by transport-selection
+	// assertions.
+	responseBody string
 }
 
+// Do records an unexpected ordinary-pool call and returns a fixture error.
 func (r *openAIOAuthHTTPUpstreamRecorder) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	r.calledDo = true
 	return nil, errors.New("Do should not be called")
 }
 
+// DoWithTLS captures the request, identity, proxy, provider, profile, and form
+// for assertions. A zero status and empty body select the successful token
+// fixture; the response reader owns the returned in-memory body.
 func (r *openAIOAuthHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	r.calledDoWithTLS = true
 	r.req = req
@@ -60,6 +76,8 @@ func (r *openAIOAuthHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL 
 	r.providerID = providerID
 	r.providerConcurrency = providerConcurrency
 	r.profile = profile
+	// This recorder captures caller-generated form bytes for assertions; parsing
+	// failures leave incomplete capture values that the grant-field checks will reject.
 	body, _ := io.ReadAll(req.Body)
 	form, _ := url.ParseQuery(string(body))
 	r.form = form
@@ -79,11 +97,17 @@ func (r *openAIOAuthHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL 
 	}, nil
 }
 
+// SetupTest initializes the suite context and one-slot form-observation channel
+// before each case. The channel lets local handlers publish a request without
+// blocking before the synchronous caller finishes reading its response.
 func (s *OpenAIOAuthServiceSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.received = make(chan url.Values, 1)
 }
 
+// TearDownTest closes any local fixture server and clears its pointer after
+// each case. Cleanup runs for failure scenarios too, so the next test starts
+// with no owned listener from this suite.
 func (s *OpenAIOAuthServiceSuite) TearDownTest() {
 	if s.srv != nil {
 		s.srv.Close()
@@ -91,11 +115,17 @@ func (s *OpenAIOAuthServiceSuite) TearDownTest() {
 	}
 }
 
+// setupServer starts a local endpoint and directs a fresh OAuthClient to its
+// URL. Listener support is checked by newOAuthLocalTestServer; TearDownTest
+// owns closure of the resulting server.
 func (s *OpenAIOAuthServiceSuite) setupServer(handler http.HandlerFunc) {
 	s.srv = newOAuthLocalTestServer(s.T(), handler)
 	s.svc = &OAuthClient{tokenURL: s.srv.URL}
 }
 
+// TestExchangeCode_DefaultRedirectURI exchanges a code with blank redirect and
+// client ID. The local handler checks all grant fields and canonical identity
+// headers, and the result must contain the returned access and refresh tokens.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_DefaultRedirectURI() {
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +191,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_DefaultRedirectURI() {
 	require.Equal(s.T(), "rt", resp.RefreshToken)
 }
 
+// TestRefreshToken_FormFields serves a refresh response from a local endpoint.
+// It verifies refresh grant fields, default client ID, refresh scopes,
+// canonical authentication headers, and decoded returned credentials.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_FormFields() {
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +249,9 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_FormFields() {
 	require.Equal(s.T(), "rt2", resp.RefreshToken)
 }
 
-// TestRefreshToken_DefaultsToOpenAIClientID verifies that an omitted client ID sends one request using ClientID.
+// TestRefreshToken_DefaultsToOpenAIClientID refreshes credentials without a
+// supplied client ID. It expects one request containing ClientID and a decoded
+// access token, protecting the default-client selection path.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	var seenClientIDs []string
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +272,9 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	require.Equal(s.T(), []string{ClientID}, seenClientIDs)
 }
 
+// TestRefreshToken_UseProvidedClientID refreshes with a custom client
+// identifier accepted by the fixture. Exactly that ID must be observed once and
+// the custom access and refresh tokens must return.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_UseProvidedClientID() {
 	const customClientID = "custom-client-id"
 	var seenClientIDs []string
@@ -262,6 +300,9 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_UseProvidedClientID() {
 	require.Equal(s.T(), []string{customClientID}, seenClientIDs)
 }
 
+// TestNonSuccessStatus_IncludesBody makes token exchange receive an HTTP 400
+// with a plain body. The returned error must include both status and captured
+// body for diagnostic handling.
 func (s *OpenAIOAuthServiceSuite) TestNonSuccessStatus_IncludesBody() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -274,8 +315,13 @@ func (s *OpenAIOAuthServiceSuite) TestNonSuccessStatus_IncludesBody() {
 	require.ErrorContains(s.T(), err, "bad")
 }
 
+// TestRequestError_ClosedServer stops a local token endpoint before code
+// exchange. The exchange must return an error containing request-failure
+// context for the unavailable direct transport.
 func (s *OpenAIOAuthServiceSuite) TestRequestError_ClosedServer() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	// Stop the fixture before sending so the exchange exercises direct connection
+	// failure while its caller context is still live and no proxy is configured.
 	s.srv.Close()
 
 	_, err := s.svc.ExchangeCode(s.ctx, "code", "ver", DefaultRedirectURI, "", "")
@@ -283,8 +329,13 @@ func (s *OpenAIOAuthServiceSuite) TestRequestError_ClosedServer() {
 	require.ErrorContains(s.T(), err, "request failed")
 }
 
+// TestExchangeCode_RequestErrorWithoutProxyReturnsProxyHint calls a closed
+// local endpoint with no proxy configured. It asserts the proxy-required
+// application reason and message when the caller context remains live.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_RequestErrorWithoutProxyReturnsProxyHint() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	// Stop the fixture before sending so the exchange exercises direct connection
+	// failure while its caller context is still live and no proxy is configured.
 	s.srv.Close()
 
 	_, err := s.svc.ExchangeCode(s.ctx, "code", "ver", DefaultRedirectURI, "", "")
@@ -294,6 +345,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_RequestErrorWithoutProxyRetur
 	require.Contains(s.T(), apperror.Message(err), "no proxy is configured")
 }
 
+// TestContextCancel blocks a local token handler until exchange has begun, then
+// cancels its context. The asynchronous exchange must return an error after
+// cancellation and the fixture handler is released.
 func (s *OpenAIOAuthServiceSuite) TestContextCancel() {
 	started := make(chan struct{})
 	block := make(chan struct{})
@@ -305,11 +359,15 @@ func (s *OpenAIOAuthServiceSuite) TestContextCancel() {
 	ctx, cancel := context.WithCancel(s.ctx)
 
 	done := make(chan error, 1)
+	// Run exchange independently while the handler signals arrival and blocks;
+	// the parent cancels only after the request has reached this fixture endpoint.
 	go func() {
 		_, err := s.svc.ExchangeCode(ctx, "code", "ver", DefaultRedirectURI, "", "")
 		done <- err
 	}()
 
+	// Wait for handler arrival before cancelling, then release the handler so
+	// server teardown cannot remain blocked after the exchange returns its error.
 	<-started
 	cancel()
 	close(block)
@@ -318,6 +376,9 @@ func (s *OpenAIOAuthServiceSuite) TestContextCancel() {
 	require.Error(s.T(), err)
 }
 
+// TestExchangeCode_UsesProvidedRedirectURI supplies a custom callback URL
+// during code exchange. The handler rejects other redirect values, and success
+// confirms the custom value reached the token form.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UsesProvidedRedirectURI() {
 	want := "http://localhost:9999/cb"
 	errCh := make(chan string, 1)
@@ -341,6 +402,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UsesProvidedRedirectURI() {
 	}
 }
 
+// TestExchangeCode_UseProvidedClientID supplies a custom OAuth client
+// identifier during code exchange. The handler accepts that identifier and the
+// exchange must complete successfully with the fixture response.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UseProvidedClientID() {
 	wantClientID := "custom-exchange-client-id"
 	errCh := make(chan string, 1)
@@ -364,6 +428,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UseProvidedClientID() {
 	}
 }
 
+// TestTokenURL_CanBeOverriddenWithQuery directs exchange to a fixture token URL
+// containing a query string. It asserts successful exchange and form arrival,
+// protecting support for that endpoint shape.
 func (s *OpenAIOAuthServiceSuite) TestTokenURL_CanBeOverriddenWithQuery() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -382,6 +449,9 @@ func (s *OpenAIOAuthServiceSuite) TestTokenURL_CanBeOverriddenWithQuery() {
 	}
 }
 
+// TestExchangeCode_SuccessButInvalidJSON returns HTTP 200 with a JSON content
+// type and malformed content. Token exchange must return a decoding error
+// instead of usable credentials.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_SuccessButInvalidJSON() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -393,6 +463,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_SuccessButInvalidJSON() {
 	require.Error(s.T(), err, "expected error for invalid JSON response")
 }
 
+// TestRefreshToken_NonSuccessStatus returns unauthorized status for a refresh
+// grant. The refresh must fail and include status 401, keeping upstream status
+// evidence available to its caller.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_NonSuccessStatus() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -404,6 +477,10 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_NonSuccessStatus() {
 	require.ErrorContains(s.T(), err, "status 401")
 }
 
+// TestExchangeCode_WithTLSProfileUsesHTTPUpstream supplies a TLS profile and
+// provider transport settings. It asserts pool selection, profile identity,
+// proxy and capacity arguments, request profile and headers, grant fields, and
+// returned credentials.
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstream() {
 	upstream := &openAIOAuthHTTPUpstreamRecorder{}
 	profile := &tlsfingerprint.Profile{Name: "token-profile"}
@@ -435,6 +512,10 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), "verifier", upstream.form.Get("code_verifier"))
 }
 
+// TestRefreshToken_WithTLSProfileUsesHTTPUpstream supplies a TLS profile and
+// custom identity to refresh. The recorder checks selected transport/profile,
+// request identity and profile context, refresh grant fields, and returned
+// access token.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstream() {
 	upstream := &openAIOAuthHTTPUpstreamRecorder{}
 	profile := &tlsfingerprint.Profile{Name: "refresh-profile"}
@@ -457,6 +538,9 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), RefreshScopes, upstream.form.Get("scope"))
 }
 
+// TestRefreshToken_WithOnlyUserAgentKeepsReqPath supplies a custom User-Agent
+// without a TLS profile. The local req-client endpoint must receive that header
+// and return the access token successfully.
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentKeepsReqPath() {
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -479,16 +563,32 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentKeepsReqPath
 	}
 }
 
+// TestNewOAuthClient_DefaultTokenURL constructs a client with no provider-aware
+// transport. It checks the compiled token endpoint, protecting default
+// construction for requests using the ordinary req client.
 func TestNewOAuthClient_DefaultTokenURL(t *testing.T) {
 	client := NewOAuthClient(nil)
 	svc := client
 	require.Equal(t, TokenURL, svc.tokenURL)
 }
 
+// TestOpenAIOAuthServiceSuite runs the local endpoint and TLS-recorder suite
+// through testify. Per-case setup and teardown provide isolated clients and
+// listener cleanup for its grant and failure assertions.
 func TestOpenAIOAuthServiceSuite(t *testing.T) {
 	suite.Run(t, new(OpenAIOAuthServiceSuite))
 }
 
+// newOAuthLocalTestServer checks local listener support and starts the supplied
+// fixture handler. Callers own closure of the returned server. The first probe
+// runs through a process-wide sync.Once and closes its temporary listener
+// immediately.
+//
+// Later tests reuse that probe result rather than repeatedly attempting a
+// forbidden listener. A failed first probe skips callers with its diagnostic,
+// while a successful probe allows httptest to create each independent fixture
+// server. This cached capability result reflects the initial environment for
+// the remainder of the test process.
 func newOAuthLocalTestServer(t testing.TB, handler http.Handler) *httptest.Server {
 	t.Helper()
 	oauthTestListenerCheck.once.Do(func() {
@@ -504,7 +604,9 @@ func newOAuthLocalTestServer(t testing.TB, handler http.Handler) *httptest.Serve
 	return httptest.NewServer(handler)
 }
 
-// TestCreateOpenAIReqClient_Timeout120Seconds checks the 120-second OAuth client timeout.
+// TestCreateOpenAIReqClient_Timeout120Seconds builds the shared OAuth req
+// client with a proxy URL. It checks the concrete client timeout is two
+// minutes, protecting the token-exchange transport budget.
 func TestCreateOpenAIReqClient_Timeout120Seconds(t *testing.T) {
 	client, err := CreateOAuthReqClient("http://proxy.local:8080")
 	require.NoError(t, err)

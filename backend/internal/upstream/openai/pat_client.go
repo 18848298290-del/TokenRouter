@@ -13,7 +13,16 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ValidatePersonalAccessToken validates an at-* token through the Codex PAT whoami endpoint.
+// Personal access token import validates the at- prefix before calling the
+// Codex whoami endpoint with canonical authentication identity. Successful
+// metadata must contain user and account identifiers, email, plan type, and a
+// present FedRAMP boolean, so false remains distinguishable from an omitted
+// field.
+
+// ValidatePersonalAccessToken validates a trimmed at- token against the
+// caller-supplied whoami endpoint. The exchange has a twenty-second client
+// timeout, uses proxyURL and ctx, and closes the response after status
+// handling, bounded metadata decoding, and required-field validation.
 func ValidatePersonalAccessToken(ctx context.Context, accessToken, proxyURL, endpoint string) (*wire.PATWhoamiResponse, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {
@@ -44,12 +53,16 @@ func ValidatePersonalAccessToken(ctx context.Context, accessToken, proxyURL, end
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_VALIDATE_FAILED", "failed to validate Codex personal access token: %v", err)
 	}
+	// Release the validation response on every status and metadata-validation exit,
+	// ensuring failed PAT imports do not retain the shared client connection.
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_INVALID", "Codex personal access token is invalid or expired")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		// Capture a small diagnostic prefix when validation fails; read errors
+		// leave any available bytes usable, with HTTP status supplying the empty-body message.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		message := strings.TrimSpace(string(body))
 		if message == "" {
@@ -58,6 +71,8 @@ func ValidatePersonalAccessToken(ctx context.Context, accessToken, proxyURL, end
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_VALIDATE_FAILED", "Codex personal access token validation failed: %s", message)
 	}
 
+	// Bound whoami parsing to its small metadata envelope before required-field
+	// validation; bytes beyond the limit cannot supply missing account attributes.
 	var whoami wire.PATWhoamiResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&whoami); err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_RESPONSE_INVALID", "invalid Codex personal access token validation response: %v", err)
@@ -69,6 +84,9 @@ func ValidatePersonalAccessToken(ctx context.Context, accessToken, proxyURL, end
 	return &whoami, nil
 }
 
+// ValidatePATWhoami rejects missing trimmed email, user ID, account ID, plan
+// type, or FedRAMP presence. A false pointed-to FedRAMP value is valid;
+// validation leaves the returned metadata fields as supplied.
 func ValidatePATWhoami(whoami wire.PATWhoamiResponse) error {
 	required := map[string]string{
 		"email":              whoami.Email,

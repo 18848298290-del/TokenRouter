@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
+// TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse looks up two proxy
+// addresses through one dialer. Matching addresses must return the same cached
+// client, while a different address must select separate client storage.
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -27,6 +30,9 @@ func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	require.NotSame(t, c1, c3, "不同代理地址应分离客户端")
 }
 
+// TestCoderOpenAIWSClientDialer_ProxyHTTPClientInvalidURL requests a client
+// using malformed proxy text. The lookup must fail before a handshake client is
+// returned, protecting proxy parsing at the cache entry point.
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientInvalidURL(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -36,6 +42,9 @@ func TestCoderOpenAIWSClientDialer_ProxyHTTPClientInvalidURL(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestCoderOpenAIWSClientDialer_TransportMetricsSnapshot performs one repeated
+// lookup and one different proxy lookup. It checks one hit, two created-client
+// misses, and the derived one-third reuse ratio.
 func TestCoderOpenAIWSClientDialer_TransportMetricsSnapshot(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -54,6 +63,9 @@ func TestCoderOpenAIWSClientDialer_TransportMetricsSnapshot(t *testing.T) {
 	require.InDelta(t, 1.0/3.0, snapshot.TransportReuseRatio, 0.0001)
 }
 
+// TestCoderOpenAIWSClientDialer_ProxyClientCacheCapacity creates more proxy
+// clients than the configured entry budget. It reads cache size under its mutex
+// and checks capacity enforcement leaves at most the allowed number.
 func TestCoderOpenAIWSClientDialer_ProxyClientCacheCapacity(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -72,6 +84,9 @@ func TestCoderOpenAIWSClientDialer_ProxyClientCacheCapacity(t *testing.T) {
 	require.LessOrEqual(t, cacheSize, openAIWSProxyClientCacheMaxEntries, "代理客户端缓存应受容量上限约束")
 }
 
+// TestCoderOpenAIWSClientDialer_ProxyClientCacheIdleTTL ages a cached entry
+// past idle TTL, then performs a different-key lookup. The cache miss must
+// trigger cleanup and remove the aged entry.
 func TestCoderOpenAIWSClientDialer_ProxyClientCacheIdleTTL(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -88,7 +103,8 @@ func TestCoderOpenAIWSClientDialer_ProxyClientCacheIdleTTL(t *testing.T) {
 	oldEntry.lastUsedUnixNano = time.Now().Add(-openAIWSProxyClientCacheIdleTTL - time.Minute).UnixNano()
 	impl.proxyMu.Unlock()
 
-	// A cache miss triggers idle-TTL cleanup.
+	// Look up another key to trigger the miss cleanup path; a hit only updates
+	// its own timestamp and would not sweep this deliberately aged cached client.
 	_, err = impl.ProxyHTTPClient("http://127.0.0.1:28081", nil)
 	require.NoError(t, err)
 
@@ -99,6 +115,9 @@ func TestCoderOpenAIWSClientDialer_ProxyClientCacheIdleTTL(t *testing.T) {
 	require.False(t, exists, "超过空闲 TTL 的代理客户端应被回收")
 }
 
+// TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout obtains a
+// proxy handshake client and inspects its concrete transport. It checks the
+// ten-second TLS handshake timeout configured for Upgrade transport.
 func TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -114,6 +133,9 @@ func TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout(t *testing.
 	require.Equal(t, 10*time.Second, transport.TLSHandshakeTimeout)
 }
 
+// TestBuildOpenAIWSHTTPTransport_TLSProfileForcesHTTP1 builds transports for
+// profiles with and without advertised HTTP/2. It checks automatic HTTP/2 stays
+// disabled and the effective WS profile removes HTTP/2 support.
 func TestBuildOpenAIWSHTTPTransport_TLSProfileForcesHTTP1(t *testing.T) {
 	t.Run("without h2", func(t *testing.T) {
 		transport, err := buildOpenAIWSHTTPTransport("", nil, &tlsfingerprint.Profile{Name: "h1"})
@@ -135,6 +157,9 @@ func TestBuildOpenAIWSHTTPTransport_TLSProfileForcesHTTP1(t *testing.T) {
 	})
 }
 
+// TestCoderOpenAIWSClientDialer_ProxyHTTPClientCacheUsesHTTP1TLSProfile starts
+// with a profile advertising HTTP/2. It checks cache insertion uses the
+// HTTP/1-only profile key and rejects reuse under the unmodified profile key.
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientCacheUsesHTTP1TLSProfile(t *testing.T) {
 	dialer := NewDefaultWSClientDialer()
 	impl, ok := dialer.(*CoderWSClientDialer)
@@ -158,6 +183,9 @@ func TestCoderOpenAIWSClientDialer_ProxyHTTPClientCacheUsesHTTP1TLSProfile(t *te
 	require.False(t, hasRawKey, "WS 缓存键不应使用仍声明 h2 的 TLS 模板")
 }
 
+// TestCoderOpenAIWSClientConn_DoesNotSupportIdlePingWithoutReader inspects the
+// coder adapter capability without a live socket. It expects false, protecting
+// the pool rule that avoids readerless idle pings for this transport.
 func TestCoderOpenAIWSClientConn_DoesNotSupportIdlePingWithoutReader(t *testing.T) {
 	require.False(t, (&coderOpenAIWSClientConn{}).SupportsIdlePingWithoutReader())
 }

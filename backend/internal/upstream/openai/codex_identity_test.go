@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestEnsureCodexIdentityHeaders fills an empty header map and processes an
+// existing official identity. It protects default identity selection, valid
+// version retention, final pairing, and experimental Responses beta
+// replacement.
 func TestEnsureCodexIdentityHeaders(t *testing.T) {
 	t.Run("补齐缺失身份头", func(t *testing.T) {
 		h := make(http.Header)
@@ -37,17 +41,21 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 	})
 }
 
+// TestEnforceCodexIdentityHeaders varies mismatched names, recognized trailers,
+// unknown User-Agents, and supplied versions. It asserts the paired identity,
+// correction of below-minimum version headers, and retention of absent or
+// acceptable versions.
 func TestEnforceCodexIdentityHeaders(t *testing.T) {
 	const tuiUA = "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)"
 
 	tests := []struct {
-		name           string
-		originator     string
-		userAgent      string
-		version        string
-		wantOriginator string
-		wantUA         string
-		wantVersion    string
+		name           string // identity pairing case description
+		originator     string // supplied outgoing originator header
+		userAgent      string // supplied outgoing User-Agent header
+		version        string // supplied outgoing version header
+		wantOriginator string // expected paired originator value
+		wantUA         string // expected paired User-Agent value
+		wantVersion    string // expected outgoing version header
 	}{
 		{
 			name:           "错配 originator 按最终 UA 重配",
@@ -132,7 +140,9 @@ func TestEnforceCodexIdentityHeaders(t *testing.T) {
 	}
 }
 
-// TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop verifies that a missing originator leaves headers unchanged.
+// TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop supplies a third-party
+// User-Agent with no originator. Enforcement must leave that User-Agent intact
+// and refrain from injecting an originator into the request.
 func TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop(t *testing.T) {
 	h := make(http.Header)
 	h.Set("user-agent", "third-party-client/1.0.0")
@@ -143,10 +153,15 @@ func TestEnforceCodexIdentityHeaders_NoOriginatorIsNoop(t *testing.T) {
 	require.Equal(t, "third-party-client/1.0.0", h.Get("user-agent"))
 }
 
+// TestCodexCanonicalAuthIdentityFollowsResolver installs a configured canonical
+// User-Agent and builds credential headers. It checks the resolver-derived pair
+// and version lookup while auth-header application leaves the version absent.
 func TestCodexCanonicalAuthIdentityFollowsResolver(t *testing.T) {
 	SetCodexCanonicalUserAgentResolver(func() string {
 		return "codex_cli_rs/0.200.1 (Linux; x86_64) terminal"
 	})
+	// Restore the process-wide resolver after this case so subsequent tests use
+	// the compiled identity rather than depending on this temporary settings source.
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
 	userAgent, originator := CodexCanonicalAuthIdentity()
@@ -161,8 +176,14 @@ func TestCodexCanonicalAuthIdentityFollowsResolver(t *testing.T) {
 	require.Empty(t, h.Get("version"))
 }
 
+// TestCodexCanonicalIdentityFallsBackForInvalidResolverValue installs an
+// unrecognized canonical User-Agent. The public canonical User-Agent and
+// version helpers must recover the compiled identity values for subsequent
+// requests.
 func TestCodexCanonicalIdentityFallsBackForInvalidResolverValue(t *testing.T) {
 	SetCodexCanonicalUserAgentResolver(func() string { return "not-a-codex-client" })
+	// Restore the process-wide resolver after this case so subsequent tests use
+	// the compiled identity rather than depending on this temporary settings source.
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
 	require.Equal(t, CodexCLIUserAgent, CodexCanonicalUserAgent())

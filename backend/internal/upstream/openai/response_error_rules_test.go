@@ -9,12 +9,15 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestIsOpenAICodexPlanGatedModelError compares detail and nested-message plan
+// rejection with unrelated, empty, and different-status bodies. It checks
+// supported Codex plan evidence qualifies only under the expected 400 status.
 func TestIsOpenAICodexPlanGatedModelError(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		body       []byte
-		want       bool
+		name       string // plan rejection case description
+		statusCode int    // upstream fixture HTTP status
+		body       []byte // upstream plan rejection bytes
+		want       bool   // expected plan rejection result
 	}{
 		{
 			name:       "400 codex plan gated detail payload",
@@ -57,6 +60,9 @@ func TestIsOpenAICodexPlanGatedModelError(t *testing.T) {
 	}
 }
 
+// TestExtractOpenAISSETerminalEventUsesEventField supplies an error frame whose
+// JSON omits its event type. It checks the event line supplies terminal
+// classification and the nested failure message remains readable.
 func TestExtractOpenAISSETerminalEventUsesEventField(t *testing.T) {
 	t.Parallel()
 

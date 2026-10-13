@@ -4,7 +4,14 @@ import (
 	"strings"
 )
 
-// TestResponsesPayload builds the Responses request shared by provider tests and usage probes.
+// Provider text probes use one user prompt in the selected Responses or Chat
+// wire format. Blank prompts become hi, while Responses probes include the
+// shared Codex instructions and OAuth storage policy needed by the internal
+// ChatGPT endpoint.
+
+// TestResponsesPayload builds a streaming Responses probe using modelID as
+// supplied. Prompt is trimmed and blank input becomes hi; OAuth disables
+// storage and both credential forms receive the shared embedded instructions.
 func TestResponsesPayload(modelID string, prompt string, isOAuth bool) map[string]any {
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {
@@ -26,7 +33,8 @@ func TestResponsesPayload(modelID string, prompt string, isOAuth bool) map[strin
 		"stream": true,
 	}
 
-	// The internal ChatGPT API requires server-side storage to be disabled for OAuth.
+	// OAuth probes target internal ChatGPT Responses, which expects disabled
+	// storage; API-key probes keep the standard request field selection for that provider.
 	if isOAuth {
 		payload["store"] = false
 	}
@@ -37,7 +45,9 @@ func TestResponsesPayload(modelID string, prompt string, isOAuth bool) map[strin
 	return payload
 }
 
-// TestChatCompletionsPayload builds a streaming Chat Completions provider probe.
+// TestChatCompletionsPayload builds a streaming Chat probe with one user
+// message and the supplied modelID. Prompt is trimmed and blank input becomes
+// hi, matching the ordinary probe content used for Responses.
 func TestChatCompletionsPayload(modelID string, prompt string) map[string]any {
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {

@@ -17,21 +17,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// imagesContractSink captures synchronous output so tests can inspect partial delivery before the terminal event.
+// imagesContractSink captures synchronous image output and progressive-delivery
+// callback observations.
 type imagesContractSink struct {
-	chunks    []string
-	flushed   int
-	head      upstream.OutputHead
+	chunks  []string            // captured image response fragments
+	flushed int                 // observed image flush count
+	head    upstream.OutputHead // captured image response head
+	// onPartial runs once after a nonterminal semantic event; Emit clears it
+	// immediately afterward so later progress cannot repeat the fixture
+	// notification.
 	onPartial func()
 }
 
-// imagesCloseRecorder counts response-body closes for one execution.
+// imagesCloseRecorder counts closure of the acquired image response body.
 type imagesCloseRecorder struct {
-	io.ReadCloser
-	closed *atomic.Int32
+	io.ReadCloser               // wrapped acquired image response
+	closed        *atomic.Int32 // acquired response close counter
 }
 
+// Begin captures the synchronous image response head for assertions.
 func (s *imagesContractSink) Begin(head upstream.OutputHead) error { s.head = head; return nil }
+
+// Emit records nonempty chunks and flushes, then runs onPartial once for a
+// nonterminal semantic event. The callback is cleared after invocation so later
+// progressive events cannot close its observation channel twice.
 func (s *imagesContractSink) Emit(event upstream.OutputEvent) error {
 	if len(event.Data) > 0 {
 		s.chunks = append(s.chunks, string(event.Data))
@@ -46,14 +55,23 @@ func (s *imagesContractSink) Emit(event upstream.OutputEvent) error {
 	return nil
 }
 
+// Close increments the fixture close count before delegating response-body
+// closure.
 func (b *imagesCloseRecorder) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 
+// TestImagesExecuteTLSResponseOwnership serves API-key JSON/SSE, OAuth
+// converted JSON, and HTTP failure fixtures over TLS. It checks request
+// identity, body closure before activity release, model/usage results, and
+// completed image output.
 func TestImagesExecuteTLSResponseOwnership(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
+		name string // image executor fixture name
+		// oauth selects OAuth conversion, and stream selects progressive output.
+		// The two flags combine with the fixture Content-Type to exercise the
+		// executor selection rules for this prepared request.
 		oauth, stream bool
-		status        int
-		body          string
+		status        int    // upstream fixture HTTP status
+		body          string // upstream fixture response body
 	}{
 		{name: "apikey_json", status: 200, body: `{"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":7,"output_tokens":3}}`},
 		{
@@ -155,6 +173,10 @@ func TestImagesExecuteTLSResponseOwnership(t *testing.T) {
 	}
 }
 
+// TestImagesExecuteOAuthProgressBeforeFailure waits for progressive image
+// delivery before sending a failed terminal event. It checks served and
+// committed observations survive failure while completed-image count remains
+// zero and the partial event was flushed.
 func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 	delivered := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +188,8 @@ func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 			return
 		}
 		flusher.Flush()
+		// Wait for the synchronous sink callback before emitting failure, proving
+		// partial image output reached the client path while no terminal image existed yet.
 		select {
 		case <-delivered:
 		case <-time.After(3 * time.Second):
@@ -199,7 +223,10 @@ func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 	require.Greater(t, sink.flushed, 0)
 }
 
-// imagesTestResponseOptions supplies response IO and observation callbacks for tests.
+// imagesTestResponseOptions supplies image reader callbacks with inactive
+// interval and heartbeat timers. It uses ordinary read errors, no backfill
+// rewrite, simple header copying, and test-local output sizing to exercise
+// executor branches.
 func imagesTestResponseOptions() ImageResponseOptions {
 	return ImageResponseOptions{
 		ReadBody:          io.ReadAll,

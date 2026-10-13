@@ -11,11 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams compares
+// guarded and ordinary queue selection. It asserts capacities of one and
+// sixteen, protecting the configuration used to bound producer buffering before
+// first output.
 func TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams(t *testing.T) {
 	require.Equal(t, 1, OpenAIFirstOutputEventQueueSize(true))
 	require.Equal(t, 16, OpenAIFirstOutputEventQueueSize(false))
 }
 
+// TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive supplies an
+// undelimited token at the guarded limit. The active splitter must reject it,
+// while deactivating the flag permits the same bytes to await a delimiter.
 func TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive(t *testing.T) {
 	var guardActive atomic.Bool
 	guardActive.Store(true)
@@ -33,6 +40,10 @@ func TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive(t *testing.
 	require.Nil(t, token)
 }
 
+// TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool stages a
+// large payload, then attempts an over-budget append. It checks unchanged
+// accepted size, platform storage choice, Unix unlink and permissions, and
+// completed cleanup.
 func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing.T) {
 	stage := NewOpenAIFirstOutputStage(70 * 1024)
 	payload := bytes.Repeat([]byte("x"), 68*1024)
@@ -67,6 +78,9 @@ func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing
 	}
 }
 
+// TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp stages a large
+// payload and commits it to a downstream buffer. It protects complete byte
+// delivery, platform spool behavior, reset buffering, and repeatable cleanup.
 func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 	stage := NewOpenAIFirstOutputStage(80 * 1024)
 	payload := bytes.Repeat([]byte("z"), 68*1024)
@@ -94,9 +108,15 @@ func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 	require.NoError(t, stage.Close())
 }
 
+// TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup
+// injects two initial removal failures. It checks that the named file remains
+// empty, later writes stay in memory, and Close removes the path while
+// returning retained cleanup evidence.
 func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup(t *testing.T) {
 	stage := NewDefaultOpenAIFirstOutputStage()
 	stage.memoryOnly = false
+	// Restore real removal before final cleanup so an assertion failure cannot
+	// leave the intentionally retained empty temporary path behind after this fixture.
 	t.Cleanup(func() {
 		stage.removeFile = os.Remove
 		_ = stage.Close()
@@ -107,6 +127,8 @@ func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetri
 		return os.CreateTemp("", "tokenrouter-openai-first-output-fallback-*")
 	}
 	removeCalls := 0
+	// Fail initial unlink and its immediate cleanup retry to retain a named
+	// empty file; the next removal succeeds when Close retries that same path.
 	stage.removeFile = func(path string) error {
 		removeCalls++
 		if removeCalls <= 2 {

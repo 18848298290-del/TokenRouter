@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// TestBuildAuthorizationURLForPlatform_OpenAI builds and parses an
+// authorization URL for the OpenAI platform. It checks the Codex client ID,
+// simplified-flow flag, and organization-claim request parameters.
 func TestBuildAuthorizationURLForPlatform_OpenAI(t *testing.T) {
 	authURL := BuildAuthorizationURLForPlatform("state-1", "challenge-1", DefaultRedirectURI, OAuthPlatformOpenAI)
 	parsed, err := url.Parse(authURL)

@@ -18,16 +18,58 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// MessagesResponseOptions adds Messages failure and usage handling to shared response options.
+// Responses event conversion to Messages emits content-block and message
+// terminal events while tracking upstream usage separately. A terminal's
+// top-level usage overrides nested response usage in this reader, and its
+// Response ID is retained for result adaptation. Buffered terminal output can
+// be supplemented from earlier deltas before Messages JSON is constructed.
+//
+// Messages output begins immediately when the bridge produces an event; this
+// path has no Chat silent-refusal holding queue. A failed client write
+// suppresses delivery while later events can still update accounting until a
+// terminal or another exit. An Anthropic ping marks local client output as
+// started, and cyber rejection also latches the disconnect flag to stop
+// successful finalization. Missing-terminal policy differs before and after
+// output, while the response owner closes the body to release any pending
+// asynchronous scan.
+
+// MessagesResponseOptions binds Messages-specific failure and usage policy
+// around shared compatibility reader callbacks.
 type MessagesResponseOptions struct {
+	// ChatResponseOptions supplies shared reading and observation callbacks;
+	// Messages bindings replace error envelope functions and shadow the base
+	// MissingUsage callback below.
 	ChatResponseOptions
-	MessagesFailure       func([]byte, string, bool, bool) ChatFailure
-	MissingUsage          func(*wire.ForwardUsage, string, bool)
-	MissingTerminal       func(string) error
+	// MessagesFailure classifies error/failed data using client-output and
+	// bare-error flags; its Failover result takes priority over selected client
+	// status/type/message.
+	MessagesFailure func([]byte, string, bool, bool) ChatFailure
+	// MissingUsage observes completed buffered terminals and finalized streams; it
+	// receives mutable usage plus terminal/disconnect evidence and returns no
+	// rejection error.
+	MissingUsage func(*wire.ForwardUsage, string, bool)
+	// MissingTerminal supplies failure classification when the upstream ends
+	// without a terminal before local output; the returned observed-usage result
+	// remains available.
+	MissingTerminal func(string) error
+	// RecordMissingTerminal records an incomplete stream after client output has
+	// started; the reader then returns its own missing-terminal error with observed
+	// usage.
 	RecordMissingTerminal func(string)
 }
 
-// ReadMessagesBuffered converts a Responses terminal result to Messages JSON and observes usage.
+// ReadMessagesBuffered converts a buffered Responses terminal to Messages JSON
+// after model/tier observation and failed-terminal policy. Supply the shared
+// read/output callbacks and Messages usage observer; the executor owns
+// response-body closure. CompatBufferedReadError is unwrapped directly instead
+// of using BufferedReadFailure.
+//
+// Completed terminals notify MissingUsage before delta supplementation and
+// conversion. The reconstructed output retains terminal metadata, and the
+// result includes its ResponseID alongside the HTTP request ID. Optional search
+// observation uses terminal JSON when serialization succeeds. JSON delivery
+// occurs with HTTP 200 and Messages content type after approved upstream
+// headers have been copied.
 func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, options MessagesResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -53,8 +95,9 @@ func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, option
 		options.MissingUsage(&usage, "response.completed", false)
 	}
 
-	// When the terminal event has an empty output array, reconstruct from
-	// accumulated delta events so the client receives the full content.
+	// Supply earlier delta content when terminal output is empty before
+	// conversion, keeping terminal identity and usage separate from reconstructed
+	// Messages content.
 	acc.SupplementResponseOutput(finalResponse)
 
 	anthropicResp := bridge.ResponsesToAnthropic(finalResponse, originalModel)
@@ -74,7 +117,8 @@ func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, option
 		Stream:          false,
 		Duration:        time.Since(startTime),
 	}
-	// Grok /v1/messages uses Responses upstream; count native search for surcharge.
+	// Optional search accounting uses terminal JSON after client conversion;
+	// a serialization failure leaves the count zero while the response remains delivered.
 	if options.CountSearch && finalResponse != nil {
 		if body, err := json.Marshal(finalResponse); err == nil {
 			if n := options.JSONSearch(body); n > 0 {
@@ -85,7 +129,19 @@ func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, option
 	return result, nil
 }
 
-// ReadMessagesStreaming converts Responses events to Messages SSE and returns observed usage on failures.
+// ReadMessagesStreaming converts Responses SSE to Messages events and returns
+// observed usage on terminal failures, read errors, or timeout. Supply the
+// shared stream callbacks and Messages-specific error/usage policy. The
+// executor retains body ownership; timed producer sends stop on return while a
+// blocked scan depends on body closure.
+//
+// Top-level terminal usage overrides nested response usage, and terminal IDs
+// populate ResponseID. FirstTokenMs starts before JSON validation, using the
+// first dispatched data payload. Output events and pings mark local output,
+// while cyber policy latches ClientDisconnect even after successful error
+// delivery. Missing terminals are classified through separate pre-output and
+// post-output callbacks. Terminals without a selected error outcome, including
+// incomplete/cancelled types, run the bridge's closing events.
 func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, options MessagesResponseOptions, originalModel, upstreamModel string, startTime time.Time) (*CompatResponseResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := NewCompatStreamHeaderWriter(c, resp.Header, options.Headers)
@@ -119,7 +175,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		intervalCh = intervalTicker.C
 	}
 
-	// resultWithUsage builds the final result snapshot.
+	// Retain accounting and turn identity on failure returns as well as
+	// success; ClientDisconnect also carries the policy-forced halt set by cyber rejection.
 	resultWithUsage := func() *CompatResponseResult {
 		out := &CompatResponseResult{
 			RequestID:        requestID,
@@ -140,7 +197,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return out
 	}
 
-	// processDataLine handles a single "data: ..." SSE line from upstream.
+	// Restore tool names before timing, search, and typed observation; a
+	// malformed payload can establish first-data latency but cannot advance bridge conversion.
 	processDataLine := func(payload string) bool {
 		payload = string(options.RestoreToolNames([]byte(payload)))
 		if firstChunk {
@@ -166,6 +224,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		eventType := strings.TrimSpace(event.Type)
 		isBareErrorEvent := eventType == "error"
 		isTerminalEvent := IsCompatResponsesTerminalEvent(eventType) || isBareErrorEvent
+		// Apply nested terminal usage before top-level event usage, making the
+		// event record authoritative when both are supplied, including all-zero totals.
 		if isTerminalEvent {
 			terminalEventType = eventType
 			if event.Response != nil {
@@ -182,9 +242,11 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		}
 		if eventType == "response.failed" || isBareErrorEvent {
 			payloadBytes := []byte(payload)
-			// Record cyber_policy as non-retryable and send an Anthropic error event.
-			// Stop conversion after this rejection so no later content follows the error.
+			// Record cyber policy before client presentation, then latch output halt
+			// even after a successful error write so ordinary message closure cannot follow rejection.
 			if hit, code, msg := DetectOpenAICyberPolicy(payloadBytes); hit {
+				// Capture up to four KiB of policy evidence with observed usage before
+				// error delivery, so its outcome cannot remove the recorded upstream rejection.
 				options.MarkCyber(CyberObservation{
 					Code:           code,
 					Message:        msg,
@@ -230,10 +292,13 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 			return true
 		}
 
-		// Convert to Anthropic events
+		// Conversion state advances independently of client delivery; suppress
+		// writes after disconnection while still observing subsequent terminal usage and failures.
 		events := bridge.ResponsesEventToAnthropicEvents(&event, state)
 		if !clientDisconnected {
 			for _, evt := range events {
+				// Skip an event whose encoding fails after conversion state advances;
+				// later events and accounting remain active for this same upstream attempt.
 				sse, err := bridge.ResponsesAnthropicEventToSSE(evt)
 				if err != nil {
 					logger.L().Warn("openai messages stream: failed to marshal event",
@@ -259,7 +324,9 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return isTerminalEvent
 	}
 
-	// finalizeStream sends any remaining Anthropic events and returns the result.
+	// Selected error outcomes return accounting first; other recognized terminals
+	// emit remaining block/message closure events and invoke the usage observer,
+	// including incomplete and cancelled terminal types.
 	finalizeStream := func() (*CompatResponseResult, error) {
 		if cyberPolicyErr != nil {
 			return resultWithUsage(), cyberPolicyErr
@@ -273,6 +340,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		finalEvents := bridge.FinalizeResponsesAnthropicStream(state)
 		if len(finalEvents) > 0 && !clientDisconnected {
 			for _, evt := range finalEvents {
+				// Skip an event whose encoding fails after conversion state advances;
+				// later events and accounting remain active for this same upstream attempt.
 				sse, err := bridge.ResponsesAnthropicEventToSSE(evt)
 				if err != nil {
 					continue
@@ -295,7 +364,9 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return resultWithUsage(), nil
 	}
 
-	// handleScanErr logs read errors other than cancellation and deadline expiration.
+	// Cancellation and deadline errors still return incomplete usage, while
+	// diagnostic logging is reserved for other scanner failures to avoid
+	// expected-cancellation noise.
 	handleScanErr := func(err error) {
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn("openai messages stream: read error",
@@ -321,10 +392,12 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return processDataLine(payload)
 	}
 
-	// Resolve the downstream keepalive interval.
+	// Snapshot heartbeat spacing for this attempt; client pings use consumed
+	// upstream line time while idle failure checks use the producer's arrival timestamp.
 	keepaliveInterval := options.KeepaliveInterval()
 
-	// Scan synchronously when neither timeout nor keepalive work is needed.
+	// With both timer policies disabled, synchronous scanning retains the
+	// same parser and terminal requirement while avoiding queued read-ahead and its producer.
 	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		var parser wire.OpenAICompatSSEFrameParser
 		for scanner.Scan() {
@@ -355,11 +428,14 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return missingTerminalErr()
 	}
 
-	// Read asynchronously so timers continue while upstream reads block.
+	// scanEvent carries one scanner line or failure to the timed consumer.
+	// The producer supplies one of line or err per event and closes the channel.
 	type scanEvent struct {
-		line string
-		err  error
+		line string // upstream scanner line
+		err  error  // upstream scanner failure
 	}
+	// Bound pending scan lines while conversion writes client events; done
+	// releases producer sends once a terminal, failure, or timeout ends the consumer.
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	var lastReadAt int64
@@ -372,6 +448,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 			return false
 		}
 	}
+	// Record actual line arrival before enqueueing, keeping read-idle policy
+	// separate from time spent converting events or writing to the client sink.
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
@@ -384,6 +462,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 			_ = sendEvent(scanEvent{err: err})
 		}
 	}()
+	// Release producer sends on every exit; the executor still closes Body
+	// to interrupt a scanner read blocked after this consumer has returned.
 	defer close(done)
 
 	var keepaliveTicker *time.Ticker
@@ -402,7 +482,8 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// Upstream closed
+				// Flush a final unterminated SSE frame at EOF before declaring a
+				// missing terminal, so buffered event data can still establish its actual outcome.
 				if frame, ok := parser.Finish(); ok {
 					if strings.TrimSpace(frame.Data) == "[DONE]" {
 						return missingTerminalErr()
@@ -452,10 +533,13 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			// Send Anthropic-format ping event
+			// An Anthropic ping counts as local client output, so subsequent
+			// missing-terminal or failure handling uses the post-output Messages policy
+			// even before content.
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, "event: ping\ndata: {\"type\":\"ping\"}\n\n"); err != nil {
-				// Client disconnected
+				// Latch failed ping delivery while keeping upstream read/accounting
+				// processing available until a terminal or another exit determines the attempt outcome.
 				logger.L().Info("openai messages stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
 				)

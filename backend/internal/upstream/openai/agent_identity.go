@@ -22,24 +22,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// Agent credentials bind a runtime, registered task, and Ed25519 signing key to
+// the Authorization header. The signed payload includes those identifiers and a
+// UTC timestamp; the outer JSON envelope and signature use different Base64
+// encodings that callers must keep paired when constructing an assertion.
+//
+// Task registration accepts snake-case and camel-case response fields,
+// preferring a plain task identifier before attempting sealed-box decryption.
+// Encrypted identifiers use an X25519 key derived from the Ed25519 seed, so the
+// registration response can be opened with the same identity that signs
+// requests. Registration owns its HTTP response body, while the provider
+// coordinator owns task reuse and invalid-task recovery.
+
+// agentIdentityTaskRegistrationTimeout limits the full registration exchange
+// after the provider coordinator elects a registering caller.
 const agentIdentityTaskRegistrationTimeout = 30 * time.Second
 
+// AgentIdentityKey holds the signing credentials for one registered agent task.
 type AgentIdentityKey struct {
-	RuntimeID  string             `json:"-"`
-	PrivateKey ed25519.PrivateKey `json:"-"`
-	TaskID     string             `json:"-"`
+	// RuntimeID and TaskID identify the registered task signed by PrivateKey.
+	// Callers keep this credential tuple together when building assertions or
+	// decrypting a registration response for the same runtime.
+	RuntimeID  string             `json:"-"` // registered agent runtime identifier
+	PrivateKey ed25519.PrivateKey `json:"-"` // Ed25519 signing key bytes
+	TaskID     string             `json:"-"` // plain registered task identifier
 }
 
+// agentIdentityTaskRegistrationResponse accepts plain and encrypted task
+// identifiers in both supported response spellings.
 type agentIdentityTaskRegistrationResponse struct {
-	TaskID               string `json:"task_id"`
-	TaskIDCamel          string `json:"taskId"`
-	EncryptedTaskID      string `json:"encrypted_task_id"`
-	EncryptedTaskIDCamel string `json:"encryptedTaskId"`
+	TaskID               string `json:"task_id"`           // plain registered task identifier
+	TaskIDCamel          string `json:"taskId"`            // camel-case plain task identifier
+	EncryptedTaskID      string `json:"encrypted_task_id"` // snake-case sealed-box task ciphertext
+	EncryptedTaskIDCamel string `json:"encryptedTaskId"`   // camel-case sealed-box task ciphertext
 }
 
-func (AgentIdentityKey) String() string       { return "agent identity key" }
+// String returns a fixed label that omits agent signing credentials.
+func (AgentIdentityKey) String() string { return "agent identity key" }
+
+// GoString returns the redacted label for Go-syntax formatting.
 func (key AgentIdentityKey) GoString() string { return key.String() }
 
+// BuildAgentAssertion signs the runtime, task, and UTC timestamp for an
+// Authorization value. RuntimeID and TaskID must be nonempty, and PrivateKey
+// must contain a valid Ed25519 key. The signature uses standard Base64 inside a
+// JSON envelope; the envelope uses unpadded URL-safe Base64 after the
+// AgentAssertion prefix.
 func BuildAgentAssertion(key AgentIdentityKey, now time.Time) (string, error) {
 	if key.RuntimeID == "" || key.TaskID == "" {
 		return "", errors.New("agent identity runtime or task id is missing")
@@ -63,6 +91,9 @@ func BuildAgentAssertion(key AgentIdentityKey, now time.Time) (string, error) {
 	return "AgentAssertion " + base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
+// SignAgentTaskRegistration returns the UTC timestamp and standard-Base64
+// signature for task registration. RuntimeID must be nonempty and PrivateKey
+// must be a valid Ed25519 key; signing failures return a sanitized error.
 func SignAgentTaskRegistration(key AgentIdentityKey, timestamp time.Time) (string, string, error) {
 	if key.RuntimeID == "" {
 		return "", "", errors.New("agent identity runtime id is missing")
@@ -75,6 +106,16 @@ func SignAgentTaskRegistration(key AgentIdentityKey, timestamp time.Time) (strin
 	return formatted, base64.StdEncoding.EncodeToString(signature), nil
 }
 
+// DecryptAgentTaskID opens a standard-Base64 sealed-box task identifier using
+// the agent signing key. Callers supply a valid Ed25519 PrivateKey because
+// deriving its seed assumes the key has the required length. Malformed
+// ciphertext, authentication failure, and blank decrypted identifiers return
+// sanitized errors.
+//
+// The Ed25519 seed is hashed and clamped into an X25519 private key, with its
+// public key derived from the same bytes. That conversion keeps registration
+// encryption tied to the signing identity; trimming occurs after authentication
+// so the returned identifier can be used directly in later assertions.
 func DecryptAgentTaskID(key AgentIdentityKey, encoded string) (string, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
@@ -84,6 +125,8 @@ func DecryptAgentTaskID(key AgentIdentityKey, encoded string) (string, error) {
 	digest := sha512.Sum512(seed)
 	var curvePrivate [32]byte
 	copy(curvePrivate[:], digest[:32])
+	// Clamp the seed-derived scalar for X25519 so the sealed-box recipient
+	// key corresponds to this Ed25519 identity when registration encrypts its task ID.
 	curvePrivate[0] &= 248
 	curvePrivate[31] &= 127
 	curvePrivate[31] |= 64
@@ -104,6 +147,9 @@ func DecryptAgentTaskID(key AgentIdentityKey, encoded string) (string, error) {
 	return taskID, nil
 }
 
+// IsAgentTaskInvalidHTTPResponse reports whether a 401 response identifies an
+// invalid, missing, or expired agent task. Other statuses return false, and a
+// signature error alone does not authorize task-registration recovery.
 func IsAgentTaskInvalidHTTPResponse(statusCode int, body []byte) bool {
 	if statusCode != http.StatusUnauthorized {
 		return false
@@ -137,6 +183,10 @@ func IsAgentTaskInvalidHTTPResponse(statusCode int, body []byte) bool {
 	return false
 }
 
+// ParseAgentIdentityPrivateKey decodes a standard-Base64 PKCS#8 Ed25519 private
+// key. It trims surrounding whitespace and rejects missing, malformed,
+// differently typed, or incorrectly sized keys before callers sign or decrypt
+// with them.
 func ParseAgentIdentityPrivateKey(raw string) (ed25519.PrivateKey, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -157,6 +207,18 @@ func ParseAgentIdentityPrivateKey(raw string) (ed25519.PrivateKey, error) {
 	return privateKey, nil
 }
 
+// RegisterAgentIdentityTask signs and posts a registration request, returning
+// the accepted task identifier. Callers provide the registration base URL,
+// proxy configuration, timestamp, and a context controlling the HTTP exchange.
+// The client adds a thirty-second request timeout and this function closes
+// every successful HTTP response body.
+//
+// The response first checks task_id, then taskId, and returns the first
+// nonblank plain identifier. If neither exists, encrypted_task_id takes
+// precedence over encryptedTaskId and is opened with the same signing identity.
+// This order allows the supported response formats to share one registration
+// path while keeping failed decryption distinguishable from an omitted
+// identifier.
 func RegisterAgentIdentityTask(ctx context.Context, key AgentIdentityKey, proxyURL, baseURL string, now time.Time) (string, error) {
 	timestamp, signature, err := SignAgentTaskRegistration(key, now)
 	if err != nil {
@@ -188,10 +250,14 @@ func RegisterAgentIdentityTask(ctx context.Context, key AgentIdentityKey, proxyU
 	if err != nil {
 		return "", errors.New("agent task registration request failed")
 	}
+	// Release the response on every status and decode path so registration
+	// failures do not retain a connection in the shared HTTP client.
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("agent task registration returned status %d", resp.StatusCode)
 	}
+	// Restrict the decoder to the first 64 KiB of the registration envelope;
+	// fields beyond that read limit cannot participate in identifier selection.
 	var result agentIdentityTaskRegistrationResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
 		return "", errors.New("agent task registration response is invalid")
@@ -212,7 +278,10 @@ func RegisterAgentIdentityTask(ctx context.Context, key AgentIdentityKey, proxyU
 	return DecryptAgentTaskID(key, encrypted)
 }
 
-// IsAgentTaskInvalidWSDialError checks the failed handshake response for an invalid task ID.
+// IsAgentTaskInvalidWSDialError reports whether a failed handshake carries
+// invalid-task evidence. A nil error or a response outside the HTTP
+// invalid-task rule returns false, so callers can reserve re-registration for
+// task failures.
 func IsAgentTaskInvalidWSDialError(err *WSDialError) bool {
 	return err != nil && IsAgentTaskInvalidHTTPResponse(err.StatusCode, err.ResponseBody)
 }

@@ -13,27 +13,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AlphaSearchTarget holds a prepared request and its execution callbacks.
-// The request may contain credentials; do not serialize or expand it in logs.
+// Standalone Alpha Search returns its upstream JSON directly, while a PAT can
+// perform search through streaming Responses. The chosen path controls response
+// conversion and whether unsuccessful responses contribute quota headers; a
+// forwarded error response can therefore be committed without becoming a served
+// search.
+//
+// Execution holds the optional admission release until reading and output are
+// complete. Error handlers may replace resp.Body to replay captured bytes, so
+// cleanup retains the original body that owns the connection. A successful
+// Responses fallback extracts text and citations into the Alpha Search format,
+// and the attempt counts one search only after a successful upstream status.
+
+// AlphaSearchTarget holds the prepared search request and synchronous execution
+// callbacks.
 type AlphaSearchTarget struct {
-	ProviderID        int64
-	Request           *http.Request `json:"-"`
+	ProviderID int64 // selected upstream provider identifier
+	// Request is the prepared authenticated HTTP request; its context controls
+	// transport execution and its credentials require redacted diagnostic
+	// formatting.
+	Request *http.Request `json:"-"`
+	// ResponsesFallback selects PAT hosted-search conversion; unsuccessful
+	// Responses statuses skip quota updates, while successful SSE output becomes
+	// standalone-search JSON.
 	ResponsesFallback bool
-	Model             string
-	Enter             func() (func(), error)
-	Do                func(*http.Request) (*http.Response, error)
-	Latency           func(time.Duration)
-	TransportError    func(error) error
-	ReadBody          func(io.Reader) ([]byte, error)
-	HTTPError         func(*http.Response, []byte) error
-	UpdateQuota       func(http.Header)
-	Headers           func(http.Header, http.Header)
+	Model             string // selected upstream model identifier
+	// Enter optionally admits execution and returns a release callback; Execute
+	// defers that callback after successful admission through response delivery.
+	Enter func() (func(), error)
+	Do    func(*http.Request) (*http.Response, error) // required HTTP exchange callback
+	// Latency observes time until Do returns and runs even on transport failure,
+	// before TransportError translates that failure for the caller.
+	Latency        func(time.Duration)
+	TransportError func(error) error                  // required transport failure translator
+	ReadBody       func(io.Reader) ([]byte, error)    // required response byte reader
+	HTTPError      func(*http.Response, []byte) error // required upstream status handler
+	UpdateQuota    func(http.Header)                  // required quota header observer
+	Headers        func(http.Header, http.Header)     // required downstream header copier
 }
 
-// AlphaSearchExecutor executes standalone search or the PAT Responses fallback,
-// with separate error handling and quota-update rules for each path.
+// AlphaSearchExecutor performs standalone search or the prepared PAT Responses
+// fallback.
 type AlphaSearchExecutor struct{}
 
+// TargetID returns the selected provider identifier for search execution. A nil
+// target reports zero, allowing diagnostic formatting to describe missing
+// configuration before request validation rejects it.
 func (t *AlphaSearchTarget) TargetID() int64 {
 	if t == nil {
 		return 0
@@ -41,11 +66,26 @@ func (t *AlphaSearchTarget) TargetID() int64 {
 	return t.ProviderID
 }
 
+// String formats the provider identifier while excluding prepared request
+// credentials.
 func (t *AlphaSearchTarget) String() string {
 	return fmt.Sprintf("openai alpha search target provider=%d", t.TargetID())
 }
+
+// GoString returns the target label used for Go-syntax formatting.
 func (t *AlphaSearchTarget) GoString() string { return t.String() }
 
+// Execute sends one prepared Alpha Search attempt and emits its response
+// through sink. The target supplies all transport, read, health, quota, and
+// header callbacks; Enter is optional and its release is deferred when
+// admission succeeds. The prepared request owns the context used by Do.
+//
+// The original response body is closed even if HTTPError substitutes a replay
+// body. ResponsesFallback converts successful SSE to search JSON and updates
+// quota only on success; standalone responses update quota after accepted error
+// handling too. A handled non-success status may commit HTTP output but leaves
+// Served false and SearchCount zero, so outer completion logic can distinguish
+// delivery from a successful search.
 func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	t, ok := input.Target.(*AlphaSearchTarget)
 	if !ok || t == nil || t.Request == nil {
@@ -67,10 +107,12 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 	if err != nil {
 		return result, t.TransportError(err)
 	}
-	// Error handling may replace resp.Body for replay; close the body that owns the connection.
+	// HTTPError may replace resp.Body with a replay reader. Retain the original
+	// body so cleanup releases the connection owned by this HTTP exchange.
 	originalBody := resp.Body
 	defer func() { _ = originalBody.Close() }()
-	// Measure duration before closing the body and record the returned failure.
+	// Capture the named failure before body cleanup completes, so the result
+	// records cancellation and upstream failure even when response handling returns early.
 	defer func() {
 		result.Duration = time.Since(started)
 		result.Cancelled = errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded)
@@ -92,6 +134,8 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 	}
 	output := upstream.NewDeferredOutputContext(sink)
 	success := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+	// PAT Responses errors do not publish inference quota headers; the standalone
+	// search path retains its header update after HTTPError accepts the response.
 	if !t.ResponsesFallback || success {
 		t.UpdateQuota(resp.Header)
 	}
@@ -105,6 +149,8 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 		t.Headers(output.Writer.Header(), resp.Header)
 		contentType := resp.Header.Get("Content-Type")
 		if contentType == "" {
+			// Missing media types receive the JSON default expected by this endpoint,
+			// allowing downstream clients to interpret the forwarded search response bytes.
 			contentType = "application/json"
 		}
 		output.Data(resp.StatusCode, contentType, body)

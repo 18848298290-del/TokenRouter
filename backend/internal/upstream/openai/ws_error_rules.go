@@ -9,7 +9,24 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// ClassifyWSAcquireError classifies acquisition failures by handshake status and error identity.
+// WebSocket errors arrive either during HTTP handshake acquisition or inside a
+// protocol error event. Acquisition uses captured status and typed local
+// failures, while event classification reads normalized code, type, and message
+// evidence for gateway recovery.
+//
+// Recovery eligibility and HTTP status are separate outputs. Rate/usage limits
+// prevent generic event recovery after exact transport/continuation codes
+// have been considered. Those exact codes can permit the outer recovery
+// policy to act before marker-based limit checks. HTTP
+// classification prioritizes bad input, authentication, and permission evidence
+// before limit markers, with BadGateway as its default. These predicates
+// describe evidence; the gateway decides whether an attempt can still recover
+// after downstream output begins.
+
+// ClassifyWSAcquireError labels acquisition failure from handshake status
+// before local queue and deadline errors. Nil or unknown causes return
+// acquire_conn; a captured unrecognized status returns dial_failed for the
+// outer acquisition policy.
 func ClassifyWSAcquireError(err error) string {
 	if err == nil {
 		return "acquire_conn"
@@ -40,6 +57,10 @@ func ClassifyWSAcquireError(err error) string {
 	return "acquire_conn"
 }
 
+// IsWSRateLimitError recognizes normalized limit markers in code, type, or
+// message. Message-only evidence requires matching reached/exceeded wording,
+// while typed rate, usage, and insufficient-quota code markers can identify a
+// limit independently.
 func IsWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
@@ -60,6 +81,18 @@ func IsWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
 	return false
 }
 
+// ClassifyWSErrorEventFromRaw returns a recovery reason and eligibility flag
+// from normalized event fields. Exact supported codes take precedence over
+// message/type matching. Upgrade, unsupported transport, connection limits,
+// invalid ciphertext, and missing continuation codes select their own eligible
+// reason.
+//
+// Rate or usage evidence returns upstream_rate_limited with false eligibility
+// before general message recovery checks. Supported message/type recovery
+// families, including server-error events, can return true; unrecognized events
+// return event_error/false. The flag describes this classifier's eligibility
+// evidence, while the enclosing gateway still checks output progress and its
+// selected recovery policy before replay.
 func ClassifyWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (string, bool) {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
@@ -106,6 +139,10 @@ func ClassifyWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (string, bo
 	return "event_error", false
 }
 
+// ClassifyWSErrorEvent parses event fields and delegates recovery
+// classification. Empty messages return event_error with false eligibility,
+// letting callers distinguish absent evidence from a recognized transport or
+// continuation failure.
 func ClassifyWSErrorEvent(message []byte) (string, bool) {
 	if len(message) == 0 {
 		return "event_error", false
@@ -113,6 +150,9 @@ func ClassifyWSErrorEvent(message []byte) (string, bool) {
 	return ClassifyWSErrorEventFromRaw(protocolopenai.ParseWSErrorEventFields(message))
 }
 
+// WSErrorHTTPStatusFromRaw maps normalized code and type evidence to an HTTP
+// status. Invalid input precedes authentication, permission, and rate/usage
+// limits; unmatched fields return BadGateway for the enclosing gateway failure.
 func WSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw string) int {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
@@ -137,6 +177,9 @@ func WSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw string) int {
 	}
 }
 
+// WSErrorHTTPStatus parses event code/type fields and returns their classified
+// HTTP status. Empty or unrecognized event evidence maps to BadGateway; the
+// wrapper follows the same precedence as direct raw-field callers.
 func WSErrorHTTPStatus(message []byte) int {
 	if len(message) == 0 {
 		return http.StatusBadGateway

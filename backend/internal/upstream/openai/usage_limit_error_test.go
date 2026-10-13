@@ -7,11 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseOpenAIRateLimitResetTime_OpenCodeGoUsageLimit supplies day, hour,
+// and combined-hour/minute readable resets. It bounds each returned Unix
+// timestamp by clocks measured before and after parsing, accounting for second
+// precision.
 func TestParseOpenAIRateLimitResetTime_OpenCodeGoUsageLimit(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want time.Duration
+		name string        // readable reset case description
+		body string        // typed limit error fixture
+		want time.Duration // expected relative reset duration
 	}{
 		{
 			name: "days",
@@ -44,6 +48,9 @@ func TestParseOpenAIRateLimitResetTime_OpenCodeGoUsageLimit(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIRateLimitResetTime_DoesNotParseUnknownErrorMessage supplies
+// reset wording under an unsupported error type. Parsing must return nil,
+// preventing message text alone from creating quota-reset evidence.
 func TestParseOpenAIRateLimitResetTime_DoesNotParseUnknownErrorMessage(t *testing.T) {
 	body := []byte(`{"error":{"type":"rate_limit_error","message":"Resets in 2 days."}}`)
 

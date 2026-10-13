@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestEnsureOpenAIRemoteCompactionV2BetaFeature supplies absent, existing,
+// other-token, and multiline capability headers. It checks exact-token
+// retention and addition of the V2 token while preserving other declared
+// capabilities.
 func TestEnsureOpenAIRemoteCompactionV2BetaFeature(t *testing.T) {
 	t.Run("absent_sets_feature", func(t *testing.T) {
 		h := http.Header{}
@@ -37,7 +41,9 @@ func TestEnsureOpenAIRemoteCompactionV2BetaFeature(t *testing.T) {
 	})
 }
 
-// TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix checks unsafe suffix rejection.
+// TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix supplies
+// traversal, query-bearing, and compact suffixes to one Responses base URL.
+// Unsafe values must retain the base while compact appends successfully.
 func TestAppendOpenAIResponsesRequestPathSuffixRefusesUnsafeSuffix(t *testing.T) {
 	// Unsafe suffixes leave the base URL unchanged.
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", AppendResponsesPathSuffix("https://chatgpt.com/backend-api/codex/responses", "/../../x"))

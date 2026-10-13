@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCollectOpenAIEncryptedContentDigestsRaw mixes supported encrypted items,
+// plaintext input, missing ciphertext, and an unsupported message type. It
+// checks digest order and that unsupported or absent input contributes no
+// tracked ciphertext.
 func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 	t.Parallel()
 
@@ -26,6 +30,10 @@ func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 	require.Nil(t, CollectOpenAIEncryptedContentDigestsRaw([]byte(`{"model":"gpt-5"}`)))
 }
 
+// TestStripOpenAIInvalidEncryptedContentItems supplies stale and fresh
+// ciphertext in decoded histories. It protects reasoning-shell retention,
+// encrypted compaction removal, fresh-item survival, and zero changes when no
+// digest matches.
 func TestStripOpenAIInvalidEncryptedContentItems(t *testing.T) {
 	t.Parallel()
 
@@ -86,6 +94,10 @@ func TestStripOpenAIInvalidEncryptedContentItems(t *testing.T) {
 	})
 }
 
+// TestStripOpenAIInvalidEncryptedContentFromReplayItems sanitizes stale
+// reasoning and compaction alongside unchanged raw input. It checks replacement
+// content, removal counts, shared unmatched byte storage, immutable original
+// bytes, and no-hit storage reuse.
 func TestStripOpenAIInvalidEncryptedContentFromReplayItems(t *testing.T) {
 	t.Parallel()
 
@@ -122,6 +134,9 @@ func TestStripOpenAIInvalidEncryptedContentFromReplayItems(t *testing.T) {
 	})
 }
 
+// TestStripOpenAIInvalidEncryptedContentRaw rewrites one stale item in a
+// complete raw request with fresh history. It checks preserved model and input
+// content plus reuse of the original payload storage on a no-hit path.
 func TestStripOpenAIInvalidEncryptedContentRaw(t *testing.T) {
 	t.Parallel()
 

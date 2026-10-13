@@ -15,33 +15,82 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// ImageResponseOptions configures image response reading, output and observation.
+// OAuth image generation arrives as Responses lifecycle, partial-image,
+// completed-item, and terminal events. Partial images can be sent before a
+// final result exists, while completed items are retained for a later terminal
+// merge. Exact encoded result and format keys prevent a completed item and its
+// terminal copy from producing duplicate client events.
+//
+// Usage is observed before error presentation, and downstream failure stops
+// further writes while upstream processing continues until a terminal event,
+// read failure, EOF, or timeout. Completed-image counts record recognized
+// results even when their delivery fails. At EOF, buffered completed items can
+// supply the final image events; lifecycle-only streams produce an
+// incomplete-generation error. The executor owns response-body closure for
+// synchronous and queued readers.
+
+// ImageResponseOptions binds image readers to request-specific output,
+// accounting, and error policy callbacks.
 type ImageResponseOptions struct {
+	// PreserveContentType lets the API-key nonstream reader keep a supplied
+	// upstream content type; otherwise that reader uses its JSON default.
 	PreserveContentType bool
-	Backfill            func([]byte) []byte
-	ReadLimit           func() int64
-	ReadBody            func(io.Reader) ([]byte, error)
-	ClassifyReadError   func(error) error
-	ResponseHeaders     func(http.Header, http.Header)
-	ObserveError        func(int, string, string)
-	WriteHTTPError      func(*OpenAIImagesUpstreamError) bool
-	EmptyOutput         func([]byte) error
-	Summary             func([]byte) string
-	AdjustedWrittenSize func() int
-	WrittenSize         func() int
-	StreamInterval      func() time.Duration
-	KeepaliveInterval   func() time.Duration
-	Logf                func(string, ...any)
+	// Backfill converts the API-key nonstream body after usage observation; that
+	// reader requires this callback even when it returns unchanged bytes.
+	Backfill func([]byte) []byte
+	// ReadLimit supplies the API-key stream's plain-JSON retention limit in bytes;
+	// SSE line allocation is independent of this value.
+	ReadLimit func() int64
+	// ReadBody consumes a buffered response under the caller's size and error
+	// policy; both nonstream readers require this callback.
+	ReadBody func(io.Reader) ([]byte, error)
+	// ClassifyReadError translates OAuth read failures after pending event
+	// processing; API-key streaming returns its read errors directly.
+	ClassifyReadError func(error) error
+	// ResponseHeaders copies approved upstream headers into the client header map
+	// before each reader selects its response content type.
+	ResponseHeaders func(http.Header, http.Header)
+	// ObserveError records OAuth generation failures before return, using status
+	// and message plus an optional caller-provided diagnostic summary.
+	ObserveError func(int, string, string)
+	// WriteHTTPError presents nonretryable OAuth nonstream errors; retryable errors
+	// are returned to the executor before this callback is invoked.
+	WriteHTTPError func(*OpenAIImagesUpstreamError) bool
+	// EmptyOutput classifies OAuth nonstream responses containing neither an image
+	// nor recognizable model text for the executor's retry policy.
+	EmptyOutput func([]byte) error
+	// Summary builds OAuth no-output diagnostics; its caller owns redaction policy
+	// for any upstream text included in that summary.
+	Summary func([]byte) string
+	// AdjustedWrittenSize captures the initial count with JSON keepalive bytes
+	// excluded. WrittenSize later reads physical bytes, and their difference
+	// controls OAuth retryable-error presentation.
+	AdjustedWrittenSize func() int // heartbeat-adjusted initial byte count
+	// WrittenSize supplies the current physical writer size; a difference from the
+	// adjusted baseline permits presenting retryable stream errors.
+	WrittenSize func() int
+	// StreamInterval enables idle checks when positive; checks use upstream read
+	// arrival time even while downstream event processing is delayed.
+	StreamInterval func() time.Duration
+	// KeepaliveInterval enables comment heartbeats when positive; successful
+	// downstream writes postpone the next heartbeat and failed writes disable it.
+	KeepaliveInterval func() time.Duration
+	Logf              func(string, ...any) // request diagnostic log callback
 }
 
-// WriteImagesStreamEvent writes and flushes one image SSE event.
+// WriteImagesStreamEvent writes an optional event line, marks image output
+// state, then writes and flushes the data frame. Pass a usable context and
+// flusher. A later failure can leave an event prefix or an already marked
+// semantic/terminal state, so callers treat the returned error as a delivery
+// failure.
 func WriteImagesStreamEvent(c *upstream.OutputContext, options ImageResponseOptions, flusher http.Flusher, eventName string, payload []byte) error {
 	if strings.TrimSpace(eventName) != "" {
 		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", eventName); err != nil {
 			return err
 		}
 	}
-	// Partial and completed images count as content; completed images also mark terminal output.
+	// Mark image content after its event prefix but before data delivery, so a
+	// data-write failure can still leave output state recorded.
 	if strings.HasSuffix(eventName, ".partial_image") || strings.HasSuffix(eventName, ".completed") {
 		c.NextEvent(true, strings.HasSuffix(eventName, ".completed"))
 	}
@@ -52,7 +101,11 @@ func WriteImagesStreamEvent(c *upstream.OutputContext, options ImageResponseOpti
 	return nil
 }
 
-// TryWriteImagesStreamEvent writes an event and updates disconnect state and last-write time.
+// TryWriteImagesStreamEvent writes an event unless the supplied disconnect flag
+// is already set. A failure latches that flag and logs through Logf; success
+// updates an optional lastWriteAt timestamp. Callers serialize access to the
+// writer and pointed-to state, and retain upstream accounting after a false
+// result.
 func TryWriteImagesStreamEvent(
 	c *upstream.OutputContext, options ImageResponseOptions,
 	flusher http.Flusher,
@@ -64,6 +117,8 @@ func TryWriteImagesStreamEvent(
 	if clientDisconnected != nil && *clientDisconnected {
 		return false
 	}
+	// A partial frame cannot be replayed through this helper; latch failure so
+	// later event attempts stop writing to the sink.
 	if err := WriteImagesStreamEvent(c, options, flusher, eventName, payload); err != nil {
 		if clientDisconnected != nil {
 			*clientDisconnected = true
@@ -77,7 +132,17 @@ func TryWriteImagesStreamEvent(
 	return true
 }
 
-// ReadImagesOAuthNonStreaming collects OAuth image results, writes the response and returns usage and sizes.
+// ReadImagesOAuthNonStreaming converts OAuth Responses image events to an
+// Images JSON response and returns their usage, count, and known sizes. Supply
+// callbacks used for body reads, error classification, diagnostics, and output;
+// the executor closes the response body.
+//
+// Completed results and completed-item copies are reconciled by the codec
+// before output. If no image remains, structured errors precede model-text
+// classification and the caller's empty-output policy. Retryable errors remain
+// available to the executor before error presentation; all error returns from
+// this reader discard the parsed usage. A blank result model receives
+// fallbackModel before response construction.
 func ReadImagesOAuthNonStreaming(
 	resp *http.Response,
 	sink upstream.OutputSink, options ImageResponseOptions,
@@ -113,7 +178,8 @@ func ReadImagesOAuthNonStreaming(
 			}
 			return wire.ForwardUsage{}, 0, nil, textFallbackErr
 		}
-		// A response with neither images nor text uses the caller's empty-output retry policy.
+		// Structured failure and model text have already been ruled out; delegate
+		// this empty result to the executor-specific retry policy.
 		options.ObserveError(http.StatusBadGateway, "upstream did not return image output", options.Summary(body))
 		return wire.ForwardUsage{}, 0, nil, options.EmptyOutput(body)
 	}
@@ -131,7 +197,18 @@ func ReadImagesOAuthNonStreaming(
 	return usage, len(results), OpenAIResponsesImageResultSizes(results), nil
 }
 
-// ReadImagesOAuthStreaming forwards image events and collects output count, sizes and usage.
+// ReadImagesOAuthStreaming converts Responses events to Images SSE while
+// retaining usage, completed-result identity, and image dimensions. Supply a
+// flushing writer and callbacks for headers, errors, writer sizes, timing, and
+// logging. The executor closes resp.Body when this reader returns.
+//
+// Partial images are delivered immediately; completed items wait for terminal
+// reconciliation or EOF. Result keys are registered before attempted client
+// writes, so counts include observed completions after disconnection.
+// FirstTokenMs measures the first dispatched SSE data payload, including
+// invalid JSON and lifecycle data. The timed reader stops queued sends on
+// return but needs owner body closure to unblock reads; completed/error events
+// end consumption without draining later events.
 func ReadImagesOAuthStreaming(
 	resp *http.Response,
 	c *upstream.OutputContext, options ImageResponseOptions,
@@ -166,6 +243,8 @@ func ReadImagesOAuthStreaming(
 	streamMeta := OpenAIResponsesImageResult{Model: strings.TrimSpace(fallbackModel)}
 	var fallbackText strings.Builder
 	appendFallbackText := func(text string) {
+		// Limit retained model text to six hundred bytes for no-image classification;
+		// this byte cap can split UTF-8 text.
 		if text == "" || fallbackText.Len() >= 600 {
 			return
 		}
@@ -181,12 +260,16 @@ func ReadImagesOAuthStreaming(
 	var sseData wire.SSEDataAccumulator
 	var processDataErr error
 	processDataDone := false
+	// Capture the heartbeat-adjusted baseline, then compare physical writes when
+	// deciding whether retryable failure should be shown to the client.
 	writerSizeBeforeResponse := options.AdjustedWrittenSize()
 
 	processData := func(dataBytes []byte) {
 		if processDataDone || processDataErr != nil {
 			return
 		}
+		// Record data arrival before validating JSON; lifecycle and malformed
+		// payloads therefore contribute to this reader-specific latency measurement.
 		if firstTokenMs == nil {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -225,6 +308,8 @@ func ReadImagesOAuthStreaming(
 				partialMeta, time.Now)
 			TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, eventName, payload)
 		case "response.output_item.done":
+			// Retain completed items until final metadata is known, deduplicating their
+			// terminal copies by encoded result and output format.
 			img, itemID, ok, extractErr := ExtractOpenAIImageFromResponsesOutputItemDone(dataBytes)
 			if extractErr != nil {
 				TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBody(extractErr.Error()))
@@ -255,6 +340,9 @@ func ReadImagesOAuthStreaming(
 				return
 			}
 			MergeOpenAIResponsesImageMeta(&streamMeta, firstMeta)
+			// Merge terminal and completed-item observations before dimension
+			// reconciliation, so copies of one encoded image produce one completed
+			// event.
 			finalResults := make([]OpenAIResponsesImageResult, 0, len(results)+len(pendingResults))
 			finalSeen := make(map[string]struct{})
 			for _, img := range results {
@@ -282,7 +370,8 @@ func ReadImagesOAuthStreaming(
 					return
 				}
 				outputErr := fmt.Errorf("upstream did not return image output")
-				// A terminal response without images or classifiable text records a diagnostic and returns an error.
+				// The terminal contains no recognized image or classifiable model text;
+				// record the empty-generation outcome before writing its client error.
 				options.ObserveError(http.StatusBadGateway, "upstream did not return image output", options.Summary(dataBytes))
 				TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBody(outputErr.Error()))
 				processDataErr = outputErr
@@ -296,6 +385,8 @@ func ReadImagesOAuthStreaming(
 					continue
 				}
 				payload := BuildOpenAIImagesStreamCompletedPayload(eventName, img, format, createdAt, usageRaw, time.Now)
+				// Register completion before delivery so a failed sink write retains
+				// observed image accounting and prevents duplicate event attempts.
 				emitted[key] = struct{}{}
 				TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, eventName, payload)
 			}
@@ -305,6 +396,8 @@ func ReadImagesOAuthStreaming(
 		case "error", "response.failed":
 			if upstreamErr := OpenAIImagesUpstreamErrorFromSSEPayload(dataBytes); upstreamErr != nil {
 				retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
+				// A retryable failure before recorded writes remains for executor recovery;
+				// after writes, present it through the Images error event.
 				if !clientDisconnected && (!retryable || options.WrittenSize() != writerSizeBeforeResponse) {
 					TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBodyFromUpstream(upstreamErr))
 				}
@@ -339,6 +432,8 @@ func ReadImagesOAuthStreaming(
 		if imageCount > 0 {
 			return nil
 		}
+		// EOF can end after completed items but before response.completed; use those
+		// retained results with accumulated metadata as final image events.
 		if len(pendingResults) > 0 {
 			eventName := streamPrefix + ".completed"
 			finalResults := append([]OpenAIResponsesImageResult(nil), pendingResults...)
@@ -352,6 +447,8 @@ func ReadImagesOAuthStreaming(
 					continue
 				}
 				payload := BuildOpenAIImagesStreamCompletedPayload(eventName, img, format, createdAt, nil, time.Now)
+				// Register completion before delivery so a failed sink write retains
+				// observed image accounting and prevents duplicate event attempts.
 				emitted[key] = struct{}{}
 				TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, eventName, payload)
 			}
@@ -402,10 +499,13 @@ func ReadImagesOAuthStreaming(
 		return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 	}
 
+	// readEvent transports one read line or failure into the timed image consumer.
 	type readEvent struct {
-		line []byte
-		err  error
+		line []byte // upstream read line
+		err  error  // upstream read failure
 	}
+	// Bound read-ahead while image conversion writes output; done releases
+	// producer sends after terminal handling or another consumer exit.
 	events := make(chan readEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev readEvent) bool {
@@ -418,6 +518,8 @@ func ReadImagesOAuthStreaming(
 	}
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	// Timestamp actual reads before queueing, preventing client conversion time
+	// from causing a false upstream-idle decision in the consumer.
 	go func() {
 		defer close(events)
 		reader := bufio.NewReader(resp.Body)
@@ -438,6 +540,8 @@ func ReadImagesOAuthStreaming(
 			}
 		}
 	}()
+	// Release sends on every return; a producer blocked inside ReadBytes still
+	// depends on the executor closing the response body.
 	defer close(done)
 
 	var intervalTicker *time.Ticker
@@ -491,6 +595,8 @@ func ReadImagesOAuthStreaming(
 				return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 			}
 		case <-intervalCh:
+			// Timer delivery can lag behind processing, so consult the atomic read
+			// timestamp before declaring this upstream image generation idle.
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {
 				continue
@@ -502,6 +608,8 @@ func ReadImagesOAuthStreaming(
 			TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBody(fmt.Sprintf("upstream image stream idle for %s", streamInterval)))
 			return usage, imageCount, imageOutputSizes, firstTokenMs, fmt.Errorf("image stream data interval timeout")
 		case <-keepaliveCh:
+			// Heartbeats follow successful downstream delivery, and a write failure
+			// suppresses further client writes while observations remain available.
 			if clientDisconnected || time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}

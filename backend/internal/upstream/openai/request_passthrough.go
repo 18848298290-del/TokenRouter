@@ -12,14 +12,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Passthrough requests keep prepared body bytes while selecting new
+// authentication and provider-specific identity headers. Client authentication
+// headers are removed before the selected assertion or bearer headers are
+// installed, and turn-origin filtering runs before Codex session
+// reconstruction.
+//
+// Existing session and conversation values have precedence over a body
+// prompt_cache_key, with legacy compact supplying its own session when absent.
+// Those values are isolated separately before credential scoping and optional
+// attempt fingerprints apply. Codex removes the legacy Responses experiment but
+// retains independent beta declarations. Allowed overrides run before final
+// OpenCode session, beta, routing-hint, and diagnostic callbacks, keeping
+// passthrough policy aligned with the same identity resources used by ordinary
+// Responses requests.
+
+// PassthroughRequestOptions extends Responses construction with passthrough
+// header and routed-originator rules.
 type PassthroughRequestOptions struct {
-	ResponsesRequestOptions
-	AllowTimeoutHeaders    func() bool
-	AllowPassthroughHeader func(string, bool) bool
-	MatchedOriginator      func() string
+	ResponsesRequestOptions                         // shared Responses request callback sources
+	AllowTimeoutHeaders     func() bool             // required timeout-forwarding policy reader
+	AllowPassthroughHeader  func(string, bool) bool // required passthrough header predicate
+	MatchedOriginator       func() string           // required routed originator reader
 }
 
-// BuildPassthroughRequest retains body bytes and resolves attempt-specific identity and session headers.
+// BuildPassthroughRequest creates a POST retaining the prepared body and
+// resolving selected-provider authentication. The option callbacks are required
+// when their branches run; callers keep eligibility readers stable during one
+// build. Header forwarding uses the timeout policy before selected credentials
+// replace client authentication headers.
+//
+// Codex retains inbound session/conversation values when present, fills their
+// absence from compact or prompt-cache values, then isolates them by API key.
+// User-Agent selection precedes credential scoping, precomputed fingerprints,
+// and official identity pairing. Overrides and final session/beta/routing
+// callbacks follow. Legacy compact acceptance is JSON for both credential
+// forms, so an inbound SSE Accept cannot change its unary response shape.
 func BuildPassthroughRequest(ctx context.Context, body []byte, options PassthroughRequestOptions) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
@@ -40,7 +68,8 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 		}
 	}
 
-	// Drop turn state known to belong to a previous provider after failover.
+	// Filter turn state before replacing credentials so a known previous-provider
+	// continuation cannot be sent under the newly selected authentication identity.
 	options.GuardTurnState(req.Header)
 	req.Header.Del("authorization")
 	req.Header.Del("x-api-key")
@@ -106,7 +135,8 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 	}
 
 	options.ApplyUserAgent(req)
-	// Passthrough shares the credential namespace and precomputed fingerprint with ordinary requests.
+	// Scope under the selected credential before applying the attempt fingerprint;
+	// this gives passthrough the same header/body identity tuple used by ordinary Responses construction.
 	options.ApplyProviderIdentity(req.Header)
 	options.ApplyFingerprint(req.Header)
 	// Apply the same official identity pairing and version correction as ordinary OAuth requests.
@@ -120,7 +150,8 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 
 	options.OverrideHeaders(req.Header)
 	options.OpenCodeSession(req.Header)
-	// Apply session beta features after overrides so required capabilities survive.
+	// Apply beta negotiation after allowed overrides so the final request retains
+	// required protocol feature tokens before its routing hint is generated.
 	options.BetaFeatures(req.Header)
 	options.RoutingHint(req.Header, body)
 	options.Diagnostics(req.Header, body)
@@ -128,6 +159,10 @@ func BuildPassthroughRequest(ctx context.Context, body []byte, options Passthrou
 	return req, nil
 }
 
+// StripLegacyResponsesBeta removes the Responses experimental token from all
+// case-insensitive beta header entries. Nil headers are ignored; other nonblank
+// tokens are retained and republished under the canonical header name, with
+// multiple original values remaining separate.
 func StripLegacyResponsesBeta(headers http.Header) {
 	if headers == nil {
 		return
@@ -138,6 +173,8 @@ func StripLegacyResponsesBeta(headers http.Header) {
 		if !strings.EqualFold(strings.TrimSpace(key), "OpenAI-Beta") {
 			continue
 		}
+		// Remove each spelling before republishing kept tokens canonically, so an
+		// alternate-case map key cannot retain the obsolete Responses negotiation value.
 		delete(headers, key)
 		for _, value := range values {
 			parts := strings.Split(value, ",")

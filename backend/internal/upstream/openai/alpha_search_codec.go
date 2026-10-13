@@ -8,6 +8,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// A PAT search fallback sends the Alpha Search command description as a
+// Responses user message with a hosted web_search tool. Each embedded JSON
+// section has its own byte cap, while supported search settings also populate
+// the tool declaration.
+//
+// Responses SSE can provide text deltas or a completed response with full
+// output. Deltas take precedence whenever they produce nonblank text, and
+// citations are collected from the same stream with URLs deduplicated across
+// events. A completed response supplies both text and citations when deltas are
+// absent, keeping the fallback usable for upstreams that send terminal output
+// alone. Standalone Alpha Search separately removes Responses-only top-level
+// fields.
+
+// openAIAlphaSearchUnsupportedBodyFields names Responses-only fields removed before
+// standalone SearchRequest forwarding, where these parameters are unsupported.
 var openAIAlphaSearchUnsupportedBodyFields = [...]string{
 	// Codex alpha/search uses SearchRequest. Responses fields forwarded by clients
 	// or proxies, such as prompt_cache_key, cause Unknown parameter errors here.
@@ -16,6 +31,10 @@ var openAIAlphaSearchUnsupportedBodyFields = [...]string{
 	"store",
 }
 
+// BuildOpenAIAlphaSearchResponsesWebSearchBody creates streaming,
+// store-disabled hosted-search JSON for model. A blank model returns an error;
+// optional search-context and object-shaped user-location settings are copied
+// to the tool when usable.
 func BuildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string) ([]byte, error) {
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("model is required")
@@ -26,10 +45,14 @@ func BuildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string
 	}
 	if userLocation := gjson.GetBytes(alphaBody, "settings.user_location"); userLocation.IsObject() {
 		var loc map[string]any
+		// Ignore unusable optional location data so hosted-search conversion can
+		// still carry commands and other settings from an otherwise usable request.
 		if err := json.Unmarshal([]byte(userLocation.Raw), &loc); err == nil && len(loc) > 0 {
 			tool["user_location"] = loc
 		}
 	}
+	// Hosted search requires a Responses message and web_search declaration;
+	// carry supported settings into that tool while the command text describes the request.
 	payload := map[string]any{
 		"model":  model,
 		"stream": true,
@@ -50,6 +73,10 @@ func BuildOpenAIAlphaSearchResponsesWebSearchBody(alphaBody []byte, model string
 	return json.Marshal(payload)
 }
 
+// OpenAIAlphaSearchResponsesWebSearchPrompt describes the standalone commands
+// for the hosted-search model. Commands, settings, and recent input are
+// appended as raw JSON text with separate byte caps to bound each part of the
+// prompt.
 func OpenAIAlphaSearchResponsesWebSearchPrompt(alphaBody []byte) string {
 	var b strings.Builder
 	_, _ = b.WriteString("Execute this Codex standalone web.run request for another model.\n")
@@ -73,25 +100,39 @@ func OpenAIAlphaSearchResponsesWebSearchPrompt(alphaBody []byte) string {
 	return b.String()
 }
 
+// TruncateOpenAIAlphaSearchPromptJSON trims and bounds an embedded prompt
+// section by bytes. Nonpositive limits disable truncation; a truncated value
+// gains a textual suffix and may end inside a multibyte character or JSON
+// token.
 func TruncateOpenAIAlphaSearchPromptJSON(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if limit <= 0 || len(value) <= limit {
 		return value
 	}
+	// The cap bounds prompt bytes, while the suffix signals that the embedded
+	// JSON section is partial and should be treated as descriptive input.
 	return value[:limit] + "\n...<truncated>"
 }
 
+// SanitizeOpenAIAlphaSearchBody removes unsupported top-level Responses fields
+// from an Alpha Search object. Empty, malformed, null, and already-compatible
+// inputs return their existing bytes; changed objects are encoded again and may
+// change formatting.
 func SanitizeOpenAIAlphaSearchBody(body []byte) ([]byte, error) {
 	if len(body) == 0 {
 		return body, nil
 	}
 	var obj map[string]json.RawMessage
+	// Sanitization is best effort: preserve unparsed input for the endpoint to
+	// validate rather than rejecting it while removing optional compatibility fields.
 	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
 		return body, nil
 	}
 	changed := false
 	for _, field := range openAIAlphaSearchUnsupportedBodyFields {
 		if _, ok := obj[field]; ok {
+			// Remove only known Responses parameters; remaining RawMessage values keep
+			// their JSON payloads for the standalone SearchRequest endpoint to validate.
 			delete(obj, field)
 			changed = true
 		}
@@ -106,6 +147,10 @@ func SanitizeOpenAIAlphaSearchBody(body []byte) ([]byte, error) {
 	return out, nil
 }
 
+// OpenAIAlphaSearchResponseFromResponsesSSE returns Alpha Search JSON built
+// from accumulated Responses text and URL citations. The output field is
+// present even when empty, and results is omitted when no citation is
+// collected.
 func OpenAIAlphaSearchResponseFromResponsesSSE(body []byte) ([]byte, error) {
 	output, results := ParseOpenAIResponsesSSEForAlphaSearch(body)
 	resp := map[string]any{
@@ -117,6 +162,16 @@ func OpenAIAlphaSearchResponseFromResponsesSSE(body []byte) ([]byte, error) {
 	return json.Marshal(resp)
 }
 
+// ParseOpenAIResponsesSSEForAlphaSearch returns streamed text and deduplicated
+// URL citation results. It ignores empty blocks, DONE markers, and malformed
+// event JSON so usable events can still contribute to a fallback response. CRLF
+// line endings are normalized before SSE blocks are separated.
+//
+// Nonempty output_text deltas form the primary text. Only when their combined
+// text is blank does the last completed response supply full message text and
+// additional citations. Citation collection shares one URL set across those
+// phases, preventing a terminal replay of an already observed citation from
+// creating another result identifier.
 func ParseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 	text := strings.ReplaceAll(string(body), "\r\n", "\n")
 	var output strings.Builder
@@ -130,6 +185,8 @@ func ParseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 			continue
 		}
 		var event map[string]any
+		// Skip a malformed event while retaining text and citations already read;
+		// one unusable block should not discard other usable search results.
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
@@ -143,6 +200,8 @@ func ParseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 	}
 
 	out := output.String()
+	// Terminal-only upstreams can omit text deltas. Read full output in that
+	// case, and share the URL set so repeated citations remain one result.
 	if strings.TrimSpace(out) == "" && completedResponse != nil {
 		out = ExtractOpenAIResponsesCompletedText(completedResponse)
 		CollectOpenAIAlphaSearchURLCitations(completedResponse, &results, seenURLs)
@@ -150,6 +209,9 @@ func ParseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
 	return out, results
 }
 
+// OpenAIAlphaSearchSSEData joins the data lines of one SSE block. It ignores
+// other line types, trims individual data prefixes and surrounding whitespace,
+// and returns empty text for blocks containing no data.
 func OpenAIAlphaSearchSSEData(block string) string {
 	var lines []string
 	for line := range strings.SplitSeq(block, "\n") {
@@ -162,6 +224,10 @@ func OpenAIAlphaSearchSSEData(block string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// ExtractOpenAIResponsesCompletedText concatenates output_text content from
+// completed response messages. Unsupported object shapes and non-message output
+// items contribute no text, letting terminal fallback tolerate mixed tool and
+// message output.
 func ExtractOpenAIResponsesCompletedText(response any) string {
 	resp, ok := response.(map[string]any)
 	if !ok {
@@ -190,6 +256,16 @@ func ExtractOpenAIResponsesCompletedText(response any) string {
 	return b.String()
 }
 
+// CollectOpenAIAlphaSearchURLCitations appends text_result entries for URL
+// citations nested in value. Callers provide a writable results slice pointer
+// and initialized seen map shared across stream events. Blank URLs are skipped
+// and URLs are trimmed before deduplication.
+//
+// Each first-seen URL receives an identifier based on the current result count,
+// with a trimmed title when supplied. Map traversal order follows Go iteration
+// order, while slice traversal follows input order; callers should match
+// entries by URL rather than assume a stable ordering for citations discovered
+// in different map children.
 func CollectOpenAIAlphaSearchURLCitations(value any, results *[]any, seen map[string]struct{}) {
 	switch typed := value.(type) {
 	case map[string]any:

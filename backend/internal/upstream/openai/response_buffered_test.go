@@ -13,6 +13,9 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestOpenAICompatTerminalResponseSynthesizesBareError supplies a bare
+// Responses error without a nested response object. It checks synthesis of
+// failed status, code, and message for buffered compatibility output.
 func TestOpenAICompatTerminalResponseSynthesizesBareError(t *testing.T) {
 	t.Parallel()
 
@@ -25,18 +28,22 @@ func TestOpenAICompatTerminalResponseSynthesizesBareError(t *testing.T) {
 	require.Equal(t, "provider failed", response.Error.Message)
 }
 
+// TestReadCompatBufferedTerminalFrameEndings combines text and tool deltas with
+// several final-frame shapes terminated by blank lines or EOF. It verifies
+// usage precedence, output accumulation, tool restoration before observation,
+// and the distinct malformed-frame logging behavior.
 func TestReadCompatBufferedTerminalFrameEndings(t *testing.T) {
 	prefix := "data: " + `{"type":"response.output_text.delta","delta":"hello","usage":{"input_tokens":2,"output_tokens":1}}` + "\n\n" +
 		"data: " + `{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"tool_alias"}}` + "\n\n" +
 		"data: " + `{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{}"}` + "\n\n"
 	tests := []struct {
-		name         string
-		frame        string
-		eventType    string
-		wantResponse *protocolopenai.ResponsesResponse
-		wantUsage    protocolopenai.ForwardUsage
-		wantText     string
-		malformed    bool
+		name         string                            // buffered frame case description
+		frame        string                            // final SSE frame fixture
+		eventType    string                            // expected observed event type
+		wantResponse *protocolopenai.ResponsesResponse // expected terminal response object
+		wantUsage    protocolopenai.ForwardUsage       // expected final token usage
+		wantText     string                            // expected accumulated output text
+		malformed    bool                              // malformed final frame flag
 	}{
 		{
 			name: "nested usage takes precedence",
@@ -105,8 +112,8 @@ func TestReadCompatBufferedTerminalFrameEndings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, ending := range []struct {
-				name   string
-				suffix string
+				name   string // buffered frame case description
+				suffix string // final frame ending bytes
 			}{
 				{name: "blank line", suffix: "\n\n"},
 				{name: "EOF"},

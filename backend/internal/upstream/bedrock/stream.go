@@ -76,8 +76,8 @@ type StreamResult struct {
 // cancellation-shaped read errors return collected counters as disconnect.
 // Other read errors propagate while output is connected; after a client write
 // failure, any read error ends usage draining with a nil error. A positive idle
-// interval checks the last
-// complete chunk clock and can invoke OnTimeout. Returning stops channel sends
+// interval checks the last complete chunk clock and can invoke OnTimeout.
+// Returning stops channel sends
 // without joining the worker, and first-token timing follows the first
 // extracted chunk rather than semantic content.
 func StreamResponse(
@@ -110,6 +110,7 @@ func StreamResponse(
 	// parsing sees only extracted chunk content after frame checksum checks.
 	decoder := NewBedrockEventStreamDecoder(resp.Body)
 
+	// decodeEvent carries a decoded chunk or failure to the output loop.
 	type decodeEvent struct {
 		payload []byte // decoded binary chunk payload
 		err     error  // binary decoding failure result
@@ -292,6 +293,8 @@ func TransformBedrockInvocationMetrics(data []byte) []byte {
 		return data
 	}
 
+	// Insert present counters independently. Ignored patch errors can leave one
+	// successfully inserted usage field even when the other modification fails.
 	inputTokens := metrics.Get("inputTokenCount")
 	outputTokens := metrics.Get("outputTokenCount")
 	if inputTokens.Exists() {

@@ -2,20 +2,24 @@ package openai
 
 import "testing"
 
-// The plugin derives both headers from clientInfo.name="Claude Code".
+// These fixtures model the paired headers derived from the plugin's Claude Code
+// client name, so admission cases exercise one internally consistent signature.
 const (
 	testClaudeCodeOriginator = "Claude Code"
 	testClaudeCodeUserAgent  = "Claude Code/0.5.0 (Macos 15.5; arm64) iTerm2.app (Claude Code; 1.0.4)"
 )
 
+// TestIsAllowedClientMatch varies both headers for the Claude Code preset. It
+// protects case/whitespace normalization, exact originator matching, and the
+// requirement for the User-Agent substring.
 func TestIsAllowedClientMatch(t *testing.T) {
 	entry := AllowedClientEntry{Originator: "Claude Code", UAContains: []string{"Claude Code/"}}
 
 	tests := []struct {
-		name       string
-		ua         string
-		originator string
-		want       bool
+		name       string // admission case description
+		ua         string // supplied User-Agent header
+		originator string // supplied client originator
+		want       bool   // expected admission result
 	}{
 		{name: "真实签名命中", ua: testClaudeCodeUserAgent, originator: testClaudeCodeOriginator, want: true},
 		{name: "大小写不敏感", ua: "claude code/0.5.0 (macos)", originator: "claude code", want: true},
@@ -35,6 +39,9 @@ func TestIsAllowedClientMatch(t *testing.T) {
 	}
 }
 
+// TestIsAllowedClientMatch_EmptyOriginatorEntryNeverMatches supplies matching
+// User-Agent text with a preset missing its originator. The incomplete preset
+// must reject even an empty caller originator.
 func TestIsAllowedClientMatch_EmptyOriginatorEntryNeverMatches(t *testing.T) {
 	// An absent originator must not turn the preset into a permissive match.
 	entry := AllowedClientEntry{Originator: "", UAContains: []string{"Claude Code/"}}
@@ -43,6 +50,9 @@ func TestIsAllowedClientMatch_EmptyOriginatorEntryNeverMatches(t *testing.T) {
 	}
 }
 
+// TestIsAllowedClientMatch_EmptyUAContainsNeverMatches supplies a matching
+// originator with no configured User-Agent requirements. The incomplete preset
+// must reject the request instead of granting originator-only admission.
 func TestIsAllowedClientMatch_EmptyUAContainsNeverMatches(t *testing.T) {
 	// Missing UA requirements must not allow originator-only matching.
 	entry := AllowedClientEntry{Originator: "Claude Code", UAContains: nil}
@@ -51,6 +61,9 @@ func TestIsAllowedClientMatch_EmptyUAContainsNeverMatches(t *testing.T) {
 	}
 }
 
+// TestIsAllowedClientMatch_WhitespaceUAMarkerNeverMatches configures a marker
+// containing only spaces alongside matching caller headers. Normalization must
+// leave the preset invalid and the request rejected.
 func TestIsAllowedClientMatch_WhitespaceUAMarkerNeverMatches(t *testing.T) {
 	// Whitespace markers are invalid after normalization and must fail closed.
 	entry := AllowedClientEntry{Originator: "Claude Code", UAContains: []string{"   "}}
@@ -59,6 +72,9 @@ func TestIsAllowedClientMatch_WhitespaceUAMarkerNeverMatches(t *testing.T) {
 	}
 }
 
+// TestIsAllowedClientMatch_MixedEmptyUAMarkerNeverMatches combines an empty
+// marker with a matching nonempty marker. Every configured requirement matters,
+// so the empty marker still invalidates the preset.
 func TestIsAllowedClientMatch_MixedEmptyUAMarkerNeverMatches(t *testing.T) {
 	// One valid marker does not make a preset with a blank marker valid.
 	entry := AllowedClientEntry{Originator: "Claude Code", UAContains: []string{"", "Claude Code/"}}
@@ -67,13 +83,16 @@ func TestIsAllowedClientMatch_MixedEmptyUAMarkerNeverMatches(t *testing.T) {
 	}
 }
 
+// TestMatchAllowedClients mixes known, unknown, empty, and normalized preset
+// IDs. It protects rejection of absent presets and acceptance when any known
+// preset matches both caller headers.
 func TestMatchAllowedClients(t *testing.T) {
 	tests := []struct {
-		name       string
-		ua         string
-		originator string
-		clientIDs  []string
-		want       bool
+		name       string   // admission case description
+		ua         string   // supplied User-Agent header
+		originator string   // supplied client originator
+		clientIDs  []string // configured client preset IDs
+		want       bool     // expected admission result
 	}{
 		{name: "claude_code 预设命中真实签名", ua: testClaudeCodeUserAgent, originator: testClaudeCodeOriginator, clientIDs: []string{AllowedClientClaudeCode}, want: true},
 		{name: "claude_code 预设 + 伪造 originator 不命中", ua: testClaudeCodeUserAgent, originator: "my_client", clientIDs: []string{AllowedClientClaudeCode}, want: false},

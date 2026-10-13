@@ -17,6 +17,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// ChatGPT image assets can arrive as file-service or sediment pointers, direct
+// download URLs, or inline Base64 text. Collection merges these representations
+// by a preferred pointer/URL key or a short encoded prefix, filling missing
+// metadata while retaining existing values.
+//
+// Pointer resolution prefers usable inline data, then a direct URL, then an
+// authenticated pointer lookup. Sediment conversation-not-found failures can
+// retry while transport failures retry for either pointer form. Download
+// authentication is copied for the ChatGPT URL prefix and other targets receive
+// a User-Agent; target and redirect policy belongs to the configured
+// client/caller. Download reading is truncated to its byte cap, and inline
+// decoding has no size or image-format validation here. Error records retain
+// bounded bytes and request metadata, while their display message uses query
+// sanitization.
+
+// Image resource constants select ChatGPT lookup endpoints, browser identity, and
+// bounded error/download capture used when resolving pointer or direct image representations.
 const (
 	ImageErrorBodyReadLimit     int64 = 512 << 10
 	OpenAIChatGPTStartURL             = "https://chatgpt.com/"
@@ -25,23 +42,36 @@ const (
 	OpenAIImageMaxDownloadBytes       = 20 << 20 // 20 MiB per image download
 )
 
+// ImagePointerInfo holds one asset representation and optional image prompt
+// metadata.
 type ImagePointerInfo struct {
-	Pointer     string
-	DownloadURL string
-	B64JSON     string
-	MimeType    string
-	Prompt      string
+	// Pointer, DownloadURL, and B64JSON are alternative representations.
+	// ResolveOpenAIImageBytes prefers normalized B64JSON, then DownloadURL, then
+	// Pointer lookup, while merge fills only missing representation and metadata fields.
+	Pointer     string // ChatGPT asset pointer spelling
+	DownloadURL string // direct asset download URL
+	B64JSON     string // inline Base64 asset representation
+	MimeType    string // reported image media type
+	Prompt      string // reported or inherited image prompt
 }
 
+// ImageStatusError retains status, captured response evidence, and sanitized
+// display text.
 type ImageStatusError struct {
-	StatusCode      int
-	Message         string
-	ResponseBody    []byte
-	ResponseHeaders http.Header
-	RequestID       string
-	URL             string
+	StatusCode      int         // captured backend HTTP status
+	Message         string      // sanitized backend display message
+	ResponseBody    []byte      // bounded backend response bytes
+	ResponseHeaders http.Header // cloned backend response headers
+	RequestID       string      // captured upstream request identifier
+	// URL retains the raw request spelling and can contain signed query values;
+	// callers redact it before expanding diagnostic or serialized error fields.
+	URL string
 }
 
+// CollectOpenAIImagePointers collects raw pointer spellings and decoded inline
+// assets, then merges their metadata. Prompt lookup prefers message metadata,
+// then metadata, then revised_prompt; empty input returns nil and discovered
+// assets can retain shared string values.
 func CollectOpenAIImagePointers(body []byte) []ImagePointerInfo {
 	if len(body) == 0 {
 		return nil
@@ -65,6 +95,10 @@ func CollectOpenAIImagePointers(body []byte) []ImagePointerInfo {
 	return MergeOpenAIImagePointerInfos(out, CollectOpenAIImageInlineAssets(body, prompt))
 }
 
+// OpenAIImagePointerMatches finds literal file-service and sediment pointer
+// prefixes followed by ASCII ID characters. Prefixes are searched in that order
+// and exact duplicates are removed; this textual scan does not require valid
+// JSON.
 func OpenAIImagePointerMatches(body []byte) []string {
 	raw := string(body)
 	matches := make([]string, 0, 4)
@@ -94,6 +128,17 @@ func OpenAIImagePointerMatches(body []byte) []string {
 	return DedupeStrings(matches)
 }
 
+// MergeOpenAIImagePointerInfos combines next assets with existing values using
+// representation identity keys. Empty next returns the existing slice directly.
+// Existing entries, including duplicates and keyless values, are retained,
+// while keyless next entries are skipped.
+//
+// Matching next entries fill missing metadata in the first output slot with
+// that key, using the latest remembered existing value for merge. New
+// identities append in discovery order. Base64 identity uses only a short text
+// prefix, so this merge is an asset heuristic rather than full-content
+// equality; callers needing distinct encoded images account for possible prefix
+// matches.
 func MergeOpenAIImagePointerInfos(existing []ImagePointerInfo, next []ImagePointerInfo) []ImagePointerInfo {
 	if len(next) == 0 {
 		return existing
@@ -130,6 +175,9 @@ func MergeOpenAIImagePointerInfos(existing []ImagePointerInfo, next []ImagePoint
 	return out
 }
 
+// identityKey prefers a trimmed pointer, then download URL, then the first
+// sixty-four bytes of trimmed Base64 text. Missing representations return empty
+// text, and the short encoded key can match different full image payloads.
 func (i ImagePointerInfo) identityKey() string {
 	switch {
 	case strings.TrimSpace(i.Pointer) != "":
@@ -138,6 +186,8 @@ func (i ImagePointerInfo) identityKey() string {
 		return "download:" + strings.TrimSpace(i.DownloadURL)
 	case strings.TrimSpace(i.B64JSON) != "":
 		b64 := strings.TrimSpace(i.B64JSON)
+		// The identity shortcut uses a small encoded prefix, bounding key storage
+		// while accepting that images with matching initial Base64 text can share this heuristic key.
 		if len(b64) > 64 {
 			b64 = b64[:64]
 		}
@@ -147,6 +197,9 @@ func (i ImagePointerInfo) identityKey() string {
 	}
 }
 
+// MergeOpenAIImagePointerInfo fills blank existing representation and metadata
+// strings from next. Nonblank existing fields keep precedence and the returned
+// value is a copied struct, with immutable strings supplying its contents.
 func MergeOpenAIImagePointerInfo(existing, next ImagePointerInfo) ImagePointerInfo {
 	merged := existing
 	if strings.TrimSpace(merged.Pointer) == "" {
@@ -167,6 +220,10 @@ func MergeOpenAIImagePointerInfo(existing, next ImagePointerInfo) ImagePointerIn
 	return merged
 }
 
+// ResolveOpenAIImageBytes prefers a usable normalized inline value, then direct
+// URL, then pointer lookup and download. Client, context, and permitted request
+// headers are caller-owned; inline decode has no image-size or format check and
+// an absent representation returns an error.
 func ResolveOpenAIImageBytes(
 	ctx context.Context,
 	client *req.Client,
@@ -191,6 +248,11 @@ func ResolveOpenAIImageBytes(
 	return DownloadOpenAIImageBytes(ctx, client, headers, downloadURL, errorBodyReadLimit)
 }
 
+// NormalizeOpenAIImageBase64 trims text, removes a data-URI prefix when usable,
+// and validates its rebuilt standard-Base64 spelling. It strips supplied
+// padding but computes replacement padding from the preceding length, so a
+// padded value requiring padding can be rejected; failed validation returns
+// empty text.
 func NormalizeOpenAIImageBase64(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -202,6 +264,8 @@ func NormalizeOpenAIImageBase64(raw string) string {
 		}
 	}
 	raw = strings.TrimSpace(raw)
+	// Replacement padding uses raw length before existing equals signs are
+	// removed, so a supplied padded value can fail the subsequent validation.
 	raw = strings.TrimRight(raw, "=") + strings.Repeat("=", (4-len(raw)%4)%4)
 	if raw == "" {
 		return ""
@@ -212,6 +276,10 @@ func NormalizeOpenAIImageBase64(raw string) string {
 	return raw
 }
 
+// CollectOpenAIImageInlineAssets decodes valid JSON and recursively gathers
+// plausible asset objects with prompt inheritance. Invalid or empty input
+// returns nil, while asset recognition remains a representation heuristic
+// rather than image-byte or download-policy validation.
 func CollectOpenAIImageInlineAssets(body []byte, fallbackPrompt string) []ImagePointerInfo {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return nil
@@ -225,6 +293,16 @@ func CollectOpenAIImageInlineAssets(body []byte, fallbackPrompt string) []ImageP
 	return out
 }
 
+// WalkOpenAIImageInlineAssets appends plausible asset objects found in maps and
+// arrays. The output pointer is required when an asset can be appended, and
+// callers own the accumulation slice. Each map prefers revised_prompt,
+// image_gen_title, then prompt over its inherited prompt.
+//
+// Known pointer prefixes, URL hints, or usable normalized Base64 qualify an
+// object before its children are visited. A local prompt flows into nested
+// maps, while array children keep their parent prompt. Map traversal order is
+// not stable, and collected strings retain their supplied representations for
+// later merge and resolution rather than becoming validated download authority.
 func WalkOpenAIImageInlineAssets(node any, prompt string, out *[]ImagePointerInfo) {
 	switch value := node.(type) {
 	case map[string]any:
@@ -259,6 +337,10 @@ func WalkOpenAIImageInlineAssets(node any, prompt string, out *[]ImagePointerInf
 	}
 }
 
+// FirstNonEmptyString returns the first nonblank string after trimming
+// surrounding whitespace. Nonstring values and blank strings are skipped, and
+// an absent usable value returns empty text for caller-specific default
+// selection.
 func FirstNonEmptyString(values ...any) string {
 	for _, value := range values {
 		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
@@ -268,6 +350,10 @@ func FirstNonEmptyString(values ...any) string {
 	return ""
 }
 
+// IsLikelyOpenAIImageDownloadURL checks data-image prefixes or HTTP URL text
+// with download/image-extension hints. Blank or unrelated strings return false;
+// the heuristic does not parse hosts, validate image content, or authorize
+// network targets.
 func IsLikelyOpenAIImageDownloadURL(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -287,6 +373,17 @@ func IsLikelyOpenAIImageDownloadURL(raw string) bool {
 		strings.Contains(lower, ".webp")
 }
 
+// FetchOpenAIImageDownloadURL requests the URL for a file-service or sediment
+// pointer with supplied authentication headers. The caller provides nonnil
+// context, configured client, validated pointer, and conversation identity
+// needed by sediment. Unsupported pointer forms return before sending.
+//
+// Transport errors retry for either form, while HTTP status errors retry only
+// for sediment conversation-not-found evidence. The loop allows eight exchanges
+// and waits a fixed 750 milliseconds between eligible failures, with
+// cancellation ending the wait. A nonblank successful download_url returns
+// immediately; status errors capture bounded response evidence and an exhausted
+// retry returns the last available failure.
 func FetchOpenAIImageDownloadURL(
 	ctx context.Context,
 	client *req.Client,
@@ -310,9 +407,11 @@ func FetchOpenAIImageDownloadURL(
 	}
 
 	var lastErr error
+	// Retry transport failures for either pointer form and transient conversation
+	// lookup failures for sediment, giving attachment availability several bounded lookup attempts.
 	for attempt := range 8 {
 		var result struct {
-			DownloadURL string `json:"download_url"`
+			DownloadURL string `json:"download_url"` // direct asset download URL
 		}
 		resp, err := client.R().
 			SetContext(ctx).
@@ -333,6 +432,8 @@ func FetchOpenAIImageDownloadURL(
 		if attempt == 7 {
 			break
 		}
+		// Wait between eligible lookup failures with a cancellable timer; stop it
+		// on cancellation so pending delay work does not outlive the caller lookup operation.
 		timer := time.NewTimer(750 * time.Millisecond)
 		select {
 		case <-ctx.Done():
@@ -349,6 +450,17 @@ func FetchOpenAIImageDownloadURL(
 	return "", lastErr
 }
 
+// DownloadOpenAIImageBytes reads a caller-approved asset URL through the
+// configured req client and closes the response. ChatGPT-prefix URLs receive
+// copied supplied headers with image Accept and no Content-Type, while other
+// URLs receive a selected User-Agent. Client redirect and target checks remain
+// caller responsibilities.
+//
+// Automatic response reading is disabled so successful body capture uses the
+// image byte cap. LimitReader returns a truncated prefix when the body exceeds
+// that cap; this routine does not reject oversize or sniff image format.
+// Non-success responses are converted to ImageStatusError with the configured
+// bounded error read, and their original transport body is released by cleanup.
 func DownloadOpenAIImageBytes(ctx context.Context, client *req.Client, headers http.Header, downloadURL string, errorBodyReadLimit int64) ([]byte, error) {
 	request := client.R().
 		SetContext(ctx).
@@ -379,9 +491,15 @@ func DownloadOpenAIImageBytes(ctx context.Context, client *req.Client, headers h
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, NewOpenAIImageStatusError(resp, "download image bytes failed", errorBodyReadLimit)
 	}
+	// The read cap bounds returned bytes by truncation; it does not inspect an
+	// extra byte or prove the upstream image fit within the complete-image budget.
 	return io.ReadAll(io.LimitReader(resp.Body, OpenAIImageMaxDownloadBytes))
 }
 
+// Error returns the prepared image-backend display message or a status/default
+// label. Nil errors use the fixed default; formatting omits the retained
+// response body and URL fields, which remain available for explicit
+// diagnostics.
 func (e *ImageStatusError) Error() string {
 	if e == nil {
 		return "openai image backend request failed"
@@ -395,6 +513,10 @@ func (e *ImageStatusError) Error() string {
 	return "openai image backend request failed"
 }
 
+// NewOpenAIImageStatusError captures available status, cloned headers, request
+// URL, and bounded response bytes, closing the response body. Nonpositive read
+// limits select ImageErrorBodyReadLimit; nil responses return a plain fallback
+// error and display messages sanitize upstream query values.
 func NewOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyReadLimit int64) error {
 	if resp == nil {
 		if strings.TrimSpace(fallback) == "" {
@@ -419,6 +541,8 @@ func NewOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyRea
 			if errorBodyReadLimit <= 0 {
 				errorBodyReadLimit = ImageErrorBodyReadLimit
 			}
+			// Capture the available bounded error prefix and close transport ownership;
+			// a read failure keeps its partial bytes for diagnostics rather than replacing status evidence.
 			body, _ = io.ReadAll(io.LimitReader(resp.Body, errorBodyReadLimit))
 			_ = resp.Body.Close()
 		}
@@ -443,6 +567,10 @@ func NewOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyRea
 	}
 }
 
+// IsOpenAIImageTransientConversationNotFoundError recognizes
+// conversation-not-found text in a direct nonnil ImageStatusError with status
+// 404. Wrapped or other error types return false; either prepared message or
+// extracted captured-body message can supply the marker.
 func IsOpenAIImageTransientConversationNotFoundError(err error) bool {
 	statusErr, ok := err.(*ImageStatusError)
 	if !ok || statusErr == nil || statusErr.StatusCode != http.StatusNotFound {
@@ -462,6 +590,9 @@ func IsOpenAIImageTransientConversationNotFoundError(err error) bool {
 	return strings.Contains(bodyMsg, "conversation") && strings.Contains(bodyMsg, "not found")
 }
 
+// CloneHTTPHeader copies the header map and each value slice into independently
+// mutable storage. Nil input returns a writable empty map, and immutable header
+// strings remain the copied values.
 func CloneHTTPHeader(src http.Header) http.Header {
 	dst := make(http.Header, len(src))
 	for key, values := range src {
@@ -472,6 +603,9 @@ func CloneHTTPHeader(src http.Header) http.Header {
 	return dst
 }
 
+// HeaderToMap returns the first value of each nonempty header entry. Empty
+// headers produce nil and additional values are omitted, matching the
+// single-value map accepted by req request header configuration.
 func HeaderToMap(header http.Header) map[string]string {
 	if len(header) == 0 {
 		return nil
@@ -486,6 +620,9 @@ func HeaderToMap(header http.Header) map[string]string {
 	return result
 }
 
+// DedupeStrings returns first occurrences in supplied order using exact string
+// equality. Empty input returns nil, a blank string is retained once, and case
+// differences remain separate values.
 func DedupeStrings(values []string) []string {
 	if len(values) == 0 {
 		return nil

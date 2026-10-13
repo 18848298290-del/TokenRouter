@@ -15,38 +15,81 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Nonstreaming Responses output can arrive as JSON or buffered SSE from a
+// compatible upstream. Explicit SSE Content-Type applies to every provider;
+// OAuth also checks physical framing before JSON extraction, and other
+// providers use framing after JSON usage parsing fails.
+//
+// A final SSE response can reconstruct missing output from earlier deltas
+// before model and tool identities are restored. Terminal error paths run
+// compact recovery and provider failure policy before output commitment. When
+// no extractable final JSON exists, the reader can retain SSE bytes and its
+// parsed usage instead of creating a successful terminal object. Usage and
+// media/search counts come from upstream observations, while client-visible
+// model and tools are restored in a defined order before ordinary or
+// compact-bridge output is written.
+
+// NonStreamingResult reports visible output and upstream usage/media
+// observations after buffered response handling.
 type NonStreamingResult struct {
-	Served           bool
-	Usage            *wire.ForwardUsage
-	ResponseID       string
-	ImageCount       int
-	ImageOutputSizes []string
-	SearchCount      int
-}
-type NonStreamOptions struct {
-	OAuthProvider, GrokCompact, PreserveContentType          bool
-	ReadBody                                                 func(io.Reader) ([]byte, error)
-	ObserveTier                                              func([]byte)
-	ObserveSSE                                               func(string)
-	ConvertCompact                                           func([]byte) ([]byte, error)
-	RestoreClientTools, RestoreOpenAITools, RestoreNamespace func([]byte) ([]byte, error)
-	RestoreToolNames, CorrectToolCalls                       func([]byte) []byte
-	ResponseHeaders                                          func(http.Header, http.Header)
-	WriteCompactBridge                                       func(int, []byte) bool
-	CountJSONSearch                                          func([]byte) int
-	CountSSESearch                                           func(string) int
-	ExtractError                                             func([]byte) string
-	CompactFallback                                          func([]byte, string) error
-	TerminalFailover                                         func(*http.Response, string, []byte, string, string) error
-	ProtocolError                                            func(*http.Response, string) error
-	FailedTerminal                                           func(*http.Response, string, []byte, string) error
-	SupplementCompaction                                     func([]byte, string) []byte
+	Served           bool               // observed visible response output
+	Usage            *wire.ForwardUsage // parsed upstream token observations
+	ResponseID       string             // extracted upstream response identifier
+	ImageCount       int                // observed completed image count
+	ImageOutputSizes []string           // observed produced image dimensions
+	SearchCount      int                // observed hosted search count
 }
 
+// NonStreamOptions supplies buffered response conversion, identity restoration,
+// and failure callbacks.
+type NonStreamOptions struct {
+	// OAuthProvider enables pre-JSON SSE framing detection, GrokCompact selects
+	// vendor compact conversion, and PreserveContentType retains a nonempty
+	// upstream JSON media type. These prepared flags control distinct buffered
+	// response decisions within the same attempt.
+	OAuthProvider, GrokCompact, PreserveContentType bool
+	ReadBody                                        func(io.Reader) ([]byte, error) // required complete body reader
+	ObserveTier                                     func([]byte)                    // required raw processing-tier observer
+	ObserveSSE                                      func(string)                    // required buffered stream observer
+	ConvertCompact                                  func([]byte) ([]byte, error)    // required Grok compact converter
+	// RestoreClientTools restores Grok client tools, RestoreOpenAITools restores
+	// OpenAI client tools, and RestoreNamespace restores namespace identity.
+	// They run in that order on one response before final tool-name restoration.
+	RestoreClientTools, RestoreOpenAITools, RestoreNamespace func([]byte) ([]byte, error)
+	// RestoreToolNames restores reserved-tool aliases in outgoing data, and
+	// CorrectToolCalls corrects synthesized final SSE tool calls. Correction
+	// precedes schema and name restoration so later callbacks see its result.
+	RestoreToolNames, CorrectToolCalls func([]byte) []byte
+	ResponseHeaders                    func(http.Header, http.Header)                             // required downstream header copier
+	WriteCompactBridge                 func(int, []byte) bool                                     // required unary-to-SSE output bridge
+	CountJSONSearch                    func([]byte) int                                           // required JSON search counter
+	CountSSESearch                     func(string) int                                           // required SSE search counter
+	ExtractError                       func([]byte) string                                        // required terminal message extractor
+	CompactFallback                    func([]byte, string) error                                 // required compact recovery selector
+	TerminalFailover                   func(*http.Response, string, []byte, string, string) error // required bare-error failure policy
+	ProtocolError                      func(*http.Response, string) error                         // required protocol failure translator
+	FailedTerminal                     func(*http.Response, string, []byte, string) error         // required failed-response policy
+	SupplementCompaction               func([]byte, string) []byte                                // required compaction output supplement
+}
+
+// IsEventStreamResponse reports whether Content-Type contains the SSE
+// media-type marker.
 func IsEventStreamResponse(header http.Header) bool {
 	return strings.Contains(strings.ToLower(header.Get("Content-Type")), "text/event-stream")
 }
 
+// ReadNonStreamingResponse reads a complete response and emits JSON or
+// dispatches buffered SSE conversion. The caller supplies response/body
+// ownership, output context, and required option callbacks, and closes the
+// acquired response after return. Explicit SSE content type is recognized for
+// every provider.
+//
+// OAuth framing can select SSE before JSON usage extraction; other providers
+// use framing when that extraction fails. JSON usage is captured before model
+// and client tool restoration. RestoreClientTools, RestoreOpenAITools,
+// RestoreNamespace, and RestoreToolNames run in that order before output.
+// Dispatch to ReadSSEAsJSON can observe the same complete SSE body again, so
+// observation callbacks tolerate repeated inspection.
 func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options NonStreamOptions, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	body, err := options.ReadBody(resp.Body)
 	if err != nil {
@@ -87,7 +130,8 @@ func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstr
 	}
 	usage := &usageValue
 
-	// Replace model in response if needed
+	// Return the requested model identity after capturing upstream usage, so
+	// downstream responses name the client model while billing retains the observed upstream values.
 	if originalModel != mappedModel {
 		body = wire.ReplaceModelInResponseBody(body, mappedModel, originalModel)
 	}
@@ -128,6 +172,19 @@ func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstr
 	}, nil
 }
 
+// ReadSSEAsJSON processes buffered SSE and emits extracted final JSON or
+// retained stream bytes. Callers supply the complete body and keep response
+// closure ownership; required option callbacks handle compact recovery,
+// provider failure, identity restoration, and output. Bare terminal errors are
+// classified before conversion.
+//
+// An extracted response with empty output can receive reconstruction from
+// deltas, followed by compaction supplementation and ordered tool/model
+// restoration. Explicit failed terminals without extractable final JSON use
+// failure policy. Other streams without final JSON retain their bytes and
+// parsed usage, with an SSE content type default. Served also considers visible
+// original stream payloads, while image and search counts remain observations
+// from that stream.
 func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options NonStreamOptions, body []byte, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	bodyText := string(body)
 	options.ObserveSSE(bodyText)
@@ -157,6 +214,8 @@ func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputC
 		// gjson Array() returns empty slice for null, missing, or empty arrays.
 		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
 			if outputJSON, reconstructed := bridge.ReconstructResponseOutputFromSSE(bodyText); reconstructed {
+				// Optional reconstruction keeps the terminal response when patching fails,
+				// so usage and other final metadata remain available instead of losing the whole result.
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
 					finalResponse = patched
 				}
@@ -167,7 +226,8 @@ func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputC
 		if originalModel != mappedModel {
 			body = wire.ReplaceModelInResponseBody(body, mappedModel, originalModel)
 		}
-		// Correct tool calls in final response
+		// Correct the extracted final tool payload before restoring client schemas,
+		// namespaces, and reserved names, keeping the downstream identity transformations in their required order.
 		body = options.CorrectToolCalls(body)
 		restoredBody, restoreErr := options.RestoreClientTools(body)
 		if restoreErr != nil {

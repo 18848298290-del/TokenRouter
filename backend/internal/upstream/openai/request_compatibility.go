@@ -13,8 +13,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// SanitizeOpenAICrossModeFailoverReasoning derives a retry body by removing whole encrypted reasoning items.
-// UseNumber retains large JSON integers, and the input bytes are unchanged.
+// OpenAI replay cleanup depends on the destination and storage mode. Cross-mode
+// retry removes an entire reasoning item whenever encrypted_content is present,
+// while API-key store=false replay requires a usable ciphertext string and
+// repairs selected reasoning identifiers and summaries. Visible reasoning
+// content uses a separate cleanup so callers can select the applicable
+// compatibility rule.
+//
+// Most whole-body rewrites decode with UseNumber, and Compact copies accepted
+// fields as raw JSON. Empty Base64 image cleanup uses ordinary encoding/json
+// decoding, so changing that body can also round large numeric values.
+// Decoded-map helpers mutate the supplied request and can share item maps or
+// slice storage with their callers. Raw-body helpers return the supplied bytes
+// on unchanged and failed paths, keeping replacement decisions with the request
+// builder.
+
+// SanitizeOpenAICrossModeFailoverReasoning derives a retry body after crossing
+// OpenAI request modes by removing encrypted reasoning items. Empty bodies,
+// missing input, and unchanged decoded input return the supplied bytes. Decode
+// or rebuild failures return those bytes with an error.
+//
+// UseNumber keeps numeric values available for re-encoding. Cleanup removes the
+// whole reasoning item whenever encrypted_content is present, including empty
+// or null content, because partial removal would retain the provider-bound
+// reasoning item in the retry. Unencrypted reasoning remains available to the
+// next attempt.
 func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, changed bool, err error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -37,8 +60,16 @@ func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, ch
 	return out, true, nil
 }
 
-// DropOpenAIEncryptedReasoningInputItems removes reasoning items carrying encrypted_content
-// and reports whether the request changed. Unencrypted reasoning is retained.
+// DropOpenAIEncryptedReasoningInputItems mutates a request by removing
+// reasoning input items carrying an encrypted_content key. It accepts []any,
+// []map[string]any, or one map item, and deletes input when cleanup empties the
+// accepted representation.
+//
+// Slice filtering reuses the existing backing array, so aliases can observe
+// rewritten positions. Remaining item maps are shared. Callers need exclusive
+// ownership of the decoded request during cleanup; key presence decides removal
+// regardless of ciphertext type or usability, distinguishing cross-mode cleanup
+// from API-key store=false replay.
 func DropOpenAIEncryptedReasoningInputItems(reqBody map[string]any) bool {
 	if len(reqBody) == 0 {
 		return false
@@ -48,6 +79,8 @@ func DropOpenAIEncryptedReasoningInputItems(reqBody map[string]any) bool {
 		return false
 	}
 
+	// Filter within existing slice storage so this decoded-request cleanup is in
+	// place; aliases to the array can observe retained items moving.
 	switch input := inputValue.(type) {
 	case []any:
 		filtered := input[:0]
@@ -98,6 +131,9 @@ func DropOpenAIEncryptedReasoningInputItems(reqBody map[string]any) bool {
 	}
 }
 
+// IsOpenAIEncryptedReasoningInputItem recognizes a map whose trimmed type is
+// reasoning and whose encrypted_content key exists. Null, empty, and non-string
+// values all qualify. Other item shapes return false.
 func IsOpenAIEncryptedReasoningInputItem(item any) bool {
 	inputItem, ok := item.(map[string]any)
 	if !ok {
@@ -111,13 +147,23 @@ func IsOpenAIEncryptedReasoningInputItem(item any) bool {
 	return has
 }
 
+// NormalizeOpenAICompactRequestBody rebuilds a Compact body from the accepted
+// field list and removes parallel_tool_calls when no tools remain. Empty input
+// returns unchanged; patch failures return the supplied body with an error.
+// Callers supply an already validated JSON request.
+//
+// Accepted values are inserted as raw JSON, keeping their numeric and nested
+// representations while request-scoped fields are omitted. The final byte
+// comparison ignores outer whitespace but still detects field ordering or
+// encoding changes. Tool detection includes Lite additional_tools items even
+// though this call uses the ordinary parallel-call cleanup rule.
 func NormalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 	normalized := []byte(`{}`)
-	// Keep the current Codex /compact schema while still dropping request-scoped
-	// fields such as prompt_cache_key, store, and stream.
+	// Copy accepted Compact fields as raw values, keeping large numbers intact
+	// while omitting request-scoped storage, stream, and cache metadata.
 	for _, field := range []string{
 		"model",
 		"input",
@@ -151,7 +197,14 @@ func NormalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	return normalized, true, nil
 }
 
+// NormalizeOpenAIParallelToolCallsWithoutTools removes an existing
+// parallel_tool_calls field when an ordinary request has no declared tools.
+// Responses Lite bypasses this cleanup. Missing fields, top-level tools, or
+// additional_tools declarations return unchanged bytes; deletion errors retain
+// the supplied body.
 func NormalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite bool) ([]byte, bool, error) {
+	// Lite can carry tool declarations outside the ordinary tool field, and its
+	// caller keeps the parallel-call flag under Lite-specific policy.
 	if responsesLite {
 		return body, false, nil
 	}
@@ -169,7 +222,10 @@ func NormalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite boo
 	return normalized, true, nil
 }
 
-// OpenAIRequestBodyHasTools recognizes top-level tools and input additional_tools declarations.
+// OpenAIRequestBodyHasTools recognizes nonempty top-level tools arrays and
+// nonempty tools arrays in input additional_tools items. It checks declaration
+// presence rather than each tool's validity, allowing upstream validation to
+// decide whether those entries are usable.
 func OpenAIRequestBodyHasTools(body []byte) bool {
 	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
 		return true
@@ -185,10 +241,16 @@ func OpenAIRequestBodyHasTools(body []byte) bool {
 	return false
 }
 
-// NormalizeOpenAIResponsesReasoningContentReplay removes nonempty reasoning.content arrays
-// before replay to OpenAI, which rejects visible reasoning returned by compatible providers.
-// Other fields, including summary, encrypted_content and id, are retained. Enable this
-// for OpenAI targets; compatible providers may accept their own content arrays.
+// NormalizeOpenAIResponsesReasoningContentReplay removes nonempty
+// reasoning.content arrays before replay to an OpenAI destination. Non-array
+// input or an unmatched precheck returns the supplied bytes; decoding and
+// re-encoding use UseNumber, and failures retain those bytes.
+//
+// Only visible content arrays are removed. Item identity, summary, and
+// encrypted_content remain for the destination's separate storage-mode cleanup.
+// Compatible providers can accept their own visible reasoning representation,
+// so callers enable this transformation according to the selected upstream
+// instead of applying it to every replay.
 func NormalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
@@ -229,6 +291,9 @@ func NormalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, 
 		if !ok || len(content) == 0 {
 			continue
 		}
+		// Remove visible reasoning content as one field while retaining summary,
+		// ciphertext, and identity for subsequent destination-specific replay
+		// handling.
 		delete(item, "content")
 		changed = true
 	}
@@ -242,6 +307,16 @@ func NormalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, 
 	return normalized, true, nil
 }
 
+// NormalizeOpenAIAPIKeyStoreFalseReasoningReplay repairs reasoning history for
+// an API-key request using store=false. The raw body needs literal false unless
+// knownStoreFalse supplies that destination fact, as for Compact. Non-array
+// input is unchanged, and whole-body decoding retains JSON numbers.
+//
+// Reasoning without a nonblank string ciphertext is removed. Retained reasoning
+// loses rs_ item IDs and receives an empty summary when missing or null; rs_
+// references are removed because their remote object cannot be reused here.
+// Unpaired call_id fields are stripped according to the shared protocol rule,
+// while tool call/result identities remain available for pairing.
 func NormalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
 	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
 		return body, false, nil
@@ -271,6 +346,8 @@ func NormalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse
 		id := strings.TrimSpace(FirstNonEmptyString(item["id"]))
 		switch typ {
 		case "reasoning":
+			// Stored reasoning IDs cannot resolve under store=false; retain only usable
+			// ciphertext and supply required summary shape for inline replay.
 			encryptedContent, hasEncryptedContent := item["encrypted_content"].(string)
 			if !hasEncryptedContent || strings.TrimSpace(encryptedContent) == "" {
 				changed = true
@@ -285,11 +362,15 @@ func NormalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse
 				changed = true
 			}
 		case "item_reference":
+			// A reasoning reference requires the remote object that store=false omits,
+			// so remove rs_ references together with their unusable identity.
 			if strings.HasPrefix(id, "rs_") {
 				changed = true
 				continue
 			}
 		}
+		// Keep call identifiers only on protocol-recognized pairs, so ordinary
+		// history items do not send unrelated call association fields upstream.
 		if wire.ShouldStripNonPairCallID(typ) {
 			if _, hasCallID := item["call_id"]; hasCallID {
 				delete(item, "call_id")
@@ -309,6 +390,10 @@ func NormalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse
 	return normalized, true, nil
 }
 
+// SetOpenAIRequestMapPath mutates a nonnil request along a trimmed dotted path,
+// creating intermediate maps and replacing non-map intermediates. Empty
+// segments stop traversal. Maps created before a later empty segment remain, so
+// malformed paths can leave a partial mutation.
 func SetOpenAIRequestMapPath(reqBody map[string]any, path string, value any) {
 	path = strings.TrimSpace(path)
 	if reqBody == nil || path == "" {
@@ -323,6 +408,8 @@ func SetOpenAIRequestMapPath(reqBody map[string]any, path string, value any) {
 		}
 		next, _ := current[part].(map[string]any)
 		if next == nil {
+			// Replace incompatible intermediate values immediately; a later malformed
+			// segment leaves maps already installed along this supplied path.
 			next = map[string]any{}
 			current[part] = next
 		}
@@ -334,6 +421,9 @@ func SetOpenAIRequestMapPath(reqBody map[string]any, path string, value any) {
 	}
 }
 
+// DeleteOpenAIRequestMapPath deletes a final key after following existing maps
+// along a trimmed dotted path. Nil requests, blank paths, empty segments, and
+// missing intermediates are ignored. Empty parent maps remain after deletion.
 func DeleteOpenAIRequestMapPath(reqBody map[string]any, path string) {
 	path = strings.TrimSpace(path)
 	if reqBody == nil || path == "" {
@@ -358,6 +448,16 @@ func DeleteOpenAIRequestMapPath(reqBody map[string]any, path string) {
 	}
 }
 
+// NormalizeOpenAIResponsesReasoningMode removes a string reasoning.mode and
+// supplies max effort for mode=pro when effort is missing, null, or blank.
+// Other string modes are also removed; non-string modes remain unchanged.
+// Failed raw patches return the supplied body.
+//
+// An existing nonblank effort wins over pro mode. Removing the last reasoning
+// member deletes the now-empty object, preventing an unsupported compatibility
+// field from leaving an empty configuration object. Updates are accumulated
+// privately until every required patch succeeds, so callers publish only the
+// returned changed body.
 func NormalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -366,6 +466,8 @@ func NormalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	if !mode.Exists() || mode.Type != gjson.String {
 		return body, false, nil
 	}
+	// Keep patches private until mode removal and any empty-object cleanup
+	// succeed, returning the supplied bytes if a later patch fails.
 	updated := body
 	effort := gjson.GetBytes(body, "reasoning.effort")
 	if (!effort.Exists() || effort.Type == gjson.Null || strings.TrimSpace(effort.String()) == "") &&
@@ -389,6 +491,11 @@ func NormalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	return updated, true, nil
 }
 
+// NormalizeOpenAIResponseFormatSchemasBody decodes requests using text.format
+// or response_format JSON schemas and delegates schema cleanup. UseNumber
+// retains numeric values through the rebuild. Unmatched or unchanged schemas
+// return the supplied bytes, and failures return those bytes with a contextual
+// error.
 func NormalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -412,9 +519,17 @@ func NormalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error)
 	return normalized, true, nil
 }
 
-// NormalizeOpenAIPassthroughOAuthBody normalizes compatibility fields, reasoning and schemas
-// and removes unsupported parameters. Compact omits store and stream; ordinary
-// Responses requests force store=false and stream=true.
+// NormalizeOpenAIPassthroughOAuthBody prepares raw OAuth Responses JSON using
+// shared compatibility, reasoning-mode, and schema transformations. Empty or
+// unchanged bodies return their supplied bytes; any failed phase returns the
+// initial body with an error. Callers retain ownership until successful
+// replacement.
+//
+// Internal-only fields are removed before string/object input becomes an item
+// array. Nonblank strings keep their full text in a user message; blank strings
+// become an empty list. Compact omits store and stream, while ordinary
+// execution forces store=false and stream=true. Intermediate successful patches
+// remain private if a later phase fails.
 func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -431,6 +546,8 @@ func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
+	// Passthrough applies the internal field list after compatibility rewrites,
+	// allowing later input and storage policy to operate on supported nodes.
 	for _, field := range OpenAIChatGPTInternalUnsupportedFields {
 		if value := gjson.GetBytes(normalized, field); !value.Exists() {
 			continue
@@ -449,7 +566,8 @@ func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
-	// ChatGPT requires input to be an item array.
+	// Convert string input into a user item and wrap object input as raw JSON,
+	// keeping nested numeric spelling for the object case.
 	if inputResult := gjson.GetBytes(normalized, "input"); inputResult.Exists() {
 		switch {
 		case inputResult.Type == gjson.String:
@@ -478,6 +596,8 @@ func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		}
 	}
 
+	// Compact omits storage and transport flags; ordinary OAuth execution
+	// overrides their supplied values to match the streaming internal endpoint.
 	if compact {
 		if store := gjson.GetBytes(normalized, "store"); store.Exists() {
 			next, err := sjson.DeleteBytes(normalized, "store")
@@ -517,6 +637,10 @@ func NormalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	return normalized, changed, nil
 }
 
+// DetectOpenAIPassthroughInstructionsRejectReason returns a diagnostic for
+// present non-string or blank instructions on a Codex-named model. Missing
+// instructions and other models return an empty reason. Default instruction
+// injection and rejection policy belong to the caller.
 func DetectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byte) string {
 	if !IsOpenAICodexModel(reqModel) {
 		return ""
@@ -535,20 +659,32 @@ func DetectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 	return ""
 }
 
-// IsOpenAICodexModel recognizes models that require Codex instructions.
+// IsOpenAICodexModel recognizes the codex substring in a trimmed, case-folded
+// model name.
 func IsOpenAICodexModel(model string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "codex")
 }
 
+// OpenAIRequestBodyMayContainImageInput probes Responses input and the
+// messages.#-1 path for image content. Under gjson v1.18.0, ordinary Chat
+// message arrays produce no value for that path, so their image parts are
+// outside this probe. Empty bodies return false; request-mode callers need
+// separate Chat media validation when that input affects admission.
 func OpenAIRequestBodyMayContainImageInput(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
 	input := gjson.GetBytes(body, "input")
+	// This path yields no element for ordinary Chat arrays in the pinned gjson
+	// parser, leaving their image content outside this request-mode probe.
 	messages := gjson.GetBytes(body, "messages.#-1")
 	return wire.JSONValueMayContainImageInput(input) || wire.JSONValueMayContainImageInput(messages)
 }
 
+// OpenAIRequestBodyMayContainEmptyBase64InputImage probes input for an
+// input_image with an empty Base64 data URI. A literal-token or Unicode-escape
+// precheck gates decoded traversal. Missing input and unmatched shapes return
+// false; the subsequent sanitizer supports a narrower array layout.
 func OpenAIRequestBodyMayContainEmptyBase64InputImage(body []byte) bool {
 	if len(body) == 0 || !OpenAIRequestBodyMayContainInputImageToken(body) {
 		return false
@@ -560,14 +696,23 @@ func OpenAIRequestBodyMayContainEmptyBase64InputImage(body []byte) bool {
 	return OpenAIJSONValueMayContainEmptyBase64InputImage(input)
 }
 
+// OpenAIRequestBodyMayContainInputImageToken admits literal input_image bytes
+// or any Unicode escape for a later decoded traversal. Escapes can hide the
+// token's spelling, so a positive result is a candidate probe rather than proof
+// of an image part.
 func OpenAIRequestBodyMayContainInputImageToken(body []byte) bool {
 	if bytes.Contains(body, []byte("input_image")) {
 		return true
 	}
-	// Unicode escapes can hide any JSON string character; defer to decoded gjson traversal when present.
+	// Unicode escapes can hide any character of input_image, so let decoded
+	// traversal inspect escaped payloads after the literal precheck misses.
 	return bytes.Contains(body, []byte("\\u"))
 }
 
+// OpenAIJSONValueMayContainEmptyBase64InputImage searches arrays and object
+// content recursively for an empty input_image data URI. Missing values and
+// other scalar/object branches return false. This probe can recognize nested
+// content that the array sanitizer does not rebuild.
 func OpenAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {
 	if !value.Exists() {
 		return false
@@ -592,11 +737,24 @@ func OpenAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {
 	return false
 }
 
+// SanitizeEmptyBase64InputImagesInOpenAIBody removes empty Base64 input images
+// when the probe matches a supported decoded layout. Unchanged and failed
+// operations return the supplied body, and errors identify decoding or
+// rebuilding. The input byte slice is not modified.
+//
+// This path uses ordinary encoding/json decoding, so a changed request
+// re-encodes numbers through float64 and can round large integers. The
+// sanitizer removes top-level image items and immediate content parts within an
+// input array; deeper probe matches may still leave the body unchanged. Callers
+// select this cleanup for its compatibility purpose with those representation
+// limits.
 func SanitizeEmptyBase64InputImagesInOpenAIBody(body []byte) ([]byte, bool, error) {
 	if !OpenAIRequestBodyMayContainEmptyBase64InputImage(body) {
 		return body, false, nil
 	}
 
+	// This image cleanup decodes through float64; when it rebuilds a changed body,
+	// large numeric metadata can be rounded with the rest of the request.
 	var reqBody map[string]any
 	if err := json.Unmarshal(body, &reqBody); err != nil {
 		return body, false, fmt.Errorf("sanitize request body: %w", err)
@@ -611,6 +769,10 @@ func SanitizeEmptyBase64InputImagesInOpenAIBody(body []byte) ([]byte, bool, erro
 	return normalized, true, nil
 }
 
+// SanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap replaces a supplied
+// request's input when the array sanitizer changes it. Nil requests and absent
+// input are unchanged. Retained item maps remain shared, so callers serialize
+// mutation of this decoded request.
 func SanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(reqBody map[string]any) bool {
 	if reqBody == nil {
 		return false
@@ -627,6 +789,15 @@ func SanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(reqBody map[string]any
 	return true
 }
 
+// SanitizeEmptyBase64InputImagesInOpenAIInput filters top-level input_image
+// items and immediate content-array parts with empty Base64 data URIs.
+// Unsupported input shapes return unchanged. An item is dropped when removing
+// parts empties its content array.
+//
+// New slice headers retain surviving item and part values. A changed item's map
+// receives its replacement content array in place, so callers sharing that map
+// observe the mutation. The operation leaves deeper nested content to other
+// handling and returns the initial input when no supported removal occurred.
 func SanitizeEmptyBase64InputImagesInOpenAIInput(input any) (any, bool) {
 	items, ok := input.([]any)
 	if !ok {
@@ -666,6 +837,8 @@ func SanitizeEmptyBase64InputImagesInOpenAIInput(input any) (any, bool) {
 			}
 			normalizedParts = append(normalizedParts, part)
 		}
+		// Replace content on the shared item map after filtering; remove the item if
+		// its last part was an empty image.
 		if itemChanged {
 			if len(normalizedParts) == 0 {
 				continue
@@ -680,6 +853,9 @@ func SanitizeEmptyBase64InputImagesInOpenAIInput(input any) (any, bool) {
 	return normalizedItems, true
 }
 
+// ShouldDropEmptyBase64InputImagePart recognizes a map with trimmed input_image
+// type and an empty Base64 image_url data URI. Non-map parts, other types, and
+// usable or non-Base64 URLs remain for the caller's separate input validation.
 func ShouldDropEmptyBase64InputImagePart(part any) bool {
 	partMap, ok := part.(map[string]any)
 	if !ok {

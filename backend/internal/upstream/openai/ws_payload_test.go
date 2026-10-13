@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// buildReplayTurnPayload builds a full-history replay for turn, adding an item with
-// itemBytes of filler per turn to model Codex store=false requests.
+// buildReplayTurnPayload creates turn user-history items containing itemBytes
+// of filler each. Callers supply nonnegative sizes; the serialized full-history
+// payload models store-disabled replay and can be allocated before memory
+// measurements.
 func buildReplayTurnPayload(turn, itemBytes int) []byte {
 	var b strings.Builder
 	_, _ = b.WriteString(`{"type":"response.create","model":"gpt-5.5","stream":true,"input":[`)
@@ -78,6 +80,9 @@ func TestOpenAIWSReplayStateBuildAllocationBounded(t *testing.T) {
 	)
 }
 
+// TestApplyOpenAIWSRetryPayloadStrategy_KeepPromptCacheKey applies the
+// optional-field strategy to a third retry attempt. It checks include removal
+// while prompt_cache_key and text survive in the caller-owned payload.
 func TestApplyOpenAIWSRetryPayloadStrategy_KeepPromptCacheKey(t *testing.T) {
 	payload := map[string]any{
 		"model":            "gpt-5.3-codex",
@@ -98,6 +103,10 @@ func TestApplyOpenAIWSRetryPayloadStrategy_KeepPromptCacheKey(t *testing.T) {
 	require.Contains(t, payload, "text")
 }
 
+// TestApplyOpenAIWSRetryPayloadStrategy_AttemptSixKeepsSemanticFields supplies
+// history-relevant request fields on a sixth attempt. It checks include removal
+// while cache identity, instructions, tools, tool choice, parallel tool calls,
+// and text remain.
 func TestApplyOpenAIWSRetryPayloadStrategy_AttemptSixKeepsSemanticFields(t *testing.T) {
 	payload := map[string]any{
 		"prompt_cache_key":    "pcache_456",

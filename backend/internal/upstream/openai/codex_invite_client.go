@@ -14,6 +14,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Codex invitation operations use ChatGPT backend JSON endpoints with bearer
+// credentials and desktop identity headers. Responses are read within the
+// error-body limit and closed before ownership returns to the provider use
+// case, including decoding and upstream-status failures.
+//
+// Referral-unavailable 403 responses carry a distinct application error because
+// the invitation entry and existing reset credits have different availability.
+// The classifier extracts structured detail when possible and retains
+// status/detail metadata for callers; other status failures retain the generic
+// upstream error category. The fixed backend target is assembled before the
+// authenticated request is sent.
+
+// Invitation constants select the desktop request identity and ChatGPT backend
+// endpoint, and define the application error used for unavailable referral entry.
 const (
 	CodexInviteDefaultUserAgent        = "Codex Desktop/0.0.0 (Linux; x86_64)"
 	codexBackendAPIBaseURL             = "https://chatgpt.com/backend-api"
@@ -21,14 +35,18 @@ const (
 	codexInviteResetUnavailableMessage = "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用"
 )
 
-// CodexInviteClient holds transport options and reads and closes invitation responses.
+// CodexInviteClient holds credentials and callbacks for ChatGPT invitation
+// exchanges.
 type CodexInviteClient struct {
-	Token           string
-	UserAgent       string
-	ProviderHeaders func(http.Header)
-	Do              func(*http.Request) (*http.Response, error)
+	Token           string                                      // backend bearer access token
+	UserAgent       string                                      // desktop request User-Agent value
+	ProviderHeaders func(http.Header)                           // required provider metadata writer
+	Do              func(*http.Request) (*http.Response, error) // configured HTTP exchange callback
 }
 
+// GetJSON sends an authenticated backend GET with the supplied query values and
+// returns decoded JSON. The context controls the exchange; an empty successful
+// body returns an empty map and transport or status failures propagate.
 func (s *CodexInviteClient) GetJSON(ctx context.Context, path string, query map[string]string) (map[string]any, error) {
 	target, err := BuildCodexBackendURL(path, query)
 	if err != nil {
@@ -42,6 +60,9 @@ func (s *CodexInviteClient) GetJSON(ctx context.Context, path string, query map[
 	return s.doJSON(req)
 }
 
+// PostJSON sends an authenticated backend POST with body encoded as JSON. The
+// context controls the exchange; unsupported body values fail before sending,
+// and response reading and closing are delegated to doJSON.
 func (s *CodexInviteClient) PostJSON(ctx context.Context, path string, body map[string]any) (map[string]any, error) {
 	target, err := BuildCodexBackendURL(path, nil)
 	if err != nil {
@@ -60,6 +81,9 @@ func (s *CodexInviteClient) PostJSON(ctx context.Context, path string, body map[
 	return s.doJSON(req)
 }
 
+// applyHeaders writes the ChatGPT host, bearer token, desktop identity, and
+// request profile into req. ProviderHeaders is required and runs last, allowing
+// its provider-specific metadata to supplement the prepared request.
 func (s *CodexInviteClient) applyHeaders(req *http.Request) {
 	*req = *req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
 	req.Host = "chatgpt.com"
@@ -78,6 +102,10 @@ func (s *CodexInviteClient) applyHeaders(req *http.Request) {
 	s.ProviderHeaders(req.Header)
 }
 
+// doJSON executes and closes one invitation response, reading at most
+// ImageErrorBodyReadLimit bytes. A missing transport returns an application
+// error, empty success returns an empty map, and non-success statuses are
+// classified before JSON decoding.
 func (s *CodexInviteClient) doJSON(req *http.Request) (map[string]any, error) {
 	if s.Do == nil {
 		return nil, apperror.InternalServer("HTTP_UPSTREAM_NOT_CONFIGURED", "http upstream is not configured")
@@ -87,9 +115,12 @@ func (s *CodexInviteClient) doJSON(req *http.Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Close errors do not replace the response read or decode result.
+	// Close the acquired body on status, read, and decode exits so the transport
+	// releases its connection; a close failure leaves the primary result intact.
 	defer func() { _ = resp.Body.Close() }()
 
+	// Reuse the bounded error-body budget for both success and failure responses,
+	// limiting captured invitation data before status classification or JSON decoding.
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, ImageErrorBodyReadLimit))
 	if readErr != nil {
 		return nil, readErr
@@ -115,18 +146,26 @@ func (s *CodexInviteClient) doJSON(req *http.Request) (map[string]any, error) {
 	return result, nil
 }
 
+// codexInviteResetUpstreamBusinessError returns a referral-unavailable error
+// for a matching 403 detail. Other status/detail combinations return nil so
+// doJSON can construct the generic upstream error, and matched errors retain
+// upstream metadata.
 func codexInviteResetUpstreamBusinessError(statusCode int, body string) error {
 	detail := codexInviteResetUpstreamDetail(body)
 	if statusCode != http.StatusForbidden || !strings.Contains(detail, "推荐邀请不可用") {
 		return nil
 	}
-	// Referral-unavailable responses use 403 even when existing reset credits remain usable.
+	// This 403 describes referral entry availability; existing reset credits can
+	// still be used, so expose that distinction through the dedicated application error.
 	return apperror.Forbidden(codexInviteResetUnavailable, codexInviteResetUnavailableMessage).WithMetadata(map[string]string{
 		"upstream_status": fmt.Sprint(statusCode),
 		"upstream_detail": detail,
 	})
 }
 
+// codexInviteResetUpstreamDetail reads a usable detail field from JSON when
+// available. Malformed JSON, missing detail, or an empty formatted detail falls
+// back to the trimmed complete body for upstream classification.
 func codexInviteResetUpstreamDetail(body string) string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(body), &payload); err == nil {
@@ -134,9 +173,14 @@ func codexInviteResetUpstreamDetail(body string) string {
 			return detail
 		}
 	}
+	// Keep an unstructured upstream body as diagnostic detail when structured
+	// extraction fails, allowing the same unavailable-referral match to handle either shape.
 	return strings.TrimSpace(body)
 }
 
+// BuildCodexBackendURL appends path to the fixed ChatGPT backend base and
+// encodes query values. A missing leading slash is added; callers choose
+// backend paths and each supplied query key has one value.
 func BuildCodexBackendURL(path string, query map[string]string) (string, error) {
 	base, err := url.Parse(codexBackendAPIBaseURL)
 	if err != nil {
@@ -156,7 +200,9 @@ func BuildCodexBackendURL(path string, query map[string]string) (string, error) 
 	return base.String(), nil
 }
 
-// codexInviteDetail formats a JSON value for display, returning empty for nil.
+// codexInviteDetail returns trimmed display text for a JSON value. Nil becomes
+// empty text, while other values use fmt.Sprint so classification can examine
+// scalar or structured detail values.
 func codexInviteDetail(value any) string {
 	if value == nil {
 		return ""

@@ -11,6 +11,9 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestClassifyOpenAIWSAcquireError supplies handshake statuses, local
+// queue/continuation failures, a deadline, nil, and an unknown error. It checks
+// the corresponding acquisition reason for each observed failure shape.
 func TestClassifyOpenAIWSAcquireError(t *testing.T) {
 	t.Run("dial_426_upgrade_required", func(t *testing.T) {
 		err := &WSDialError{StatusCode: 426, Err: errors.New("upgrade required")}
@@ -58,6 +61,9 @@ func TestClassifyOpenAIWSAcquireError(t *testing.T) {
 	})
 }
 
+// TestClassifyOpenAIWSErrorEvent supplies explicit upgrade and
+// previous-response error codes in JSON frames. It checks their reason labels
+// and true eligibility flags for the outer recovery policy.
 func TestClassifyOpenAIWSErrorEvent(t *testing.T) {
 	reason, recoverable := ClassifyWSErrorEvent([]byte(`{"type":"error","error":{"code":"upgrade_required","message":"Upgrade required"}}`))
 	require.Equal(t, "upgrade_required", reason)
@@ -68,6 +74,9 @@ func TestClassifyOpenAIWSErrorEvent(t *testing.T) {
 	require.True(t, recoverable)
 }
 
+// TestOpenAIWSErrorHTTPStatus supplies invalid-input, authentication,
+// permission, rate-limit, and server-error frames. It protects the HTTP status
+// mapping used when the gateway reports those event failures.
 func TestOpenAIWSErrorHTTPStatus(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, WSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_request","message":"invalid input"}}`)))
 	require.Equal(t, http.StatusUnauthorized, WSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"auth failed"}}`)))
@@ -76,6 +85,9 @@ func TestOpenAIWSErrorHTTPStatus(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, WSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"server_error","code":"server_error","message":"server"}}`)))
 }
 
+// TestOpenAIWSErrorEventHelpers_ConsistentWithWrapper parses one invalid-input
+// event and compares raw helpers with JSON wrappers. Reason, eligibility, and
+// HTTP status must agree, including the expected BadRequest status.
 func TestOpenAIWSErrorEventHelpers_ConsistentWithWrapper(t *testing.T) {
 	message := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_request","message":"invalid input"}}`)
 	codeRaw, errTypeRaw, errMsgRaw := protocolopenai.ParseWSErrorEventFields(message)
@@ -91,6 +103,9 @@ func TestOpenAIWSErrorEventHelpers_ConsistentWithWrapper(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rawStatus)
 }
 
+// TestOpenAIWSErrorHTTPStatusFromRaw_UsageLimitReachedIs429 supplies
+// usage-limit type and rate-limit code independently. Each field alone must
+// yield TooManyRequests, protecting both raw event evidence forms.
 func TestOpenAIWSErrorHTTPStatusFromRaw_UsageLimitReachedIs429(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, WSErrorHTTPStatusFromRaw("", "usage_limit_reached"))
 	require.Equal(t, http.StatusTooManyRequests, WSErrorHTTPStatusFromRaw("rate_limit_exceeded", ""))

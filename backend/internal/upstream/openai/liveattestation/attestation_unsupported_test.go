@@ -8,6 +8,9 @@ import (
 	"testing"
 )
 
+// TestUnsupportedProviderReturnsExplicitPlatformError constructs the provider
+// selected by a non-macOS build. Both Check and Generate must return an error
+// matching the shared unsupported-platform sentinel.
 func TestUnsupportedProviderReturnsExplicitPlatformError(t *testing.T) {
 	provider := NewProvider()
 	if err := provider.Check(context.Background()); !errors.Is(err, ErrUnsupportedPlatform) {

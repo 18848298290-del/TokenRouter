@@ -11,7 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestWSPoolWaiterLimitsAndCancellation checks queue slots for ordinary, required, and incompatible requests.
+// TestWSPoolWaiterLimitsAndCancellation fills queue capacity with ordinary,
+// forced-continuation, and incompatible requests. It checks rejection of
+// another waiter, cancellation cleanup, zero retained reservations, and
+// successful acquisition after lease return.
 func TestWSPoolWaiterLimitsAndCancellation(t *testing.T) {
 	for _, mode := range []string{"ordinary", "required", "incompatible"} {
 		t.Run(mode, func(t *testing.T) {
@@ -55,7 +58,10 @@ func TestWSPoolWaiterLimitsAndCancellation(t *testing.T) {
 	}
 }
 
-// TestWSPoolWakeupsKeepOriginalDeadline checks that option wakeups retain the acquisition deadline and queue count.
+// TestWSPoolWakeupsKeepOriginalDeadline repeatedly publishes unchanged options
+// while one request waits. It asserts the original one-second deadline, one
+// queue-wait observation, measured wait duration, and removal of the
+// reservation.
 func TestWSPoolWakeupsKeepOriginalDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -87,7 +93,10 @@ func TestWSPoolWakeupsKeepOriginalDeadline(t *testing.T) {
 	})
 }
 
-// TestWSPoolRequiredWaiterIgnoresOtherConnection checks that continuation waits for its required connection.
+// TestWSPoolRequiredWaiterIgnoresOtherConnection releases a different
+// connection while forced continuation is waiting. The waiter must remain
+// pending until its selected connection returns and then receive exactly that
+// connection.
 func TestWSPoolRequiredWaiterIgnoresOtherConnection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
@@ -126,7 +135,10 @@ func TestWSPoolRequiredWaiterIgnoresOtherConnection(t *testing.T) {
 	})
 }
 
-// TestWSPoolCanceledDeliveryReturnsCapacity races cancellation with release and checks lease and waiter cleanup.
+// TestWSPoolCanceledDeliveryReturnsCapacity races cancellation with return of
+// the sole occupied connection. Either acquisition or cancellation is allowed,
+// but every iteration must finish with zero leases and waiters while retaining
+// one connection.
 func TestWSPoolCanceledDeliveryReturnsCapacity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(1, 1)
@@ -137,6 +149,8 @@ func TestWSPoolCanceledDeliveryReturnsCapacity(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			result := acquireWSInBackground(pool, ctx, req)
 			synctest.Wait()
+			// Start cancellation and lease return together after the waiter is blocked;
+			// accept either winner while checking that both reservation and lease capacity return.
 			go cancel()
 			go first.Release()
 			synctest.Wait()
@@ -156,7 +170,9 @@ func TestWSPoolCanceledDeliveryReturnsCapacity(t *testing.T) {
 	})
 }
 
-// TestWSPoolCloseWakesEveryWaiter checks that all waiter kinds exit on shutdown.
+// TestWSPoolCloseWakesEveryWaiter starts ordinary, forced, and incompatible
+// waiters with both sockets leased. Closing the pool must wake all of them with
+// the closed error and clear queue reservations.
 func TestWSPoolCloseWakesEveryWaiter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		pool, req := newWSReuseTestPool(2, 2)
