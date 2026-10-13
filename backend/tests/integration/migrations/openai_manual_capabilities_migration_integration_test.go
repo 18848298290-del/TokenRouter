@@ -11,11 +11,22 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestOpenAIManualCapabilityMigrations checks backfill, replay, and retention of unrelated settings in
-// isolated legacy tables.
+// OpenAI automatic compression modes are converted from historical probe facts
+// into manual settings, while CN accounts derive text routes from their
+// protocol choice. Minimal account and group tables isolate these
+// representations, and replaying both migrations also checks that a later Fast
+// policy edit survives another execution of its initialization SQL.
+
+// TestOpenAIManualCapabilityMigrations supplies legacy probe facts, manual
+// compression choices, and CN protocols in isolated tables. It checks two-pass
+// backfill, selected JSON retention, and preservation of a subsequently edited
+// Fast policy.
 func TestOpenAIManualCapabilityMigrations(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()
+	// The local search_path redirects migration SQL to minimal legacy
+	// tables. Rollback removes the created schema and its fixtures after
+	// replay and assertions complete.
 	_, err := tx.ExecContext(ctx, `CREATE SCHEMA manual_capability_test; SET LOCAL search_path TO manual_capability_test;
  CREATE TABLE groups(id BIGINT,platform TEXT,force_openai_fast BOOLEAN);
  INSERT INTO groups VALUES(1,'openai',true),(2,'anthropic',true);
@@ -27,6 +38,9 @@ func TestOpenAIManualCapabilityMigrations(t *testing.T) {
  (4,'kimi','apikey','{"api_protocol":"responses"}','{"openai_responses_probe_status":"unsupported"}'),
  (5,'zhipu','apikey','{"api_protocol":"adaptive"}','{}');`)
 	require.NoError(t, err)
+	// Run group policy initialization before account capability conversion
+	// in each pass, matching the numbered SQL sequence while exposing
+	// replay to already converted fixture values.
 	for range 2 {
 		for _, file := range []string{"269_group_openai_fast_policy.sql", "270_openai_manual_protocol_capabilities.sql"} {
 			data, err := dbmigrations.FS.ReadFile(file)
@@ -51,6 +65,10 @@ func TestOpenAIManualCapabilityMigrations(t *testing.T) {
 	require.Equal(t, "force_priority", policy)
 	_, err = tx.ExecContext(ctx, "UPDATE groups SET openai_fast_policy='force_ultrafast' WHERE id=1")
 	require.NoError(t, err)
+	// The preceding loop has required successful reads of this embedded
+	// file. This lookup discards its error and replays the same policy SQL
+	// after the edit, so that earlier read check is part of the fixture's
+	// setup requirement.
 	migration, _ := dbmigrations.FS.ReadFile("269_group_openai_fast_policy.sql")
 	_, err = tx.ExecContext(ctx, string(migration))
 	require.NoError(t, err)

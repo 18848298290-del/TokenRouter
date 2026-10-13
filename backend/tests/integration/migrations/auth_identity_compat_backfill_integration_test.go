@@ -12,6 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Synthetic OIDC emails require a recovery report whose type exceeds the
+// foundation schema's earlier width. Rebuilding the identity tables and running
+// 108a before 109 checks that this report fits during the historical sequence,
+// while the transaction restores the shared schema at cleanup.
+
+// TestAuthIdentityCompatBackfillMigration_AllowsLongReportTypes rebuilds the
+// foundation tables and inserts a synthetic OIDC email. It requires one
+// recovery report and a report_type width of at least 45 after the preflight
+// migration.
 func TestAuthIdentityCompatBackfillMigration_AllowsLongReportTypes(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -25,6 +34,9 @@ func TestAuthIdentityCompatBackfillMigration_AllowsLongReportTypes(t *testing.T)
 	migration109SQL, err := migrations.FS.ReadFile("109_auth_identity_compat_backfill.sql")
 	require.NoError(t, err)
 
+	// The shared report_type column is already wider than the foundation
+	// schema. Recreate the tables inside the rollback transaction before
+	// replaying 108a and 109.
 	_, err = tx.ExecContext(ctx, `
 DROP TABLE IF EXISTS auth_identity_migration_reports CASCADE;
 DROP TABLE IF EXISTS auth_identity_channels CASCADE;
@@ -42,6 +54,9 @@ ALTER TABLE users
 	_, err = tx.ExecContext(ctx, string(migration108SQL))
 	require.NoError(t, err)
 
+	// Widen report_type before the backfill writes its long recovery label;
+	// a later widening migration cannot prevent rejection of that earlier
+	// narrow-column write.
 	_, err = tx.ExecContext(ctx, string(migration108aSQL))
 	require.NoError(t, err)
 

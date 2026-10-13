@@ -13,6 +13,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Legacy external identities can identify a LinuxDo user, a canonical WeChat
+// UnionID, or an OpenID that still requires remediation. Reconstructed legacy
+// rows exercise these distinctions alongside malformed metadata and conflicting
+// ownership; report assertions use legacy-row keys to keep remediation records
+// separate from identities already synthesized in auth_identities.
+//
+// Each fixture restores the optional text-metadata table inside a rollback
+// transaction and clears identity data before seeding its own users. The
+// missing-table cases instead use the fully migrated schema directly, while the
+// report-width case narrows the column before replaying the preflight and the
+// historical report writers.
+
+// TestAuthIdentityLegacyExternalBackfillMigration supplies LinuxDo, WeChat
+// UnionID, OpenID-only, and synthetic identity fixtures. It checks canonical
+// identity and channel creation plus separately keyed remediation reports for
+// the two OpenID-only sources.
 func TestAuthIdentityLegacyExternalBackfillMigration(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -41,6 +57,9 @@ INSERT INTO users (email, password_hash, role, status, balance, concurrency)
 VALUES ('legacy-wechat-openid@example.com', 'hash', 'user', 'active', 0, 1)
 RETURNING id`).Scan(&wechatOpenIDOnlyUserID))
 
+	// Seed a synthetic OpenID separately from its legacy table row. The
+	// later report-key checks distinguish the auth identity's remediation
+	// from the legacy row's remediation.
 	var syntheticAuthIdentityID int64
 	require.NoError(t, tx.QueryRowContext(ctx, `
 INSERT INTO auth_identities (user_id, provider_type, provider_key, provider_subject, metadata)
@@ -157,6 +176,10 @@ WHERE report_type = 'wechat_openid_only_requires_remediation'
 	require.NotZero(t, linuxDoLegacyID)
 }
 
+// TestAuthIdentityLegacyExternalBackfillMigration_IsSafeWhenLegacyTableMissing
+// runs migration 115 on the current schema with its optional legacy table
+// absent. It checks successful execution and an unchanged total
+// remediation-report count.
 func TestAuthIdentityLegacyExternalBackfillMigration_IsSafeWhenLegacyTableMissing(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -181,6 +204,10 @@ FROM auth_identity_migration_reports
 	require.Equal(t, beforeCount, afterCount)
 }
 
+// TestAuthIdentityLegacyExternalMigrations_ChainHandlesMalformedAndNonObjectMetadata
+// feeds malformed text and array metadata through migrations 115 and 116. It
+// checks object-shaped identities and report details, and retained raw-array
+// keys on two canonical identities.
 func TestAuthIdentityLegacyExternalMigrations_ChainHandlesMalformedAndNonObjectMetadata(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -274,6 +301,9 @@ INSERT INTO user_external_identities (
 RETURNING id
 `, wechatOpenIDArrayUserID).Scan(&wechatOpenIDArrayLegacyID))
 
+	// Run backfill before safety reporting so malformed and array metadata
+	// travel through canonical identity creation, then inspect
+	// object-shaped values and retained raw metadata keys.
 	_, err = tx.ExecContext(ctx, string(migration115SQL))
 	require.NoError(t, err)
 
@@ -349,6 +379,10 @@ WHERE id IN (
 	require.NotZero(t, wechatUnionArrayLegacyID)
 }
 
+// TestAuthIdentityLegacyExternalSafetyMigration_ReportsConflictsAndDowngradesInvalidJSON
+// seeds canonical ownership conflicts, a channel conflict, and invalid
+// metadata. It checks the selected conflict and remediation reports, plus
+// successful LinuxDo identity creation from malformed input.
 func TestAuthIdentityLegacyExternalSafetyMigration_ReportsConflictsAndDowngradesInvalidJSON(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -359,6 +393,9 @@ func TestAuthIdentityLegacyExternalSafetyMigration_ReportsConflictsAndDowngrades
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
 	truncateAuthIdentityLegacyFixtureTables(t, tx, ctx)
 
+	// Allocate separate legacy and existing owners for canonical and
+	// channel conflicts. Reusing one user would hide the cross-user
+	// ownership conditions that these reports diagnose.
 	userIDs := make([]int64, 0, 8)
 	for _, email := range []string{
 		"linuxdo-conflict-legacy@example.com",
@@ -546,6 +583,10 @@ WHERE report_type = 'wechat_openid_only_requires_remediation'
 	require.Equal(t, 1, wechatOpenIDOnlyReportCount)
 }
 
+// TestAuthIdentityLegacyExternalSafetyMigration_IsSafeWhenLegacyTableMissing
+// runs migration 116 with the optional legacy table absent from the current
+// schema. It checks successful execution and retention of the total report
+// count.
 func TestAuthIdentityLegacyExternalSafetyMigration_IsSafeWhenLegacyTableMissing(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -570,6 +611,10 @@ FROM auth_identity_migration_reports
 	require.Equal(t, beforeCount, afterCount)
 }
 
+// TestAuthIdentityLegacyExternalBackfillMigration_SkipsAmbiguousCanonicalSubjects
+// gives each LinuxDo and WeChat subject two distinct legacy users. It checks
+// that migration 115 creates neither canonical identities nor the associated
+// WeChat channels.
 func TestAuthIdentityLegacyExternalBackfillMigration_SkipsAmbiguousCanonicalSubjects(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -656,6 +701,9 @@ INSERT INTO user_external_identities (
 RETURNING id
 `, wechatSecondUserID).Scan(new(int64)))
 
+	// Both users claim the same canonical subject, so no single legacy row
+	// can represent ownership. The identity and channel counts detect any
+	// arbitrary winner created by backfill.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 
@@ -691,6 +739,10 @@ WHERE provider_type = 'wechat'
 	require.Zero(t, wechatChannelCount)
 }
 
+// TestAuthIdentityLegacyExternalMigrations_ReportAmbiguousCanonicalSubjectsWithoutWinnerAttribution
+// runs migrations 115 and 116 over shared subjects owned by distinct users. It
+// checks zero canonical identities, four conflict reports, and no
+// existing_identity_id attribution on those reports.
 func TestAuthIdentityLegacyExternalMigrations_ReportAmbiguousCanonicalSubjectsWithoutWinnerAttribution(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -784,6 +836,9 @@ INSERT INTO user_external_identities (
 RETURNING id
 `, wechatSecondUserID).Scan(&wechatSecondLegacyID))
 
+	// Apply backfill before safety reports to check both steps agree about
+	// ambiguous ownership. Report details are then queried for accidental
+	// attribution to a fabricated existing identity.
 	_, err = tx.ExecContext(ctx, string(migration115SQL))
 	require.NoError(t, err)
 
@@ -819,6 +874,10 @@ WHERE report_type = 'legacy_external_identity_conflict'
 	require.Zero(t, winnerAttributedReportCount)
 }
 
+// TestAuthIdentityMigrationReportTypeWideningPreflightKeeps109And116SafeBefore121
+// narrows report_type to 40 before replaying 108a, 109, and 116. It checks the
+// resulting width of 80 and the two long recovery and invalid-metadata report
+// types.
 func TestAuthIdentityMigrationReportTypeWideningPreflightKeeps109And116SafeBefore121(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
@@ -835,6 +894,9 @@ func TestAuthIdentityMigrationReportTypeWideningPreflightKeeps109And116SafeBefor
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
 	truncateAuthIdentityLegacyFixtureTables(t, tx, ctx)
 
+	// The shared schema already has the wider column. Narrow it to
+	// reconstruct the report-writer ordering problem before the early
+	// preflight SQL runs again.
 	_, err = tx.ExecContext(ctx, `
 ALTER TABLE auth_identity_migration_reports
 ALTER COLUMN report_type TYPE VARCHAR(40);
@@ -867,6 +929,9 @@ INSERT INTO user_external_identities (
 RETURNING id
 `, linuxdoLegacyUserID).Scan(&invalidMetadataLegacyID))
 
+	// Migration 108a must precede these writers because their labels exceed
+	// the reconstructed column width; replaying 121 later could not make an
+	// earlier rejected insert succeed.
 	_, err = tx.ExecContext(ctx, string(migration108aSQL))
 	require.NoError(t, err)
 
@@ -905,6 +970,10 @@ WHERE report_type = 'legacy_external_identity_invalid_metadata_json'
 	require.Equal(t, 1, invalidMetadataReportCount)
 }
 
+// prepareLegacyExternalIdentitiesTable creates the optional legacy identity
+// fixture table when absent. Metadata stays TEXT so callers can seed invalid
+// JSON that the backfill must handle; callers own the supplied rollback
+// transaction.
 func prepareLegacyExternalIdentitiesTable(t *testing.T, tx *sql.Tx, ctx context.Context) {
 	t.Helper()
 
@@ -927,9 +996,17 @@ CREATE TABLE IF NOT EXISTS user_external_identities (
 	require.NoError(t, err)
 }
 
+// truncateAuthIdentityLegacyFixtureTables clears identity, report, and user
+// fixture data through the supplied transaction, resetting sequences and
+// cascading to dependent rows. Call it after preparing the legacy table and
+// before seeding scenario users; rollback restores the shared database's prior
+// contents.
 func truncateAuthIdentityLegacyFixtureTables(t *testing.T, tx *sql.Tx, ctx context.Context) {
 	t.Helper()
 
+	// Clear the users and dependent identity tables as one fixture reset,
+	// including CASCADE targets; the surrounding rollback transaction keeps
+	// this destructive setup from persisting between tests.
 	_, err := tx.ExecContext(ctx, `
 TRUNCATE TABLE
 	auth_identity_channels,

@@ -11,8 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration275RemovesRedundantPricingControls checks replay and targeted removal while retaining
-// protocols, other features, and prices.
+// Retiring the shared-price cost switch also removes the group image-bridge
+// feature key. The pre-275 fixture combines that key with a separate search
+// feature, a protocol policy, and linked zero pricing so two executions can
+// check targeted removal alongside selected retained values.
+
+// TestMigration275RemovesRedundantPricingControls supplies a cost switch and
+// mixed group features before migration 275. It checks replay, switch-column
+// and bridge-key removal, and retained protocol, alias, search feature, and
+// linked zero price.
 func TestMigration275RemovesRedundantPricingControls(t *testing.T) {
 	tx := historicalTx(t, "275_")
 	ctx := context.Background()
@@ -26,6 +33,9 @@ INSERT INTO pricing_config_model_pricing(id,pricing_config_id,platform,models,in
 	require.NoError(t, err)
 	data, err := migrations.FS.ReadFile("275_remove_redundant_pricing_controls.sql")
 	require.NoError(t, err)
+	// The second pass sees the retired column and feature key already
+	// removed. Read the neighboring protocol, mapping, feature, and price
+	// afterwards to detect overbroad cleanup.
 	for range 2 {
 		_, err = tx.ExecContext(ctx, string(data))
 		require.NoError(t, err)

@@ -12,6 +12,16 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Retiring the account billing toggle removes both its metadata key and the
+// functions and triggers that can recreate or propagate it. A historical
+// accounts schema is first given those mechanisms again, then OpenAI and
+// Anthropic fixtures check retained nested metadata after two removal
+// executions.
+
+// TestMigration241RemovesOpenAILongContextBillingToggleIdempotently reinstalls
+// migration 203 and writes toggle-bearing accounts on two platforms. It checks
+// replay, retained custom JSON, and absence of the retired triggers and public
+// functions.
 func TestMigration241RemovesOpenAILongContextBillingToggleIdempotently(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()
@@ -20,8 +30,9 @@ func TestMigration241RemovesOpenAILongContextBillingToggleIdempotently(t *testin
 	removalSQL, err := dbmigrations.FS.ReadFile("241_remove_openai_long_context_billing_toggle.sql")
 	require.NoError(t, err)
 
-	// The historical database includes the removal migration, so restore the old triggers before testing their
-	// removal.
+	// The pre-282 history has already run migration 241. Reinstall
+	// migration 203 so removal encounters the functions and triggers as
+	// well as legacy metadata.
 	_, err = tx.ExecContext(ctx, string(legacySQL))
 	require.NoError(t, err)
 
@@ -47,6 +58,9 @@ RETURNING id
 		`{"openai_long_context_billing_enabled":"legacy","custom":{"nested":2}}`,
 	)
 
+	// The second removal runs after both mechanism and metadata cleanup,
+	// checking that missing triggers, functions, and keys permit the same
+	// SQL to complete again.
 	_, err = tx.ExecContext(ctx, string(removalSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(removalSQL))

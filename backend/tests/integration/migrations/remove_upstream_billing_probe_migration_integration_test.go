@@ -12,6 +12,15 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Retired upstream billing probes occupy account extra keys and four runtime
+// settings, alongside unrelated nested JSON and an unrelated setting. The
+// historical accounts name is retained for this fixture, and two SQL executions
+// are followed by explicit checks of both removed keys and retained values.
+
+// TestMigration236RemovesUpstreamBillingProbeDataIdempotently seeds a
+// historical account and four probe settings alongside retained controls. It
+// checks replay, absence of the retired keys, and preservation of custom JSON
+// and the unrelated setting.
 func TestMigration236RemovesUpstreamBillingProbeDataIdempotently(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()
@@ -51,6 +60,9 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 `)
 	require.NoError(t, err)
 
+	// The second execution sees the probe keys and settings already gone.
+	// Inspect both account JSON and settings so a successful replay alone
+	// cannot conceal unrelated deletions.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migrationSQL))

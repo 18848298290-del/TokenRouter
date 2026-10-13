@@ -11,11 +11,25 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Historical OpenAI account metadata contains a billing toggle inherited by
+// Spark shadows, with scheduler events emitted when a shadow value changes. The
+// pre-282 database retains the accounts name but has already removed the toggle
+// triggers, so the fixture reinstalls migration 203 to test backfill and
+// subsequent parent and legacy-writer updates.
+
+// TestMigration203EnforcesOpenAILongContextBillingWriteInvariant restores the
+// historical toggle migration over missing, boolean, and malformed account
+// values. It checks default-off backfill, inherited shadow updates, selected
+// outbox counts, legacy replacement writes, and rejection of a new nonboolean
+// value.
 func TestMigration203EnforcesOpenAILongContextBillingWriteInvariant(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()
 	migrationSQL, err := dbmigrations.FS.ReadFile("203_default_openai_long_context_billing.sql")
 	require.NoError(t, err)
+	// Remove any toggle triggers before inserting malformed legacy values.
+	// The pre-282 cutoff retains accounts, and replaying migration 203 then
+	// supplies the write-time enforcement.
 	_, err = tx.ExecContext(ctx, `
 DROP TRIGGER IF EXISTS accounts_propagate_openai_long_context_billing_extra ON accounts;
 DROP TRIGGER IF EXISTS accounts_enforce_openai_long_context_billing_extra ON accounts;
@@ -50,6 +64,9 @@ VALUES ('migration-203-malformed-legacy', 'openai', 'oauth', '{"openai_long_cont
 RETURNING id
 `).Scan(&malformedLegacyID))
 
+	// The first pass normalizes historical values and creates the triggers.
+	// A second pass exercises replay before querying backfilled values and
+	// the shadow's event count.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
@@ -93,6 +110,9 @@ WHERE id = $1
 `, malformedLegacyID)
 	require.NoError(t, err)
 
+	// Clear setup events before replacing the parent's extra with a legacy
+	// writer payload; the following count can then detect an unnecessary
+	// shadow notification.
 	_, err = tx.ExecContext(ctx, "TRUNCATE scheduler_outbox")
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `
@@ -131,6 +151,9 @@ RETURNING (extra->>'openai_long_context_billing_enabled')::boolean
 
 	_, err = tx.ExecContext(ctx, "TRUNCATE scheduler_outbox")
 	require.NoError(t, err)
+	// Enable the parent's toggle after clearing earlier events. The shadow
+	// value and one matching outbox row check propagation for this single
+	// effective-value change.
 	_, err = tx.ExecContext(ctx, `
 UPDATE accounts
 SET extra = jsonb_set(extra, '{openai_long_context_billing_enabled}', 'true'::jsonb, true)
@@ -152,6 +175,9 @@ WHERE event_type = 'account_changed' AND account_id = $1
 `, shadowID).Scan(&shadowOutboxEvents))
 	require.Equal(t, 1, shadowOutboxEvents)
 
+	// This final write intentionally aborts the fixture transaction. Assert
+	// the trigger diagnostic, then let test cleanup roll back the completed
+	// setup and rejected write.
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO accounts (name, platform, type, extra)
 VALUES ('migration-203-malformed', 'openai', 'oauth', '{"openai_long_context_billing_enabled":"false"}'::jsonb)

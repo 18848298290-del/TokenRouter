@@ -13,6 +13,16 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Text capability arrays, routing mode, and probe facts are migrated into
+// separate fields for OpenAI API-key accounts. Fixtures distinguish absent
+// configuration from explicit empty sets and newer values from legacy ones;
+// replay is inspected through stored JSON, with a Grok row checking that its
+// legacy fields remain present.
+
+// TestMigration247NormalizesOpenAITextProtocolConfigIdempotently supplies old
+// arrays, objects, defaults, invalid values, and competing newer fields. It
+// checks two-pass normalization, selected unrelated metadata, and legacy-field
+// presence on a nontargeted Grok row.
 func TestMigration247NormalizesOpenAITextProtocolConfigIdempotently(t *testing.T) {
 	tx := historicalTx(t, "282_")
 	ctx := context.Background()
@@ -20,15 +30,22 @@ func TestMigration247NormalizesOpenAITextProtocolConfigIdempotently(t *testing.T
 	require.NoError(t, err)
 
 	tests := []struct {
-		name        string
-		platform    string
-		accountType string
-		credentials string
-		extra       string
-		wantCaps    []any
-		wantMode    string
-		wantProbe   string
-		targeted    bool
+		name        string // migration scenario label
+		platform    string // stored account platform
+		accountType string // stored account credential type
+		credentials string // input credentials JSON text
+		extra       string // input extra JSON text
+		// wantCaps, wantMode, and wantProbe describe the normalized
+		// fields for targeted rows. Untargeted rows check the presence
+		// of legacy keys instead, so their zero-valued expectations are
+		// not used.
+		wantCaps  []any  // expected workload capability array
+		wantMode  string // expected text routing mode
+		wantProbe string // expected response probe status
+		// targeted selects full normalized-field assertions; false
+		// checks that both legacy capability and route keys still exist
+		// on the fixture row.
+		targeted bool
 	}{
 		{
 			name:     "旧 auto、true 与数组能力",
@@ -92,6 +109,9 @@ RETURNING id
 		ids = append(ids, id)
 	}
 
+	// A second execution consumes normalized data with legacy keys already
+	// removed. Read both JSON columns afterwards to check defaults,
+	// explicit emptiness, and newer-field precedence.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migrationSQL))

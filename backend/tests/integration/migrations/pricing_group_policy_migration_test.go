@@ -12,6 +12,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Shared channel prices and group routing policies need separate storage while
+// existing IDs still identify the same prices and usage rows. A pre-274 fixture
+// binds active and disabled channels to groups, includes an unbound policy for
+// the archive, and edits one group policy before replay to check that the edit
+// survives the completed rename.
+
+// TestMigration274PreservesPricesAndCopiesPolicies supplies linked and unbound
+// channels with zero and nullable price fixtures. It checks selected policy
+// fields, archive counts, price and usage identities, interval values, and a
+// later group edit on replay.
 func TestMigration274PreservesPricesAndCopiesPolicies(t *testing.T) {
 	tx := historicalTx(t, "274_")
 	ctx := context.Background()
@@ -40,13 +50,15 @@ INSERT INTO usage_logs(user_id,api_key_id,account_id,model,channel_id,total_cost
 	for _, id := range []int64{91001, 91002, 91003} {
 		var raw []byte
 		require.NoError(t, tx.QueryRowContext(ctx, `SELECT routing_policy FROM groups WHERE id=$1`, id).Scan(&raw))
-		// Decode the historical platform-nested policy with its own shape; current entities use flat fields.
+		// Migration 274 stores allowed models and aliases under
+		// platform names. Decode that historical shape directly so
+		// later flattened entities do not redefine these assertions.
 		var policy struct {
-			Enabled                bool                         `json:"enabled"`
-			RestrictModels         bool                         `json:"restrict_models"`
-			RestrictionModelSource string                       `json:"restriction_model_source"`
-			AllowedModels          map[string][]string          `json:"allowed_models"`
-			ModelMapping           map[string]map[string]string `json:"model_mapping"`
+			Enabled                bool                         `json:"enabled"`                  // migrated channel activation flag
+			RestrictModels         bool                         `json:"restrict_models"`          // migrated model restriction flag
+			RestrictionModelSource string                       `json:"restriction_model_source"` // migrated restriction model source
+			AllowedModels          map[string][]string          `json:"allowed_models"`           // allowed models by platform
+			ModelMapping           map[string]map[string]string `json:"model_mapping"`            // alias mappings by platform
 		}
 		require.NoError(t, json.Unmarshal(raw, &policy))
 		require.Equal(t, id != 91003, policy.Enabled)
@@ -65,11 +77,17 @@ INSERT INTO usage_logs(user_id,api_key_id,account_id,model,channel_id,total_cost
 	var input, output float64
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT input_price,output_price FROM pricing_config_model_pricing WHERE id=93001 AND pricing_config_id=92001`).Scan(&input, &output))
 	require.Zero(t, input)
+	// Compare the numeric price with a small tolerance after decoding it as
+	// float64, while the separate zero assertion keeps explicit zero-price
+	// coverage exact.
 	require.InDelta(t, 0.000123, output, 1e-12)
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM pricing_config_pricing_intervals WHERE id=94001 AND pricing_id=93001 AND sort_order=2 AND input_price=0`).Scan(&count))
 	require.Equal(t, 1, count)
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM usage_logs WHERE pricing_config_id=92001 AND total_cost=1.23 AND actual_cost=2.34`).Scan(&count))
 	require.Equal(t, 1, count)
+	// Edit the migrated group before replaying the rename SQL. The final
+	// flag query checks that completing migration 274 does not overwrite
+	// subsequent administrator policy changes.
 	_, err = tx.ExecContext(ctx, `UPDATE groups SET routing_policy='{"enabled":false}' WHERE id=91001`)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(sql))

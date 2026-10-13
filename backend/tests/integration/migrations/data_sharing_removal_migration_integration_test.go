@@ -14,14 +14,23 @@ import (
 	dbmigrations "github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration265RemovesDataSharing checks replay and targeted schema and settings cleanup.
+// Retired data-sharing tables, columns, and settings are restored inside the
+// current schema to exercise their removal. Backup settings combine a removable
+// key with retained values, then malformed text and an escaped NUL distinguish
+// JSON conversion tolerance from an injected database update failure.
+
+// TestMigration265RemovesDataSharing rebuilds retired schema and settings
+// before replaying migration 265. It checks targeted removal and retained
+// backup values, then requires a database update failure to remain visible.
 func TestMigration265RemovesDataSharing(t *testing.T) {
 	ctx := context.Background()
 	migrationSQL, err := dbmigrations.FS.ReadFile("265_remove_data_sharing.sql")
 	require.NoError(t, err)
 	tx := testTx(t)
 
-	// Restore retired data-sharing objects in the current test schema to simulate an upgrade.
+	// Restore the removed objects inside testTx so the SQL encounters
+	// populated legacy names; rollback removes this reconstruction from the
+	// shared database.
 	_, err = tx.ExecContext(ctx, `
 CREATE TABLE data_share_sessions (id BIGSERIAL PRIMARY KEY);
 CREATE TABLE data_share_export_artifacts (id BIGSERIAL PRIMARY KEY);
@@ -56,6 +65,9 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 `)
 	require.NoError(t, err)
 
+	// Two executions against the same reconstruction exercise IF EXISTS
+	// cleanup and repeated backup-key removal before inspecting the
+	// transaction's resulting state.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
@@ -97,7 +109,9 @@ SELECT COUNT(*) FROM settings WHERE key LIKE 'data_sharing_%'
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'migration_265_preserved'`).Scan(&preserved))
 	require.Equal(t, "unchanged", preserved)
 
-	// Malformed legacy values remain intact while targeted settings are still removed.
+	// Invalid backup text reaches the migration's guarded JSON conversion.
+	// Reinsert a retired setting to check that conversion failure still
+	// permits its deletion.
 	_, err = tx.ExecContext(ctx, `
 UPDATE settings SET value = 'not-json' WHERE key = 'backup_content_config';
 INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
@@ -110,7 +124,9 @@ INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = 'data_sharing_enabled'`).Scan(&removedSettingCount))
 	require.Zero(t, removedSettingCount)
 
-	// Escaped NUL is valid JSON text but cannot be represented by PostgreSQL JSONB.
+	// Escaped NUL passes JSON text syntax but PostgreSQL cannot store it as
+	// JSONB. The unchanged text and removed setting exercise that separate
+	// conversion failure.
 	invalidJSONB := `{"note":"\u0000"}`
 	_, err = tx.ExecContext(ctx, `UPDATE settings SET value = $1 WHERE key = 'backup_content_config'`, invalidJSONB)
 	require.NoError(t, err)
@@ -123,7 +139,9 @@ INSERT INTO settings (key, value) VALUES ('data_sharing_enabled', 'true');
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = 'data_sharing_enabled'`).Scan(&removedSettingCount))
 	require.Zero(t, removedSettingCount)
 
-	// Errors unrelated to JSON conversion must abort the migration.
+	// A trigger raises during the backup UPDATE, outside the conversion
+	// handler. Requiring its diagnostic prevents broad error suppression
+	// from hiding failed writes.
 	_, err = tx.ExecContext(ctx, `UPDATE settings SET value = '{"include_data_share_sessions":true}' WHERE key = 'backup_content_config'`)
 	require.NoError(t, err)
 	functionName := fmt.Sprintf("fail_data_sharing_backup_update_%d", time.Now().UnixNano())

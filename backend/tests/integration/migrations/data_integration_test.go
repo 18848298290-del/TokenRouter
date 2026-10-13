@@ -16,6 +16,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Legacy subscriptions select plans through group and validity rather than a
+// stored plan ID. The migration fixture contrasts one uniquely matching plan
+// with two ambiguous sale plans, then checks the hidden plan chosen for the
+// ambiguous subscription across redeem codes, payment snapshots, defaults, and
+// announcement targeting while retaining recorded usage windows and amounts.
+
+// TestMigration111_MigratesLegacySubscriptionData seeds unique and ambiguous
+// group-plan relationships before migration 111. It checks retained
+// subscription windows and amounts, shared hidden-plan references, payment
+// attribution and snapshots, deduplicated defaults, and expanded announcement
+// plan targeting.
 func TestMigration111_MigratesLegacySubscriptionData(t *testing.T) {
 	ctx := context.Background()
 	tx := historicalTx(t, "111_")
@@ -83,8 +94,9 @@ VALUES ($1, 'subscription', 0, 'unused', 1, 0, 'legacy redeem', $2, 14)
 RETURNING id
 `, "MIGRATE-REDEEM-"+time.Unix(0, suffix).UTC().Format("150405000000"), group2ID).Scan(&redeemCodeID))
 
-	// The historical schema allows one undeleted subscription per user and group, so the payment fixture uses
-	// another user.
+	// The historical schema permits one undeleted subscription per user and
+	// group. Give the payment-linked subscription another user so it can
+	// share group2's ambiguous plan fixture.
 	var paymentUserID int64
 	require.NoError(t, tx.QueryRowContext(ctx, `INSERT INTO users (email, password_hash) VALUES ($1, 'hash') RETURNING id`, "payment-"+int64ToString(suffix)+"@example.test").Scan(&paymentUserID))
 
@@ -134,6 +146,10 @@ RETURNING id
 
 	migrationSQL, err := migrations.FS.ReadFile("111_global_plan_quota_packs.sql")
 	require.NoError(t, err)
+	// Resolve all fixture consumers in one migration execution before
+	// querying them. Comparing the subscription, redeem, order, defaults,
+	// and targeting references catches inconsistent group-to-plan
+	// resolution.
 	_, err = tx.ExecContext(ctx, string(migrationSQL))
 	require.NoError(t, err)
 
@@ -273,12 +289,16 @@ WHERE id = $1
 	require.Equal(t, orderID, sourceOrderID.Int64)
 
 	var snapshot struct {
-		Name            string   `json:"name"`
-		Price           float64  `json:"price"`
-		ValidityDays    int      `json:"validity_days"`
-		DailyLimitUSD   *float64 `json:"daily_limit_usd"`
-		WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
-		MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
+		Name         string  `json:"name"`          // snapshot plan display name
+		Price        float64 `json:"price"`         // snapshot paid order amount
+		ValidityDays int     `json:"validity_days"` // snapshot duration in days
+		// DailyLimitUSD, WeeklyLimitUSD, and MonthlyLimitUSD retain the
+		// plan allowance amounts in the order snapshot. Their pointers
+		// distinguish missing values from zero, and this fixture
+		// requires every allowance present.
+		DailyLimitUSD   *float64 `json:"daily_limit_usd"`   // daily allowance in USD
+		WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`  // weekly allowance in USD
+		MonthlyLimitUSD *float64 `json:"monthly_limit_usd"` // monthly allowance in USD
 	}
 	require.NoError(t, json.Unmarshal(snapshotRaw, &snapshot))
 	require.NotEmpty(t, snapshot.Name)
@@ -294,7 +314,7 @@ WHERE id = $1
 	var settingsValue string
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'default_subscriptions'`).Scan(&settingsValue))
 	var defaultSubscriptions []struct {
-		PlanID int64 `json:"plan_id"`
+		PlanID int64 `json:"plan_id"` // resolved default plan ID
 	}
 	require.NoError(t, json.Unmarshal([]byte(settingsValue), &defaultSubscriptions))
 	require.Len(t, defaultSubscriptions, 2)
@@ -307,10 +327,10 @@ WHERE id = $1
 	var targeting struct {
 		AnyOf []struct {
 			AllOf []struct {
-				Type    string  `json:"type"`
-				PlanIDs []int64 `json:"plan_ids"`
-			} `json:"all_of"`
-		} `json:"any_of"`
+				Type    string  `json:"type"`     // targeting condition category
+				PlanIDs []int64 `json:"plan_ids"` // resolved eligible plan IDs
+			} `json:"all_of"` // nested targeting condition list
+		} `json:"any_of"` // outer targeting condition groups
 	}
 	require.NoError(t, json.Unmarshal(targetingRaw, &targeting))
 	require.Len(t, targeting.AnyOf, 1)
@@ -319,6 +339,10 @@ WHERE id = $1
 	require.ElementsMatch(t, []int64{plan1ID, plan2AID, plan2BID, sub2PlanID}, targeting.AnyOf[0].AllOf[0].PlanIDs)
 }
 
+// insertLegacyGroup creates a historical subscription group and returns its ID.
+// The supplied daily, weekly, and monthly limits are USD amounts, validityDays
+// sets the group default, and suffix separates fixture names in the caller's
+// transaction.
 func insertLegacyGroup(t *testing.T, tx *sql.Tx, base string, suffix int64, daily, weekly, monthly float64, validityDays int) int64 {
 	t.Helper()
 
@@ -336,6 +360,9 @@ RETURNING id
 	return id
 }
 
+// insertLegacyPlan creates a sale plan in the supplied historical transaction
+// and returns its ID. groupID may be nil to store no group association;
+// validityDays is measured in days and price is the stored plan price.
 func insertLegacyPlan(t *testing.T, tx *sql.Tx, base string, suffix int64, groupID *int64, validityDays int, price float64) int64 {
 	t.Helper()
 
@@ -353,6 +380,7 @@ RETURNING id
 	return id
 }
 
+// int64ToString formats a fixture ID or suffix as decimal text.
 func int64ToString(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

@@ -14,8 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration281MovesSettingsWithoutCopyingGroupValues checks default billing settings while retaining
-// shared prices and group links.
+// Price-config billing settings start with defaults even when an associated
+// group has different legacy values. The historical fixture checks those
+// defaults alongside shared price rows and links; a current-store fixture then
+// checks the distinction between a stored zero override and a cleared nullable
+// price through create, update, and list operations.
+
+// TestMigration281MovesSettingsWithoutCopyingGroupValues supplies divergent
+// group prices and a linked shared price config before migration 281. It checks
+// new defaults, selected removed columns, and retained price, multiplier, and
+// association.
 func TestMigration281MovesSettingsWithoutCopyingGroupValues(t *testing.T) {
 	ctx := context.Background()
 	tx := historicalTx(t, "281_")
@@ -29,6 +37,9 @@ func TestMigration281MovesSettingsWithoutCopyingGroupValues(t *testing.T) {
 	require.NoError(t, err)
 	migration, err := migrations.FS.ReadFile("281_pricing_config_billing_settings.sql")
 	require.NoError(t, err)
+	// The first pass adds config settings and drops group price columns.
+	// Replay then checks the same SQL can finish after those structural
+	// changes already exist.
 	for range 2 {
 		_, err = tx.ExecContext(ctx, string(migration))
 		require.NoError(t, err)
@@ -55,12 +66,17 @@ func TestMigration281MovesSettingsWithoutCopyingGroupValues(t *testing.T) {
 	require.Zero(t, count)
 }
 
-// TestPricingConfigBillingSettingsRoundTrip checks writes, clearing an override, and listing stored billing
-// settings in PostgreSQL.
+// TestPricingConfigBillingSettingsRoundTrip creates a stored zero search-price
+// override and a model price through the service. It checks override clearing,
+// updated flags, retained model price, and billing settings returned by the
+// filtered list.
 func TestPricingConfigBillingSettingsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := routingpostgres.NewPricingConfigStore(integrationDB)
 	svc := routing.NewPricingConfigService(repo, nil)
+	// A nonnil pointer to zero stores an explicit free search call. The
+	// later Set flag with a nil Value clears that override back to
+	// inherited pricing.
 	zero, price := 0.0, 0.15
 	config, err := svc.Create(ctx, &routing.CreatePricingConfigInput{
 		Name:                 "billing-settings-roundtrip",
@@ -68,6 +84,9 @@ func TestPricingConfigBillingSettingsRoundTrip(t *testing.T) {
 		ModelPricing:         []routing.ModelPricingEntry{{Models: []string{"custom-image"}, BillingMode: routing.BillingModeImage, PerRequestPrice: &price}},
 	})
 	require.NoError(t, err)
+	// This service test commits through the shared repository, so cleanup
+	// deletes its created config even when a later assertion stops the test
+	// before completion.
 	t.Cleanup(func() { require.NoError(t, repo.Delete(ctx, config.ID)) })
 	require.True(t, config.LongContextPricingEnabled)
 	require.Equal(t, 0.5, config.BatchImageDiscountMultiplier)

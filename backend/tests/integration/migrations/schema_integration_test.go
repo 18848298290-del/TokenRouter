@@ -15,14 +15,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// The embedded migration history is applied before schema assertions inspect
+// PostgreSQL catalogs. These checks compare selected current columns, named
+// indexes, foreign-key actions, and definition fragments, while separate runner
+// calls exercise re-entry and two concurrent callers on the already migrated
+// shared pool. Historical data transformations are exercised by the dedicated
+// migration fixtures rather than inferred from these catalog checks.
+
+// TestMigrationsRunner_ConcurrentInstancesSerializeOnSessionLock calls the
+// runner from two goroutines sharing the migrated fixture pool. It waits for
+// both calls and requires each result to succeed within its own context budget.
 func TestMigrationsRunner_ConcurrentInstancesSerializeOnSessionLock(t *testing.T) {
+	// Two runner calls share one pool, reproducing concurrent entry without
+	// adding pending SQL to the schema already initialized by TestMain.
 	const instances = 2
 	errorsByInstance := make([]error, instances)
 	var wg sync.WaitGroup
+	// Each worker writes a different result slot and signals completion
+	// afterward. Wait before reading those slots so assertions observe
+	// completed calls rather than racing their writes.
 	for i := range instances {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+			// Give each runner its own thirty-second context so a timeout in
+			// one call does not cancel the other call's session-lock wait.
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			errorsByInstance[index] = postgresinfra.ApplyMigrations(ctx, integrationDB, migrations.FS)
@@ -34,13 +51,21 @@ func TestMigrationsRunner_ConcurrentInstancesSerializeOnSessionLock(t *testing.T
 	}
 }
 
+// TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate reapplies the embedded
+// history to the initialized database. It checks a migration-count floor and
+// selected current schema objects and retired columns through PostgreSQL
+// catalogs.
 func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	tx := testTx(t)
 
-	// Reapply migrations before checking the recorded history and schema.
+	// ApplyMigrations uses its own reserved session rather than the
+	// observation transaction; re-entry checks recorded files before these
+	// catalog assertions inspect the shared database.
 	require.NoError(t, postgresinfra.ApplyMigrations(context.Background(), integrationDB, migrations.FS))
 
-	// Migration history records the applied files.
+	// The count floor catches an empty or severely incomplete migration
+	// ledger. It deliberately does not compare the ledger with the complete
+	// embedded filename set.
 	var applied int
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&applied))
 	require.GreaterOrEqual(t, applied, 7, "expected schema_migrations to contain applied migrations")
@@ -49,7 +74,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "users", "username", "character varying", 100, false)
 	requireColumn(t, tx, "users", "notes", "text", 0, false)
 
-	// Provider scheduling requires status, rate-limit timing, and session-window fields.
+	// Provider scheduling requires status, rate-limit timing, and
+	// session-window fields.
 	requireColumn(t, tx, "providers", "notes", "text", 0, true)
 	requireColumn(t, tx, "providers", "schedulable", "boolean", 0, false)
 	requireColumn(t, tx, "providers", "rate_limited_at", "timestamp with time zone", 0, true)
@@ -58,7 +84,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "providers", "session_window_status", "character varying", 20, true)
 	requireIndex(t, tx, "providers", "idx_providers_autopause_expiry_due")
 
-	// Live access belongs to groups; free Fast pricing belongs to pricing_configs.
+	// Live access belongs to groups; free Fast pricing belongs to
+	// pricing_configs.
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireNoColumn(t, tx, "groups", "free_openai_fast")
 	requireColumn(t, tx, "pricing_configs", "free_openai_fast", "boolean", 0, false)
@@ -72,7 +99,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "subscription_plans", "monthly_limit_usd", "numeric", 0, true)
 	requireNoColumn(t, tx, "subscription_plans", "group_id")
 
-	// Subscriptions retain plan-specific allowances and source-order attribution.
+	// Subscriptions retain plan-specific allowances and source-order
+	// attribution.
 	requireColumn(t, tx, "user_subscriptions", "plan_id", "bigint", 0, false)
 	requireColumn(t, tx, "user_subscriptions", "daily_limit_usd", "numeric", 0, true)
 	requireColumn(t, tx, "user_subscriptions", "weekly_limit_usd", "numeric", 0, true)
@@ -84,7 +112,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireIndex(t, tx, "user_subscriptions", "idx_user_subscriptions_user_status_starts_expires")
 	requireIndex(t, tx, "user_subscriptions", "idx_user_subscriptions_user_plan_starts")
 
-	// Batch image jobs snapshot the internal model and separate balance and subscription holds.
+	// Batch image jobs snapshot the internal model and separate balance and
+	// subscription holds.
 	requireColumn(t, tx, "batch_image_jobs", "internal_model", "character varying", 128, false)
 	requireColumn(t, tx, "batch_image_jobs", "balance_hold_amount", "numeric", 0, false)
 	requireColumn(t, tx, "batch_image_jobs", "subscription_hold_allocations", "jsonb", 0, false)
@@ -173,7 +202,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "scheduler_outbox", "dedup_key", "text", 0, true)
 	requireIndex(t, tx, "scheduler_outbox", "idx_scheduler_outbox_pending_dedup_key")
 
-	// Billing deduplication records retain the request fingerprint and lookup indexes.
+	// Billing deduplication records retain the request fingerprint and
+	// lookup indexes.
 	var usageBillingDedupRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))
 	require.True(t, usageBillingDedupRegclass.Valid, "expected usage_billing_dedup table to exist")
@@ -208,7 +238,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.user_allowed_groups')").Scan(&uagRegclass))
 	require.True(t, uagRegclass.Valid, "expected user_allowed_groups table to exist")
 
-	// Public groups disabled by a user are persisted in user_disabled_public_groups.
+	// Public groups disabled by a user are persisted in
+	// user_disabled_public_groups.
 	var udpgRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.user_disabled_public_groups')").Scan(&udpgRegclass))
 	require.True(t, udpgRegclass.Valid, "expected user_disabled_public_groups table to exist")
@@ -230,6 +261,10 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireIndex(t, tx, "user_disabled_public_groups", "idx_user_disabled_public_groups_group_id")
 }
 
+// TestMigrationsRunner_AuthIdentityAndPaymentSchemaStayAligned inspects the
+// migrated identity and payment schema. It checks report width, signup
+// metadata, foreign-key deletion actions, payment index uniqueness and
+// fragments, and absence of the retired index.
 func TestMigrationsRunner_AuthIdentityAndPaymentSchemaStayAligned(t *testing.T) {
 	tx := testTx(t)
 
@@ -261,6 +296,9 @@ func TestMigrationsRunner_AuthIdentityAndPaymentSchemaStayAligned(t *testing.T) 
 	requireIndexAbsent(t, tx, "payment_orders", "paymentorder_out_trade_no_unique")
 }
 
+// requireIndex requires a named index on table in the public schema. It queries
+// pg_indexes through the supplied transaction and fails the calling test when
+// the catalog lookup or presence assertion fails.
 func requireIndex(t *testing.T, tx *sql.Tx, table, index string) {
 	t.Helper()
 
@@ -278,6 +316,9 @@ SELECT EXISTS (
 	require.True(t, exists, "expected index %s on %s", index, table)
 }
 
+// requireIndexAbsent requires a named index to be absent from table in public.
+// The supplied transaction observes the fixture schema, and a lookup error
+// fails the test before the absence assertion.
 func requireIndexAbsent(t *testing.T, tx *sql.Tx, table, index string) {
 	t.Helper()
 
@@ -295,6 +336,10 @@ SELECT EXISTS (
 	require.False(t, exists, "expected index %s on %s to be absent", index, table)
 }
 
+// requirePartialUniqueIndexDefinition requires uniqueness and each supplied
+// text fragment in a public table's index definition. Callers include the
+// predicate fragments they intend to check; the helper does not execute
+// duplicate writes or independently inspect a partial-index predicate.
 func requirePartialUniqueIndexDefinition(t *testing.T, tx *sql.Tx, table, index string, fragments ...string) {
 	t.Helper()
 
@@ -323,6 +368,10 @@ WHERE ns.nspname = 'public'
 	}
 }
 
+// requireForeignKeyOnDelete compares the deletion action of a matching public
+// foreign key with expected. It selects one matching constraint for table,
+// column, and refTable, so callers use a fixture with the intended unambiguous
+// relationship.
 func requireForeignKeyOnDelete(t *testing.T, tx *sql.Tx, table, column, refTable, expected string) {
 	t.Helper()
 
@@ -351,6 +400,10 @@ LIMIT 1
 	require.Equal(t, expected, actual, "unexpected ON DELETE action for %s.%s -> %s", table, column, refTable)
 }
 
+// requireConstraintDefinitionContains reads a named constraint definition on a
+// public table and requires each supplied fragment. Fragments are checked as
+// case-sensitive substrings, giving callers structural evidence for the
+// selected definition.
 func requireConstraintDefinitionContains(t *testing.T, tx *sql.Tx, table, constraint string, fragments ...string) {
 	t.Helper()
 
@@ -371,6 +424,9 @@ WHERE ns.nspname = 'public'
 	}
 }
 
+// requireColumnDefaultContains requires a nonnull stored default expression for
+// a public column and checks each supplied substring. It inspects the catalog's
+// expression text rather than inserting a row to evaluate the default.
 func requireColumnDefaultContains(t *testing.T, tx *sql.Tx, table, column string, fragments ...string) {
 	t.Helper()
 
@@ -390,13 +446,17 @@ WHERE table_schema = 'public'
 	}
 }
 
+// requireColumn checks a public column's PostgreSQL data type and nullability.
+// A positive maxLen also requires that character length; zero or negative
+// maxLen skips the length comparison, allowing numeric and timestamp columns to
+// use the same helper.
 func requireColumn(t *testing.T, tx *sql.Tx, table, column, dataType string, maxLen int, nullable bool) {
 	t.Helper()
 
 	var row struct {
-		DataType string
-		MaxLen   sql.NullInt64
-		Nullable string
+		DataType string        // PostgreSQL catalog type name
+		MaxLen   sql.NullInt64 // optional character length limit
+		Nullable string        // YES or NO nullability
 	}
 
 	err := tx.QueryRowContext(context.Background(), `
@@ -424,6 +484,9 @@ WHERE table_schema = 'public'
 	}
 }
 
+// requireNoColumn requires a column name to be absent from a public table. It
+// checks information_schema through the supplied transaction and fails the test
+// on either a lookup error or an existing column.
 func requireNoColumn(t *testing.T, tx *sql.Tx, table, column string) {
 	t.Helper()
 

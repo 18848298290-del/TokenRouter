@@ -11,12 +11,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUnifiedProtocolMigration checks replay, custom endpoints, empty protocol sets, image restrictions, and
-// video-job bindings in an isolated schema.
+// Legacy account protocols and group client-protocol sets become unified
+// protocol fields. Minimal tables reproduce CN endpoint overrides, an OpenAI
+// workload choice, an image restriction, and a video-job binding; replay then
+// checks that deliberately stored empty account and group sets remain empty
+// while the job keeps its selected account.
+
+// TestUnifiedProtocolMigration uses isolated legacy tables for protocol and
+// endpoint conversion. It checks selected protocol arrays, a CN endpoint, an
+// image block, retained empty sets on replay, and the existing video-job
+// account binding.
 func TestUnifiedProtocolMigration(t *testing.T) {
 	tx, err := integrationDB.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
+	// Cleanup attempts rollback after any assertion outcome and discards
+	// its error. The fixture's schema creation, data writes, and replay all
+	// use this transaction.
 	t.Cleanup(func() { _ = tx.Rollback() })
+	// The local search_path directs unqualified migration names to the
+	// minimal legacy tables, keeping these protocol cases independent of
+	// public tables already migrated at startup.
 	_, err = tx.Exec(`CREATE SCHEMA protocol_migration_test; SET LOCAL search_path=protocol_migration_test;
  CREATE TABLE accounts(id bigint,platform text,type text,credentials jsonb,extra jsonb,parent_account_id bigint);
  CREATE TABLE groups(id bigint,platform text,allowed_client_protocols jsonb,allow_image_generation boolean,allow_batch_image_generation boolean,allow_live boolean);
@@ -38,6 +52,9 @@ func TestUnifiedProtocolMigration(t *testing.T) {
 	require.JSONEq(t, `["openai_embeddings","openai_images_generations","openai_images_edits"]`, value)
 	require.NoError(t, tx.QueryRow(`SELECT responses_image_policy FROM groups WHERE id=1`).Scan(&value))
 	require.Equal(t, "block", value)
+	// Persist empty unified protocol sets before replay, simulating an
+	// administrator choosing no protocols; querying those fields catches
+	// accidental re-expansion from the legacy account data.
 	_, err = tx.Exec(`UPDATE accounts SET credentials=jsonb_set(credentials,'{upstream_protocols}','[]') WHERE id=1; UPDATE groups SET allowed_protocols='[]',protocol_fallbacks='{}',responses_image_policy='disabled' WHERE id=1`)
 	require.NoError(t, err)
 	_, err = tx.Exec(string(sql))

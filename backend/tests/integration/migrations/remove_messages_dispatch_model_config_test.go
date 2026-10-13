@@ -11,8 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestMigration280RemovesMessagesOverride checks replay and retention of general group mappings and identity
-// after override removal.
+// Messages-specific model overrides are retired while the group keeps its
+// general model mapping in routing_policy. A pre-280 group supplies both
+// representations, then repeated column removal is checked through catalog
+// absence and the stored group name and general policy JSON.
+
+// TestMigration280RemovesMessagesOverride gives one historical group a Messages
+// override and a general mapping. It checks two removal executions, absence of
+// the specialized column, and retention of the group name and policy JSON.
 func TestMigration280RemovesMessagesOverride(t *testing.T) {
 	ctx := context.Background()
 	tx := historicalTx(t, "280_")
@@ -20,6 +26,9 @@ func TestMigration280RemovesMessagesOverride(t *testing.T) {
 	require.NoError(t, err)
 	migration, err := migrations.FS.ReadFile("280_remove_messages_dispatch_model_config.sql")
 	require.NoError(t, err)
+	// Replay after the specialized column is gone exercises the guarded
+	// DROP; querying the group by its existing ID checks its name and
+	// general policy still exist.
 	for range 2 {
 		_, err = tx.ExecContext(ctx, string(migration))
 		require.NoError(t, err)
