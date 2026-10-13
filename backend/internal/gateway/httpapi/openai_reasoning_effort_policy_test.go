@@ -17,8 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra checks group-defined mappings for
-// incompatible effort values.
+// TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra
+// maps a configured none effort to low for the named model. It checks the
+// outgoing effort and retention of requested none in context and result
+// attribution.
 func TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -52,6 +54,9 @@ func TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra(t
 	require.Equal(t, "none", *result.RequestedReasoningEffort)
 }
 
+// TestApplyAnthropicReasoningEffortPolicyForRequest_CapsOutputConfigEffort
+// caps max output_config effort to the group's high setting. It checks the
+// changed body while requested max remains recorded in context.
 func TestApplyAnthropicReasoningEffortPolicyForRequest_CapsOutputConfigEffort(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -70,8 +75,9 @@ func TestApplyAnthropicReasoningEffortPolicyForRequest_CapsOutputConfigEffort(t 
 	require.Equal(t, "max", *requested)
 }
 
-// TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault checks that Anthropic policy leaves
-// forced-platform and default requests intact.
+// TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault compares a
+// request with no effort and one forced to Antigravity. It checks unchanged
+// request bytes and false change results for these scenarios.
 func TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault(t *testing.T) {
 	apiKey := &apikey.APIKey{Group: &routing.Group{MaxReasoningEffort: "low"}}
 	for _, forced := range []bool{false, true} {

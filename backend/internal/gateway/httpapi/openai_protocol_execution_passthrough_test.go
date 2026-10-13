@@ -24,6 +24,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestOpenAIPassthroughCompactFallbackSecondStreamFailureUsesStandardErrorPath
+// returns context-window failures from both initial and Compact retry streams.
+// It checks two requests, final HTTP 400, no remaining Compact signal and
+// ordered retry/error Ops events.
 func TestOpenAIPassthroughCompactFallbackSecondStreamFailureUsesStandardErrorPath(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`)
 	recorder := httptest.NewRecorder()
@@ -69,6 +73,9 @@ func TestOpenAIPassthroughCompactFallbackSecondStreamFailureUsesStandardErrorPat
 	require.True(t, events[1].Passthrough)
 }
 
+// TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming lowers client
+// custom tools for a native API-key response. It checks outgoing declarations
+// and restored custom call types and inputs in buffered JSON.
 func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
@@ -97,6 +104,10 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 	require.Equal(t, "*** Begin Patch", gjson.Get(recorder.Body.String(), "output.1.input").String())
 }
 
+// TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts supplies
+// text and file parts in a custom tool result. It checks conversion to
+// function_call_output with the upstream output array and its field values
+// retained.
 func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"custom","name":"exec"}],"input":[{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"result"},{"type":"input_file","file_id":"file_123"}]}]}`)
 	recorder := httptest.NewRecorder()
@@ -124,6 +135,9 @@ func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing
 	require.Equal(t, "file_123", output.Get("1.file_id").String())
 }
 
+// TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming returns
+// function-call stream events for a lowered custom tool. It checks restored
+// custom-call events and string input, plus the final observed runtime model.
 func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(true)
 	recorder := httptest.NewRecorder()
@@ -153,11 +167,15 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.NotContains(t, output, `"input":{`)
 }
 
+// TestOpenAIUpstreamAccessStateClassification compares structured access-state
+// codes with the listed free-form messages. It checks accepted cases'
+// credential failure scope, next-provider action and client presentation
+// alongside rejected classifications.
 func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want bool
+		name string // fixture case name
+		body string // upstream error payload
+		want bool   // expected access-state classification
 	}{
 		{"workspace_code", `{"detail":{"code":"deactivated_workspace"}}`, true},
 		{"disabled_provider_message", `{"error":{"message":"Your provider is disabled"}}`, false},
@@ -189,12 +207,20 @@ func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 	}
 }
 
+// TestOpenAIUpstreamAccessStateDoesNotScanEchoedJSON puts disabled-provider
+// wording in an echo beside an ordinary invalid-input error. It checks that
+// access-state and passthrough failover classification reject that unrelated
+// text.
 func TestOpenAIUpstreamAccessStateDoesNotScanEchoedJSON(t *testing.T) {
 	body := []byte(`{"error":{"code":"invalid_request_error","message":"Invalid input"},"echo":{"prompt":"my provider is disabled"}}`)
 	require.False(t, gatewayprovider.IsOpenAIUpstreamAccessStateError("", body))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Type: capability.ProviderTypeOAuth}}, http.StatusBadRequest, body))
 }
 
+// TestOpenAIHTTPAccessStateDoesNotTrustBadRequestMessage mentions account
+// disabling inside an unknown-parameter HTTP 400. It checks absence of
+// access-state, failover and credential-failure classification for this
+// request rejection.
 func TestOpenAIHTTPAccessStateDoesNotTrustBadRequestMessage(t *testing.T) {
 	body := []byte(`{"error":{"type":"invalid_request_error","code":"unknown_parameter","message":"Unknown parameter: account disabled"}}`)
 
@@ -207,6 +233,9 @@ func TestOpenAIHTTPAccessStateDoesNotTrustBadRequestMessage(t *testing.T) {
 	require.False(t, err.IsCredentialFailure())
 }
 
+// TestOpenAICyberPolicyWrapped5xxNeverFailsOver wraps a cyber-policy code
+// inside an HTTP 502 failure. It checks that both general Responses and OAuth
+// passthrough classifiers decline provider failover.
 func TestOpenAICyberPolicyWrapped5xxNeverFailsOver(t *testing.T) {
 	body := []byte(`{"error":{"code":"cyber_policy","message":"blocked"}}`)
 

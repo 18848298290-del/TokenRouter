@@ -12,6 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Chat Completion readers observe service tiers while decoding chunks and
+// bounded JSON bodies. Their callbacks retain the active HTTP request so model
+// observations, body-limit diagnostics and protocol errors reach the same
+// request that receives output.
+
+// CCOptions binds Chat Completion observations and bounded body reading to c.
+// Keep c and writeError available until the reader finishes; chunk tier state
+// belongs to this option instance, while JSON observations update request
+// state.
 func (p *OpenAIResponseOutput) CCOptions(c *gin.Context, writeError func(*gin.Context, int, string, string)) openai.CCResponseOptions {
 	tierObserver := &forwardcore.ResponseObserver{}
 	maxLineSize := OpenAIResponseDefaultMaxLineSize
@@ -41,6 +50,10 @@ func (p *OpenAIResponseOutput) CCOptions(c *gin.Context, writeError func(*gin.Co
 	}
 }
 
+// Scanner creates a compatibility SSE scanner with the configured line-size
+// limit. A missing configuration or nonpositive MaxLineSize selects
+// OpenAIResponseDefaultMaxLineSize; callers supply and retain ownership of the
+// reader being scanned.
 func (p *OpenAIResponseOutput) Scanner(r io.Reader) *bufio.Scanner {
 	maxLineSize := OpenAIResponseDefaultMaxLineSize
 	if p.Options.Configured && p.Options.MaxLineSize > 0 {

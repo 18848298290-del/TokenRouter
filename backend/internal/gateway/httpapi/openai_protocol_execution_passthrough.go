@@ -20,7 +20,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Passthrough prepares the current provider request and handles upstream recovery.
+// Passthrough execution retains request bytes for the selected provider while
+// the shared runner applies required compatibility and model policies. Its
+// HTTP adapter captures returned model observations, and local diagnostics
+// identify rejected instructions and timeout headers without choosing the
+// outer provider-retry loop.
+
+// Passthrough runs one provider attempt with its canonical image-intent bytes,
+// model and client stream preference. Keep c and the bound services available
+// until synchronous reading finishes; the shared runner owns response
+// recovery, and returned observations can accompany an error.
 func (s *OpenAITextExecutor) Passthrough(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body, canonicalImageIntentBody []byte, reqModel string, attemptImageIntentInvalidated bool, reasoningEffort *string, reqStream bool, startTime time.Time, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	input := openaiexecution.PassthroughInput{Body: body, CanonicalImageIntentBody: canonicalImageIntentBody, Model: reqModel, ImageIntentInvalidated: attemptImageIntentInvalidated, ReasoningEffort: reasoningEffort, Stream: reqStream, StartedAt: startTime}
 	p := &openAIPassthroughExecutionAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}}
@@ -30,6 +39,10 @@ func (s *OpenAITextExecutor) Passthrough(ctx context.Context, c *gin.Context, pr
 	return out, err
 }
 
+// logOpenAIPassthroughInstructionsRejected logs an instruction rejection with
+// provider and request diagnostics. A nil context selects background logging,
+// and a missing provider supplies zero or empty identity fields; the appended
+// request fields follow their own capture rules.
 func logOpenAIPassthroughInstructionsRejected(
 	ctx context.Context,
 	c *gin.Context,
@@ -61,8 +74,10 @@ func logOpenAIPassthroughInstructionsRejected(
 	logging.FromContext(ctx).With(fields...).Warn("OpenAI passthrough 本地拦截：Codex 请求缺少有效 instructions")
 }
 
-// shouldFailoverOpenAIPassthroughResponse decides whether to switch providers using provider type and platform
-// error classification.
+// shouldFailoverOpenAIPassthroughResponse delegates classification using the
+// selected credential type and request-scoped error predicates. Pool-mode
+// retry statuses participate through the provider callback; callers still
+// enforce commitment and output rules before starting another attempt.
 func shouldFailoverOpenAIPassthroughResponse(provider *gatewayprovider.ExecutionProvider, status int, body []byte) bool {
 	return openaiexecution.ShouldFailoverPassthrough(status, body, openaiexecution.PassthroughFailureOptions{
 		APIKey:        provider != nil && provider.Record.Type == capability.ProviderTypeAPIKey,
@@ -76,6 +91,10 @@ func shouldFailoverOpenAIPassthroughResponse(provider *gatewayprovider.Execution
 	})
 }
 
+// collectOpenAIPassthroughTimeoutHeaders returns sorted lowercase
+// timeout-header diagnostics from the supplied map. Nil input returns nil,
+// recognized values are joined with vertical bars, and this collection leaves
+// header admission or filtering to the request builder.
 func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 	if h == nil {
 		return nil

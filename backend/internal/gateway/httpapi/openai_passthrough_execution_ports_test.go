@@ -15,6 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestOpenAIResponsesRejectedFieldRetryStateRejectsDuplicateBodyAndCap repeats
+// initial and repaired request bodies through one state. It checks duplicate
+// rejection and admission stopping after the configured number of unique
+// repair variants.
 func TestOpenAIResponsesRejectedFieldRetryStateRejectsDuplicateBodyAndCap(t *testing.T) {
 	initialBody := []byte(`{"model":"gpt-5.5"}`)
 	state := openai.NewOpenAIResponsesRejectedFieldRetryState(initialBody)
@@ -28,11 +32,15 @@ func TestOpenAIResponsesRejectedFieldRetryStateRejectsDuplicateBodyAndCap(t *tes
 	require.False(t, state.Allow([]byte(`{"model":"gpt-5.5","variant":"overflow"}`)))
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousErrors
+// supplies the listed conflicting or ineligible error paths. It checks no
+// adopted repair and nil retry body for each ambiguous namespace/token-control
+// fixture.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousErrors(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         []byte
-		responseBody []byte
+		name         string // fixture case name
+		body         []byte // client request JSON bytes
+		responseBody []byte // upstream rejection JSON bytes
 	}{
 		{
 			name:         "namespace belongs to message",
@@ -71,6 +79,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousErrors(t 
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRepairsAutomationMissingRootType
+// explicitly rejects an automation tool root schema type. It checks an adopted
+// object-type repair and the exact root-type rejection reason.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRepairsAutomationMissingRootType(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"automation_update","parameters":{"oneOf":[{"type":"object"},{"type":"object","properties":{}}]}}]}`)
 	responseBody := []byte(`{"error":{"code":"invalid_function_parameters","message":"Invalid schema for function 'automation_update': got 'type: \"None\"'.","param":"tools[0].parameters"}}`)
@@ -83,6 +94,10 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRepairsAutomationMissingR
 	require.Equal(t, "object", gjson.GetBytes(retryBody, "tools.0.parameters.type").String())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotGuessAutomationRootType
+// varies the rejected path, classification and message around an automation
+// schema. It checks unchanged adoption state and absent retry bytes for these
+// unsupported signals.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotGuessAutomationRootType(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"automation_update","parameters":{"oneOf":[{"type":"object"}]}}]}`)
 	tests := []string{
@@ -98,6 +113,10 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotGuessAutomationRoo
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyFindsNamespacePathInMessage
+// names one rejected namespace after another accepted index. It checks removal
+// of only the rejected function-call namespace and retention of the other
+// value.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyFindsNamespacePathInMessage(t *testing.T) {
 	body := []byte(`{"input":[{"type":"function_call","namespace":"keep","arguments":"{}"},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"input[0] was accepted; Unknown parameter: 'input[1].namespace'."}}`)
@@ -110,6 +129,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyFindsNamespacePathInMessa
 	require.False(t, gjson.GetBytes(retryBody, "input.1.namespace").Exists())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsNamespacePathToRejectionPhrase
+// mentions an accepted namespace before its rejection phrase. It checks the
+// repair follows the rejected index and retains the accepted namespace.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsNamespacePathToRejectionPhrase(t *testing.T) {
 	body := []byte(`{"input":[{"type":"function_call","namespace":"keep","arguments":"{}"},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"input[0].namespace is supported; Unknown parameter: input[1].namespace."}}`)
@@ -122,6 +144,10 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsNamespacePathToRejec
 	require.False(t, gjson.GetBytes(retryBody, "input.1.namespace").Exists())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputTokensSuggestionAsRejection
+// suggests max_output_tokens after rejecting the different max_tokens control.
+// It checks no adopted change and absent retry bytes for that unrelated
+// suggested parameter.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputTokensSuggestionAsRejection(t *testing.T) {
 	body := []byte(`{"max_tokens":4096,"max_output_tokens":2048}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: max_tokens. Use max_output_tokens instead."}}`)
@@ -133,6 +159,10 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputToke
 	require.Nil(t, retryBody)
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsMaxOutputTokensToRejectionPhrase
+// explicitly rejects top-level max_output_tokens through HTTP 400
+// unsupported-parameter evidence. It checks changed adoption state and removal
+// of that exact field from the retry body.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsMaxOutputTokensToRejectionPhrase(t *testing.T) {
 	body := []byte(`{"max_output_tokens":2048}`)
 	responseBody := []byte(`{"error":{"code":"unsupported_parameter","message":"Unsupported parameter: max_output_tokens."}}`)
@@ -144,11 +174,15 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsMaxOutputTokensToRej
 	require.False(t, gjson.GetBytes(retryBody, "max_output_tokens").Exists())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactIndexedStatus
+// rejects reasoning status through structured or message evidence. It checks
+// removal at the selected index and retention of the different message item's
+// status.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactIndexedStatus(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","status":"keep","content":"one"},{"type":"reasoning","status":"remove","summary":[]}]}`)
 	responses := []struct {
-		name string
-		body []byte
+		name string // fixture case name
+		body []byte // upstream rejection JSON bytes
 	}{
 		{
 			name: "structured param",
@@ -170,13 +204,20 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactIndexedStatus
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyNormalizesExactNullContent
+// applies one indexed null-content rejection to the listed item shapes. It
+// checks message empty-string repair, reasoning removal and no adoption for
+// unknown/non-null items.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyNormalizesExactNullContent(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       []byte
-		wantChange bool
-		wantValue  string
-		wantExists bool
+		name string // fixture case name
+		body []byte // client request JSON bytes
+		// wantChange, wantValue and wantExists describe an adopted repair together.
+		// Value and existence are checked only after change is true; unchanged
+		// cases instead require an absent retry body.
+		wantChange bool   // expected adopted body repair
+		wantValue  string // expected normalized content string
+		wantExists bool   // expected normalized content presence
 	}{
 		{
 			name:       "message becomes empty string",
@@ -222,6 +263,10 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyNormalizesExactNullConten
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactReasoningContentAboveMaximumZero
+// rejects one reasoning content array with maximum zero. It checks the exact
+// repair reason, removed reasoning content and retained neighboring message
+// text.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactReasoningContentAboveMaximumZero(t *testing.T) {
 	body := []byte(`{"input":[{"type":"reasoning","content":[{"type":"reasoning_text","text":"remove"}],"summary":[]},{"type":"message","content":[{"type":"input_text","text":"keep"}]}]}`)
 	responseBody := []byte(`{"error":{"code":"array_above_max_length","message":"Invalid 'input[0].content': array too long. Expected an array with maximum length 0, but got an array with length 1 instead.","param":"input[0].content","type":"invalid_request_error"}}`)
@@ -235,11 +280,15 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExactReasoningCont
 	require.Equal(t, "keep", gjson.GetBytes(retryBody, "input.1.content.0.text").String())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeReasoningMaximumZeroMutations
+// supplies nonreasoning, conflicting-index and wrong-code fixtures. It checks
+// that each ambiguous rejection yields false adoption state and nil retry
+// bytes.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeReasoningMaximumZeroMutations(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         []byte
-		responseBody []byte
+		name         string // fixture case name
+		body         []byte // client request JSON bytes
+		responseBody []byte // upstream rejection JSON bytes
 	}{
 		{
 			name:         "message content is not reasoning",
@@ -267,6 +316,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeReasoningMax
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExplicitlyRejectedTopLevelTruncation
+// supplies structured and message-only unsupported-control evidence. It checks
+// the exact repair reason, removed truncation field and retained input text.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExplicitlyRejectedTopLevelTruncation(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","truncation":"auto","input":"keep"}`)
 	responses := [][]byte{
@@ -283,11 +335,15 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesExplicitlyRejected
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeIndexedMutations
+// tests nested paths, missing indexes, nonrejection mentions and mismatched
+// null evidence. It checks all listed fixtures leave repair unadopted with nil
+// retry bytes.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeIndexedMutations(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         []byte
-		responseBody []byte
+		name         string // fixture case name
+		body         []byte // client request JSON bytes
+		responseBody []byte // upstream rejection JSON bytes
 	}{
 		{
 			name:         "nested status path",
@@ -325,14 +381,17 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeIndexedMutat
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesModelRejectedPromptCacheBreakpoint
+// rejects top-level and indexed model cache hints. It checks exact reason,
+// removed selected path and retained unrelated input or breakpoint.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesModelRejectedPromptCacheBreakpoint(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         []byte
-		responseBody []byte
-		removedPath  string
-		preserved    string
-		reason       string
+		name         string // fixture case name
+		body         []byte // client request JSON bytes
+		responseBody []byte // upstream rejection JSON bytes
+		removedPath  string // expected removed JSON path
+		preserved    string // expected retained JSON path
+		reason       string // expected repair diagnostic reason
 	}{
 		{
 			name:         "top level",
@@ -365,11 +424,14 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRemovesModelRejectedPromp
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousPromptCacheBreakpointErrors
+// conflicts structured/message targets or names an out-of-range index. It
+// checks no adopted repair and nil retry bytes for those fixtures.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousPromptCacheBreakpointErrors(t *testing.T) {
 	body := []byte(`{"prompt_cache_breakpoint":{"type":"message_start"},"input":[{"type":"message","prompt_cache_breakpoint":{"type":"message_end"}}]}`)
 	tests := []struct {
-		name         string
-		responseBody []byte
+		name         string // fixture case name
+		responseBody []byte // upstream rejection JSON bytes
 	}{
 		{
 			name:         "structured param disagrees",
@@ -392,10 +454,14 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousPromptCac
 	}
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyAcceptsEitherCacheModelRejectionSignal
+// compares an explicit invalid-parameter code with model-unsupported wording.
+// It checks adopted breakpoint removal and retained input under either
+// supplied signal.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyAcceptsEitherCacheModelRejectionSignal(t *testing.T) {
 	tests := []struct {
-		name         string
-		responseBody []byte
+		name         string // fixture case name
+		responseBody []byte // upstream rejection JSON bytes
 	}{
 		{
 			name:         "invalid parameter code",
@@ -419,6 +485,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyAcceptsEitherCacheModelRe
 	}
 }
 
+// TestOpenAIResponsesRejectedFieldRetryStateAllowsPromptCacheBreakpointVariantOnce
+// normalizes a rejected indexed cache hint. It checks adoption of that variant
+// and one allowance followed by rejection of the repeated body.
 func TestOpenAIResponsesRejectedFieldRetryStateAllowsPromptCacheBreakpointVariantOnce(t *testing.T) {
 	body := []byte(`{"input":[{"prompt_cache_breakpoint":{"type":"message_start"}}]}`)
 	responseBody := []byte(`{"error":{"code":"invalid_parameter","message":"input[0].prompt_cache_breakpoint is not supported on this model","param":"input[0].prompt_cache_breakpoint"}}`)
@@ -431,9 +500,10 @@ func TestOpenAIResponsesRejectedFieldRetryStateAllowsPromptCacheBreakpointVarian
 	require.False(t, state.Allow(retryBody))
 }
 
-// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType covers repeated items with a
-// rejected status field.
-// Clear all items of the same type in one retry so per-index repairs do not exhaust the budget.
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType
+// rejects status on one of ten tool_search_output items. It checks removal
+// across that type, retained call identities and retained status on the
+// different message type.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType(t *testing.T) {
 	input := make([]string, 0, 12)
 	for i := range 10 {
@@ -458,8 +528,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType(
 		"a different item type keeps its status: the rejection only proves this type has none")
 }
 
-// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly covers rejected items
-// without a type.
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly
+// rejects one untyped item's status. It checks the indexed removal and
+// retention of the other untyped item's status value.
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly(t *testing.T) {
 	body := []byte(`{"input":[{"status":"keep_a"},{"status":"remove"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[1].status'.","param":"input[1].status"}}`)
@@ -471,6 +542,9 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtInde
 	require.False(t, gjson.GetBytes(retryBody, "input.1.status").Exists())
 }
 
+// TestOpenAIResponsesRejectedFieldRetryStateForRequestAllowsSameTransformAcrossProviders
+// creates two attempt states on one Gin request. It checks distinct state
+// objects, shared budget and admission of the same repair once per state.
 func TestOpenAIResponsesRejectedFieldRetryStateForRequestAllowsSameTransformAcrossProviders(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	initialBody := []byte(`{"model":"gpt-5.5","truncation":"auto"}`)
@@ -486,6 +560,10 @@ func TestOpenAIResponsesRejectedFieldRetryStateForRequestAllowsSameTransformAcro
 	require.True(t, providerB.Allow(retryBody), "a failover provider must be allowed to apply the same transform")
 }
 
+// TestOpenAIResponsesRejectedFieldRetryStateForRequestSharesBoundedBudgetAcrossProviders
+// consumes one repair from each request-linked attempt state. It checks the
+// next state cannot admit another novel body after the shared allowance is
+// exhausted.
 func TestOpenAIResponsesRejectedFieldRetryStateForRequestSharesBoundedBudgetAcrossProviders(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	for attempt := range openai.MaxResponsesRejectedFieldRetries {

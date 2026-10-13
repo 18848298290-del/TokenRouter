@@ -21,6 +21,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestHandleSSEToJSON_CompletedEventReturnsJSON supplies in-progress and
+// completed SSE events with terminal usage. It checks final JSON content,
+// removal of SSE framing and the exact input, output and cached-token counts.
 func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -49,6 +52,9 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "data:")
 }
 
+// TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone supplies an
+// image item before an empty terminal output array. It checks restored image
+// content and prompt, completed status and observed image-token usage.
 func TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -76,6 +82,9 @@ func TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone(t *testing.T)
 	require.Equal(t, "draw a cat", gjson.Get(rec.Body.String(), "output.0.revised_prompt").String())
 }
 
+// TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody supplies an in-progress
+// event followed by DONE with no final Response. It checks passthrough SSE
+// content and a returned observation with zero input usage.
 func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -96,6 +105,9 @@ func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `data: {"type":"response.in_progress"`)
 }
 
+// TestHandleSSEToJSON_ResponseFailedReturnsFailoverBeforeWrite supplies a
+// generic failed terminal to an API-key provider. It checks no result, a typed
+// 502 failover error and an untouched client writer.
 func TestHandleSSEToJSON_ResponseFailedReturnsFailoverBeforeWrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -117,8 +129,10 @@ func TestHandleSSEToJSON_ResponseFailedReturnsFailoverBeforeWrite(t *testing.T) 
 	require.False(t, c.Writer.Written())
 }
 
-// TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver checks failover for non-streaming SSE capacity
-// failures.
+// TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver supplies a capacity
+// rejection inside a failed SSE terminal. It checks HTTP 400 classification,
+// same-provider retry eligibility and retained error body before any client
+// output.
 func TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()
@@ -140,8 +154,9 @@ func TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver(t *testing.T) {
 	require.Empty(t, rec.Body.String())
 }
 
-// TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver checks retryable generic response.failed events.
-// Non-streaming and streaming paths must agree on failover.
+// TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver supplies a
+// generic failure accepted by the stream classifier. It checks a typed
+// failover result with no written response or returned usage object.
 func TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()
@@ -160,13 +175,15 @@ func TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver(t *testing.T) {
 	require.Empty(t, rec.Body.String())
 }
 
-// TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError checks a 502 protocol error for
-// non-retryable response.failed events.
+// TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError
+// enumerates parameter, context-window and content-policy failures. It checks
+// JSON 502 protocol errors containing each message and no provider failover
+// wrapper.
 func TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError(t *testing.T) {
 	cases := []struct {
-		name    string
-		data    string
-		wantMsg string
+		name    string // fixture case name
+		data    string // upstream terminal payload
+		wantMsg string // expected client message
 	}{
 		{
 			name:    "invalid_request",
@@ -203,9 +220,10 @@ func TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError(t
 	}
 }
 
-// TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier checks that bare error frames require a
-// recognized transient signal for failover.
-// error and response.failed use separate classifiers.
+// TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier compares
+// generic and recognized transient bare error frames. It checks a final
+// protocol error for the generic case and pre-output failover for the
+// transient case.
 func TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier(t *testing.T) {
 	t.Run("non_transient_stays_protocol_error", func(t *testing.T) {
 		c, rec := newNonStreamingFailoverContext(t)
@@ -239,8 +257,10 @@ func TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier(t *testi
 	})
 }
 
-// TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict compares non-streaming and streaming
-// classifications.
+// TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict runs the listed
+// failed payloads through buffered conversion and the stream predicate. It
+// checks agreement on the presence of a typed failover error for those
+// fixtures.
 func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 	payloads := []string{
 		`{"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`,
@@ -251,6 +271,7 @@ func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 	}
 
 	for _, data := range payloads {
+		// Bound the case label while keeping the full payload in each assertion.
 		t.Run(data[:min(len(data), 60)], func(t *testing.T) {
 			payload := []byte(data)
 			want := openai.OpenAIStreamFailedEventShouldFailover(payload, openai.ExtractOpenAISSEErrorMessage(payload))
@@ -266,9 +287,9 @@ func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 	}
 }
 
-// TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError checks protocol errors after response
-// commitment.
-// The handler subtracts heartbeat bytes when deciding whether output permits failover (#3887).
+// TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError marks response
+// commitment before a capacity failed terminal. It checks a JSON 502 error and
+// absence of provider failover under that marker.
 func TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError(t *testing.T) {
 	c, rec := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()

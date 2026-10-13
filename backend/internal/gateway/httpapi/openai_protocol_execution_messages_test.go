@@ -35,25 +35,60 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Messages callers retain their client model while selected providers may
+// consume native Anthropic, converted Responses or forced Chat requests. These
+// fixtures compare prepared model and effort fields with returned attribution
+// and translated Messages output. Cache keys and saved response IDs receive
+// separate checks because changing a conversation prefix can alter replay while
+// metadata identity stays stable.
+//
+// A terminal Responses event can finish Messages conversion even when its
+// source body never supplies EOF. Blocking bodies separate that decision from
+// executor-owned closure, and failed client writers expose continued usage
+// collection. Other scripted failures inspect local continuation recovery and
+// typed failover; usage and billing-model assertions observe forwarding
+// metadata.
+
+// openAICompatFailingWriter limits delegated byte writes to simulate client
+// disconnection.
 type openAICompatFailingWriter struct {
+	// ResponseWriter supplies the remaining Gin operations while Write injects
+	// the disconnection used by the downstream-draining scenarios in this file.
 	gin.ResponseWriter
-	failAfter int
-	writes    int
+	// failAfter and writes govern delegated byte writes. Write increments writes
+	// before calling the embedded writer and rejects when that count has reached
+	// failAfter, so the counter measures delegation rather than successful delivery.
+	failAfter int // delegated write-call limit
+	writes    int // delegated write-call count
 }
 
-// errTailReader returns data followed by err instead of EOF to simulate a broken upstream stream.
+// errTailReader supplies fixture bytes before returning a configured terminal
+// read error.
 type errTailReader struct {
-	data []byte
-	off  int
-	err  error
+	// data, off and err describe sequential fixture reading. Read copies data
+	// from off and advances it by the copied count before later calls return err;
+	// callers retain data while reading and choose a terminating error.
+	data []byte // upstream fixture bytes
+	off  int    // next unread byte offset
+	err  error  // configured terminal read error
 }
 
+// tempUnschedulableOpenAIProviderRepo records model-scoped health writes over
+// a provider fixture.
 type tempUnschedulableOpenAIProviderRepo struct {
+	// stubOpenAIProviderRepo supplies the other provider methods while this
+	// recorder overrides model-limit writes to expose their provider and scope.
 	stubOpenAIProviderRepo
-	modelRateLimitProviderID int64
-	modelRateLimitKey        string
+	// modelRateLimitProviderID and modelRateLimitKey record the latest fixture
+	// callback together. They remain zero and empty until SetModelRateLimit
+	// receives a model-scoped provider-health observation.
+	modelRateLimitProviderID int64  // last model-limit provider identifier
+	modelRateLimitKey        string // last model-limit scope key
 }
 
+// TestAdaptiveProtocolRoutesMessagesToNativeAnthropic captures Messages input
+// for an adaptive Zhipu target. It checks the configured native Anthropic
+// endpoint and retained model before the deliberate transport failure.
 func TestAdaptiveProtocolRoutesMessagesToNativeAnthropic(t *testing.T) {
 	body := []byte(`{"model":"glm-4.7","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -69,6 +104,9 @@ func TestAdaptiveProtocolRoutesMessagesToNativeAnthropic(t *testing.T) {
 	require.Equal(t, "glm-4.7", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// Write delegates up to failAfter calls, then returns the fixture disconnect
+// error. Nonpositive limits fail immediately; writes counts calls that reached
+// the embedded writer, even if that delegated write itself reports an error.
 func (w *openAICompatFailingWriter) Write(p []byte) (int, error) {
 	if w.writes >= w.failAfter {
 		return 0, errors.New("write failed: client disconnected")
@@ -77,6 +115,10 @@ func (w *openAICompatFailingWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
+// TestForwardAsAnthropic_UsesExactFableMessagesDispatchModel maps a Fable
+// client model to the configured Responses model. It checks separate client,
+// billing and upstream identities and restoration of the client model in
+// Messages output.
 func TestForwardAsAnthropic_UsesExactFableMessagesDispatchModel(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +166,10 @@ func TestForwardAsAnthropic_UsesExactFableMessagesDispatchModel(t *testing.T) {
 	require.Equal(t, "claude-fable-5", gjson.GetBytes(rec.Body.Bytes(), "model").String())
 }
 
+// TestForwardAsAnthropic_NormalizesRoutingAndEffortForGpt54XHigh supplies a
+// suffixed model without explicit effort. It checks normalized
+// upstream/billing model, medium outgoing/result effort and restored client
+// model and answer.
 func TestForwardAsAnthropic_NormalizesRoutingAndEffortForGpt54XHigh(t *testing.T) {
 	t.Parallel()
 
@@ -181,17 +227,22 @@ func TestForwardAsAnthropic_NormalizesRoutingAndEffortForGpt54XHigh(t *testing.T
 	t.Logf("response body: %s", rec.Body.String())
 }
 
+// TestForwardAsAnthropic_PreservesMaxForFinalGPT56ResponsesModel enumerates
+// API-key and OAuth mappings into newer and older models. It checks final
+// outgoing model and model-sensitive max/default effort in both body and
+// result.
 func TestForwardAsAnthropic_PreservesMaxForFinalGPT56ResponsesModel(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
+		name string // fixture case name
+		// selected fixture execution provider
 		provider      *gatewayprovider.ExecutionProvider
-		model         string
-		defaultMapped string
-		effort        string
-		wantModel     string
-		wantEffort    string
+		model         string // client request model
+		defaultMapped string // group-mapped model fallback
+		effort        string // requested effort value
+		wantModel     string // expected outgoing model
+		wantEffort    string // expected outgoing effort
 	}{
 		{
 			name:       "供应商限定型号保留显式 max 和完整 ID",
@@ -270,7 +321,8 @@ func TestForwardAsAnthropic_PreservesMaxForFinalGPT56ResponsesModel(t *testing.T
 	}
 }
 
-// rawGPT56ResponsesAPIKeyProvider builds a Responses API key fixture with model mapping.
+// rawGPT56ResponsesAPIKeyProvider creates an API-key Responses target with one
+// supplied model mapping.
 func rawGPT56ResponsesAPIKeyProvider(requestedModel, mappedModel string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -289,7 +341,8 @@ func rawGPT56ResponsesAPIKeyProvider(requestedModel, mappedModel string) *gatewa
 	}
 }
 
-// rawGPT56ResponsesOAuthProvider builds a Responses OAuth fixture with model mapping.
+// rawGPT56ResponsesOAuthProvider creates an OAuth Codex target with one
+// supplied model mapping.
 func rawGPT56ResponsesOAuthProvider(requestedModel, mappedModel string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -307,6 +360,10 @@ func rawGPT56ResponsesOAuthProvider(requestedModel, mappedModel string) *gateway
 	}
 }
 
+// TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape returns
+// Chat-style usage inside a Responses terminal for mapped Claude input. It
+// checks client/billing/upstream identities and the exact input, output and
+// cached-token observations.
 func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T) {
 	t.Parallel()
 
@@ -362,6 +419,10 @@ func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T)
 	require.Equal(t, "gpt-5.5", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch
+// supplies an explicit cache key for mapped Messages conversion. It checks
+// outgoing cache/model fields and retained cache-read usage from the fixture
+// response.
 func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *testing.T) {
 	t.Parallel()
 
@@ -406,6 +467,9 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 }
 
+// TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID
+// supplies system/history without a session seed. It checks an Anthropic
+// digest key and its isolated session UUID in the outgoing API-key request.
 func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID(t *testing.T) {
 	t.Parallel()
 
@@ -451,6 +515,9 @@ func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSe
 	require.Equal(t, upstreamcore.GenerateSessionUUID(upstreamcore.IsolateSessionID(0, cacheKey)), upstream.lastReq.Header.Get("session_id"))
 }
 
+// TestForwardAsAnthropic_GPT6AstraPromptCacheIdentityStableAcrossAppendedTurns
+// appends history to the same mapped Astra conversation. It checks both
+// captured upstream models and stable nonempty cache keys and session headers.
 func TestForwardAsAnthropic_GPT6AstraPromptCacheIdentityStableAcrossAppendedTurns(t *testing.T) {
 	t.Parallel()
 
@@ -508,6 +575,9 @@ func TestForwardAsAnthropic_GPT6AstraPromptCacheIdentityStableAcrossAppendedTurn
 	}
 }
 
+// TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel maps
+// Messages to the listed noncompatible API-key model. It checks successful
+// forwarding with no derived cache field or session header.
 func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *testing.T) {
 	t.Parallel()
 
@@ -551,8 +621,10 @@ func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *t
 	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 }
 
-// TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity checks that non-Codex models still use the
-// Codex endpoint and identity for OAuth.
+// TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity maps
+// third-party Messages client input to gpt-4o through OAuth. It checks
+// successful execution and the shared Codex identity-header assertions on the
+// captured request.
 func TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -586,10 +658,16 @@ func TestForwardAsAnthropic_OAuthNonCodexModelRestoresCodexIdentity(t *testing.T
 	requireOpenAIMessagesCodexIdentity(t, upstream.lastReq, openai.CodexCLIUserAgent, openai.CodexDefaultOriginator)
 }
 
+// TestForwardAsAnthropic_TrimsFullReplayOnlyForCodexCompatModels converts
+// fifteen history messages for compatible and other API-key models. It checks
+// the compatible retained suffix and guard, while the other fixture retains
+// all messages.
 func TestForwardAsAnthropic_TrimsFullReplayOnlyForCodexCompatModels(t *testing.T) {
 	t.Parallel()
 
 	messages := make([]string, 0, 12+3)
+	// Exceed the compatibility replay suffix with distinguishable messages so
+	// assertions can detect both trimming and retention of the earlier conversation.
 	for i := range 12 + 3 {
 		messages = append(messages, `{"role":"user","content":"message-`+fmt.Sprintf("%02d", i)+`"}`)
 	}
@@ -648,10 +726,16 @@ func TestForwardAsAnthropic_TrimsFullReplayOnlyForCodexCompatModels(t *testing.T
 	require.Equal(t, "message-00", gjson.GetBytes(nonCompatBody, "input.0.content.0.text").String())
 }
 
+// TestForwardAsAnthropic_OAuthCompatKeepsFullReplayForCacheGrowth sends
+// fifteen history messages through OAuth Codex conversion. It checks the
+// inserted developer guard, retained first/last history messages and absent
+// outgoing prompt-cache field.
 func TestForwardAsAnthropic_OAuthCompatKeepsFullReplayForCacheGrowth(t *testing.T) {
 	t.Parallel()
 
 	messages := make([]string, 0, 12+3)
+	// Exceed the compatibility replay suffix with distinguishable messages so
+	// assertions can detect both trimming and retention of the earlier conversation.
 	for i := range 12 + 3 {
 		messages = append(messages, `{"role":"user","content":"message-`+fmt.Sprintf("%02d", i)+`"}`)
 	}
@@ -689,6 +773,10 @@ func TestForwardAsAnthropic_OAuthCompatKeepsFullReplayForCacheGrowth(t *testing.
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 }
 
+// TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation
+// executes two keyed turns with continuation enabled. It checks first-response
+// binding, second previous-response identity and trimmed latest-turn input
+// plus the developer guard.
 func TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation(t *testing.T) {
 	t.Parallel()
 
@@ -740,6 +828,9 @@ func TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation(t *t
 	require.Equal(t, "second", gjson.GetBytes(upstream.lastBody, "input.1.content.0.text").String())
 }
 
+// TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDWhenCapabilityDisabled
+// seeds an ID in storage for a provider without enabled continuation. It
+// checks successful Messages forwarding and no outgoing previous_response_id.
 func TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDWhenCapabilityDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -772,6 +863,9 @@ func TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDWhenCapabilityDisable
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_ReplaysWithoutContinuationWhenNestedOAuthRejectsHTTPPreviousResponseID
+// returns the nested HTTP continuation rejection before success. It checks two
+// requests, initial saved ID and its absence on the replay.
 func TestForwardAsAnthropic_ReplaysWithoutContinuationWhenNestedOAuthRejectsHTTPPreviousResponseID(t *testing.T) {
 	t.Parallel()
 
@@ -816,6 +910,10 @@ func TestForwardAsAnthropic_ReplaysWithoutContinuationWhenNestedOAuthRejectsHTTP
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext appends
+// two tool calls and results after a bound first response. It checks both
+// call/result identifiers, their order and the latest user text in continued
+// input.
 func TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext(t *testing.T) {
 	t.Parallel()
 
@@ -870,6 +968,10 @@ func TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext(t *testi
 	require.Equal(t, "continue", gjson.GetBytes(upstream.lastBody, "input.5.content.0.text").String())
 }
 
+// TestForwardAsAnthropic_ReplaysFullToolHistoryWhenPreviousResponseUnavailable
+// rejects a saved response ID before a successful replay. It checks stable
+// TLS-selected headers and complete original user/tool/result/latest input
+// after removing the continuation ID.
 func TestForwardAsAnthropic_ReplaysFullToolHistoryWhenPreviousResponseUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -928,6 +1030,10 @@ func TestForwardAsAnthropic_ReplaysFullToolHistoryWhenPreviousResponseUnavailabl
 	require.Equal(t, "second", gjson.GetBytes(upstream.bodies[1], "input.4.content.0.text").String())
 }
 
+// TestOpenAICompatPreviousResponseUnavailableRecognitionIsStrict compares the
+// supported unavailable-response message with wrong status and similar
+// unrelated wording. It checks acceptance of the exact fixture and rejection
+// of the listed alternatives.
 func TestOpenAICompatPreviousResponseUnavailableRecognitionIsStrict(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"error":{"message":"previous_response_id is not available for this user","type":"invalid_request_error"}}`)
@@ -937,6 +1043,9 @@ func TestOpenAICompatPreviousResponseUnavailableRecognitionIsStrict(t *testing.T
 	require.False(t, gatewayprovider.CompatPreviousResponseNotFound(http.StatusBadRequest, "previous_response_id is not available for this project", nil))
 }
 
+// TestForwardAsAnthropic_PreviousResponseUnavailableRetryFailureDoesNotLoop
+// returns unavailable-continuation rejection from both captured exchanges. It
+// checks exactly two requests, with the saved ID removed from the second body.
 func TestForwardAsAnthropic_PreviousResponseUnavailableRetryFailureDoesNotLoop(t *testing.T) {
 	t.Parallel()
 
@@ -965,12 +1074,18 @@ func TestForwardAsAnthropic_PreviousResponseUnavailableRetryFailureDoesNotLoop(t
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 
+	// Discard both forwarding returns because this case counts recovery requests
+	// and inspects continuation removal, including the retry that also fails.
 	_, _ = svc.Text.Messages(context.Background(), c, provider, body, "stable-cache-key", "gpt-5.3-codex")
 	require.Len(t, upstream.requests, 2)
 	require.True(t, gjson.GetBytes(upstream.bodies[0], "previous_response_id").Exists())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSocketV2
+// rejects HTTP continuation, succeeds on replay and receives another turn. It
+// checks the initial ID and its continued absence in replay and later captured
+// requests.
 func TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSocketV2(t *testing.T) {
 	t.Parallel()
 
@@ -1029,11 +1144,18 @@ func TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSoc
 	require.False(t, gjson.GetBytes(upstream.bodies[2], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnchorAfterContinuationDisabled
+// changes history and cache anchors after disabling a metadata-keyed
+// continuation. It checks stable cache identity, absent previous ID and
+// retained full later history with its guard.
 func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnchorAfterContinuationDisabled(t *testing.T) {
 	t.Parallel()
 
 	metadata := `{"user_id":"{\"device_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"account_uuid\":\"\",\"session_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"}"}`
 	firstBody := []byte(`{"model":"claude-haiku-4-5-20251001","max_tokens":16,"metadata":` + metadata + `,"system":[{"type":"text","text":"project docs","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"first"}],"stream":false}`)
+	// Sixteen messages exceed the normal twelve-message suffix allowance, so
+	// retained earlier history distinguishes full replay after continuation is
+	// disabled.
 	messages := make([]string, 0, 12+4)
 	messages = append(messages, `{"role":"user","content":[{"type":"text","text":"rewritten context","cache_control":{"type":"ephemeral"}}]}`)
 	for i := 1; i < 12+4; i++ {
@@ -1073,6 +1195,8 @@ func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnc
 	require.NotEmpty(t, firstKey)
 	require.True(t, strings.HasPrefix(firstKey, "anthropic-metadata-"))
 
+	// Disable the metadata-keyed binding before changing history and its cache
+	// anchor; the next request must reuse that identity while replaying all input.
 	svc.Text.Continuation.Disable(session.CompatResponseKey(provider.Record.ID, 0, firstKey))
 
 	secondRec := httptest.NewRecorder()
@@ -1093,6 +1217,10 @@ func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnc
 	require.Equal(t, "message-15", gjson.GetBytes(upstream.bodies[1], "input.16.content.0.text").String())
 }
 
+// TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDForOAuthCompat seeds
+// continuation storage for an OAuth target. It checks successful Messages
+// execution and omission of the saved previous_response_id from the outgoing
+// request.
 func TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDForOAuthCompat(t *testing.T) {
 	t.Parallel()
 
@@ -1125,6 +1253,9 @@ func TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDForOAuthCompat(t *tes
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_ReusesOAuthCodexTurnState returns opaque state on the
+// first keyed OAuth turn. It checks its second-turn replay with stable
+// isolated session identity, Codex headers and no previous-response field.
 func TestForwardAsAnthropic_ReusesOAuthCodexTurnState(t *testing.T) {
 	t.Parallel()
 
@@ -1178,14 +1309,18 @@ func TestForwardAsAnthropic_ReusesOAuthCodexTurnState(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders compares official
+// and third-party client identities with a mismatched originator. It checks
+// preserved or default User-Agent plus paired originator and shared Codex
+// version/beta headers.
 func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
 	tests := []struct {
-		name           string
-		userAgent      string
-		originator     string
-		wantUserAgent  string
-		wantOriginator string
+		name           string // fixture case name
+		userAgent      string // client User-Agent value
+		originator     string // client originator value
+		wantUserAgent  string // expected upstream User-Agent
+		wantOriginator string // expected upstream originator
 	}{
 		{
 			name:           "官方UA逐字保留并重新配对",
@@ -1237,6 +1372,10 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	}
 }
 
+// TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey
+// extends history without an explicit cache seed. It checks a stable
+// digest-derived session, replayed opaque state and absent
+// prompt-cache/previous-response fields.
 func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey(t *testing.T) {
 	t.Parallel()
 
@@ -1293,6 +1432,10 @@ func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_OAuthMetadataSessionSurvivesDigestPrefixRewrite
+// changes the history prefix with unchanged metadata session. It checks stable
+// session identity and replayed turn state while outgoing cache and
+// previous-response fields remain absent.
 func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesDigestPrefixRewrite(t *testing.T) {
 	t.Parallel()
 
@@ -1348,6 +1491,10 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesDigestPrefixRewrite(t *t
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_OAuthMetadataSessionSurvivesChangingCacheControlAnchor
+// changes system cache-control anchor text under one metadata session. It
+// checks stable session identity, replayed turn state and absent
+// cache/previous-response fields.
 func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesChangingCacheControlAnchor(t *testing.T) {
 	t.Parallel()
 
@@ -1403,6 +1550,9 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesChangingCacheControlAnch
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 }
 
+// TestForwardAsAnthropic_OAuthKeepsSystemAsDeveloperInput supplies system text
+// with cache control to OAuth conversion. It checks retained developer
+// content, present empty instructions and the captured Codex identity headers.
 func TestForwardAsAnthropic_OAuthKeepsSystemAsDeveloperInput(t *testing.T) {
 	t.Parallel()
 
@@ -1440,6 +1590,9 @@ func TestForwardAsAnthropic_OAuthKeepsSystemAsDeveloperInput(t *testing.T) {
 	requireOpenAIMessagesCodexIdentity(t, upstream.requests[0], openai.CodexCLIUserAgent, openai.CodexDefaultOriginator)
 }
 
+// TestForwardAsAnthropic_OAuthAddsClaudeCodeTodoGuardForCompatModel supplies
+// system/user input for a compatible OAuth model. It checks the system
+// developer item, separate todo-guard developer item and subsequent user role.
 func TestForwardAsAnthropic_OAuthAddsClaudeCodeTodoGuardForCompatModel(t *testing.T) {
 	t.Parallel()
 
@@ -1475,6 +1628,10 @@ func TestForwardAsAnthropic_OAuthAddsClaudeCodeTodoGuardForCompatModel(t *testin
 	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.2.role").String())
 }
 
+// TestForwardAsAnthropic_OAuthPreservesClaudeCodeToolCallID converts paired
+// Claude tool-use and result history. It checks the retained identifier in
+// both function nodes and outgoing parallel, verbosity and strictness
+// settings.
 func TestForwardAsAnthropic_OAuthPreservesClaudeCodeToolCallID(t *testing.T) {
 	t.Parallel()
 
@@ -1510,6 +1667,9 @@ func TestForwardAsAnthropic_OAuthPreservesClaudeCodeToolCallID(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "tools.0.strict").Bool())
 }
 
+// TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage returns a
+// successful terminal ID with no usage on the first API-key stream. It checks
+// that the second turn attaches that first ID as continuation.
 func TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage(t *testing.T) {
 	t.Parallel()
 
@@ -1555,6 +1715,10 @@ func TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage(t *testing.T) 
 	require.Equal(t, "resp_stream_first", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
 }
 
+// openAICompatSSECompletedResponse builds a completed Responses fixture with
+// token usage and DONE. Callers provide model and ID values safe for direct
+// JSON interpolation and close the returned response body after its reader
+// finishes.
 func openAICompatSSECompletedResponse(responseID, model string) *http.Response {
 	body := strings.Join([]string{
 		`data: {"type":"response.completed","response":{"id":"` + responseID + `","object":"response","model":"` + model + `","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
@@ -1569,6 +1733,8 @@ func openAICompatSSECompletedResponse(responseID, model string) *http.Response {
 	}
 }
 
+// requireOpenAIMessagesCodexIdentity asserts User-Agent, originator, version
+// and beta on a nonnil request.
 func requireOpenAIMessagesCodexIdentity(t *testing.T, req *http.Request, wantUserAgent, wantOriginator string) {
 	t.Helper()
 	require.NotNil(t, req)
@@ -1578,6 +1744,9 @@ func requireOpenAIMessagesCodexIdentity(t *testing.T, req *http.Request, wantUse
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 }
 
+// openAICompatSSEResponseWithoutUsage builds a completed Responses fixture
+// with text and DONE but no usage. Model and response ID are interpolated
+// directly, so callers supply JSON-safe values and retain body cleanup.
 func openAICompatSSEResponseWithoutUsage(responseID, model string) *http.Response {
 	body := strings.Join([]string{
 		`data: {"type":"response.completed","response":{"id":"` + responseID + `","object":"response","model":"` + model + `","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]}}`,
@@ -1592,9 +1761,15 @@ func openAICompatSSEResponseWithoutUsage(responseID, model string) *http.Respons
 	}
 }
 
+// TestForwardAsAnthropic_ForcedCodexInstructionsTemplatePrependsRenderedInstructions
+// supplies a template string and client system text to the fixture executor.
+// It checks the exact rendered server prefix followed by client instructions.
 func TestForwardAsAnthropic_ForcedCodexInstructionsTemplatePrependsRenderedInstructions(t *testing.T) {
 	t.Parallel()
 
+	// The file is fixture setup; the executor below receives matching
+	// ForcedTemplate text directly, so these rendering assertions do not exercise
+	// template-file loading.
 	templateDir := t.TempDir()
 	templatePath := filepath.Join(templateDir, "codex-instructions.md.tmpl")
 	require.NoError(t, os.WriteFile(templatePath, []byte("server-prefix\n\n{{ .ExistingInstructions }}"), 0o644))
@@ -1638,6 +1813,9 @@ func TestForwardAsAnthropic_ForcedCodexInstructionsTemplatePrependsRenderedInstr
 	require.Equal(t, "server-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
+// TestForwardAsAnthropic_ForcedCodexInstructionsTemplateUsesCachedTemplateContent
+// supplies cached template text and client system instructions. It checks the
+// exact outgoing rendered instructions from those configured fixture values.
 func TestForwardAsAnthropic_ForcedCodexInstructionsTemplateUsesCachedTemplateContent(t *testing.T) {
 	t.Parallel()
 
@@ -1680,6 +1858,10 @@ func TestForwardAsAnthropic_ForcedCodexInstructionsTemplateUsesCachedTemplateCon
 	require.Equal(t, "cached-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "instructions").String())
 }
 
+// TestForwardAsAnthropic_ClientDisconnectDrainsUpstreamUsage rejects client
+// writes before terminal usage arrives from Responses. It checks successful
+// returned observations with the exact input, output and cache-read
+// quantities.
 func TestForwardAsAnthropic_ClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1727,6 +1909,10 @@ func TestForwardAsAnthropic_ClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 }
 
+// TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns blocks
+// source reads after terminal usage while client output fails. It checks
+// timely return and captured usage without requiring EOF before executor
+// cleanup closes the source.
 func TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1736,6 +1922,8 @@ func TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns(t *testing.
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstreamBody := []byte(`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":15,"output_tokens":6,"total_tokens":21,"input_tokens_details":{"cached_tokens":5}}}}` + "\n\n")
+	// Block reads after the terminal bytes to distinguish completion from EOF;
+	// deferred closure releases any remaining read if the test wait times out.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1761,16 +1949,25 @@ func TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns(t *testing.
 		},
 	}
 
+	// forwardResult carries one worker's forwarding observation and error to the
+	// waiting test.
 	type forwardResult struct {
-		result *forwardcore.OpenAIResult
-		err    error
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		result *forwardcore.OpenAIResult // forwarding result observation
+		err    error                     // forwarding operation error
 	}
+	// A buffered result lets the worker publish after a wait timeout; deferred
+	// body closure releases the blocking fixture if terminal-driven return did not occur.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Messages(context.Background(), c, provider, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
+	// The one-second guard turns waiting for unprovided EOF into an assertion
+	// failure, after which deferred source closure releases blocked reads.
 	select {
 	case got := <-resultCh:
 		require.NoError(t, got.err)
@@ -1783,6 +1980,9 @@ func TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns(t *testing.
 	}
 }
 
+// TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns names a
+// terminal outside JSON type and then blocks reads. It checks timely return
+// with the fixture token quantities while client output is rejected.
 func TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1797,6 +1997,8 @@ func TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns(t *tes
 		``,
 		``,
 	}, "\n"))
+	// Block reads after the terminal bytes to distinguish completion from EOF;
+	// deferred closure releases any remaining read if the test wait times out.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1822,16 +2024,25 @@ func TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns(t *tes
 		},
 	}
 
+	// forwardResult carries one worker's forwarding observation and error to the
+	// waiting test.
 	type forwardResult struct {
-		result *forwardcore.OpenAIResult
-		err    error
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		result *forwardcore.OpenAIResult // forwarding result observation
+		err    error                     // forwarding operation error
 	}
+	// A buffered result lets the worker publish after a wait timeout; deferred
+	// body closure releases the blocking fixture if terminal-driven return did not occur.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Messages(context.Background(), c, provider, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
+	// The one-second guard turns waiting for unprovided EOF into an assertion
+	// failure, after which deferred source closure releases blocked reads.
 	select {
 	case got := <-resultCh:
 		require.NoError(t, got.err)
@@ -1844,6 +2055,10 @@ func TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns(t *tes
 	}
 }
 
+// TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns combines an
+// upstream ping, named terminal and configured keepalive path. It checks
+// timely returned usage from a blocking body while downstream writes are
+// rejected; an actual keepalive beat is not asserted.
 func TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1860,6 +2075,8 @@ func TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns(t *testing.T)
 		``,
 		``,
 	}, "\n"))
+	// Block reads after the terminal bytes to distinguish completion from EOF;
+	// deferred closure releases any remaining read if the test wait times out.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1885,16 +2102,25 @@ func TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns(t *testing.T)
 		},
 	}
 
+	// forwardResult carries one worker's forwarding observation and error to the
+	// waiting test.
 	type forwardResult struct {
-		result *forwardcore.OpenAIResult
-		err    error
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		result *forwardcore.OpenAIResult // forwarding result observation
+		err    error                     // forwarding operation error
 	}
+	// A buffered result lets the worker publish after a wait timeout; deferred
+	// body closure releases the blocking fixture if terminal-driven return did not occur.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Messages(context.Background(), c, provider, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
+	// The one-second guard turns waiting for unprovided EOF into an assertion
+	// failure, after which deferred source closure releases blocked reads.
 	select {
 	case got := <-resultCh:
 		require.NoError(t, got.err)
@@ -1907,6 +2133,9 @@ func TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns(t *testing.T)
 	}
 }
 
+// TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns blocks
+// reads after a completed Response for nonstreaming Messages. It checks timely
+// return, usage observations and end_turn in the buffered client output.
 func TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1915,6 +2144,8 @@ func TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns(t *testi
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstreamBody := []byte(`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":15,"output_tokens":6,"total_tokens":21,"input_tokens_details":{"cached_tokens":5}}}}` + "\n\n")
+	// Block reads after the terminal bytes to distinguish completion from EOF;
+	// deferred closure releases any remaining read if the test wait times out.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1940,16 +2171,25 @@ func TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns(t *testi
 		},
 	}
 
+	// forwardResult carries one worker's forwarding observation and error to the
+	// waiting test.
 	type forwardResult struct {
-		result *forwardcore.OpenAIResult
-		err    error
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		result *forwardcore.OpenAIResult // forwarding result observation
+		err    error                     // forwarding operation error
 	}
+	// A buffered result lets the worker publish after a wait timeout; deferred
+	// body closure releases the blocking fixture if terminal-driven return did not occur.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Messages(context.Background(), c, provider, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
+	// The one-second guard turns waiting for unprovided EOF into an assertion
+	// failure, after which deferred source closure releases blocked reads.
 	select {
 	case got := <-resultCh:
 		require.NoError(t, got.err)
@@ -1963,6 +2203,10 @@ func TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns(t *testi
 	}
 }
 
+// TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturns
+// names the completed event outside its JSON type for buffered Messages. It
+// checks timely usage return and end_turn without requiring EOF before
+// executor cleanup closes the blocking body.
 func TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1976,6 +2220,8 @@ func TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturn
 		``,
 		``,
 	}, "\n"))
+	// Block reads after the terminal bytes to distinguish completion from EOF;
+	// deferred closure releases any remaining read if the test wait times out.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -2001,16 +2247,25 @@ func TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturn
 		},
 	}
 
+	// forwardResult carries one worker's forwarding observation and error to the
+	// waiting test.
 	type forwardResult struct {
-		result *forwardcore.OpenAIResult
-		err    error
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		result *forwardcore.OpenAIResult // forwarding result observation
+		err    error                     // forwarding operation error
 	}
+	// A buffered result lets the worker publish after a wait timeout; deferred
+	// body closure releases the blocking fixture if terminal-driven return did not occur.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Messages(context.Background(), c, provider, body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
+	// The one-second guard turns waiting for unprovided EOF into an assertion
+	// failure, after which deferred source closure releases blocked reads.
 	select {
 	case got := <-resultCh:
 		require.NoError(t, got.err)
@@ -2024,6 +2279,10 @@ func TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturn
 	}
 }
 
+// TestForwardAsAnthropic_MissingTerminalBeforeOutputReturnsFailoverAndOps
+// supplies only DONE before Messages content starts. It checks typed recovery,
+// zero usage, untouched client output and one failover Ops event with
+// provider/request identity.
 func TestForwardAsAnthropic_MissingTerminalBeforeOutputReturnsFailoverAndOps(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2074,6 +2333,10 @@ func TestForwardAsAnthropic_MissingTerminalBeforeOutputReturnsFailoverAndOps(t *
 	require.Contains(t, events[0].Message, "terminal event")
 }
 
+// TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover
+// ends after partial Messages content. It checks partial result/output, no
+// failover wrapper and one missing-terminal Ops event tied to the captured
+// request.
 func TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2128,6 +2391,10 @@ func TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover(
 	require.Contains(t, events[0].Message, "terminal event")
 }
 
+// TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailover
+// rejects client writes and ends after a preamble. It checks a disconnect
+// observation with missing-terminal error, no failover wrapper and no
+// upstream-error Ops key.
 func TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2170,6 +2437,10 @@ func TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailo
 	require.False(t, ok, "client disconnect must not be attributed as an upstream error")
 }
 
+// TestForwardAsAnthropic_CompleteStreamDoesNotRecordMissingTerminalOps
+// supplies content and a successful usage terminal. It checks returned token
+// quantities, downstream message_stop and absence of the upstream-error Ops
+// key.
 func TestForwardAsAnthropic_CompleteStreamDoesNotRecordMissingTerminalOps(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2218,6 +2489,9 @@ func TestForwardAsAnthropic_CompleteStreamDoesNotRecordMissingTerminalOps(t *tes
 	require.False(t, ok)
 }
 
+// openAICompatOpsEvents requires presence and slice type for the Gin
+// upstream-error value, then returns that request-owned slice. Callers inspect
+// it after forwarding; event pointers and backing slice storage remain shared.
 func openAICompatOpsEvents(t *testing.T, c *gin.Context) []*ops.OpsUpstreamErrorEvent {
 	t.Helper()
 	v, ok := c.Get(OpsUpstreamErrorsKey)
@@ -2227,6 +2501,10 @@ func openAICompatOpsEvents(t *testing.T, c *gin.Context) []*ops.OpsUpstreamError
 	return events
 }
 
+// TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel cancels the client
+// before converted forwarding and supplies a completed fixture response. It
+// checks successful result and an uncancelled captured upstream request
+// context.
 func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2234,6 +2512,8 @@ func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body)).WithContext(reqCtx)
 	c.Request.Header.Set("Content-Type", "application/json")
+	// Cancel before forwarding to exercise the injected cancellation path while
+	// the fixture controls the transport result independently of network progress.
 	cancel()
 
 	upstreamBody := strings.Join([]string{
@@ -2270,6 +2550,9 @@ func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+// TestForwardGrokMessagesDropsRedundantViewImage converts inline image
+// Messages to Grok Responses. It checks the endpoint, converted image content
+// and outgoing tool policy through the shared inline-image assertions.
 func TestForwardGrokMessagesDropsRedundantViewImage(t *testing.T) {
 	body := []byte(`{
 		"model":"grok-4.6","max_tokens":32,"stream":false,
@@ -2303,8 +2586,10 @@ func TestForwardGrokMessagesDropsRedundantViewImage(t *testing.T) {
 	assertGrokInlineImageTools(t, upstream.lastBody, "tools.#(name==\"%s\")")
 }
 
-// TestForwardAsAnthropicForGrokUsesXAIResponses checks Grok headers and endpoints, keeping Codex identity
-// specific to OpenAI OAuth.
+// TestForwardAsAnthropicForGrokUsesXAIResponses converts Messages under keyed
+// Grok OAuth execution. It checks Grok endpoint and CLI headers, isolated
+// cache identity, tools, separate client/upstream model and converted
+// cache-read usage.
 func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2352,8 +2637,10 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "ok")
 }
 
-// TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce checks that stale reasoning ciphertext is
-// stripped and retried on the same route after the provider cache identity changes.
+// TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce returns a
+// ciphertext rejection before success on the same route. It checks two
+// requests with encrypted reasoning present initially and absent on retry,
+// plus the final answer.
 func TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2394,6 +2681,10 @@ func TestForwardAsAnthropicForGrokRetriesInvalidEncryptedContentOnce(t *testing.
 	require.Contains(t, recorder.Body.String(), "ok")
 }
 
+// TestForwardAsAnthropicForGrokFunctionToolUsesCacheCapableMixedRoute combines
+// client functions with hosted searches for a keyed Grok request. It checks
+// isolated cache identity, declarations, restored tool use and separated
+// uncached/cached token quantities.
 func TestForwardAsAnthropicForGrokFunctionToolUsesCacheCapableMixedRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2459,6 +2750,9 @@ func TestForwardAsAnthropicForGrokFunctionToolUsesCacheCapableMixedRoute(t *test
 	require.Equal(t, int64(6144), gjson.Get(clientBody, "usage.cache_read_input_tokens").Int())
 }
 
+// TestForwardAsAnthropicForGrokStreamingPreservesCacheUsage converts a keyed
+// Grok Response into Messages SSE. It checks stable body/header identity,
+// returned cached usage and the corresponding client cache-read token field.
 func TestForwardAsAnthropicForGrokStreamingPreservesCacheUsage(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2486,6 +2780,8 @@ func TestForwardAsAnthropicForGrokStreamingPreservesCacheUsage(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"cache_read_input_tokens":2`)
 }
 
+// nativeAnthropicTestProvider creates a Kimi API-key target with a native
+// Anthropic base.
 func nativeAnthropicTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -2505,6 +2801,8 @@ func nativeAnthropicTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// nativeAnthropicGLMTestProvider creates a Zhipu variant of the native
+// Anthropic fixture.
 func nativeAnthropicGLMTestProvider() *gatewayprovider.ExecutionProvider {
 	provider := nativeAnthropicTestProvider()
 	provider.Record.Name = "zhipu-native"
@@ -2512,6 +2810,9 @@ func nativeAnthropicGLMTestProvider() *gatewayprovider.ExecutionProvider {
 	return provider
 }
 
+// nativeAnthropicBufferedResponse builds a Kimi Messages JSON fixture with
+// pong, end_turn, input 93 and output 16. Each call returns a fresh body for the
+// executing fixture to consume and close.
 func nativeAnthropicBufferedResponse() *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -2524,6 +2825,10 @@ func nativeAnthropicBufferedResponse() *http.Response {
 	}
 }
 
+// nativeAnthropicStreamResponse builds a Kimi Messages stream from
+// message_start through message_stop with pong text. Initial input 93 and
+// output 1 precede terminal output 16; each call returns a fresh body that its
+// executor consumes and closes.
 func nativeAnthropicStreamResponse() *http.Response {
 	sse := `event: message_start
 data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"k3","content":[],"stop_reason":null,"usage":{"input_tokens":93,"output_tokens":1}}}
@@ -2551,6 +2856,9 @@ data: {"type":"message_stop"}
 	}
 }
 
+// TestNativeAnthropicPassthroughRecordsOutputConfigEffort supplies low
+// output_config effort to native Kimi Messages. It checks the observed
+// upstream model and recorded low reasoning effort in the returned result.
 func TestNativeAnthropicPassthroughRecordsOutputConfigEffort(t *testing.T) {
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +
 		`"output_config":{"effort":"low"},` +
@@ -2567,6 +2875,9 @@ func TestNativeAnthropicPassthroughRecordsOutputConfigEffort(t *testing.T) {
 	require.Equal(t, "low", *result.ReasoningEffort)
 }
 
+// TestNativeAnthropicPassthroughThinkingEnabledFallback supplies enabled
+// thinking with no explicit effort to native Kimi. It checks the observed
+// model and derived high effort in the returned result.
 func TestNativeAnthropicPassthroughThinkingEnabledFallback(t *testing.T) {
 	// With thinking enabled and effort omitted, the passback-required model k3 uses high.
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +
@@ -2584,6 +2895,9 @@ func TestNativeAnthropicPassthroughThinkingEnabledFallback(t *testing.T) {
 	require.Equal(t, "high", *result.ReasoningEffort)
 }
 
+// TestNativeAnthropicPassthroughStreamRecordsEffort supplies max effort to a
+// complete native Messages stream. It checks successful observation of the
+// upstream model and max reasoning effort in the result.
 func TestNativeAnthropicPassthroughStreamRecordsEffort(t *testing.T) {
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":true,` +
 		`"output_config":{"effort":"max"},` +
@@ -2600,8 +2914,12 @@ func TestNativeAnthropicPassthroughStreamRecordsEffort(t *testing.T) {
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestNativeAnthropicPassthroughNoEffortStaysNil supplies neither output
+// effort nor enabled thinking to native Kimi. It checks a successful result
+// with observed upstream model and absent reasoning-effort attribution.
 func TestNativeAnthropicPassthroughNoEffortStaysNil(t *testing.T) {
-	// Omitting output_config.effort with thinking disabled leaves the result nil.
+	// Omitting output_config.effort and enabled thinking leaves requested-effort
+	// attribution nil on the successful result, as the field assertion checks.
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
 	upstream := &auxiliaryHTTPRecorder{resp: nativeAnthropicBufferedResponse()}
@@ -2615,12 +2933,16 @@ func TestNativeAnthropicPassthroughNoEffortStaysNil(t *testing.T) {
 	require.Nil(t, result.ReasoningEffort)
 }
 
+// TestNativeAnthropicPassthroughNormalizesGLM53Thinking enumerates
+// disabled/enabled thinking and effort values for GLM 5.3. It checks enabled
+// outgoing thinking and the expected normalized output effort in buffered and
+// streaming fixtures.
 func TestNativeAnthropicPassthroughNormalizesGLM53Thinking(t *testing.T) {
 	tests := []struct {
-		name       string
-		stream     bool
-		preference string
-		wantEffort string
+		name       string // fixture case name
+		stream     bool   // client streaming preference
+		preference string // fixture thinking/effort JSON
+		wantEffort string // expected outgoing effort
 	}{
 		{name: "disabled buffered", preference: `"thinking":{"type":"disabled"},`, wantEffort: "low"},
 		{name: "off buffered", preference: `"thinking":{"type":"off"},`, wantEffort: "low"},
@@ -2658,10 +2980,13 @@ func TestNativeAnthropicPassthroughNormalizesGLM53Thinking(t *testing.T) {
 	}
 }
 
+// TestNativeAnthropicPassthroughLeavesOtherThinkingUntouched compares
+// unspecified GLM 5.3 and disabled GLM 5.2 input. It checks successful
+// execution and JSON equality of each outgoing body with its supplied fixture.
 func TestNativeAnthropicPassthroughLeavesOtherThinkingUntouched(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name string // fixture case name
+		body string // client request JSON
 	}{
 		{name: "glm 5.3 unspecified", body: `{"model":"glm-5.3","max_tokens":32,"stream":false,"messages":[]}`},
 		{name: "glm 5.2 disabled", body: `{"model":"glm-5.2","max_tokens":32,"stream":false,"thinking":{"type":"disabled"},"messages":[]}`},
@@ -2680,6 +3005,8 @@ func TestNativeAnthropicPassthroughLeavesOtherThinkingUntouched(t *testing.T) {
 	}
 }
 
+// forceChatMessagesFallbackProvider creates an API-key provider forcing
+// Messages through Chat conversion.
 func forceChatMessagesFallbackProvider() *gatewayprovider.ExecutionProvider {
 	provider := rawChatCompletionsTestProvider()
 	provider.Record.Extra = map[string]any{
@@ -2688,6 +3015,10 @@ func forceChatMessagesFallbackProvider() *gatewayprovider.ExecutionProvider {
 	return provider
 }
 
+// Read copies remaining fixture bytes and advances its offset before returning
+// the configured error on subsequent calls. Callers supply a nonnil terminal
+// error when they need reads to terminate after all data; no EOF is
+// synthesized here.
 func (r *errTailReader) Read(p []byte) (int, error) {
 	if r.off < len(r.data) {
 		n := copy(p, r.data[r.off:])
@@ -2697,15 +3028,20 @@ func (r *errTailReader) Read(p []byte) (int, error) {
 	return 0, r.err
 }
 
+// Close satisfies the fixture body interface without changing read state.
 func (r *errTailReader) Close() error { return nil }
 
+// TestForwardAsAnthropic_ForceChatCompletionsPreservesFinalModelReasoningEffort
+// maps the listed models and efforts into native Chat. It checks final
+// outgoing model, model-sensitive reasoning control and matching result
+// attribution.
 func TestForwardAsAnthropic_ForceChatCompletionsPreservesFinalModelReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name       string
-		model      string
-		mapped     string
-		effortJSON string
-		wantEffort string
+		name       string // fixture case name
+		model      string // client request model
+		mapped     string // provider-mapped upstream model
+		effortJSON string // client effort JSON fragment
+		wantEffort string // expected outgoing effort
 	}{
 		{
 			name:       "GPT56 max",
@@ -2773,6 +3109,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsPreservesFinalModelReasoningEffo
 	}
 }
 
+// TestForwardAsAnthropic_ForceChatCompletionsNonStreaming returns native Chat
+// JSON under forced routing. It checks endpoint/profile, TLS User-Agent,
+// request shape, Messages answer/usage and separate observed service tier.
 func TestForwardAsAnthropic_ForceChatCompletionsNonStreaming(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2814,8 +3153,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonStreaming(t *testing.T) {
 	require.False(t, result.Stream)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone checks that [DONE] closes an open
-// block before message_delta and message_stop.
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone
+// sends text fragments, finish reason, usage and DONE from Chat. It checks
+// usage injection, text output and block-stop/delta/message-stop ordering.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2870,9 +3210,10 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone(t
 	require.NotNil(t, result.FirstTokenMs)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation checks that indexed tool_call
-// fragments
-// form Anthropic tool_use blocks with stop_reason=tool_use.
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation
+// splits one indexed tool argument across Chat chunks. It checks disabled
+// parallel mode, tool-use framing, ping ordering, tool stop reason and
+// observed usage.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"weather in sf?"}],"tools":[{"name":"get_weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true},"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2921,10 +3262,10 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation(t *
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls checks interleaved tool
-// arguments.
-// When declaration order differs from index order, each Anthropic tool_use block is closed and emitted by
-// index.
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls
+// declares tool index one before zero and interleaves arguments. It checks
+// per-block start/delta/stop transitions, ordered tool identities, assembled
+// JSON, parallel mode and usage.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelToolCalls(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":64,"messages":[{"role":"user","content":"read the file and print the directory"}],"tools":[{"name":"Read","input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}}},{"name":"Bash","input_schema":{"type":"object","properties":{"command":{"type":"string"}}}}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -2962,11 +3303,17 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelTool
 	require.True(t, parallelToolCalls.Exists())
 	require.True(t, parallelToolCalls.Bool())
 
+	// observedToolUse captures a rendered tool identity and its assembled JSON
+	// arguments.
 	type observedToolUse struct {
-		ID        string
-		Name      string
-		Arguments string
+		ID   string // rendered tool call identifier
+		Name string // rendered tool function name
+		// Arguments grows with input_json_delta for this opened client tool block;
+		// the parser uses its recorded block position to keep fragments paired.
+		Arguments string // assembled JSON argument text
 	}
+	// Track client block indexes and tool positions separately so interleaved
+	// partial arguments are checked against the tool_use block that actually opened them.
 	blockStates := make(map[int]string)
 	toolPositions := make(map[int]int)
 	var tools []observedToolUse
@@ -3019,8 +3366,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingInterleavedParallelTool
 	require.Equal(t, 9, result.Usage.OutputTokens)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens checks that finish_reason=length
-// becomes stop_reason=max_tokens through Chat, Responses, and Anthropic conversion.
+// TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens
+// ends native Chat with finish_reason length. It checks converted max_tokens
+// stop reason and a terminal Messages message_stop event for this fixture.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3052,8 +3400,10 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingLengthMapsToMaxTokens(t
 	require.Contains(t, out, "event: message_stop")
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage checks that an immediate [DONE]
-// still produces message_start, message_delta, and message_stop.
+// TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage
+// supplies an immediate native Chat DONE sentinel. It checks successful
+// returned observation and Messages start, delta and stop framing for that
+// empty response.
 func TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3078,9 +3428,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsEmptyStreamStillFramesMessage(t 
 	require.Contains(t, out, "event: message_stop")
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler checks shared handling for
-// non-failover 4xx responses.
-// The status selects the Anthropic error type; the upstream message and Ops error are retained.
+// TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler
+// returns a native Chat parameter rejection. It checks Anthropic HTTP 400
+// envelope and the shared status, message and single HTTP-error Ops event.
 func TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHandler(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3118,8 +3468,9 @@ func TestForwardAsAnthropic_ForceChatCompletionsNonFailover400UsesSharedErrorHan
 	require.Equal(t, "invalid roles", events[0].Message)
 }
 
-// TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize checks that a read failure leaves
-// truncated output and returns an error.
+// TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize
+// returns a read failure after a native Chat text fragment. It checks partial
+// result/output and the usage-incomplete error with no synthetic message_stop.
 func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":8,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3152,8 +3503,10 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamReadErrorSkipsFinalize(t *
 	require.NotContains(t, out, "event: message_stop", "no synthetic completion after a broken read")
 }
 
-// TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint checks /v1/responses for API key
-// providers with confirmed Responses support.
+// TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint
+// uses API-key protocol preservation for Messages conversion. It checks
+// Responses endpoint and input shape, retained third-party identity fields and
+// the converted answer.
 func TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3196,11 +3549,19 @@ func TestForwardAsAnthropic_ResponsesSupportedProviderStillUsesResponsesEndpoint
 	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "content.0.text").String())
 }
 
+// buildResponsesFailedSSEStream builds a failed Response event with fixed
+// usage for error fixtures. Type and message are interpolated directly into
+// JSON, so callers supply JSON-safe fixture values; the result contains one
+// complete SSE data frame.
 func buildResponsesFailedSSEStream(errType, errorMessage string) string {
 	failed := fmt.Sprintf(`{"type":"response.failed","response":{"id":"resp_err","object":"response","status":"failed","error":{"type":"%s","message":"%s"},"output":[],"usage":{"input_tokens":10,"output_tokens":0,"total_tokens":10}}}`, errType, errorMessage)
 	return fmt.Sprintf("data: %s\n\n", failed)
 }
 
+// TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError supplies a
+// nonretryable content-policy terminal to buffered Messages conversion. It
+// checks the returned upstream-failure diagnostic and final HTTP 502 response
+// for this fixture.
 func TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3224,6 +3585,10 @@ func TestForwardAsAnthropic_BufferedResponseFailed_ReturnsError(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code, "should write 502 for non-failover failed response")
 }
 
+// TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError supplies a
+// nonretryable content-policy failed terminal for a streaming Messages
+// request. It checks the returned error and upstream-failure diagnostic after
+// conversion.
 func TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3246,6 +3611,10 @@ func TestForwardAsAnthropic_StreamingResponseFailed_ReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "upstream response failed")
 }
 
+// TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible follows text
+// with a bare mixed-tools failure. It checks retained text and error event, no
+// message_stop, and a failure diagnostic distinct from missing-terminal
+// handling.
 func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3284,6 +3653,10 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 	require.NotContains(t, err.Error(), "missing terminal event")
 }
 
+// TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver supplies
+// recognized temporary failure before Messages content. It checks typed
+// provider recovery and an empty downstream body before any retry is
+// attempted.
 func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3314,6 +3687,9 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 	require.Empty(t, rec.Body.String(), "failover path must not commit downstream output")
 }
 
+// TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFailover
+// supplies generic mixed-tools error before content. It checks no failover
+// wrapper and visible failure text in the final client response.
 func TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFailover(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3338,6 +3714,9 @@ func TestForwardAsAnthropic_StreamingGenericBareErrorBeforeOutputIsNotHiddenByFa
 	require.Contains(t, rec.Body.String(), "mixed tools failed")
 }
 
+// TestForwardAsAnthropic_BufferedResponseFailed_Failover supplies a rate-limit
+// failure inside buffered Responses SSE. It checks a returned error with the
+// provider-failover type for this converted Messages rejection.
 func TestForwardAsAnthropic_BufferedResponseFailed_Failover(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3362,6 +3741,9 @@ func TestForwardAsAnthropic_BufferedResponseFailed_Failover(t *testing.T) {
 	require.True(t, errors.As(err, &failoverErr), "rate_limit_error should trigger UpstreamFailoverError for failover, got: %T: %v", err, err)
 }
 
+// TestForwardAsAnthropic_StreamingResponseFailed_FailoverBeforeOutput supplies
+// a rate-limit terminal before Messages content starts. It checks typed
+// provider recovery and that the writer remains uncommitted for this attempt.
 func TestForwardAsAnthropic_StreamingResponseFailed_FailoverBeforeOutput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3386,6 +3768,10 @@ func TestForwardAsAnthropic_StreamingResponseFailed_FailoverBeforeOutput(t *test
 	require.False(t, c.Writer.Written(), "故障转移前不应向客户端写入响应")
 }
 
+// TestForwardAsAnthropic_TransportError_ReturnsFailoverError injects
+// connection refusal from Messages forwarding. It checks the returned
+// provider-failover type and HTTP 502 classification without running the outer
+// provider loop.
 func TestForwardAsAnthropic_TransportError_ReturnsFailoverError(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3407,6 +3793,9 @@ func TestForwardAsAnthropic_TransportError_ReturnsFailoverError(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 }
 
+// TestForwardAsAnthropic_TransportError_DoesNotWriteResponse injects
+// connection reset from Messages forwarding. It checks the recorder's initial
+// status and empty body, leaving final client presentation to outer handling.
 func TestForwardAsAnthropic_TransportError_DoesNotWriteResponse(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3420,16 +3809,23 @@ func TestForwardAsAnthropic_TransportError_DoesNotWriteResponse(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream})
 
 	provider := rawChatCompletionsTestProvider()
+	// Discard both returns to inspect writer state after transport failure; the
+	// neighboring transport-error case checks the returned failover wrapper.
 	_, _ = svc.Text.Messages(context.Background(), c, provider, body, "", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, "transport error must not write HTTP response — handler owns the response for failover")
 	require.Empty(t, rec.Body.String(), "response body must be empty so handler can write the correct error or failover")
 }
 
+// TestForwardAsAnthropic_TransportError_ClientCanceled_NoFailover provides a
+// cancelled client and context.Canceled transport failure. It checks a
+// returned error with no provider-failover wrapper for that cancellation path.
 func TestForwardAsAnthropic_TransportError_ClientCanceled_NoFailover(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
 	cancelCtx, cancel := context.WithCancel(context.Background())
+	// Cancel before forwarding to exercise the injected cancellation path while
+	// the fixture controls the transport result independently of network progress.
 	cancel()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body)).WithContext(cancelCtx)
@@ -3448,6 +3844,9 @@ func TestForwardAsAnthropic_TransportError_ClientCanceled_NoFailover(t *testing.
 	require.False(t, errors.As(err, &failoverErr), "client-canceled transport error should NOT trigger failover")
 }
 
+// TestForwardAsAnthropic_ResponseFailed_PassthroughRule applies a buffered
+// context-window presentation override. It checks the matched-rule diagnostic,
+// HTTP 400 and a nonempty upstream message in the final envelope.
 func TestForwardAsAnthropic_ResponseFailed_PassthroughRule(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3475,6 +3874,10 @@ func TestForwardAsAnthropic_ResponseFailed_PassthroughRule(t *testing.T) {
 	require.NotEmpty(t, errMsg, "passthrough should preserve error message")
 }
 
+// TestForwardAsAnthropic_StreamingResponseFailed_PassthroughRule applies the
+// context-window presentation override to a streaming request before content.
+// It checks HTTP 400 and visible context-window text after the returned
+// failure.
 func TestForwardAsAnthropic_StreamingResponseFailed_PassthroughRule(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -3498,6 +3901,9 @@ func TestForwardAsAnthropic_StreamingResponseFailed_PassthroughRule(t *testing.T
 	require.Contains(t, rec.Body.String(), "context window")
 }
 
+// TestForwardAsAnthropic_ResponseFailed_ErrorCodeRuleMatchesViaSemanticStatus
+// matches inferred HTTP 400 and a context-length code inside SSE. It checks
+// HTTP 400 and a nonempty message in buffered Messages error output.
 func TestForwardAsAnthropic_ResponseFailed_ErrorCodeRuleMatchesViaSemanticStatus(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3523,12 +3929,19 @@ func TestForwardAsAnthropic_ResponseFailed_ErrorCodeRuleMatchesViaSemanticStatus
 	require.NotEmpty(t, gjson.Get(respBody, "error.message").String())
 }
 
+// SetModelRateLimit records the latest provider ID and model key for
+// post-forward fixture assertions. Context, deadline and reason arguments are
+// ignored, and tests serialize writes with inspection.
 func (r *tempUnschedulableOpenAIProviderRepo) SetModelRateLimit(_ context.Context, providerID int64, modelKey string, _ time.Time, _ ...string) error {
 	r.modelRateLimitProviderID = providerID
 	r.modelRateLimitKey = modelKey
 	return nil
 }
 
+// TestOpenAIGatewayService_ForwardAsAnthropic_CapacityShedReturnsRequestScopedFailoverWithoutCommit
+// observes capacity rejection before a separately invoked healthy provider. It
+// checks transient retry metadata, absent model-limit writes, untouched first
+// output and successful second response.
 func TestOpenAIGatewayService_ForwardAsAnthropic_CapacityShedReturnsRequestScopedFailoverWithoutCommit(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -3606,12 +4019,17 @@ func TestOpenAIGatewayService_ForwardAsAnthropic_CapacityShedReturnsRequestScope
 	require.NotEmpty(t, secondRec.Body.String())
 }
 
+// TestIsOpenAIOAuthLike enumerates the listed platform and credential
+// combinations, including nil. It checks OAuth-like and Codex-protocol
+// predicates separately so only the supplied OpenAI OAuth/setup fixtures
+// qualify.
 func TestIsOpenAIOAuthLike(t *testing.T) {
 	tests := []struct {
-		name     string
+		name string // fixture case name
+		// selected fixture execution provider
 		provider *gatewayprovider.ExecutionProvider
-		want     bool
-		codex    bool
+		want     bool // expected OAuth-like predicate
+		codex    bool // expected Codex protocol predicate
 	}{
 		{name: "openai_oauth", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}, want: true, codex: true},
 		{name: "openai_setup_token", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeSetupToken}}, want: true, codex: true},
@@ -3629,6 +4047,10 @@ func TestIsOpenAIOAuthLike(t *testing.T) {
 	}
 }
 
+// TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState runs two setup-token
+// Messages turns under one cache seed. It checks full replay/guard, Codex
+// credentials and identity, and second-turn state replay with the isolated
+// session header.
 func TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState(t *testing.T) {
 	firstResp := openAICompatSSECompletedResponse("resp_setup_first", "gpt-5.4")
 	firstResp.Header.Set("x-codex-turn-state", "turn_state_setup")
@@ -3640,6 +4062,8 @@ func TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState(t *testing.T) {
 	provider := openAISetupTokenCompatProvider(72)
 
 	messages := make([]string, 0, 12+3)
+	// Exceed the compatibility replay suffix with distinguishable messages so
+	// assertions can detect both trimming and retention of the earlier conversation.
 	for i := range 12 + 3 {
 		messages = append(messages, `{"role":"user","content":"message-`+fmt.Sprintf("%02d", i)+`"}`)
 	}
@@ -3682,6 +4106,10 @@ func TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState(t *testing.T) {
 	requireOpenAIMessagesCodexIdentity(t, upstream.requests[1], openai.CodexCLIUserAgent, "codex-tui")
 }
 
+// grokMessagesSSECompletedResponse builds a successful Grok Responses SSE
+// fixture with supplied cached usage. Callers supply simple IDs whose fmt-quoted
+// form is valid JSON; the executing fixture consumes and closes the returned
+// readable body.
 func grokMessagesSSECompletedResponse(responseID string, cachedTokens int) *http.Response {
 	body := strings.Join([]string{
 		fmt.Sprintf(`data: {"type":"response.completed","response":{"id":%q,"object":"response","model":"grok-4.3","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":%d}}}}`, responseID, cachedTokens),
@@ -3696,8 +4124,19 @@ func grokMessagesSSECompletedResponse(responseID string, cachedTokens int) *http
 	}
 }
 
+// TestForwardGrokMessagesReasoningOptions enumerates model-specific effort
+// inputs for Grok Messages conversion. It checks the outgoing effort value and
+// exact model after each fixture completes successfully.
 func TestForwardGrokMessagesReasoningOptions(t *testing.T) {
-	for _, tc := range []struct{ model, effort, want string }{
+	for _, tc := range []struct {
+		// model, effort and want form one model-sensitive conversion case. The
+		// supplied model selects effort handling, and want names the forwarded
+		// effort asserted after the fixture returns.
+		// model: requested Grok model identity.
+		// effort: supplied Messages effort value.
+		// want: expected forwarded effort value.
+		model, effort, want string
+	}{
 		{"grok-build-0.1", "", ""},
 		{"grok-4.20-0309-reasoning", "high", ""},
 		{"grok-4.7", "xhigh", "xhigh"},
@@ -3721,6 +4160,10 @@ func TestForwardGrokMessagesReasoningOptions(t *testing.T) {
 	}
 }
 
+// TestNativeAnthropicGLMUsesResolvedEffortBeforeConversion injects model
+// attributes allowing medium and high before native GLM preparation. It checks
+// retained medium outgoing/result effort and enabled thinking under that
+// catalog fixture.
 func TestNativeAnthropicGLMUsesResolvedEffortBeforeConversion(t *testing.T) {
 	medium, high := "medium", "high"
 	options := []modelcatalog.ReasoningOption{{Type: "effort", Values: []*string{&medium, &high}}}

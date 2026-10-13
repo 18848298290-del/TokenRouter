@@ -22,9 +22,14 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// messagesBufferedReadErrorFixture returns a configured read error.
-type messagesBufferedReadErrorFixture struct{ err error }
+// messagesBufferedReadErrorFixture supplies a body that fails its first read.
+type messagesBufferedReadErrorFixture struct {
+	err error // configured read failure
+}
 
+// TestAnthropicBufferedResponsesReadErrorKeepsExistingBehavior injects an
+// immediate buffered SSE read failure. It checks the exact read error, absent
+// result and absence of a provider failover wrapper.
 func TestAnthropicBufferedResponsesReadErrorKeepsExistingBehavior(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -42,10 +47,16 @@ func TestAnthropicBufferedResponsesReadErrorKeepsExistingBehavior(t *testing.T) 
 	require.NotErrorAs(t, err, &failoverErr)
 }
 
+// Read returns zero bytes and the fixture's configured error.
 func (r *messagesBufferedReadErrorFixture) Read([]byte) (int, error) { return 0, r.err }
 
+// Close satisfies the body closer without changing fixture state.
 func (r *messagesBufferedReadErrorFixture) Close() error { return nil }
 
+// TestHandleAnthropicBufferedStreamingResponse_OverridesUpstreamContentType
+// converts a successful Responses SSE terminal into buffered Messages JSON. It
+// checks the JSON content type and separate input, output and cached-token
+// quantities.
 func TestHandleAnthropicBufferedStreamingResponse_OverridesUpstreamContentType(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

@@ -16,6 +16,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestBufferRawChatCompletions_RejectsOversizedResponse supplies a native Chat
+// body larger than the configured read limit. It checks the body-limit error,
+// absent result and HTTP 502 response.
 func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

@@ -12,7 +12,15 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
-// Messages executes a Messages request and handles upstream recovery.
+// Messages input may reach a native Anthropic endpoint, a Chat endpoint, or
+// Responses conversion under the selected provider policy. A new adapter
+// carries this attempt through the shared runner, and returned observations
+// feed request model capture before the result and error reach the caller.
+
+// Messages executes one selected provider attempt using the Messages runner.
+// The HTTP context and bound services remain live through synchronous output
+// and model capture; callers inspect both returned observation and error
+// before deciding completion or another provider.
 func (s *OpenAITextExecutor) Messages(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, promptCacheKey, defaultMappedModel string, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	result, err := openaiexecution.RunMessages(ctx, body, promptCacheKey, defaultMappedModel, &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch})
 	out := openaiexecution.ToForwardResult(result)
@@ -20,8 +28,10 @@ func (s *OpenAITextExecutor) Messages(ctx context.Context, c *gin.Context, provi
 	return out, err
 }
 
-// messagesError reads an upstream error and returns it in
-// Anthropic error format.
+// messagesError handles an upstream HTTP rejection using Anthropic envelope
+// and body writers. The caller owns response closure and may supply a
+// scheduling model; CompatError can return a failover signal before final
+// client error output.
 func (s *OpenAITextExecutor) messagesError(
 	resp *http.Response,
 	c *gin.Context,

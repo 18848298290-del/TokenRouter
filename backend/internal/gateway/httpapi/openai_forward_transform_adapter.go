@@ -19,17 +19,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-type openAIForwardTransformAdapter struct{ openAIForwardPreludeAdapter }
+// Responses conversion resolves model attributes for the selected endpoint
+// before applying image, Codex and fast-tier policies. Compact changes the
+// attribute target endpoint and can reuse the request's attribute session, so
+// the final resolution must be installed before subsequent conversion options
+// inspect provider capabilities.
+//
+// The adapter borrows writable decoded request maps for these transformations.
+// Credential-derived client metadata and fingerprint IDs use the current
+// request headers, with the resulting IDs returned for the caller's header
+// stage. Image policy distinguishes explicit tools from automatic bridge
+// injection, and namespace/tool reverse mappings remain request-local.
+// Transformation errors return before the shared runner serializes and sends
+// the prepared request.
 
+// openAIForwardTransformAdapter extends Responses prelude bindings with
+// request transformation capabilities.
+type openAIForwardTransformAdapter struct {
+	// openAIForwardPreludeAdapter shares the selected provider, live request and
+	// execution policy context with the transformation phase for this attempt.
+	openAIForwardPreludeAdapter
+}
+
+// ModelAttributes resolves the selected provider's Responses capabilities for
+// model and request bytes. Compact changes the target endpoint to compact and
+// resolves through an existing context attribute session or a newly created
+// service session, using the current group ID when available.
+//
+// Successful resolution is installed in provider.Capabilities before
+// request-sensitive ForRequest adjustment is returned. Later transformations
+// therefore read the endpoint resolution while the returned value includes
+// this body's request state. Lookup failures leave this method's capability
+// publication untouched; callers use the returned resolution to drive
+// conversion before sending.
 func (p openAIForwardTransformAdapter) ModelAttributes(ctx context.Context, model string, body []byte, compact bool) (modelcatalog.Resolution, error) {
 	result, err := gatewayadapter.ResolveModelAttributes(ctx, p.provider, model, p.s.Text.modelAttributes(), "openai_responses")
 	if err != nil {
 		return modelcatalog.Resolution{}, err
 	}
+	// Compact capabilities use a distinct endpoint target. Resolve that target
+	// under the current group/session before publishing attributes for later transforms.
 	if compact {
 		target := result.Target
 		target.Endpoint = "compact"
 		session := routing.ModelAttributesFromContext(ctx)
+		// Direct conversion callers may lack the request's attribute session;
+		// create one so Compact still resolves through the same model service policy.
 		if session == nil {
 			session = p.s.Text.modelAttributes().NewSession()
 		}
@@ -48,15 +83,26 @@ func (p openAIForwardTransformAdapter) ModelAttributes(ctx context.Context, mode
 	return result.ForRequest(gatewayadapter.ModelRequestState(body)), nil
 }
 
+// Decode delegates number-aware Responses object decoding to requeststate for
+// transformation. It returns a decoded map or parsing error without writing
+// Gin cache state; callers keep the returned mutable map stable through
+// subsequent synchronous transformation and serialization.
 func (p openAIForwardTransformAdapter) Decode(body []byte) (map[string]any, error) {
 	return requeststate.DecodeOpenAIRequestBody(body)
 }
 
+// GroupImagePolicy resolves explicit image-tool handling from the current
+// effective key group and admitted client protocol. The inherited provider
+// policy survives when no relevant group override applies;
+// ResponsesPolicyGroup excludes unrelated declared client protocols.
 func (p openAIForwardTransformAdapter) GroupImagePolicy(inherited string) string {
 	key := GetExecutionAPIKey(p.c)
 	return gatewayadapter.GroupResponsesExplicitToolPolicy(gatewayadapter.ResponsesPolicyGroup(p.ctx, gatewayadapter.APIKeyGroup(key)), inherited)
 }
 
+// ImageAllowed reports group image admission from the current effective API
+// key. Missing keys use routing's nil-group policy, while a present key
+// supplies its admitted group to the same policy helper.
 func (p openAIForwardTransformAdapter) ImageAllowed() bool {
 	key := GetExecutionAPIKey(p.c)
 	if key == nil {
@@ -65,82 +111,133 @@ func (p openAIForwardTransformAdapter) ImageAllowed() bool {
 	return routing.GroupAllowsResponsesImages(key.Group)
 }
 
+// LiteHeader delegates the inbound Responses Lite header check to the prelude.
 func (p openAIForwardTransformAdapter) LiteHeader() bool {
 	return p.openAIForwardPreludeAdapter.LiteHeader()
 }
 
+// BridgeEnabled resolves automatic image bridge injection using group,
+// provider and process settings.
 func (p openAIForwardTransformAdapter) BridgeEnabled(ctx context.Context) bool {
 	return p.s.ImageBridge.Enabled(ctx, p.provider, GetExecutionAPIKey(p.c))
 }
 
+// ImageIntentHint resolves this request's canonical or mapped image-intent
+// hint for transformation.
 func (p openAIForwardTransformAdapter) ImageIntentHint(model string, body []byte) bool {
 	return ResolveOpenAIImageIntentHint(p.c, model, body, gatewayadapter.ImageIntent().IsImageGenerationIntent)
 }
 
+// Models delegates requested/billing upstream model selection using the
+// selected provider and Compact flag.
 func (p openAIForwardTransformAdapter) Models(model string, compact bool) (string, string) {
 	return gatewayadapter.ExecutionModelPolicy(p.provider).ForwardMappedModels(model, compact)
 }
 
+// CompactModel resolves the selected provider's configured Compact model
+// through shared recovery policy.
 func (p openAIForwardTransformAdapter) CompactModel(model string) string {
 	return p.s.Text.Compact.ResolveModel(p.provider, model)
 }
 
+// ImagePermissionMessage returns the shared client message for denied
+// image-generation admission.
 func (p openAIForwardTransformAdapter) ImagePermissionMessage() string {
 	return media.ImageGenerationPermissionMessage
 }
 
+// IsImageGenerationIntent delegates broad image-intent detection from
+// endpoint, model and raw body.
 func (p openAIForwardTransformAdapter) IsImageGenerationIntent(endpoint, model string, body []byte) bool {
 	return gatewayadapter.ImageIntent().IsImageGenerationIntent(endpoint, model, body)
 }
 
+// IsExplicitImageGenerationIntent delegates client-declared image-intent
+// detection for admission checks.
 func (p openAIForwardTransformAdapter) IsExplicitImageGenerationIntent(endpoint, model string, body []byte) bool {
 	return gatewayadapter.ImageIntent().IsExplicitImageGenerationIntent(endpoint, model, body)
 }
 
+// IsImageGenerationIntentMap delegates broad image-intent detection for a
+// decoded request map.
 func (p openAIForwardTransformAdapter) IsImageGenerationIntentMap(endpoint, model string, body map[string]any) bool {
 	return gatewayadapter.ImageIntent().IsImageGenerationIntentMap(endpoint, model, body)
 }
 
+// IsExplicitImageGenerationIntentMap delegates client-declared image-intent
+// detection for decoded input.
 func (p openAIForwardTransformAdapter) IsExplicitImageGenerationIntentMap(endpoint, model string, body map[string]any) bool {
 	return gatewayadapter.ImageIntent().IsExplicitImageGenerationIntentMap(endpoint, model, body)
 }
 
+// IsOpenAIImageGenerationModel reports whether the model belongs to the
+// image-generation family.
 func (p openAIForwardTransformAdapter) IsOpenAIImageGenerationModel(model string) bool {
 	return media.IsImageGenerationModel(model)
 }
 
+// OpenAIRequestBodyImageGenerationToolNeedsNormalization delegates whether the
+// body's image tool needs compatibility normalization.
 func (p openAIForwardTransformAdapter) OpenAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
 	return gatewayadapter.ImageIntent().OpenAIRequestBodyImageGenerationToolNeedsNormalization(body)
 }
 
+// OpenAIRequestBodyHasImageGenerationDeclaration delegates whether raw input
+// declares an image-generation tool.
 func (p openAIForwardTransformAdapter) OpenAIRequestBodyHasImageGenerationDeclaration(body []byte) bool {
 	return gatewayadapter.ImageIntent().OpenAIRequestBodyHasImageGenerationDeclaration(body)
 }
 
+// EnsureOpenAIResponsesImageGenerationTool delegates image-tool insertion into
+// a writable request map. The shared helper reports whether it changed the
+// declaration; callers apply group and provider admission before using this
+// injection capability.
 func (p openAIForwardTransformAdapter) EnsureOpenAIResponsesImageGenerationTool(body map[string]any) bool {
 	return gatewayadapter.EnsureOpenAIResponsesImageGenerationTool(body)
 }
 
+// EnsureOpenAIResponsesImageGenerationToolChoiceAuto delegates compatible
+// image tool-choice adjustment on a writable map. Its change flag reports an
+// adopted edit; the shared transform decides when automatic image choice is
+// appropriate for the request.
 func (p openAIForwardTransformAdapter) EnsureOpenAIResponsesImageGenerationToolChoiceAuto(body map[string]any) bool {
 	return gatewayadapter.EnsureOpenAIResponsesImageGenerationToolChoiceAuto(body)
 }
 
+// NormalizeOpenAIResponsesImageOnlyModel delegates image-only model
+// compatibility normalization on the supplied map. Callers retain writable
+// ownership during the edit and use the returned flag when deciding whether to
+// serialize changed request state.
 func (p openAIForwardTransformAdapter) NormalizeOpenAIResponsesImageOnlyModel(body map[string]any) bool {
 	return gatewayadapter.NormalizeOpenAIResponsesImageOnlyModel(body)
 }
 
+// ValidateOpenAIResponsesImageModel delegates image model/configuration
+// validation before request serialization. A returned error prevents
+// forwarding through the shared transform; callers pass the selected model and
+// its currently prepared decoded request map.
 func (p openAIForwardTransformAdapter) ValidateOpenAIResponsesImageModel(body map[string]any, model string) error {
 	return gatewayadapter.ValidateOpenAIResponsesImageModel(body, model)
 }
 
+// ValidateCodexSparkInput delegates selected-model Spark input validation
+// before upstream preparation.
 func (p openAIForwardTransformAdapter) ValidateCodexSparkInput(body map[string]any, model string) error {
 	return gatewayadapter.ValidateCodexSparkInput(body, model)
 }
 
+// ApplyCodexImageGenerationBridgeInstructions delegates bridge instruction
+// insertion into the writable request map. The shared helper detects supported
+// existing markers and reports whether text was added; the caller selects
+// injection through its image policy.
 func (p openAIForwardTransformAdapter) ApplyCodexImageGenerationBridgeInstructions(body map[string]any) bool {
 	return gatewayadapter.ApplyCodexImageGenerationBridgeInstructions(body)
 }
 
+// CodexTransform delegates OAuth request normalization with installed provider
+// attributes and rules when available. The supplied writable map can change
+// during that operation; callers inspect the returned Error before adopting
+// serialization and restoration state.
 func (p openAIForwardTransformAdapter) CodexTransform(body map[string]any, options openai.CodexOAuthTransformOptions) openai.CodexTransformResult {
 	if p.provider != nil && p.provider.Capabilities != nil {
 		options.Attributes = &p.provider.Capabilities.Attributes
@@ -149,31 +246,58 @@ func (p openAIForwardTransformAdapter) CodexTransform(body map[string]any, optio
 	return gatewayadapter.ApplyCodexOAuthTransformWithOptions(body, options)
 }
 
+// EnsureCodexOAuthInstructionsField delegates insertion of the required Codex
+// instructions field.
 func (p openAIForwardTransformAdapter) EnsureCodexOAuthInstructionsField(body map[string]any) {
 	protocolopenai.EnsureCodexInstructionsField(body)
 }
 
+// ToolNameReverse publishes the request-local reverse names returned by Codex
+// transformation.
 func (p openAIForwardTransformAdapter) ToolNameReverse(mapping map[string]string) {
 	SetCodexToolNameReverse(p.c, mapping)
 }
 
+// ClientMetadata delegates installation metadata filling for this selected
+// provider and writable body. Existing nonblank IDs and unsupported metadata
+// shapes follow the shared helper's retention rules; the result indicates
+// whether it changed request metadata.
 func (p openAIForwardTransformAdapter) ClientMetadata(body map[string]any) bool {
 	return gatewayadapter.ApplyCodexClientMetadata(body, p.provider)
 }
 
+// ProviderIdentity applies the selected Codex identity namespace and API-key
+// ID to client metadata. Callers supply the writable request map and retain
+// current request identity state while the upstream helper updates that
+// representation.
 func (p openAIForwardTransformAdapter) ProviderIdentity(body map[string]any) bool {
 	return openai.ApplyCodexProviderIdentityClientMetadataMap(body, provideradapter.CodexIdentityNamespace(CodexIdentityRecord(p.c, p.provider.View())), APIKeyIDFromContext(p.c))
 }
 
+// ClearFingerprint replaces request-local staged fingerprint IDs with an
+// absent value before transformation.
 func (p openAIForwardTransformAdapter) ClearFingerprint() {
 	StageCodexFingerprintIDs(p.c, nil)
 }
 
+// Fingerprint resolves the credential provider and applies installation
+// metadata before deriving request-header fingerprint IDs. Credential
+// resolution errors return before mutation; later body edits combine their
+// change flags, and the returned IDs belong to the caller's subsequent header
+// stage.
+//
+// Request headers may be absent, in which case the provider fingerprint helper
+// receives nil. This method returns the same derived IDs used to update body
+// metadata, allowing the caller to apply that identity to the outgoing
+// headers. The writable map is borrowed for synchronous edits, and caller
+// staging keeps those IDs attached to this attempt.
 func (p openAIForwardTransformAdapter) Fingerprint(ctx context.Context, body map[string]any) (*openai.FingerprintIDs, bool, error) {
 	provider, err := gatewayadapter.CredentialProvider(ctx, p.s.Requests.Providers, p.provider)
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve Codex fingerprint provider: %w", err)
 	}
+	// Resolve credential identity before editing metadata, then use one derived
+	// fingerprint for body metadata and the caller's later outgoing header stage.
 	changed := gatewayadapter.ApplyCodexClientMetadata(body, provider)
 	var headers http.Header
 	if p.c != nil && p.c.Request != nil {
@@ -186,6 +310,10 @@ func (p openAIForwardTransformAdapter) Fingerprint(ctx context.Context, body map
 	return ids, changed, nil
 }
 
+// FastDecision delegates fast-tier resolution and translates its deletion,
+// tier and optional rejection values for the shared transform. The blocked
+// error pointer is retained as the returned error value; callers handle it
+// before serializing or sending the body.
 func (p openAIForwardTransformAdapter) FastDecision(ctx context.Context, model, tier string, hasTier bool) forward.FastDecision {
 	decision := tierpolicy.Resolve(p.s.Text.FastPolicy.Input(ctx, p.provider, model), tier, hasTier)
 	value := forward.FastDecision{DeleteField: decision.DeleteField, Tier: decision.Tier}
@@ -195,24 +323,41 @@ func (p openAIForwardTransformAdapter) FastDecision(ctx context.Context, model, 
 	return value
 }
 
+// FastBlocked writes the heartbeat-aware rejection when err contains a
+// tierpolicy BlockedError. Other errors produce no output here; the transform
+// caller returns the preparation failure and controls further error handling.
 func (p openAIForwardTransformAdapter) FastBlocked(err error) {
 	if blocked, ok := errors.AsType[*tierpolicy.BlockedError](err); ok {
 		WriteFastPolicyBlockedResponse(p.c, blocked)
 	}
 }
 
+// SanitizeOpenAIResponsesOrphanToolOutputs delegates unmatched output removal
+// when continuation cannot supply call context. It requires a writable body
+// when filtering changes input; retained nested item values stay shared with
+// the supplied input slice.
 func (p openAIForwardTransformAdapter) SanitizeOpenAIResponsesOrphanToolOutputs(body map[string]any, input []any, hasPrevious bool) bool {
 	return gatewayadapter.SanitizeOpenAIResponsesOrphanToolOutputs(body, input, hasPrevious)
 }
 
+// FirstNonEmptyString delegates trimmed selection of the first usable string
+// value.
 func (p openAIForwardTransformAdapter) FirstNonEmptyString(values ...any) string {
 	return openai.FirstNonEmptyString(values...)
 }
 
+// Marshal serializes the prepared request through the number-aware JSON
+// wrapper. Callers retain the mutable map unchanged while serialization reads
+// it; unsupported values or invalid numeric literals return errors before the
+// prepared body is adopted.
 func (p openAIForwardTransformAdapter) Marshal(body map[string]any) ([]byte, error) {
 	return wirejson.Marshal(body)
 }
 
+// NormalizeTrigger delegates final remote-compaction trigger ordering after
+// other input edits. Reordered or duplicate triggers become one minimal final
+// trigger, while the helper retains other decoded values and returns original
+// bytes with errors.
 func (p openAIForwardTransformAdapter) NormalizeTrigger(body []byte) ([]byte, bool, error) {
 	return protocolopenai.NormalizeCompactionTriggerInputOrder(body)
 }

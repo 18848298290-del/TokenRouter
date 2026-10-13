@@ -16,6 +16,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// HTTP Responses continuation needs both provider affinity and downstream
+// ownership for a response identifier. Binding records those two observations
+// independently, and a storage failure is logged while response delivery
+// continues. The current effective API-key group scopes both bindings after
+// any group switch.
+//
+// An invalid nonstreaming upstream result normally becomes JSON with filtered
+// headers. A Compact heartbeat can already have committed HTTP 200, so
+// ProtocolError stops the heartbeat and uses a failed Responses event when
+// that stream is active. This keeps the error compatible with the output
+// format already established for the caller while recording the intended
+// upstream failure in Ops.
+
+// BindResponseProvider records provider affinity and, when present, the
+// authenticated HTTP owner for a trimmed response ID. Missing output,
+// provider, positive provider ID, response ID or store skips binding. The
+// effective request group and ResponseTTL supply the namespace and expiry.
+//
+// Provider and owner writes are separate best-effort operations. A failed
+// provider bind is logged before the owner bind is attempted, and an
+// owner-bind error is also logged; callers continue response handling after
+// either failure. Supply ResponseTTL when a state store is configured.
 func (p *OpenAIResponseOutput) BindResponseProvider(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, responseID string) {
 	if p == nil || provider == nil || provider.Record.ID <= 0 {
 		return
@@ -30,6 +52,8 @@ func (p *OpenAIResponseOutput) BindResponseProvider(ctx context.Context, c *gin.
 	}
 	groupID := OpenAIResponseGroupID(c)
 	ttl := p.ResponseTTL()
+	// Provider affinity and user ownership have separate storage operations. Keep
+	// attempting owner publication after an affinity error so each available binding survives.
 	gatewayprovider.LogOpenAIWSBindResponseProviderWarn(groupID, provider.Record.ID, responseID, store.BindResponseProvider(ctx, groupID, responseID, provider.Record.ID, ttl))
 	if owner, ok := ResponseOwnerFromContext(c); ok {
 		if err := store.BindHTTPResponseOwner(ctx, groupID, responseID, owner.UserID, owner.APIKeyID, p.ResponseTTL()); err != nil {
@@ -46,13 +70,24 @@ func (p *OpenAIResponseOutput) BindResponseProvider(ctx context.Context, c *gin.
 	}
 }
 
+// ProtocolError records a sanitized nonstreaming protocol failure and writes
+// its client error. Callers supply a live request, response and output
+// configuration after the reader has rejected the upstream representation.
+// Empty messages use the standard invalid-response explanation.
+//
+// The output format depends on prior Compact heartbeat commitment. Stopping a
+// committed Compact stream permits a response.failed terminal event under its
+// existing HTTP status; otherwise filtered upstream headers precede a JSON 502
+// envelope. The returned error retains the same diagnostic message for
+// execution logging.
 func (p *OpenAIResponseOutput) ProtocolError(resp *http.Response, c *gin.Context, message string) error {
 	message = logredact.SanitizeUpstreamQueries(strings.TrimSpace(message))
 	if message == "" {
 		message = "Upstream returned an invalid non-streaming response"
 	}
 	SetOpsUpstreamError(c, http.StatusBadGateway, message, "")
-	// After a body-signaled Compact heartbeat commits 200, terminate errors with response.failed.
+	// Stop the Compact heartbeat before taking over its writer. A committed
+	// stream needs a terminal Responses event because its HTTP status is already sent.
 	if OpenAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
 		WriteOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message, MarkOpsStreamError)
 		return fmt.Errorf("non-streaming openai protocol error: %s", message)
@@ -68,7 +103,10 @@ func (p *OpenAIResponseOutput) ProtocolError(resp *http.Response, c *gin.Context
 	return fmt.Errorf("non-streaming openai protocol error: %s", message)
 }
 
-// OpenAIResponseGroupID reads the updated HTTP request key group used for response ownership.
+// OpenAIResponseGroupID reads the effective API-key group used for response
+// ownership. Nil contexts, absent or differently typed keys, and keys without
+// GroupID return zero; group switches therefore use the key currently stored
+// in Gin.
 func OpenAIResponseGroupID(c *gin.Context) int64 {
 	if c == nil {
 		return 0

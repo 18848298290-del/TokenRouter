@@ -19,6 +19,30 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Passthrough readers retain Responses framing while sharing HTTP health and
+// terminal-error decisions with ordinary output. Their stream bindings carry
+// the current provider and request observations, and their nonstream binding
+// changes the terminal failover observation to identify the passthrough path.
+//
+// Keepalive startup copies the reader's prepared header values onto the live
+// HTTP writer before a heartbeat can commit them. The returned stop callback
+// belongs to the reader's lifetime. Passthrough header relay includes quota
+// and turn-state policy, while model observation uses the request observer
+// established during attempt preparation. These choices keep timeout and error
+// handling attached to the response whose bytes the client receives.
+
+// PassthroughOptions binds passthrough stream and buffered readers to the
+// current HTTP attempt. Callers establish model observation during attempt
+// preparation and retain c, provider and dependencies until reading completes.
+// The reader owns its returned heartbeat-stop callback, while the execution
+// caller closes the response body.
+//
+// Startup copies prepared header slices before starting a configured
+// heartbeat, so the writer commits the reader's current metadata. Nonstream
+// terminal classification uses passthrough observations, and stream error
+// callbacks preserve that path marker for Ops. Model, missing-usage and
+// missing-terminal observations remain separate from the entry's completion
+// decision.
 func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider) upstreamopenai.PassthroughOptions {
 	stream := upstreamopenai.StreamOptions{
 		NativeOpenAI: provider != nil && provider.Record.Platform == capability.PlatformOpenAI,
@@ -83,6 +107,8 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 	}
 	nonstream := p.NonStreamOptions(ctx, c, provider)
 	nonstream.TerminalFailover = func(resp *http.Response, event string, body []byte, message, model string) error {
+		// A nil concrete failure means no failover proposal. Return nil as an
+		// interface so the buffered reader can choose its remaining protocol-error path.
 		//nolint:revive // Returning the concrete pointer directly would wrap a nil pointer in a non-nil error.
 		if failure := p.nonStreamingTerminalFailure(c, resp, provider, true, event, body, message, model); failure != nil {
 			return failure
@@ -99,11 +125,14 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 			WriteOpenAIPassthroughResponseHeaders(dst, src, p.Headers)
 		},
 		StartKeepalive: func(headers http.Header) func() {
-			// Headers were set before heartbeats started; synchronize metadata from the current output adapter here.
+			// Prepared headers must reach the live writer before a heartbeat can
+			// commit its status; copy value slices to keep later header-map edits separate.
 			for key, values := range headers {
 				c.Writer.Header()[key] = append([]string(nil), values...)
 			}
 			if p.Options.Configured && p.Options.StreamKeepaliveInterval > 0 {
+				// Heartbeat settings store seconds; the reader receives its stop callback
+				// and ends that writer before its own response lifetime finishes.
 				return StartOpenAISSEKeepalive(c, time.Duration(p.Options.StreamKeepaliveInterval)*time.Second)
 			}
 			return func() {}

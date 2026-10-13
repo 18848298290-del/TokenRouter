@@ -16,11 +16,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// Chat admission validates stream and tier before provider execution, and
+// rejects group-mapped image models before moderation. Prompt replacement
+// occurs before model policy and session derivation so later checks use the
+// rewritten client body, while logs and client errors retain the original
+// requested model.
+//
+// Group route mapping is resolved before moderation in this entry. User
+// admission can wait and start output, so eligibility is checked afterward and
+// its rejection uses the resulting started flag. Provider affinity, explicit
+// session isolation and upstream prompt-cache seeds are then derived
+// separately. Only explicit identity enters session isolation, while the
+// admitted body, route and output-state pointer reach one synchronous
+// execution call with deferred request and slot cleanup.
+
+// ChatCompletions admits a Chat HTTP request and invokes the bound text
+// executor. Authentication and dependency checks precede lenient body reading;
+// prompt replacement, model/group resolution, effort policy and strict
+// stream/tier validation prepare the canonical request.
+//
+// The group-mapped model determines the Chat image-family rejection before
+// moderation, while the client model remains in observations and execution
+// attribution. After user-slot waiting, Eligibility runs the configured
+// funding admission and its normal RPM path. Session affinity and cache seeds
+// are distinct from explicit isolation identity, and cyber/session rejection
+// stops before Execute. Returned request and slot cleanup remain deferred
+// until synchronous execution or an earlier rejection ends the handler.
 func (h *OpenAITextHandler) ChatCompletions(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
 		return
 	}
+	// Keep request lifetime active through admission, execution and deferred slot
+	// release so application shutdown waits for the complete HTTP handling interval.
 	defer done()
 
 	streamStarted := false
@@ -135,10 +163,14 @@ func (h *OpenAITextHandler) ChatCompletions(c *gin.Context) {
 	if !acquired {
 		return
 	}
+	// Retain returned user cleanup through eligibility and execution; the resource
+	// binding also observes cancellation, so completion and disconnect can both invoke it.
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
 	}
 
+	// Balance, subscription and normal admission can change while the user slot
+	// waits. Invoke the configured checker after acquisition before provider execution.
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := BillingErrorDetails(err)
@@ -155,6 +187,8 @@ func (h *OpenAITextHandler) ChatCompletions(c *gin.Context) {
 	if h.backend.RejectCyber(c, apiKey, body, reqModel, protocol.ProtocolOpenAIChatCompletions) {
 		return
 	}
+	// Explicit client identity is the isolation input; general affinity can use
+	// derived content and must not substitute for that separate session admission.
 	if explicitSessionHash != "" {
 		c.Request = c.Request.WithContext(requeststate.WithSessionIsolation(c.Request.Context(), session.SessionIsolationSourceOpenAI, explicitSessionHash))
 		if err := h.backend.Isolate(c.Request.Context(), apiKey, subject.UserID, session.SessionIsolationSourceOpenAI, explicitSessionHash); h.handleOpenAISessionIsolationError(c, err, streamStarted) {

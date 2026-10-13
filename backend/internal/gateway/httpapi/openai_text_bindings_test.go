@@ -12,6 +12,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestAllowOpenAICompatibleMessagesDispatchUsesProtocolCollectionForCN checks
+// nil input and group protocol collections in the listed CN cases. It checks
+// Messages admission only for the nil or explicitly allowed group fixtures.
 func TestAllowOpenAICompatibleMessagesDispatchUsesProtocolCollectionForCN(t *testing.T) {
 	require.True(t, (openAITextHTTPBackend{}).AllowsMessages(nil))
 	for _, platform := range []string{capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
@@ -25,14 +28,19 @@ func TestAllowOpenAICompatibleMessagesDispatchUsesProtocolCollectionForCN(t *tes
 	}
 }
 
-// TestMessagesProviderModelKeepsGroupMapping checks group mapping and protocol model normalization for
-// Messages.
+// TestMessagesProviderModelKeepsGroupMapping passes three group-mapped model
+// strings through Messages provider-layer resolution. It checks each exact
+// value so this step does not remap the listed models.
 func TestMessagesProviderModelKeepsGroupMapping(t *testing.T) {
 	require.Equal(t, "group-model", ResolveOpenAIMessagesProviderLayerModel("group-model"))
 	require.Equal(t, "claude-sonnet-4-6", ResolveOpenAIMessagesProviderLayerModel("claude-sonnet-4-6"))
 	require.Equal(t, "gpt-5.4-high", ResolveOpenAIMessagesProviderLayerModel("gpt-5.4-high"))
 }
 
+// TestOpenAITextHTTPPreludeErrorOrder injects authentication, protocol,
+// parsing, owner and image failures across text entries. It checks their
+// status, output and observed ordering, including the different stream-field
+// acceptance in Messages and Chat.
 func TestOpenAITextHTTPPreludeErrorOrder(t *testing.T) {
 	t.Run("credential rejection does not read body", func(t *testing.T) {
 		p, h, c, w, r := newOpenAITextEntryProbe(t, `broken`)
@@ -88,6 +96,10 @@ func TestOpenAITextHTTPPreludeErrorOrder(t *testing.T) {
 	})
 }
 
+// TestOpenAITextHTTPWaitAndSnapshot records entry callbacks around user-slot
+// waiting and execution for all three protocols. It checks release and
+// eligibility ordering, cancellation and failed rechecks, plus Responses
+// hashing before reasoning rewriting.
 func TestOpenAITextHTTPWaitAndSnapshot(t *testing.T) {
 	for _, entry := range []string{"responses", "messages", "chat"} {
 		t.Run(entry, func(t *testing.T) {

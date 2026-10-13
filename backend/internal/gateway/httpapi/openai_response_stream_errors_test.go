@@ -20,43 +20,80 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openAIAuthPolicyProviderRepo counts authentication-policy provider writes
+// for stream fixtures.
 type openAIAuthPolicyProviderRepo struct {
+	// ExecutionProviderStore supplies the remaining methods; unimplemented
+	// calls expose an unexpected fixture path while these overrides count selected writes.
 	gatewayprovider.ExecutionProviderStore
 
-	tempCalls     int
-	setErrorCalls int
+	tempCalls     int // temporary provider-write count
+	setErrorCalls int // persistent provider-error write count
 }
 
+// openAIAuthPolicy403Counter returns configured forbidden-count observations
+// for health policy fixtures.
 type openAIAuthPolicy403Counter struct {
-	counts []int64
+	// counts supplies sequential forbidden observations. Increment consumes its
+	// first value, while an exhausted list uses one and Reset leaves the list intact.
+	counts []int64 // remaining configured forbidden counts
 }
 
+// capacityShedProviderRepoStub records temporary cooldown calls for
+// request-capacity fixtures.
 type capacityShedProviderRepoStub struct {
+	// ExecutionProviderStore supplies the remaining methods; unimplemented
+	// calls expose an unexpected fixture path while these overrides count selected writes.
 	gatewayprovider.ExecutionProviderStore
-	// Embedding the interface makes unexpected calls to unimplemented methods panic.
 
-	tempUnschedCalls int
+	tempUnschedCalls int // temporary provider-cooldown call count
 }
 
-// Cooldown uses the same store stub after conversion reads the fixture.
-type capacityRetryStore struct{ *capacityShedProviderRepoStub }
+// capacityRetryStore adapts the capacity fixture provider into core cooldown
+// lookup.
+type capacityRetryStore struct {
+	// capacityShedProviderRepoStub supplies the same counted cooldown methods;
+	// GetByID adapts only its provider representation for the core retry service.
+	*capacityShedProviderRepoStub
+}
 
+// oauth429RateLimitRepo captures provider and model rate-limit writes from
+// quota fixtures.
 type oauth429RateLimitRepo struct {
+	// HealthStoreBase supplies the ordinary fixture health operations while the
+	// overrides retain the rate-limit calls and their observed reset values.
 	gatewaytestkit.HealthStoreBase
-	setRateLimitedCalls       int
-	lastRateLimitedUntil      time.Time
-	setModelRateLimitCalls    int
-	lastModelRateLimitKey     string
-	lastModelRateLimitedUntil time.Time
+	// setRateLimitedCalls and lastRateLimitedUntil describe the same latest
+	// provider-rate callback. SetRateLimited increments the count before recording
+	// the supplied deadline; no rate persistence is emulated beyond that observation.
+	setRateLimitedCalls  int       // provider-rate persistence call count
+	lastRateLimitedUntil time.Time // last provider-rate reset deadline
+	// setModelRateLimitCalls, lastModelRateLimitKey and lastModelRateLimitedUntil
+	// describe the latest model callback together. Tests compare its scope and
+	// deadline against provider-level calls to distinguish the selected quota rule.
+	setModelRateLimitCalls    int       // model-rate persistence call count
+	lastModelRateLimitKey     string    // last model-rate scope key
+	lastModelRateLimitedUntil time.Time // last model-rate reset deadline
 }
 
+// rateLimit429ProviderRepoStub captures provider identity and reset time for
+// HTTP 429 fixtures.
 type rateLimit429ProviderRepoStub struct {
+	// HealthStoreBase supplies the ordinary fixture health operations while the
+	// overrides retain the rate-limit calls and their observed reset values.
 	gatewaytestkit.HealthStoreBase
-	rateLimitCalls     int
-	lastRateLimitID    int64
-	lastRateLimitReset time.Time
+	// rateLimitCalls, lastRateLimitID and lastRateLimitReset describe each latest
+	// provider callback together. The override records supplied values for
+	// deadline assertions and returns success without storing a durable block.
+	rateLimitCalls     int       // provider-rate persistence call count
+	lastRateLimitID    int64     // last rate-limited provider identifier
+	lastRateLimitReset time.Time // last provider-rate reset timestamp
 }
 
+// TestOpenAIHandleErrorResponsePassthrough_InvalidRequest400PassesThrough
+// supplies a structured parameter rejection to OAuth passthrough output. It
+// checks HTTP 400 and the exact client JSON containing code and parameter
+// identity.
 func TestOpenAIHandleErrorResponsePassthrough_InvalidRequest400PassesThrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -79,7 +116,9 @@ func TestOpenAIHandleErrorResponsePassthrough_InvalidRequest400PassesThrough(t *
 	require.Contains(t, rec.Body.String(), "input[35].arguments")
 }
 
-// wsFixtureModelBlocked reads model blocking through the provider health interface.
+// wsFixtureModelBlocked checks the model-transient state after one canonical
+// scheduling-model resolution. A nil provider returns false; the fixture
+// service supplies the block state and time used to observe that model key.
 func wsFixtureModelBlocked(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider, model string) bool {
 	if value == nil {
 		return false
@@ -88,6 +127,10 @@ func wsFixtureModelBlocked(s *wsExecutionFixture, value *gatewayprovider.Executi
 	return s.Output.Health.ModelTransient.IsBlocked(value.Record.ID, key, time.Now())
 }
 
+// wsFixtureProviderBlocked checks credential-aware provider blocking for
+// OpenAI or Grok fixture targets. Missing or other-platform providers return
+// false; the runtime reader uses the current execution credential identity to
+// evaluate any stored block.
 func wsFixtureProviderBlocked(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider) bool {
 	if value == nil || (value.Record.Platform != capability.PlatformOpenAI && value.Record.Platform != capability.PlatformGrok) {
 		return false
@@ -95,6 +138,9 @@ func wsFixtureProviderBlocked(s *wsExecutionFixture, value *gatewayprovider.Exec
 	return s.Output.Health.Runtime.Blocked(value.Record.ID, func() string { return providercore.RefreshCredentialIdentity(gatewayprovider.ExecutionRecord(value)) })
 }
 
+// wsFixtureBlockProvider publishes a runtime block for an OpenAI or Grok
+// fixture provider. Missing or other-platform targets are ignored, and the
+// caller supplies the deadline and reason used by later diagnostic checks.
 func wsFixtureBlockProvider(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider, until time.Time, reason string) {
 	if value == nil || (value.Record.Platform != capability.PlatformOpenAI && value.Record.Platform != capability.PlatformGrok) {
 		return
@@ -102,24 +148,37 @@ func wsFixtureBlockProvider(s *wsExecutionFixture, value *gatewayprovider.Execut
 	s.Output.Health.Runtime.Block(value.Record.ID, until, reason)
 }
 
+// wsFixtureRetry429 checks OAuth-like 429 recovery against fixture runtime
+// state and response evidence. This delegated admission is stateful: an
+// eligible transient observation can start the provider's runtime retry window.
 func wsFixtureRetry429(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider, headers http.Header, body []byte) bool {
 	return provideradapter.CanRetryOpenAI429(s.Output.Health.Runtime, gatewayprovider.ExecutionRecord(value), headers, body)
 }
 
+// wsFixtureRequestBlocked reports combined provider or model blocking in the
+// fixture states.
 func wsFixtureRequestBlocked(s *wsExecutionFixture, value *gatewayprovider.ExecutionProvider, model string) bool {
 	return wsFixtureProviderBlocked(s, value) || wsFixtureModelBlocked(s, value, model)
 }
 
+// SetTempUnschedulable counts a temporary provider write and returns fixture
+// success.
 func (r *openAIAuthPolicyProviderRepo) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	r.tempCalls++
 	return nil
 }
 
+// SetError counts a persistent provider-error write and returns fixture
+// success.
 func (r *openAIAuthPolicyProviderRepo) SetError(context.Context, int64, string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// IncrementOpenAI403Count consumes the first configured count, or returns one
+// when none remain. It ignores request identity and expiry inputs, letting
+// these fixtures control the observation rather than emulate persistent
+// counter storage.
 func (s *openAIAuthPolicy403Counter) IncrementOpenAI403Count(context.Context, int64, int) (int64, error) {
 	if len(s.counts) == 0 {
 		return 1, nil
@@ -129,10 +188,15 @@ func (s *openAIAuthPolicy403Counter) IncrementOpenAI403Count(context.Context, in
 	return count, nil
 }
 
+// ResetOpenAI403Count returns success without clearing the fixture's remaining
+// configured counts.
 func (*openAIAuthPolicy403Counter) ResetOpenAI403Count(context.Context, int64) error {
 	return nil
 }
 
+// TestOpenAIHTTPAccessStateBadRequestDoesNotDisableProvider mentions account
+// disabling inside an unknown-parameter HTTP 400. It checks false stop
+// decision, no error-store call and no provider runtime block.
 func TestOpenAIHTTPAccessStateBadRequestDoesNotDisableProvider(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -146,6 +210,10 @@ func TestOpenAIHTTPAccessStateBadRequestDoesNotDisableProvider(t *testing.T) {
 	require.False(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover supplies
+// request-validation wording inside a failed Response. It checks no
+// access-state/failover classification, default terminal status and no
+// provider-error or block observation.
 func TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -162,6 +230,10 @@ func TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover(t *testing
 	require.False(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIHTTPAccessStateTrustsStructuredCode returns
+// organization-deactivated code in HTTP 400. It checks recognized provider
+// failure, one error-store write and a runtime block under that structured
+// evidence.
 func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{health: newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -175,6 +247,9 @@ func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	require.True(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies compares refreshable
+// OAuth 401 and counter-driven 403 messages. It checks temporary cooldown
+// calls and absence of permanent error-store writes for the listed fixtures.
 func TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies(t *testing.T) {
 	t.Run("oauth 401 remains recoverable", func(t *testing.T) {
 		repo := &openAIAuthPolicyProviderRepo{}
@@ -217,6 +292,10 @@ func TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies(t *testing.T) {
 	})
 }
 
+// TestOpenAICapacityFailoverCarriesSafeTerminalResponse supplies
+// server-overload evidence inside HTTP 400. It checks capacity classification,
+// HTTP 503 client presentation and retained message without exposing the
+// upstream classification code as text.
 func TestOpenAICapacityFailoverCarriesSafeTerminalResponse(t *testing.T) {
 	message := "Our servers are currently overloaded. Please try again later."
 	body := []byte(`{"error":{"code":"server_is_overloaded","message":"` + message + `"}}`)
@@ -228,12 +307,15 @@ func TestOpenAICapacityFailoverCarriesSafeTerminalResponse(t *testing.T) {
 	require.NotContains(t, err.ClientMessage, "server_is_overloaded")
 }
 
+// TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes enumerates
+// authentication, permission, rate and overload forms. It checks inferred
+// status and bare-error recovery predicate for each listed terminal payload.
 func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         string
-		status       int
-		wantFailover bool
+		name         string // fixture case name
+		body         string // upstream terminal JSON payload
+		status       int    // expected inferred HTTP status
+		wantFailover bool   // expected bare-error recovery predicate
 	}{
 		{"unauthorized", `{"type":"error","error":{"type":"authentication_error","code":"invalid_api_key","message":"unauthorized"}}`, http.StatusUnauthorized, true},
 		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, false},
@@ -250,16 +332,23 @@ func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T)
 	}
 }
 
+// TestOpenAIStreamBareErrorUsesSemanticFailover supplies a bare rate-limit
+// error with recognized type/code. It checks that the stream predicate admits
+// this semantic failure for provider recovery.
 func TestOpenAIStreamBareErrorUsesSemanticFailover(t *testing.T) {
 	payload := []byte(`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`)
 	require.True(t, openai.OpenAIStreamErrorEventShouldFailover(payload, "slow down"))
 }
 
+// TestOpenAIStream403FailoverRequiresStructuredProviderCredentialSignal
+// compares ordinary permission with access-state and authentication evidence.
+// It checks HTTP 403 inference and both terminal predicates for every listed
+// fixture.
 func TestOpenAIStream403FailoverRequiresStructuredProviderCredentialSignal(t *testing.T) {
 	tests := []struct {
-		name    string
-		payload string
-		want    bool
+		name    string // fixture case name
+		payload string // upstream terminal JSON payload
+		want    bool   // expected terminal failover verdict
 	}{
 		{
 			name:    "ordinary permission error",
@@ -297,6 +386,9 @@ func TestOpenAIStream403FailoverRequiresStructuredProviderCredentialSignal(t *te
 	}
 }
 
+// TestOpenAIStream403PostOutputProviderSideEffectsIgnoreRequestPermissionErrors
+// supplies a request-specific permission terminal. It checks retained HTTP 403
+// status, false scheduling stop, no error-store write and no runtime block.
 func TestOpenAIStream403PostOutputProviderSideEffectsIgnoreRequestPermissionErrors(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	rateLimits := newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)
@@ -313,6 +405,9 @@ func TestOpenAIStream403PostOutputProviderSideEffectsIgnoreRequestPermissionErro
 	require.False(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIStream403ExplicitCredentialAuthAppliesProviderSideEffects supplies
+// structured invalid-key HTTP 403 evidence. It checks status, scheduling stop,
+// one error-store write and a provider block for that credential failure.
 func TestOpenAIStream403ExplicitCredentialAuthAppliesProviderSideEffects(t *testing.T) {
 	repo := &openAIStream403ProviderRepo{}
 	rateLimits := newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)
@@ -329,6 +424,9 @@ func TestOpenAIStream403ExplicitCredentialAuthAppliesProviderSideEffects(t *test
 	require.True(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIStreamAccessStateAppliesProviderHealthBeforeFailover supplies
+// suspended-workspace evidence to setup-token health. It checks semantic HTTP
+// 403, scheduling stop and a runtime block after terminal effects.
 func TestOpenAIStreamAccessStateAppliesProviderHealthBeforeFailover(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 919, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeSetupToken}}
@@ -341,6 +439,10 @@ func TestOpenAIStreamAccessStateAppliesProviderHealthBeforeFailover(t *testing.T
 	require.True(t, wsFixtureProviderBlocked(svc, provider))
 }
 
+// TestOpenAIStreamOAuthLike429GetsDeadlineWithoutImmediateRuntimeBlock
+// compares OAuth and setup-token rate-limit terminals. It checks same-provider
+// retry with a deadline and absence of immediate runtime block for these
+// fixtures.
 func TestOpenAIStreamOAuthLike429GetsDeadlineWithoutImmediateRuntimeBlock(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken} {
 		t.Run(providerType, func(t *testing.T) {
@@ -359,17 +461,23 @@ func TestOpenAIStreamOAuthLike429GetsDeadlineWithoutImmediateRuntimeBlock(t *tes
 	}
 }
 
+// SetTempUnschedulable counts temporary cooldown attempts in the capacity
+// fixture store.
 func (r *capacityShedProviderRepoStub) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.tempUnschedCalls++
 	return nil
 }
 
+// GetByID constructs an OpenAI OAuth fixture for the supplied provider
+// identifier.
 func (r *capacityShedProviderRepoStub) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	return &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: id, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}, nil
 }
 
-// TestStreamFailedEventCapacityShedRetriesOnSameProvider checks bounded local retries for non-pool providers
-// because switching does not resolve capacity shedding.
+// TestStreamFailedEventCapacityShedRetriesOnSameProvider compares
+// overload/slow-down codes with a generic server failure outside pool mode. It
+// checks capacity detection and retry eligibility only for the listed capacity
+// fixtures.
 func TestStreamFailedEventCapacityShedRetriesOnSameProvider(t *testing.T) {
 	nonPool := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 
@@ -385,6 +493,10 @@ func TestStreamFailedEventCapacityShedRetriesOnSameProvider(t *testing.T) {
 	require.False(t, gatewayprovider.OpenAIStreamFailureRetryable(nonPool, other, "boom"))
 }
 
+// TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthProviders classifies
+// request overload and passes its metadata to cooldown/health. It checks
+// transient same-provider eligibility with no recorded provider
+// temporary-unscheduling call.
 func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthProviders(t *testing.T) {
 	payload := []byte(`{"error":{"type":"server_error","message":"Our servers are currently overloaded. Please try again later."}}`)
 	failoverErr := gatewayprovider.NewOpenAIUpstreamFailure(
@@ -410,14 +522,14 @@ func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthProviders(t *testing.T) {
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
-// TestOpenAIStreamErrorFrameDoesNotStartClientOutput checks buffering of capacity error frames until
-// response.failed.
-// Flushing error early sets clientOutputStarted and prevents pre-output failover.
+// TestOpenAIStreamErrorFrameDoesNotStartClientOutput enumerates retryable
+// errors, metadata, empty/content deltas and DONE. It checks each listed
+// semantic-output verdict independently of any actual writer commitment.
 func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 	cases := []struct {
-		data      string
-		eventType string
-		want      bool
+		data      string // upstream stream-data payload
+		eventType string // declared SSE event type
+		want      bool   // expected semantic client-output verdict
 	}{
 		{`{"type":"error","error":{"code":"server_is_overloaded","message":"overloaded"}}`, "error", false},
 		{`{"type":"error","error":{"code":"slow_down","message":"slow down"}}`, "error", false},
@@ -440,15 +552,15 @@ func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 	}
 }
 
-// TestSanitizeOpenAICapacityShedErrorCodeForClient checks capacity-code rewriting and preservation of other
-// codes.
-// Clients use codes such as rate_limit_exceeded to interpret retry delays.
+// TestSanitizeOpenAICapacityShedErrorCodeForClient enumerates overload and
+// ordinary error payloads plus invalid JSON. It checks the change flag and
+// exact code fragments, including retention of the listed noncapacity inputs.
 func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {
 	cases := []struct {
-		name        string
-		payload     string
-		wantChanged bool
-		wantContain string
+		name        string // fixture case name
+		payload     string // upstream terminal JSON payload
+		wantChanged bool   // expected adopted code rewrite
+		wantContain string // expected output payload fragment
 	}{
 		{
 			name:        "failed事件嵌套code改写",
@@ -506,11 +618,17 @@ func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {
 	}
 }
 
+// GetByID converts the capacity fixture execution provider into its core
+// record.
 func (s capacityRetryStore) GetByID(ctx context.Context, id int64) (*providercore.Record, error) {
 	value, err := s.capacityShedProviderRepoStub.GetByID(ctx, id)
 	return gatewayprovider.ExecutionRecord(value), err
 }
 
+// TestApplyOpenAIStreamFailedErrorPassthroughRule_UsesProvidedPlatform
+// installs a Grok-specific context-window presentation rule. It checks
+// successful matching and HTTP 400 when the caller passes Grok as the event
+// platform.
 func TestApplyOpenAIStreamFailedErrorPassthroughRule_UsesProvidedPlatform(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -528,6 +646,10 @@ func TestApplyOpenAIStreamFailedErrorPassthroughRule_UsesProvidedPlatform(t *tes
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
+// TestNonStreamingTerminalFailureFailover_NilProviderProposesNothing supplies
+// capacity terminal evidence without a selected provider. It checks that
+// buffered terminal classification returns no provider recovery proposal for
+// that missing target.
 func TestNonStreamingTerminalFailureFailover_NilProviderProposesNothing(t *testing.T) {
 	c, _ := newNonStreamingFailoverContext(t)
 	svc := newNonStreamingFailoverService()
@@ -538,12 +660,16 @@ func TestNonStreamingTerminalFailureFailover_NilProviderProposesNothing(t *testi
 		"Selected model is at capacity. Please try a different model."))
 }
 
+// SetRateLimited counts provider-rate persistence and records its last reset
+// deadline.
 func (r *oauth429RateLimitRepo) SetRateLimited(_ context.Context, _ int64, until time.Time) error {
 	r.setRateLimitedCalls++
 	r.lastRateLimitedUntil = until
 	return nil
 }
 
+// SetModelRateLimit counts model-rate persistence and records scope and reset
+// deadline.
 func (r *oauth429RateLimitRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, until time.Time, _ ...string) error {
 	r.setModelRateLimitCalls++
 	r.lastModelRateLimitKey = scope
@@ -551,6 +677,10 @@ func (r *oauth429RateLimitRepo) SetModelRateLimit(_ context.Context, _ int64, sc
 	return nil
 }
 
+// TestOpenAI429FastPath_KeepsOAuthProviderSchedulableDuringRetryWindow
+// compares OAuth, setup-token, API-key and Grok retry inputs. It checks
+// credential-specific retry deadlines and API-key blocking/persistence
+// alongside no immediate OAuth block.
 func TestOpenAI429FastPath_KeepsOAuthProviderSchedulableDuringRetryWindow(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	var svc *OpenAIResponsesExecutor
@@ -585,6 +715,10 @@ func TestOpenAI429FastPath_KeepsOAuthProviderSchedulableDuringRetryWindow(t *tes
 	require.WithinDuration(t, time.Now().Add(providercore.RuntimeRetryWindow), svc.Output.Health.RetryDeadline(setupTokenProvider.View()), time.Second)
 }
 
+// TestOpenAI429FastPath_BlocksOAuthImmediatelyWhenSevenDayQuotaIsExhausted
+// supplies exhausted seven-day quota headers. It checks a temporary runtime
+// block and persisted reset beyond six days, with false permanent-stop
+// decision and no local retry eligibility.
 func TestOpenAI429FastPath_BlocksOAuthImmediatelyWhenSevenDayQuotaIsExhausted(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	var svc *OpenAIResponsesExecutor
@@ -616,6 +750,9 @@ func TestOpenAI429FastPath_BlocksOAuthImmediatelyWhenSevenDayQuotaIsExhausted(t 
 	require.False(t, provideradapter.CanRetryOpenAI429(svc.Output.Health.Runtime, provider.View(), headers, nil))
 }
 
+// TestOpenAI429FastPath_RetriesOAuthWhenNoQuotaSignalExists supplies
+// Retry-After with no exhausted quota evidence. It checks OAuth retry
+// eligibility and absence of a provider runtime block for that fixture.
 func TestOpenAI429FastPath_RetriesOAuthWhenNoQuotaSignalExists(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 424, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
@@ -625,6 +762,10 @@ func TestOpenAI429FastPath_RetriesOAuthWhenNoQuotaSignalExists(t *testing.T) {
 	require.False(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestOpenAIStream429IgnoresSuccessfulQuotaSnapshotHeaders expires the local
+// retry window then supplies semantic 429 with HTTP 200 quota headers. It
+// checks short-lived blocking that expires under the fixture clock rather than
+// inheriting a week-long window.
 func TestOpenAIStream429IgnoresSuccessfulQuotaSnapshotHeaders(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	var svc *OpenAIResponsesExecutor
@@ -658,6 +799,9 @@ func TestOpenAIStream429IgnoresSuccessfulQuotaSnapshotHeaders(t *testing.T) {
 	}
 }
 
+// TestOpenAI429FastPath_SparkQuotaOnlyBlocksSparkModel supplies exhausted
+// seven-day quota for Spark model execution. It checks model-only persistence
+// and reset, no provider-rate write and no provider-wide runtime block.
 func TestOpenAI429FastPath_SparkQuotaOnlyBlocksSparkModel(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	var svc *OpenAIResponsesExecutor
@@ -690,6 +834,9 @@ func TestOpenAI429FastPath_SparkQuotaOnlyBlocksSparkModel(t *testing.T) {
 	require.Greater(t, time.Until(repo.lastModelRateLimitedUntil), 6*24*time.Hour)
 }
 
+// TestOpenAIStreamFailover_Spark429KeepsModelScope builds failover from a
+// Spark rate-limit event and exhausted quota headers. It checks HTTP 429 and
+// model-scoped recording with no provider-wide rate or runtime block.
 func TestOpenAIStreamFailover_Spark429KeepsModelScope(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	var svc *OpenAIResponsesExecutor
@@ -724,6 +871,10 @@ func TestOpenAIStreamFailover_Spark429KeepsModelScope(t *testing.T) {
 	require.False(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration supplies
+// the fixture four-hour-fifty-nine-minute reset message. It checks provider
+// identity, bounded reset timestamp and runtime blocking after the rate-limit
+// write.
 func TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration(t *testing.T) {
 	repo := &rateLimit429ProviderRepoStub{}
 	var svc *OpenAIResponsesExecutor
@@ -753,6 +904,9 @@ func TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration(t *testi
 	require.True(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestOpenAIRuntimeBlock_AppliesToOpenAIAPIKeyWhenRateLimitServiceStopsScheduling
+// directly publishes a permanent runtime stop for an OpenAI key. It checks
+// that the fixture runtime recognizes that provider block.
 func TestOpenAIRuntimeBlock_AppliesToOpenAIAPIKeyWhenRateLimitServiceStopsScheduling(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 44, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -762,6 +916,9 @@ func TestOpenAIRuntimeBlock_AppliesToOpenAIAPIKeyWhenRateLimitServiceStopsSchedu
 	require.True(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestOpenAIRuntimeBlock_DoesNotApplyToOtherPlatforms directly publishes a
+// stop for the Gemini fixture target. It checks that the OpenAI runtime block
+// helper does not retain a block for that platform.
 func TestOpenAIRuntimeBlock_DoesNotApplyToOtherPlatforms(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 45, Platform: capability.PlatformGemini, Type: capability.ProviderTypeOAuth}}
@@ -771,6 +928,10 @@ func TestOpenAIRuntimeBlock_DoesNotApplyToOtherPlatforms(t *testing.T) {
 	require.False(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestOpenAIRuntimeBlocker_IgnoresNonOpenAIFromRateLimitService observes a
+// Gemini forbidden failure through shared health. It checks true stop
+// classification while the OpenAI-specific runtime block predicate remains
+// false.
 func TestOpenAIRuntimeBlocker_IgnoresNonOpenAIFromRateLimitService(t *testing.T) {
 	gateway := newResponsesFixture(responsesFixtureInputs{})
 	repo := &gatewaytestkit.HealthStoreRecorder{}
@@ -790,6 +951,10 @@ func TestOpenAIRuntimeBlocker_IgnoresNonOpenAIFromRateLimitService(t *testing.T)
 	require.False(t, httpFixtureRuntimeBlocked(gateway, provider))
 }
 
+// TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock repeats a
+// listed pool-retryable HTTP 524 for one model. It checks false
+// scheduling-stop decisions and no provider or model transient block after
+// those observations.
 func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	healthObserver := newHTTPHealthFixture(repo, &responsesFixtureOptions{}, nil, providercore.HealthOptions{}, nil)
@@ -815,6 +980,9 @@ func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.
 	require.False(t, (httpFixtureRuntimeBlocked(gateway, provider) || gateway.Output.Health.ModelTransient.IsBlocked(provider.Record.ID, providercore.NormalizeTransientModel(gatewayprovider.ExecutionModelPolicy(provider).CanonicalSchedulingModel("gpt-5.4")), time.Now())))
 }
 
+// TestOpenAIPoolModeNonRetryable5xx_DoesNotCreateModelTransientBlock repeats
+// HTTP 503 outside the fixture pool status list. It checks false stop
+// decisions and no provider or model block for this pool-policy case.
 func TestOpenAIPoolModeNonRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	healthObserver := newHTTPHealthFixture(repo, &responsesFixtureOptions{}, nil, providercore.HealthOptions{}, nil)
@@ -840,6 +1008,9 @@ func TestOpenAIPoolModeNonRetryable5xx_DoesNotCreateModelTransientBlock(t *testi
 	require.False(t, (httpFixtureRuntimeBlocked(gateway, provider) || gateway.Output.Health.ModelTransient.IsBlocked(provider.Record.ID, providercore.NormalizeTransientModel(gatewayprovider.ExecutionModelPolicy(provider).CanonicalSchedulingModel("gpt-5.4")), time.Now())))
 }
 
+// TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock repeats HTTP 504
+// for a nonpool API key. It checks false stop decisions and a true block
+// predicate for either the provider or requested model after two observations.
 func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	healthObserver := newHTTPHealthFixture(repo, &responsesFixtureOptions{}, nil, providercore.HealthOptions{}, nil)
@@ -861,6 +1032,9 @@ func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
 	require.True(t, (httpFixtureRuntimeBlocked(gateway, provider) || gateway.Output.Health.ModelTransient.IsBlocked(provider.Record.ID, providercore.NormalizeTransientModel(gatewayprovider.ExecutionModelPolicy(provider).CanonicalSchedulingModel("gpt-5.4")), time.Now())))
 }
 
+// TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeProvider supplies structured
+// model-not-found evidence with a known model. It checks scheduling stop and
+// one model-limit record, with no provider-wide temporary or runtime block.
 func TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeProvider(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -874,6 +1048,9 @@ func TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeProvider(t *testing.T) {
 	require.Len(t, repo.ModelRateLimitCalls, 1)
 }
 
+// TestOpenAIModelTempUnschedulable_DoesNotRuntimeBlockWholeProvider matches an
+// endpoint-not-found rule for a known model. It checks the recorded model
+// scope and absence of provider-wide persistence and runtime blocking.
 func TestOpenAIModelTempUnschedulable_DoesNotRuntimeBlockWholeProvider(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -888,6 +1065,10 @@ func TestOpenAIModelTempUnschedulable_DoesNotRuntimeBlockWholeProvider(t *testin
 	require.Equal(t, "gpt-5.4", repo.ModelRateLimitCalls[0].Scope)
 }
 
+// TestOpenAIModelTempUnschedulable_WriteFailureDoesNotRuntimeBlockWholeProvider
+// fails the model-limit persistence call after rule matching. It checks stop
+// classification and recorded attempt without substituting a provider-wide
+// cooldown or runtime block.
 func TestOpenAIModelTempUnschedulable_WriteFailureDoesNotRuntimeBlockWholeProvider(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{ModelRateLimitErr: errors.New("write failed")}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -901,6 +1082,9 @@ func TestOpenAIModelTempUnschedulable_WriteFailureDoesNotRuntimeBlockWholeProvid
 	require.Len(t, repo.ModelRateLimitCalls, 1)
 }
 
+// TestOpenAIOAuth429_MatchingModelTempRuleAvoidsProviderRuntimeBlock matches a
+// model-quota rule for OAuth. It checks model-scoped persistence and stop
+// classification with no provider-wide runtime block in this fixture.
 func TestOpenAIOAuth429_MatchingModelTempRuleAvoidsProviderRuntimeBlock(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -922,6 +1106,10 @@ func TestOpenAIOAuth429_MatchingModelTempRuleAvoidsProviderRuntimeBlock(t *testi
 	require.Equal(t, "gpt-5.4", repo.ModelRateLimitCalls[0].Scope)
 }
 
+// TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsProviderRuntimeBlock
+// supplies generic rate limiting that misses a model rule. Its actual
+// assertions check retry eligibility, no immediate runtime block and no
+// model-limit write.
 func TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsProviderRuntimeBlock(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -943,6 +1131,9 @@ func TestOpenAIOAuth429_NonmatchingModelTempRuleKeepsProviderRuntimeBlock(t *tes
 	require.Empty(t, repo.ModelRateLimitCalls)
 }
 
+// TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock matches
+// temporary-error policy without a model identity. It checks provider-wide
+// temporary persistence and runtime blocking rather than a model-limit record.
 func TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newResponsesFixture(responsesFixtureInputs{health: newHTTPHealthFixture(repo, nil, nil, providercore.HealthOptions{}, nil)})
@@ -956,6 +1147,11 @@ func TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock(t *testin
 	require.Empty(t, repo.ModelRateLimitCalls)
 }
 
+// expireRuntimeRetryForTest installs one test-clock runtime state across
+// output, transport and credential recovery services. It seeds the selected
+// provider's retry window in the past, restores the clock's ordinary reading
+// and returns the controllable clock; callers run this setup before
+// overlapping execution.
 func expireRuntimeRetryForTest(s *OpenAIResponsesExecutor, id int64) *httpRuntimeClock {
 	clock := &httpRuntimeClock{}
 	state := providercore.NewRuntimeBlockState(clock.Now)
@@ -964,12 +1160,16 @@ func expireRuntimeRetryForTest(s *OpenAIResponsesExecutor, id int64) *httpRuntim
 	s.Requests.Failure.Health.Runtime = state
 	s.Text.Credentials.Runtime = state
 	s.Text.Credentials.Recovery.Runtime = state
+	// Seed a retry window under the past fixture timestamp, then restore ordinary
+	// clock reads so terminal handling observes it after the seeded deadline has passed.
 	clock.Set(time.Now().Add(-providercore.RuntimeRetryWindow - time.Second))
 	state.RetryWindowActive(id)
 	clock.nanos.Store(0)
 	return clock
 }
 
+// SetRateLimited records the latest provider identifier and rate-reset
+// timestamp with its call count.
 func (r *rateLimit429ProviderRepoStub) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitCalls++
 	r.lastRateLimitID = id
@@ -977,6 +1177,9 @@ func (r *rateLimit429ProviderRepoStub) SetRateLimited(_ context.Context, id int6
 	return nil
 }
 
+// TestHandleOpenAITransientError_BlocksOnlyRequestedModel repeats transient
+// failure for one known model. It checks no provider-wide block, a block for
+// that model and an unblocked different model in the fixture.
 func TestHandleOpenAITransientError_BlocksOnlyRequestedModel(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	setWSFixtureHealth(svc, newUpstreamHealthForTest(transientCooldownProviderRepo{}, &wsFixtureOptions{}, nil, providercore.HealthOptions{}, nil))
@@ -999,6 +1202,9 @@ func TestHandleOpenAITransientError_BlocksOnlyRequestedModel(t *testing.T) {
 	require.False(t, wsFixtureModelBlocked(svc, provider, "gpt-5.6-terra"))
 }
 
+// TestHandleOpenAITransientError_TransientStatusesUseModelScope repeats each
+// listed transient status for a known model. It checks unchanged stop
+// decisions, no whole-provider block and a retained requested-model block.
 func TestHandleOpenAITransientError_TransientStatusesUseModelScope(t *testing.T) {
 	for _, statusCode := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
@@ -1024,10 +1230,17 @@ func TestHandleOpenAITransientError_TransientStatusesUseModelScope(t *testing.T)
 	}
 }
 
+// TestHandleOpenAITransientError_529RemainsOverloadOnly supplies HTTP 529 with
+// overload text to transient classification. It checks that this fixture
+// status is excluded from the ordinary transient-provider failure predicate.
 func TestHandleOpenAITransientError_529RemainsOverloadOnly(t *testing.T) {
 	require.False(t, gatewayprovider.IsTransientProviderFailure(529, []byte(`{"error":{"message":"overloaded"}}`)))
 }
 
+// TestHandleOpenAITransientError_CanonicalModelIsNotMappedTwice configures
+// chained model mappings and observes failure under the first mapped model. It
+// checks that model blocking is visible by client alias and cleared by
+// successful schedule feedback.
 func TestHandleOpenAITransientError_CanonicalModelIsNotMappedTwice(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	setWSFixtureHealth(svc, newUpstreamHealthForTest(transientCooldownProviderRepo{}, &wsFixtureOptions{}, nil, providercore.HealthOptions{}, nil))
@@ -1057,6 +1270,9 @@ func TestHandleOpenAITransientError_CanonicalModelIsNotMappedTwice(t *testing.T)
 	require.False(t, wsFixtureModelBlocked(svc, provider, "public-alias"))
 }
 
+// TestHandleOpenAITransientError_DoesNotBlockParameter400 supplies a
+// parameter-error HTTP 400 for a known model. It checks false stop and absence
+// of provider and model runtime blocks for that input rejection.
 func TestHandleOpenAITransientError_DoesNotBlockParameter400(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	setWSFixtureHealth(svc, newUpstreamHealthForTest(transientCooldownProviderRepo{}, &wsFixtureOptions{}, nil, providercore.HealthOptions{}, nil))
@@ -1076,6 +1292,10 @@ func TestHandleOpenAITransientError_DoesNotBlockParameter400(t *testing.T) {
 	require.False(t, wsFixtureModelBlocked(svc, provider, "gpt-5.5"))
 }
 
+// TestHandleOpenAITransientError_HardDisableStillBlocksWholeProvider directly
+// publishes a provider-wide runtime block with a finite deadline. It checks
+// request blocking for both listed models under that same provider
+// observation.
 func TestHandleOpenAITransientError_HardDisableStillBlocksWholeProvider(t *testing.T) {
 	svc := newWSFixture(wsFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 5106, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}

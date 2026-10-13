@@ -17,17 +17,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIResponsesExecutor binds Responses request construction, execution, and output.
+// A Responses attempt separates prelude dispatch from full native HTTP
+// transformation, so raw Chat, Grok, Anthropic and passthrough routes retain
+// their own execution behavior. The native branch keeps original client,
+// billing and upstream model values alongside a byte view and optional decoded
+// request map.
+//
+// Ciphertext recovery can change input after model policy has already run. The
+// decoder first applies pending byte patches, invalidates a cached map when
+// current bytes change and decodes the resulting view again. Lineage uses a
+// session identity derived before encrypted items are stripped, so later
+// rejection marking refers to the same prepared entry that a repeated request
+// can present. HTTP exchange callbacks carry one token, fingerprint and route
+// preparation through the shared runner's local recovery and response-reading
+// phases.
+
+// OpenAIResponsesExecutor combines selected-attempt request, output, text and
+// lineage services for Responses forwarding. App assembly shares these
+// dependencies with other protocol executors; each Forward call owns its
+// byte/decoded preparation state.
 type OpenAIResponsesExecutor struct {
-	Requests    *OpenAIRequests
-	Output      *OpenAIResponseOutput
-	Text        *OpenAITextExecutor
-	Grok        *GrokExecutor
-	Lineage     *OpenAIEncryptedLineage
+	Requests *OpenAIRequests       // shared upstream request builder
+	Output   *OpenAIResponseOutput // shared Responses output bindings
+	Text     *OpenAITextExecutor   // shared compatible text executor
+	Grok     *GrokExecutor         // shared Grok Responses executor
+	// shared encrypted-history rejection tracker
+	Lineage *OpenAIEncryptedLineage
+	// Responses image injection policy
 	ImageBridge *gatewayprovider.ResponseImagePolicy
 }
 
-// Forward prepares, dispatches, and executes one Responses attempt.
+// Forward prepares and executes one selected Responses provider attempt,
+// returning observations and failure for outer handling. Callers retain the
+// live HTTP context and app-bound services during synchronous output. Prelude
+// dispatch can delegate directly to raw Chat, Grok, native Anthropic or
+// passthrough before native HTTP transformation runs.
+//
+// The native branch retains model identities and prepared byte/decoded views
+// through ciphertext recovery. Pending patches invalidate cached decoded state
+// before another map is used, and changed retry bytes also force a fresh
+// request view. Lineage identity is derived before encrypted-history stripping
+// and retained for marking rejected digests. The shared HTTP runner owns
+// response-body cleanup, local recovery and reading; the outer text loop
+// decides provider switching and completion. Deferred model capture uses the
+// returned result even when failure accompanies partial observations.
 func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte) (out *forwardcore.OpenAIResult, failure error) {
 	defer func() { captureResponseModel(c, out) }()
 	var routeErr error
@@ -72,8 +105,11 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	imageIntent := transformed.ImageIntent
 	fingerprintIDs := transformed.Fingerprint
 	reqBody := transformed.Decoded
-	// WS and ciphertext recovery reuse the prepared request to avoid repeating model mapping and policy.
+	// HTTP ciphertext recovery reuses model/policy preparation. Apply pending byte
+	// patches before decoding so the mutable map describes the body selected for this retry.
 	ensureReqBody := func() (map[string]any, error) {
+		// A patched byte view supersedes its earlier decoded map; drop that cache
+		// before a retry decoder can trim history from stale request content.
 		if requestView.HasPatches() {
 			patched, err := requestView.ApplyPatches()
 			if err != nil {
@@ -93,10 +129,9 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 		reqBody = decoded
 		return reqBody, nil
 	}
-	// Strip encrypted items already rejected by upstream for this session.
-	// This prevents client history from repeatedly triggering rejection, stripping, and retry or reconnect.
-	// Derive the lineage session key from the incoming body before retries can rewrite it;
-	// a key computed afterward could differ from the next incoming request.
+	// Known rejected ciphertext is stripped using the session key from this
+	// prepared entry, before stripping or recovery changes its bytes. Retain that
+	// identity so later rejection marking matches another request presenting the same entry.
 	lineageGroupID := OpenAIResponseGroupID(c)
 	lineageEntryBody := body
 	lineageSessionHash := ""
@@ -106,6 +141,8 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 			strippedBody, strippedCount := s.Lineage.Strip(
 				body, invalidDigests, "invalid_encrypted_lineage_strip", provider.Record.ID, 0,
 			)
+			// Adopt successful lineage stripping and retire the decoded cache; later
+			// body validation or recovery must inspect the current stripped byte view.
 			if strippedCount > 0 {
 				body = strippedBody
 				requestView = requeststate.NewOpenAIRequestView(body)
@@ -140,7 +177,8 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	SetOpsUpstreamModel(c, upstreamModel)
 
 	reasoningEffort := requeststate.ExtractOpenAIReasoningEffortFromBody(body)
-	// Add default effort for Chinese provider models after reqModel has been mapped to billingModel.
+	// The mapped model guides enabled-thinking display effort after request
+	// transformation; this usage fallback does not add another outgoing reasoning control.
 	reasoningEffort = gatewayprovider.ApplyThinkingEnabledFallback(reasoningEffort, body, reqModel)
 	reasoningEffortValue := ""
 	if reasoningEffort != nil {
@@ -175,6 +213,7 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 			return s.Requests.Transport.DoWithTLS(request, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, tlsRouterMatch))
 		},
 		Latency: func(elapsed time.Duration) {
+			// Ops latency stores whole milliseconds from this exchange duration.
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, elapsed.Milliseconds())
 		},
 		HeaderTimeout: func() error {
@@ -185,6 +224,8 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	options := s.nativeForwardHTTPOptions(ctx, c, provider, input, exchange,
 		func(current []byte) ([]byte, bool, error) {
 			return prepareOpenAIHTTPEncryptedRetry(current, func(current []byte) (map[string]any, error) {
+				// Local recovery may supply new bytes after prior preparation. Invalidate
+				// both view and map before trimming so the repair uses that current request.
 				if !bytes.Equal(body, current) {
 					body = current
 					requestView = requeststate.NewOpenAIRequestView(body)
@@ -198,17 +239,23 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 			if len(digests) == 0 {
 				return
 			}
+			// A request with no prior rejected lineage still needs its entry identity
+			// before these newly rejected digests are published for later session lookup.
 			if lineageSessionHash == "" {
 				lineageSessionHash = GenerateOpenAISessionHash(c, entry)
 			}
 			s.Lineage.Mark(lineageGroupID, lineageSessionHash, digests)
 		},
 	)
+	// The HTTP runner clears this explicit map reference after a successful
+	// response and before reading output; byte/view state remains available for later recovery decoding.
 	options.ReleaseDecodedRequest = func() { reqBody = nil }
 	result, err := openaiexecution.RunHTTP(ctx, input, options)
 	return openaiexecution.ToForwardResult(result), err
 }
 
+// shouldForwardOpenAIResponsesViaRawChatCompletions delegates raw-Chat routing
+// policy for the selected attempt provider.
 func shouldForwardOpenAIResponsesViaRawChatCompletions(provider *gatewayprovider.ExecutionProvider) bool {
 	return gatewayprovider.ExecutionModelPolicy(provider).RawChat()
 }

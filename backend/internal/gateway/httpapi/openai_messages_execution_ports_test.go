@@ -16,8 +16,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestOpenAIMessagesExecutionAdapterPreservesNilFailover checks that a nil failure pointer becomes a nil
-// error interface.
+// TestOpenAIMessagesExecutionAdapterPreservesNilFailover classifies a
+// model-not-found HTTP 400 through the Messages adapter. It checks a nil error
+// interface and that classification leaves the client writer untouched.
 func TestOpenAIMessagesExecutionAdapterPreservesNilFailover(t *testing.T) {
 	writer := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(writer)

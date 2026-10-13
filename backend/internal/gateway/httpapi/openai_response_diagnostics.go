@@ -14,17 +14,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Codex client-admission diagnostics describe the rejected request using a
+// fixed header whitelist and a hashed prompt-cache key. The captured query
+// remains the request's trimmed RawQuery, while final deterministic client
+// errors use the separately supplied message and selected upstream
+// classification fields.
+
+// Rejection diagnostics cap each whitelisted header value. Client error
+// envelopes use these fallback strings when upstream classification or
+// message fields are absent.
 const (
+	// codexCLIOnlyHeaderValueMaxBytes bounds one recorded header excerpt so
+	// rejection diagnostics can retain selected values with a finite byte limit.
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
-	// openAIUpstreamClientErrorFallbackType is used when the upstream omits error.type.
+	// openAIUpstreamClientErrorFallbackType and
+	// openAIUpstreamClientErrorFallbackMessage supply envelope defaults when the
+	// selected upstream type or supplied client message is empty.
+	// openAIUpstreamClientErrorFallbackType names the default rejection category.
 	openAIUpstreamClientErrorFallbackType = "invalid_request_error"
 
 	// openAIUpstreamClientErrorFallbackMessage is used when the upstream message is empty.
 	openAIUpstreamClientErrorFallbackMessage = "Upstream rejected the request"
 )
 
-// codexCLIOnlyDebugHeaderWhitelist limits headers recorded when codex_cli_only rejects a request.
+// codexCLIOnlyDebugHeaderWhitelist selects client and routing headers for
+// rejection diagnostics;
+// SnapshotCodexRejectedHeaders trims values and bounds each captured excerpt.
 var codexCLIOnlyDebugHeaderWhitelist = []string{
 	"User-Agent",
 	"Content-Type",
@@ -40,6 +56,11 @@ var codexCLIOnlyDebugHeaderWhitelist = []string{
 	"X-Real-IP",
 }
 
+// AppendCodexRejectedRequestFields appends request metadata, selected headers
+// and body size to diagnostic fields. Missing context or request leaves fields
+// unchanged. Prompt-cache keys are hashed, but RawQuery and selected header
+// values retain request text after trimming, so callers account for that
+// content when choosing log destinations.
 func AppendCodexRejectedRequestFields(fields []zap.Field, c *gin.Context, body []byte) []zap.Field {
 	if c == nil || c.Request == nil {
 		return fields
@@ -73,6 +94,10 @@ func AppendCodexRejectedRequestFields(fields []zap.Field, c *gin.Context, body [
 	return fields
 }
 
+// SnapshotCodexRejectedHeaders captures trimmed, nonempty whitelisted header
+// values under lowercase names. Nil or empty headers return nil; each value is
+// UTF-8 truncated to codexCLIOnlyHeaderValueMaxBytes, and the returned map
+// owns its entries.
 func SnapshotCodexRejectedHeaders(header http.Header) map[string]string {
 	if len(header) == 0 {
 		return nil
@@ -83,20 +108,25 @@ func SnapshotCodexRejectedHeaders(header http.Header) map[string]string {
 		if value == "" {
 			continue
 		}
+		// Bound each whitelisted value while retaining complete UTF-8 characters.
 		result[strings.ToLower(key)] = logredact.TruncateUTF8(value, codexCLIOnlyHeaderValueMaxBytes)
 	}
 	return result
 }
 
-// IsOpenAIDeterministicClientError reports whether a 400 has been classified as non-retryable.
-// The supplied classification accounts for different normal-provider and pool-mode retry rules.
+// IsOpenAIDeterministicClientError reports whether a 400 was classified as
+// nonretryable. The caller supplies the relevant failover decision, because
+// status alone cannot distinguish request rejection from provider or pool
+// recovery.
 func IsOpenAIDeterministicClientError(statusCode int, shouldFailover bool) bool {
 	return statusCode == http.StatusBadRequest && !shouldFailover
 }
 
-// WriteOpenAIUpstreamClientError writes a deterministic client error in an OpenAI envelope.
-// The caller must redact identities and sensitive query parameters from upstreamMsg.
-// Copy diagnostic fields only, so upstream extensions and internal debug data stay private.
+// WriteOpenAIUpstreamClientError writes a deterministic client error from
+// selected upstream fields and upstreamMsg. Callers sanitize sensitive data in
+// the message before entry; the upstream body supplies type, code and param,
+// and absent classification or message selects the standard fallback
+// strings.
 func WriteOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte, upstreamMsg string) {
 	errorPayload := gin.H{"type": openAIUpstreamClientErrorFallbackType}
 	if errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String()); errType != "" {

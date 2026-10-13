@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestSummarizeNoOutputBody_RespectsLogBodyConfig checks structured diagnostics with error-body logging
-// disabled.
-// gateway.log_upstream_error_body controls raw upstream body excerpts.
+// TestSummarizeNoOutputBody_RespectsLogBodyConfig summarizes an in-progress
+// image stream with body logging disabled. It checks that the last event
+// remains visible while the raw body excerpt is omitted.
 func TestSummarizeNoOutputBody_RespectsLogBodyConfig(t *testing.T) {
 	body := []byte("data: {\"type\":\"response.in_progress\",\"response\":{\"status\":\"in_progress\"}}\n\n")
 	svc := newImagesFixture(imagesFixtureInputs{})

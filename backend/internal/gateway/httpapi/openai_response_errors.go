@@ -26,6 +26,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Upstream HTTP failures need separate request-error, provider-health and
+// client-presentation decisions. Responses and compatible Chat/Messages output
+// preserve structured request rejection details, handle cyber evidence before
+// provider policy, and classify remaining failures before applying
+// administrator presentation rules.
+//
+// Error capture is bounded but intentionally returns available partial bytes
+// when reads fail, allowing later classification to use whatever evidence was
+// captured. Replayable reads close and replace the original body so subsequent
+// protocol handling sees those captured bytes again. The request or explicitly
+// supplied model selects health scope, and the final error path can return a
+// failover signal before writing a client response. Execution callers retain
+// overall response cleanup.
+
+// LogOpenAIInstructionsRequiredDebug logs request diagnostics for recognized
+// instructions-required HTTP 400 evidence. Other errors are ignored; nil
+// logging context uses background context, and the appended diagnostic fields
+// follow their own header, query and prompt-cache capture rules.
 func LogOpenAIInstructionsRequiredDebug(
 	ctx context.Context,
 	c *gin.Context,
@@ -71,6 +89,10 @@ func LogOpenAIInstructionsRequiredDebug(
 	logging.FromContext(ctx).With(fields...).Warn("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查")
 }
 
+// isOpenAIInstructionsRequiredError recognizes instructions-required evidence
+// only for HTTP 400. It examines the supplied message and selected nested
+// error fields, accepts error.param instructions directly, and returns false
+// when no matching message or body evidence is present.
 func isOpenAIInstructionsRequiredError(upstreamStatusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if upstreamStatusCode != http.StatusBadRequest {
 		return false
@@ -125,15 +147,33 @@ func isOpenAIInstructionsRequiredError(upstreamStatusCode int, upstreamMsg strin
 	return false
 }
 
+// ReadErrorBody captures at most errorBodyReadLimit bytes from the upstream
+// body. Missing response or body returns nil; read errors are suppressed and
+// available partial bytes survive, while callers retain responsibility for
+// closing or replacing the response body.
 func (p *OpenAIResponseOutput) ReadErrorBody(resp *http.Response) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
 	limit := p.errorBodyReadLimit()
+	// Preserve bytes received before a read failure so downstream classifiers
+	// can use partial upstream evidence; the caller separately controls body cleanup.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
 	return body
 }
 
+// ResponseError classifies a captured upstream HTTP failure for Responses
+// output or provider recovery. Callers provide the selected provider, live
+// HTTP context and response, and keep ownership of response-body closure. It
+// captures and optionally redacts the body before interpreting cyber, Grok
+// policy, size and parameter evidence.
+//
+// Request-specific branches precede provider health and preserve their
+// dedicated presentation. Remaining failures use the first supplied scheduling
+// model, or a canonical model derived from requestBody. Health policy chooses
+// generic output or failover before administrator rules and default status
+// mapping. A failover error returns without final client output; other
+// branches write the selected rejection and return its diagnostic error.
 func (p *OpenAIResponseOutput) ResponseError(
 	ctx context.Context,
 	resp *http.Response,
@@ -145,7 +185,10 @@ func (p *OpenAIResponseOutput) ResponseError(
 	body := p.ReadErrorBody(resp)
 	body = p.redact(ctx, provider, body)
 
+	// Dedicated cyber evidence belongs to this request. Record it and preserve
+	// its rejection before provider health or administrator presentation can reinterpret it.
 	if hit, code, cyberMsg := openai.DetectOpenAICyberPolicy(body); hit {
+		// Bound cyber evidence and the Ops summary at complete UTF-8 characters.
 		MarkOpsCyberPolicy(c, moderationflow.Mark{
 			Code:           code,
 			Message:        cyberMsg,
@@ -165,8 +208,11 @@ func (p *OpenAIResponseOutput) ResponseError(
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
 	}
+	// Grok content rejection is request-specific; its dedicated client error
+	// precedes provider health so policy-blocked input does not become provider recovery.
 	if provider != nil && provider.Record.Platform == capability.PlatformGrok && grok.IsGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := gatewayprovider.GrokContentPolicyClientMessage(body)
+		// Keep the Grok rejection excerpt bounded at complete UTF-8 characters.
 		SetOpsUpstreamError(c, resp.StatusCode, clientMsg, logredact.TruncateUTF8(string(body), 2048))
 		WriteOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, p.Headers)
 		MarkResponseCommitted(c)
@@ -187,6 +233,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Limit optional diagnostic excerpts while keeping classification on the
+		// complete captured bytes; UTF-8 truncation avoids a split character in Ops.
 		upstreamDetail = logredact.TruncateUTF8(string(body), maxBytes)
 	}
 	SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
@@ -249,7 +297,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 	}
 
 	if openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, body) {
-		// Parameter errors leave provider health unchanged; retain Ops context and return the full error structure.
+		// Parameter rejection is tied to this input. Record its Ops evidence and
+		// retain the captured structure before any provider-health branch can run.
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
 			Platform:           provider.Record.Platform,
 			ProviderID:         provider.Record.ID,
@@ -273,7 +322,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 		return nil, fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// Apply provider policy after excluding request errors, including statuses that do not trigger failover.
+	// These remaining failures can affect provider scheduling even when their
+	// default status is nonretryable; apply health before selecting final presentation.
 	var reqModel string
 	if len(requestedModel) > 0 {
 		reqModel = strings.TrimSpace(requestedModel[0])
@@ -338,7 +388,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 		}
 	}
 
-	// After provider policy, passthrough rules select the final client response.
+	// Health and recovery are already decided here. Presentation rules may
+	// change the client envelope but cannot reopen the preceding retry decision.
 	if status, errType, errMsg, matched := ApplyErrorPassthroughRule(
 		c,
 		provider.Record.Platform,
@@ -377,7 +428,8 @@ func (p *OpenAIResponseOutput) ResponseError(
 	}
 	MarkResponseCommitted(c)
 
-	// Map the upstream status to a client error.
+	// Upstream authentication and billing statuses describe the selected provider.
+	// Map them to gateway failures while retaining client-actionable rate-limit output.
 	var errType, errMsg string
 	var statusCode int
 
@@ -420,7 +472,18 @@ func (p *OpenAIResponseOutput) ResponseError(
 	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
-// CompatError handles non-failover errors for Chat Completions and Anthropic Messages.
+// CompatError classifies an upstream HTTP rejection for the supplied Chat or
+// Messages writers. Callers retain response-body cleanup and provide a
+// selected provider and live request. Captured error bytes are optionally
+// redacted using background context before dedicated cyber, Grok policy,
+// parameter and size handling.
+//
+// Remaining failures apply health using the first supplied model, then can
+// return a failover error before either writer is invoked. Final presentation
+// applies administrator rules or compatible status/type mapping. The body
+// writer retains structured parameter errors, while ordinary errors use the
+// message writer. Callers inspect the returned error to distinguish recovery
+// from a rejection already written.
 func (p *OpenAIResponseOutput) CompatError(
 	resp *http.Response,
 	c *gin.Context,
@@ -432,7 +495,10 @@ func (p *OpenAIResponseOutput) CompatError(
 	body := p.ReadErrorBody(resp)
 	body = p.redact(context.Background(), provider, body)
 
+	// Dedicated cyber evidence belongs to this request. Record it and preserve
+	// its rejection before provider health or administrator presentation can reinterpret it.
 	if hit, code, cyberMsg := openai.DetectOpenAICyberPolicy(body); hit {
+		// Bound cyber evidence and the Ops summary at complete UTF-8 characters.
 		MarkOpsCyberPolicy(c, moderationflow.Mark{
 			Code:           code,
 			Message:        cyberMsg,
@@ -451,8 +517,11 @@ func (p *OpenAIResponseOutput) CompatError(
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
 	}
+	// Grok content rejection is request-specific; its dedicated client error
+	// precedes provider health so policy-blocked input does not become provider recovery.
 	if provider != nil && provider.Record.Platform == capability.PlatformGrok && grok.IsGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := gatewayprovider.GrokContentPolicyClientMessage(body)
+		// Keep the Grok rejection excerpt bounded at complete UTF-8 characters.
 		SetOpsUpstreamError(c, resp.StatusCode, clientMsg, logredact.TruncateUTF8(string(body), 2048))
 		MarkResponseCommitted(c)
 		writeError(c, http.StatusForbidden, "invalid_request_error", clientMsg)
@@ -471,12 +540,15 @@ func (p *OpenAIResponseOutput) CompatError(
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Limit optional diagnostic excerpts while keeping classification on the
+		// complete captured bytes; UTF-8 truncation avoids a split character in Ops.
 		upstreamDetail = logredact.TruncateUTF8(string(body), maxBytes)
 	}
 	SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
 	if openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, body) {
-		// Keep structured upstream error details such as code and param in compatible protocols.
+		// Retain code, param and other captured error fields in the supplied
+		// protocol body writer, before provider health can classify this request rejection.
 		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
 			Platform:           provider.Record.Platform,
 			ProviderID:         provider.Record.ID,
@@ -552,7 +624,8 @@ func (p *OpenAIResponseOutput) CompatError(
 		}
 	}
 
-	// After provider policy, passthrough rules select the response format.
+	// Provider effects and retry eligibility precede presentation rules. Use a
+	// matched envelope only after the failure has remained on the final-output path.
 	if status, errType, errMsg, matched := ApplyErrorPassthroughRule(
 		c, provider.Record.Platform, resp.StatusCode, body,
 		http.StatusBadGateway, "api_error", "Upstream request failed",
@@ -569,7 +642,8 @@ func (p *OpenAIResponseOutput) CompatError(
 	}
 	MarkResponseCommitted(c)
 
-	// Map the upstream status to the compatible protocol error type.
+	// Compatible writers retain the upstream status while selecting a client
+	// protocol category, so their envelope describes this already-classified final rejection.
 	errType := "api_error"
 	switch {
 	case resp.StatusCode == http.StatusBadRequest:
@@ -586,7 +660,12 @@ func (p *OpenAIResponseOutput) CompatError(
 	return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 }
 
+// errorBodyReadLimit returns the capture ceiling for upstream HTTP error
+// evidence. It defaults to 512 KiB; enabled body logging with a larger
+// positive excerpt limit expands capture even when Options.Configured is
+// false.
 func (p *OpenAIResponseOutput) errorBodyReadLimit() int64 {
+	// Bound error capture by default while allowing configured diagnostic expansion.
 	limit := int64(512 << 10)
 	if p != nil && p.Options.LogUpstreamErrorBody && p.Options.LogUpstreamErrorBodyMaxBytes > int(limit) {
 		limit = int64(p.Options.LogUpstreamErrorBodyMaxBytes)
@@ -594,7 +673,10 @@ func (p *OpenAIResponseOutput) errorBodyReadLimit() int64 {
 	return limit
 }
 
-// ApplyHTTPFailure applies provider health policy using the first supplied model.
+// ApplyHTTPFailure delegates OpenAI response-health handling using status,
+// headers and captured body. The first supplied model scopes the observation
+// when present; callers supply existing response bytes, and this helper does
+// not reread or close the response body.
 func (p *OpenAIResponseOutput) ApplyHTTPFailure(ctx context.Context, resp *http.Response, target *gatewayprovider.ExecutionProvider, body []byte, models ...string) providercore.UpstreamErrorDecision {
 	if len(models) > 0 {
 		return gatewayprovider.ApplyOpenAIResponseHealth(ctx, p.Health, target, resp.StatusCode, resp.Header, body, false, models[0])
@@ -602,10 +684,15 @@ func (p *OpenAIResponseOutput) ApplyHTTPFailure(ctx context.Context, resp *http.
 	return gatewayprovider.ApplyOpenAIResponseHealth(ctx, p.Health, target, resp.StatusCode, resp.Header, body, false)
 }
 
-// ReadReplayableError reads and closes the upstream error body, then replaces resp.Body with a readable copy.
-// It returns the raw body and a message with sensitive query parameters sanitized.
+// ReadReplayableError captures bounded error bytes, closes the upstream body
+// and replaces resp.Body with a readable copy. Callers supply a live
+// response/body; partial capture and close errors do not prevent replacement.
+// The returned message sanitizes query values, while returned body bytes
+// remain the captured content.
 func (p *OpenAIResponseOutput) ReadReplayableError(resp *http.Response) ([]byte, string) {
 	respBody := p.ReadErrorBody(resp)
+	// Captured bytes remain replayable after the original body is closed, even
+	// if that close reports an error; subsequent handlers consume the bounded copy.
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 

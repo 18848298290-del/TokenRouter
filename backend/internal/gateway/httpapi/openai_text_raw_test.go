@@ -29,13 +29,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIRawStreamDisconnectedWriter simulates client disconnection by failing both write methods.
-// Raw forwarding uses WriteString, so overriding Write alone would miss that path.
+// openAIRawStreamDisconnectedWriter rejects byte and string output to simulate
+// client disconnection.
 type openAIRawStreamDisconnectedWriter struct {
+	// ResponseWriter supplies the remaining Gin writer operations. Both write
+	// methods are overridden so either raw-output path receives a disconnect error.
 	gin.ResponseWriter
 }
 
-// newExecutionReadersFixture shares one settings store among test readers.
+// newExecutionReadersFixture builds runtime readers using the optional
+// settings repository. A nonnil repository is wrapped in a settings service
+// first; the wsFixtureOptions argument is unused by this helper.
 func newExecutionReadersFixture(repo settings.Repository, _ *wsFixtureOptions) *gatewayprovider.RuntimeReaders {
 	if repo != nil {
 		repo = settings.New(repo)
@@ -43,6 +47,10 @@ func newExecutionReadersFixture(repo settings.Repository, _ *wsFixtureOptions) *
 	return gatewaytestkit.RuntimeReaders(repo)
 }
 
+// TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDownstream
+// forwards content followed by a native Chat usage chunk and DONE. It checks
+// usage injection, returned token quantities, downstream usage and the
+// prepared request context/profile.
 func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDownstream(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -81,6 +89,9 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestForwardAsRawChatCompletions_TransportErrorFailsOver injects EOF from the
+// selected Chat transport. It checks one upstream request and a typed 502
+// failover error before a hard client response is written.
 func TestForwardAsRawChatCompletions_TransportErrorFailsOver(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"hello"}]}`)
 	rec := httptest.NewRecorder()
@@ -104,6 +115,9 @@ func TestForwardAsRawChatCompletions_TransportErrorFailsOver(t *testing.T) {
 	require.Equal(t, 0, rec.Body.Len(), "service must not write a hard 502 before handler can fail over")
 }
 
+// TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort maps sol to a
+// GPT-5.6 model with max effort. It checks the upstream model and effort plus
+// the same effort in the returned result.
 func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T) {
 	body := []byte(`{"model":"sol","messages":[{"role":"user","content":"hello"}],"reasoning_effort":"max","stream":false}`)
 	rec := httptest.NewRecorder()
@@ -132,6 +146,9 @@ func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T)
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestForwardAsRawChatCompletions_RecordsMappedThirdPartyMaxEffort maps a
+// DeepSeek name to a third-party upstream identifier. It checks max effort in
+// both outgoing native Chat bytes and returned effort attribution.
 func TestForwardAsRawChatCompletions_RecordsMappedThirdPartyMaxEffort(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hello"}],"reasoning_effort":"max","stream":false}`)
 	rec := httptest.NewRecorder()
@@ -160,11 +177,14 @@ func TestForwardAsRawChatCompletions_RecordsMappedThirdPartyMaxEffort(t *testing
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestForwardAsRawChatCompletions_NonStreamingCapturesCacheWriteUsage supplies
+// the listed nested cache-write quantities and a conflicting legacy alias. It
+// checks input/read counts and precedence of an explicit nested zero.
 func TestForwardAsRawChatCompletions_NonStreamingCapturesCacheWriteUsage(t *testing.T) {
 	tests := []struct {
-		name      string
-		usageJSON string
-		wantWrite int
+		name      string // fixture case name
+		usageJSON string // upstream usage JSON
+		wantWrite int    // expected cache-created token count
 	}{
 		{
 			name:      "positive cache write",
@@ -206,6 +226,10 @@ func TestForwardAsRawChatCompletions_NonStreamingCapturesCacheWriteUsage(t *test
 	}
 }
 
+// TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreaming
+// returns reasoning_content alongside answer text in native Chat JSON. It
+// checks both fields, token observations and equality with the supplied
+// upstream response.
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreaming(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -233,6 +257,9 @@ func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreami
 	require.JSONEq(t, upstreamJSON, rec.Body.String())
 }
 
+// TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentStreaming
+// emits reasoning and answer deltas before usage and DONE. It checks both
+// downstream fields and the returned input and output quantities.
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentStreaming(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -271,6 +298,10 @@ func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentStreaming(
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentInRequest
+// includes assistant reasoning and a tool-call continuation in Chat history.
+// It checks the outgoing reasoning text and function name after native request
+// preparation.
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentInRequest(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"weather"},{"role":"assistant","reasoning_content":"need tool","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"cloudy"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -294,6 +325,9 @@ func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentInRequest(
 	require.Equal(t, "get_weather", gjson.GetBytes(upstream.lastBody, "messages.1.tool_calls.0.function.name").String())
 }
 
+// TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream
+// supplies xhigh for the listed GLM model. It checks max in the outgoing Chat
+// control and in the returned reasoning-effort attribution.
 func TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream(t *testing.T) {
 	body := []byte(`{"model":"glm-5.2","messages":[{"role":"user","content":"hello"}],"reasoning_effort":"xhigh","stream":false}`)
 	rec := httptest.NewRecorder()
@@ -318,6 +352,9 @@ func TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream(t *
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover sends a
+// qualifying large request with an empty completed Chat stream. It checks
+// silent-refusal classification, absent result and no committed client output.
 func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T) {
 	body := largeRawChatCompletionsBody()
 	rec := httptest.NewRecorder()
@@ -351,6 +388,9 @@ func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T)
 	require.Empty(t, rec.Body.String())
 }
 
+// TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt supplies a
+// tool-call-only completion for a large request. It checks a successful result
+// and forwarded tool-call content and finish reason.
 func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) {
 	body := largeRawChatCompletionsBody()
 	rec := httptest.NewRecorder()
@@ -383,6 +423,9 @@ func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) 
 	require.Contains(t, rec.Body.String(), `"finish_reason":"tool_calls"`)
 }
 
+// TestForwardAsRawChatCompletions_SilentRefusalNormalContentExempt supplies
+// nonempty text in a completed large-request stream. It checks successful
+// result, retained text and downstream DONE termination for this fixture.
 func TestForwardAsRawChatCompletions_SilentRefusalNormalContentExempt(t *testing.T) {
 	body := largeRawChatCompletionsBody()
 	rec := httptest.NewRecorder()
@@ -415,10 +458,10 @@ func TestForwardAsRawChatCompletions_SilentRefusalNormalContentExempt(t *testing
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
-// TestForwardAsRawChatCompletions_StripsEmptyToolCallIdentity checks removal of empty id/name fields in later
-// DashScope and DeepSeek deltas.
-// Keep initial identities and argument fragments; empty fields otherwise overwrite identities in clients such
-// as dsh and cause unknown-tool errors.
+// TestForwardAsRawChatCompletions_StripsEmptyToolCallIdentity follows valid
+// tool identity with empty ID/name deltas carrying argument fragments. It
+// checks retained initial identity, absent later empty fields and forwarded
+// argument fragments and DONE.
 func TestForwardAsRawChatCompletions_StripsEmptyToolCallIdentity(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"weather"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -489,9 +532,10 @@ func TestForwardAsRawChatCompletions_StripsEmptyToolCallIdentity(t *testing.T) {
 	require.True(t, followUpSeen)
 }
 
-// TestForwardAsRawChatCompletions_TruncatedStreamAfterOutputFailsRequest checks EOF without [DONE], usage, or
-// finish_reason after output.
-// The handler uses the error to append an SSE error and record SLA failure.
+// TestForwardAsRawChatCompletions_TruncatedStreamAfterOutputFailsRequest ends
+// after partial content with no terminal, usage or DONE. It checks a partial
+// result, classified truncation error, retained output and absence of a
+// provider failover wrapper.
 func TestForwardAsRawChatCompletions_TruncatedStreamAfterOutputFailsRequest(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -523,8 +567,9 @@ func TestForwardAsRawChatCompletions_TruncatedStreamAfterOutputFailsRequest(t *t
 	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }
 
-// TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover checks retry before header
-// commitment for an empty HTTP 200 SSE stream.
+// TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover
+// returns an empty HTTP 200 SSE body. It checks typed truncation recovery,
+// next-provider eligibility, absent result and an untouched client writer.
 func TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -552,9 +597,10 @@ func TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover(t *
 	require.Empty(t, rec.Body.String())
 }
 
-// TestForwardAsRawChatCompletions_StreamReadErrorAfterOutputFailsRequest checks that transport failures after
-// output fail the request
-// and remain distinguishable from clean EOF truncation in Ops.
+// TestForwardAsRawChatCompletions_StreamReadErrorAfterOutputFailsRequest
+// injects connection reset after a content delta. It checks a returned partial
+// result, stream-read classification and the already-forwarded text for this
+// transport failure.
 func TestForwardAsRawChatCompletions_StreamReadErrorAfterOutputFailsRequest(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -583,9 +629,9 @@ func TestForwardAsRawChatCompletions_StreamReadErrorAfterOutputFailsRequest(t *t
 	require.Contains(t, rec.Body.String(), `"content":"partial"`)
 }
 
-// TestForwardAsRawChatCompletions_MissingDoneWithUsageStillSucceeds checks settlement when usage arrives
-// without [DONE].
-// Compatible upstreams may end with EOF after generation while still reporting consumed tokens.
+// TestForwardAsRawChatCompletions_MissingDoneWithUsageStillSucceeds ends after
+// a usage chunk with no DONE marker. It checks a successful forwarding result
+// and the exact observed input and output token counts.
 func TestForwardAsRawChatCompletions_MissingDoneWithUsageStillSucceeds(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -614,8 +660,9 @@ func TestForwardAsRawChatCompletions_MissingDoneWithUsageStillSucceeds(t *testin
 	require.Equal(t, 6, result.Usage.OutputTokens)
 }
 
-// TestForwardAsRawChatCompletions_MissingDoneWithFinishReasonStillSucceeds checks termination with
-// finish_reason but no [DONE] or usage.
+// TestForwardAsRawChatCompletions_MissingDoneWithFinishReasonStillSucceeds
+// ends after finish_reason with no DONE or usage chunk. It checks success, a
+// returned observation and the forwarded stop finish reason.
 func TestForwardAsRawChatCompletions_MissingDoneWithFinishReasonStillSucceeds(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -643,17 +690,20 @@ func TestForwardAsRawChatCompletions_MissingDoneWithFinishReasonStillSucceeds(t 
 	require.Contains(t, rec.Body.String(), `"finish_reason":"stop"`)
 }
 
+// Write rejects byte output with the fixture client-disconnection error.
 func (w *openAIRawStreamDisconnectedWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed: client disconnected")
 }
 
+// WriteString rejects string output with the same fixture disconnection error.
 func (w *openAIRawStreamDisconnectedWriter) WriteString(string) (int, error) {
 	return 0, errors.New("write failed: client disconnected")
 }
 
-// TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills checks observed usage settlement after
-// client disconnection and upstream truncation.
-// These failures cannot establish an upstream fault, so provider health stays unchanged.
+// TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills rejects
+// downstream writes and then ends the upstream without a terminal chunk. It
+// checks a successful returned observation; this fixture does not invoke
+// billing completion.
 func TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -676,8 +726,10 @@ func TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills(t *tes
 	require.NotNil(t, result)
 }
 
-// TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills checks that context.Canceled from
-// propagated client cancellation is not classified as upstream truncation.
+// TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills returns
+// context.Canceled after an upstream content chunk. It checks success and a
+// returned observation rather than a classified truncation failure; billing
+// completion is not exercised here.
 func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -701,6 +753,10 @@ func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing
 	require.NotNil(t, result)
 }
 
+// TestForwardAsRawChatCompletions_ClientDisconnectDrainsUsage rejects client
+// output before a later upstream usage chunk arrives. It checks usage
+// injection and the exact input, output and cached-token observations after
+// draining.
 func TestForwardAsRawChatCompletions_ClientDisconnectDrainsUsage(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -735,6 +791,10 @@ func TestForwardAsRawChatCompletions_ClientDisconnectDrainsUsage(t *testing.T) {
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
 }
 
+// TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel starts
+// with a cancelled client context and fixture usage response. It checks
+// successful forwarding and an uncancelled context on the captured upstream
+// request.
 func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	reqCtx, cancel := context.WithCancel(context.Background())
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
@@ -742,6 +802,8 @@ func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testi
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(reqCtx)
 	c.Request.Header.Set("Content-Type", "application/json")
+	// Cancel before forwarding so the captured request demonstrates context
+	// detachment at construction, with the fixture transport still returning its usage.
 	cancel()
 
 	upstreamBody := strings.Join([]string{
@@ -766,6 +828,10 @@ func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testi
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+// TestForwardAsRawChatCompletions_UsesFilteredServiceTierForBilling filters an
+// API-key priority request through fast-tier policy. It checks absent
+// outgoing/result tier and retained usage, without invoking a billing
+// settlement operation.
 func TestForwardAsRawChatCompletions_UsesFilteredServiceTierForBilling(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"service_tier":"priority"}`)
 	rec := httptest.NewRecorder()
@@ -796,12 +862,18 @@ func TestForwardAsRawChatCompletions_UsesFilteredServiceTierForBilling(t *testin
 	require.Equal(t, 2, result.Usage.OutputTokens)
 }
 
+// largeRawChatCompletionsBody creates streaming Chat input large enough for
+// silent-refusal checks.
 func largeRawChatCompletionsBody() []byte {
+	// Cross the reader's silent-refusal request-size threshold so the empty
+	// terminal scenarios exercise that classifier rather than its small-request exemption.
 	return []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` +
 		strings.Repeat("x", openai.SilentRefusalMinRequestBodyBytes) +
 		`"}],"stream":true}`)
 }
 
+// ollamaCloudRawChatCompletionsTestProvider creates an OpenAI API-key target
+// forcing Ollama Cloud Chat.
 func ollamaCloudRawChatCompletionsTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -820,6 +892,9 @@ func ollamaCloudRawChatCompletionsTestProvider() *gatewayprovider.ExecutionProvi
 	}
 }
 
+// TestIsOllamaCloudRawChatCompletionsProvider enumerates routing, host,
+// usage-metadata and platform cases using per-case providers. It checks which
+// listed targets qualify for the Ollama Cloud compatibility policy.
 func TestIsOllamaCloudRawChatCompletionsProvider(t *testing.T) {
 	t.Parallel()
 
@@ -885,6 +960,10 @@ func TestIsOllamaCloudRawChatCompletionsProvider(t *testing.T) {
 	})
 }
 
+// TestNormalizeOllamaCloudChatCompletionsResponseJSON compares
+// reasoning/thinking aliases with existing, empty and tool-only fields. It
+// checks added reasoning_content and retention of existing or unrelated
+// payload representations in the listed cases.
 func TestNormalizeOllamaCloudChatCompletionsResponseJSON(t *testing.T) {
 	t.Parallel()
 
@@ -936,6 +1015,10 @@ func TestNormalizeOllamaCloudChatCompletionsResponseJSON(t *testing.T) {
 	})
 }
 
+// TestNormalizeOllamaCloudChatCompletionsRequest supplies assistant
+// reasoning_content beside a function call. It checks the added reasoning
+// alias, retained source reasoning and tool fields, and absence of reasoning
+// on the user message.
 func TestNormalizeOllamaCloudChatCompletionsRequest(t *testing.T) {
 	t.Parallel()
 
@@ -948,6 +1031,9 @@ func TestNormalizeOllamaCloudChatCompletionsRequest(t *testing.T) {
 	require.False(t, gjson.GetBytes(out, "messages.0.reasoning").Exists())
 }
 
+// TestApplyOllamaCloudRawChatCompletionsLeavesForeignProvidersUnchanged uses
+// official DeepSeek and OpenCode target fixtures. It checks exact retention of
+// request, JSON response and SSE line bytes through each Ollama policy entry.
 func TestApplyOllamaCloudRawChatCompletionsLeavesForeignProvidersUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -976,6 +1062,9 @@ func TestApplyOllamaCloudRawChatCompletionsLeavesForeignProvidersUnchanged(t *te
 	}
 }
 
+// TestNormalizeOllamaCloudChatCompletionsSSELine supplies one reasoning delta
+// and the DONE marker. It checks data framing, source and compatibility
+// reasoning fields, and exact retention of the terminal marker.
 func TestNormalizeOllamaCloudChatCompletionsSSELine(t *testing.T) {
 	t.Parallel()
 
@@ -988,6 +1077,10 @@ func TestNormalizeOllamaCloudChatCompletionsSSELine(t *testing.T) {
 	require.Equal(t, "data: [DONE]", ollama.NormalizeOllamaCloudChatCompletionsSSELine("data: [DONE]"))
 }
 
+// TestForwardAsRawChatCompletions_OllamaCloudReasoningAliasStreaming returns
+// native Ollama reasoning, text and usage chunks. It checks the added
+// reasoning_content alias, retained source fields, token details and
+// downstream DONE marker.
 func TestForwardAsRawChatCompletions_OllamaCloudReasoningAliasStreaming(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1027,6 +1120,10 @@ func TestForwardAsRawChatCompletions_OllamaCloudReasoningAliasStreaming(t *testi
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestForwardAsRawChatCompletions_OllamaCloudThinkingAliasNonStreaming
+// supplies request reasoning history and response thinking text. It checks
+// request/response aliases, retained answer text and reasoning-token details
+// after native Chat forwarding.
 func TestForwardAsRawChatCompletions_OllamaCloudThinkingAliasNonStreaming(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"},{"role":"assistant","reasoning_content":"prev","content":""}],"stream":false}`)
 	rec := httptest.NewRecorder()

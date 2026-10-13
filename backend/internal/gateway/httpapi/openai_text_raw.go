@@ -11,10 +11,15 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
-// RawChat forwards Chat Completions to {base_url}/v1/chat/completions.
-// It rewrites model IDs, forwards SSE or JSON with compatibility repairs, and extracts usage.
-// This route serves API key providers without Responses support and CN providers fixed to chat_completions.
-// OAuth request transforms and prompt_cache_key injection belong to the separate OAuth route.
+// Chat-only upstream routes can serve native Chat input or converted Messages
+// and Responses requests. The client protocol kind selects the runner and
+// error writer, while returned observations are captured in HTTP request state
+// before the result and any failure are handed back.
+
+// RawChat executes native Chat Completions against the selected provider's
+// resolved Chat URL. The runner maps models, applies provider compatibility,
+// observes SSE or JSON usage and owns response closure; callers retain request
+// state until model capture finishes.
 func (s *OpenAITextExecutor) RawChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -30,8 +35,10 @@ func (s *OpenAITextExecutor) RawChat(
 	return out, err
 }
 
-// MessagesViaRawChat converts Messages to Chat Completions and returns Anthropic events or JSON.
-// Its stream state machine handles the Messages client protocol separately from ResponsesViaRawChat.
+// MessagesViaRawChat converts Messages input for a selected Chat endpoint and
+// returns Anthropic output. A fresh adapter keeps this call's provider and TLS
+// selection; the runner owns upstream cleanup, and result observations can
+// accompany an error.
 func (s *OpenAITextExecutor) MessagesViaRawChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -47,8 +54,10 @@ func (s *OpenAITextExecutor) MessagesViaRawChat(
 	return out, err
 }
 
-// ResponsesViaRawChat bridges Responses requests to
-// upstreams that support only /v1/chat/completions.
+// ResponsesViaRawChat converts Responses input for a selected Chat-only
+// upstream route. Its fresh adapter uses Responses error output and shared
+// reasoning history; callers retain c during synchronous output and inspect
+// the returned result alongside its error.
 func (s *OpenAITextExecutor) ResponsesViaRawChat(
 	ctx context.Context,
 	c *gin.Context,

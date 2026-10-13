@@ -25,20 +25,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// writeSanitizedOpenAIPassthroughError writes a sanitized error with Compact SSE support.
+// Responses terminal failures carry status evidence inside HTTP 200 streams,
+// so health and presentation inspect the event payload. Request-specific
+// parameter, context-window and cyber rejections remain distinct from
+// credential or provider failures, and final presentation can use normalized
+// error fields rather than the transport status.
+//
+// A converted reader may already have applied health before constructing its
+// failover error. NewStreamPolicyFailureWithModel consumes that request-local
+// evidence when present and otherwise performs terminal effects itself.
+// Retained response headers support retry and request identifiers, while
+// semantic 429 classification avoids treating successful stream-establishment
+// quota headers as fresh global failure evidence. Caller-visible error bodies
+// retain classified credential or transient evidence and rebuild other
+// failures into a generic protocol envelope.
+
+// writeSanitizedOpenAIPassthroughError delegates status-based fixed client
+// messages with Compact SSE support. Its callback can terminate an
+// already-started Compact response; otherwise the shared envelope writer emits
+// JSON with validated retry headers.
 func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, upstreamHeaders http.Header) {
 	WriteSanitizedForwardPassthroughError(c, upstreamStatus, upstreamHeaders, func(c *gin.Context, status int, body []byte) bool {
 		return WriteOpenAICompactSSEBridge(c, status, body, MarkOpsStreamError)
 	})
 }
 
-// writeOpenAIPassthroughErrorEnvelope writes an error envelope with Compact SSE support.
+// writeOpenAIPassthroughErrorEnvelope writes the chosen message using Compact
+// or JSON presentation. It supplies the Compact bridge callback required by
+// the shared envelope helper, which checks that format before committing
+// ordinary JSON output.
 func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, upstreamHeaders http.Header, message string) {
 	WriteForwardPassthroughErrorEnvelope(c, downstreamStatus, upstreamHeaders, message, func(c *gin.Context, status int, body []byte) bool {
 		return WriteOpenAICompactSSEBridge(c, status, body, MarkOpsStreamError)
 	})
 }
 
+// PassthroughFailoverError applies health to a passthrough failure selected
+// for recovery and returns its final error. Callers supply already-captured
+// responseBody, the selected provider and a live request. Optional redaction
+// and diagnostics precede canonical scheduling-model classification.
+//
+// Generic policy rejection commits a fixed client envelope instead of
+// returning a provider-switch signal. Other decisions record passthrough
+// failover evidence and construct the classified failure using scheduling
+// disablement and pool retry policy. The caller still enforces whether output
+// commitment permits another attempt; this helper does not own the provider
+// loop.
 func (p *OpenAIResponseOutput) PassthroughFailoverError(
 	ctx context.Context,
 	resp *http.Response,
@@ -57,6 +89,8 @@ func (p *OpenAIResponseOutput) PassthroughFailoverError(
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Bound optional logged excerpts while health still sees the captured
+		// response bytes, retaining whole UTF-8 characters in the diagnostic text.
 		upstreamDetail = logredact.TruncateUTF8(string(body), maxBytes)
 	}
 	SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
@@ -93,6 +127,18 @@ func (p *OpenAIResponseOutput) PassthroughFailoverError(
 	)
 }
 
+// PassthroughError presents a captured passthrough HTTP rejection or returns
+// configured recovery. Callers supply the selected provider, live
+// request/response and captured bytes. Cyber, invalid-input, context-window
+// and size evidence identify request-scoped failures that bypass the
+// subsequent provider-health branch.
+//
+// Health can choose generic output or a configured failover signal for
+// remaining errors. Final presentation commits the request, records
+// passthrough Ops evidence and retains a redacted parameter-error body when
+// appropriate. Context-window messages use the sanitized extracted message,
+// allowing client recovery; other failures use fixed status-based text through
+// the Compact-aware envelope writer.
 func (p *OpenAIResponseOutput) PassthroughError(
 	ctx context.Context,
 	resp *http.Response,
@@ -124,6 +170,8 @@ func (p *OpenAIResponseOutput) PassthroughError(
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Bound optional logged excerpts while health still sees the captured
+		// response bytes, retaining whole UTF-8 characters in the diagnostic text.
 		upstreamDetail = logredact.TruncateUTF8(string(body), maxBytes)
 	}
 	SetOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
@@ -131,8 +179,8 @@ func (p *OpenAIResponseOutput) PassthroughError(
 	clientInvalidRequest := openai.IsOpenAIClientInvalidRequestError(resp.StatusCode, upstreamMsg, body)
 	requestScopedError := cyberHit || clientInvalidRequest || openai.IsOpenAIContextWindowError(upstreamMsg, body) ||
 		gatewayprovider.IsOpenAIRequestBodyTooLargeError(resp.StatusCode, upstreamMsg, body)
-	// Update provider state so sticky routing stops reusing a rate-limited provider.
-	// Request-scoped errors bypass provider cooldown and pool retries.
+	// Input, context-window, size and cyber rejections describe this request.
+	// Remaining failures can affect provider reuse, so health runs before final presentation.
 	if !requestScopedError {
 		reqModel, _, _ := requeststate.OpenAIRequestMetaFromBody(requestBody)
 		canonicalModel := gatewayprovider.ExecutionModelPolicy(provider).CanonicalSchedulingModel(reqModel)
@@ -166,12 +214,14 @@ func (p *OpenAIResponseOutput) PassthroughError(
 		UpstreamResponseBody: upstreamDetail,
 	})
 	if clientInvalidRequest {
-		// Parameter errors return safe headers and the full redacted error object.
+		// Keep the captured redacted parameter error intact while the shared
+		// header writer admits retry metadata for this already-final client rejection.
 		WriteForwardPassthroughErrorHeaders(c.Writer.Header(), resp.Header)
 		c.Data(http.StatusBadRequest, "application/json; charset=utf-8", body)
 		return fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
-	// Return the sanitized context-window message so clients can trigger recovery such as automatic compaction.
+	// Context-window text describes the client recovery condition. Retain its
+	// sanitized message so a client can identify the need to compact its input.
 	if openai.IsOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
@@ -181,6 +231,10 @@ func (p *OpenAIResponseOutput) PassthroughError(
 	return fmt.Errorf("upstream error: %d (client response sanitized)", resp.StatusCode)
 }
 
+// LogOpenAICapacityFailoverSuppressed records that capacity recovery was
+// suppressed after semantic output. A missing provider omits its identity
+// fields; callers supply the path and event evidence from the reader's own
+// output-state decision.
 func LogOpenAICapacityFailoverSuppressed(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -202,6 +256,17 @@ func LogOpenAICapacityFailoverSuppressed(
 	logging.FromContext(ctx).Warn("gateway.failover_suppressed_after_semantic_output", fields...)
 }
 
+// openAIStreamFailedEventPassthroughBody supplies normalized error evidence
+// for administrator presentation rules. Empty, invalid JSON and payloads
+// already containing top-level error pass through. For nested response.error,
+// it extracts type, code, param and message, using failedMessage when nested
+// message is blank.
+//
+// A missing nested error can still produce a message-only envelope when the
+// reader supplied failure text. An empty extracted error or failed
+// serialization retains the supplied payload, keeping available event evidence
+// for matching. Callers use the unmodified event separately to infer status,
+// so normalization does not erase the status source.
 func openAIStreamFailedEventPassthroughBody(payload []byte, failedMessage string) []byte {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload
@@ -219,12 +284,16 @@ func openAIStreamFailedEventPassthroughBody(payload []byte, failedMessage string
 				"message": failedMessage,
 			},
 		})
+		// Failed normalization must leave the captured event available for rules;
+		// retaining its bytes avoids replacing usable failure evidence with an empty body.
 		if err != nil {
 			return payload
 		}
 		return body
 	}
 
+	// Presentation rules consume a root error object. Extract its recognized
+	// diagnostic fields from response.error while the original event remains the status source.
 	errorPayload := gin.H{}
 	if errType := strings.TrimSpace(gjson.Get(responseError.Raw, "type").String()); errType != "" {
 		errorPayload["type"] = errType
@@ -246,15 +315,18 @@ func openAIStreamFailedEventPassthroughBody(payload []byte, failedMessage string
 		return payload
 	}
 	body, err := wirejson.Marshal(gin.H{"error": errorPayload})
+	// Keep the supplied event when normalized serialization fails, so rule
+	// matching can still inspect the available upstream evidence for this failure.
 	if err != nil {
 		return payload
 	}
 	return body
 }
 
-// ApplyOpenAIStreamFailedErrorRule applies passthrough rules to response.failed.
-// The normalized body supplies matching text and messages; event contents determine the status.
-// Callers supply provider.Platform so OpenAI and Grok rules match their own platforms.
+// ApplyOpenAIStreamFailedErrorRule matches final presentation using
+// event-derived status and normalized error fields. Callers pass the selected
+// provider platform so OpenAI and Grok rules remain scoped correctly; a miss
+// returns the shared default presentation alongside false.
 func ApplyOpenAIStreamFailedErrorRule(
 	c *gin.Context,
 	platform string,
@@ -274,6 +346,17 @@ func ApplyOpenAIStreamFailedErrorRule(
 	)
 }
 
+// TerminalProviderEffects applies health effects eligible for the inferred
+// terminal failure status and returns that status with scheduling disablement.
+// Ordinary permission 403 events return without provider effects unless their
+// payload supplies provider-failure evidence.
+//
+// Authentication, rate-limit and overload status use the selected canonical
+// model, or event model evidence when no canonical value was supplied.
+// Semantic 429 headers follow the model-specific quota policy before health
+// handling. Other statuses apply health only when custom or pool retry
+// settings admit them, preventing an unrecognized terminal status from
+// automatically entering those provider policies.
 func (p *OpenAIResponseOutput) TerminalProviderEffects(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -285,6 +368,8 @@ func (p *OpenAIResponseOutput) TerminalProviderEffects(
 	statusCode := openai.OpenAIStreamFailureStatus(payload, message)
 	switch statusCode {
 	case http.StatusForbidden:
+		// A permission error needs structured provider-failure evidence before
+		// credential or scheduling effects can be attributed to the selected provider.
 		if !openai.OpenAIStream403ProviderFailure(payload, message) {
 			return statusCode, false
 		}
@@ -321,8 +406,10 @@ func (p *OpenAIResponseOutput) TerminalProviderEffects(
 	}
 }
 
-// ApplyStreamFailurePolicy maps response.failed inside HTTP 200 streams
-// to provider policy using a shared event-status interpretation.
+// ApplyStreamFailurePolicy interprets a failed stream event for OpenAI health
+// classification. An inferred status below HTTP 400 becomes 502; callers
+// supply the canonical model and event bytes, and true semantic-stream
+// handling distinguishes this observation from ordinary HTTP failures.
 func (p *OpenAIResponseOutput) ApplyStreamFailurePolicy(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -332,12 +419,18 @@ func (p *OpenAIResponseOutput) ApplyStreamFailurePolicy(
 	message string,
 ) (int, providercore.UpstreamErrorDecision) {
 	status := openai.OpenAIStreamFailedEventSemanticStatus(payload, message)
+	// A failed lifecycle event needs an error status even when its payload
+	// lacks one; 502 lets provider health evaluate the failure under that condition.
 	if status < http.StatusBadRequest {
 		status = http.StatusBadGateway
 	}
 	return status, gatewayprovider.ApplyOpenAIResponseHealth(ctx, p.Health, provider, status, headers, payload, true, model)
 }
 
+// RecordStreamError sanitizes the message and records inferred event status
+// with optional bounded detail. Empty messages use a standard failure
+// description, missing provider uses OpenAI identity, and nil contexts skip
+// Ops publication while still returning the normalized message.
 func (p *OpenAIResponseOutput) RecordStreamError(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -358,6 +451,8 @@ func (p *OpenAIResponseOutput) RecordStreamError(
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Keep optional Ops payload excerpts bounded and UTF-8 complete; event
+		// status and retry predicates continue to use the full supplied event evidence.
 		detail = logredact.TruncateUTF8(string(payload), maxBytes)
 	}
 	if c != nil {
@@ -381,6 +476,10 @@ func (p *OpenAIResponseOutput) RecordStreamError(
 	return message
 }
 
+// NewStreamFailure delegates stream failover construction with no
+// canonical-model override. The first optional response-header map is
+// considered by the builder; callers decide retry eligibility from commitment
+// and actual output before using the returned signal.
 func (p *OpenAIResponseOutput) NewStreamFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -393,6 +492,10 @@ func (p *OpenAIResponseOutput) NewStreamFailure(
 	return p.NewStreamFailureWithModel(c, provider, passthrough, upstreamRequestID, payload, message, "", responseHeaders...)
 }
 
+// NewStreamFailureWithModel delegates stream failover construction using the
+// canonical scheduling model and first optional headers. Missing headers pass
+// nil, and the shared builder applies or consumes terminal health evidence
+// before choosing the final classified response body.
 func (p *OpenAIResponseOutput) NewStreamFailureWithModel(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -412,8 +515,10 @@ func (p *OpenAIResponseOutput) NewStreamFailureWithModel(
 	)
 }
 
-// NewStreamPolicyFailure builds a stream failover error after applying provider policy.
-// The handler receives the client envelope, event status, and upstream headers.
+// NewStreamPolicyFailure delegates stream failure construction using status
+// and captured event evidence. Its boolean retry argument is unused; the
+// model-aware builder recomputes event retryability and may replace the
+// supplied status with applied-health or terminal classification.
 func (p *OpenAIResponseOutput) NewStreamPolicyFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -428,6 +533,18 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailure(
 	return p.NewStreamPolicyFailureWithModel(c, provider, passthrough, upstreamRequestID, responseHeaders, statusCode, payload, message, false)
 }
 
+// NewStreamPolicyFailureWithModel constructs a classified failover error from
+// terminal event and applied-health evidence. It sanitizes failure text,
+// clones supplied response headers and consumes the request-local effects
+// slot. Present evidence supplies the status and disablement already applied;
+// otherwise TerminalProviderEffects computes them.
+//
+// Event retryability is recomputed, and the boolean input is unused. Semantic
+// 429 classification omits stream-establishment headers while retaining them
+// on the returned failure for downstream metadata. Classified credential or
+// request-transient failures keep their response body; other failures receive
+// a rebuilt protocol error envelope. Callers enforce the output window before
+// invoking another provider.
 func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -448,6 +565,8 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	if len(responseHeaders) > 0 {
 		headers = responseHeaders.Clone()
 	}
+	// Conversion may already have applied health for this terminal. Consume
+	// that evidence once before deciding whether another health application is needed.
 	observedStatus, shouldDisable, sideEffectsApplied := consumeOpenAIResponseFailureEffects(c)
 	if sideEffectsApplied {
 		statusCode = observedStatus
@@ -458,13 +577,16 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	if statusCode < http.StatusBadRequest {
 		statusCode = openai.OpenAIStreamFailureStatus(payload, message)
 	}
-	// Use the event status to update health for failed events inside HTTP 200 streams.
-	// The failover engine selects recovery from StatusCode and RetryableOnSameProvider.
+	// Record failover after applied or newly computed effects select the policy
+	// status. Ops infers its own status from the event, while the returned
+	// failure retains that policy status for recovery.
 	message = p.RecordStreamError(c, provider, passthrough, upstreamRequestID, "failover", payload, message)
 	errType := "upstream_error"
 	if statusCode == http.StatusTooManyRequests {
 		errType = "rate_limit_error"
 	}
+	// The rebuilt envelope uses fixed string fields. Classified credentials or
+	// request-transient failures retain their own upstream body at the final selection.
 	body, _ := json.Marshal(gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -472,8 +594,8 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 		},
 	})
 	retryable := gatewayprovider.OpenAIStreamFailureRetryable(provider, payload, message)
-	// HTTP 200 headers describe stream establishment; quota classification uses the terminal event status.
-	// Retain those headers for Retry-After and request ID lookup.
+	// HTTP 200 quota headers describe stream establishment. A semantic 429
+	// omits them from classification while retained headers still supply retry and request IDs.
 	classificationHeaders := headers
 	if statusCode == http.StatusTooManyRequests {
 		classificationHeaders = nil
@@ -482,16 +604,23 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
 	}
-	// Unclassified stream failures use a generic envelope; credential and capacity failures keep the upstream
-	// body.
+	// Credential and request-transient failures have already retained their
+	// classified evidence; remaining failures use the rebuilt client error envelope here.
 	failoverErr.ResponseBody = body
 	return failoverErr
 }
 
-// nonStreamingTerminalFailure applies streaming classification to buffered SSE terminal failures.
-// Bare error events require a transient signal for failover; response.failed uses full classification.
-// The entry still decides retry eligibility from commitment state and non-heartbeat output.
-// A missing provider or committed response stays on the protocol-error path.
+// nonStreamingTerminalFailure proposes stream-classified recovery for a
+// buffered SSE terminal. Missing provider or committed response returns nil,
+// leaving protocol-error handling to the reader. The failed-event predicate is
+// replaced by the more conservative bare-error predicate when terminalType is
+// error.
+//
+// Only an accepted predicate reaches the shared failure builder with response
+// headers and the first nonempty canonical model. The entry still checks
+// actual output and heartbeat-adjusted commitment before using that proposal.
+// A nil return is an absent recovery proposal, so callers converting it to an
+// error interface preserve nil rather than a typed nil pointer.
 func (p *OpenAIResponseOutput) nonStreamingTerminalFailure(
 	c *gin.Context,
 	resp *http.Response,
@@ -506,6 +635,8 @@ func (p *OpenAIResponseOutput) nonStreamingTerminalFailure(
 		return nil
 	}
 	shouldFailover := openai.OpenAIStreamFailedEventShouldFailover(payload, message)
+	// Bare error frames need recognized transient evidence. Their conservative
+	// predicate keeps a generic message from automatically requesting another provider.
 	if terminalType == "error" {
 		shouldFailover = openai.OpenAIStreamErrorEventShouldFailover(payload, message)
 	}

@@ -18,11 +18,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// A dedicated WebSocket relays client frames and upstream events concurrently,
-// so completion can consume request metadata before terminal delivery opens the
-// next turn. PassthroughSession queues copied turn bodies and policy values,
-// then retains the dequeued snapshot for the response terminal write instead of
-// relying only on mutable session defaults.
+// A dedicated WebSocket relays client frames and upstream events concurrently.
+// Completion and delivery consume request metadata at different points when a
+// bare error waits for later settlement evidence. PassthroughSession queues
+// copied turn bodies and policy values, then retains a dequeued snapshot for
+// response-terminal rewriting while paired write callbacks govern later
+// admission. Immediate terminal settlement can prepare that snapshot before
+// its write; a bare error may already have been delivered.
 //
 // Admission and terminal delivery share TurnLifecycle. The client filter
 // reserves response.create before validation and cancels that reservation on
@@ -43,10 +45,12 @@ import (
 // The first request is normalized and written through DeadlineConn before
 // bidirectional relay starts. Later response.create reservations reject
 // overlap, apply current model and policy rules, acquire turn admission, and
-// publish copied snapshots before upstream forwarding. Terminal observation
-// dequeues metadata before client delivery, so the saved snapshot and paired
-// lifecycle writes order that delivery with the next admission. Runtime read
-// and write budgets refresh on accepted turns; client idle budget refreshes on
+// publish copied snapshots before upstream forwarding. Immediate terminal
+// settlement dequeues metadata before its client write; a bare error can
+// already have been sent when later evidence settles its turn. The saved
+// snapshot supports response rewriting, while paired lifecycle writes govern
+// admission after a response terminal. Runtime read and write budgets refresh
+// on accepted turns; client idle budget refreshes on
 // each wait. Non-control relay failures report a still-queued turn; parent
 // control causes return before that completion path. Initial pre-output timeout
 // can replace the provider, while later timeout requires reconnection.
@@ -398,6 +402,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			if isResponseCreate {
 				usageMeta.CaptureRequestedReasoningEffort(originalResponseCreate)
 			}
+			// The first request is already accepted. Later request numbering starts at
+			// two even when no completion callback has advanced the shared counter.
 			turnNo := max(int(completedTurns.Load())+1, 2)
 			if isResponseCreate && hooks != nil && hooks.BeforeRequest != nil {
 				requestModel := usageMeta.RequestModelForFrame(payload)
@@ -506,9 +512,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			eventType := p.EventType(payload)
 			turnPayload := turnPayloads.Peek()
 			if p.IsTerminal(eventType) {
-				// Terminal observation already removed this turn from the queue. Consume
-				// its saved write snapshot so response metadata uses that completed turn
-				// rather than the next queued request.
+				// A settled terminal can have consumed its queued metadata before this
+				// write. Prefer its saved snapshot when present; an unassociated terminal
+				// can leave the oldest request available through Peek.
 				if completed := terminalWritePayload.Swap(nil); completed != nil {
 					turnPayload = *completed
 				}
@@ -516,6 +522,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			if !p.MayContainModel(eventType) {
 				return payload, nil
 			}
+			// Missing queued identity falls back to independently loaded session
+			// defaults. Those atomic fields can reflect separate publications; captured
+			// turn metadata supplies the preferred request-specific identities.
 			requestedModel := strings.TrimSpace(turnPayload.OriginalModel)
 			upstreamModel := strings.TrimSpace(turnPayload.UpstreamModel)
 			if requestedModel == "" {
@@ -615,9 +624,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			},
 			OnTurnComplete: func(turn RelayTurnResult) {
-				// Completion observation precedes terminal delivery. Dequeue its request
-				// snapshot now, retain that snapshot for the write filter, and let the
-				// paired write callbacks control next-turn admission.
+				// Settlement consumes one request snapshot for completion. An immediate
+				// response terminal uses the saved copy at its following write; a pending
+				// bare error can already have been sent when this callback runs. Paired
+				// response-terminal writes separately control next-turn admission.
 				turnNo := int(completedTurns.Add(1))
 				turnPayload := turnPayloads.Pop()
 				if !turn.StartedAt.IsZero() {
@@ -625,6 +635,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 				turnPayloadForWrite := turnPayload
 				terminalWritePayload.Store(&turnPayloadForWrite)
+				// Missing queue metadata leaves the relay's initial request model as the
+				// completion fallback; its terminal response model remains a separate field.
 				turnOriginalModel := strings.TrimSpace(turnPayload.OriginalModel)
 				if turnOriginalModel == "" {
 					turnOriginalModel = turn.RequestModel
@@ -703,6 +715,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				// Cap the close reason before transport closure, because an oversized
 				// control-frame payload can prevent delivery of the selected close status.
 				reason = p.TruncateReason(reason, 120)
+				// Attempt the selected close code, then force cleanup even if that
+				// handshake fails. Cleanup errors leave the relay's exit classification
+				// available to the surrounding session.
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
 			},
@@ -743,6 +758,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			status = 1013
 			reason = "websocket ingress capacity lease lost; please reconnect"
 		}
+		// Parent cancellation ends this connection. Attempt its selected close
+		// instruction before force cleanup, retaining the control cause when either
+		// transport close reports an error.
 		_ = clientConn.Close(status, reason)
 		_ = clientConn.CloseNow()
 		return p.CloseError(status, reason, cause)
@@ -876,6 +894,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 // invalid-payload close instruction.
 func replaceRequestModel(payload []byte, eventType, model string, closeError func(int, string, error) error) ([]byte, error) {
 	path := "model"
+	// Session updates place their model inside session; patch that location so
+	// the provider default follows the event's schema rather than a root field.
 	if eventType == "session.update" {
 		path = "session.model"
 	}

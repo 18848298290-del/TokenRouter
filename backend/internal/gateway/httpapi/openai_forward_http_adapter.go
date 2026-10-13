@@ -21,7 +21,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// nativeForwardHTTPOptions defers runtime settings reads and output observation setup until a response arrives.
+// Responses HTTP recovery reuses prepared model and policy state while a
+// rejected request body may need decoding and encrypted-history removal. The
+// supplied decoder must retain numeric precision, because full serialization
+// of a repaired body would otherwise change unrelated large identifiers.
+//
+// The HTTP options bind identity, Compact recovery, provider health and final
+// output to one live request. Stream/nonstream output settings are constructed
+// when the runner has a response, keeping their request observations tied to
+// the selected attempt. Captured error bytes support both recovery
+// classification and later client presentation, and client-tool SSE wrapping
+// follows the request's restoration mapping while the shared runner owns
+// response cleanup.
+
+// nativeForwardHTTPOptions binds the current Responses attempt to the shared
+// HTTP runner. Callers retain c, provider, executor services and input bytes
+// throughout RunHTTP. Stream/nonstream options are constructed after response
+// arrival, and supplied encrypted-retry/lineage callbacks retain this prepared
+// request's body state.
+//
+// Identity and Compact callbacks prepare local recovery, while health
+// callbacks can return a classified failover or leave generic error output to
+// ErrorResponse. Client-tool stream wrapping uses any positive configured line
+// limit, independently of Configured. Response ownership and usage snapshots
+// are delegated after the runner observes their corresponding output; body
+// closure and retry ordering stay with RunHTTP.
 func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, input forward.HTTPInput, exchange openai.HTTPExchangeOptions, retryEncrypted func([]byte) ([]byte, bool, error), markLineage func([]byte)) forward.HTTPOptions {
 	return forward.HTTPOptions{
 		Exchange: exchange, Sink: ResponseSink{Writer: c.Writer},
@@ -66,6 +90,8 @@ func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, 
 				if limit <= 0 {
 					limit = 2048
 				}
+				// Bound optional diagnostic detail while health receives the captured
+				// payload; UTF-8 truncation keeps the recorded excerpt character-complete.
 				detail = logredact.TruncateUTF8(string(payload), limit)
 			}
 			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{Platform: provider.Record.Platform, ProviderID: provider.Record.ID, ProviderName: provider.Record.Name, UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"), Kind: "failover", Message: message, Detail: detail})
@@ -91,6 +117,8 @@ func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, 
 				if s.Output.Options.MaxLineSize > 0 {
 					limit = s.Output.Options.MaxLineSize
 				}
+				// A request mapping identifies lowered client tools. Restore its SSE
+				// nodes while preserving response-body cleanup through the wrapper's Close.
 				resp.Body = upstream.NewResponsesClientToolStreamBody(resp.Body, mapping, limit)
 			}
 		},
@@ -110,13 +138,25 @@ func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, 
 	}
 }
 
-// prepareOpenAIHTTPEncryptedRetry strips encrypted reasoning through the supplied decoder.
-// The caller supplies a cache-aware decoder that preserves JSON number precision.
+// prepareOpenAIHTTPEncryptedRetry removes encrypted reasoning from a decoded
+// request and serializes an adopted repair. Callers supply a writable,
+// cache-aware decoder that retains JSON number precision. Decoding failures
+// return before trimming, and no removable content returns the supplied body
+// with false.
+//
+// Successful trimming mutates the decoder's map before serialization, so an
+// encoding error can leave that mutable view changed even though no
+// replacement body is returned. The caller therefore treats the byte result
+// and change flag as adoption evidence. Number-aware serialization keeps
+// supported unrelated numeric literals in the repaired body while the shared
+// HTTP runner owns whether an explicit upstream rejection permits retry.
 func prepareOpenAIHTTPEncryptedRetry(body []byte, decode func([]byte) (map[string]any, error)) ([]byte, bool, error) {
 	decoded, err := decode(body)
 	if err != nil {
 		return nil, false, err
 	}
+	// An encrypted-content rejection permits removing reasoning before reencoding.
+	// The decoder retains number literals so unrelated identifiers survive whole-body serialization.
 	if !openaicore.TrimEncryptedReasoningItems(decoded) {
 		return body, false, nil
 	}

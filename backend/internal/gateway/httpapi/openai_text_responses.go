@@ -19,16 +19,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Responses handles Compact normalization, response ownership, and funds rechecks after waiting.
+// Responses admission keeps canonical session input separate from
+// effort/bootstrap rewrites and group-mapped attempt bytes. Prompt replacement
+// follows Compact normalization, and the resulting bytes are retained for
+// affinity and cyber checks so those identities do not change when later
+// forwarding controls are adjusted.
+//
+// Continuation ownership is checked in the effective group before moderation
+// and selection. Explicit image intent chooses permission, image admission and
+// capability requirements, while broad intent supplies transformation hints.
+// User-slot acquisition can change request context and output state, so its
+// lease is copied into the earlier selection context and eligibility is
+// checked after waiting. The admitted client model, mapped attempt model and
+// prepared route then reach synchronous execution with image, user and request
+// cleanup held until handler return.
+
+// Responses admits HTTP input, continuation ownership and image/capability
+// requirements before text execution. Authentication and dependencies precede
+// body reading; Compact normalization and heartbeat startup occur before
+// structural JSON validation, letting committed wait output use a protocol
+// terminal on later failure.
+//
+// Prompt-replaced input is retained as SessionHashBody before effort and
+// bootstrap rewrites. The current effective group validates ownership, and its
+// mapped body/model drives explicit image admission while client identity
+// remains available for observations. Image and user resources are held
+// through the configured post-wait eligibility call, cyber/session handling
+// and Execute. The selection context receives the acquired lease, and later
+// request-context hints reach execution separately. All acquired cleanup
+// remains deferred until the handler exits.
 // @project-doc docs/interfaces/openai_upstream.md#openai_protocol_dispatch
 func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
 		return
 	}
+	// Keep the HTTP request admitted through image/user cleanup and synchronous
+	// execution so shutdown cannot release shared services before this handler finishes.
 	defer done()
 
-	// Recover handler panics according to the current response state.
+	// Recovery uses the mutable output state because slot waits or Compact
+	// keepalives may have committed a format before a later admission callback panics.
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
 	compactStartedAt := time.Now()
@@ -83,9 +114,9 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		return
 	}
 	legacyCompact, nativeCompactionV2 := IsOpenAIResponsesCompactPath(c), IsBareOpenAIResponsesPath(c) && IsOpenAIRemoteCompactionV2Request(body)
-	// Body-signaled Compact sends SSE comment heartbeats while waiting to keep proxy connections alive (#3887).
-	// Delay the first heartbeat by one interval so earlier failures can return JSON status; non-streaming or
-	// zero-interval requests skip heartbeats.
+	// A normalized body-signaled Compact stream can wait through admission and
+	// execution. Start its delayed heartbeat here and stop it on return; errors
+	// before the first beat can still choose JSON status, while later errors need a terminal.
 	stopCompactKeepalive := h.backend.StartCompact(c, h.options.CompactKeepaliveInterval)
 	defer stopCompactKeepalive()
 
@@ -95,7 +126,8 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
-	// Replace user prompts after Compact normalization and before model parsing.
+	// Retain prompt-replaced bytes for identity before effort and bootstrap
+	// edits; affinity and cyber checks later use this view of the admitted client input.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "openai_responses")
 	sessionHashBody := body
 
@@ -118,12 +150,16 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
+	// Automation bootstrap repair can replace an unsupported call-output shape
+	// with user input; session identity continues to use the view saved before this repair.
 	if normalizedBody, changed := h.backend.NormalizeBootstrap(body, false); changed {
 		body = normalizedBody
 		reqLog.Info("openai.codex_automation_bootstrap_normalized",
 			zap.String("normalization", "call_output_to_user_message"),
 		)
 	}
+	// Delegation bootstrap has its own input repair. Adopt its changed bytes
+	// for forwarding while the saved session view keeps identity before bootstrap normalization.
 	if normalizedBody, changed := h.backend.NormalizeBootstrap(body, true); changed {
 		body = normalizedBody
 		reqLog.Info("openai.codex_delegation_bootstrap_normalized",
@@ -219,6 +255,8 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 			return
 		}
 		if imageReleaseFunc != nil {
+			// Keep image capacity until the request has completed synchronous execution;
+			// later admission rejection also returns through this same acquired cleanup.
 			defer imageReleaseFunc()
 		}
 	}
@@ -244,16 +282,19 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	if !acquired {
 		return
 	}
-	// Add the acquired user lease to the selection context while retaining HTTP passthrough state.
+	// The image-selection context was captured before user waiting. Carry its
+	// acquired lease into selection so provider admission uses this request's current resource handle.
 	if lease := scheduler.RequestLease(c.Request.Context()); lease != nil {
 		selectionCtx = scheduler.WithRequestLease(selectionCtx, lease)
 	}
-	// Release the slot on cancellation, including long-lived connection disconnection.
+	// The resource binding already observes cancellation; retain completion
+	// cleanup here so successful or rejected synchronous handling also releases the user slot.
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
 	}
 
-	// Recheck funds after the wait succeeds.
+	// Waiting can change funding eligibility. Invoke the configured admission
+	// checker here; the default text binding uses the normal funding/RPM path with afterWait false.
 	if err := h.backend.Eligibility(c.Request.Context(), apiKey, subscription); err != nil {
 		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := BillingErrorDetails(err)
@@ -264,7 +305,8 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// Prefer session headers and fall back to prompt_cache_key.
+	// Derive affinity and explicit isolation from the saved pre-policy body,
+	// keeping forwarding-control rewrites out of the session and cyber identity inputs.
 	explicitSessionHash := h.backend.SessionHash(c, OpenAIExplicitSession, sessionHashBody)
 	sessionHash := h.backend.SessionHash(c, OpenAISelectionSession, sessionHashBody)
 	if h.backend.RejectCyber(c, apiKey, sessionHashBody, reqModel, protocol.ProtocolOpenAIResponses) {

@@ -15,6 +15,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Native OpenAI streaming attempts can bound the wait for first semantic
+// output across header and stream phases. The base timeout enables that
+// budget, high reasoning efforts may override it, and timeout failures carry an
+// upstream 504 observation plus replay permission for staged output.
+
+// FirstOutputTimeout selects the first-output budget from configured seconds.
+// Nil output, unconfigured options or a nonpositive base disables it; trimmed
+// high, xhigh and max efforts use a positive high-effort override when
+// configured.
 func (p *OpenAIResponseOutput) FirstOutputTimeout(reasoningEffort string) time.Duration {
 	if p == nil || !p.Options.Configured || p.Options.OpenAIFirstOutputTimeoutSeconds <= 0 {
 		return 0
@@ -26,9 +35,15 @@ func (p *OpenAIResponseOutput) FirstOutputTimeout(reasoningEffort string) time.D
 			seconds = override
 		}
 	}
+	// Stored timeout values are whole seconds for either phase.
 	return time.Duration(seconds) * time.Second
 }
 
+// FirstOutputFailure records the timed-out phase and returns a 504 failover
+// signal. Callers supply a selected provider and the attempt start time after
+// the first-output budget expires; an available health observer receives the
+// same model timeout. Headers are cloned, and SafeToFailoverAfterWrite
+// supports the reader's staged-output recovery path.
 func (p *OpenAIResponseOutput) FirstOutputFailure(
 	ctx context.Context,
 	c *gin.Context,
@@ -47,6 +62,7 @@ func (p *OpenAIResponseOutput) FirstOutputFailure(
 		provider.Record.ID, originalModel, reasoningEffort, phase, elapsed, timeout,
 	)
 	requestID := strings.TrimSpace(responseHeaders.Get("x-request-id"))
+	// Store elapsed and timeout diagnostics in milliseconds for Ops duration comparisons.
 	AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
 		Platform: provider.Record.Platform, ProviderID: provider.Record.ID, ProviderName: provider.Record.Name,
 		UpstreamStatusCode: http.StatusGatewayTimeout, UpstreamRequestID: requestID,

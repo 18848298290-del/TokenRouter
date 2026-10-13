@@ -10,9 +10,15 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
-// NativeMessages forwards Anthropic Messages to a Chinese provider native Anthropic endpoint.
-// It applies model mapping and body cleanup for empty text and web-search history blocks
-// while retaining the Anthropic protocol.
+// A selected Anthropic-compatible upstream can serve Messages directly or
+// receive requests converted from Chat or Responses. These HTTP entry facades
+// create adapters with the corresponding client protocol kind so the shared
+// native runner chooses the right conversion and error output.
+
+// NativeMessages executes one selected provider through its native Anthropic
+// endpoint. The native runner maps the model, cleans the body and owns the
+// response lifetime; callers retain the HTTP context until its synchronous
+// output and usage observation finish.
 func (s *OpenAITextExecutor) NativeMessages(
 	ctx context.Context,
 	c *gin.Context,
@@ -25,13 +31,10 @@ func (s *OpenAITextExecutor) NativeMessages(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// NativeChat accepts OpenAI Chat Completions through
-// a Chinese provider native Anthropic endpoint.
-//
-// Conversion path:
-//
-//	Request: Chat Completions to Responses to Anthropic.
-//	Response: Anthropic events to Responses events to Chat chunks.
+// NativeChat executes Chat input through the selected native Anthropic
+// endpoint. The runner converts Chat through Responses into Anthropic and
+// converts returned events back into Chat output; callers inspect the returned
+// result and error for completion eligibility.
 func (s *OpenAITextExecutor) NativeChat(
 	ctx context.Context,
 	c *gin.Context,
@@ -44,13 +47,10 @@ func (s *OpenAITextExecutor) NativeChat(
 	return openaiexecution.ToForwardResult(result), err
 }
 
-// NativeResponses accepts OpenAI Responses through
-// a Chinese provider native Anthropic endpoint.
-//
-// Conversion path:
-//
-//	Request: Responses to Anthropic.
-//	Response: Anthropic events to Responses events.
+// NativeResponses executes Responses input through the selected native
+// Anthropic endpoint. The runner converts the request and Anthropic response
+// events for the Responses client, owns the upstream body lifetime, and may
+// return observed usage with a failure.
 func (s *OpenAITextExecutor) NativeResponses(
 	ctx context.Context,
 	c *gin.Context,

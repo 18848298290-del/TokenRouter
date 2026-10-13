@@ -32,6 +32,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestAdaptiveProtocolRoutesChatCompletionsToNativeChat captures standard Chat
+// input for an adaptive Zhipu target. It checks the configured Chat URL,
+// messages array and absence of Responses input before fixture transport
+// failure.
 func TestAdaptiveProtocolRoutesChatCompletionsToNativeChat(t *testing.T) {
 	body := []byte(`{"model":"glm-4.7","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -48,6 +52,10 @@ func TestAdaptiveProtocolRoutesChatCompletionsToNativeChat(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 }
 
+// TestAdaptiveProtocolRoutesResponsesShapedChatToNativeResponses captures
+// Responses-shaped input at the Chat entry for adaptive DeepSeek. It checks
+// the native Responses URL and retained input shape before fixture transport
+// failure.
 func TestAdaptiveProtocolRoutesResponsesShapedChatToNativeResponses(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4","input":"hello","max_output_tokens":32,"stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -65,6 +73,10 @@ func TestAdaptiveProtocolRoutesResponsesShapedChatToNativeResponses(t *testing.T
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 }
 
+// TestAdaptiveProtocolConvertsResponsesShapedChatForChatOnlyProvider supplies
+// Responses-shaped input to adaptive Zhipu without native Responses. It checks
+// the Chat URL, converted messages and removed input field before transport
+// failure.
 func TestAdaptiveProtocolConvertsResponsesShapedChatForChatOnlyProvider(t *testing.T) {
 	body := []byte(`{"model":"glm-4.7","input":"hello","max_output_tokens":32,"stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -81,6 +93,10 @@ func TestAdaptiveProtocolConvertsResponsesShapedChatForChatOnlyProvider(t *testi
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 }
 
+// TestAdaptiveProtocolRoutesKimiResponsesShapedChatToNativeResponses supplies
+// Responses-shaped Chat-entry input to adaptive Kimi. It checks the configured
+// versioned Responses URL and retained input shape before fixture transport
+// failure.
 func TestAdaptiveProtocolRoutesKimiResponsesShapedChatToNativeResponses(t *testing.T) {
 	body := []byte(`{"model":"k3-256k","input":"hello","max_output_tokens":32,"stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -98,6 +114,9 @@ func TestAdaptiveProtocolRoutesKimiResponsesShapedChatToNativeResponses(t *testi
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 }
 
+// TestForwardAsChatCompletions_ServiceTierFastNormalizedToPriorityUpstream
+// captures a fast alias before an upstream HTTP 400. It checks the outgoing
+// priority tier and the expected rejection after capture.
 func TestForwardAsChatCompletions_ServiceTierFastNormalizedToPriorityUpstream(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -131,6 +150,10 @@ func TestForwardAsChatCompletions_ServiceTierFastNormalizedToPriorityUpstream(t 
 		"client alias fast must reach upstream as priority")
 }
 
+// TestForwardAsChatCompletions_ServiceTierPriorityPreservedUpstream captures a
+// priority request before an upstream HTTP 400. It checks the outgoing
+// priority value and the expected fixture rejection after request
+// construction.
 func TestForwardAsChatCompletions_ServiceTierPriorityPreservedUpstream(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -163,6 +186,10 @@ func TestForwardAsChatCompletions_ServiceTierPriorityPreservedUpstream(t *testin
 	require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String())
 }
 
+// TestForwardAsChatCompletions_KeepsOutboundAndObservedServiceTiersSeparate
+// sends fast while the terminal Response declares default. It checks requested
+// priority in the result, observed default attribution and default in buffered
+// client output.
 func TestForwardAsChatCompletions_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -207,6 +234,10 @@ func TestForwardAsChatCompletions_KeepsOutboundAndObservedServiceTiersSeparate(t
 	require.NotContains(t, rec.Body.String(), `"service_tier":"priority"`)
 }
 
+// TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable
+// returns invalid-task errors around a local registration exchange. It checks
+// two captured requests with the same derived cache key and isolated session
+// header after recovery.
 func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -223,7 +254,12 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 		},
 	}
 	repo := &agentIdentityForwardRepo{provider: provider}
+	// A local registration endpoint returns the replacement task identity; close
+	// it after both captured attempts so recovery uses only this fixture exchange.
 	registerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Discard handler write errors in this fixture. Later assertions inspect
+		// captured retry identities, rather than propagation of a registration
+		// response write failure.
 		_, _ = io.WriteString(w, `{"task_id":"task-cache-new"}`)
 	}))
 	defer registerServer.Close()
@@ -250,13 +286,18 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
 }
 
+// TestForwardAsChatCompletions_OpenAICompatibleRawUsageGuard enumerates native
+// Chat model and usage shapes, including mapped aliases. It checks successful
+// forwarding for admitted fixtures and pre-output missing-Grok-usage recovery
+// with request and Ops identity for guarded fixtures.
 func TestForwardAsChatCompletions_OpenAICompatibleRawUsageGuard(t *testing.T) {
 	tests := []struct {
-		name             string
-		model            string
-		upstreamResponse string
-		modelMapping     map[string]any
-		wantGuarded      bool
+		name             string // fixture case name
+		model            string // client request model
+		upstreamResponse string // upstream JSON response
+		// optional provider model mapping
+		modelMapping map[string]any
+		wantGuarded  bool // expected missing-usage rejection
 	}{
 		{
 			name:             "Grok response without usage",
@@ -343,6 +384,10 @@ func TestForwardAsChatCompletions_OpenAICompatibleRawUsageGuard(t *testing.T) {
 	}
 }
 
+// TestForwardAsChatCompletions_PreserveClientProtocolUsesVersionedChatURL
+// forwards native Chat to a versioned configured base. It checks URL joining,
+// TLS-selected User-Agent, request shape, observed usage and buffered answer
+// output.
 func TestForwardAsChatCompletions_PreserveClientProtocolUsesVersionedChatURL(t *testing.T) {
 	body := []byte(`{"model":"glm-4.5-air","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -380,6 +425,10 @@ func TestForwardAsChatCompletions_PreserveClientProtocolUsesVersionedChatURL(t *
 	require.Contains(t, rec.Body.String(), `"content":"ok"`)
 }
 
+// TestForwardAsChatCompletions_UnknownModelWithoutMessagesDispatchKeepsRequestedModel
+// captures an unknown OAuth model before model-not-found rejection. It checks
+// the requested model remains outgoing and the client receives the fixture
+// HTTP 400.
 func TestForwardAsChatCompletions_UnknownModelWithoutMessagesDispatchKeepsRequestedModel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -416,6 +465,10 @@ func TestForwardAsChatCompletions_UnknownModelWithoutMessagesDispatchKeepsReques
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody
+// forces API-key Chat through Responses with an explicit cache seed. It checks
+// outgoing key/model, endpoint observation, authorization and isolated session
+// header before rejection.
 func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -459,6 +512,9 @@ func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(
 	require.Equal(t, upstreamcore.GenerateSessionUUID(upstreamcore.IsolateSessionID(99, "cache-key-123")), upstream.lastReq.Header.Get("session_id"))
 }
 
+// TestForwardAsChatCompletions_APIKeyResponsesRecordsThirdPartyMaxEffort
+// forces DeepSeek Chat input with max effort through Responses. It checks the
+// endpoint and outgoing reasoning control plus returned max attribution.
 func TestForwardAsChatCompletions_APIKeyResponsesRecordsThirdPartyMaxEffort(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -502,10 +558,15 @@ func TestForwardAsChatCompletions_APIKeyResponsesRecordsThirdPartyMaxEffort(t *t
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestForwardAsChatCompletions_APIKeyResponsesDoesNotRecordDroppedNestedEffort
+// supplies nested reasoning.effort to Chat conversion. It checks absence of
+// outgoing reasoning and returned effort after the successful fixture
+// response.
 func TestForwardAsChatCompletions_APIKeyResponsesDoesNotRecordDroppedNestedEffort(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	// Chat conversion accepts top-level reasoning_effort; nested reasoning.effort is dropped.
+	// Supply nested effort that Chat conversion discards, then inspect outgoing
+	// controls and result attribution to catch accidental restoration from client bytes.
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hello"}],"reasoning":{"effort":"max"},"stream":false}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -544,6 +605,9 @@ func TestForwardAsChatCompletions_APIKeyResponsesDoesNotRecordDroppedNestedEffor
 	require.Nil(t, result.ReasoningEffort)
 }
 
+// TestForwardAsChatCompletions_TransportErrorFailsOver injects EOF after one
+// captured Responses request. It checks absent result, a typed 502 recovery
+// error and no hard client body before outer retry handling.
 func TestForwardAsChatCompletions_TransportErrorFailsOver(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -581,6 +645,10 @@ func TestForwardAsChatCompletions_TransportErrorFailsOver(t *testing.T) {
 	require.Equal(t, 0, rec.Body.Len(), "service must not write a hard 502 before handler can fail over")
 }
 
+// TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey
+// compares appended history on one key with the same history on another. It
+// checks stable first-key seeds and session headers, plus distinct other-key
+// values.
 func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(t *testing.T) {
 	response := func() *http.Response {
 		return &http.Response{
@@ -630,6 +698,10 @@ func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(
 	require.NotEqual(t, upstream.requests[1].Header.Get("session_id"), upstream.requests[2].Header.Get("session_id"))
 }
 
+// TestForwardAsChatCompletions_ResponsesShapeDoesNotAutoDerivePromptCacheKey
+// compares unrelated Responses-shaped bodies and one explicit cache seed. It
+// checks absent automatic keys/headers and isolated propagation of the
+// explicit seed.
 func TestForwardAsChatCompletions_ResponsesShapeDoesNotAutoDerivePromptCacheKey(t *testing.T) {
 	response := func() *http.Response {
 		return &http.Response{
@@ -674,6 +746,10 @@ func TestForwardAsChatCompletions_ResponsesShapeDoesNotAutoDerivePromptCacheKey(
 	require.Equal(t, upstreamcore.GenerateSessionUUID(upstreamcore.IsolateSessionID(99, "explicit-responses-key")), upstream.requests[2].Header.Get("session_id"))
 }
 
+// TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions captures
+// an OAuth Chat request without system content. It checks the Codex target,
+// present empty instructions and absence of the listed default instruction
+// text.
 func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -712,6 +788,10 @@ func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testi
 	require.NotContains(t, string(upstream.lastBody), "Communicate with the user by streaming thinking")
 }
 
+// forwardOAuthChatCompletionsForUpstreamBody captures one OAuth request before
+// a deliberate HTTP 400. It asserts the expected error, absent result and
+// nonempty body, then returns the recorder-owned outgoing bytes for focused
+// request assertions.
 func forwardOAuthChatCompletionsForUpstreamBody(t *testing.T, body []byte) []byte {
 	t.Helper()
 
@@ -747,6 +827,10 @@ func forwardOAuthChatCompletionsForUpstreamBody(t *testing.T, body []byte) []byt
 	return upstream.lastBody
 }
 
+// TestForwardAsChatCompletions_OAuthPromotesSystemMessageWithoutDuplication
+// converts text-only system and user messages for OAuth. It checks one
+// instructions occurrence and a remaining user-only input array after
+// promotion.
 func TestForwardAsChatCompletions_OAuthPromotesSystemMessageWithoutDuplication(t *testing.T) {
 	const systemPrompt = "Unique system prefix for token accounting."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"hello"}],"stream":false}`)
@@ -759,6 +843,10 @@ func TestForwardAsChatCompletions_OAuthPromotesSystemMessageWithoutDuplication(t
 	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
 }
 
+// TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput
+// requests JSON_OBJECT with text-only system content. It checks instructions
+// plus retained developer input and two occurrences of that fixture system
+// text.
 func TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput(t *testing.T) {
 	const systemPrompt = "Return JSON only."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"symbol data"}],"response_format":{"type":" JSON_OBJECT "},"stream":false}`)
@@ -772,6 +860,9 @@ func TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput(t *te
 	require.Equal(t, 2, strings.Count(string(upstreamBody), systemPrompt))
 }
 
+// TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput supplies
+// system text and an image together. It checks promoted instructions and
+// retained developer content with the converted input-image URL.
 func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing.T) {
 	const systemPrompt = "Inspect this reference image."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":[{"type":"text","text":"` + systemPrompt + `"},{"type":"image_url","image_url":{"url":"https://example.com/reference.png"}}]},{"role":"user","content":"hello"}],"stream":false}`)
@@ -786,6 +877,10 @@ func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing
 	require.Equal(t, "https://example.com/reference.png", gjson.GetBytes(upstreamBody, "input.0.content.1.image_url").String())
 }
 
+// TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage rejects
+// downstream writes before terminal Responses usage arrives. It checks
+// successful returned observations with the fixture input, output and
+// cached-token quantities after draining.
 func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -833,6 +928,9 @@ func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing
 	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
 }
 
+// TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErrorWithoutFailover
+// supplies a buffered context-window failure terminal. It checks no result, no
+// failover wrapper and a written JSON 502 carrying the failure message.
 func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErrorWithoutFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -876,9 +974,15 @@ func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErro
 	require.Contains(t, rec.Body.String(), "input exceeds the context window")
 }
 
+// TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorWithoutFailover
+// supplies a pre-content context-window terminal to a streaming request. It
+// checks a returned observation, JSON 502, no failover wrapper and no DONE
+// marker.
 func TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorWithoutFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	// Cross the large-request buffering threshold so converted preamble stays
+	// pending until this fixture's terminal failure classification.
 	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + strings.Repeat("large prompt ", 6000) + `"}],"stream":true}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -923,6 +1027,9 @@ func TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorW
 	require.NotContains(t, rec.Body.String(), "[DONE]")
 }
 
+// TestForwardAsChatCompletions_StreamBareErrorAfterOutputDoesNotFailOver
+// follows a text delta with a bare error. It checks partial result, retained
+// content and failure message, absent DONE and no provider failover wrapper.
 func TestForwardAsChatCompletions_StreamBareErrorAfterOutputDoesNotFailOver(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -963,9 +1070,15 @@ func TestForwardAsChatCompletions_StreamBareErrorAfterOutputDoesNotFailOver(t *t
 	require.NotContains(t, rec.Body.String(), "[DONE]")
 }
 
+// TestForwardAsChatCompletions_StreamCyberPolicyNoFailover supplies a
+// cyber-policy failed terminal after the Responses preamble. It checks the
+// request risk marker, absence of failover wrapping and the client error/code
+// and DONE fields.
 func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	// Cross the large-request buffering threshold so converted preamble stays
+	// pending until this fixture's terminal failure classification.
 	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + strings.Repeat("large prompt ", 6000) + `"}],"stream":true}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -1008,6 +1121,9 @@ func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
 	require.Contains(t, respBody, "data: [DONE]")
 }
 
+// TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions supplies
+// terminal usage despite no client stream_options field. It checks returned
+// token quantities and their converted Chat usage fields in downstream output.
 func TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1060,6 +1176,9 @@ func TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions(t *test
 	require.Contains(t, responseBody, `"cached_tokens":5`)
 }
 
+// TestForwardAsChatCompletions_StreamsTopLevelTerminalUsage places usage
+// beside the terminal response object in SSE. It checks returned input, output
+// and cache observations plus their downstream Chat usage representation.
 func TestForwardAsChatCompletions_StreamsTopLevelTerminalUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1112,6 +1231,9 @@ func TestForwardAsChatCompletions_StreamsTopLevelTerminalUsage(t *testing.T) {
 	require.Contains(t, responseBody, `"cached_tokens":4`)
 }
 
+// TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage places usage
+// beside the terminal Response for buffered conversion. It checks the observed
+// token quantities and matching Chat JSON usage fields.
 func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1160,6 +1282,9 @@ func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 	require.Contains(t, responseBody, `"cached_tokens":3`)
 }
 
+// TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns blocks
+// reads after a terminal and rejects client writes. It checks timely return
+// and usage even though the fixture supplies no EOF before executor cleanup.
 func TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1169,6 +1294,8 @@ func TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns(t *te
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstreamBody := []byte(`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":17,"output_tokens":8,"total_tokens":25,"input_tokens_details":{"cached_tokens":6}}}}` + "\n\n")
+	// Keep reads blocked after terminal bytes to distinguish protocol completion
+	// from EOF; deferred closure releases the fixture if the bounded wait fails.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1194,10 +1321,18 @@ func TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns(t *te
 		},
 	}
 
+	// forwardResult carries one forwarding observation and error from the worker
+	// to this test.
 	type forwardResult struct {
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		// forwarding result observation
 		result *forwardcore.OpenAIResult
-		err    error
+		err    error // forwarding operation error
 	}
+	// Publish through a buffered result so the worker can finish even if the
+	// wait times out; deferred source closure releases any remaining blocked read.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Chat(context.Background(), c, provider, body, "", "gpt-5.1")
@@ -1216,6 +1351,10 @@ func TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns(t *te
 	}
 }
 
+// TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns
+// supplies event names when data omits type and then blocks reads. It checks
+// timely completion, returned usage and converted text without requiring EOF
+// from that blocking fixture.
 func TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1235,6 +1374,8 @@ func TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns(
 		``,
 		``,
 	}, "\n"))
+	// Keep reads blocked after terminal bytes to distinguish protocol completion
+	// from EOF; deferred closure releases the fixture if the bounded wait fails.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1260,10 +1401,18 @@ func TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns(
 		},
 	}
 
+	// forwardResult carries one forwarding observation and error from the worker
+	// to this test.
 	type forwardResult struct {
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		// forwarding result observation
 		result *forwardcore.OpenAIResult
-		err    error
+		err    error // forwarding operation error
 	}
+	// Publish through a buffered result so the worker can finish even if the
+	// wait times out; deferred source closure releases any remaining blocked read.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Chat(context.Background(), c, provider, body, "", "gpt-5.1")
@@ -1283,6 +1432,9 @@ func TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns(
 	}
 }
 
+// TestForwardAsChatCompletions_EventTypeDoesNotLeakAcrossFrames mixes named
+// and data-typed SSE frames across blank boundaries. It checks successful text
+// forwarding and DONE after the fixture terminal.
 func TestForwardAsChatCompletions_EventTypeDoesNotLeakAcrossFrames(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1330,6 +1482,10 @@ func TestForwardAsChatCompletions_EventTypeDoesNotLeakAcrossFrames(t *testing.T)
 	require.Contains(t, rec.Body.String(), `data: [DONE]`)
 }
 
+// TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns
+// blocks source reads after a completed terminal for nonstreaming Chat. It
+// checks timely return, observed usage and a stop finish reason in buffered
+// output.
 func TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1338,6 +1494,8 @@ func TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns(t 
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstreamBody := []byte(`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":17,"output_tokens":8,"total_tokens":25,"input_tokens_details":{"cached_tokens":6}}}}` + "\n\n")
+	// Keep reads blocked after terminal bytes to distinguish protocol completion
+	// from EOF; deferred closure releases the fixture if the bounded wait fails.
 	upstreamStream := gatewaytestkit.NewBlockingReadCloser(upstreamBody)
 	defer func() {
 		require.NoError(t, upstreamStream.Close())
@@ -1363,10 +1521,18 @@ func TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns(t 
 		},
 	}
 
+	// forwardResult carries one forwarding observation and error from the worker
+	// to this test.
 	type forwardResult struct {
+		// result and err are captured by the same forwarding worker and published
+		// together in one channel value, so assertions inspect the observation
+		// associated with that operation's returned failure.
+		// forwarding result observation
 		result *forwardcore.OpenAIResult
-		err    error
+		err    error // forwarding operation error
 	}
+	// Publish through a buffered result so the worker can finish even if the
+	// wait times out; deferred source closure releases any remaining blocked read.
 	resultCh := make(chan forwardResult, 1)
 	go func() {
 		result, err := svc.Text.Chat(context.Background(), c, provider, body, "", "gpt-5.1")
@@ -1386,6 +1552,10 @@ func TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns(t 
 	}
 }
 
+// TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError
+// supplies only the DONE sentinel to converted Chat. It checks a
+// missing-terminal error with a returned observation whose input and output
+// counts are zero.
 func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1423,6 +1593,10 @@ func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *tes
 	require.Zero(t, result.Usage.OutputTokens)
 }
 
+// TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel cancels the
+// client before converted forwarding and supplies a completed fixture
+// response. It checks success and an uncancelled context on the captured
+// request.
 func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1430,6 +1604,9 @@ func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(reqCtx)
 	c.Request.Header.Set("Content-Type", "application/json")
+	// Cancel before conversion to inspect detachment on the captured upstream
+	// request. The fixture supplies a completed response independently of that
+	// client context.
 	cancel()
 
 	upstreamBody := strings.Join([]string{
@@ -1466,6 +1643,10 @@ func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+// TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat bridges a
+// cached Grok Chat request into Responses. It checks isolated cache/header
+// identity, request tools and shape, quota snapshot, observed usage and
+// buffered Chat answer.
 func TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hi"}],"stream":false,"prompt_cache_key":"stable-session","tools":[],"functions":null,"tool_choice":"none"}`)
 	recorder := httptest.NewRecorder()
@@ -1511,6 +1692,10 @@ func TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat(t *testing.
 	require.NotNil(t, repo.updates[provider.Record.ID]["grok_usage_snapshot"])
 }
 
+// TestForwardGrokChatViaResponsesNonStreamingRejectsCompletedResponseWithoutUsage
+// supplies successful Grok content with no terminal usage. It checks
+// missing-usage recovery, copied request identity and absence of committed
+// buffered client output.
 func TestForwardGrokChatViaResponsesNonStreamingRejectsCompletedResponseWithoutUsage(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}],"stream":false,"prompt_cache_key":"stable-session"}`)
 	recorder := httptest.NewRecorder()
@@ -1547,6 +1732,9 @@ func TestForwardGrokChatViaResponsesNonStreamingRejectsCompletedResponseWithoutU
 	require.Empty(t, recorder.Body.String())
 }
 
+// TestForwardGrokChatImageWithoutCacheIdentityUsesResponses supplies image
+// content without a cache seed. It checks native Responses dispatch, converted
+// text/image parts and absent cache-key and conversation-header values.
 func TestForwardGrokChatImageWithoutCacheIdentityUsesResponses(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":[{"type":"text","text":"what is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,QQ=="}}]}],"stream":false}`)
 	recorder := httptest.NewRecorder()
@@ -1574,13 +1762,17 @@ func TestForwardGrokChatImageWithoutCacheIdentityUsesResponses(t *testing.T) {
 	require.Empty(t, upstream.lastReq.Header.Get(GrokConversationIDHeader))
 }
 
+// TestForwardGrokChatViaResponsesCodeBuddyUsesStableConversationHeader changes
+// request/message IDs and tool content across one CodeBuddy conversation. It
+// checks the same derived identity and its outgoing cache/header values for
+// both turns.
 func TestForwardGrokChatViaResponsesCodeBuddyUsesStableConversationHeader(t *testing.T) {
 	const conversationID = "codebuddy-session-42"
 	tests := []struct {
-		name      string
-		requestID string
-		messageID string
-		body      []byte
+		name      string // fixture case name
+		requestID string // changing request identifier
+		messageID string // changing message identifier
+		body      []byte // client request body
 	}{
 		{
 			name:      "first turn",
@@ -1635,6 +1827,10 @@ func TestForwardGrokChatViaResponsesCodeBuddyUsesStableConversationHeader(t *tes
 	}
 }
 
+// TestForwardGrokChatViaResponsesTraeToolHistoryKeepsCacheRoute appends
+// tool-call history to a free-tier Grok cache request. It checks stable
+// identity, Responses dispatch and retained function declarations, control
+// flags and paired tool input/output.
 func TestForwardGrokChatViaResponsesTraeToolHistoryKeepsCacheRoute(t *testing.T) {
 	firstTurnBody := []byte(`{"model":"grok-4.5","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Find alpha"}],"stream":false,"prompt_cache_key":"trae-session","tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"strict":false}}],"tool_choice":"auto","parallel_tool_calls":true}`)
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Find alpha"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_lookup","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"alpha\"}"}}]},{"role":"tool","tool_call_id":"call_lookup","content":"{\"value\":\"ok\"}"},{"role":"user","content":"Summarize"}],"stream":false,"prompt_cache_key":"trae-session","tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"strict":false}}],"tool_choice":"auto","parallel_tool_calls":true}`)
@@ -1687,6 +1883,10 @@ func TestForwardGrokChatViaResponsesTraeToolHistoryKeepsCacheRoute(t *testing.T)
 	require.Equal(t, `{"value":"ok"}`, gjson.GetBytes(upstream.lastBody, "input.3.output").String())
 }
 
+// TestForwardGrokChatViaResponsesTraeCompatibilityFieldsKeepCacheRoute
+// supplies JSON format, instructions, effort placeholders and tool reasoning
+// history. It checks cache stability, transformed compatibility fields,
+// retained tool pairing and cached-token output.
 func TestForwardGrokChatViaResponsesTraeCompatibilityFieldsKeepCacheRoute(t *testing.T) {
 	firstTurnBody := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"Find alpha"}],"instructions":"Return concise JSON","stream":false,"response_format":{"type":"json_object"},"service_tier":"fast","stop":null,"reasoning_effort":null,"tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}],"tool_choice":"auto","parallel_tool_calls":true}`)
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"Find alpha"},{"role":"assistant","content":null,"reasoning_content":"I should use lookup","tool_calls":[{"index":0,"id":"call_lookup","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"alpha\"}"}}]},{"role":"tool","tool_call_id":"call_lookup","content":"{\"value\":\"ok\"}"},{"role":"user","content":"Summarize"}],"instructions":"Return concise JSON","stream":false,"response_format":{"type":"json_object"},"service_tier":"fast","stop":null,"reasoning_effort":null,"tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}],"tool_choice":"auto","parallel_tool_calls":true}`)
@@ -1733,6 +1933,9 @@ func TestForwardGrokChatViaResponsesTraeCompatibilityFieldsKeepCacheRoute(t *tes
 	require.Equal(t, int64(12288), gjson.Get(recorder.Body.String(), "usage.prompt_tokens_details.cached_tokens").Int())
 }
 
+// TestForwardGrokChatViaResponsesStreamingPropagatesCachedUsage bridges Grok
+// SSE to Chat with cached usage. It checks the Responses endpoint, stream
+// result, converted text, cached count and DONE marker.
 func TestForwardGrokChatViaResponsesStreamingPropagatesCachedUsage(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	recorder := httptest.NewRecorder()
@@ -1759,12 +1962,15 @@ func TestForwardGrokChatViaResponsesStreamingPropagatesCachedUsage(t *testing.T)
 	require.Contains(t, recorder.Body.String(), "data: [DONE]")
 }
 
+// TestForwardGrokChatRuntimeGateFallsBackToRaw compares missing cache identity
+// and a non-cache-capable mapped model. It checks native Chat dispatch,
+// selected model, absent injected tools and buffered answer for each fixture.
 func TestForwardGrokChatRuntimeGateFallsBackToRaw(t *testing.T) {
 	tests := []struct {
-		name         string
-		setAPIKey    bool
-		mappedModel  string
-		wantUpstream string
+		name         string // fixture case name
+		setAPIKey    bool   // bind downstream API key
+		mappedModel  string // configured mapped model
+		wantUpstream string // expected upstream model
 	}{
 		{name: "missing cache identity", wantUpstream: "grok-4.5"},
 		{name: "non cache capable mapped model", setAPIKey: true, mappedModel: "grok-4.3", wantUpstream: "grok-4.3"},
@@ -1808,6 +2014,9 @@ func TestForwardGrokChatRuntimeGateFallsBackToRaw(t *testing.T) {
 	}
 }
 
+// TestForwardGrokChatViaResponses429UsesGrokRateLimitPolicy returns HTTP 429
+// with a forty-five-second retry delay. It checks typed recovery, rate-limit
+// storage and runtime block, retained delay and the actual Responses endpoint.
 func TestForwardGrokChatViaResponses429UsesGrokRateLimitPolicy(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}],"stream":false}`)
 	recorder := httptest.NewRecorder()
@@ -1845,6 +2054,9 @@ func TestForwardGrokChatViaResponses429UsesGrokRateLimitPolicy(t *testing.T) {
 	require.True(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestForwardGrokRawChat429PreservesRetryAfter forces native Chat with a stop
+// control and returns HTTP 429. It checks the raw endpoint and retained retry
+// delay in the typed failure.
 func TestForwardGrokRawChat429PreservesRetryAfter(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}],"stream":false,"stop":"done"}`)
 	recorder := httptest.NewRecorder()
@@ -1878,6 +2090,9 @@ func TestForwardGrokRawChat429PreservesRetryAfter(t *testing.T) {
 	require.Equal(t, grok.DefaultCLIBaseURL+"/chat/completions", upstream.lastReq.URL.String())
 }
 
+// TestForwardGrokRawChatErrorRecordsActualEndpoint forces native Chat with
+// stop and returns a request rejection. It checks an error with absent result
+// and matching captured and observed Chat endpoints.
 func TestForwardGrokRawChatErrorRecordsActualEndpoint(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}],"stream":false,"stop":"done"}`)
 	recorder := httptest.NewRecorder()
@@ -1903,6 +2118,8 @@ func TestForwardGrokRawChatErrorRecordsActualEndpoint(t *testing.T) {
 	require.Equal(t, grok.GrokChatRawEndpoint, GetActualOpenAIUpstreamEndpoint(c))
 }
 
+// grokChatBridgeTestProvider creates an active Grok OAuth target for the
+// supplied ID.
 func grokChatBridgeTestProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1923,6 +2140,10 @@ func grokChatBridgeTestProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// grokChatBridgeCompletedResponse constructs the fixture SSE terminal with
+// supplied cache usage and response identifier. Callers provide an identifier
+// safe for direct JSON interpolation and close the returned body after using
+// this response.
 func grokChatBridgeCompletedResponse(responseID string, cachedTokens int) *http.Response {
 	body := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"cached ok"}`,
@@ -1942,6 +2163,9 @@ func grokChatBridgeCompletedResponse(responseID string, cachedTokens int) *http.
 	}
 }
 
+// TestForwardGrokChatViaResponsesDropsRedundantViewImage bridges inline image
+// Chat input to Grok Responses. It checks the converted image part and
+// outgoing tool policy through the shared inline-image assertions.
 func TestForwardGrokChatViaResponsesDropsRedundantViewImage(t *testing.T) {
 	body := grokInlineImageChatRequest()
 	recorder := httptest.NewRecorder()
@@ -1964,6 +2188,9 @@ func TestForwardGrokChatViaResponsesDropsRedundantViewImage(t *testing.T) {
 	assertGrokInlineImageTools(t, upstream.lastBody, "tools.#(name==\"%s\")")
 }
 
+// TestForwardGrokRawChatDropsRedundantViewImage forwards inline image input to
+// a configured Grok API-key Chat endpoint. It checks native image
+// representation and outgoing tool policy through the shared assertions.
 func TestForwardGrokRawChatDropsRedundantViewImage(t *testing.T) {
 	body := grokInlineImageChatRequest()
 	recorder := httptest.NewRecorder()
@@ -1993,6 +2220,8 @@ func TestForwardGrokRawChatDropsRedundantViewImage(t *testing.T) {
 	assertGrokInlineImageTools(t, upstream.lastBody, "tools.#(function.name==\"%s\")")
 }
 
+// grokInlineImageChatRequest creates Chat image input with view_image and
+// shell tools.
 func grokInlineImageChatRequest() []byte {
 	return []byte(`{
 		"model":"grok-4.6",
@@ -2009,6 +2238,10 @@ func grokInlineImageChatRequest() []byte {
 	}`)
 }
 
+// TestForwardAsChatCompletionsForGrokStopFallsBackToXAIChatCompletions
+// supplies stop and a raw cache seed to Grok OAuth. It checks raw dispatch,
+// isolated conversation identity, stripped cache field, usage and quota
+// snapshot.
 func TestForwardAsChatCompletionsForGrokStopFallsBackToXAIChatCompletions(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2053,6 +2286,9 @@ func TestForwardAsChatCompletionsForGrokStopFallsBackToXAIChatCompletions(t *tes
 	require.Equal(t, http.StatusOK, recorder.Code)
 }
 
+// TestForwardAsChatCompletionsForGrokAPIKeyUsesConfiguredRawEndpointWithoutOAuthIdentity
+// supplies a configured Grok API-key base. It checks the native Chat URL,
+// bearer key and the fixture absence of OAuth CLI identity headers.
 func TestForwardAsChatCompletionsForGrokAPIKeyUsesConfiguredRawEndpointWithoutOAuthIdentity(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2086,6 +2322,10 @@ func TestForwardAsChatCompletionsForGrokAPIKeyUsesConfiguredRawEndpointWithoutOA
 	require.NotEqual(t, grok.DefaultGrokUpstreamUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
 }
 
+// TestForwardAsChatCompletionsForGrokAPIKeyRejectsNonStreamingResponseWithoutUsage
+// supplies completed native Chat content without usage. It checks
+// missing-usage recovery, retained upstream request ID and no client
+// commitment or body.
 func TestForwardAsChatCompletionsForGrokAPIKeyRejectsNonStreamingResponseWithoutUsage(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2126,6 +2366,10 @@ func TestForwardAsChatCompletionsForGrokAPIKeyRejectsNonStreamingResponseWithout
 	require.Empty(t, recorder.Body.String())
 }
 
+// TestForwardAsChatCompletionsForGrokStreamingUsesRawXAIChatCompletions
+// supplies an OAuth Grok stream without a cache identity. It checks raw
+// dispatch, CLI headers, usage injection, returned usage, downstream DONE and
+// quota snapshot.
 func TestForwardAsChatCompletionsForGrokStreamingUsesRawXAIChatCompletions(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2175,6 +2419,10 @@ func TestForwardAsChatCompletionsForGrokStreamingUsesRawXAIChatCompletions(t *te
 	require.NotNil(t, repo.updates[53]["grok_usage_snapshot"])
 }
 
+// TestForwardAsChatCompletionsForGrokStreamingStopFallsBackToRawXAIChatCompletions
+// supplies stop and a native conversation header on a keyed stream. It checks
+// raw CLI dispatch, rewritten conversation identity, usage/DONE output and
+// quota snapshot.
 func TestForwardAsChatCompletionsForGrokStreamingStopFallsBackToRawXAIChatCompletions(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2229,6 +2477,10 @@ func TestForwardAsChatCompletionsForGrokStreamingStopFallsBackToRawXAIChatComple
 	require.NotNil(t, repo.updates[53]["grok_usage_snapshot"])
 }
 
+// TestForwardAsChatCompletionsForGrokComposerBridgesImageInput describes one
+// image before a Composer Chat request. It checks two endpoints, description
+// replacement, exact large metadata number, separate conversation identity and
+// summed usage.
 func TestForwardAsChatCompletionsForGrokComposerBridgesImageInput(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -2285,13 +2537,18 @@ func TestForwardAsChatCompletionsForGrokComposerBridgesImageInput(t *testing.T) 
 	require.NotNil(t, repo.updates[55]["grok_usage_snapshot"])
 }
 
-// forcedResponsesChatTestProvider routes Chat input through Responses for error conversion tests.
+// forcedResponsesChatTestProvider creates an API-key target forcing Chat
+// through Responses conversion.
 func forcedResponsesChatTestProvider() *gatewayprovider.ExecutionProvider {
 	provider := rawChatCompletionsTestProvider()
 	provider.Record.Extra = map[string]any{"openai_text_route_mode": "force_responses"}
 	return provider
 }
 
+// TestForwardAsChatCompletions_ResponseFailed_PassthroughRule applies a
+// configured override to buffered context-window failure. It checks HTTP 400,
+// upstream_error type and the retained context-window message after rule
+// matching.
 func TestForwardAsChatCompletions_ResponseFailed_PassthroughRule(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2323,6 +2580,9 @@ func TestForwardAsChatCompletions_ResponseFailed_PassthroughRule(t *testing.T) {
 	require.Contains(t, errMsg, "context window")
 }
 
+// TestForwardAsChatCompletions_ResponseFailed_NoRule_Still502 supplies the
+// same buffered context-window failure with no presentation rule. It checks a
+// returned error and the default HTTP 502 response.
 func TestForwardAsChatCompletions_ResponseFailed_NoRule_Still502(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2344,8 +2604,9 @@ func TestForwardAsChatCompletions_ResponseFailed_NoRule_Still502(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code, "without passthrough rule should still be 502")
 }
 
-// TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500 checks generic output when an
-// in-stream error misses configured codes.
+// TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500
+// excludes the event status from configured provider error codes. It checks
+// generic HTTP 500, no failover wrapper and no persistent error-store call.
 func TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2376,8 +2637,10 @@ func TestForwardAsChatCompletions_ResponseFailedCustomErrorMissReturnsGeneric500
 	require.Zero(t, repo.setErrorCalls)
 }
 
-// TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver checks failover for an event
-// status matched by provider policy.
+// TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver
+// admits semantic HTTP 422 through provider custom codes. It checks typed
+// recovery, scheduling error recording, no same-provider retry and no client
+// commitment.
 func TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2408,6 +2671,10 @@ func TestForwardAsChatCompletions_ResponseFailedCustomNonDefaultStatusFailsOver(
 	require.Equal(t, 1, repo.setErrorCalls)
 }
 
+// TestForwardAsChatCompletions_ResponseFailed_ErrorCodeRuleMatchesViaSemanticStatus
+// matches HTTP 400 inferred from a context-window event. It checks the
+// configured final status, upstream_error type and context-window message in
+// the envelope.
 func TestForwardAsChatCompletions_ResponseFailed_ErrorCodeRuleMatchesViaSemanticStatus(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -2434,6 +2701,10 @@ func TestForwardAsChatCompletions_ResponseFailed_ErrorCodeRuleMatchesViaSemantic
 	require.Contains(t, gjson.Get(respBody, "error.message").String(), "context window")
 }
 
+// TestNormalizeResponsesRequestServiceTier passes the listed aliases,
+// recognized tiers and unsupported value through request normalization. It
+// checks priority canonicalization, retained accepted values and empty
+// unsupported tier.
 func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	t.Parallel()
 
@@ -2464,6 +2735,10 @@ func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	require.Empty(t, req.ServiceTier)
 }
 
+// TestNormalizeResponsesBodyServiceTier passes the listed service tiers
+// through byte-level normalization. It checks returned tier and outgoing field
+// together, including ultrafast retention and deletion of the unsupported
+// value.
 func TestNormalizeResponsesBodyServiceTier(t *testing.T) {
 	t.Parallel()
 
@@ -2505,6 +2780,10 @@ func TestNormalizeResponsesBodyServiceTier(t *testing.T) {
 	require.False(t, gjson.GetBytes(body, "service_tier").Exists())
 }
 
+// TestOpenAISetupTokenChatCompletionsUsesCodexTransform captures setup-token
+// Chat before an HTTP 400 fixture rejection. It checks Codex URL, credential
+// and identity headers, promoted instructions, user input and derived cache
+// key.
 func TestOpenAISetupTokenChatCompletionsUsesCodexTransform(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"setup instructions"},{"role":"user","content":"hello"}],"stream":false}`)
 	rec := httptest.NewRecorder()

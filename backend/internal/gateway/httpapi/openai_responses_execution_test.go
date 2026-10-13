@@ -49,12 +49,27 @@ import (
 	openaicore "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// An admitted Responses request can be prepared differently for each provider
+// while retaining the client's model and tool identity. These fixtures compare
+// captured upstream bodies and returned attribution with client JSON or SSE,
+// covering model mappings, effort and tier policy, namespace conversion and
+// exact numeric text.
+//
+// HTTP errors and failed stream events have different effects before client
+// output and after keepalive commits it. Scripted transports expose those
+// decisions through typed failover, direct error output, usage and body
+// closure. The blocking header transport coordinates request cancellation
+// against a guard timer, while the loopback transport exercises model
+// restoration over a loopback HTTP exchange.
+
 const (
-	// Keep the full large-text fixture length.
+	// openAIResponsesInputTextMaxChars sets the ASCII prefix length for the
+	// oversized tool-output fixture, which appends one multibyte character to it.
 	openAIResponsesInputTextMaxChars = 10000000
 
-	// codexNamespaceRequestBody represents Codex multi-agent calls and ordinary messages with leftover namespace
-	// fields.
+	// codexNamespaceRequestBody supplies namespace declarations and historical
+	// calls alongside a stale namespace on an ordinary message, supporting
+	// preservation and stripping assertions.
 	codexNamespaceRequestBody = `{
 	"model":"gpt-5.6-terra",
 	"stream":false,
@@ -72,41 +87,78 @@ const (
 	]
 }`
 
+	// namespaceForwardOKResponse supplies a successful usage-bearing body for
+	// namespace forwarding tests, allowing their assertions to focus on captured
+	// request preparation.
 	namespaceForwardOKResponse = `{"id":"resp_ns","output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`
 )
 
+// blockingOpenAIResponseHeaderUpstream models a header wait cancelled by the
+// first-output timer.
 type blockingOpenAIResponseHeaderUpstream struct {
-	canceled chan struct{}
-	once     sync.Once
+	// canceled and once report the first request-cancellation branch selected by
+	// Do. Tests initialize the channel before forwarding and inspect it after the
+	// call returns.
+	canceled chan struct{} // upstream cancellation signal
+	once     sync.Once     // cancellation signal close guard
 }
 
+// reasoningCacheStub supplies preloaded reasoning reads and captures reasoning
+// writes for Chat history conversion.
 type reasoningCacheStub struct {
-	sessiontestkit.StickyCache
-	sets    map[string]string
-	getResp map[string]string
+	sessiontestkit.StickyCache // inherited session binding fixture
+	// sets captures written item text and getResp supplies preloaded item text;
+	// writes leave the read fixture unchanged. Tests serialize these maps and the
+	// fixture ignores expiration.
+	sets    map[string]string // captured item reasoning text
+	getResp map[string]string // preloaded item reasoning text
 }
 
+// passthroughErrReadCloser injects body read failure after a successful
+// Compact response establishment.
 type passthroughErrReadCloser struct {
-	err error
+	// err is returned on every Read; nil selects io.ErrUnexpectedEOF so the
+	// fixture still fails after establishment.
+	err error // injected body read error
 }
 
+// openAIPassthroughFailoverRepo records provider health deadlines produced by
+// passthrough failure handling.
 type openAIPassthroughFailoverRepo struct {
-	gatewaytestkit.HealthStoreBase
-	rateLimitCalls []time.Time
-	overloadCalls  []time.Time
+	gatewaytestkit.HealthStoreBase // inherited health storage defaults
+	// rateLimitCalls and overloadCalls retain supplied deadlines in call order
+	// for their respective health updates. Provider IDs are ignored and tests
+	// serialize recording with inspection.
+	rateLimitCalls []time.Time // captured rate-limit reset deadlines
+	overloadCalls  []time.Time // captured overload cooldown deadlines
 }
 
-// mappingHTTPTransport sends the built upstream request to a local HTTP server.
+// mappingHTTPTransport redirects prepared upstream requests to the loopback
+// fixture server.
 type mappingHTTPTransport struct {
-	client   *http.Client
-	endpoint *url.URL
+	// client sends redirected requests and endpoint supplies their loopback
+	// scheme and host. Both references are supplied before forwarding and kept
+	// stable while a fixture exchange runs.
+	client   *http.Client // fixture HTTP exchange client
+	endpoint *url.URL     // loopback server URL
 }
 
+// tlsRouterTestStore supplies router configuration for synchronous startup in
+// identity-selection tests.
 type tlsRouterTestStore struct {
-	egress.TLSFingerprintRouterRepository
-	values []*egress.TLSFingerprintRouter
+	// TLSFingerprintRouterRepository supplies the other repository methods
+	// through embedding. This fixture calls List and leaves that embedded
+	// interface unset.
+	egress.TLSFingerprintRouterRepository // unused inherited repository methods
+	// values is returned directly by List, including a nil slice; callers keep
+	// its router pointers stable during startup reload.
+	values []*egress.TLSFingerprintRouter // supplied router configuration
 }
 
+// TestAdaptiveProtocolRoutesKimiResponsesToNativeResponses captures adaptive
+// Kimi Responses input with effort and continuation controls. It checks native
+// endpoint/shape, retained effort and disabled store/previous-response fields
+// before transport failure.
 func TestAdaptiveProtocolRoutesKimiResponsesToNativeResponses(t *testing.T) {
 	body := []byte(`{"model":"k3-256k","input":"hello","reasoning":{"effort":"none"},"store":true,"previous_response_id":"resp_old","stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -127,6 +179,10 @@ func TestAdaptiveProtocolRoutesKimiResponsesToNativeResponses(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
 }
 
+// TestAdaptiveProtocolRoutesKimiCodingResponsesToNativeResponses captures Kimi
+// coding-mode Responses input under configured protocol bases. It checks the
+// coding Responses URL and retained input before the deliberate fixture
+// transport failure.
 func TestAdaptiveProtocolRoutesKimiCodingResponsesToNativeResponses(t *testing.T) {
 	body := []byte(`{"model":"k3-256k","input":"hello","stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -144,6 +200,10 @@ func TestAdaptiveProtocolRoutesKimiCodingResponsesToNativeResponses(t *testing.T
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 }
 
+// TestAdaptiveProtocolRoutesDeepSeekResponsesToNativeResponses captures
+// adaptive DeepSeek input with output limit and continuation controls. It
+// checks native unversioned endpoint, retained output limit, removed
+// continuation and absent injected instructions.
 func TestAdaptiveProtocolRoutesDeepSeekResponsesToNativeResponses(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4","input":"hello","max_output_tokens":32,"store":true,"previous_response_id":"resp_old","stream":false}`)
 	upstream := &auxiliaryHTTPRecorder{err: errors.New("stop after capture")}
@@ -163,6 +223,10 @@ func TestAdaptiveProtocolRoutesDeepSeekResponsesToNativeResponses(t *testing.T) 
 	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 }
 
+// TestForward_ResponsesServiceTierFastNormalizedToPriorityUpstream sends the
+// fast alias through native Responses preparation. It checks outgoing priority
+// and returned requested-tier attribution after the successful fixture
+// exchange.
 func TestForward_ResponsesServiceTierFastNormalizedToPriorityUpstream(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -199,11 +263,14 @@ func TestForward_ResponsesServiceTierFastNormalizedToPriorityUpstream(t *testing
 	require.NotNil(t, upstream.lastBody)
 	require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String(),
 		"client alias fast must reach the upstream as priority")
-	// The billing result carries the normalized tier.
+	// The Forward result records the normalized requested tier.
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 }
 
+// TestForward_ResponsesServiceTierOmittedStaysOmitted omits tier from the
+// admitted Responses body. It checks absent outgoing field and nil result tier
+// after successful forwarding of the fixture response.
 func TestForward_ResponsesServiceTierOmittedStaysOmitted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -243,6 +310,9 @@ func TestForward_ResponsesServiceTierOmittedStaysOmitted(t *testing.T) {
 	require.Nil(t, result.ServiceTier)
 }
 
+// TestForwardStreaming_ServiceTierPropagatedToResult requests fast while the
+// fixture stream omits echoed tier. It checks normalized priority attribution
+// and retained text with no injected client service-tier field.
 func TestForwardStreaming_ServiceTierPropagatedToResult(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -281,12 +351,16 @@ func TestForwardStreaming_ServiceTierPropagatedToResult(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier, "streaming billing context must carry the normalized tier")
-	// Responses SSE keeps the upstream service_tier, including omission; billing records the request tier
-	// separately.
+	// The upstream stream omits service_tier while the result retains requested
+	// priority. Inspect client output separately to detect accidental insertion
+	// of that requested tier.
 	require.Contains(t, rec.Body.String(), `"delta":"hi"`, "streamed content must reach the client")
 	require.NotContains(t, rec.Body.String(), `"service_tier"`, "upstream did not return service_tier, client stream must stay untouched")
 }
 
+// TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate requests
+// fast while buffered output echoes default. It checks requested priority,
+// observed default and the retained default field in client JSON.
 func TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -294,7 +368,9 @@ func TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	// An upstream default tier can indicate that the requested tier was downgraded.
+	// Return default from the fixture despite requested fast so result assertions
+	// distinguish requested priority from the observed upstream tier and the
+	// client-visible field.
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-resp-echo"}},
@@ -324,11 +400,15 @@ func TestForward_ResponsesKeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
-	// Non-streaming passthrough exposes the upstream default tier.
+	// Client JSON retains the observed upstream default tier.
 	require.Contains(t, rec.Body.String(), `"service_tier":"default"`)
 	require.NotContains(t, rec.Body.String(), `"service_tier":"priority"`)
 }
 
+// TestForwardStreaming_KeepsOutboundAndObservedServiceTiersSeparate requests
+// fast while the streaming terminal echoes default. It checks requested
+// priority, separate observed default and default in downstream terminal
+// output.
 func TestForwardStreaming_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -367,10 +447,13 @@ func TestForwardStreaming_KeepsOutboundAndObservedServiceTiersSeparate(t *testin
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
-	// Streaming passthrough exposes default in the terminal event.
+	// The client terminal event retains the observed default tier.
 	require.Contains(t, rec.Body.String(), `"service_tier":"default"`)
 }
 
+// TestForward_ServiceTierFilteredByPolicyBillsStandard filters a priority
+// field before the selected Responses exchange. It checks absent outgoing
+// field and nil result tier; this fixture does not run billing completion.
 func TestForward_ServiceTierFilteredByPolicyBillsStandard(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -414,12 +497,18 @@ func TestForward_ServiceTierFilteredByPolicyBillsStandard(t *testing.T) {
 	result, err := svc.Forward(context.Background(), c, provider, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// With the outbound tier removed and no upstream tier, billing uses the standard rate.
+	// The filtered body and result leave requested-tier attribution absent. This
+	// assertion observes forwarding metadata; it does not execute billing
+	// completion or select a rate.
 	require.False(t, gjson.GetBytes(upstream.lastBody, "service_tier").Exists(),
 		"policy filter must strip service_tier from the outbound body")
 	require.Nil(t, result.ServiceTier, "filtered request must not bill as fast")
 }
 
+// TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce returns invalid-task
+// evidence around local registration exchanges in standard and passthrough
+// execution. It checks bounded request/registration counts and replacement
+// assertion task identity in the captured retry.
 func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -442,10 +531,18 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	}
 	repo := &agentIdentityForwardRepo{provider: provider}
 	registerCalls := 0
+	// Reuse the registration endpoint across sequential Forward calls so
+	// cumulative registration counts expose retries and assertion identity
+	// replacement in the same provider state.
 	registerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registerCalls++
+		// The callback returns the replacement task fixture after counting
+		// registration and discards write errors. The test checks Forward results
+		// and captured retry identity afterward.
 		_, _ = io.WriteString(w, `{"task_id":"task-new"}`)
 	}))
+	// Close the local registration server after all three forwarding scenarios
+	// finish so each scenario can inspect the same cumulative counter.
 	defer registerServer.Close()
 
 	successBody := `{"id":"resp-agent-retry","object":"response","model":"gpt-5.4","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
@@ -466,7 +563,9 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	require.NotEqual(t, upstream.requests[0].Header.Get("Authorization"), upstream.requests[1].Header.Get("Authorization"))
 	require.Equal(t, "task-new", decodeAgentAssertionTask(t, upstream.requests[1].Header.Get("Authorization")))
 
-	// Two consecutive task-invalid failures return an error after one retry.
+	// Replace the consumed response script with two invalid tasks to check
+	// recovery stops after its single retry, using the same provider and
+	// registration endpoint.
 	upstream.responses = []*http.Response{
 		{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
 		{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
@@ -479,7 +578,9 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	require.Equal(t, 2, registerCalls)
 	require.Len(t, upstream.requests, 4)
 
-	// Passthrough also retries task invalidation once.
+	// Reset the provider task and response script for passthrough after managed
+	// forwarding finishes; cumulative counters reveal one additional registration
+	// and two additional attempts.
 	provider.Record.Extra = map[string]any{"openai_passthrough": true}
 	provider.Record.Credentials["task_id"] = "task-old-passthrough"
 	upstream.responses = []*http.Response{
@@ -495,18 +596,25 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 	require.Len(t, upstream.requests, 6)
 }
 
+// decodeAgentAssertionTask decodes the fixture AgentAssertion header and
+// requires valid JSON before returning task_id. It uses the raw URL Base64
+// variant after prefix trimming; the helper does not verify signature or
+// authenticated ownership.
 func decodeAgentAssertionTask(t *testing.T, header string) string {
 	t.Helper()
 	encoded := strings.TrimPrefix(header, "AgentAssertion ")
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	require.NoError(t, err)
 	var envelope struct {
-		TaskID string `json:"task_id"`
+		TaskID string `json:"task_id"` // decoded assertion task
 	}
 	require.NoError(t, json.Unmarshal(decoded, &envelope))
 	return envelope.TaskID
 }
 
+// TestOpenAIGatewayForwardUsesGlobalCompactModelOnInitialLegacyRequest
+// supplies a legacy Compact request with a global model setting. It checks one
+// successful exchange uses that model and the Compact endpoint path.
 func TestOpenAIGatewayForwardUsesGlobalCompactModelOnInitialLegacyRequest(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"compact-test","input":[]}`)
 	c := newOpenAICompactFallbackTestContext(t, "/v1/responses/compact")
@@ -535,6 +643,10 @@ func TestOpenAIGatewayForwardUsesGlobalCompactModelOnInitialLegacyRequest(t *tes
 	require.Contains(t, upstream.requests[0].URL.Path, "/compact")
 }
 
+// TestOpenAIGatewayForwardRetriesExplicitNativeCompactHTTPFailureOnce rejects
+// native compaction over HTTP before a successful model recovery. It checks
+// two bodies, model switch, retained trigger, unchanged Responses path and one
+// retry Ops event.
 func TestOpenAIGatewayForwardRetriesExplicitNativeCompactHTTPFailureOnce(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	c := newOpenAICompactFallbackTestContext(t, "/v1/responses")
@@ -583,6 +695,10 @@ func TestOpenAIGatewayForwardRetriesExplicitNativeCompactHTTPFailureOnce(t *test
 	require.Equal(t, http.StatusBadRequest, events[0].UpstreamStatusCode)
 }
 
+// TestOpenAIGatewayForwardRetriesExplicitNativeCompactSSEFailureBeforeOutput
+// returns context-window failure inside native compaction SSE before success.
+// It checks two prepared models and reuse of the ordinary Responses path on
+// both attempts.
 func TestOpenAIGatewayForwardRetriesExplicitNativeCompactSSEFailureBeforeOutput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	c := newOpenAICompactFallbackTestContext(t, "/v1/responses")
@@ -623,6 +739,10 @@ func TestOpenAIGatewayForwardRetriesExplicitNativeCompactSSEFailureBeforeOutput(
 	require.NotContains(t, upstream.requests[1].URL.Path, "/compact")
 }
 
+// TestOpenAIGatewayForwardRetriesStreamingCompactFailureBeforeOutput returns a
+// streamed compact failure followed by recovered output. It checks the second
+// model, observed recovered model and successful terminal with no leaked
+// context-window error.
 func TestOpenAIGatewayForwardRetriesStreamingCompactFailureBeforeOutput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	recorder := httptest.NewRecorder()
@@ -660,6 +780,10 @@ func TestOpenAIGatewayForwardRetriesStreamingCompactFailureBeforeOutput(t *testi
 	require.Contains(t, recorder.Body.String(), "response.completed")
 }
 
+// TestOpenAIGatewayForwardDoesNotRecurseWhenCompactFallbackAlsoFails rejects
+// both the requested and recovery models during native compaction. It checks
+// forwarding stops after two attempts and reports the second error with the
+// retry and final-error Ops events.
 func TestOpenAIGatewayForwardDoesNotRecurseWhenCompactFallbackAlsoFails(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	recorder := httptest.NewRecorder()
@@ -708,8 +832,9 @@ func TestOpenAIGatewayForwardDoesNotRecurseWhenCompactFallbackAlsoFails(t *testi
 	require.Equal(t, "http_error", events[1].Kind)
 }
 
-// TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure checks that recovery without a model
-// declaration leaves the model unknown.
+// TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure fails with
+// one echoed model before a successful terminal omits model. It checks the
+// retry uses the recovery model while the result leaves observed model empty.
 func TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"compact-test","input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
 	recorder := httptest.NewRecorder()
@@ -747,6 +872,10 @@ func TestResponseModelMissingAfterCompactRetryDoesNotInheritFailure(t *testing.T
 	require.Contains(t, recorder.Body.String(), "response.completed")
 }
 
+// TestOpenAIGatewayService_Forward_CompactOnlyModelMappingOverridesOAuthUpstreamModel
+// configures both ordinary and Compact mappings for an OAuth request. It
+// checks the Compact mapping in outgoing body, result and Ops attribution
+// while retaining the client model.
 func TestOpenAIGatewayService_Forward_CompactOnlyModelMappingOverridesOAuthUpstreamModel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -790,6 +919,10 @@ func TestOpenAIGatewayService_Forward_CompactOnlyModelMappingOverridesOAuthUpstr
 	require.Equal(t, "gpt-5.4-openai-compact", opsModel)
 }
 
+// TestOpenAIGatewayService_Forward_APIKeyCompactSanitizesStatelessReplayAfterStoreWasDropped
+// sends API-key Compact input with server reasoning, an item reference and a
+// user message. It checks outgoing input keeps the user message and omits
+// parallel-tool controls.
 func TestOpenAIGatewayService_Forward_APIKeyCompactSanitizesStatelessReplayAfterStoreWasDropped(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -825,6 +958,10 @@ func TestOpenAIGatewayService_Forward_APIKeyCompactSanitizesStatelessReplayAfter
 	require.Equal(t, "message", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
 }
 
+// TestOpenAIGatewayService_Forward_NormalizesCompactionTriggerAfterHistoryCleanup
+// places the native compaction trigger before retained tool history. It checks
+// outgoing input orders the function call, its result, user message and
+// compaction trigger.
 func TestOpenAIGatewayService_Forward_NormalizesCompactionTriggerAfterHistoryCleanup(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -857,6 +994,10 @@ func TestOpenAIGatewayService_Forward_NormalizesCompactionTriggerAfterHistoryCle
 	require.Equal(t, "compaction_trigger", items[3].Get("type").String())
 }
 
+// TestOpenAIGatewayService_Forward_NonCompactRequestIgnoresCompactOnlyModelMapping
+// provides a Compact-only mapping on an ordinary Responses path. It checks
+// client and upstream model attribution and captured body retain the requested
+// model.
 func TestOpenAIGatewayService_Forward_NonCompactRequestIgnoresCompactOnlyModelMapping(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -896,6 +1037,10 @@ func TestOpenAIGatewayService_Forward_NonCompactRequestIgnoresCompactOnlyModelMa
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_CompactOnlyModelMappingOverridesUpstreamModel
+// maps an OAuth passthrough Compact request to another upstream model. It
+// checks outgoing and Ops attribution use that model while client output and
+// result retain the requested identity.
 func TestOpenAIGatewayService_OAuthPassthrough_CompactOnlyModelMappingOverridesUpstreamModel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -941,14 +1086,21 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactOnlyModelMappingOverridesU
 	require.Equal(t, "gpt-5.4-openai-compact", opsModel)
 }
 
+// TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextProvider
+// separately forwards the same admitted bytes through two differently mapped
+// providers. It checks the second body uses its own mapping despite injected
+// cached content from the failed first attempt.
 func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextProvider(t *testing.T) {
 	tests := []struct {
-		name          string
-		requestModel  string
-		firstMapping  map[string]any
-		secondMapping map[string]any
-		wantFirst     string
-		wantSecond    string
+		name         string // case display name
+		requestModel string // admitted client model
+		// firstMapping and secondMapping configure the respective provider attempts;
+		// nil leaves that provider unmapped. wantFirst and wantSecond assert
+		// captured models after each separately invoked forward.
+		firstMapping  map[string]any // first provider model rules
+		secondMapping map[string]any // second provider model rules
+		wantFirst     string         // first captured upstream model
+		wantSecond    string         // second captured upstream model
 	}{
 		{
 			name:          "both providers have mapping",
@@ -1016,6 +1168,9 @@ func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextProvider(
 			require.Len(t, upstream.bodies, 1)
 			require.Equal(t, tt.wantFirst, gjson.GetBytes(upstream.bodies[0], "model").String())
 
+			// Inject the first provider's legacy parsed-body cache before the explicit
+			// second forward; its captured model must come from admitted bytes and the
+			// second provider's rules.
 			c.Set("openai_parsed_request_body", map[string]any{"model": tt.wantFirst, "stream": true})
 			result, err := svc.Forward(context.Background(), c, secondProvider, body)
 			require.NoError(t, err)
@@ -1026,6 +1181,10 @@ func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextProvider(
 	}
 }
 
+// openAIFailoverCachedBodyTestProvider creates an active OAuth fixture
+// provider with the supplied identity and optional model mapping. The
+// credentials retain the supplied mapping map, so callers keep it stable
+// during forwarding.
 func openAIFailoverCachedBodyTestProvider(id int64, name string, mapping map[string]any) *gatewayprovider.ExecutionProvider {
 	credentials := map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-provider"}
 	if mapping != nil {
@@ -1046,20 +1205,42 @@ func openAIFailoverCachedBodyTestProvider(id int64, name string, mapping map[str
 	}
 }
 
+// Do waits for request cancellation while modeling a missing upstream response
+// header. The cancellation branch closes the fixture signal through once and
+// returns the context error. A 1500-millisecond guard returns a fixture
+// failure when forwarding has not cancelled in time.
+//
+// Tests initialize canceled before invoking Do and wait for forwarding to
+// return before inspecting it. If both select cases are ready, the selected
+// branch determines the returned error; the timer branch leaves the
+// cancellation signal open.
 func (u *blockingOpenAIResponseHeaderUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	select {
 	case <-req.Context().Done():
+		// Close the cancellation signal once so repeated transport calls cannot
+		// panic, and tests can distinguish cancellation from the guard timeout.
 		u.once.Do(func() { close(u.canceled) })
 		return nil, req.Context().Err()
+	// Bound this fixture header wait so missing first-output cancellation reports
+	// a test failure instead of leaving the synchronous forwarding call blocked
+	// indefinitely.
 	case <-time.After(1500 * time.Millisecond):
 		return nil, errors.New("test upstream was not canceled before response headers")
 	}
 }
 
+// DoWithTLS delegates the same header-wait fixture to Do for transports
+// selecting TLS. Proxy, provider, concurrency and TLS-profile arguments are
+// ignored; request context cancellation and the initialized signal follow Do's
+// rules.
 func (u *blockingOpenAIResponseHeaderUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, "", 0, 0)
 }
 
+// TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait delays
+// response headers beyond the configured first-output allowance. It checks
+// prompt typed timeout, cancelled upstream context and empty client body while
+// the transport fixture records cancellation.
 func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T) {
 	upstream := &blockingOpenAIResponseHeaderUpstream{canceled: make(chan struct{})}
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{OpenAIFirstOutputTimeoutSeconds: 1, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}, transport: upstream})
@@ -1084,6 +1265,7 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "first_output_timeout")
 	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	// Leave two hundred milliseconds before the fixture guard timeout.
 	require.Less(t, time.Since(started), 1300*time.Millisecond)
 	require.Empty(t, rec.Body.String())
 	select {
@@ -1093,6 +1275,10 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	}
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs mixes
+// valid and invalid IDs for several tool and message item types. It checks
+// invalid IDs disappear while valid IDs, call IDs and tool arguments remain in
+// captured passthrough input.
 func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1146,6 +1332,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *tes
 	require.False(t, gjson.GetBytes(forwarded, "input.9.id").Exists())
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_SanitizesNativeToolItemIDs sends
+// custom and search tool items through OAuth and setup-token passthrough. It
+// checks incorrect function prefixes disappear while valid custom/search
+// prefixes reach the Codex endpoint.
 func TestOpenAIGatewayService_OAuthPassthrough_SanitizesNativeToolItemIDs(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken} {
 		t.Run(providerType, func(t *testing.T) {
@@ -1190,6 +1380,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_SanitizesNativeToolItemIDs(t *tes
 	}
 }
 
+// TestOpenAIGatewayService_SetupTokenLegacy_SanitizesAndTransforms sends
+// setup-token input with reasoning mode, a malformed custom-tool ID and an
+// orphan result. It checks Codex preparation disables store, converts effort
+// and removes the malformed ID and orphan item.
 func TestOpenAIGatewayService_SetupTokenLegacy_SanitizesAndTransforms(t *testing.T) {
 	upstreamSSE := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n"
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -1230,6 +1424,10 @@ func TestOpenAIGatewayService_SetupTokenLegacy_SanitizesAndTransforms(t *testing
 	require.Len(t, gjson.GetBytes(upstream.lastBody, "input").Array(), 1)
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidReasoningItemIDs
+// sends invalid and valid reasoning IDs with a valid message. It checks
+// captured API-key passthrough input removes the invalid reasoning ID while
+// retaining the valid reasoning and message IDs.
 func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidReasoningItemIDs(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1262,12 +1460,15 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidReasoningItemIDs(t 
 	require.Equal(t, "msg_valid", gjson.GetBytes(upstream.lastBody, "input.2.id").String())
 }
 
+// TestShouldStripOpenAIResponsesInputItemID_Reasoning compares item types
+// against valid and mismatched ID prefixes. It checks each table verdict,
+// including the supported function-call ID on custom-tool output.
 func TestShouldStripOpenAIResponsesInputItemID_Reasoning(t *testing.T) {
 	testCases := []struct {
-		name     string
-		itemType string
-		id       string
-		want     bool
+		name     string // case display name
+		itemType string // input item type
+		id       string // candidate item identifier
+		want     bool   // expected removal verdict
 	}{
 		{"reasoning item_* id", "reasoning", "item_bad_reasoning", true},
 		{"reasoning rs id", "reasoning", "rs_abc123", false},
@@ -1293,6 +1494,10 @@ func TestShouldStripOpenAIResponsesInputItemID_Reasoning(t *testing.T) {
 	}
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear measures
+// total allocated bytes while sanitizing twenty and two hundred malformed IDs.
+// It checks ten times the item count stays below thirty times the smaller
+// allocation sample.
 func TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear(t *testing.T) {
 	makeBody := func(itemCount int) []byte {
 		items := make([]string, itemCount)
@@ -1302,6 +1507,9 @@ func TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear(t *testing
 		return []byte(`{"model":"gpt-5.6-sol","input":[` + strings.Join(items, ",") + `]}`)
 	}
 	allocatedBytes := func(body []byte) uint64 {
+		// Collect fixture garbage before each sample so TotalAlloc snapshots
+		// surround the sanitizer call, excluding allocation for constructing the
+		// input body.
 		runtime.GC()
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
@@ -1315,10 +1523,15 @@ func TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear(t *testing
 
 	smallAllocated := allocatedBytes(makeBody(20))
 	largeAllocated := allocatedBytes(makeBody(200))
+	// Allow thirtyfold allocation growth for the tenfold fixture size increase.
 	require.Less(t, largeAllocated, smallAllocated*30,
 		"10x more input items must not cause quadratic whole-body allocation growth")
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyPreservesOpaqueReferences
+// normalizes custom output beside an item reference and an unknown item type
+// for two provider types. It checks only the malformed output ID disappears
+// and a second normalization is unchanged.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyPreservesOpaqueReferences(t *testing.T) {
 	body := []byte(`{"type":"response.create","input":[
 		{"type":"custom_tool_call","id":"ctc_call","call_id":"call_custom","name":"apply_patch","input":"patch"},
@@ -1358,6 +1571,10 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyPreservesOpaqueRefere
 	}
 }
 
+// TestForwardResponsesChatCompletionsFallbackKeepsFunctionArgumentsSingle
+// splits a Chat tool call between identity and argument chunks. It checks
+// translated delta accumulation and both final Responses argument
+// representations contain the argument JSON once.
 func TestForwardResponsesChatCompletionsFallbackKeepsFunctionArgumentsSingle(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"run a command","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1397,6 +1614,14 @@ func TestForwardResponsesChatCompletionsFallbackKeepsFunctionArgumentsSingle(t *
 	require.Equal(t, wantArgs, gjson.Get(findPassthroughArgsSSEEvent(t, events, "response.output_item.done", "chatcmpl-tool-a"), "item.arguments").String())
 }
 
+// chatToolCallChunkJSON builds one Chat tool-call delta for the fixed fixture
+// response and tool slot. includeIdentity supplies the call ID, type and
+// function name; later chunks can carry arguments alone. Empty arguments are
+// encoded on the identity chunk, and later empty chunks omit that field.
+// Keeping the same index while omitting repeated identity reproduces split
+// tool delivery for the Responses converter. Callers supply argument text whose
+// strconv.Quote representation is valid JSON, because this helper embeds that
+// Go-quoted string directly.
 func chatToolCallChunkJSON(includeIdentity bool, arguments string) string {
 	identity := ""
 	functionFields := make([]string, 0, 2)
@@ -1414,6 +1639,10 @@ func chatToolCallChunkJSON(includeIdentity bool, arguments string) string {
 	)
 }
 
+// passthroughArgsTestConfig creates request options that allow the HTTP
+// fixture upstream URL. URL policy validation is disabled and insecure HTTP is
+// allowed for this synthetic host; callers receive fresh options for each
+// service.
 func passthroughArgsTestConfig() *responsesFixtureOptions {
 	return &responsesFixtureOptions{Request: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{
 		Enabled:           false,
@@ -1421,6 +1650,9 @@ func passthroughArgsTestConfig() *responsesFixtureOptions {
 	}}}
 }
 
+// passthroughArgsFallbackProvider creates a fresh API-key OpenAI provider for
+// tool-argument conversion fixtures. It supplies the synthetic HTTP base URL
+// and one execution slot; tests set routing extras on the returned provider.
 func passthroughArgsFallbackProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1437,6 +1669,10 @@ func passthroughArgsFallbackProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_ImageIntentPreservesGateAndBilling
+// exercises image tool input with denied and allowed groups in API-key
+// passthrough. It checks pre-transport rejection or unchanged admitted body
+// and returned image pricing dimensions.
 func TestOpenAIGatewayService_APIKeyPassthrough_ImageIntentPreservesGateAndBilling(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":"draw"}`)
 
@@ -1482,6 +1718,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ImageIntentPreservesGateAndBilli
 	})
 }
 
+// TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletions
+// forces buffered Responses input through Chat conversion with reasoning and
+// priority tier. It checks Chat endpoint/profile, converted client text, usage
+// and separate requested/observed tier and model attribution.
 func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletions(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","input":"hello","reasoning":{"effort":"max"},"stream":false,"service_tier":"priority"}`)
 	rec := httptest.NewRecorder()
@@ -1523,6 +1763,10 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	require.False(t, result.Stream)
 }
 
+// TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions
+// forces streaming Responses input through split Chat text and usage chunks.
+// It checks the Chat usage request option, translated text/terminal events and
+// returned usage with a first-token observation.
 func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1567,6 +1811,10 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.NotNil(t, result.FirstTokenMs)
 }
 
+// TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit
+// truncates a Chat tool argument at the output-token limit. It checks an
+// invalid-JSON error with retained usage and no translated final argument,
+// item or done-marker output.
 func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","input":"run the command","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1599,6 +1847,10 @@ func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t
 	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText receives
+// DeepSeek reasoning followed by an empty content field at the length limit.
+// It checks visible Responses text, incomplete status and a client done
+// marker.
 func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1633,6 +1885,10 @@ func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *test
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+// TestForwardResponses_PreserveClientProtocolUsesResponsesEndpoint selects
+// client-protocol preservation despite an earlier Chat endpoint hint. It
+// checks native Responses input/endpoint, successful text and returned
+// requested reasoning effort.
 func TestForwardResponses_PreserveClientProtocolUsesResponsesEndpoint(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-flash","input":"hello","reasoning":{"effort":"max"},"stream":false}`)
 	rec := httptest.NewRecorder()
@@ -1666,6 +1922,10 @@ func TestForwardResponses_PreserveClientProtocolUsesResponsesEndpoint(t *testing
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// forceChatResponsesFallbackProvider creates the ordinary raw Chat fixture
+// provider and selects forced Chat routing. Callers may mutate the returned
+// provider extras independently of other invocations because the base helper
+// constructs a fresh provider.
 func forceChatResponsesFallbackProvider() *gatewayprovider.ExecutionProvider {
 	provider := rawChatCompletionsTestProvider()
 	provider.Record.Extra = map[string]any{
@@ -1674,14 +1934,23 @@ func forceChatResponsesFallbackProvider() *gatewayprovider.ExecutionProvider {
 	return provider
 }
 
+// SetReasoningContent records reasoning text under itemID, allocating the
+// capture map when absent. Existing text is overwritten, context and TTL are
+// ignored, and tests provide serial access to this mutable fixture.
 func (c *reasoningCacheStub) SetReasoningContent(_ context.Context, itemID, content string, _ time.Duration) error {
 	if c.sets == nil {
 		c.sets = make(map[string]string)
 	}
+	// Capture the plain reasoning summary written by history conversion so the
+	// test can inspect it separately from encrypted text supplied by the read
+	// fixture.
 	c.sets[itemID] = content
 	return nil
 }
 
+// GetReasoningContent reads the preloaded reasoning text for itemID and
+// returns the cache not-found error when absent. Context is ignored and
+// captured writes in sets do not populate this read map.
 func (c *reasoningCacheStub) GetReasoningContent(_ context.Context, itemID string) (string, error) {
 	if content, ok := c.getResp[itemID]; ok {
 		return content, nil
@@ -1689,6 +1958,10 @@ func (c *reasoningCacheStub) GetReasoningContent(_ context.Context, itemID strin
 	return "", session.ErrReasoningContentNotFound
 }
 
+// TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache converts
+// tool history containing plain and encrypted reasoning into Chat messages. It
+// checks the encrypted item uses cached text and the plain item is captured by
+// the reasoning cache writer.
 func TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","stream":false,"input":[
 		{"type":"reasoning","id":"item_plain","summary":[{"type":"summary_text","text":"plain thinking"}]},
@@ -1719,6 +1992,10 @@ func TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache(t *test
 	require.Equal(t, "plain thinking", cache.sets["item_plain"])
 }
 
+// TestDeepSeekResponsesForwardRestoresClientToolsStreaming lowers custom tools
+// for a DeepSeek Responses exchange and receives function-call SSE. It checks
+// the upstream tool shape and unversioned endpoint while downstream
+// custom-call input is restored.
 func TestDeepSeekResponsesForwardRestoresClientToolsStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(true)
 	recorder := httptest.NewRecorder()
@@ -1762,6 +2039,10 @@ func TestDeepSeekResponsesForwardRestoresClientToolsStreaming(t *testing.T) {
 	require.Contains(t, output, `"input":"pwd"`)
 }
 
+// TestDeepSeekAdaptiveResponsesForwardRestoresClientToolsNonStreaming selects
+// the configured adaptive DeepSeek Responses base and receives two lowered
+// function calls. It checks the outgoing tool form and restored custom-call
+// types and input text in buffered output.
 func TestDeepSeekAdaptiveResponsesForwardRestoresClientToolsNonStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
@@ -1804,6 +2085,10 @@ func TestDeepSeekAdaptiveResponsesForwardRestoresClientToolsNonStreaming(t *test
 	require.Equal(t, "*** Begin Patch", gjson.Get(recorder.Body.String(), "output.1.input").String())
 }
 
+// TestDeepSeekResponsesCompactSkipsClientToolAdaptation sends custom tool
+// declarations to the DeepSeek Compact path. It checks the captured
+// declaration remains custom and the upstream endpoint includes the Compact
+// suffix.
 func TestDeepSeekResponsesCompactSkipsClientToolAdaptation(t *testing.T) {
 	body := openAIClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
@@ -1836,8 +2121,9 @@ func TestDeepSeekResponsesCompactSkipsClientToolAdaptation(t *testing.T) {
 	require.Equal(t, "/responses/compact", upstream.lastReq.URL.Path)
 }
 
-// TestOpenAIResponsesEmptyCompletedFailsOver checks pre-output failover for empty terminals in standard and
-// passthrough streams.
+// TestOpenAIResponsesEmptyCompletedFailsOver receives created and bare
+// completed events in managed and passthrough streams. It checks a
+// silent-refusal failover with upstream request ID and no client output.
 func TestOpenAIResponsesEmptyCompletedFailsOver(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "managed"
@@ -1874,11 +2160,13 @@ func TestOpenAIResponsesEmptyCompletedFailsOver(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesEmptyCompletedExemptions checks valid terminals with content, usage, or output items.
+// TestOpenAIResponsesEmptyCompletedExemptions receives semantic text, terminal
+// usage or a terminal output item in managed and passthrough streams. It
+// checks each fixture succeeds and writes client output.
 func TestOpenAIResponsesEmptyCompletedExemptions(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name string // case display name
+		body string // upstream SSE fixture
 	}{
 		{
 			name: "semantic output",
@@ -1920,13 +2208,17 @@ func TestOpenAIResponsesEmptyCompletedExemptions(t *testing.T) {
 	}
 }
 
-// TestOpenAIResponsesCompletedEventIsEmpty checks terminal emptiness across field combinations.
+// TestOpenAIResponsesCompletedEventIsEmpty classifies completed event payloads
+// with output, usage, errors and malformed JSON. It checks accumulated usage
+// also prevents the empty-terminal verdict in the corresponding case.
 func TestOpenAIResponsesCompletedEventIsEmpty(t *testing.T) {
 	tests := []struct {
-		name  string
-		data  string
-		usage *protocolopenai.ForwardUsage
-		want  bool
+		name string // case display name
+		data string // terminal JSON fixture
+		// usage supplies earlier accumulated counts; nil leaves emptiness dependent
+		// on evidence in the terminal payload supplied by this case.
+		usage *protocolopenai.ForwardUsage // earlier usage observation
+		want  bool                         // expected empty verdict
 	}{
 		{name: "bare completed", data: `{"type":"response.completed"}`, want: true},
 		{name: "empty output", data: `{"type":"response.completed","response":{"output":[]}}`, want: true},
@@ -1944,7 +2236,13 @@ func TestOpenAIResponsesCompletedEventIsEmpty(t *testing.T) {
 	}
 }
 
+// TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails returns a
+// missing-instructions error for a request carrying cache and token fields. It
+// checks client error identity and warning metadata, including request
+// headers/size with no logged body preview.
 func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing.T) {
+	// Capture shared structured logs for this synchronous exchange, then restore
+	// the hook on exit so later scenarios use their normal logging sink.
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -1997,6 +2295,10 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 	require.False(t, logSink.ContainsFieldValue("request_body_preview", ""))
 }
 
+// TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover
+// receives a transient processing message inside an HTTP 400 error. It checks
+// the typed failover retains status/body and leaves the client writer
+// uncommitted.
 func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2040,6 +2342,10 @@ func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t
 	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层换号，而不是直接向客户端写响应")
 }
 
+// TestOpenAIGatewayService_Forward_APIKeyMissingInstructionsKeepsLargeInputRaw
+// forwards API-key input without instructions and with an integer beyond exact
+// float precision. It checks JSON equivalence, absent injected instructions
+// and retained raw integer text.
 func TestOpenAIGatewayService_Forward_APIKeyMissingInstructionsKeepsLargeInputRaw(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2083,6 +2389,9 @@ func TestOpenAIGatewayService_Forward_APIKeyMissingInstructionsKeepsLargeInputRa
 	require.Equal(t, "9007199254740993", gjson.GetBytes(upstream.lastBody, "input.0.content.0.nonce").Raw)
 }
 
+// TestOpenAIGatewayService_Forward_AstraReasoningEffortUsesGroupMapping
+// applies group effort mapping before mapping the client model to Astra. It
+// checks both minimal and none become low in captured upstream input.
 func TestOpenAIGatewayService_Forward_AstraReasoningEffortUsesGroupMapping(t *testing.T) {
 	for _, effort := range []string{"minimal", "none"} {
 		t.Run(effort, func(t *testing.T) {
@@ -2138,10 +2447,13 @@ func TestOpenAIGatewayService_Forward_AstraReasoningEffortUsesGroupMapping(t *te
 	}
 }
 
+// TestOpenAIGatewayService_Forward_PassthroughPreservesAstraInputWithoutGroupMapping
+// passes Astra effort values through API-key passthrough without a group rule.
+// It checks none and minimal remain unchanged in the captured upstream body.
 func TestOpenAIGatewayService_Forward_PassthroughPreservesAstraInputWithoutGroupMapping(t *testing.T) {
 	for _, tt := range []struct {
-		effort string
-		want   string
+		effort string // admitted reasoning effort
+		want   string // expected upstream effort
 	}{
 		{effort: "none", want: "none"},
 		{effort: "minimal", want: "minimal"},
@@ -2186,6 +2498,10 @@ func TestOpenAIGatewayService_Forward_PassthroughPreservesAstraInputWithoutGroup
 	}
 }
 
+// TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes
+// combines image-tool normalization with removal of an unsupported completion
+// limit. It checks later deletions survive serialization while the image
+// output-format field remains available.
 func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2225,9 +2541,10 @@ func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *t
 	require.Equal(t, "png", gjson.GetBytes(upstream.lastBody, "tools.0.output_format").String())
 }
 
-// TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions checks that native Responses
-// forwarding
-// maps max_tokens to max_output_tokens and removes unsupported prompt_cache_options (#4417).
+// TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions
+// sends legacy output limits and unsupported prompt-cache options through
+// native forwarding. It checks limit renaming, option removal and precedence
+// of an already supplied max_output_tokens value.
 func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions(t *testing.T) {
 	runForward := func(t *testing.T, body []byte) []byte {
 		t.Helper()
@@ -2280,6 +2597,10 @@ func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOpt
 	})
 }
 
+// TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate maps a text
+// alias to an image model for a group that denies images. It checks rejection
+// before transport, then successful text-provider forwarding with the cached
+// request-intent hint still false.
 func TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2338,6 +2659,10 @@ func TestOpenAIGatewayService_Forward_MappedImageModelUsesImageGate(t *testing.T
 	require.False(t, cached)
 }
 
+// TestOpenAIGatewayService_Forward_TextResponsesSetsBillingModelToMappedModel
+// maps a text request to another upstream model. It checks client identity
+// remains requested while outgoing body and returned billing/upstream model
+// attribution use the mapping.
 func TestOpenAIGatewayService_Forward_TextResponsesSetsBillingModelToMappedModel(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2382,6 +2707,10 @@ func TestOpenAIGatewayService_Forward_TextResponsesSetsBillingModelToMappedModel
 	require.Equal(t, 0, result.ImageCount)
 }
 
+// TestOpenAIGatewayService_Forward_TextResponsesWithoutMappingKeepsRequestedBillingModel
+// forwards text input with no configured model mapping. It checks requested,
+// billing and upstream model attribution all retain the admitted model after
+// success.
 func TestOpenAIGatewayService_Forward_TextResponsesWithoutMappingKeepsRequestedBillingModel(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2420,6 +2749,10 @@ func TestOpenAIGatewayService_Forward_TextResponsesWithoutMappingKeepsRequestedB
 	require.Equal(t, "gpt-5.4", result.UpstreamModel)
 }
 
+// TestOpenAIGatewayService_Forward_TextDataImageDoesNotForceMapMarshal places
+// a literal image-data prefix inside ordinary text alongside a huge numeric
+// exponent. It checks the captured upstream exponent retains its raw
+// representation after successful forwarding.
 func TestOpenAIGatewayService_Forward_TextDataImageDoesNotForceMapMarshal(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2457,6 +2790,10 @@ func TestOpenAIGatewayService_Forward_TextDataImageDoesNotForceMapMarshal(t *tes
 	require.Equal(t, "1e1000000", gjson.GetBytes(upstream.lastBody, "input.0.content.0.nonce").Raw)
 }
 
+// TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode
+// combines image generation metadata with an input number beyond float
+// decoding range. It checks the raw number and returned image count, size
+// class and billing-model attribution.
 func TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2499,6 +2836,10 @@ func TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode(t *
 	require.Equal(t, "gpt-image-2", result.BillingModel)
 }
 
+// TestOpenAIGatewayService_Forward_ImageToolWithImageOnlyModelIsNormalized
+// requests an image-only main model with an image generation tool. It checks
+// successful forwarding uses the configured Responses main-model constant in
+// captured input.
 func TestOpenAIGatewayService_Forward_ImageToolWithImageOnlyModelIsNormalized(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2536,6 +2877,10 @@ func TestOpenAIGatewayService_Forward_ImageToolWithImageOnlyModelIsNormalized(t 
 	require.Equal(t, openaicore.ImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError
+// rejects encrypted reasoning before a successful retry. It checks the first
+// captured body retains ciphertext and exact integer text, while recovery
+// removes ciphertext and keeps reasoning summary.
 func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		responses: []*http.Response{
@@ -2584,6 +2929,9 @@ func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError(
 	require.Equal(t, "summary_text", gjson.GetBytes(upstream.bodies[1], "input.0.summary.0.type").String())
 }
 
+// TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDropsCompaction rejects an
+// encrypted compaction item before a successful retry. It checks the first
+// body contains compaction and the retry retains only the following message.
 func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDropsCompaction(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		responses: []*http.Response{
@@ -2631,6 +2979,9 @@ func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDropsCompaction(t *testin
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.1").Exists())
 }
 
+// TestOpenAIGatewayService_Forward_CodexSparkRejectsEscapedInputImage spells
+// an image item type with a JSON Unicode escape for Codex Spark. It checks
+// HTTP 400, nil result and no outgoing transport request.
 func TestOpenAIGatewayService_Forward_CodexSparkRejectsEscapedInputImage(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2669,6 +3020,10 @@ func TestOpenAIGatewayService_Forward_CodexSparkRejectsEscapedInputImage(t *test
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling
+// enables CLI image-tool injection for an allowed group and receives an image
+// result. It checks returned image count, size class and image billing-model
+// attribution.
 func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2713,6 +3068,10 @@ func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *te
 	require.Equal(t, "gpt-image-2", result.BillingModel)
 }
 
+// TestOpenAIGatewayService_Forward_HTTPPreservesPreviousResponseIDForAPIKey
+// sends empty-string and null continuation IDs through API-key HTTP
+// forwarding. It checks both captured upstream bodies retain the
+// previous_response_id field after successful exchange.
 func TestOpenAIGatewayService_Forward_HTTPPreservesPreviousResponseIDForAPIKey(t *testing.T) {
 	cfg := &responsesFixtureOptions{}
 	cfg.Request.URLPolicy.Enabled = false
@@ -2755,6 +3114,10 @@ func TestOpenAIGatewayService_Forward_HTTPPreservesPreviousResponseIDForAPIKey(t
 	}
 }
 
+// TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool uses a
+// custom API-key Spark provider with an image-enabled group. It checks both
+// image generation and ordinary function tools remain in captured upstream
+// input.
 func TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2783,7 +3146,9 @@ func TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool(t *tes
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	// Custom API key services do not use Codex OAuth Spark tool restrictions.
+	// Allow image generation on this custom API-key Spark case so captured tool
+	// assertions exercise its credential-type handling rather than the group
+	// permission rejection.
 	c.Set("api_key", &apikey.APIKey{Group: &routing.Group{AllowImageGeneration: true}})
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
@@ -2796,6 +3161,10 @@ func TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool(t *tes
 	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="function")`).Exists())
 }
 
+// TestOpenAIGatewayService_Forward_ImageOnlyModelKeepsSupportedVerbosity
+// requests an image-only model with low text verbosity. It checks upstream
+// preparation selects the Responses main model and retains the supported
+// verbosity field.
 func TestOpenAIGatewayService_Forward_ImageOnlyModelKeepsSupportedVerbosity(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2834,6 +3203,9 @@ func TestOpenAIGatewayService_Forward_ImageOnlyModelKeepsSupportedVerbosity(t *t
 	require.Equal(t, openaicore.ImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+// TestOpenAIGatewayServiceForwardPreservesGPT56MaxEffort forwards GPT-5.6
+// input with maximum effort through an API-key provider. It checks captured
+// reasoning effort and returned requested-effort attribution both retain max.
 func TestOpenAIGatewayServiceForwardPreservesGPT56MaxEffort(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2874,6 +3246,9 @@ func TestOpenAIGatewayServiceForwardPreservesGPT56MaxEffort(t *testing.T) {
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceForwardPreservesMappedGPT56MaxEffort maps a client
+// alias to GPT-5.6 with maximum effort. It checks upstream model mapping
+// retains max in captured input and result effort.
 func TestOpenAIGatewayServiceForwardPreservesMappedGPT56MaxEffort(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2918,6 +3293,9 @@ func TestOpenAIGatewayServiceForwardPreservesMappedGPT56MaxEffort(t *testing.T) 
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceForwardOAuthCompactDowngradesMaxEffort forwards an
+// OAuth request through the legacy Compact path with maximum effort. It checks
+// the Codex Compact URL and xhigh in captured input and result effort.
 func TestOpenAIGatewayServiceForwardOAuthCompactDowngradesMaxEffort(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -2961,6 +3339,11 @@ func TestOpenAIGatewayServiceForwardOAuthCompactDowngradesMaxEffort(t *testing.T
 	require.Equal(t, "xhigh", *result.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceForwardOAuthRemoteCompactV2PreservesResponsesWire
+// requests remote compaction through ordinary OAuth Responses with a
+// Compact-only model mapping configured. It checks the ordinary model/path,
+// beta header and reasoning controls remain, and encrypted compaction reaches
+// client output.
 func TestOpenAIGatewayServiceForwardOAuthRemoteCompactV2PreservesResponsesWire(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3019,6 +3402,11 @@ func TestOpenAIGatewayServiceForwardOAuthRemoteCompactV2PreservesResponsesWire(t
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceForwardAPIKeyRemoteCompactV2PreservesResponsesWire
+// requests remote compaction through ordinary API-key Responses with a
+// Compact-only model mapping configured. It checks the ordinary model/path,
+// beta header and reasoning controls remain, and encrypted compaction reaches
+// client output.
 func TestOpenAIGatewayServiceForwardAPIKeyRemoteCompactV2PreservesResponsesWire(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3078,10 +3466,14 @@ func TestOpenAIGatewayServiceForwardAPIKeyRemoteCompactV2PreservesResponsesWire(
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents
+// requests images through a main model, hosted tool or tool choice in an
+// image-disabled group. It checks permission errors and no outgoing transport
+// request for each case.
 func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *testing.T) {
 	tests := []struct {
-		name string
-		body []byte
+		name string // case display name
+		body []byte // image intent request
 	}{
 		{
 			name: "image model",
@@ -3115,6 +3507,9 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *te
 	}
 }
 
+// TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses sends
+// ordinary text through a group that disables image generation. It checks
+// successful transport/output, returned text usage and zero counted images.
 func TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3138,10 +3533,14 @@ func TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses(t *tes
 	require.NotNil(t, upstream.lastReq)
 }
 
+// TestOpenAIGatewayServiceForward_DisabledGroupAllowsPassiveImageNamespace
+// declares a passive image namespace in managed and passthrough requests for
+// an image-disabled group. It checks success, retained namespace and a true
+// broad image-intent hint.
 func TestOpenAIGatewayServiceForward_DisabledGroupAllowsPassiveImageNamespace(t *testing.T) {
 	tests := []struct {
-		name        string
-		passthrough bool
+		name        string // case display name
+		passthrough bool   // selected forwarding mode
 	}{
 		{name: "managed forwarding"},
 		{name: "passthrough forwarding", passthrough: true},
@@ -3183,13 +3582,20 @@ func TestOpenAIGatewayServiceForward_DisabledGroupAllowsPassiveImageNamespace(t 
 	}
 }
 
+// TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability
+// varies group image permission, bridge enablement and Responses-lite
+// selection. It checks hosted-tool, tool-choice and instruction injection
+// follow the table, with the lite header forwarded.
 func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(t *testing.T) {
 	tests := []struct {
-		name          string
-		allowImages   bool
-		bridgeEnabled bool
-		responsesLite bool
-		wantInjected  bool
+		name string // case display name
+		// allowImages and bridgeEnabled permit injection together in these cases;
+		// responsesLite suppresses it despite both being enabled. wantInjected
+		// applies to tool, choice and instruction assertions.
+		allowImages   bool // group image permission
+		bridgeEnabled bool // default bridge enablement
+		responsesLite bool // lite header selection
+		wantInjected  bool // expected bridge injection
 	}{
 		{name: "disabled group skips injection", allowImages: false, bridgeEnabled: true, wantInjected: false},
 		{name: "enabled group skips injection by default", allowImages: true, bridgeEnabled: false, wantInjected: false},
@@ -3237,6 +3643,10 @@ func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(
 	}
 }
 
+// TestOpenAIGatewayServiceForward_ExplicitImageToolWorksWithBridgeDisabled
+// supplies an image tool for an allowed group while automatic bridge injection
+// is disabled. It checks output-format normalization and retained tool with no
+// bridge instruction text.
 func TestOpenAIGatewayServiceForward_ExplicitImageToolWorksWithBridgeDisabled(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3262,6 +3672,10 @@ func TestOpenAIGatewayServiceForward_ExplicitImageToolWorksWithBridgeDisabled(t 
 	require.NotContains(t, instructions, "image_generation")
 }
 
+// TestOpenAIGatewayServiceForward_ProviderPolicyStripsExplicitImageTool
+// selects provider stripping for an explicit image tool and image tool choice.
+// It checks both are removed while the ordinary function tool remains and
+// bridge instructions stay absent.
 func TestOpenAIGatewayServiceForward_ProviderPolicyStripsExplicitImageTool(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3299,10 +3713,14 @@ func TestOpenAIGatewayServiceForward_ProviderPolicyStripsExplicitImageTool(t *te
 	require.NotContains(t, instructions, "image_generation")
 }
 
+// TestOpenAIGatewayServiceForward_ProviderPolicyStripsImageNamespaceTools
+// declares image namespaces at the top level and inside additional_tools in
+// both forwarding modes. It checks stripping keeps shell/code tools, user text
+// and auto choice while the cached broad intent remains true.
 func TestOpenAIGatewayServiceForward_ProviderPolicyStripsImageNamespaceTools(t *testing.T) {
 	tests := []struct {
-		name        string
-		passthrough bool
+		name        string // case display name
+		passthrough bool   // selected forwarding mode
 	}{
 		{name: "managed forwarding"},
 		{name: "passthrough forwarding", passthrough: true},
@@ -3359,6 +3777,9 @@ func TestOpenAIGatewayServiceForward_ProviderPolicyStripsImageNamespaceTools(t *
 	}
 }
 
+// TestOpenAIGatewayServiceForward_GroupProtocolEnablesCodexInjection enables
+// the group Responses image policy on a Codex-shaped request. It checks hosted
+// image-tool and image instruction injection after successful forwarding.
 func TestOpenAIGatewayServiceForward_GroupProtocolEnablesCodexInjection(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3384,6 +3805,9 @@ func TestOpenAIGatewayServiceForward_GroupProtocolEnablesCodexInjection(t *testi
 	require.Contains(t, instructions, "image_generation")
 }
 
+// TestOpenAIGatewayServiceForward_CodexBridgeDoesNotInjectHostedToolAlongsideImageGenNamespace
+// enables the image bridge beside image namespaces at two request levels. It
+// checks both namespaces remain and no hosted image tool is added.
 func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotInjectHostedToolAlongsideImageGenNamespace(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3420,10 +3844,14 @@ func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotInjectHostedToolAlongside
 	require.Equal(t, "namespace", gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools").tools.#(name=="image_gen").type`).String())
 }
 
+// TestOpenAIGatewayServiceForward_CodexBridgePreservesImageGenFunction enables
+// the image bridge beside flat and nested image function declarations. It
+// checks function recognition, no hosted-tool/choice injection and no bridge
+// marker in captured instructions.
 func TestOpenAIGatewayServiceForward_CodexBridgePreservesImageGenFunction(t *testing.T) {
 	tests := []struct {
-		name string
-		tool string
+		name string // case display name
+		tool string // image function declaration
 	}{
 		{
 			name: "flat function",
@@ -3466,6 +3894,10 @@ func TestOpenAIGatewayServiceForward_CodexBridgePreservesImageGenFunction(t *tes
 	}
 }
 
+// TestOpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice
+// enables the image bridge with an existing hosted image tool choice. It
+// checks successful forwarding retains the requested choice type in captured
+// upstream input.
 func TestOpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3487,6 +3919,9 @@ func TestOpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice(t *t
 	require.Equal(t, "image_generation", gjson.GetBytes(upstream.lastBody, "tool_choice.type").String())
 }
 
+// TestOpenAIGatewayServiceForward_CodexBridgeSkipsCompactRequests enables the
+// image bridge on a legacy Compact request. It checks captured input omits
+// hosted-tool/choice injection and instructions contain no image bridge text.
 func TestOpenAIGatewayServiceForward_CodexBridgeSkipsCompactRequests(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -3502,7 +3937,9 @@ func TestOpenAIGatewayServiceForward_CodexBridgeSkipsCompactRequests(t *testing.
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0")
 	provider := newOpenAIImageGenerationControlTestProvider()
 
-	// Compact upstreams reject tool_choice, so Compact skips bridge tool injection.
+	// Select the Compact path with the bridge enabled to expose any injected
+	// image tool or choice in captured input; the assertions also inspect
+	// instructions.
 	result, err := svc.Forward(context.Background(), c, provider, []byte(`{"model":"gpt-5.4","input":"summarize the conversation","stream":false}`))
 
 	require.NoError(t, err)
@@ -3514,6 +3951,9 @@ func TestOpenAIGatewayServiceForward_CodexBridgeSkipsCompactRequests(t *testing.
 	require.NotContains(t, instructions, "image_generation")
 }
 
+// Read returns no bytes and the configured error on every invocation. A nil
+// configured error selects io.ErrUnexpectedEOF, allowing Compact tests to
+// inject a response read failure after successful request establishment.
 func (r passthroughErrReadCloser) Read(_ []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
@@ -3521,10 +3961,16 @@ func (r passthroughErrReadCloser) Read(_ []byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
 }
 
+// Close accepts fixture response cleanup and returns nil; this stateless
+// error reader records no closure observation.
 func (r passthroughErrReadCloser) Close() error {
 	return nil
 }
 
+// TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54
+// receives a model-not-found error for an unrecognized OAuth model. It checks
+// the captured Codex request retains that model and forwarding returns an
+// error response.
 func TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3565,6 +4011,10 @@ func TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54(t *tes
 	require.True(t, rec.Code >= http.StatusBadRequest)
 }
 
+// TestOpenAIGatewayService_OAuthResponsesPromotesSystemMessageWithoutDuplication
+// combines a system input message with existing OAuth instructions. It checks
+// captured instructions concatenate both once and input retains only the user
+// message before the fixture transport error.
 func TestOpenAIGatewayService_OAuthResponsesPromotesSystemMessageWithoutDuplication(t *testing.T) {
 	const systemPrompt = "Unique system prefix for Responses token accounting."
 	const existingInstructions = "Existing instructions."
@@ -3603,6 +4053,10 @@ func TestOpenAIGatewayService_OAuthResponsesPromotesSystemMessageWithoutDuplicat
 	require.Equal(t, 1, strings.Count(string(upstream.lastBody), systemPrompt))
 }
 
+// TestOpenAIGatewayService_NativeResponsesBodyModificationPreservesHTMLChars
+// prepares native Responses input containing repeated HTML characters. It
+// checks the captured body keeps literal text and the Responses endpoint
+// before the fixture HTTP error.
 func TestOpenAIGatewayService_NativeResponsesBodyModificationPreservesHTMLChars(t *testing.T) {
 	payloadText := strings.Repeat(`<tag>&value</tag>`, 128)
 	originalBody := []byte(fmt.Sprintf(`{"model":"gpt-5.5","stream":false,"max_output_tokens":100,"previous_response_id":"resp_prev","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}]}`, payloadText))
@@ -3650,6 +4104,10 @@ func TestOpenAIGatewayService_NativeResponsesBodyModificationPreservesHTMLChars(
 	require.NotContains(t, string(upstream.lastBody), `\\u0026`)
 }
 
+// TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstructions
+// sends developer-marker input and a metadata session key through OAuth
+// forwarding. It checks absent default instructions, removal of the body key
+// and populated Session_Id with other Codex identity headers absent.
 func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstructions(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3691,12 +4149,17 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
 }
 
+// TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile varies provider
+// credential type and TLS fingerprint enablement. It checks the transport
+// receives a TLS profile only for the enabled OAuth table case.
 func TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		providerType string
-		extra        map[string]any
-		wantProfile  bool
+		name         string // case display name
+		providerType string // fixture credential type
+		// extra is retained by the constructed provider record and read during
+		// forwarding; each case keeps that map stable until transport inspection.
+		extra       map[string]any // provider TLS settings
+		wantProfile bool           // expected profile presence
 	}{
 		{
 			name:         "OpenAI OAuth 启用 TLS 时传入 profile",
@@ -3751,6 +4214,9 @@ func TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile(t *testing.T) {
 				}
 			}
 
+			// Discard the scripted HTTP error because this table inspects transport
+			// TLS-profile selection; the request capture remains available even when
+			// forwarding reports fixture rejection.
 			_, _ = svc.Forward(context.Background(), c, provider, body)
 			if tc.wantProfile {
 				require.NotNil(t, upstream.lastTLSProfile)
@@ -3761,16 +4227,31 @@ func TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile(t *testing.T) {
 	}
 }
 
+// SetRateLimited appends the supplied reset deadline to the fixture call
+// history. It ignores context and provider ID, reports success and requires
+// tests to serialize writes with later inspection.
 func (r *openAIPassthroughFailoverRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
+	// Capture every reset deadline in order so failover assertions can count
+	// rate-limit updates as well as inspect the resulting wait duration.
 	r.rateLimitCalls = append(r.rateLimitCalls, resetAt)
 	return nil
 }
 
+// SetOverloaded appends the supplied overload deadline to the fixture call
+// history. It ignores context and provider ID, reports success and requires
+// tests to serialize writes with later inspection.
 func (r *openAIPassthroughFailoverRepo) SetOverloaded(_ context.Context, _ int64, until time.Time) error {
+	// Capture every overload deadline in order so failover assertions can count
+	// cooldown updates separately from verifying the configured overload
+	// duration.
 	r.overloadCalls = append(r.overloadCalls, until)
 	return nil
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormalized
+// streams OAuth passthrough with inbound credentials and mixed request
+// headers. It checks provider authentication/header selection, store/stream
+// normalization, retained input and downstream apply_patch tool identity.
 func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormalized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3817,7 +4298,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 		},
 	}
 
-	// Omit the token provider to exercise credentials from the current provider.
+	// Clear the supplied OpenAI token resolver before forwarding so the request
+	// takes credentials from the current provider record and its captured
+	// authentication can be asserted.
 	svc.Requests.Credentials.OpenAI = nil
 
 	result, err := svc.Forward(context.Background(), c, provider, originalBody)
@@ -3854,8 +4337,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	require.NotContains(t, body, "\"name\":\"edit\"")
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest checks namespace declarations,
-// tool_choice, and historical calls while clearing stale ordinary-item fields.
+// TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest passes
+// namespace declarations, tool choice and historical calls through OAuth
+// passthrough. It checks their identities remain, a stale message-level
+// namespace disappears and the nested namespace/output remain.
 func TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3908,8 +4393,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_PreservesNamespaceRequest(t *test
 	require.Contains(t, rec.Body.String(), `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse checks request
-// flattening and response restoration with compatibility mode enabled.
+// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse
+// enables OAuth passthrough namespace flattening for declarations, choice and
+// history. It checks one outgoing flattened exchange and restored tool
+// name/namespace in client SSE.
 func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAndStreamResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3982,8 +4469,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceRequestAnd
 	require.Contains(t, downstream, `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse checks namespace
-// compatibility mode for native OAuth.
+// TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse
+// enables namespace flattening on the managed OAuth Responses path. It checks
+// flattened upstream declaration/history names and restored name/namespace in
+// the client stream.
 func TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStreamResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4029,8 +4518,10 @@ func TestOpenAIGatewayService_NativeOAuth_FlattenEnabledNamespaceRequestAndStrea
 	require.Contains(t, rec.Body.String(), `"namespace":"collaboration"`)
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest checks name
-// collisions in flattening mode.
+// TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest
+// declares a top-level function that conflicts with a flattened namespace
+// function. It checks pre-transport HTTP 400 with tools parameter attribution
+// and the collision message.
 func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionReturnsBadRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4067,6 +4558,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_FlattenEnabledNamespaceCollisionR
 	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "conflicts with a top-level tool")
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreaming
+// sends streaming/store flags to OAuth passthrough Compact and receives JSON.
+// It checks those flags disappear, result is nonstreaming and the request uses
+// JSON accept and Codex identity headers.
 func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreaming(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4118,12 +4613,19 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel
+// cancels the client context before OAuth passthrough forwarding over HTTP. It
+// checks a successful result and a captured upstream context with no
+// cancellation error.
 func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	reqCtx, cancel := context.WithCancel(context.Background())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil)).WithContext(reqCtx)
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+	// Cancel before calling Forward so the captured transport context
+	// distinguishes HTTP upstream detachment from a request that happened to
+	// finish before client cancellation.
 	cancel()
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"store":true,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
@@ -4161,6 +4663,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault
+// omits instructions in Codex passthrough streaming and Compact requests. It
+// checks the model-specific synthesized instructions and stream flag behavior
+// for each path.
 func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
@@ -4210,6 +4716,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefau
 	}
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform
+// disables passthrough for OAuth input that requests buffered stored output.
+// It checks the captured body differs and carries the legacy store=false and
+// stream=true controls.
 func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4252,12 +4762,19 @@ func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *te
 	require.Contains(t, string(upstream.lastBody), `"stream":true`)
 }
 
+// TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel
+// cancels the client context before managed OAuth HTTP forwarding. It checks a
+// successful result and a captured upstream context with no cancellation
+// error.
 func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	reqCtx, cancel := context.WithCancel(context.Background())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil)).WithContext(reqCtx)
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+	// Cancel before calling Forward so the captured transport context
+	// distinguishes HTTP upstream detachment from a request that happened to
+	// finish before client cancellation.
 	cancel()
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -4295,11 +4812,17 @@ func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+// TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator
+// sends a browser-prefixed user agent containing a later Codex token. It
+// checks outgoing identity uses the default Codex user agent and codex-tui
+// originator.
 func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	// A composite UA whose leading token is not codex_cli_rs must not select the opencode identity.
+	// Place the Codex token after a browser prefix to exercise
+	// composite-user-agent recognition; paired outgoing identity is asserted
+	// after the managed OAuth exchange.
 	c.Request.Header.Set("User-Agent", "Mozilla/5.0 codex_cli_rs/0.1.0")
 
 	inputBody := []byte(`{"model":"gpt-5.2","stream":true,"store":false,"input":[{"type":"text","text":"hi"}]}`)
@@ -4331,13 +4854,16 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	_, err := svc.Forward(context.Background(), c, provider, inputBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	// Replace the browser-style composite UA with the default codex-tui identity and paired originator (issue
-	// #3901).
+	// The outgoing user agent and originator describe the same fixture client.
 	require.Equal(t, gateway.DefaultOpenAICodexUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 	require.NotEqual(t, "opencode", upstream.lastReq.Header.Get("originator"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowXCodex returns
+// quota headers alongside an OAuth passthrough usage stream. It checks primary
+// and secondary used percentages reach the client response headers after
+// successful forwarding.
 func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowXCodex(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4393,6 +4919,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowXCodex(t *tes
 	require.Equal(t, "34", rec.Header().Get("x-codex-secondary-used-percent"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughFlag
+// returns an ordinary HTTP 400 through OAuth passthrough. It checks direct
+// client status and a recorded http_error Ops event carrying passthrough
+// attribution.
 func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughFlag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4440,16 +4970,20 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughF
 	require.Equal(t, "http_error", arr[len(arr)-1].Kind)
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors returns
+// structured and unstructured API-key errors with sensitive body/header
+// fixtures. It checks status reconstruction, generic messages and allowed
+// retry delay while dropping tested secrets and diagnostic headers.
 func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testing.T) {
 	tests := []struct {
-		name           string
-		statusCode     int
-		contentType    string
-		responseBody   string
-		retryAfter     string
-		wantStatus     int
-		wantMessage    string
-		wantRetryAfter string
+		name           string // case display name
+		statusCode     int    // upstream HTTP status
+		contentType    string // upstream media type
+		responseBody   string // upstream error payload
+		retryAfter     string // upstream retry hint
+		wantStatus     int    // expected client status
+		wantMessage    string // expected public message
+		wantRetryAfter string // expected client retry hint
 	}{
 		{
 			name:           "upstream forbidden is reported as gateway failure",
@@ -4583,12 +5117,22 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 	}
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSingleJSON
+// starts Compact keepalive with an interval beyond the fixture error arrival.
+// It checks one valid JSON error with no SSE framing or sensitive upstream
+// text.
 func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSingleJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(nil))
 	MarkOpenAICompactClientStream(c)
+	// Place the first heartbeat beyond this fixture exchange so upstream
+	// rejection can select ordinary JSON before keepalive commits client stream
+	// output.
 	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+	// Prevent future heartbeat writes when this scenario exits, including
+	// assertion failures; the callback waits for an active write but does not
+	// join worker exit.
 	defer stop()
 
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Request: OpenAIRequestOptions{ForceCLI: false}}, transport: &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -4615,13 +5159,23 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSin
 	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFailedSSE
+// waits for Compact keepalive before returning an API-key error. It checks the
+// committed stream carries one response.failed event after keepalive removal,
+// with generic error text.
 func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFailedSSE(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(nil))
 	MarkOpenAICompactClientStream(c)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
+	// Prevent future heartbeat writes when this scenario exits, including
+	// assertion failures; the callback waits for an active write but does not
+	// join worker exit.
 	defer stop()
+	// Allow twenty short heartbeat intervals before forwarding the error. This
+	// helper sleeps; the SSE framing assertions below establish the observed
+	// committed stream.
 	waitForKeepaliveBeats()
 
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Request: OpenAIRequestOptions{ForceCLI: false}}, transport: &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -4651,6 +5205,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFail
 	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 }
 
+// TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover returns
+// rate-limit and overload statuses for OAuth and API-key passthrough. It
+// checks typed failover, untouched client writer, Ops attribution and the
+// corresponding repository reset or overload deadline.
 func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *testing.T) {
 	originalBody := []byte(`{"model":"gpt-5.2","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 
@@ -4678,17 +5236,21 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 	}
 
 	testCases := []struct {
-		name         string
-		providerType string
-		statusCode   int
-		body         string
-		assertRepo   func(t *testing.T, repo *openAIPassthroughFailoverRepo, start time.Time)
+		name         string // case display name
+		providerType string // fixture credential type
+		statusCode   int    // upstream failure status
+		body         string // upstream error fixture
+		// assertRepo runs after Forward returns and compares serial repository calls
+		// with the timestamp captured immediately before forwarding for this case.
+		// post-forward health assertions
+		assertRepo func(t *testing.T, repo *openAIPassthroughFailoverRepo, start time.Time)
 	}{
 		{
 			name:         "oauth_429_rate_limit",
 			providerType: capability.ProviderTypeOAuth,
 			statusCode:   http.StatusTooManyRequests,
 			body: func() string {
+				// Place reset one week ahead to exceed the asserted one-day wait.
 				resetAt := time.Now().Add(7 * 24 * time.Hour).Unix()
 				return fmt.Sprintf(`{"error":{"message":"The usage limit has been reached","type":"usage_limit_reached","resets_at":%d}}`, resetAt)
 			}(),
@@ -4706,6 +5268,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, start time.Time) {
 				require.Empty(t, repo.rateLimitCalls)
 				require.Len(t, repo.overloadCalls, 1)
+				// Allow five seconds between call-start and health timestamp preparation.
 				require.WithinDuration(t, start.Add(10*time.Minute), repo.overloadCalls[0], 5*time.Second)
 			},
 		},
@@ -4714,6 +5277,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			providerType: capability.ProviderTypeAPIKey,
 			statusCode:   http.StatusTooManyRequests,
 			body: func() string {
+				// Place reset one week ahead to exceed the asserted one-day wait.
 				resetAt := time.Now().Add(7 * 24 * time.Hour).Unix()
 				return fmt.Sprintf(`{"error":{"message":"The usage limit has been reached","type":"usage_limit_reached","resets_at":%d}}`, resetAt)
 			}(),
@@ -4731,6 +5295,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, start time.Time) {
 				require.Empty(t, repo.rateLimitCalls)
 				require.Len(t, repo.overloadCalls, 1)
+				// Allow five seconds between call-start and health timestamp preparation.
 				require.WithinDuration(t, start.Add(10*time.Minute), repo.overloadCalls[0], 5*time.Second)
 			},
 		},
@@ -4782,6 +5347,10 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 	}
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover
+// returns the listed transient server statuses through API-key passthrough. It
+// checks typed failover, retained body/request ID, closed failed body,
+// unchanged request bytes and untouched client output.
 func TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover(t *testing.T) {
 	requestBody := []byte(`{"model":"gpt-5.2","stream":false,"input":"hello"}`)
 
@@ -4849,6 +5418,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover(t *
 	}
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover
+// returns context-window evidence with HTTP 502 through API-key passthrough.
+// It checks direct client error text/status, closed body and an error that is
+// not provider failover.
 func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4881,6 +5454,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(
 	require.True(t, body.Closed)
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSameProvider
+// configures pool-mode retry for HTTP 502 on API-key passthrough. It checks
+// typed failover advertises retry on the same provider before any client
+// write.
 func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSameProvider(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -4912,12 +5489,20 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PoolModeConfigured5xxRetriesSame
 	require.False(t, c.Writer.Written())
 }
 
+// TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailover
+// compares Compact request establishment failure with response-body read
+// failure. It checks establishment yields typed failover while the read
+// failure retains io.ErrUnexpectedEOF, with neither case writing client
+// output.
 func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailover(t *testing.T) {
 	tests := []struct {
-		name           string
-		resp           *http.Response
-		err            error
-		expectFailover bool
+		name string // case display name
+		// resp supplies established-response reading and err overrides response
+		// selection with request failure in the capture transport. expectFailover
+		// distinguishes those phases in the error assertions.
+		resp           *http.Response // configured upstream response
+		err            error          // injected establishment error
+		expectFailover bool           // expected failover classification
 	}{
 		{
 			name:           "request_error",
@@ -4976,11 +5561,15 @@ func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailo
 	}
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA sends
+// a curl user agent through OAuth passthrough. It checks store/stream
+// normalization and selection of the Codex CLI user agent for the captured
+// request.
 func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	// Non-Codex UA
+	// curl supplies the non-Codex client identity for this request.
 	c.Request.Header.Set("User-Agent", "curl/8.0")
 
 	inputBody := []byte(`{"model":"gpt-5.2","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -5016,6 +5605,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *te
 	require.Equal(t, openaicore.CodexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA
+// sends a browser user agent with a configured Codex replacement identity. It
+// checks the captured user agent uses that setting and originator is paired as
+// codex-tui.
 func TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5055,9 +5648,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA(t 
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired checks official UA retention
-// and originator derivation.
-// Mismatched leading identity tokens cause upstream 404 responses (#3901).
+// TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired
+// sends an official TUI user agent with mismatched inbound originator. It
+// checks the user agent remains and the captured originator becomes codex-tui.
 func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired(t *testing.T) {
 	const tuiUA = "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)"
 
@@ -5097,6 +5690,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaire
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_TLSRouterOfficialUAIsPreservedAndPaired
+// matches a custom client to a TLS router rule supplying an official TUI
+// identity. It checks the routed user agent and derived codex-tui originator
+// in captured input.
 func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterOfficialUAIsPreservedAndPaired(t *testing.T) {
 	const routedUA = "codex-tui/9.9.0 (Linux; x86_64) xterm (codex-tui; 9.9.0)"
 
@@ -5149,6 +5746,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterOfficialUAIsPreservedAnd
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
 }
 
+// TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient enables provider
+// client restrictions for a curl request. It checks forwarding returns HTTP
+// 403 with the official-client message before needing an upstream fixture.
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5180,11 +5780,15 @@ func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "Codex official clients")
 }
 
+// TestOpenAIGatewayService_CodexCLIOnly_AllowOfficialClientFamilies enables
+// provider client restrictions across CLI, editor, app and desktop-originator
+// fixtures. It checks each case forwards successfully and reaches the
+// transport recorder.
 func TestOpenAIGatewayService_CodexCLIOnly_AllowOfficialClientFamilies(t *testing.T) {
 	tests := []struct {
-		name       string
-		ua         string
-		originator string
+		name       string // case display name
+		ua         string // inbound user agent
+		originator string // inbound client originator
 	}{
 		{name: "codex_cli_rs", ua: "codex_cli_rs/0.99.0", originator: ""},
 		{name: "codex_vscode", ua: "codex_vscode/1.0.0", originator: ""},
@@ -5235,6 +5839,9 @@ func TestOpenAIGatewayService_CodexCLIOnly_AllowOfficialClientFamilies(t *testin
 	}
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs streams
+// one text delta through OAuth passthrough with the fast tier alias. It checks
+// nonnegative first-token timing and normalized priority result attribution.
 func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5284,12 +5891,18 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *test
 	require.Equal(t, "priority", *result.ServiceTier)
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollectsUsage
+// makes later client writes fail during OAuth passthrough output. It checks
+// forwarding still returns terminal input/output/cache usage and a first-token
+// observation.
 func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollectsUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
-	// The first write succeeds and subsequent writes fail to simulate client disconnection.
+	// Permit one delegated client Write before later Write calls fail, allowing
+	// the scanner to encounter terminal usage after downstream delivery becomes
+	// unavailable.
 	c.Writer = &httptestkit.FailingWriter{ResponseWriter: c.Writer, FailAfter: 1}
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -5336,6 +5949,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollec
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 }
 
+// TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEndpoint
+// passes an API-key body with flex tier and output limit through Responses. It
+// checks identical captured bytes, endpoint/authentication/header selection
+// and returned requested-tier attribution.
 func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEndpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5384,7 +6001,13 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEnd
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream
+// includes a client timeout header in streaming OAuth passthrough input. It
+// checks the structured warning records the timeout header and value after
+// successful forwarding.
 func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *testing.T) {
+	// Capture shared structured logs for this synchronous exchange, then restore
+	// the hook on exit so later scenarios use their normal logging sink.
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -5423,7 +6046,13 @@ func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *
 	require.True(t, logSink.ContainsFieldValue("timeout_headers", "x-stainless-timeout=10000"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone ends
+// upstream SSE after text with no terminal event or done marker. It checks
+// incomplete-usage error and an informational truncation log carrying the
+// upstream request ID.
 func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *testing.T) {
+	// Capture shared structured logs for this synchronous exchange, then restore
+	// the hook on exit so later scenarios use their normal logging sink.
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -5433,7 +6062,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
-	// Omit [DONE] to simulate upstream truncation.
+	// End the fixture after visible text with neither a terminal event nor a done
+	// marker, separating emitted text from the missing usage-completion evidence.
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid-truncate"}},
@@ -5463,6 +6093,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *
 	require.True(t, logSink.ContainsFieldValue("upstream_request_id", "rid-truncate"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders sends
+// timeout and arbitrary headers through default OAuth passthrough options. It
+// checks both tested headers are absent from the captured upstream request.
 func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5506,6 +6139,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
+// TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured
+// enables timeout-header forwarding beside an arbitrary inbound header. It
+// checks the timeout value reaches the upstream while the arbitrary header
+// remains absent.
 func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5549,8 +6186,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
-// TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel checks that suffix models are sent intact
-// without a synthesized effort.
+// TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel sends an
+// OAuth model spelling that includes an effort suffix. It checks captured
+// model spelling remains intact and returned requested effort is nil.
 func TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
@@ -5591,6 +6229,11 @@ func TestOpenAIGatewayServiceForwardOAuthDerivesEffortFromSuffixModel(t *testing
 	require.Nil(t, result.ReasoningEffort)
 }
 
+// TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesProvidersBeforeWrite
+// returns provider body-limit evidence for managed and API-key passthrough
+// attempts with pool retries configured. It checks next-provider retry
+// metadata, generic client message, closed body and no committed client
+// output.
 func TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesProvidersBeforeWrite(t *testing.T) {
 	requestBody := []byte(`{"model":"gpt-5.2","stream":false,"input":"hello"}`)
 
@@ -5663,6 +6306,10 @@ func TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesProvidersBeforeWrite(t *t
 	}
 }
 
+// TestOpenAIRequestBodyLimitFailover_ContextWindow413DoesNotSwitchProviders
+// returns context-window evidence inside HTTP 413 in managed and passthrough
+// attempts. It checks direct client error text and closed body with no
+// provider-failover error.
 func TestOpenAIRequestBodyLimitFailover_ContextWindow413DoesNotSwitchProviders(t *testing.T) {
 	requestBody := []byte(`{"model":"gpt-5.2","stream":false,"input":"hello"}`)
 
@@ -5703,6 +6350,10 @@ func TestOpenAIRequestBodyLimitFailover_ContextWindow413DoesNotSwitchProviders(t
 	}
 }
 
+// TestOpenAIGatewayService_OAuthDropsOrphanAfterDroppingPreviousResponse sends
+// an orphan tool result beside an OAuth continuation ID. It checks one
+// outgoing attempt removes both the previous-response field and the orphan
+// input.
 func TestOpenAIGatewayService_OAuthDropsOrphanAfterDroppingPreviousResponse(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"previous_response_id":"resp_missing","input":[{"type":"function_call_output","call_id":"call_missing","output":"keep this result"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5723,7 +6374,13 @@ func TestOpenAIGatewayService_OAuthDropsOrphanAfterDroppingPreviousResponse(t *t
 	require.Empty(t, gjson.GetBytes(upstream.bodies[0], "input").Array())
 }
 
+// TestOpenAIGatewayService_PreservesOversizedToolOutputForUpstream builds tool
+// output above the large-text fixture length with a final multibyte character.
+// It checks the one captured upstream attempt retains the entire output
+// string.
 func TestOpenAIGatewayService_PreservesOversizedToolOutputForUpstream(t *testing.T) {
+	// Append a multibyte character after the ten-million-character ASCII prefix
+	// so exact output comparison exposes clipping or damage to the fixture tail.
 	oversized := strings.Repeat("x", openAIResponsesInputTextMaxChars) + "中"
 	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"` + oversized + `"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5743,6 +6400,11 @@ func TestOpenAIGatewayService_PreservesOversizedToolOutputForUpstream(t *testing
 	require.Equal(t, oversized, gjson.GetBytes(upstream.bodies[0], "input.1.output").String())
 }
 
+// TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth sends
+// mixed tool declarations and reasoning controls through managed and
+// passthrough OAuth lite paths. It checks namespace relocation, disabled
+// parallel calls, expanded reasoning context and parameter-specific rejection
+// of malformed field shapes.
 func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "managed"
@@ -5821,8 +6483,8 @@ func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *tes
 			require.Nil(t, badUpstream.lastReq)
 
 			for _, malformed := range []struct {
-				body      string
-				wantParam string
+				body      string // malformed lite input
+				wantParam string // expected rejected parameter
 			}{
 				{body: `{"model":"gpt-5.6-terra","tools":{}}`, wantParam: "tools"},
 				{body: `{"model":"gpt-5.6-terra","reasoning":[]}`, wantParam: "reasoning"},
@@ -5843,6 +6505,10 @@ func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *tes
 	}
 }
 
+// TestOpenAIGatewayServiceForward_DisablesResponsesLiteParallelToolCallsForAPIKey
+// sends parallel calls and current-turn reasoning through API-key lite paths
+// in both forwarding modes. It checks parallel calls become false while
+// reasoning context remains current_turn.
 func TestOpenAIGatewayServiceForward_DisablesResponsesLiteParallelToolCallsForAPIKey(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "managed"
@@ -5895,8 +6561,10 @@ func TestOpenAIGatewayServiceForward_DisablesResponsesLiteParallelToolCallsForAP
 	}
 }
 
-// TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools checks namespace declarations and historical
-// tool-call fields.
+// TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools forwards declared
+// namespace tools and historical calls through ordinary OAuth execution. It
+// checks retained namespace identity, removal of stale message namespace and
+// an empty restoration map.
 func TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5922,9 +6590,10 @@ func TestOpenAIGatewayService_OAuthPreservesCodexNamespaceTools(t *testing.T) {
 	require.Empty(t, OpenAIResponsesNamespaceNames(c))
 }
 
-// TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls checks that custom upstreams accepting
-// namespace tools
-// also receive namespace on historical function_call items; removing it causes Missing namespace.
+// TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls forwards
+// namespace declarations and historical function calls through an API-key
+// provider. It checks declaration/call namespaces remain while stale namespace
+// on the ordinary message disappears.
 func TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5946,9 +6615,9 @@ func TestOpenAIGatewayService_APIKeyPreservesDeclaredNamespaceToolCalls(t *testi
 	require.False(t, gjson.GetBytes(forwarded, "input.1.namespace").Exists())
 }
 
-// TestOpenAIGatewayService_OAuthCompactKeepsFlattening checks namespace flattening and tool-declaration
-// cleanup for Compact.
-// Compact summarizes history and rejects input[].namespace with 400 Unknown parameter (#4761).
+// TestOpenAIGatewayService_OAuthCompactKeepsFlattening sends declared
+// namespace history through the OAuth Compact path. It checks the historical
+// name is flattened and input namespace and namespace declaration disappear.
 func TestOpenAIGatewayService_OAuthCompactKeepsFlattening(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5969,8 +6638,10 @@ func TestOpenAIGatewayService_OAuthCompactKeepsFlattening(t *testing.T) {
 	require.Equal(t, "collaboration__spawn_agent", gjson.GetBytes(forwarded, "input.0.name").String())
 }
 
-// TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior checks namespace flattening through the
-// provider compatibility flag.
+// TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior enables
+// namespace compatibility on an ordinary OAuth request. It checks flattened
+// declarations/history and the Gin restoration map linking the flattened name
+// to namespace and function identity.
 func TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -5994,8 +6665,9 @@ func TestOpenAIGatewayService_OAuthFlattenFlagRestoresLegacyBehavior(t *testing.
 	}, OpenAIResponsesNamespaceNames(c)["collaboration__spawn_agent"])
 }
 
-// TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames checks that failover clears the previous provider
-// mapping from reused Gin state.
+// TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames preloads a stale
+// restoration mapping before an ordinary OAuth forward. It checks successful
+// forwarding clears that Gin mapping for this attempt.
 func TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames(t *testing.T) {
 	body := []byte(codexNamespaceRequestBody)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6014,6 +6686,10 @@ func TestOpenAIGatewayService_ForwardClearsStaleNamespaceNames(t *testing.T) {
 	require.Empty(t, OpenAIResponsesNamespaceNames(c))
 }
 
+// TestOpenAIGatewayService_APIKeyRetriesExplicitlyRejectedTopLevelTruncation
+// receives an exact unsupported-truncation rejection before success. It checks
+// two attempts, removal of the top-level field on retry and retained input
+// text.
 func TestOpenAIGatewayService_APIKeyRetriesExplicitlyRejectedTopLevelTruncation(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"truncation":"auto","input":"keep"}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6033,6 +6709,9 @@ func TestOpenAIGatewayService_APIKeyRetriesExplicitlyRejectedTopLevelTruncation(
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input").String())
 }
 
+// TestOpenAIGatewayService_OAuthRetriesExactRejectedStatus receives an exact
+// indexed input-status rejection before a successful OAuth stream. It checks
+// two attempts remove the identified status only on retry.
 func TestOpenAIGatewayService_OAuthRetriesExactRejectedStatus(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"test","input":[{"type":"message","role":"user","status":"completed","content":"hello"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6052,6 +6731,10 @@ func TestOpenAIGatewayService_OAuthRetriesExactRejectedStatus(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.0.status").Exists())
 }
 
+// TestOpenAIGatewayService_APIKeyRetriesExactRejectedNullMessageContent
+// receives an invalid-type rejection for null assistant content before
+// success. It checks retry content becomes a string and the following user
+// text remains.
 func TestOpenAIGatewayService_APIKeyRetriesExactRejectedNullMessageContent(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"message","role":"assistant","content":null},{"type":"message","role":"user","content":"continue"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6071,6 +6754,10 @@ func TestOpenAIGatewayService_APIKeyRetriesExactRejectedNullMessageContent(t *te
 	require.Equal(t, "continue", gjson.GetBytes(upstream.bodies[1], "input.1.content").String())
 }
 
+// TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward
+// sends undeclared namespace fields on function and custom-tool history. It
+// checks the first and only API-key attempt removes both indexed namespace
+// fields.
 func TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","name":"first","namespace":"remove-first","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove-second","input":"{}"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6091,6 +6778,10 @@ func TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward
 	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.1.namespace").Exists())
 }
 
+// TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent
+// includes reasoning content and summary after ordinary text/tool history. It
+// checks the first attempt removes reasoning content while retaining the
+// reasoning item and summary text.
 func TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"store":true,"input":[` +
 		`{"type":"message","role":"user","content":"one"},` +
@@ -6119,10 +6810,14 @@ func TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent(t *t
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[0], "input.5.summary.0.text").String())
 }
 
+// TestOpenAIGatewayService_OpenAIHTTPStripsInputNamespacesBeforeFirstForward
+// varies OAuth/API-key providers and ordinary/Compact paths with a stale
+// message namespace. It checks one attempt removes that top-level item field
+// and retains nested content namespace.
 func TestOpenAIGatewayService_OpenAIHTTPStripsInputNamespacesBeforeFirstForward(t *testing.T) {
 	providers := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
+		name     string                             // provider case name
+		provider *gatewayprovider.ExecutionProvider // retained fixture provider
 	}{
 		{name: "oauth", provider: newOpenAIOAuthNamespaceTestProvider()},
 		{name: "apikey", provider: newOpenAIRejectedFieldTestProvider()},
@@ -6154,6 +6849,9 @@ func TestOpenAIGatewayService_OpenAIHTTPStripsInputNamespacesBeforeFirstForward(
 	}
 }
 
+// TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection rejects the
+// top-level output limit beside a nested field with the same name. It checks
+// retry removes the rejected limit and retains the nested content value.
 func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":4096,"input":[{"type":"message","role":"user","content":{"max_output_tokens":"keep"}}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6176,6 +6874,10 @@ func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input.0.content.max_output_tokens").String())
 }
 
+// TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRetry
+// combines undeclared tool namespaces with an output limit rejected after
+// preparation. It checks both attempts omit namespaces while only the retry
+// drops the limit.
 func TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRetry(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":2048,"input":[{"type":"function_call","name":"first","namespace":"remove-first","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove-second","input":"{}"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -6201,10 +6903,18 @@ func TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRe
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "max_output_tokens").Exists())
 }
 
+// newOpenAIRejectedFieldTestService builds a Responses executor over the
+// supplied capture transport using fixture defaults. The recorder and its
+// scripted response bodies remain shared, so callers coordinate their mutation
+// and consumption with forwarding.
 func newOpenAIRejectedFieldTestService(upstream *auxiliaryHTTPRecorder) *OpenAIResponsesExecutor {
 	return newResponsesFixture(responsesFixtureInputs{transport: upstream})
 }
 
+// newOpenAIRejectedFieldTestContext creates a Gin recorder context for a JSON
+// Responses request with curl identity. The request reader retains the
+// supplied byte slice; callers keep those bytes stable while forwarding reads
+// them.
 func newOpenAIRejectedFieldTestContext(body []byte) *gin.Context {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -6214,6 +6924,10 @@ func newOpenAIRejectedFieldTestContext(body []byte) *gin.Context {
 	return c
 }
 
+// newOpenAIRejectedFieldTestProvider creates an active API-key fixture
+// provider for native Responses field normalization. It selects
+// client-protocol preservation and the synthetic HTTPS compatibility host;
+// each call returns fresh credentials and extras.
 func newOpenAIRejectedFieldTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -6235,6 +6949,10 @@ func newOpenAIRejectedFieldTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// newOpenAIOAuthNamespaceTestProvider creates an active OAuth fixture provider
+// with the namespace test identity. It supplies access and account credentials
+// and leaves namespace compatibility extras unset for callers to select per
+// scenario.
 func newOpenAIOAuthNamespaceTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -6253,6 +6971,10 @@ func newOpenAIOAuthNamespaceTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// newOpenAIRejectedFieldTestResponse builds a JSON upstream response using the
+// supplied status and body text. The body is a string reader wrapped for
+// closure; callers can replace headers before the scripted transport consumes
+// it.
 func newOpenAIRejectedFieldTestResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
@@ -6261,8 +6983,20 @@ func newOpenAIRejectedFieldTestResponse(status int, body string) *http.Response 
 	}
 }
 
+// Do sends a built upstream request to the fixture HTTP server while retaining
+// its path and query. It requires initialized client and endpoint references
+// and a valid request.
+//
+// The request clone keeps the supplied context and shares the body reader, so
+// the HTTP client consumes that same body. A separate URL value receives the
+// loopback scheme and host, and the request Host is updated to match. The
+// supplied upstream request URL remains available for inspection; proxy and
+// provider-slot parameters are ignored by this transport. Callers close any
+// returned response body after reading it.
 func (p mappingHTTPTransport) Do(request *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	clone := request.Clone(request.Context())
+	// Redirect the copied URL to loopback while retaining path and query, so
+	// consuming its shared body leaves the supplied upstream URL inspectable.
 	target := *clone.URL
 	target.Scheme = p.endpoint.Scheme
 	target.Host = p.endpoint.Host
@@ -6271,16 +7005,24 @@ func (p mappingHTTPTransport) Do(request *http.Request, _ string, _ int64, _ int
 	return p.client.Do(clone)
 }
 
+// DoWithTLS delegates loopback request redirection to Do and ignores the
+// supplied TLS profile. The fixture client performs the exchange under the
+// request context, sharing the request body reader as described by Do.
 func (p mappingHTTPTransport) DoWithTLS(request *http.Request, proxy string, id int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return p.Do(request, proxy, id, concurrency)
 }
 
-// TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce checks one model mapping and restoration of the
-// requested model.
+// TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce exchanges real HTTP
+// fixtures for both provider types and stream choices with chained mapping
+// entries configured. It checks one outgoing mapping, restored client model,
+// retained extension and unchanged admitted bytes.
 func TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%v", providerType, stream), func(t *testing.T) {
+				// Buffer the expected capture so the server can publish bytes before
+				// writing its response; this scenario reads the capture after Forward
+				// completes.
 				observed := make(chan []byte, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, err := io.ReadAll(r.Body)
@@ -6293,12 +7035,21 @@ func TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce(t *testing.T) {
 					w.Header().Set("x-request-id", "mapping-request")
 					if gjson.GetBytes(body, "stream").Bool() {
 						w.Header().Set("Content-Type", "text/event-stream")
+						// Write the scripted SSE terminal and discard callback write errors;
+						// Forward error and output assertions supply the observable outcome of
+						// this exchange.
 						fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":%s}\n\ndata: [DONE]\n\n", response)
 					} else {
 						w.Header().Set("Content-Type", "application/json")
+						// Write the scripted JSON terminal and discard callback write errors;
+						// Forward error and output assertions supply the observable outcome of
+						// this exchange.
 						_, _ = io.WriteString(w, response)
 					}
 				}))
+				// Keep the server available through forwarding and capture inspection,
+				// then close its listener and connections when this provider/stream
+				// scenario finishes.
 				defer server.Close()
 				target, err := url.Parse(server.URL)
 				require.NoError(t, err)
@@ -6315,6 +7066,9 @@ func TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce(t *testing.T) {
 					"model_mapping":   map[string]any{"public-model": "gpt-5.4", "gpt-5.4": "must-not-map-again"},
 					"model_whitelist": []string{"gpt-5.4"},
 				}})
+				// Use a five-second forwarding context and cancel it on exit to release
+				// the deadline timer; capture inspection follows successful Forward
+				// completion.
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				result, err := service.Forward(ctx, c, value, body)
@@ -6332,10 +7086,18 @@ func TestOpenAIPassthroughHTTPAppliesExplicitModelMappingOnce(t *testing.T) {
 	}
 }
 
+// List returns the retained router slice and pointers for synchronous fixture
+// startup. Nil values represent an empty router list; callers keep the
+// returned data stable during reload because this store neither copies nor
+// locks it.
 func (s *tlsRouterTestStore) List(context.Context) ([]*egress.TLSFingerprintRouter, error) {
 	return s.values, nil
 }
 
+// newTLSFingerprintRouterTestService constructs a router service over the
+// supplied router pointers and warms it synchronously. The fixture uses a nil
+// distributed cache, so startup loads the List values with no subscription to
+// stop.
 func newTLSFingerprintRouterTestService(routers ...*egress.TLSFingerprintRouter) *egress.TLSFingerprintRouterService {
 	service := egress.NewTLSFingerprintRouterService(&tlsRouterTestStore{values: routers}, nil)
 	service.Start()

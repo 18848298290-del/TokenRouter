@@ -17,6 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestOpenAIGatewayService_BindHTTPResponseProvider stores one response
+// provider and HTTP owner in the fixture state store. It checks affinity,
+// same-user access across keys, different-user denial and denial of an unknown
+// response.
 func TestOpenAIGatewayService_BindHTTPResponseProvider(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

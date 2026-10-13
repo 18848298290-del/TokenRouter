@@ -27,14 +27,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openAIInvalidFunctionParametersBody supplies the fixed automation schema rejection used
+// to compare deterministic native/compatible error output and provider-pool recovery.
 const openAIInvalidFunctionParametersBody = `{"error":{` +
 	`"message":"Invalid schema for function 'automation_update': expected an object.",` +
 	`"type":"invalid_request_error",` +
 	`"param":"input[8].tools[1].tools[2].parameters",` +
 	`"code":"invalid_function_parameters"}}`
 
+// panicOnReadCloser rejects any body reread in captured-error health fixtures.
 type panicOnReadCloser struct{}
 
+// TestOpenAIHandleErrorResponse_NoRuleKeepsDefault supplies an upstream HTTP
+// 422 without a presentation rule. It checks a returned error and the default
+// JSON 502 upstream-error type and fixed message.
 func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -60,6 +66,10 @@ func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 	assert.Equal(t, "Upstream request failed", errField["message"])
 }
 
+// TestOpenAIHandleErrorResponse_InvalidRequest400PassesThrough supplies a
+// structured parameter rejection with upstream JSON headers. It checks exact
+// error JSON, HTTP 400, content type and committed request/status
+// observations.
 func TestOpenAIHandleErrorResponse_InvalidRequest400PassesThrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -86,6 +96,10 @@ func TestOpenAIHandleErrorResponse_InvalidRequest400PassesThrough(t *testing.T) 
 	require.Equal(t, http.StatusBadRequest, c.MustGet(OpsUpstreamStatusCodeKey))
 }
 
+// TestOpenAIHandleErrorResponse_TransientInvalidRequest400KeepsGatewayError
+// supplies temporary-processing wording with invalid_request_error type. It
+// checks final HTTP 502 and generic gateway text rather than presenting this
+// fixture as deterministic input rejection.
 func TestOpenAIHandleErrorResponse_TransientInvalidRequest400KeepsGatewayError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -106,6 +120,9 @@ func TestOpenAIHandleErrorResponse_TransientInvalidRequest400KeepsGatewayError(t
 	require.Contains(t, rec.Body.String(), "Upstream request failed")
 }
 
+// TestOpenAIHandleErrorResponse_OtherInvalidRequest400PassesThroughDetails
+// supplies an unknown namespace parameter. It checks HTTP 400 with retained
+// type, code, parameter and message fields in client output.
 func TestOpenAIHandleErrorResponse_OtherInvalidRequest400PassesThroughDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -129,6 +146,10 @@ func TestOpenAIHandleErrorResponse_OtherInvalidRequest400PassesThroughDetails(t 
 	require.Equal(t, "Unknown parameter: input[0].namespace", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+// TestOpenAIHandleCompatErrorResponse_InvalidRequest400PreservesDetails
+// invokes Chat-compatible handling for a structured argument rejection. It
+// checks HTTP 400 and the exact JSON body including code and parameter
+// identity.
 func TestOpenAIHandleCompatErrorResponse_InvalidRequest400PreservesDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -152,6 +173,10 @@ func TestOpenAIHandleCompatErrorResponse_InvalidRequest400PreservesDetails(t *te
 	require.Contains(t, rec.Body.String(), "input[35].arguments")
 }
 
+// TestOpenAIHandleCompatMessagesErrorResponse_InvalidRequest400PreservesDetails
+// invokes Messages-compatible handling for the same structured parameter
+// rejection. It checks HTTP 400 and the Anthropic envelope retaining the
+// nested error fields.
 func TestOpenAIHandleCompatMessagesErrorResponse_InvalidRequest400PreservesDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -173,6 +198,10 @@ func TestOpenAIHandleCompatMessagesErrorResponse_InvalidRequest400PreservesDetai
 	require.JSONEq(t, `{"type":"error","error":{"message":"Invalid property name in input arguments","type":"invalid_request_error","param":"input[35].arguments","code":"property_name_above_max_length"}}`, rec.Body.String())
 }
 
+// TestOpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover
+// wraps context-window text in HTTP 502. It checks no recovery wrapper,
+// retained upstream_error type and the exact context-window message in the
+// decoded client envelope.
 func TestOpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -201,6 +230,9 @@ func TestOpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover(t
 	assert.Equal(t, "Your input exceeds the context window of this model. Please adjust your input and try again.", errField["message"])
 }
 
+// TestOpenAIHandleErrorResponse_AppliesRuleFor422 matches a configured schema
+// rule against an upstream HTTP 422. It checks the overridden HTTP 418,
+// upstream_error category and configured client message.
 func TestOpenAIHandleErrorResponse_AppliesRuleFor422(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -229,6 +261,9 @@ func TestOpenAIHandleErrorResponse_AppliesRuleFor422(t *testing.T) {
 	assert.Equal(t, "OpenAI上游失败", errField["message"])
 }
 
+// TestOpenAIHandleErrorResponse_SetsResponseCommitted handles the fixture
+// final HTTP 429 rejection. It checks a returned error and the committed
+// response marker used by outer error handling.
 func TestOpenAIHandleErrorResponse_SetsResponseCommitted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -246,6 +281,9 @@ func TestOpenAIHandleErrorResponse_SetsResponseCommitted(t *testing.T) {
 	assert.True(t, IsResponseCommitted(c), "OpenAI non-failover path must mark response committed")
 }
 
+// newOpenAIUpstreamClientErrorResponse builds an HTTP error fixture with the
+// supplied status and body text. It returns a JSON header and readable body;
+// callers keep this response live during handling and retain body cleanup.
 func newOpenAIUpstreamClientErrorResponse(statusCode int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: statusCode,
@@ -254,24 +292,35 @@ func newOpenAIUpstreamClientErrorResponse(statusCode int, body string) *http.Res
 	}
 }
 
+// newOpenAIUpstreamClientErrorTestProvider creates the OpenAI OAuth target
+// used by HTTP error fixtures.
 func newOpenAIUpstreamClientErrorTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Name: "acct"}}
 }
 
-// newOpenAIUpstreamErrorTestContext creates an upstream error fixture.
+// newOpenAIUpstreamErrorTestContext delegates creation of a live Gin request
+// and response recorder.
 func newOpenAIUpstreamErrorTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	return newOpenAIUpstreamClientErrorTestContext()
 }
 
+// newOpenAIUpstreamErrorResponse returns a readable JSON error fixture with
+// the supplied status and body. Callers keep it live through handling and
+// retain response-body cleanup, as with the underlying fixture constructor.
 func newOpenAIUpstreamErrorResponse(statusCode int, body string) *http.Response {
 	return newOpenAIUpstreamClientErrorResponse(statusCode, body)
 }
 
+// newOpenAIUpstreamErrorTestProvider delegates creation of the HTTP error
+// fixture provider.
 func newOpenAIUpstreamErrorTestProvider() *gatewayprovider.ExecutionProvider {
 	return newOpenAIUpstreamClientErrorTestProvider()
 }
 
+// TestHandleErrorResponse_Deterministic400IsNotRewrappedAs502 supplies the
+// automation parameter-schema error fixture. It checks HTTP 400, retained
+// classification/parameter/message and absence of a typed recovery error.
 func TestHandleErrorResponse_Deterministic400IsNotRewrappedAs502(t *testing.T) {
 	c, recorder := newOpenAIUpstreamClientErrorTestContext()
 	svc := newResponseOutputForTest(OpenAIResponseOptions{})
@@ -293,6 +342,10 @@ func TestHandleErrorResponse_Deterministic400IsNotRewrappedAs502(t *testing.T) {
 	require.False(t, errors.As(err, &failoverErr))
 }
 
+// TestHandleErrorResponse_Deterministic400MatchesCompatSibling handles the
+// same parameter-schema fixture through native and compatible output. It
+// checks native JSON status, type and message against values captured by the
+// compatible writer.
 func TestHandleErrorResponse_Deterministic400MatchesCompatSibling(t *testing.T) {
 	svc := newResponseOutputForTest(OpenAIResponseOptions{})
 	nativeCtx, nativeRecorder := newOpenAIUpstreamClientErrorTestContext()
@@ -319,6 +372,9 @@ func TestHandleErrorResponse_Deterministic400MatchesCompatSibling(t *testing.T) 
 	require.Equal(t, compatMessage, gjson.Get(nativeRecorder.Body.String(), "error.message").String())
 }
 
+// TestHandleErrorResponse_Transient400KeepsGenericGatewayError supplies
+// temporary-processing HTTP 400 wording. It checks a returned error with
+// generic HTTP 502 and upstream_error classification for that fixture.
 func TestHandleErrorResponse_Transient400KeepsGenericGatewayError(t *testing.T) {
 	c, recorder := newOpenAIUpstreamClientErrorTestContext()
 	svc := newResponseOutputForTest(OpenAIResponseOptions{})
@@ -335,6 +391,9 @@ func TestHandleErrorResponse_Transient400KeepsGenericGatewayError(t *testing.T) 
 	require.Equal(t, "upstream_error", gjson.Get(recorder.Body.String(), "error.type").String())
 }
 
+// TestHandleErrorResponse_PoolRetryable400StillFailsOver admits HTTP 400 in
+// the API-key pool retry settings. It checks typed same-provider recovery with
+// the original status and no client commitment or body.
 func TestHandleErrorResponse_PoolRetryable400StillFailsOver(t *testing.T) {
 	c, recorder := newOpenAIUpstreamClientErrorTestContext()
 	svc := newResponseOutputForTest(OpenAIResponseOptions{})
@@ -359,18 +418,21 @@ func TestHandleErrorResponse_PoolRetryable400StillFailsOver(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
-// TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502 checks generic 502 handling for default
-// statuses such as 404, 422, and 5xx.
+// TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502 enumerates
+// URL, schema, authentication, access and rate-limit rejections. It checks
+// each listed final status, category and message, including no credential
+// recovery for free-form forbidden wording.
 func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T) {
 	cases := []struct {
-		name       string
-		statusCode int
-		body       string
-		wantStatus int
-		wantType   string
-		wantMsg    string
+		name       string // fixture case name
+		statusCode int    // upstream HTTP failure status
+		body       string // upstream error JSON payload
+		wantStatus int    // expected client HTTP status
+		wantType   string // expected client error category
+		wantMsg    string // expected client error message
 	}{
-		// A 404 or 405 can indicate an operator base_url error, so it is not exposed as a client request error.
+		// An unknown upstream URL maps to a gateway error in this fixture. Its
+		// routing rejection does not enter deterministic input-error presentation.
 		{
 			"not_found", http.StatusNotFound, `{"error":{"message":"Unknown request URL"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream request failed",
@@ -379,8 +441,9 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 			"unprocessable", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid schema for field messages"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream request failed",
 		},
-		// Credential and billing errors from 401, 402, and 403 are mapped to client-facing statuses.
-		// Free-form 403 text cannot establish a durable access-state failure; a structured code is required.
+		// Authentication and access failures use gateway statuses in this table.
+		// Free-form forbidden wording alone is insufficient for the structured
+		// access-state classifier used by these fixtures.
 		{
 			"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator",
@@ -418,8 +481,9 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 	}
 }
 
-// TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch checks that administrator passthrough rules
-// precede deterministic 400 handling.
+// TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch matches the
+// schema error against an administrator rule. It checks HTTP 418 and
+// configured text before the default deterministic-400 presentation can apply.
 func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T) {
 	c, rec := newOpenAIUpstreamErrorTestContext(t)
 	ruleSvc := gatewaytestkit.ErrorRules([]*errorpolicy.ErrorPassthroughRule{
@@ -439,6 +503,9 @@ func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T)
 	require.Equal(t, "自定义文案", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+// TestOpenAIUpstreamErrorBodyReadLimitForConfig_RespectsDiagnosticLimit
+// enables a diagnostic excerpt larger than the default error capture. It
+// checks the capture limit expands to that configured byte quantity.
 func TestOpenAIUpstreamErrorBodyReadLimitForConfig_RespectsDiagnosticLimit(t *testing.T) {
 	output := &OpenAIResponseOutput{Options: OpenAIResponseOptions{
 		LogUpstreamErrorBody:         true,
@@ -448,12 +515,18 @@ func TestOpenAIUpstreamErrorBodyReadLimitForConfig_RespectsDiagnosticLimit(t *te
 	require.Equal(t, int64(output.Options.LogUpstreamErrorBodyMaxBytes), output.errorBodyReadLimit())
 }
 
+// Read panics to expose any attempt to reread captured upstream error bytes.
 func (panicOnReadCloser) Read(_ []byte) (int, error) {
 	panic("response body should not be reread")
 }
 
+// Close satisfies fixture response cleanup without changing the panic-on-read
+// behavior.
 func (panicOnReadCloser) Close() error { return nil }
 
+// TestOpenAIGatewayService_HandleFailoverSideEffects_DoesNotRereadResponseBody
+// supplies captured rate-limit bytes beside a panic-on-read body. It checks
+// nonpanic health handling, absent runtime block and eligible OAuth 429 retry.
 func TestOpenAIGatewayService_HandleFailoverSideEffects_DoesNotRereadResponseBody(t *testing.T) {
 	svc := newResponsesFixture(responsesFixtureInputs{})
 	provider := &gatewayprovider.ExecutionProvider{
@@ -477,7 +550,13 @@ func TestOpenAIGatewayService_HandleFailoverSideEffects_DoesNotRereadResponseBod
 	require.True(t, provideradapter.CanRetryOpenAI429(svc.Output.Health.Runtime, provider.View(), nil, nil))
 }
 
+// TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails logs recognized
+// instructions rejection with client headers, query and a sensitive body
+// fixture. It checks the listed metadata fields and absent body-preview field
+// in the captured warning.
 func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {
+	// Capture the shared logger and restore it on return so this diagnostic
+	// fixture does not leave its recording destination installed for later tests.
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -511,7 +590,13 @@ func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {
 	require.False(t, logSink.ContainsFieldValue("request_body_preview", ""))
 }
 
+// TestLogOpenAIInstructionsRequiredDebug_NonTargetErrorSkipped supplies a
+// forbidden response outside instructions-required classification. It checks
+// the special warning message is absent from captured structured logs for that
+// request.
 func TestLogOpenAIInstructionsRequiredDebug_NonTargetErrorSkipped(t *testing.T) {
+	// Capture the shared logger and restore it on return so this diagnostic
+	// fixture does not leave its recording destination installed for later tests.
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -534,6 +619,10 @@ func TestLogOpenAIInstructionsRequiredDebug_NonTargetErrorSkipped(t *testing.T) 
 	require.False(t, logSink.ContainsMessage("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查"))
 }
 
+// TestIsOpenAITransientProcessingError compares the listed processing,
+// capacity and overload messages/codes with a missing-instructions rejection.
+// It checks transient recognition in those fixtures and rejection of the
+// input-error case.
 func TestIsOpenAITransientProcessingError(t *testing.T) {
 	require.True(t, openai.IsOpenAITransientProcessingError(
 		http.StatusBadRequest,
@@ -596,6 +685,9 @@ func TestIsOpenAITransientProcessingError(t *testing.T) {
 	))
 }
 
+// TestIsOpenAIContextWindowError compares nested, direct and plain-text
+// context-window evidence with cancellation and echoed wording. It checks the
+// listed positive forms and exclusion of the unrelated fixtures.
 func TestIsOpenAIContextWindowError(t *testing.T) {
 	require.True(t, openai.IsOpenAIContextWindowError(
 		"",
@@ -619,6 +711,10 @@ func TestIsOpenAIContextWindowError(t *testing.T) {
 	))
 }
 
+// TestOpenAITransientAndCapacityClassificationIgnoresEchoedJSON puts
+// overload/capacity wording in an echo beside an ordinary error. It checks
+// rejected echo classification and accepted direct plain-text overload
+// evidence.
 func TestOpenAITransientAndCapacityClassificationIgnoresEchoedJSON(t *testing.T) {
 	body := []byte(`{"error":{"message":"upstream unavailable","code":"upstream_error"},"echo":"server is overloaded; selected model is at capacity"}`)
 
@@ -630,6 +726,10 @@ func TestOpenAITransientAndCapacityClassificationIgnoresEchoedJSON(t *testing.T)
 	require.True(t, openai.IsOpenAIRequestScopedCapacityShed("", plainText))
 }
 
+// TestShouldFailoverOpenAIUpstreamResponseContextWindow502 compares a
+// context-window HTTP 502 with temporary outage and echoed context text. It
+// checks no recovery for the actual context rejection and recovery for the
+// outage fixtures.
 func TestShouldFailoverOpenAIUpstreamResponseContextWindow502(t *testing.T) {
 	body := []byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"upstream_error","code":null}}`)
 
@@ -642,6 +742,10 @@ func TestShouldFailoverOpenAIUpstreamResponseContextWindow502(t *testing.T) {
 	))
 }
 
+// TestOpenAIShouldFailoverUpstreamResponse_CyberWarningDoesNotFailover
+// compares cyber-risk wording with inactive-account evidence at HTTP 401. It
+// checks request-warning exclusion and provider recovery for the structured
+// inactive fixture.
 func TestOpenAIShouldFailoverUpstreamResponse_CyberWarningDoesNotFailover(t *testing.T) {
 	body := []byte(`{"error":{"message":"This request has been flagged for potentially high-risk cyber activity."}}`)
 
@@ -653,6 +757,9 @@ func TestOpenAIShouldFailoverUpstreamResponse_CyberWarningDoesNotFailover(t *tes
 	)
 }
 
+// TestOpenAIHandleErrorResponse_CyberWarningPassesThroughMessage supplies HTTP
+// 403 with the risk-warning message. It checks retained client status/text and
+// warning-chain status/message for this request-specific rejection.
 func TestOpenAIHandleErrorResponse_CyberWarningPassesThroughMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

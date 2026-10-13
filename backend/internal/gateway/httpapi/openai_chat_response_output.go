@@ -23,9 +23,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Responses failures reach Chat clients through either a buffered JSON
+// rejection or a terminal stream error. Provider health classification runs
+// before presentation rules, so a custom error message cannot by itself reopen
+// provider selection. The response reader supplies whether business output has
+// begun, and only a failure before that point can return a failover signal.
+//
+// The callbacks retain the selected provider, response headers and
+// request-local observations until reading finishes. Buffered cyber-policy
+// failures also carry observed token counts into the moderation mark.
+// ChatOptions delegates conversion and output to the upstream reader while
+// binding these HTTP decisions, model and tier observations, optional header
+// filtering, and reasoning/tool restoration to that attempt.
+
+// chatBufferedFailure handles a failed terminal Responses object before
+// buffered Chat output. It records cyber-policy evidence first; otherwise
+// provider health classification chooses generic rejection, failover, or a
+// client error. A failover result leaves final response writing to the outer
+// attempt loop.
+//
+// For a final client error, event-derived status and normalized failure bytes
+// feed configured error rules after Ops recording. Those rules can replace
+// status and message, while the unhandled case emits a Chat upstream_error
+// using the captured failure message.
 func (p *OpenAIResponseOutput) chatBufferedFailure(c *gin.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, requestID, upstreamModel string, finalResponse *wire.ResponsesResponse, usage wire.ForwardUsage) error {
+	// Classification continues if event marshaling fails; the message still comes
+	// from finalResponse, while byte-based cyber detection and rules receive no payload.
 	payload, _ := json.Marshal(map[string]any{"type": "response.failed", "response": finalResponse})
 	if hit, code, msg := openai.DetectOpenAICyberPolicy(payload); hit {
+		// A buffered cyber rejection has no client content yet. Attach its observed
+		// usage to the moderation mark before returning the dedicated Chat error.
 		MarkOpsCyberPolicy(c, moderationflow.Mark{
 			Code:           code,
 			Message:        msg,
@@ -49,6 +76,8 @@ func (p *OpenAIResponseOutput) chatBufferedFailure(c *gin.Context, provider *gat
 		WriteForwardChatError(c, http.StatusInternalServerError, "api_error", "Upstream gateway error")
 		return fmt.Errorf("upstream response failed: status=%d (not in custom error codes)", policyStatus)
 	}
+	// Health policy can request another provider before buffered JSON is written;
+	// publishing failure effects lets the outer attempt loop account for that choice.
 	if decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus, openai.OpenAIStreamFailedEventShouldFailover(payload, message)) {
 		MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
 		return p.NewStreamPolicyFailureWithModel(
@@ -57,7 +86,8 @@ func (p *OpenAIResponseOutput) chatBufferedFailure(c *gin.Context, provider *gat
 		)
 	}
 	message = p.RecordStreamError(c, provider, false, requestID, "http_error", payload, message)
-	// Infer status from response.failed inside HTTP 200 SSE and normalize its body for status-based error rules.
+	// HTTP 200 carries no failure status for these events. Infer one from the
+	// terminal object so status-based presentation rules see the upstream failure.
 	if status, errType, errMsg, matched := ApplyOpenAIStreamFailedErrorRule(
 		c, provider.Record.Platform, payload, message,
 	); matched {
@@ -72,11 +102,22 @@ func (p *OpenAIResponseOutput) chatBufferedFailure(c *gin.Context, provider *gat
 	return fmt.Errorf("upstream response failed: %s", message)
 }
 
+// chatStreamFailure translates a failed Responses event into a ChatFailure for
+// the stream reader. Callers pass the reader's business-output state, because
+// only a pre-output failure can return a provider failover error. Health
+// effects are recorded before that signal is returned.
+//
+// Once output has begun, the returned status, type and message describe the
+// terminal Chat error. Generic health-policy rejection suppresses custom
+// presentation overrides; other failures may use normalized event bytes for an
+// administrator rule and mark its response as committed.
 func (p *OpenAIResponseOutput) chatStreamFailure(c *gin.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, requestID, upstreamModel string, payloadBytes []byte, message string, clientOutputStarted bool) openai.ChatFailure {
 	policyStatus, decision := p.ApplyStreamFailurePolicy(
 		c.Request.Context(), provider, upstreamModel, resp.Header, payloadBytes, message,
 	)
 	policyGeneric := decision.ShouldReturnGenericError()
+	// A second provider may start only while the reader still holds business
+	// output; after publication, its content would be appended to an existing stream.
 	if !clientOutputStarted && decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus, openai.OpenAIStreamFailedEventShouldFailover(payloadBytes, message)) {
 		MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
 		failure := p.NewStreamPolicyFailureWithModel(
@@ -90,7 +131,8 @@ func (p *OpenAIResponseOutput) chatStreamFailure(c *gin.Context, provider *gatew
 	if policyGeneric {
 		defaultStatus, defaultErrType, defaultMsg = http.StatusInternalServerError, "upstream_error", "Upstream gateway error"
 	}
-	// Use the same event status inference and body normalization as /v1/responses error rules.
+	// Derive rule input from event failure evidence, because the enclosing HTTP
+	// status is successful; generic policy rejection keeps its own terminal message.
 	if status, errType, errMsg, matched := ApplyOpenAIStreamFailedErrorRule(
 		c, provider.Record.Platform, payloadBytes, message,
 	); matched && !policyGeneric {
@@ -103,6 +145,10 @@ func (p *OpenAIResponseOutput) chatStreamFailure(c *gin.Context, provider *gatew
 	return openai.ChatFailure{Status: defaultStatus, Type: defaultErrType, Message: defaultMsg}
 }
 
+// ChatOptions binds Chat conversion, observations and error handling to one
+// HTTP attempt. Keep c, provider and resp alive until the reader completes;
+// response closure stays with the execution caller, and optional header
+// filtering runs when output is prepared.
 func (p *OpenAIResponseOutput) ChatOptions(c *gin.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, originalModel, billingModel, upstreamModel string) openai.ChatResponseOptions {
 	options := openai.ChatResponseOptions{
 		Runtime:        bridge.Runtime{Now: time.Now, ReadRandom: rand.Read},
@@ -125,6 +171,8 @@ func (p *OpenAIResponseOutput) ChatOptions(c *gin.Context, provider *gatewayprov
 			observer.ObserveServiceTier(final.ServiceTier, true)
 		},
 		MissingUsage: func(final *wire.ResponsesResponse, usage wire.ForwardUsage) error {
+			// Eligible Grok Chat models require observed billing usage even after a
+			// terminal object; expose its absence as a dedicated attempt failure.
 			if gatewayprovider.RequiresBillableGrokChatUsage(provider, billingModel, upstreamModel, final.Model) && !gatewayprovider.HasBillableGrokChatUsage(usage) {
 				return NewGrokMissingUsageFailure(c, provider, requeststate.FirstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")))
 			}
@@ -143,12 +191,14 @@ func (p *OpenAIResponseOutput) ChatOptions(c *gin.Context, provider *gatewayprov
 		Scanner:      func(r io.Reader) *bufio.Scanner { return p.Scanner(r) },
 		StreamInterval: func() time.Duration {
 			if p.Options.Configured && p.Options.StreamDataIntervalTimeout > 0 {
+				// Configured stream idle intervals are stored as whole seconds.
 				return time.Duration(p.Options.StreamDataIntervalTimeout) * time.Second
 			}
 			return 0
 		},
 		KeepaliveInterval: func() time.Duration {
 			if p.Options.Configured && p.Options.StreamKeepaliveInterval > 0 {
+				// Configured heartbeat intervals are stored as whole seconds.
 				return time.Duration(p.Options.StreamKeepaliveInterval) * time.Second
 			}
 			return 0

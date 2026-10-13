@@ -20,40 +20,64 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// textFailureStore records selected provider-health writes for synchronous
+// text failure fixtures.
 type textFailureStore struct {
+	// ExecutionProviderStore supplies unimplemented fixture methods; unexpected
+	// calls still expose the missing binding while the overrides record selected writes.
 	gatewayprovider.ExecutionProviderStore
+	// tempUnschedCalls, rateLimitedCalls and updateCalls count selected store
+	// calls in the synchronous health fixtures. Tests compare these separate
+	// counters to detect which observation branch reached persistence.
+	// tempUnschedCalls: temporary cooldown write count.
+	// rateLimitedCalls: provider rate-limit write count.
+	// updateCalls: metadata update write count.
 	tempUnschedCalls, rateLimitedCalls, updateCalls int
-	modelRateLimitProviderID                        int64
-	modelRateLimitKey                               string
+	// modelRateLimitProviderID and modelRateLimitKey record the latest
+	// SetModelRateLimit call in this serial fixture. The deadline and reason
+	// arguments are discarded, so these values identify the observation alone.
+	modelRateLimitProviderID int64  // last model-limit provider identifier
+	modelRateLimitKey        string // last model-limit scope key
 }
 
+// SetTempUnschedulable counts the fixture cooldown write and returns success.
 func (s *textFailureStore) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	s.tempUnschedCalls++
 	return nil
 }
 
+// SetRateLimited counts the fixture provider-rate write and returns success.
 func (s *textFailureStore) SetRateLimited(context.Context, int64, time.Time) error {
 	s.rateLimitedCalls++
 	return nil
 }
 
+// SetRateLimitedIfLater delegates to the fixture counter without comparing
+// deadlines. The supplied context, provider ID and time reach SetRateLimited,
+// which only counts the call and returns nil for assertions.
 func (s *textFailureStore) SetRateLimitedIfLater(c context.Context, id int64, t time.Time) error {
 	return s.SetRateLimited(c, id, t)
 }
 
+// UpdateExtra counts the fixture metadata write and returns success.
 func (s *textFailureStore) UpdateExtra(context.Context, int64, map[string]any) error {
 	s.updateCalls++
 	return nil
 }
 
+// SetModelRateLimit records the latest provider identifier and model scope key
+// for fixture inspection. Context, deadline and variadic reasons are ignored;
+// the synchronous tests serialize this recording with their later assertions.
 func (s *textFailureStore) SetModelRateLimit(_ context.Context, id int64, key string, _ time.Time, _ ...string) error {
 	s.modelRateLimitProviderID = id
 	s.modelRateLimitKey = key
 	return nil
 }
 
-// textFailureFixture combines provider health, blocking, and protocol classification with a write-recording
-// store stub.
+// textFailureFixture builds text health adapters over the supplied recording
+// store. observe optionally installs the shared upstream observer; runtime
+// provider and model states remain available to both OpenAI and Grok branches
+// for the fixture.
 func textFailureFixture(store gatewayprovider.ExecutionProviderStore, observe bool) *OpenAITextExecutor {
 	blocks := providercore.NewRuntimeBlockState(time.Now)
 	models := providercore.NewModelTransientState(0)
@@ -67,8 +91,10 @@ func textFailureFixture(store gatewayprovider.ExecutionProviderStore, observe bo
 	return &OpenAITextExecutor{Output: &OpenAIResponseOutput{Health: &provideradapter.OpenAIResponseHealth{Health: health, Runtime: blocks, ModelTransient: models}}, Grok: &GrokExecutor{Health: grokHealth}}
 }
 
-// TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover checks that
-// Chat error handling and the WS HTTP bridge treat provider proxy 413 responses as provider failures.
+// TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover
+// classifies the fixture provider-proxy HTTP 413. It checks provider scope,
+// next-provider action, no same-provider retry and absence of request-scope
+// classification in the WS HTTP predicate.
 func TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -96,6 +122,10 @@ func TestOpenAIRequestBodyLimitFailover_CompatAndWSBridgeKeepProviderFailover(t 
 	))
 }
 
+// TestFailoverOpenAIUpstreamHTTPError_NilContextSkipsTempUnschedulablePolicy
+// uses a default-nonretryable HTTP 400 with no Gin context. It checks no
+// recovery signal and untouched model-limit recorder fields for that
+// configured temporary-error rule.
 func TestFailoverOpenAIUpstreamHTTPError_NilContextSkipsTempUnschedulablePolicy(t *testing.T) {
 	repo := &textFailureStore{}
 	svc := textFailureFixture(repo, true)
@@ -125,6 +155,10 @@ func TestFailoverOpenAIUpstreamHTTPError_NilContextSkipsTempUnschedulablePolicy(
 	require.Empty(t, repo.modelRateLimitKey)
 }
 
+// TestGrokContentPolicy403DoesNotMutateOrFailover supplies structured Grok
+// content-policy rejection to health and text classification. It checks the
+// recorded mutation counters, runtime block and failover predicate remain
+// absent in this fixture.
 func TestGrokContentPolicy403DoesNotMutateOrFailover(t *testing.T) {
 	repo := &textFailureStore{}
 	svc := textFailureFixture(repo, false)
@@ -148,6 +182,10 @@ func TestGrokContentPolicy403DoesNotMutateOrFailover(t *testing.T) {
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
+// TestGrokNonFailoverDoesNotApplyGenericTempUnschedulablePolicy combines a
+// Grok policy code with a matching temporary-rule message. It checks no
+// recovery signal, no recorded cooldown/rate/metadata calls and no runtime
+// block.
 func TestGrokNonFailoverDoesNotApplyGenericTempUnschedulablePolicy(t *testing.T) {
 	repo := &textFailureStore{}
 	svc := textFailureFixture(repo, true)
@@ -183,6 +221,9 @@ func TestGrokNonFailoverDoesNotApplyGenericTempUnschedulablePolicy(t *testing.T)
 	require.False(t, svc.Output.Health.Runtime.Blocked(provider.Record.ID, nil))
 }
 
+// TestFailoverOpenAIUpstreamHTTPErrorUsesOnlyGrokRateLimitPolicy returns Grok
+// HTTP 429 with a retry delay. It checks a recovery signal, one rate-limit
+// write and no generic temporary-unscheduling call.
 func TestFailoverOpenAIUpstreamHTTPErrorUsesOnlyGrokRateLimitPolicy(t *testing.T) {
 	repo := &textFailureStore{}
 	svc := textFailureFixture(repo, false)
@@ -205,11 +246,10 @@ func TestFailoverOpenAIUpstreamHTTPErrorUsesOnlyGrokRateLimitPolicy(t *testing.T
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
-// TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel checks model-scoped temporary
-// blocking (#4547).
-// Known models cool down by provider and model; unknown models cool down the provider.
-// See TestOpenAITempUnschedulable_UnknownModelKeepsProviderRuntimeBlock.
-// Pool rules stop same-provider retries and temporarily block the matching model (issue 4470).
+// TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel
+// matches a temporary rule on a known model in pool mode. It checks no
+// same-provider retry, model-scoped recording, retained provider status and no
+// provider-wide block.
 func TestOpenAIPoolModeTempRule_StopsSameProviderRetryAndIsolatesBlockToModel(t *testing.T) {
 	repo := &gatewaytestkit.ErrorPolicyStore{}
 	gateway := textFailureFixture(repo, true)

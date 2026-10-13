@@ -10,11 +10,37 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 )
 
+// An HTTP writer can be committed by Compact SSE heartbeats, Images JSON
+// whitespace, or actual response content before forwarding reports an error.
+// EnsureResponse stops heartbeat writers before combining commitment markers
+// with heartbeat-adjusted byte counts, so an error follows the format already
+// established for the client.
+//
+// A Compact stream containing only heartbeats still needs a Responses terminal
+// event, while image padding can be followed by a JSON error. Meaningful image
+// response bytes or a dedicated committed error suppress the fallback. The
+// separate communication predicate uses byte differences, a cyber marker and
+// recognized error prefixes as evidence; it infers prior delivery from those
+// observations rather than decoding the existing body.
+
+// EnsureResponse attempts a protocol failure response when the current writer
+// still needs one. A nil context or writer returns false. Both heartbeat
+// writers are stopped before output state is examined, and a Compact heartbeat
+// changes the requested format to streaming.
+//
+// Heartbeat-adjusted bytes distinguish Images padding from response content,
+// and Compact content from keepalive-only commitment. Existing meaningful
+// committed output suppresses this fallback; padding can still receive JSON
+// and Compact keepalives can receive a terminal event. Cyber-warning evidence
+// supplies a request error and valid upstream status, while other failures use
+// the generic 502 message. True reports that StreamError was invoked, not
+// successful network delivery.
 func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, err error) bool {
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	// Stop both heartbeat writers before inspecting Writer state.
+	// Stop both heartbeat writers before reading their counts or taking over
+	// Writer; otherwise a late keepalive could change the format decision during fallback.
 	compactKeepaliveCommitted := StopOpenAICompactSSEKeepaliveCommitted(c)
 	if compactKeepaliveCommitted {
 		streamStarted = true
@@ -29,7 +55,8 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 		imageKeepaliveResponseWritten = adjustedSize >= 0
 	}
 	compactKeepaliveHasMeaningfulOutput := compactKeepaliveCommitted && OpenAICompactKeepaliveAdjustedWrittenSize(c) > 0
-	// A Compact heartbeat may have committed HTTP 200 while a terminal protocol event is still needed.
+	// Dedicated commitment suppresses replacement after meaningful output, but
+	// a keepalive-only Compact commitment still needs its terminal Responses event.
 	if (IsResponseCommitted(c) && (!compactKeepaliveCommitted || compactKeepaliveHasMeaningfulOutput)) ||
 		(!compactKeepaliveCommitted && imageKeepaliveResponseWritten) {
 		return false
@@ -44,7 +71,8 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 			status = warning.StatusCode
 		}
 	}
-	// SSE heartbeats require a terminal event; image JSON padding can still be followed by a JSON error.
+	// Any written SSE response needs an in-stream error, while image whitespace
+	// keeps JSON usable because padding alone contributes no completed response object.
 	if c.Writer.Written() && !imageKeepalivePaddingOnly {
 		streamStarted = true
 	}
@@ -52,6 +80,10 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	return true
 }
 
+// ShouldLogOpenAIForwardFailureAsWarn reports whether an unwritten fallback
+// left already-committed client output. A written fallback, missing context or
+// missing writer returns false; otherwise the current writer's Written result
+// determines the logging level.
 func ShouldLogOpenAIForwardFailureAsWarn(c *gin.Context, wroteFallback bool) bool {
 	if wroteFallback {
 		return false
@@ -62,16 +94,22 @@ func ShouldLogOpenAIForwardFailureAsWarn(c *gin.Context, wroteFallback bool) boo
 	return c.Writer.Written()
 }
 
-// OpenAIForwardErrorAlreadyCommunicated reports whether forwarding already delivered the upstream error.
+// OpenAIForwardErrorAlreadyCommunicated infers whether forwarding delivered a
+// terminal failure before returning err. Nil errors or missing writer state
+// return false. Equal heartbeat-adjusted byte counts mean this attempt
+// supplied no additional business output and suppress that inference.
 //
-// HTTP 200 streams can carry terminal failures such as policy refusals.
-// Forwarding delivers the event before returning an error for logging and metrics.
-// Appending a generic failure afterward would give strict clients duplicate terminal events.
+// After a byte difference, a request cyber-policy mark or a recognized
+// failure-message prefix supplies the remaining evidence. The helper does not
+// decode the existing output or verify its terminal structure. Callers pass
+// the writer size captured before forwarding and use this result to decide
+// whether appending a generic error could duplicate a delivered failure.
 func OpenAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForward int, err error) bool {
 	if err == nil || c == nil || c.Writer == nil {
 		return false
 	}
-	// Exclude heartbeat bytes when checking whether response output started (#3887).
+	// Compare the attempt's starting size against each heartbeat-adjusted count;
+	// keepalives alone provide no evidence that the returned error reached the client.
 	if OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward || OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 		return false
 	}
