@@ -8,8 +8,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage analytics combines normalized dimensions with UTC hour and day buckets.
+// Live rebuilding clears every affected hourly row but reads the last hour only
+// through the supplied watermark. Cleanup uses an inclusive end and rescans
+// that complete final hour, retaining surviving requests outside the deletion
+// range. Daily rows are rebuilt from hourly sums with matching dimension
+// identities and nonnull-duration counts.
+//
+// Rebuilding replaces rows before inserting current data so empty or changed
+// dimension groups disappear. A *sql.DB creates a transaction around those
+// phases; supplied executors retain caller-owned transaction behavior.
+// ApplyUsageAnalyticsState uses a separate, short row-lock transaction and
+// merges fields by change kind, keeping a manual backfill request from
+// overwriting concurrent live progress.
+
 const (
-	// usageAnalyticsRawDimensionsSQL normalizes raw columns in rollup order; callers alias usage_logs as ul.
+	// usageAnalyticsRawDimensionsSQL supplies the ordered dimensions shared by
+	// hourly insertion and combined raw queries; callers alias usage_logs as ul.
+	// Missing payer IDs use the actor, absent team/group IDs become zero, and the
+	// model prefers trimmed model then requested_model.
+	//
+	// Nonzero request types win over legacy websocket and stream flags. An
+	// existing nonempty billing mode wins over inferred video, image, then token
+	// mode. Platform remains the recorded snapshot, so provider metadata changes
+	// cannot relabel existing usage.
 	usageAnalyticsRawDimensionsSQL = `
 			ul.user_id,
 			COALESCE(ul.billing_user_id, ul.user_id),
@@ -37,25 +59,44 @@ const (
 			COALESCE(ul.inbound_endpoint, ''),`
 )
 
-// AggregateUsageAnalyticsRange rebuilds affected UTC hour and day buckets, scanning the final hour up to end.
+// AggregateUsageAnalyticsRange refreshes UTC hourly rows and the affected daily
+// rows from their sums. It scans raw data through the exclusive end, and nil
+// storage or a nonincreasing range performs no work.
 func (r *AggregationStore) AggregateUsageAnalyticsRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, false, true)
 }
 
-// AggregateUsageAnalyticsHourlyRange rebuilds affected UTC hour buckets without rebuilding daily data.
+// AggregateUsageAnalyticsHourlyRange refreshes affected UTC hourly rows through
+// the exclusive end. Daily rows remain for a separate rebuild phase, and nil
+// storage or nonincreasing ranges return successfully.
 func (r *AggregationStore) AggregateUsageAnalyticsHourlyRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, false, false)
 }
 
-// RecomputeUsageAnalyticsRange rebuilds complete UTC hour and day buckets for an inclusive cleanup range.
+// RecomputeUsageAnalyticsRange refreshes UTC hourly and daily rows after an
+// inclusive cleanup range. It includes the hour beginning at an exact end and
+// scans that complete hour to retain surviving requests.
 func (r *AggregationStore) RecomputeUsageAnalyticsRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, true, true)
 }
 
+// aggregateUsageAnalyticsRange selects affected UTC hours and the raw scan
+// endpoint for live work or cleanup repair. Nil storage and nonincreasing
+// ranges return successfully. Live work excludes an exact end hour and scans
+// only through end, while includeEndBucket adds that hour and scans its
+// complete contents.
+//
+// Deleting entire affected hourly groups allows vanished dimensions to
+// disappear. A database handle wraps deletion, insertion, and optional daily
+// rebuilding in one transaction; supplied executors keep their own transaction
+// ownership. The daily flag lets backfill defer day rebuilding until its hour
+// blocks are ready.
 func (r *AggregationStore) aggregateUsageAnalyticsRange(ctx context.Context, start, end time.Time, includeEndBucket, rebuildDaily bool) error {
 	if r == nil || r.sql == nil || !end.After(start) {
 		return nil
 	}
+	// Select whole UTC bucket starts for replacement even when raw endpoints
+	// fall inside hours; the scan endpoint below distinguishes live partial work.
 	hourStart := start.UTC().Truncate(time.Hour)
 	endUTC := end.UTC()
 	hourEnd := endUTC.Truncate(time.Hour)
@@ -68,12 +109,17 @@ func (r *AggregationStore) aggregateUsageAnalyticsRange(ctx context.Context, sta
 
 	scanEnd := endUTC
 	if includeEndBucket {
-		// Cleanup includes end; rescan the entire last bucket to retain records outside the deleted range.
+		// Cleanup removes records at end as well as before it. Rescan the complete
+		// last hour so rebuilding keeps its surviving later records.
 		scanEnd = hourEnd
 	}
+	// Keep the raw scan inside the hourly replacement range.
 	if scanEnd.After(hourEnd) {
 		scanEnd = hourEnd
 	}
+	// Use one database transaction for each replacement sequence; caller-supplied
+	// executors must provide the transaction holding their own delete and insert
+	// together.
 	if db, ok := r.sql.(*sql.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -81,6 +127,8 @@ func (r *AggregationStore) aggregateUsageAnalyticsRange(ctx context.Context, sta
 		}
 		txRepo := NewAggregationStoreWithSQL(tx, r.calendar)
 		if err := txRepo.aggregateUsageAnalyticsRangeInTx(ctx, hourStart, hourEnd, scanEnd, rebuildDaily); err != nil {
+			// Roll back the earlier replacement phases after a write fails; return that
+			// write error as the operation result even if rollback fails.
 			_ = tx.Rollback()
 			return err
 		}
@@ -89,7 +137,20 @@ func (r *AggregationStore) aggregateUsageAnalyticsRange(ctx context.Context, sta
 	return r.aggregateUsageAnalyticsRangeInTx(ctx, hourStart, hourEnd, scanEnd, rebuildDaily)
 }
 
+// aggregateUsageAnalyticsRangeInTx replaces hourly dimensions from raw
+// [hourStart, scanEnd) records and optionally rebuilds their UTC dates. The
+// caller supplies rounded hour bounds and a transaction when replacement must
+// commit together. Deleting the affected range first removes dimension groups
+// whose raw requests disappeared.
+//
+// The shared dimension expression gives raw readers and stored rows the same
+// legacy normalization. duration_count counts nonnull values separately from
+// the duration sum. Daily rebuilding includes dates containing replaced hours,
+// using the instant before the exclusive hourEnd to avoid adding an untouched
+// next date.
 func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context, hourStart, hourEnd, scanEnd time.Time, rebuildDaily bool) error {
+	// Delete the affected hourly groups before insertion so requests removed by
+	// cleanup cannot leave stale totals or obsolete dimension rows behind.
 	if _, err := r.sql.ExecContext(ctx, `
 		DELETE FROM usage_analytics_hourly
 		WHERE bucket_start >= $1 AND bucket_start < $2
@@ -97,7 +158,9 @@ func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context,
 		return err
 	}
 
-	// Normalize legacy request types and billing modes when writing rollups so readers use consistent dimensions.
+	// Raw and rollup query rows share this dimension expression; normalization at
+	// insertion keeps the same request from acquiring different identities across
+	// data sources.
 	if _, err := r.sql.ExecContext(ctx, `
 		INSERT INTO usage_analytics_hourly (
 			bucket_start, user_id, billing_user_id, team_id, api_key_id, group_id,
@@ -133,16 +196,29 @@ func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context,
 		return nil
 	}
 	dayStart := truncateUsageAnalyticsDay(hourStart)
+	// hourEnd is exclusive; subtract one nanosecond to select the last affected
+	// date without extending daily rebuilding into the next untouched day.
 	lastHour := hourEnd.Add(-time.Nanosecond)
 	dayEnd := truncateUsageAnalyticsDay(lastHour).AddDate(0, 0, 1)
 	return r.rebuildUsageAnalyticsDailyRangeInTx(ctx, dayStart, dayEnd)
 }
 
-// RebuildUsageAnalyticsDailyRange rebuilds complete affected UTC days from hourly data.
+// RebuildUsageAnalyticsDailyRange replaces complete UTC days touched by [start,
+// end) using hourly data. A partial final day expands to the following
+// midnight, while an exact midnight remains exclusive. Nil storage and
+// nonincreasing ranges return successfully.
+//
+// The database-backed path starts a transaction so deletion and reinsertion
+// commit together. A failed phase requests rollback and returns its error; a
+// supplied executor retains caller-owned completion. This method reads existing
+// hourly rows, so callers finish the relevant hourly work before rebuilding
+// their daily summaries.
 func (r *AggregationStore) RebuildUsageAnalyticsDailyRange(ctx context.Context, start, end time.Time) error {
 	if r == nil || r.sql == nil || !end.After(start) {
 		return nil
 	}
+	// Daily rows contain whole UTC dates; round touched dates outward so a
+	// partial endpoint cannot leave its earlier daily total in place.
 	dayStart := truncateUsageAnalyticsDay(start)
 	dayEnd := truncateUsageAnalyticsDay(end)
 	if end.UTC().After(dayEnd) {
@@ -151,6 +227,9 @@ func (r *AggregationStore) RebuildUsageAnalyticsDailyRange(ctx context.Context, 
 	if !dayEnd.After(dayStart) {
 		return nil
 	}
+	// Use one database transaction for each replacement sequence; caller-supplied
+	// executors must provide the transaction holding their own delete and insert
+	// together.
 	if db, ok := r.sql.(*sql.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -158,6 +237,8 @@ func (r *AggregationStore) RebuildUsageAnalyticsDailyRange(ctx context.Context, 
 		}
 		txRepo := NewAggregationStoreWithSQL(tx, r.calendar)
 		if err := txRepo.rebuildUsageAnalyticsDailyRangeInTx(ctx, dayStart, dayEnd); err != nil {
+			// Roll back the earlier replacement phases after a write fails; return that
+			// write error as the operation result even if rollback fails.
 			_ = tx.Rollback()
 			return err
 		}
@@ -166,7 +247,18 @@ func (r *AggregationStore) RebuildUsageAnalyticsDailyRange(ctx context.Context, 
 	return r.rebuildUsageAnalyticsDailyRangeInTx(ctx, dayStart, dayEnd)
 }
 
+// rebuildUsageAnalyticsDailyRangeInTx replaces daily dimensions from hourly
+// rows in [dayStart, dayEnd). Its caller supplies UTC day bounds and any
+// transaction containing the delete and insert. Removing old daily rows first
+// clears groups that no longer exist in the hourly source.
+//
+// The insert keeps every stored dimension and adds requests, tokens, costs,
+// duration sums, and duration counts across hours. Empty days remain empty
+// after deletion. Query errors stop replacement before later work, leaving
+// rollback or partial-commit handling to the supplied executor's owner.
 func (r *AggregationStore) rebuildUsageAnalyticsDailyRangeInTx(ctx context.Context, dayStart, dayEnd time.Time) error {
+	// Replace whole daily groups from the hourly source; deletion also removes a
+	// previous group when no surviving hourly row can recreate it.
 	if _, err := r.sql.ExecContext(ctx, `
 		DELETE FROM usage_analytics_daily
 		WHERE bucket_date >= $1::date AND bucket_date < $2::date
@@ -196,12 +288,17 @@ func (r *AggregationStore) rebuildUsageAnalyticsDailyRangeInTx(ctx context.Conte
 	return err
 }
 
+// truncateUsageAnalyticsDay returns midnight for the UTC date containing
+// value's instant. Its result supplies multidimensional daily bounds
+// independently of the Calendar timezone used by dashboard aggregation.
 func truncateUsageAnalyticsDay(value time.Time) time.Time {
 	value = value.UTC()
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// GetUsageAnalyticsAggregationState reads the singleton progress row.
+// GetUsageAnalyticsAggregationState reads the singleton progress row with
+// optional timestamps represented by pointers. Timestamp values are converted
+// to UTC, SQL NULL becomes nil, and a missing singleton remains a query error.
 func (r *AggregationStore) GetUsageAnalyticsAggregationState(ctx context.Context) (*usage.UsageAnalyticsAggregationState, error) {
 	state := &usage.UsageAnalyticsAggregationState{}
 	var coverageStart, backfillCursor, sourceOldest, manualStart, manualCursor sql.NullTime
@@ -229,7 +326,10 @@ func (r *AggregationStore) GetUsageAnalyticsAggregationState(ctx context.Context
 	return state, nil
 }
 
-// SaveUsageAnalyticsAggregationState replaces all fields of the singleton progress row.
+// SaveUsageAnalyticsAggregationState replaces every persisted field of the
+// singleton progress row; nil state performs no work. Callers coordinate full
+// replacement themselves or use ApplyUsageAnalyticsState to merge a field-owned
+// change under the row lock.
 func (r *AggregationStore) SaveUsageAnalyticsAggregationState(ctx context.Context, state *usage.UsageAnalyticsAggregationState) error {
 	if state == nil {
 		return nil
@@ -260,7 +360,9 @@ func (r *AggregationStore) SaveUsageAnalyticsAggregationState(ctx context.Contex
 	return err
 }
 
-// GetOldestUsageLogTime reads the oldest raw timestamp using created_at ordering.
+// GetOldestUsageLogTime returns the earliest retained raw timestamp in UTC. An
+// empty table produces nil through the scalar subquery's SQL NULL; scan and
+// result cleanup failures propagate.
 func (r *AggregationStore) GetOldestUsageLogTime(ctx context.Context) (*time.Time, error) {
 	var oldest sql.NullTime
 	if err := scanSingleRow(ctx, r.sql, `
@@ -276,8 +378,14 @@ func (r *AggregationStore) GetOldestUsageLogTime(ctx context.Context) (*time.Tim
 	return nullableTimePointer(oldest), nil
 }
 
-// CleanupUsageAnalytics deletes multidimensional buckets older than the supplied retention cutoffs.
+// CleanupUsageAnalytics deletes hourly rows before hourlyCutoff, then daily
+// rows before dailyCutoff's SQL date. It starts no transaction; when the daily
+// deletion fails, the executor's transaction scope determines whether the
+// earlier hourly deletion remains.
 func (r *AggregationStore) CleanupUsageAnalytics(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
+	// Hourly and daily rollups have different configured retention lifetimes.
+	// Apply their independent cutoffs on the supplied executor, stopping the
+	// sequence if hourly cleanup fails.
 	if _, err := r.sql.ExecContext(ctx, `DELETE FROM usage_analytics_hourly WHERE bucket_start < $1`, hourlyCutoff.UTC()); err != nil {
 		return err
 	}
@@ -285,6 +393,9 @@ func (r *AggregationStore) CleanupUsageAnalytics(ctx context.Context, hourlyCuto
 	return err
 }
 
+// nullableTimePointer converts a valid SQL timestamp into a new UTC time
+// pointer. SQL NULL returns nil, letting progress readers distinguish an absent
+// cursor from a stored zero timestamp.
 func nullableTimePointer(value sql.NullTime) *time.Time {
 	if !value.Valid {
 		return nil
@@ -293,13 +404,26 @@ func nullableTimePointer(value sql.NullTime) *time.Time {
 	return &result
 }
 
-// ApplyUsageAnalyticsState locks the progress row in a short transaction; aggregation queries execute separately.
+// ApplyUsageAnalyticsState applies a change kind to the latest locked singleton
+// progress row and returns the merged state after successful persistence. A
+// *sql.DB supplies a short transaction containing the row lock, read, merge,
+// and save. Aggregation scans run separately from this state transaction.
+//
+// Callers supplying another executor provide its transaction so the lock
+// remains held through saving. Superseded manual progress returns its
+// comparison error before saving. The merged result can retain timestamp
+// pointers from change.State, and an unsuccessful commit returns an error
+// instead of the candidate state.
 func (r *AggregationStore) ApplyUsageAnalyticsState(ctx context.Context, change usage.AnalyticsStateChange) (*usage.UsageAnalyticsAggregationState, error) {
+	// Hold the singleton lock through read, merge, and save in this short
+	// transaction so field-owned writers operate on the latest committed request.
 	if db, ok := r.sql.(*sql.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
+		// An early lock, merge, or save error leaves the transaction open. Deferred
+		// rollback releases it while the primary operation error remains returned.
 		defer func() { _ = tx.Rollback() }()
 		next, err := NewAggregationStoreWithSQL(tx, r.calendar).applyUsageAnalyticsStateInTx(ctx, change)
 		if err != nil {
@@ -313,8 +437,21 @@ func (r *AggregationStore) ApplyUsageAnalyticsState(ctx context.Context, change 
 	return r.applyUsageAnalyticsStateInTx(ctx, change)
 }
 
+// applyUsageAnalyticsStateInTx locks and reads the singleton before merging
+// fields owned by change.Kind. The caller supplies a transaction keeping FOR
+// UPDATE effective through the save. A missing singleton or rejected manual
+// target/cursor comparison ends the operation before replacement.
+//
+// Reading after the lock gives the merge current live and manual fields.
+// SaveUsageAnalyticsAggregationState then replaces the whole row using that
+// merged value, retaining fields belonging to other flows. The returned state
+// can share timestamp pointers with change.State; transaction completion
+// belongs to the caller.
 func (r *AggregationStore) applyUsageAnalyticsStateInTx(ctx context.Context, change usage.AnalyticsStateChange) (*usage.UsageAnalyticsAggregationState, error) {
 	var id int64
+	// Acquire the singleton lock before reading field ownership inputs so another
+	// state writer cannot replace the observed manual target during this
+	// transaction.
 	if err := scanSingleRow(ctx, r.sql, "SELECT id FROM usage_analytics_aggregation_state WHERE id=1 FOR UPDATE", nil, &id); err != nil {
 		return nil, err
 	}

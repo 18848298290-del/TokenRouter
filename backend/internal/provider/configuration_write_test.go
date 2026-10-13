@@ -7,7 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestConfigurationUsesCurrentWindowAndIsolatedValues checks locked usage totals and window rollover at the captured calculation time.
+// A configuration edit can carry older usage totals or redacted credentials
+// than the locked current provider record. These tests supply both snapshots
+// and inspect the merge result, covering captured-time window reconciliation,
+// sensitive-key intent, temporary-secret removal, and supported output
+// isolation.
+
+// TestConfigurationUsesCurrentWindowAndIsolatedValues merges quota
+// configuration against current usage in active and expired daily windows. It
+// checks retained total consumption, appropriate daily rollover, and selected
+// output mutations leaving both inputs intact.
 func TestConfigurationUsesCurrentWindowAndIsolatedValues(t *testing.T) {
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
 	for _, currentDay := range []bool{false, true} {
@@ -42,7 +51,9 @@ func TestConfigurationUsesCurrentWindowAndIsolatedValues(t *testing.T) {
 	}
 }
 
-// TestConfigurationSensitiveCredentialIntent checks inheritance of omitted secrets and explicit clearing or replacement.
+// TestConfigurationSensitiveCredentialIntent submits an omitted, cleared, or
+// replaced API Key against a newer stored secret. The merge follows submitted
+// key presence and leaves the current record's secret unchanged.
 func TestConfigurationSensitiveCredentialIntent(t *testing.T) {
 	for _, mode := range []string{"omitted", "clear", "rotate"} {
 		t.Run(mode, func(t *testing.T) {
@@ -68,7 +79,10 @@ func TestConfigurationSensitiveCredentialIntent(t *testing.T) {
 	}
 }
 
-// TestConfigurationDoesNotRestoreTemporaryCredentials checks that secret inheritance cannot restore removed temporary authentication fields.
+// TestConfigurationDoesNotRestoreTemporaryCredentials starts with current Grok
+// login material and an edit omitting secrets. The renewed object retains
+// access_token while removing password, SSO, and cookie keys, leaving current
+// input intact.
 func TestConfigurationDoesNotRestoreTemporaryCredentials(t *testing.T) {
 	current := &Record{Platform: PlatformGrok, Credentials: map[string]any{
 		"access_token": "current-token", "password": "old-password", "sso_token": "old-sso", "cookie": "old-cookie",

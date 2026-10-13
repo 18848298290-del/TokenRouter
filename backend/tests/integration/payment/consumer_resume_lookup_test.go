@@ -13,35 +13,64 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// Signed resume claims must match the stored order's user and provider identity
+// before a public lookup succeeds. The schema-version-two snapshot case
+// deliberately disagrees with legacy provider columns and checks snapshot
+// precedence. A counted provider stub distinguishes pending resume lookup,
+// which queries once, from plain public verification, which returns local state
+// with no provider query.
+
+// paymentResumeLookupProvider counts sequential status queries and supplies
+// pending outcomes.
 type paymentResumeLookupProvider struct {
-	queryCount int
+	// queryCount records calls on the shared fixture without
+	// synchronization; use this provider sequentially when inspecting the
+	// number of upstream lookup attempts.
+	queryCount int // recorded provider query count
 }
 
+// Name returns the fixed display name for the resume-lookup provider fixture.
 func (p *paymentResumeLookupProvider) Name() string { return "resume-lookup-provider" }
 
+// ProviderKey identifies the fixture as the Alipay provider for registry
+// lookup.
 func (p *paymentResumeLookupProvider) ProviderKey() string { return payment.TypeAlipay }
 
+// SupportedTypes returns a new slice containing the fixture's Alipay payment
+// type.
 func (p *paymentResumeLookupProvider) SupportedTypes() []payment.PaymentType {
 	return []payment.PaymentType{payment.TypeAlipay}
 }
 
+// CreatePayment panics when resume-lookup tests unexpectedly request payment
+// creation.
 func (p *paymentResumeLookupProvider) CreatePayment(context.Context, payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	panic("unexpected call")
 }
 
+// QueryOrder counts the call and returns a new pending response. It ignores
+// context and the query reference; this unsynchronized counter records
+// sequential lookup observations and supplies no provider network behavior.
 func (p *paymentResumeLookupProvider) QueryOrder(context.Context, string) (*payment.QueryOrderResponse, error) {
 	p.queryCount++
 	return &payment.QueryOrderResponse{Status: payment.ProviderStatusPending}, nil
 }
 
+// VerifyNotification panics when resume-lookup tests unexpectedly verify a
+// webhook.
 func (p *paymentResumeLookupProvider) VerifyNotification(context.Context, string, map[string]string) (*payment.PaymentNotification, error) {
 	panic("unexpected call")
 }
 
+// Refund panics when resume-lookup tests unexpectedly request a provider
+// refund.
 func (p *paymentResumeLookupProvider) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
 	panic("unexpected call")
 }
 
+// TestGetPublicOrderByResumeTokenReturnsMatchingOrder signs claims matching a
+// SQLite order's user, provider instance, and payment type. The public lookup
+// succeeds and returns that order's ID.
 func TestGetPublicOrderByResumeTokenReturnsMatchingOrder(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -93,6 +122,9 @@ func TestGetPublicOrderByResumeTokenReturnsMatchingOrder(t *testing.T) {
 	require.Equal(t, order.ID, got.ID)
 }
 
+// TestGetPublicOrderByResumeTokenRejectsSnapshotMismatch signs an instance ID
+// different from the stored order. Lookup returns an error with
+// INVALID_RESUME_TOKEN when the supplied claims cannot identify that snapshot.
 func TestGetPublicOrderByResumeTokenRejectsSnapshotMismatch(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -142,6 +174,9 @@ func TestGetPublicOrderByResumeTokenRejectsSnapshotMismatch(t *testing.T) {
 	require.Equal(t, "INVALID_RESUME_TOKEN", apperror.Reason(err))
 }
 
+// TestGetPublicOrderByResumeTokenUsesSnapshotAuthorityWhenColumnsDiffer stores
+// conflicting legacy columns and a schema-version-two provider snapshot. Claims
+// matching the snapshot resolve the expected order ID successfully.
 func TestGetPublicOrderByResumeTokenUsesSnapshotAuthorityWhenColumnsDiffer(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -196,6 +231,9 @@ func TestGetPublicOrderByResumeTokenUsesSnapshotAuthorityWhenColumnsDiffer(t *te
 	require.Equal(t, order.ID, got.ID)
 }
 
+// TestGetPublicOrderByResumeTokenChecksUpstreamForPendingOrder resolves signed
+// claims for a pending SQLite order through a counted provider stub. Lookup
+// returns the order ID and invokes provider QueryOrder once.
 func TestGetPublicOrderByResumeTokenChecksUpstreamForPendingOrder(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -248,6 +286,9 @@ func TestGetPublicOrderByResumeTokenChecksUpstreamForPendingOrder(t *testing.T) 
 	require.Equal(t, 1, provider.queryCount)
 }
 
+// TestVerifyOrderPublicDoesNotCheckUpstreamForPendingOrder looks up a pending
+// SQLite order by its local reference. It returns the expected ID while the
+// configured provider query counter stays zero.
 func TestVerifyOrderPublicDoesNotCheckUpstreamForPendingOrder(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -290,6 +331,9 @@ func TestVerifyOrderPublicDoesNotCheckUpstreamForPendingOrder(t *testing.T) {
 	require.Equal(t, 0, provider.queryCount)
 }
 
+// TestVerifyOrderPublicRejectsBlankOutTradeNoUseCase supplies a whitespace-only
+// reference to plain public verification. The use case rejects that input with
+// INVALID_OUT_TRADE_NO before any order is returned.
 func TestVerifyOrderPublicRejectsBlankOutTradeNoUseCase(t *testing.T) {
 	svc := paymenttestkit.Lifecycle(sqlitetest.NewClient(t), nil, nil, nil, nil, false)
 

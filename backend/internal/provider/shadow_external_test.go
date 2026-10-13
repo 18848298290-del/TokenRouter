@@ -16,29 +16,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// sparkShadowGroupRepoStub supplies active groups for shadow group-selection tests.
+// Shadow creation writes a provider before binding its groups, so validation
+// and failed-binding cleanup determine whether a retry can succeed. External
+// tests use controlled repositories to exercise parent requirements, group
+// inheritance, scheduling defaults, compensation, and conflicts that arise
+// after the initial duplicate check.
+
+// sparkShadowGroupRepoStub supplies active groups for shadow group-selection
+// tests.
 // Unexpected methods on the embedded nil repository panic.
 type sparkShadowGroupRepoStub struct {
-	routing.GroupRepository
-	groups []routing.Group
+	routing.GroupRepository                 // unused repository methods panic
+	groups                  []routing.Group // configured active group fixtures
 }
 
-// bindFailRepoStub fails group binding to check compensating deletion of the new shadow.
+// bindFailRepoStub fails group binding to check compensating deletion of the
+// new shadow.
 type bindFailRepoStub struct {
-	*sparkShadowRepoStub
+	*sparkShadowRepoStub // shared in-memory shadow repository
 }
 
-// raceCreateRepoStub simulates a competing shadow creation that wins the unique index.
-// The subsequent reread finds that shadow, allowing CreateShadow to return a structured 409.
+// raceCreateRepoStub simulates a competing shadow creation that wins the unique
+// index.
+// The subsequent reread finds that shadow, allowing CreateShadow to return a
+// structured 409.
 type raceCreateRepoStub struct {
-	*sparkShadowRepoStub
+	*sparkShadowRepoStub // competing-create shadow repository state
 }
 
+// ListActive returns the fixture's configured group slice directly and
+// succeeds. The result shares its backing array with the fixture, so test
+// callers treat those returned group values as read-only.
 func (s *sparkShadowGroupRepoStub) ListActive(_ context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
-// TestCreateShadowDoesNotBindDefaultGroup checks that an ungrouped parent produces an ungrouped shadow.
+// TestCreateShadowDoesNotBindDefaultGroup supplies an ungrouped parent and an
+// available default-named group. Creating the shadow leaves it ungrouped,
+// keeping names from implicitly selecting group membership.
 func TestCreateShadowDoesNotBindDefaultGroup(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -61,8 +76,9 @@ func TestCreateShadowDoesNotBindDefaultGroup(t *testing.T) {
 	require.Empty(t, repo.groupsOf[shadow.ID], "未指定分组且母提供商无分组时保留未分组状态")
 }
 
-// TestCreateShadow_InheritsParentGroups checks that omitted group_ids inherit
-// the parent's existing groups, including custom routing groups.
+// TestCreateShadow_InheritsParentGroups omits the shadow's group selection for
+// a parent already in custom groups. The bound group IDs match the parent's
+// selection instead of the available default-named group.
 func TestCreateShadow_InheritsParentGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -82,12 +98,15 @@ func TestCreateShadow_InheritsParentGroups(t *testing.T) {
 	require.Equal(t, []int64{11, 22}, repo.groupsOf[shadow.ID], "未指定分组应继承母提供商分组,而非 openai-default")
 }
 
+// BindGroups returns the configured fixture's simulated binding failure for
+// every request.
 func (s *bindFailRepoStub) BindGroups(_ context.Context, _ int64, _ []int64) error {
 	return errors.New("simulated bind failure")
 }
 
-// TestCreateShadow_InvalidGroupRejectedNoOrphan checks that invalid groups are rejected
-// before a shadow is created.
+// TestCreateShadow_InvalidGroupRejectedNoOrphan submits a group ID rejected by
+// the validating reader. Creation returns an error before a shadow is stored,
+// leaving the parent's shadow list empty.
 func TestCreateShadow_InvalidGroupRejectedNoOrphan(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -107,8 +126,9 @@ func TestCreateShadow_InvalidGroupRejectedNoOrphan(t *testing.T) {
 	require.Empty(t, shadows, "无效分组应在创建前被拒,不应建出影子")
 }
 
-// TestCreateShadow_BindFailureRollsBackShadow checks that failed binding deletes
-// the newly created shadow, releasing the one-shadow-per-parent constraint for a retry.
+// TestCreateShadow_BindFailureRollsBackShadow accepts the selected group but
+// injects a binding failure after creation. The request fails and compensating
+// deletion removes the shadow, leaving the one-shadow slot available.
 func TestCreateShadow_BindFailureRollsBackShadow(t *testing.T) {
 	ctx := context.Background()
 	base := newSparkShadowRepoStub()
@@ -129,10 +149,9 @@ func TestCreateShadow_BindFailureRollsBackShadow(t *testing.T) {
 	require.Empty(t, shadows, "绑组失败后应补偿删除影子,不留孤儿")
 }
 
-// TestCreateShadow checks parent identity, Spark quota dimension, and proxy inheritance.
-//
-// The shadow receives default model mappings and holds no authentication tokens.
-// Creating another shadow for the same parent returns an error.
+// TestCreateShadow creates a Spark provider from an OpenAI OAuth parent with a
+// proxy. The result carries the parent link, Spark dimension and default
+// mappings, omits token credentials, and rejects a duplicate shadow.
 func TestCreateShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -168,8 +187,9 @@ func TestCreateShadow(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreateShadow_BindGroups checks that supplied groups are bound after creation.
-// The shadow must then be returned by ListSchedulableByGroupID.
+// TestCreateShadow_BindGroups supplies one group ID when creating a shadow. The
+// returned group IDs are populated and the fixture's schedulable group query
+// returns the created shadow.
 func TestCreateShadow_BindGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -201,8 +221,9 @@ func TestCreateShadow_BindGroups(t *testing.T) {
 	require.Equal(t, shadow.ID, providers[0].ID)
 }
 
-// TestCreateShadow_InheritsParentConcurrency checks that omitted concurrency inherits
-// the parent limit; zero would mean unlimited concurrency to the limiter.
+// TestCreateShadow_InheritsParentConcurrency compares an omitted limit with a
+// positive supplied limit. The first inherits the parent's concurrency, and the
+// second retains the requested value in the returned shadow.
 func TestCreateShadow_InheritsParentConcurrency(t *testing.T) {
 	ctx := context.Background()
 
@@ -238,8 +259,9 @@ func TestCreateShadow_InheritsParentConcurrency(t *testing.T) {
 	})
 }
 
-// TestCreateShadow_InheritsParentPriorityWhenOmitted checks priority inheritance for omitted values.
-// Lower priorities schedule first; a name-only request uses the parent value instead of zero.
+// TestCreateShadow_InheritsParentPriorityWhenOmitted compares omitted priority
+// with a positive selection. Name-only creation inherits the parent's priority,
+// while a supplied positive priority remains on the shadow.
 func TestCreateShadow_InheritsParentPriorityWhenOmitted(t *testing.T) {
 	ctx := context.Background()
 
@@ -275,7 +297,9 @@ func TestCreateShadow_InheritsParentPriorityWhenOmitted(t *testing.T) {
 	})
 }
 
-// TestResolveCredentialProvider_RejectsParentShadow checks that credential resolution rejects a shadow parent.
+// TestResolveCredentialProvider_RejectsParentShadow manually stores a shadow
+// whose parent is itself a shadow. Public credential resolution returns an
+// error, protecting the one-link credential ownership rule.
 func TestResolveCredentialProvider_RejectsParentShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -301,7 +325,9 @@ func TestResolveCredentialProvider_RejectsParentShadow(t *testing.T) {
 	require.Error(t, err, "父提供商本身是影子时凭据解析应拒绝(fail-closed)")
 }
 
-// TestCreateShadow_RejectsShadowAsParent checks that shadows cannot become parents of further shadows.
+// TestCreateShadow_RejectsShadowAsParent first creates a valid shadow, then
+// uses it as another creation's parent. The second request fails with a
+// bad-request status.
 func TestCreateShadow_RejectsShadowAsParent(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -320,7 +346,9 @@ func TestCreateShadow_RejectsShadowAsParent(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpx.ErrorCode(err), "影子当母应返回 400")
 }
 
-// TestCreateShadow_StructuredErrors checks structured 4xx responses for invalid parents and duplicates.
+// TestCreateShadow_StructuredErrors supplies a non-OAuth parent and then
+// repeats creation for a valid parent. Public error mapping returns bad request
+// for the first case and conflict for the duplicate.
 func TestCreateShadow_StructuredErrors(t *testing.T) {
 	ctx := context.Background()
 
@@ -347,9 +375,15 @@ func TestCreateShadow_StructuredErrors(t *testing.T) {
 	})
 }
 
+// Create simulates another shadow winning after the caller's duplicate
+// precheck. Shadow input adds a shallow phantom record and returns a
+// unique-constraint error; ordinary providers delegate to the embedded fixture.
 func (s *raceCreateRepoStub) Create(ctx context.Context, provider *providercore.Record) error {
 	if provider.ParentProviderID != nil {
 		s.nextID++
+		// Insert the competing row before returning the simulated constraint
+		// failure. CreateShadow's reread can then distinguish this race from
+		// an unrelated failure with no shadow present.
 		phantom := *provider
 		phantom.ID = s.nextID
 		s.providers[phantom.ID] = &phantom
@@ -358,8 +392,9 @@ func (s *raceCreateRepoStub) Create(ctx context.Context, provider *providercore.
 	return s.sparkShadowRepoStub.Create(ctx, provider)
 }
 
-// TestCreateShadow_DefaultsNameFromParent checks that a blank name succeeds
-// with the default "<parent name> (Spark)".
+// TestCreateShadow_DefaultsNameFromParent supplies a whitespace-only name while
+// creating a valid shadow. Creation succeeds with the parent-derived Spark
+// suffix, making a blank display choice usable.
 func TestCreateShadow_DefaultsNameFromParent(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
@@ -375,8 +410,9 @@ func TestCreateShadow_DefaultsNameFromParent(t *testing.T) {
 	require.Equal(t, "mum (Spark)", shadow.Name)
 }
 
-// TestCreateShadow_ConcurrentCreateReturns409 checks a race after the precheck:
-// a unique-index conflict with an existing shadow returns a structured 409.
+// TestCreateShadow_ConcurrentCreateReturns409 injects a competing stored shadow
+// after the duplicate precheck. The creation failure's reread finds that record
+// and maps the result to a conflict response.
 func TestCreateShadow_ConcurrentCreateReturns409(t *testing.T) {
 	ctx := context.Background()
 	base := newSparkShadowRepoStub()

@@ -20,8 +20,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// TestPaymentRefundPostgresAtomicity checks transactional refund confirmation through the public workflow.
-// Provider HTTP uses a test server; deductions, order claims, audit writes, and commits use production storage.
+// Refund confirmation can compete after two callers have already loaded the
+// same pending recovery state. The PostgreSQL fixture holds both local Stripe
+// status responses until each query reaches the HTTP gate, then lets the
+// workflow's conditional confirmation choose one successful claimant and checks
+// one balance deduction and success audit.
+//
+// A separate case rejects the success audit after its trigger observes the
+// reduced balance inside the refund transaction. Outside state reads check
+// rollback to the pending order and original funds, followed by successful
+// retry after removing that trigger. Provider transport remains the local test
+// server, and the process-wide Stripe API backend is restored before server
+// cleanup. Repeating completed confirmation checks rejection of the terminal
+// order while outside reads confirm the retained final state.
+
+// TestPaymentRefundPostgresAtomicity combines gated concurrent confirmation
+// with a success-audit failure and retry against PostgreSQL. Exactly one
+// confirmation succeeds in the race, and final balance, order status, and audit
+// count reflect one deduction.
 func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 	for _, concurrent := range []bool{false, true} {
 		name := "audit_failure_rolls_back_then_retry"
@@ -39,7 +55,10 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 					http.Error(w, "unexpected refund request", http.StatusBadRequest)
 					return
 				}
-				// Both callers read the pending state before competing for the PostgreSQL claim.
+				// Hold provider status replies until both
+				// queries arrive so each workflow has loaded
+				// pending recovery facts before competing for
+				// the conditional PostgreSQL confirmation.
 				if calls.Add(1) == 2 && concurrent {
 					close(ready)
 				}
@@ -51,11 +70,22 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 					}
 				}
 				w.Header().Set("Content-Type", "application/json")
+				// Return the local provider success shape
+				// needed by confirmation; this handler discards
+				// encoding errors while the caller assertions
+				// inspect workflow and stored effects.
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"id": "re_test", "object": "refund", "status": "succeeded",
 				})
 			}))
+			// Keep the provider server alive through workflow
+			// calls, and register its closure before backend
+			// restoration so the later restoration callback runs
+			// first.
 			t.Cleanup(server.Close)
+			// Replace the process-wide Stripe API backend with this
+			// local server and disable SDK network retries, then
+			// restore its preceding backend at test cleanup.
 			originalBackend := stripe.GetBackend(stripe.APIBackend)
 			stripe.SetBackend(stripe.APIBackend, stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{
 				URL: stripe.String(server.URL), HTTPClient: server.Client(), MaxNetworkRetries: stripe.Int64(0),
@@ -69,6 +99,10 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 				SetName("test-refund").SetConfig(`{"secretKey":"test-only-key","currency":"USD"}`).
 				SetSupportedTypes(payment.TypeStripe).SetRefundEnabled(true).Save(ctx)
 			require.NoError(t, err)
+			// Remove the committed provider instance after the
+			// later order cleanup so the passing case deletes its
+			// separate provider record before the shared fixture
+			// truncates users.
 			t.Cleanup(func() {
 				require.NoError(t, client.PaymentProviderInstance.DeleteOneID(instance.ID).Exec(context.Background()))
 			})
@@ -83,7 +117,9 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 				SetProviderInstanceID(strconv.FormatInt(instance.ID, 10)).Save(ctx)
 			require.NoError(t, err)
 			orderID := strconv.FormatInt(order.ID, 10)
-			// Orders and audits need separate cleanup from the users cascade.
+			// Remove order audits before the committed order and
+			// provider instance so their separate cleanup precedes
+			// the shared fixture's cascading user-table truncation.
 			t.Cleanup(func() {
 				_, cleanupErr := client.PaymentAuditLog.Delete().Where(paymentauditlog.OrderIDEQ(orderID)).Exec(context.Background())
 				require.NoError(t, cleanupErr)
@@ -95,10 +131,17 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 			svc := newPostgresRefundWorkflow(client)
 
 			if concurrent {
+				// outcome records a confirmation worker's
+				// report and failure for the competing refund
+				// claim.
 				type outcome struct {
-					result *payment.RefundResult
-					err    error
+					result *payment.RefundResult // completed confirmation result
+					err    error                 // refund confirmation failure
 				}
+				// Buffer both worker results before receiving
+				// them so their completion can proceed
+				// independently; the state assertion follows
+				// both returned confirmation attempts.
 				results := make(chan outcome, 2)
 				for range 2 {
 					go func() {
@@ -119,9 +162,16 @@ func TestPaymentRefundPostgresAtomicity(t *testing.T) {
 				}
 				require.Equal(t, 1, successes)
 			} else {
-				// The trigger checks that the deduction is visible in this transaction, then fails the final audit write.
+				// Inspect the already reduced balance from the
+				// audit trigger before rejecting the success
+				// insert, then use outside reads to detect
+				// effects that escaped rollback.
 				functionName := fmt.Sprintf("test_refund_audit_failure_%d", order.ID)
 				triggerName := functionName + "_trigger"
+				// Remove the failure trigger before its
+				// function on every test exit; IF EXISTS also
+				// tolerates the successful retry path's earlier
+				// trigger removal.
 				t.Cleanup(func() {
 					_, cleanupErr := integrationDB.ExecContext(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON payment_audit_logs", triggerName))
 					require.NoError(t, cleanupErr)
@@ -149,6 +199,10 @@ $$`, functionName, orderID, user.ID))
 				require.ErrorContains(t, callErr, "forced refund audit failure")
 				assertRefundPostgresState(t, ctx, client, user.ID, order.ID, 100, payment.OrderStatusRefundPending, 0)
 
+				// Disable the injected audit failure before
+				// repeating confirmation so final state can
+				// demonstrate a successful retry after the
+				// failed transaction rolled back.
 				_, err = integrationDB.ExecContext(ctx, fmt.Sprintf("DROP TRIGGER %s ON payment_audit_logs", triggerName))
 				require.NoError(t, err)
 				result, err = svc.QueryAndFinalizeRefund(ctx, order.ID)
@@ -158,7 +212,10 @@ $$`, functionName, orderID, user.ID))
 			}
 
 			assertRefundPostgresState(t, ctx, client, user.ID, order.ID, 50, payment.OrderStatusRefunded, 1)
-			// Confirming the completed refund again must fail and leave the balance unchanged.
+			// Retry after completed confirmation with the same
+			// order to check rejection of that terminal state and
+			// retained balance, status, and success-audit
+			// observations.
 			_, err = svc.QueryAndFinalizeRefund(ctx, order.ID)
 			require.Error(t, err)
 			assertRefundPostgresState(t, ctx, client, user.ID, order.ID, 50, payment.OrderStatusRefunded, 1)

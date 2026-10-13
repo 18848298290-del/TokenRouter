@@ -22,15 +22,48 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Billing integration cases share one migrated PostgreSQL database and an Ent
+// client using its connection pool. Committed fixtures clean shared tables
+// after their cases, while repository suites use caller-owned transactions for
+// rollback isolation. TestMain starts the container before invoking the package
+// runner, so integration-tagged and ordinary cases in this package use the same
+// migrated schema.
+//
+// Startup failures return exit code one after releasing resources already
+// acquired. The Ent client cleanup closes the pool before the deferred
+// container termination runs, and both cleanup paths log errors. Container
+// cleanup uses a fresh bounded context after the setup budget has ended.
+// Cleanup errors leave the runner's chosen exit code unchanged.
+
+// integrationDB and integrationEntClient share the migrated billing database
+// for package tests; runPostgresTests owns their setup and closes them after
+// m.Run.
 var (
-	// integrationDB connects to the test container; runPostgresTests closes it before terminating the container.
+	// integrationDB remains available through package test cleanup and
+	// shares its pool with integrationEntClient, whose Close releases that
+	// pool before container termination.
 	integrationDB *sql.DB
 
+	// integrationEntClient wraps integrationDB for Ent fixtures; cases
+	// borrow it and keep their own transactions separate from its
+	// package-wide connection lifetime.
 	integrationEntClient *dbent.Client
 )
 
+// TestMain starts the shared billing PostgreSQL fixture and exits with its
+// runner result. Database setup precedes all cases, and deferred resource
+// cleanup completes before process exit.
 func TestMain(m *testing.M) { os.Exit(runPostgresTests(m)) }
 
+// runPostgresTests prepares the shared migrated PostgreSQL fixture, runs
+// package tests, and returns their exit code. The image can be selected through
+// TOKENROUTER_TEST_POSTGRES_IMAGE, and startup plus migrations share a
+// three-minute budget.
+//
+// Each acquired resource registers deferred cleanup before the next setup step.
+// The Ent client closes its shared pool before container termination uses a
+// fresh thirty-second context. Setup errors return one; cleanup errors are
+// logged and do not replace the test runner result.
 func runPostgresTests(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -43,6 +76,9 @@ func runPostgresTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	// Register termination as soon as startup succeeds so later DSN or
+	// migration errors still release the container using a budget
+	// independent of setup cancellation.
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
@@ -61,6 +97,9 @@ func runPostgresTests(m *testing.M) int {
 		return 1
 	}
 	integrationEntClient = dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)))
+	// The later-registered Ent cleanup runs before container termination
+	// and owns shared pool closure. Reporting its error does not change the
+	// returned test status.
 	defer func() {
 		if err := integrationEntClient.Close(); err != nil {
 			fmt.Fprintln(os.Stderr, err)

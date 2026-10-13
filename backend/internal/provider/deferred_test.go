@@ -12,18 +12,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/timingwheel"
 )
 
-// deferredDrainRepository blocks writes to test serialization of periodic and final flushes without losing queued activity.
+// Activity batching can overlap a provider's newer queued timestamp or a
+// shutdown deadline. Blocking repository doubles make those interleavings
+// visible, so the tests inspect write serialization, retained failed batches,
+// rejected post-stop admission, and the first shutdown result.
+
+// deferredDrainRepository blocks writes to test serialization of periodic and
+// final flushes without losing queued activity.
 type deferredDrainRepository struct {
-	DeferredRepository
-	mu               sync.Mutex
-	calls            int
-	entered, release chan struct{}
-	err              error
+	DeferredRepository // embedded repository fixture interface
+	// mu protects calls so the first-write barrier remains consistent while
+	// periodic and final flushes compete to reach this repository double.
+	mu    sync.Mutex
+	calls int // observed repository write count
+	// entered and release bracket the first repository call when configured.
+	// The test waits for entered before adding activity or starting shutdown,
+	// then closes release to let the blocked batch finish.
+	entered, release chan struct{} // entry and completion barriers
+	err              error         // configured repository write failure
 }
 
-// deferredBlockedRepository ignores cancellation to test bounded shutdown while a write remains blocked.
-type deferredBlockedRepository struct{ entered, release chan struct{} }
+// deferredBlockedRepository ignores cancellation to test bounded shutdown while
+// a write remains blocked.
+type deferredBlockedRepository struct {
+	// entered and release bracket an intentionally uncooperative write. Tests
+	// trigger shutdown after entered closes and release the writer after inspecting
+	// the timeout result and retained pending queue.
+	entered, release chan struct{} // blocked write lifecycle barriers
+}
 
+// BatchUpdateLastUsed counts writes and optionally blocks the first call on its
+// release channel. That wait responds to ctx cancellation; after admission the
+// double returns its configured database error.
 func (r *deferredDrainRepository) BatchUpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
 	r.mu.Lock()
 	r.calls++
@@ -40,6 +60,10 @@ func (r *deferredDrainRepository) BatchUpdateLastUsed(ctx context.Context, updat
 	return r.err
 }
 
+// TestDeferredStopSerializesFinalFlush blocks a periodic write and queues
+// another provider before stopping. Stop waits for that write, then performs
+// the final batch; repeated stop and start calls keep the completed lifecycle
+// fixed.
 func TestDeferredStopSerializesFinalFlush(t *testing.T) {
 	wheel, err := NewTimingWheelService()
 	require.NoError(t, err)
@@ -50,6 +74,8 @@ func TestDeferredStopSerializesFinalFlush(t *testing.T) {
 	svc.Start()
 	svc.ScheduleLastUsedUpdate(1)
 	flushed := make(chan struct{})
+	// Hold the first batch inside persistence before stopping. The stop owner
+	// must then wait for that flush lock and drain the separately queued provider.
 	go func() { svc.flushLastUsed(); close(flushed) }()
 	<-repo.entered
 	svc.ScheduleLastUsedUpdate(2)
@@ -58,6 +84,7 @@ func TestDeferredStopSerializesFinalFlush(t *testing.T) {
 	select {
 	case <-stopped:
 		t.Fatal("周期写回未结束")
+	// A short observation interval checks that shutdown remains blocked here.
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(repo.release)
@@ -70,6 +97,9 @@ func TestDeferredStopSerializesFinalFlush(t *testing.T) {
 	repo.mu.Unlock()
 }
 
+// TestDeferredFinalFlushReportsFailure makes the final activity write return a
+// database error. Stop retains that error across another call, and the failed
+// provider timestamp remains queued.
 func TestDeferredFinalFlushReportsFailure(t *testing.T) {
 	failure := errors.New("database unavailable")
 	repo := &deferredDrainRepository{err: failure}
@@ -83,15 +113,23 @@ func TestDeferredFinalFlushReportsFailure(t *testing.T) {
 	require.True(t, retained)
 }
 
-// NewTimingWheelService constructs a timing wheel; tests start it explicitly.
+// NewTimingWheelService constructs an unstarted timing wheel for deferred
+// service tests.
 func NewTimingWheelService() (*timingwheel.Wheel, error) { return timingwheel.New(), nil }
 
+// BatchUpdateLastUsed signals that persistence has started and waits for
+// release while ignoring cancellation. The test uses this unfinished call to
+// show shutdown budgeting cannot complete an active uncooperative repository
+// write.
 func (r *deferredBlockedRepository) BatchUpdateLastUsed(context.Context, map[int64]time.Time) error {
 	close(r.entered)
 	<-r.release
 	return nil
 }
 
+// TestDeferredStopBudgetKeepsUnfinishedBatch blocks a periodic write that
+// ignores cancellation and times out shutdown. New admission is rejected, the
+// later queued timestamp remains, and another stop returns the first timeout.
 func TestDeferredStopBudgetKeepsUnfinishedBatch(t *testing.T) {
 	repo := &deferredBlockedRepository{entered: make(chan struct{}), release: make(chan struct{})}
 	wheel, err := NewTimingWheelService()
@@ -116,7 +154,9 @@ func TestDeferredStopBudgetKeepsUnfinishedBatch(t *testing.T) {
 	require.ErrorIs(t, svc.StopContext(context.Background()), context.DeadlineExceeded)
 }
 
-// TestDeferredFailureKeepsNewerPendingActivity protects newer queued activity when an older batch fails.
+// TestDeferredFailureKeepsNewerPendingActivity queues newer activity while an
+// older batch is blocked, then fails that write. Failure restoration leaves the
+// newer pending timestamp in place.
 func TestDeferredFailureKeepsNewerPendingActivity(t *testing.T) {
 	repo := &deferredDrainRepository{entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("forced write failure")}
 	wheel, err := NewTimingWheelService()

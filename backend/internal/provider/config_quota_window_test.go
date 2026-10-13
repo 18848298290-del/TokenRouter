@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// The next fixed reset must be strictly after the supplied observation, while
+// current-window reconciliation keeps consumption at an already current start.
+// Daily and weekly scenarios check those distinctions across local weekdays,
+// UTC conversion, rolling metadata removal, and billing's invalid-hour
+// normalization.
+
+// TestNextFixedDailyReset_BeforeResetHour supplies a time before the local
+// daily reset hour. The next boundary remains on the same calendar date at that
+// configured hour.
 func TestNextFixedDailyReset_BeforeResetHour(t *testing.T) {
 	tz := time.UTC
 	// At 06:00 UTC, the daily 09:00 reset is still ahead.
@@ -19,6 +28,9 @@ func TestNextFixedDailyReset_BeforeResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedDailyReset_AtResetHour supplies the exact local daily reset
+// instant. Next-reset publication advances one calendar day because the
+// supplied occurrence has already taken effect.
 func TestNextFixedDailyReset_AtResetHour(t *testing.T) {
 	tz := time.UTC
 	// At the reset instant, choose tomorrow's reset.
@@ -28,6 +40,9 @@ func TestNextFixedDailyReset_AtResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedDailyReset_AfterResetHour supplies a time after the local daily
+// reset. The next boundary advances to tomorrow's configured reset hour instead
+// of returning the elapsed occurrence.
 func TestNextFixedDailyReset_AfterResetHour(t *testing.T) {
 	tz := time.UTC
 	// After the reset instant, choose tomorrow's reset.
@@ -37,6 +52,9 @@ func TestNextFixedDailyReset_AfterResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedDailyReset_MidnightReset evaluates a midnight schedule just
+// before the day ends. The result is midnight on the following calendar date,
+// protecting date rollover for this schedule.
 func TestNextFixedDailyReset_MidnightReset(t *testing.T) {
 	tz := time.UTC
 	// At 23:59, the next midnight reset is tomorrow.
@@ -46,6 +64,9 @@ func TestNextFixedDailyReset_MidnightReset(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedDailyReset_NonUTCTimezone supplies a UTC instant whose Shanghai
+// local reset has passed. The returned boundary uses the following Shanghai
+// calendar date and configured local reset hour.
 func TestNextFixedDailyReset_NonUTCTimezone(t *testing.T) {
 	tz, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
@@ -58,6 +79,9 @@ func TestNextFixedDailyReset_NonUTCTimezone(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_TargetDayAhead supplies Saturday with a Monday
+// morning weekly schedule. The returned next reset is the following Monday,
+// maintaining the requested weekday and hour.
 func TestNextFixedWeeklyReset_TargetDayAhead(t *testing.T) {
 	tz := time.UTC
 	// From Saturday, choose the next Monday at 09:00.
@@ -68,6 +92,9 @@ func TestNextFixedWeeklyReset_TargetDayAhead(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_TargetDayToday_BeforeHour supplies Monday before its
+// configured reset hour. The next weekly reset stays on that same Monday
+// because the occurrence is still ahead.
 func TestNextFixedWeeklyReset_TargetDayToday_BeforeHour(t *testing.T) {
 	tz := time.UTC
 	// On Monday before 09:00, use today's reset.
@@ -78,6 +105,9 @@ func TestNextFixedWeeklyReset_TargetDayToday_BeforeHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_TargetDayToday_AtHour supplies the exact Monday
+// weekly reset instant. Publication chooses the following Monday so the result
+// represents a future occurrence.
 func TestNextFixedWeeklyReset_TargetDayToday_AtHour(t *testing.T) {
 	tz := time.UTC
 	// At Monday's reset instant, advance one week.
@@ -88,6 +118,9 @@ func TestNextFixedWeeklyReset_TargetDayToday_AtHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_TargetDayToday_AfterHour supplies Monday after its
+// configured weekly reset. The next boundary advances a full calendar week to
+// the following Monday morning.
 func TestNextFixedWeeklyReset_TargetDayToday_AfterHour(t *testing.T) {
 	tz := time.UTC
 	// After Monday's reset, advance one week.
@@ -98,6 +131,9 @@ func TestNextFixedWeeklyReset_TargetDayToday_AfterHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_TargetDayPast supplies Wednesday with a Monday reset
+// schedule. The next reset uses the following Monday, moving ahead to the next
+// matching weekday.
 func TestNextFixedWeeklyReset_TargetDayPast(t *testing.T) {
 	tz := time.UTC
 	// From Wednesday, choose the following Monday.
@@ -108,6 +144,9 @@ func TestNextFixedWeeklyReset_TargetDayPast(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNextFixedWeeklyReset_Sunday supplies Saturday for a Sunday-midnight
+// weekly schedule. Weekday zero produces the following Sunday's boundary,
+// protecting the Sunday encoding used by stored configuration.
 func TestNextFixedWeeklyReset_Sunday(t *testing.T) {
 	tz := time.UTC
 	// From Saturday, choose the next Sunday reset.
@@ -118,6 +157,9 @@ func TestNextFixedWeeklyReset_Sunday(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestNormalizeFixedQuotaWindows_ClearsExpiredWeeklyWindow starts saved
+// consumption before the current UTC Monday window. Reconciliation clears
+// weekly usage and writes the current Monday start in RFC3339 form.
 func TestNormalizeFixedQuotaWindows_ClearsExpiredWeeklyWindow(t *testing.T) {
 	now := time.Now().UTC()
 	daysSinceMonday := (int(now.Weekday()) + 6) % 7
@@ -139,6 +181,9 @@ func TestNormalizeFixedQuotaWindows_ClearsExpiredWeeklyWindow(t *testing.T) {
 	assert.Equal(t, currentWeekStart.Format(time.RFC3339), extra["quota_weekly_start"])
 }
 
+// TestNormalizeFixedQuotaWindows_KeepsActiveWeeklyWindow supplies consumption
+// whose saved start already matches the current UTC Monday. Reconciliation
+// keeps the amount and start because the stored window remains current.
 func TestNormalizeFixedQuotaWindows_KeepsActiveWeeklyWindow(t *testing.T) {
 	now := time.Now().UTC()
 	daysSinceMonday := (int(now.Weekday()) + 6) % 7
@@ -159,6 +204,9 @@ func TestNormalizeFixedQuotaWindows_KeepsActiveWeeklyWindow(t *testing.T) {
 	assert.Equal(t, currentWeekStart.Format(time.RFC3339), extra["quota_weekly_start"])
 }
 
+// TestComputeQuotaResetAt_RollingMode_NoResetAt supplies rolling daily and
+// weekly schedules with no reset metadata. Publication leaves both reset_at
+// keys absent because those dimensions use elapsed durations.
 func TestComputeQuotaResetAt_RollingMode_NoResetAt(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode":  "rolling",
@@ -171,6 +219,9 @@ func TestComputeQuotaResetAt_RollingMode_NoResetAt(t *testing.T) {
 	assert.False(t, hasWeeklyResetAt, "rolling mode should not set quota_weekly_reset_at")
 }
 
+// TestComputeQuotaResetAt_RollingMode_ClearsExistingResetAt supplies rolling
+// schedules alongside old fixed reset timestamps. Both timestamps are removed,
+// keeping management metadata consistent with the selected rolling modes.
 func TestComputeQuotaResetAt_RollingMode_ClearsExistingResetAt(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode":  "rolling",
@@ -185,6 +236,9 @@ func TestComputeQuotaResetAt_RollingMode_ClearsExistingResetAt(t *testing.T) {
 	assert.False(t, hasWeeklyResetAt, "rolling mode should remove quota_weekly_reset_at")
 }
 
+// TestComputeQuotaResetAt_FixedDaily_SetsResetAt publishes a fixed daily
+// schedule with a UTC morning hour. The saved RFC3339 timestamp parses, lies in
+// the future at assertion time, and retains that UTC hour.
 func TestComputeQuotaResetAt_FixedDaily_SetsResetAt(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -203,6 +257,9 @@ func TestComputeQuotaResetAt_FixedDaily_SetsResetAt(t *testing.T) {
 	assert.Equal(t, 9, resetAt.UTC().Hour())
 }
 
+// TestComputeQuotaResetAt_FixedWeekly_SetsResetAt publishes a fixed Monday
+// schedule in UTC. The saved timestamp parses, lies in the future at assertion
+// time, and falls on Monday.
 func TestComputeQuotaResetAt_FixedWeekly_SetsResetAt(t *testing.T) {
 	extra := map[string]any{
 		"quota_weekly_reset_mode": "fixed",
@@ -222,6 +279,9 @@ func TestComputeQuotaResetAt_FixedWeekly_SetsResetAt(t *testing.T) {
 	assert.Equal(t, time.Monday, resetAt.UTC().Weekday())
 }
 
+// TestComputeQuotaResetAt_FixedDaily_WithTimezone publishes a morning reset
+// using the Shanghai timezone. Parsing the stored timestamp and converting it
+// to that location recovers the configured local hour.
 func TestComputeQuotaResetAt_FixedDaily_WithTimezone(t *testing.T) {
 	tz, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
@@ -241,6 +301,9 @@ func TestComputeQuotaResetAt_FixedDaily_WithTimezone(t *testing.T) {
 	assert.Equal(t, 9, resetAt.In(tz).Hour())
 }
 
+// TestComputeQuotaResetAt_DefaultTimezone omits quota_reset_timezone from a
+// fixed daily schedule. The timestamp published into Extra uses UTC and retains
+// the configured noon reset hour after parsing.
 func TestComputeQuotaResetAt_DefaultTimezone(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -256,6 +319,9 @@ func TestComputeQuotaResetAt_DefaultTimezone(t *testing.T) {
 	assert.Equal(t, 12, resetAt.UTC().Hour())
 }
 
+// TestComputeQuotaResetAt_InvalidHour_ClampedToZero supplies an out-of-range
+// daily reset hour to publication. Billing's wrapper normalizes it to midnight,
+// and the resulting UTC timestamp has hour zero.
 func TestComputeQuotaResetAt_InvalidHour_ClampedToZero(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -268,6 +334,6 @@ func TestComputeQuotaResetAt_InvalidHour_ClampedToZero(t *testing.T) {
 
 	resetAt, err := time.Parse(time.RFC3339, resetAtStr)
 	require.NoError(t, err)
-	// Invalid hours are clamped to midnight.
+	// Publication normalizes an invalid clock hour to midnight before calculation.
 	assert.Equal(t, 0, resetAt.UTC().Hour())
 }

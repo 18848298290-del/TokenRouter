@@ -9,21 +9,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// Usage queries can share work only when their provider credentials and
+// connection settings describe the same request. A digest includes normalized
+// query choices, proxy credentials and TLS settings so an identity change
+// selects another shared query; CN monitor snapshots reuse that digest to reject
+// observations from an earlier identity.
+//
+// Ollama browser usage groups use a narrower identity: the fixed host and API
+// key. Providers with that same key can share the managed browser observation
+// despite different provider IDs. These digest inputs contain sensitive
+// authentication data, so callers use the resulting hashes as identifiers and
+// keep source records stable during construction.
+
+// UpstreamUsageContextFingerprint hashes the provider, query configuration and
+// selected query root used to identify shared work. Nil input returns the
+// literal nil marker. Keep provider credentials, proxy and transport settings
+// stable while the input is encoded.
+//
+// The JSON input includes proxy credentials and selected TLS fields. If JSON
+// encoding fails, a reduced formatted input containing ID, platform, adapter and
+// credentials is hashed instead; that exceptional result does not retain every
+// connection field used by normal encoding.
 func UpstreamUsageContextFingerprint(provider *Record, config UpstreamUsageQueryConfig, baseURL string) string {
 	if provider == nil {
 		return "nil"
 	}
 	payload := struct {
-		ID          int64
-		Platform    string
-		Type        string
-		Credentials map[string]any
-		Config      UpstreamUsageQueryConfig
-		BaseURL     string
-		ProxyID     *int64
-		Proxy       any
-		Concurrency int
-		Transport   map[string]any
+		ID       int64  // observed provider database ID
+		Platform string // observed provider platform name
+		Type     string // observed provider authentication type
+		// Credentials borrows the provider credential map during JSON encoding.
+		// Callers keep its entries and nested values stable until the digest input
+		// has been encoded.
+		Credentials map[string]any           // observed provider credential object
+		Config      UpstreamUsageQueryConfig // normalized usage query choices
+		BaseURL     string                   // resolved usage query root
+		// ProxyID borrows the provider's selected proxy pointer. Keep its pointed
+		// value stable until JSON has captured that connection choice.
+		ProxyID     *int64 // selected provider proxy ID
+		Proxy       any    // hydrated selected proxy metadata
+		Concurrency int    // configured provider concurrency limit
+		// Transport collects three TLS Extra values in a new map. Mutable values
+		// returned by usageExtraValue remain borrowed from the provider until JSON
+		// encoding finishes.
+		Transport map[string]any // selected TLS configuration values
 	}{
 		ID:          provider.ID,
 		Platform:    provider.Platform,
@@ -40,17 +69,22 @@ func UpstreamUsageContextFingerprint(provider *Record, config UpstreamUsageQuery
 		},
 	}
 	if provider.Proxy != nil {
-		// Include proxy credentials in the digest input so credential changes invalidate the identity.
+		// Include hydrated proxy credentials in the normal digest input so queries
+		// using replacement proxy authentication cannot reuse an earlier shared
+		// result.
 		payload.Proxy = struct {
-			ID       int64
-			Protocol string
-			Host     string
-			Port     int
-			Username string
-			Password string
-			Status   string
+			ID       int64  // selected proxy database ID
+			Protocol string // proxy connection protocol name
+			Host     string // proxy connection host name
+			Port     int    // proxy connection port number
+			Username string // proxy authentication username value
+			Password string // proxy authentication password value
+			Status   string // proxy connection status value
 		}{provider.Proxy.ID, provider.Proxy.Protocol, provider.Proxy.Host, provider.Proxy.Port, provider.Proxy.Username, provider.Proxy.Password, provider.Proxy.Status}
 	}
+	// If the complete input cannot be JSON encoded, use a reduced formatted
+	// identity. That path omits proxy and other connection fields included by the
+	// normal digest.
 	data, err := json.Marshal(payload)
 	if err != nil {
 		data = []byte(fmt.Sprintf("%d:%s:%s:%v", provider.ID, provider.Platform, config.Adapter, provider.Credentials))
@@ -59,11 +93,18 @@ func UpstreamUsageContextFingerprint(provider *Record, config UpstreamUsageQuery
 	return hex.EncodeToString(hash[:])
 }
 
+// CNUsageMonitorIdentityFingerprint returns the query identity for a supported
+// CN API Key provider. Invalid configuration or an unavailable platform/mode
+// adapter returns empty, leaving monitor consumers without trusted snapshot
+// identity.
 func CNUsageMonitorIdentityFingerprint(provider *Record) string {
 	if provider == nil || !provider.IsCNProvider() || provider.Type != ProviderTypeAPIKey {
 		return ""
 	}
 	queryConfig, err := EffectiveUpstreamUsageConfig(provider)
+	// Configuration merging compares this identity to decide whether a CN
+	// snapshot still belongs to the record. Query-validation failure therefore
+	// supplies the empty identity marker.
 	if err != nil {
 		return ""
 	}
@@ -74,6 +115,9 @@ func CNUsageMonitorIdentityFingerprint(provider *Record) string {
 	return UpstreamUsageContextFingerprint(provider, queryConfig, provider.OpenAIBaseURL(provider.ConfiguredAPIProtocol() == APIProtocolAdaptive))
 }
 
+// IsOllamaCloudUsageProvider reports whether an OpenAI or Anthropic API Key
+// record targets an Ollama Cloud base URL. Nil, other provider types and other
+// platforms return false.
 func IsOllamaCloudUsageProvider(provider *Record) bool {
 	if provider == nil || provider.Type != ProviderTypeAPIKey || (provider.Platform != PlatformOpenAI && provider.Platform != PlatformAnthropic) {
 		return false
@@ -82,6 +126,9 @@ func IsOllamaCloudUsageProvider(provider *Record) bool {
 	return egress.IsOllamaCloudBaseURL(baseURL)
 }
 
+// OllamaCloudUsageIdentity returns a new host/API-key map for a supported Ollama
+// Cloud provider. Missing or empty string API keys return nil; the map contains
+// sensitive credentials for internal identity comparison.
 func OllamaCloudUsageIdentity(provider *Record) map[string]any {
 	if !IsOllamaCloudUsageProvider(provider) {
 		return nil
@@ -93,6 +140,9 @@ func OllamaCloudUsageIdentity(provider *Record) map[string]any {
 	return map[string]any{"host": "ollama.com", "api_key": apiKey}
 }
 
+// OllamaCloudUsageGroupFingerprint hashes the fixed Ollama host and exact API
+// key for browser-usage grouping. Unsupported identities return empty with
+// false, allowing providers with the same usable key to share one group.
 func OllamaCloudUsageGroupFingerprint(provider *Record) (string, bool) {
 	identity := OllamaCloudUsageIdentity(provider)
 	if identity == nil {
@@ -103,4 +153,7 @@ func OllamaCloudUsageGroupFingerprint(provider *Record) (string, bool) {
 	return hex.EncodeToString(sum[:]), true
 }
 
+// usageExtraValue reads a named setting from Extra, returning nil when its
+// map or key is absent. Mutable results remain borrowed; their owners keep them
+// stable until fingerprint encoding finishes.
 func usageExtraValue(extra map[string]any, key string) any { return extra[key] }

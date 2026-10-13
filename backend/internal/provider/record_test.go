@@ -11,6 +11,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Provider accessors turn persisted configuration into decisions for routes,
+// scheduling, billing, and administrator display. These tests vary supported
+// JSON shapes, omitted fields, explicit disabling selections, provider kinds,
+// and clock positions, then assert the resulting defaults and eligibility
+// decisions.
+//
+// Quota tests distinguish current consumption from expired windows, including
+// the equality rule for fixed reset dates. Temporary suspension tests keep
+// their deadlines separate from global rate-limit state. The fixture
+// comparisons target the accessor being exercised. Tests using time.Now
+// compute their fixtures and assertions at separate real-clock reads, so their
+// results depend on the selected timestamps remaining in the intended period.
+
+// TestProvider_IsAnthropicAPIKeyPassthroughEnabled varies saved booleans and
+// provider eligibility for Anthropic passthrough. Only an eligible API Key with
+// a true boolean enables the accessor; unrelated types and malformed values
+// remain disabled.
 func TestProvider_IsAnthropicAPIKeyPassthroughEnabled(t *testing.T) {
 	t.Run("Anthropic API Key 开启", func(t *testing.T) {
 		provider := &Record{
@@ -66,11 +83,14 @@ func TestProvider_IsAnthropicAPIKeyPassthroughEnabled(t *testing.T) {
 	})
 }
 
+// TestGetBaseURL supplies API Key and OAuth records with missing or custom base
+// URLs. The API Key uses the Anthropic default when absent, while other types
+// return empty.
 func TestGetBaseURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider Record
-		expected string
+		name     string // test case display name
+		provider Record // provider configuration under test
+		expected string // expected accessor result
 	}{
 		{
 			name: "non-apikey type returns empty",
@@ -119,13 +139,16 @@ func TestGetBaseURL(t *testing.T) {
 	}
 }
 
+// TestGetGeminiBaseURL supplies custom or missing endpoints across Gemini API
+// Key and Antigravity OAuth records. The accessor returns the supplied endpoint
+// directly or the caller's default without adding an Antigravity path.
 func TestGetGeminiBaseURL(t *testing.T) {
 	const defaultGeminiURL = "https://generativelanguage.googleapis.com"
 
 	tests := []struct {
-		name     string
-		provider Record
-		expected string
+		name     string // test case display name
+		provider Record // provider configuration under test
+		expected string // expected accessor result
 	}{
 		{
 			name: "apikey without base_url returns default",
@@ -183,11 +206,14 @@ func TestGetGeminiBaseURL(t *testing.T) {
 	}
 }
 
+// TestHasGeminiThirdPartyBaseURL compares a custom host, a missing URL, and
+// Google's official host under the third-party marker. Only the parsed custom
+// endpoint qualifies for the accessor.
 func TestHasGeminiThirdPartyBaseURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider Record
-		expected bool
+		name     string // test case display name
+		provider Record // provider configuration under test
+		expected bool   // expected accessor result
 	}{
 		{
 			name: "custom Gemini-compatible endpoint",
@@ -233,8 +259,9 @@ func TestHasGeminiThirdPartyBaseURL(t *testing.T) {
 	}
 }
 
-// TestGetOpenAIProtocolAPIKey_CNProviders checks API key access for Chinese providers.
-// IsOpenAIApiKey remains OpenAI-specific for scheduling and WebSocket eligibility.
+// TestGetOpenAIProtocolAPIKey_CNProviders reads keys from eligible CN and
+// OpenAI API Key records. A CN OAuth record returns empty, and CN
+// classification remains separate from the OpenAI-specific type check.
 func TestGetOpenAIProtocolAPIKey_CNProviders(t *testing.T) {
 	t.Parallel()
 
@@ -263,11 +290,14 @@ func TestGetOpenAIProtocolAPIKey_CNProviders(t *testing.T) {
 	require.Equal(t, "sk-openai", openai.GetOpenAIProtocolAPIKey())
 }
 
+// TestGetPoolModeRetryCount exercises missing settings, supported numeric and
+// string values, and values outside the allowed range. The accessor applies its
+// default and clamps negative or oversized configured counts.
 func TestGetPoolModeRetryCount(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		expected int
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		expected int     // expected accessor result
 	}{
 		{
 			name: "default_when_not_pool_mode",
@@ -370,6 +400,9 @@ func TestGetPoolModeRetryCount(t *testing.T) {
 	}
 }
 
+// TestProvider_GetCodexCLIOnlyAllowedClients supplies typed and mixed client-ID
+// arrays on OAuth and API Key records. The accessor filters blank or nonstring
+// entries and returns no IDs for ineligible or absent configuration.
 func TestProvider_GetCodexCLIOnlyAllowedClients(t *testing.T) {
 	t.Run("OAuth 提供商读取 []any 字符串列表", func(t *testing.T) {
 		provider := &Record{
@@ -431,11 +464,14 @@ func TestProvider_GetCodexCLIOnlyAllowedClients(t *testing.T) {
 	})
 }
 
+// TestProvider_IsInterceptWarmupEnabled varies the credential object's
+// warmup-interception value and presence. Boolean true enables it, while
+// missing, nil, string, integer, and false inputs keep it disabled.
 func TestProvider_IsInterceptWarmupEnabled(t *testing.T) {
 	tests := []struct {
-		name        string
-		credentials map[string]any
-		expected    bool
+		name        string         // test case display name
+		credentials map[string]any // input provider credential object
+		expected    bool           // expected accessor result
 	}{
 		{
 			name:        "nil credentials",
@@ -488,44 +524,70 @@ func TestProvider_IsInterceptWarmupEnabled(t *testing.T) {
 	}
 }
 
+// intPtrHelper allocates an integer pointer for load-factor configuration
+// fixtures.
 func intPtrHelper(v int) *int { return &v }
 
+// TestEffectiveLoadFactor_NilProvider calls the accessor on an absent record.
+// The result is one, giving consumers a positive divisor when no provider
+// configuration is available.
 func TestEffectiveLoadFactor_NilProvider(t *testing.T) {
 	var a *Record
 	require.Equal(t, 1, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_NilLoadFactor_PositiveConcurrency omits a separate
+// load factor on a record with five concurrency slots. The accessor uses that
+// positive concurrency as its divisor.
 func TestEffectiveLoadFactor_NilLoadFactor_PositiveConcurrency(t *testing.T) {
 	a := &Record{Concurrency: 5}
 	require.Equal(t, 5, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_NilLoadFactor_ZeroConcurrency omits a separate load
+// factor and sets unlimited concurrency. The accessor returns one instead of
+// passing a zero divisor to load scoring.
 func TestEffectiveLoadFactor_NilLoadFactor_ZeroConcurrency(t *testing.T) {
 	a := &Record{Concurrency: 0}
 	require.Equal(t, 1, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_PositiveLoadFactor sets a positive load factor larger
+// than the record's concurrency. The accessor returns the configured factor,
+// protecting its priority over inherited concurrency.
 func TestEffectiveLoadFactor_PositiveLoadFactor(t *testing.T) {
 	a := &Record{Concurrency: 5, LoadFactor: intPtrHelper(20)}
 	require.Equal(t, 20, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_ZeroLoadFactor_FallbackToConcurrency supplies a zero
+// factor and positive concurrency. The result uses concurrency because the
+// factor needs to be positive before it can take priority.
 func TestEffectiveLoadFactor_ZeroLoadFactor_FallbackToConcurrency(t *testing.T) {
 	a := &Record{Concurrency: 5, LoadFactor: intPtrHelper(0)}
 	require.Equal(t, 5, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_NegativeLoadFactor_FallbackToConcurrency supplies a
+// negative factor with positive concurrency. The invalid divisor is ignored and
+// the positive concurrency supplies the effective load factor.
 func TestEffectiveLoadFactor_NegativeLoadFactor_FallbackToConcurrency(t *testing.T) {
 	a := &Record{Concurrency: 3, LoadFactor: intPtrHelper(-1)}
 	require.Equal(t, 3, a.EffectiveLoadFactor())
 }
 
+// TestEffectiveLoadFactor_ZeroLoadFactor_ZeroConcurrency supplies zero for both
+// factor and concurrency. The accessor returns one, protecting the final
+// positive divisor when neither configured input applies.
 func TestEffectiveLoadFactor_ZeroLoadFactor_ZeroConcurrency(t *testing.T) {
 	a := &Record{Concurrency: 0, LoadFactor: intPtrHelper(0)}
 	require.Equal(t, 1, a.EffectiveLoadFactor())
 }
 
-// TestProviderCompactionControlledByAdministrator checks independent switches that override historical probe results.
+// TestProviderCompactionControlledByAdministrator pairs each administrator mode
+// with old probe observations and independently disables V2. The switches
+// follow administrator selection, stay independent, and reject nil or
+// non-OpenAI records.
 func TestProviderCompactionControlledByAdministrator(t *testing.T) {
 	for _, mode := range []string{"", "force_on", "force_off"} {
 		for _, probed := range []bool{false, true} {
@@ -547,11 +609,14 @@ func TestProviderCompactionControlledByAdministrator(t *testing.T) {
 	}
 }
 
+// TestProviderGetCompactModelMapping reads missing, mixed-value, and typed
+// compact mapping objects. Nil inputs remain absent, mixed entries retain
+// string targets, and typed maps return the expected string entries.
 func TestProviderGetCompactModelMapping(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		want     map[string]string
+		name     string            // test case display name
+		provider *Record           // provider configuration under test
+		want     map[string]string // expected accessor result
 	}{
 		{
 			name: "nil provider returns nil",
@@ -603,13 +668,16 @@ func TestProviderGetCompactModelMapping(t *testing.T) {
 	}
 }
 
+// TestProviderResolveCompactMappedModel exercises absent rules, exact remaps,
+// identity rules, and overlapping wildcard prefixes. Results retain unmatched
+// input, count an identity rule as matched, and select the longest wildcard.
 func TestProviderResolveCompactMappedModel(t *testing.T) {
 	tests := []struct {
-		name           string
-		credentials    map[string]any
-		requestedModel string
-		expectedModel  string
-		expectedMatch  bool
+		name           string         // test case display name
+		credentials    map[string]any // input provider credential object
+		requestedModel string         // input requested model name
+		expectedModel  string         // expected resolved model name
+		expectedMatch  bool           // expected mapping presence flag
 	}{
 		{
 			name:           "no compact mapping reports unmatched",
@@ -680,6 +748,8 @@ func TestProviderResolveCompactMappedModel(t *testing.T) {
 	}
 }
 
+// equalStringMap compares mapping lengths, key presence, and every expected
+// target value.
 func equalStringMap(left, right map[string]string) bool {
 	if len(left) != len(right) {
 		return false
@@ -692,6 +762,10 @@ func equalStringMap(left, right map[string]string) bool {
 	return true
 }
 
+// TestProvider_IsOpenAIPassthroughEnabled checks the current and legacy OpenAI
+// passthrough keys alongside unrelated platforms and absent Extra. Either
+// supported OpenAI selection enables it, while the unrelated and absent cases
+// stay disabled.
 func TestProvider_IsOpenAIPassthroughEnabled(t *testing.T) {
 	t.Run("新字段开启", func(t *testing.T) {
 		provider := &Record{
@@ -735,6 +809,9 @@ func TestProvider_IsOpenAIPassthroughEnabled(t *testing.T) {
 	})
 }
 
+// TestProvider_IsOpenAIOAuthPassthroughEnabled supplies the same true
+// passthrough setting to OAuth and API Key records. The legacy OAuth-specific
+// accessor permits the OAuth record and rejects the API Key.
 func TestProvider_IsOpenAIOAuthPassthroughEnabled(t *testing.T) {
 	t.Run("仅OAuth类型允许返回开启", func(t *testing.T) {
 		oauthProvider := &Record{
@@ -757,6 +834,10 @@ func TestProvider_IsOpenAIOAuthPassthroughEnabled(t *testing.T) {
 	})
 }
 
+// TestProvider_IsCodexCLIOnlyEnabled varies legacy booleans, provider
+// eligibility, and recognized current policy values. Current any policy
+// overrides a true legacy flag, and TLS-router policy remains distinct from
+// Codex-only policy.
 func TestProvider_IsCodexCLIOnlyEnabled(t *testing.T) {
 	t.Run("OpenAI OAuth 开启", func(t *testing.T) {
 		provider := &Record{
@@ -848,11 +929,14 @@ func TestProvider_IsCodexCLIOnlyEnabled(t *testing.T) {
 	})
 }
 
+// TestProvider_IsTLSFingerprintEnabled combines supported token types, an
+// unsupported OpenAI API Key, and malformed settings. Emulation needs a
+// supported provider and true boolean; missing and nil cases remain disabled.
 func TestProvider_IsTLSFingerprintEnabled(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		want     bool
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		want     bool    // expected accessor result
 	}{
 		{
 			name: "Anthropic OAuth 开启",
@@ -922,11 +1006,14 @@ func TestProvider_IsTLSFingerprintEnabled(t *testing.T) {
 	}
 }
 
+// TestGetPoolModeRetryStatusCodes supplies missing, empty, mixed numeric/text,
+// repeated, and out-of-range overrides. It checks nil inheritance, explicit
+// empty selection, sorted deduplication, and filtering of unusable elements.
 func TestGetPoolModeRetryStatusCodes(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		expected []int
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		expected []int   // expected accessor result
 	}{
 		{
 			name:     "nil_provider_returns_nil",
@@ -1031,12 +1118,16 @@ func TestGetPoolModeRetryStatusCodes(t *testing.T) {
 	}
 }
 
+// TestIsPoolModeRetryableStatus_Provider compares default inheritance,
+// configured replacement, and an explicit empty override. Membership follows
+// the default in unconfigured fixtures, and the empty override disables
+// matching for the tested default status.
 func TestIsPoolModeRetryableStatus_Provider(t *testing.T) {
 	tests := []struct {
-		name       string
-		provider   *Record
-		statusCode int
-		expected   bool
+		name       string  // test case display name
+		provider   *Record // provider configuration under test
+		statusCode int     // upstream response status code
+		expected   bool    // expected accessor result
 	}{
 		{
 			name:       "nil_provider_falls_back_to_default_401",
@@ -1105,13 +1196,17 @@ func TestIsPoolModeRetryableStatus_Provider(t *testing.T) {
 	}
 }
 
+// TestProviderIsSchedulable_QuotaExceeded supplies total and current-period
+// quota exhaustion alongside an expired daily period. API Key and Bedrock
+// records apply these limits, while OAuth records keep this generic check
+// outside admission.
 func TestProviderIsSchedulable_QuotaExceeded(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name     string
-		provider *Record
-		want     bool
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		want     bool    // expected accessor result
 	}{
 		{
 			name: "apikey daily quota exceeded",
@@ -1225,6 +1320,9 @@ func TestProviderIsSchedulable_QuotaExceeded(t *testing.T) {
 	}
 }
 
+// TestProviderSparkShadowHelpers compares an ordinary provider with a
+// parent-linked Spark record. Shadow and credential-shadow flags follow the
+// parent link, while quota dimension defaults to global or retains Spark.
 func TestProviderSparkShadowHelpers(t *testing.T) {
 	pid := int64(100)
 	normal := &Record{ID: 100}
@@ -1237,6 +1335,9 @@ func TestProviderSparkShadowHelpers(t *testing.T) {
 	require.Equal(t, QuotaDimensionSpark, shadow.QuotaDimensionOrDefault())
 }
 
+// TestLastFixedDailyReset_BeforeResetHour evaluates the fixed daily schedule
+// before today's reset. The preceding boundary lies on yesterday's date at the
+// configured local hour.
 func TestLastFixedDailyReset_BeforeResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 6, 0, 0, 0, tz)
@@ -1246,6 +1347,9 @@ func TestLastFixedDailyReset_BeforeResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestLastFixedDailyReset_AtResetHour evaluates the exact daily reset instant
+// in UTC. The preceding boundary is that same instant, protecting inclusive
+// handling of an already active reset.
 func TestLastFixedDailyReset_AtResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 9, 0, 0, 0, tz)
@@ -1255,6 +1359,9 @@ func TestLastFixedDailyReset_AtResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestLastFixedDailyReset_AfterResetHour evaluates a time after the configured
+// daily reset. The preceding boundary remains on today's date at the selected
+// reset hour.
 func TestLastFixedDailyReset_AfterResetHour(t *testing.T) {
 	tz := time.UTC
 	now := time.Date(2026, 3, 14, 15, 0, 0, 0, tz)
@@ -1264,6 +1371,9 @@ func TestLastFixedDailyReset_AfterResetHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestLastFixedWeeklyReset_SameDay_AfterHour supplies Monday afternoon with a
+// Monday morning reset. The returned preceding boundary is the reset from that
+// same calendar day.
 func TestLastFixedWeeklyReset_SameDay_AfterHour(t *testing.T) {
 	tz := time.UTC
 	// Monday, 2026-03-16 at 15:00, with a Monday 09:00 reset.
@@ -1274,6 +1384,9 @@ func TestLastFixedWeeklyReset_SameDay_AfterHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestLastFixedWeeklyReset_SameDay_BeforeHour supplies Monday before its
+// scheduled reset. The preceding boundary is the previous Monday, protecting
+// the remaining lifetime of last week's window.
 func TestLastFixedWeeklyReset_SameDay_BeforeHour(t *testing.T) {
 	tz := time.UTC
 	// Monday, 2026-03-16 at 06:00, before the Monday 09:00 reset.
@@ -1284,6 +1397,9 @@ func TestLastFixedWeeklyReset_SameDay_BeforeHour(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestLastFixedWeeklyReset_DifferentDay supplies Wednesday with a Monday weekly
+// schedule. The preceding boundary is the earlier Monday of that week at the
+// configured reset hour.
 func TestLastFixedWeeklyReset_DifferentDay(t *testing.T) {
 	tz := time.UTC
 	// Wednesday, 2026-03-18, with a Monday reset.
@@ -1294,6 +1410,9 @@ func TestLastFixedWeeklyReset_DifferentDay(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestIsFixedDailyPeriodExpired_ZeroPeriodStart supplies an absent stored start
+// under a fixed daily schedule. The period reports expired so a later usage
+// increment can initialize a current window.
 func TestIsFixedDailyPeriodExpired_ZeroPeriodStart(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -1303,18 +1422,24 @@ func TestIsFixedDailyPeriodExpired_ZeroPeriodStart(t *testing.T) {
 	assert.True(t, a.IsFixedDailyPeriodExpired(time.Time{}))
 }
 
+// TestIsFixedDailyPeriodExpired_NotExpired places the start at noon on today's
+// UTC date under a morning schedule. That chosen start is not before the latest
+// daily reset.
 func TestIsFixedDailyPeriodExpired_NotExpired(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_daily_reset_mode": "fixed",
 		"quota_daily_reset_hour": float64(9),
 		"quota_reset_timezone":   "UTC",
 	}}
-	// Start the period at noon UTC today, after the latest daily reset.
+	// Today's noon is at or after the most recent UTC morning reset.
 	now := time.Now().UTC()
 	periodStart := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	assert.False(t, a.IsFixedDailyPeriodExpired(periodStart))
 }
 
+// TestIsFixedDailyPeriodExpired_Expired supplies a stored start three elapsed
+// days in the past. The fixed daily comparison reports expired under the
+// configured UTC reset schedule.
 func TestIsFixedDailyPeriodExpired_Expired(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -1326,6 +1451,9 @@ func TestIsFixedDailyPeriodExpired_Expired(t *testing.T) {
 	assert.True(t, a.IsFixedDailyPeriodExpired(periodStart))
 }
 
+// TestIsFixedDailyPeriodExpired_InvalidTimezone uses an invalid location name
+// and a start three days old. The helper still reports expiration through its
+// UTC handling of the failed timezone lookup.
 func TestIsFixedDailyPeriodExpired_InvalidTimezone(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_daily_reset_mode": "fixed",
@@ -1337,6 +1465,9 @@ func TestIsFixedDailyPeriodExpired_InvalidTimezone(t *testing.T) {
 	assert.True(t, a.IsFixedDailyPeriodExpired(periodStart))
 }
 
+// TestIsFixedWeeklyPeriodExpired_ZeroPeriodStart supplies no stored start under
+// a Monday fixed schedule. The period reports expired, allowing the consumption
+// writer to initialize the weekly window.
 func TestIsFixedWeeklyPeriodExpired_ZeroPeriodStart(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_weekly_reset_mode": "fixed",
@@ -1347,6 +1478,9 @@ func TestIsFixedWeeklyPeriodExpired_ZeroPeriodStart(t *testing.T) {
 	assert.True(t, a.IsFixedWeeklyPeriodExpired(time.Time{}))
 }
 
+// TestIsFixedWeeklyPeriodExpired_NotExpired places the start at noon on today's
+// UTC date. Under the Monday morning schedule, that selected start is not
+// before the latest weekly reset.
 func TestIsFixedWeeklyPeriodExpired_NotExpired(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_weekly_reset_mode": "fixed",
@@ -1354,12 +1488,15 @@ func TestIsFixedWeeklyPeriodExpired_NotExpired(t *testing.T) {
 		"quota_weekly_reset_hour": float64(9),
 		"quota_reset_timezone":    "UTC",
 	}}
-	// Start the period at noon UTC today, after the latest Monday 09:00 reset.
+	// Today's noon is at or after the latest Monday morning reset.
 	now := time.Now().UTC()
 	periodStart := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	assert.False(t, a.IsFixedWeeklyPeriodExpired(periodStart))
 }
 
+// TestIsFixedWeeklyPeriodExpired_Expired supplies a stored start ten elapsed
+// days in the past. The fixed Monday schedule reports expiration because that
+// start predates the current weekly boundary.
 func TestIsFixedWeeklyPeriodExpired_Expired(t *testing.T) {
 	a := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
 		"quota_weekly_reset_mode": "fixed",
@@ -1372,14 +1509,23 @@ func TestIsFixedWeeklyPeriodExpired_Expired(t *testing.T) {
 	assert.True(t, a.IsFixedWeeklyPeriodExpired(periodStart))
 }
 
+// TestValidateQuotaResetConfig_NilExtra submits no Extra configuration to reset
+// validation. The result succeeds, allowing absent reset settings to keep the
+// existing default interpretation.
 func TestValidateQuotaResetConfig_NilExtra(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(nil, time.LoadLocation))
 }
 
+// TestValidateQuotaResetConfig_EmptyExtra submits an empty object to reset
+// validation. The result succeeds because no reset modes, clock values, or
+// timezone names were supplied for checking.
 func TestValidateQuotaResetConfig_EmptyExtra(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(map[string]any{}, time.LoadLocation))
 }
 
+// TestValidateQuotaResetConfig_ValidFixed combines valid daily and weekly clock
+// settings with a Shanghai timezone. Validation accepts the fixed modes, local
+// hour ranges, weekday value, and resolved location.
 func TestValidateQuotaResetConfig_ValidFixed(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode":  "fixed",
@@ -1392,6 +1538,9 @@ func TestValidateQuotaResetConfig_ValidFixed(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(extra, time.LoadLocation))
 }
 
+// TestValidateQuotaResetConfig_ValidRolling supplies rolling labels for the
+// daily and weekly dimensions. Validation succeeds, keeping duration-based
+// reset configuration available alongside the fixed calendar modes.
 func TestValidateQuotaResetConfig_ValidRolling(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode":  "rolling",
@@ -1400,6 +1549,9 @@ func TestValidateQuotaResetConfig_ValidRolling(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(extra, time.LoadLocation))
 }
 
+// TestValidateQuotaResetConfig_InvalidTimezone supplies a location name that
+// the loader cannot resolve. Validation returns an error naming
+// quota_reset_timezone, so management can identify the rejected setting.
 func TestValidateQuotaResetConfig_InvalidTimezone(t *testing.T) {
 	extra := map[string]any{
 		"quota_reset_timezone": "Not/A/Timezone",
@@ -1409,6 +1561,9 @@ func TestValidateQuotaResetConfig_InvalidTimezone(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_reset_timezone")
 }
 
+// TestValidateQuotaResetConfig_InvalidDailyMode submits an unsupported daily
+// mode string. Validation returns an error naming quota_daily_reset_mode,
+// protecting the accepted rolling and fixed configuration labels.
 func TestValidateQuotaResetConfig_InvalidDailyMode(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_mode": "invalid",
@@ -1418,6 +1573,9 @@ func TestValidateQuotaResetConfig_InvalidDailyMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_daily_reset_mode")
 }
 
+// TestValidateQuotaResetConfig_InvalidDailyHour_TooHigh submits hour
+// twenty-four for a daily reset. Validation rejects it and identifies the
+// daily-hour key because local clock hours end at twenty-three.
 func TestValidateQuotaResetConfig_InvalidDailyHour_TooHigh(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_hour": float64(24),
@@ -1427,6 +1585,9 @@ func TestValidateQuotaResetConfig_InvalidDailyHour_TooHigh(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_daily_reset_hour")
 }
 
+// TestValidateQuotaResetConfig_InvalidDailyHour_Negative submits a negative
+// daily reset hour. Validation returns an error identifying the daily-hour key
+// because the accepted local range starts at zero.
 func TestValidateQuotaResetConfig_InvalidDailyHour_Negative(t *testing.T) {
 	extra := map[string]any{
 		"quota_daily_reset_hour": float64(-1),
@@ -1436,6 +1597,9 @@ func TestValidateQuotaResetConfig_InvalidDailyHour_Negative(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_daily_reset_hour")
 }
 
+// TestValidateQuotaResetConfig_InvalidWeeklyMode submits an unsupported weekly
+// mode string. Validation rejects it with the weekly-mode key, protecting the
+// accepted fixed and rolling labels.
 func TestValidateQuotaResetConfig_InvalidWeeklyMode(t *testing.T) {
 	extra := map[string]any{
 		"quota_weekly_reset_mode": "unknown",
@@ -1445,6 +1609,9 @@ func TestValidateQuotaResetConfig_InvalidWeeklyMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_weekly_reset_mode")
 }
 
+// TestValidateQuotaResetConfig_InvalidWeeklyDay_TooHigh submits weekday seven
+// to the Sunday-zero configuration. Validation rejects the value and identifies
+// the weekly-day key because the accepted week ends at six.
 func TestValidateQuotaResetConfig_InvalidWeeklyDay_TooHigh(t *testing.T) {
 	extra := map[string]any{
 		"quota_weekly_reset_day": float64(7),
@@ -1454,6 +1621,9 @@ func TestValidateQuotaResetConfig_InvalidWeeklyDay_TooHigh(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_weekly_reset_day")
 }
 
+// TestValidateQuotaResetConfig_InvalidWeeklyDay_Negative supplies a negative
+// weekday index for a fixed weekly schedule. Validation rejects it and names
+// the weekly-day key, preserving the Sunday-zero lower bound.
 func TestValidateQuotaResetConfig_InvalidWeeklyDay_Negative(t *testing.T) {
 	extra := map[string]any{
 		"quota_weekly_reset_day": float64(-1),
@@ -1463,6 +1633,9 @@ func TestValidateQuotaResetConfig_InvalidWeeklyDay_Negative(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_weekly_reset_day")
 }
 
+// TestValidateQuotaResetConfig_InvalidWeeklyHour supplies hour twenty-five for
+// a weekly reset. Validation rejects it and identifies quota_weekly_reset_hour
+// because the accepted local clock range ends at twenty-three.
 func TestValidateQuotaResetConfig_InvalidWeeklyHour(t *testing.T) {
 	extra := map[string]any{
 		"quota_weekly_reset_hour": float64(25),
@@ -1472,6 +1645,9 @@ func TestValidateQuotaResetConfig_InvalidWeeklyHour(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota_weekly_reset_hour")
 }
 
+// TestValidateQuotaResetConfig_BoundaryValues checks both ends of the accepted
+// clock and weekday ranges. Midnight, hour twenty-three, Sunday zero, and
+// Saturday six all pass the configuration validator.
 func TestValidateQuotaResetConfig_BoundaryValues(t *testing.T) {
 	// Both ends of each accepted range are valid.
 	extra := map[string]any{
@@ -1490,15 +1666,18 @@ func TestValidateQuotaResetConfig_BoundaryValues(t *testing.T) {
 	assert.NoError(t, ValidateQuotaResetConfig(extra2, time.LoadLocation))
 }
 
-// TestProviderIsSchedulable_TempUnschedulable checks temporary scheduling blocks and expiry.
+// TestProviderIsSchedulable_TempUnschedulable varies temporary suspension
+// deadlines around real time. A future deadline blocks admission even after a
+// separate rate limit expires, while elapsed and missing deadlines permit the
+// remaining checks.
 func TestProviderIsSchedulable_TempUnschedulable(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	past := time.Now().Add(-10 * time.Minute)
 
 	tests := []struct {
-		name     string
-		provider *Record
-		want     bool
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		want     bool    // expected accessor result
 	}{
 		{
 			name: "temp_unschedulable_active",
@@ -1547,12 +1726,14 @@ func TestProviderIsSchedulable_TempUnschedulable(t *testing.T) {
 	}
 }
 
-// TestProvider_IsTempUnschedulableEnabled checks the temporary scheduling switch.
+// TestProvider_IsTempUnschedulableEnabled checks true, false, missing, and
+// absent-map suspension switches. Only the stored true boolean enables the rule
+// feature, keeping incomplete configuration on its disabled path.
 func TestProvider_IsTempUnschedulableEnabled(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		want     bool
+		name     string  // test case display name
+		provider *Record // provider configuration under test
+		want     bool    // expected accessor result
 	}{
 		{
 			name: "enabled",
@@ -1588,12 +1769,14 @@ func TestProvider_IsTempUnschedulableEnabled(t *testing.T) {
 	}
 }
 
-// TestProvider_GetTempUnschedulableRules checks configured and absent rule lists.
+// TestProvider_GetTempUnschedulableRules reads a valid JSON-shaped rule list
+// and three absent or empty forms. The accepted rule count matches the
+// populated input while every absent or empty case returns no rules.
 func TestProvider_GetTempUnschedulableRules(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  *Record
-		wantCount int
+		name      string  // test case display name
+		provider  *Record // provider configuration under test
+		wantCount int     // expected accepted rule count
 	}{
 		{
 			name: "has_rules",
@@ -1640,7 +1823,9 @@ func TestProvider_GetTempUnschedulableRules(t *testing.T) {
 	}
 }
 
-// TestTempUnschedulableRule_Parse checks status, keywords, and duration decoded from credentials.
+// TestTempUnschedulableRule_Parse reads one JSON-shaped rule containing a
+// numeric status and duration plus two keywords. The parsed result retains the
+// status, both keyword strings, and the minute duration.
 func TestTempUnschedulableRule_Parse(t *testing.T) {
 	provider := &Record{LoadLocation: time.LoadLocation, Credentials: map[string]any{
 		"temp_unschedulable_rules": []any{
@@ -1661,15 +1846,17 @@ func TestTempUnschedulableRule_Parse(t *testing.T) {
 	require.Equal(t, 5, rule.DurationMinutes)
 }
 
-// TestProvider_TempUnschedulableUntil checks active, expired, and absent temporary blocks.
+// TestProvider_TempUnschedulableUntil compares future, elapsed, and absent
+// temporary block timestamps on active records. A future block rejects
+// scheduling, while the elapsed or absent block leaves admission available.
 func TestProvider_TempUnschedulableUntil(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	past := time.Now().Add(-10 * time.Minute)
 
 	tests := []struct {
-		name        string
-		provider    *Record
-		schedulable bool
+		name        string  // test case display name
+		provider    *Record // provider configuration under test
+		schedulable bool    // expected provider admission result
 	}{
 		{
 			name: "active_temp_unsched_not_schedulable",
@@ -1708,12 +1895,15 @@ func TestProvider_TempUnschedulableUntil(t *testing.T) {
 	}
 }
 
+// TestProvider_GetCredentialAsInt64 supplies supported numeric forms, trimmed
+// string values, and missing or unusable credential entries. Parsing retains
+// the selected integer metadata and returns zero for the unavailable cases.
 func TestProvider_GetCredentialAsInt64(t *testing.T) {
 	tests := []struct {
-		name        string
-		credentials map[string]any
-		key         string
-		expected    int64
+		name        string         // test case display name
+		credentials map[string]any // input provider credential object
+		key         string         // credential field under test
+		expected    int64          // expected accessor result
 	}{
 		{
 			name:        "int64_value",
@@ -1786,6 +1976,9 @@ func TestProvider_GetCredentialAsInt64(t *testing.T) {
 	}
 }
 
+// TestProvider_GetCredentialAsInt64_NilProvider calls the token-version
+// accessor on an absent record. The returned zero lets callers treat that
+// unavailable version as missing metadata.
 func TestProvider_GetCredentialAsInt64_NilProvider(t *testing.T) {
 	var provider *Record
 	result := provider.GetCredentialAsInt64("_token_version")

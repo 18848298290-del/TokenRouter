@@ -12,6 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// TestPreviewAdvancedSchedulerScoreRejectsSensitiveContextFields submits a
+// preview object with a session_hash field outside the request schema. It
+// requires a bad-request status and an unknown-field message before the
+// unavailable diagnostic source can be invoked.
 func TestPreviewAdvancedSchedulerScoreRejectsSensitiveContextFields(t *testing.T) {
 	handler := NewDiagnosticsHandler(scheduler.NewDiagnosticService(nil, nil, scheduler.DiagnosticPorts{}))
 	router := gin.New()

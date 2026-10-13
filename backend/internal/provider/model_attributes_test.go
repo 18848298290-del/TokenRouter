@@ -8,6 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// An Ollama Chat route supplies its provider output cap to catalogue execution
+// rules, including nonpositive values that disable clamping. The test compares
+// those route attributes and verifies that the same provider's Responses route
+// does not acquire the Chat-specific Ollama interpretation.
+
+// TestModelAttributeTargetOllamaLimits resolves positive, zero, and negative
+// caps on an Ollama Chat target. It checks the copied cap, positive-limit
+// clamping and output attributes, and Ollama exclusion on a Responses target.
 func TestModelAttributeTargetOllamaLimits(t *testing.T) {
 	for _, limit := range []int{-1, 0, 32000, 90000} {
 		value := &Record{Platform: "openai", Type: "apikey", Credentials: map[string]any{"base_url": "https://ollama.com"}, Extra: map[string]any{"ollama_max_tokens_cap": limit}}

@@ -23,12 +23,32 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// promotionInvalidationProbe counts post-commit cache invalidations; failed transactions must leave both
-// counts zero.
-type promotionInvalidationProbe struct{ auth, balance int }
+// Promo redemption credits balance and cumulative recharge together with one
+// usage row and the code's usage count. PostgreSQL trigger fixtures reject
+// either usage insertion or count advancement after observing the credit inside
+// that transaction, while callback counters and outside reads inspect rollback
+// or successful publication.
+//
+// The successful case retries the same user and code to check duplicate
+// rejection and retained credited balance. Its usage response is compared with
+// the shallow public identity DTO and checked for the supplied password hash.
+// Cleanup removes injected triggers before deleting dependent usage rows and
+// their code, and the plain callback counters observe synchronous fixture calls
+// rather than providing concurrent state protection.
 
-// TestPromotionApplyCodeFundsAndUsageAtomicity checks that balance, total recharged, usage records, and
-// usage counts commit together.
+// promotionInvalidationProbe counts observed authentication and wallet
+// invalidation calls from promo scenarios.
+type promotionInvalidationProbe struct {
+	// auth and balance count their corresponding callback invocations
+	// regardless of user ID. Calls and test reads are serialized because
+	// these ordinary integers have no lock.
+	auth, balance int // auth callback count; balance callback count
+}
+
+// TestPromotionApplyCodeFundsAndUsageAtomicity injects usage or count failures
+// after transaction-local promo credit, alongside a successful case. Funds,
+// usage, counts, and invalidations follow the commit result, and usage JSON
+// excludes the supplied password hash.
 func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 	for _, failure := range []string{"", "usage", "count"} {
 		t.Run("failure_"+failure, func(t *testing.T) {
@@ -39,6 +59,10 @@ func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 			repo := promotionpostgres.NewPromoCodeRepository(client)
 			code := &promotion.PromoCode{Code: "REFUNDPROMO", BonusAmount: 10, MaxUses: 2, Status: promotion.PromoCodeStatusActive}
 			require.NoError(t, repo.Create(ctx, code))
+			// Remove usage references before deleting their code so
+			// normal case cleanup satisfies foreign keys; later
+			// trigger cleanup runs first when a failure fixture
+			// exists.
 			t.Cleanup(func() {
 				_, e := client.PromoCodeUsage.Delete().Where(promocodeusage.PromoCodeIDEQ(code.ID)).Exec(ctx)
 				require.NoError(t, e)
@@ -53,10 +77,18 @@ func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 					table, event, condition = "promo_codes", "UPDATE", fmt.Sprintf("NEW.id=%d AND NEW.used_count > OLD.used_count", code.ID)
 				}
 				name := fmt.Sprintf("test_promo_failure_%d", code.ID)
+				// Observe credited balance in the failure
+				// trigger before rejecting the selected usage
+				// or count write, exposing a credit participant
+				// outside the common transaction.
 				_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF %s THEN IF (SELECT balance FROM users WHERE id=%d)<>15 THEN RAISE EXCEPTION 'credit not in same transaction'; END IF; RAISE EXCEPTION 'test promo forced failure'; END IF; RETURN NEW; END; $$`, name, condition, user.ID))
 				require.NoError(t, err)
 				_, err = integrationDB.ExecContext(ctx, fmt.Sprintf("CREATE TRIGGER %s BEFORE %s ON %s FOR EACH ROW EXECUTE FUNCTION %s()", name, event, table, name))
 				require.NoError(t, err)
+				// Remove the selected failure trigger before
+				// its function so subsequent usage and code
+				// cleanup can run after the transaction
+				// rollback has completed.
 				t.Cleanup(func() {
 					_, e := integrationDB.ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s; DROP FUNCTION IF EXISTS %s()", name, table, name))
 					require.NoError(t, e)
@@ -90,7 +122,8 @@ func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 			current, readErr = client.User.Get(ctx, user.ID)
 			require.NoError(t, readErr)
 			require.Equal(t, 15.0, current.Balance)
-			// Usage responses match the shallow public user DTO and exclude the password hash.
+			// Usage responses match the shallow public user DTO and
+			// exclude the password hash.
 			usages, _, err := repo.ListUsagesByPromoCode(ctx, code.ID, pagination.PaginationParams{Page: 1, PageSize: 20})
 			require.NoError(t, err)
 			require.Len(t, usages, 1)
@@ -104,8 +137,14 @@ func TestPromotionApplyCodeFundsAndUsageAtomicity(t *testing.T) {
 	}
 }
 
+// InvalidateAuthCacheByUserID increments the observed authentication callback
+// count and ignores the supplied context and user ID. Callers serialize access
+// because this fixture uses an ordinary integer without synchronization.
 func (p *promotionInvalidationProbe) InvalidateAuthCacheByUserID(context.Context, int64) { p.auth++ }
 
+// InvalidateUserBalance increments the observed balance callback count and
+// always returns nil for any context or user ID. Callers serialize its ordinary
+// integer mutation while inspecting publication order in this fixture.
 func (p *promotionInvalidationProbe) InvalidateUserBalance(context.Context, int64) error {
 	p.balance++
 	return nil

@@ -4,11 +4,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// Provider Header overrides are available for selected platform and credential
+// types. The enabled flag is read as a boolean, then egress filters stored names
+// and values before a new request map is returned, keeping administrator
+// configuration separate from outgoing headers.
+
+// credKeyHeaderOverrideEnabled selects the saved boolean flag checked after
+// platform and credential-type eligibility before outgoing overrides are resolved.
 const credKeyHeaderOverrideEnabled = "header_override_enabled"
 
-// IsHeaderOverrideEligible reports whether this provider type supports request header overrides.
-// Anthropic, OpenAI, Kimi, Zhipu, DeepSeek, and Jev support API keys; Grok also supports OAuth.
-// Overrides can supply relay access headers when subscription traffic uses a custom endpoint.
+// IsHeaderOverrideEligible reports whether administrator Header overrides apply
+// to this provider. API Keys qualify on Anthropic, OpenAI, Kimi, Zhipu,
+// DeepSeek, Jev and Grok; Grok OAuth also qualifies, while nil records return
+// false.
 func (r *Record) IsHeaderOverrideEligible() bool {
 	if r == nil {
 		return false
@@ -23,7 +31,9 @@ func (r *Record) IsHeaderOverrideEligible() bool {
 	}
 }
 
-// IsHeaderOverrideEnabled reports whether an eligible provider has enabled header overrides.
+// IsHeaderOverrideEnabled reports whether an eligible provider has a true
+// boolean override flag. Missing credentials, unsupported providers and flags
+// stored with another type return false before Header values are read.
 func (r *Record) IsHeaderOverrideEnabled() bool {
 	if !r.IsHeaderOverrideEligible() || r.Credentials == nil {
 		return false
@@ -32,8 +42,9 @@ func (r *Record) IsHeaderOverrideEnabled() bool {
 	return ok && enabled
 }
 
-// HeaderOverrides returns an independent map of eligible overrides validated by egress.
-// It returns nil when overrides are disabled or unsupported.
+// HeaderOverrides returns a new map of enabled overrides accepted by egress
+// validation. Unsupported, disabled or entirely filtered configuration returns
+// nil; callers keep credentials stable during synchronous filtering.
 func (r *Record) HeaderOverrides() map[string]string {
 	if !r.IsHeaderOverrideEnabled() {
 		return nil

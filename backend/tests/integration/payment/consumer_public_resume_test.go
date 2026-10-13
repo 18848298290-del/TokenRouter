@@ -23,6 +23,16 @@ import (
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 )
 
+// Plain public order verification exposes a small state response, while signed
+// resume lookup supplies the financial fields needed by the purchase frontend.
+// SQLite handler cases check the listed JSON keys and reject claims naming
+// another user. Independent WeChat claim cases check restored amount and
+// subscription selections, including rejection when the requested payment type
+// disagrees with the resume claim.
+
+// TestApplyWeChatPaymentResumeClaims applies saved WeChat payment claims to an
+// unfinished create-order request. The request receives the supplied OpenID,
+// parsed amount, subscription type, and plan ID.
 func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +66,9 @@ func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	}
 }
 
+// TestApplyWeChatPaymentResumeClaimsRejectsPaymentTypeMismatch supplies WeChat
+// claims to an Alipay create-order request. Applying those claims returns an
+// error when their payment types disagree.
 func TestApplyWeChatPaymentResumeClaimsRejectsPaymentTypeMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -74,11 +87,18 @@ func TestApplyWeChatPaymentResumeClaimsRejectsPaymentTypeMismatch(t *testing.T) 
 	}
 }
 
+// TestVerifyOrderPublicReturnsMinimalOrderState stores a pending order with
+// financial and provider details in SQLite. Plain verification returns
+// reference, status, paid flag, and timestamps while excluding the listed
+// detailed fields.
 func TestVerifyOrderPublicReturnsMinimalOrderState(t *testing.T) {
 	t.Parallel()
 
 	db, err := sql.Open("sqlite", "file:payment_handler_public_verify?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register pool cleanup before constructing Ent so later client cleanup
+	// runs first; both callbacks discard close errors after the handler
+	// observations finish.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -86,6 +106,9 @@ func TestVerifyOrderPublicReturnsMinimalOrderState(t *testing.T) {
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Close the Ent wrapper before the earlier pool cleanup releases the
+	// same database; this callback discards shutdown errors after the
+	// response has been inspected.
 	t.Cleanup(func() { _ = client.Close() })
 
 	user, err := client.User.Create().
@@ -137,8 +160,8 @@ func TestVerifyOrderPublicReturnsMinimalOrderState(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // application response status
+		Data map[string]any `json:"data"` // decoded public order fields
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -160,17 +183,27 @@ func TestVerifyOrderPublicReturnsMinimalOrderState(t *testing.T) {
 	require.NotContains(t, resp.Data, "refund_amount")
 }
 
+// TestPublicOrderStatusPaidIncludesRefundPending compares three supplied order
+// statuses used by public responses. Pending is unpaid, while recharging and
+// refund-pending are classified as paid by the helper.
 func TestPublicOrderStatusPaidIncludesRefundPending(t *testing.T) {
 	require.False(t, paymenthttp.UserPublicOrderStatusPaid(payment.OrderStatusPending))
 	require.True(t, paymenthttp.UserPublicOrderStatusPaid(payment.OrderStatusRecharging))
 	require.True(t, paymenthttp.UserPublicOrderStatusPaid(payment.OrderStatusRefundPending))
 }
 
+// TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields signs a
+// matching token for a paid balance order. Resolution returns the listed
+// financial, currency, type, and timestamp fields while excluding the selected
+// refund administration fields and plan ID.
 func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing.T) {
 	t.Setenv("PAYMENT_RESUME_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
 
 	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register pool cleanup before constructing Ent so later client cleanup
+	// runs first; both callbacks discard close errors after the handler
+	// observations finish.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -178,6 +211,9 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Close the Ent wrapper before the earlier pool cleanup releases the
+	// same database; this callback discards shutdown errors after the
+	// response has been inspected.
 	t.Cleanup(func() { _ = client.Close() })
 
 	user, err := client.User.Create().
@@ -239,8 +275,8 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // application response status
+		Data map[string]any `json:"data"` // decoded public order fields
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -266,11 +302,17 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	require.NotContains(t, resp.Data, "plan_id")
 }
 
+// TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken signs
+// a valid token whose user ID differs from the SQLite order. Resolution returns
+// HTTP 400 with INVALID_RESUME_TOKEN in the error envelope.
 func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *testing.T) {
 	t.Setenv("PAYMENT_RESUME_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
 
 	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve_mismatch?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register pool cleanup before constructing Ent so later client cleanup
+	// runs first; both callbacks discard close errors after the handler
+	// observations finish.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -278,6 +320,9 @@ func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *t
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Close the Ent wrapper before the earlier pool cleanup releases the
+	// same database; this callback discards shutdown errors after the
+	// response has been inspected.
 	t.Cleanup(func() { _ = client.Close() })
 
 	user, err := client.User.Create().
@@ -335,18 +380,24 @@ func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *t
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 
 	var resp struct {
-		Code    int    `json:"code"`
-		Reason  string `json:"reason"`
-		Message string `json:"message"`
+		Code    int    `json:"code"`    // application error status
+		Reason  string `json:"reason"`  // stable error reason
+		Message string `json:"message"` // response error message
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 	require.Equal(t, "INVALID_RESUME_TOKEN", resp.Reason)
 }
 
+// TestVerifyOrderPublicRejectsBlankOutTradeNo sends whitespace as the local
+// order reference through the HTTP handler. Verification returns HTTP 400 and
+// the INVALID_OUT_TRADE_NO error reason.
 func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:payment_handler_public_verify_blank?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register pool cleanup before constructing Ent so later client cleanup
+	// runs first; both callbacks discard close errors after the handler
+	// observations finish.
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
@@ -354,6 +405,9 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	// Close the Ent wrapper before the earlier pool cleanup releases the
+	// same database; this callback discards shutdown errors after the
+	// response has been inspected.
 	t.Cleanup(func() { _ = client.Close() })
 
 	core := payment.NewFulfillment(paymentpostgres.NewOrderStore(client), nil, nil, nil, nil, payment.FulfillmentRuntime{})
@@ -375,8 +429,8 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 
 	var resp struct {
-		Code   int    `json:"code"`
-		Reason string `json:"reason"`
+		Code   int    `json:"code"`   // application error status
+		Reason string `json:"reason"` // stable error reason
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, http.StatusBadRequest, resp.Code)

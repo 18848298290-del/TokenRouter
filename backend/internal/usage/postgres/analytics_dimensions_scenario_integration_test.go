@@ -2,8 +2,6 @@
 
 package postgres
 
-// These scenarios cover usage_analytics_aggregation_repo.go and usage_log_repo_analytics_queries.go.
-
 import (
 	"fmt"
 	"time"
@@ -15,21 +13,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Legacy usage fields can encode the same request type or model differently
+// from current records. Matching fixtures are placed in a raw head, covered
+// hourly interval, and raw tail, so a combined query must expose the same
+// normalized dimensions at all three positions. Each result is checked against
+// its model-specific expectations.
+
+// TestAnalyticsDimensionsAcrossRawAndHourly places four legacy dimension cases
+// in raw and hourly source segments. The combined rows agree on payer, absent
+// team/group IDs, normalized model/type/mode, platform and endpoint, with each
+// case observed three times.
 func (s *UsageLogRepoSuite) TestAnalyticsDimensionsAcrossRawAndHourly() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "analytics-dimensions@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "analytics-dimensions"})
 	upstream := mustCreateProvider(s.T(), s.client, &provider.Record{Name: "analytics-dimensions"})
 	start := time.Date(2026, 9, 1, 10, 20, 0, 0, time.UTC)
 	end := start.Add(200 * time.Minute)
+	// Leave the partial first and last hours in raw segments around the covered
+	// interval, placing equivalent dimension cases on each side of stored rows.
 	coverage := start.Truncate(time.Hour).Add(time.Hour)
 	watermark := end.Truncate(time.Hour)
 	cases := []struct {
+		// model, requested, and wantModel connect raw model representations to
+		// the normalized result. A trimmed nonempty model wins; requested supplies
+		// the value when model is blank.
+		// model is internal; requested is legacy; wantModel is normalized
 		model, requested, wantModel string
-		requestType, wantType       int
-		ws, stream                  bool
-		video, images               int
-		mode, wantMode              string
-		platform, endpoint          string
+		// requestType and wantType pair the raw enum with its expected normalized
+		// value. Zero lets ws select websocket, then stream select streaming.
+		// requestType is stored; wantType is normalized
+		requestType, wantType int
+		ws, stream            bool // ws marks websocket; stream marks streamed requests
+		// video, images, mode, and wantMode describe billing-mode normalization. A
+		// nonempty mode wins; with an empty mode, positive video duration takes
+		// precedence over positive images.
+		video, images  int    // video duration seconds; images generated count
+		mode, wantMode string // mode is stored; wantMode is normalized
+		// platform snapshot value; endpoint inbound path
+		platform, endpoint string
 	}{
 		{" ", " fallback-ws ", "fallback-ws", 0, 3, true, false, 2, 1, "", "video", "gemini", "/v1/responses"},
 		{" internal-stream ", "caller/alias", "internal-stream", 0, 2, false, true, 0, 1, "", "image", "openai", ""},
@@ -43,7 +64,9 @@ func (s *UsageLogRepoSuite) TestAnalyticsDimensionsAcrossRawAndHourly() {
 				RequestID: fmt.Sprintf("dimensions-%d-%d", caseIndex, position), Model: "fixture", CreatedAt: at,
 			})
 			s.Require().NoError(err)
-			// Populate legacy empty fields and request types to compare compatibility handling across both sources.
+			// Bypass normal insertion normalization after creating each row, exposing
+			// legacy blanks and zero request types to both the raw reader and hourly
+			// writer.
 			_, err = s.tx.ExecContext(s.ctx, `UPDATE usage_logs SET
 				model=$1, requested_model=$2, request_type=$3, openai_ws_mode=$4, stream=$5,
 				video_duration_seconds=$6, image_count=$7, image_size=CASE WHEN $7>0 THEN '1K' ELSE NULL END, billing_mode=$8, platform=$9, inbound_endpoint=$10,
@@ -68,6 +91,8 @@ func (s *UsageLogRepoSuite) TestAnalyticsDimensionsAcrossRawAndHourly() {
 		user_id,billing_user_id,team_id,api_key_id,group_id,requested_model,request_type,stream,
 		billing_type,billing_mode,platform,inbound_endpoint,total_requests FROM combined`, query.args...)
 	s.Require().NoError(err)
+	// Keep the combined result set available through every dimension assertion,
+	// then close it even if a required assertion ends the test early.
 	defer func() { _ = rows.Close() }()
 	seen := make(map[string]int)
 	for rows.Next() {

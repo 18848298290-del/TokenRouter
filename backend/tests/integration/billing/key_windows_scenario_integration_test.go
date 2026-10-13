@@ -1,7 +1,5 @@
 //go:build integration
 
-// These tests cover quota-window increments through the key usage store and settlement store.
-
 package billing_test
 
 import (
@@ -16,6 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/postgres"
 )
 
+// Key usage writers reset missing or expired spending windows and retain the
+// start of an active window. The PostgreSQL matrix compares direct key-store
+// increments with settlement writes, checking costs and database-time bounds
+// for five-hour, daily, and weekly starts.
+
+// TestKeyRateLimitWindowWrites applies direct and settlement costs to empty,
+// expired, and active spending windows. New windows use fresh starts and
+// calendar midnight alignment; active windows retain their timestamps.
 func TestKeyRateLimitWindowWrites(t *testing.T) {
 	for _, writer := range []string{"key_store", "settlement"} {
 		for _, state := range []string{"empty", "expired", "active"} {
@@ -28,6 +34,8 @@ func TestKeyRateLimitWindowWrites(t *testing.T) {
 				var start sql.NullTime
 				used, want := 0.0, 1.25
 				switch state {
+				// Eight elapsed days make every configured
+				// spending window expired.
 				case "expired":
 					start = sql.NullTime{Time: before.Add(-8 * 24 * time.Hour), Valid: true}
 					used = 3
@@ -65,6 +73,10 @@ func TestKeyRateLimitWindowWrites(t *testing.T) {
 				require.Equal(t, want, usage1d)
 				require.Equal(t, want, usage7d)
 				if state == "active" {
+					// Active starts survive the increment,
+					// so use exact time equality here; the
+					// database-time interval checks belong
+					// to newly initialized or reset starts.
 					for _, got := range []time.Time{start5h, start1d, start7d} {
 						require.True(t, start.Time.Equal(got))
 					}

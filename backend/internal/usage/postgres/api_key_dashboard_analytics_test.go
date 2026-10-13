@@ -13,7 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// TestAPIKeyDashboardAnalyticsFallback checks full raw totals and daily statistics after state lookup fails.
+// API-key dashboard totals can remain usable when analytics state cannot be
+// read, and retained rollups can outlast all raw records. SQL mocks exercise
+// the complete raw retry and the successful empty-history case. Recent-rate
+// reads remain separate expectations after either statistics path.
+
+// TestAPIKeyDashboardAnalyticsFallback fails analytics-state lookup after
+// finding a retained raw timestamp. The public dashboard query uses raw totals
+// and today values, with token sums and average duration checked after the
+// retry.
 func TestAPIKeyDashboardAnalyticsFallback(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, calendar: timezone.NewCalendar(time.UTC), preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}
@@ -30,7 +38,9 @@ func TestAPIKeyDashboardAnalyticsFallback(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestAPIKeyDashboardWithoutRecords ignores stale rollups after all raw records are gone.
+// TestAPIKeyDashboardWithoutRecords makes the raw-history minimum SQL NULL
+// while aggregation is enabled. The dashboard returns zero cumulative and today
+// request counts without attempting an analytics-state lookup.
 func TestAPIKeyDashboardWithoutRecords(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, calendar: timezone.NewCalendar(time.UTC), preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}

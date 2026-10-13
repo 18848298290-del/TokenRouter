@@ -10,10 +10,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Invitation codes establish registration access and cannot issue benefits
+// through the ordinary redemption endpoint. The fixture supplies an invitation
+// and a typed nil user dependency, then checks the unsupported-type error
+// before any recorded code use or owner assignment occurs.
+
+// TestRedeemRejectsInvitationCodeBeforeGrantingBenefits supplies an unused
+// invitation with a typed nil user fixture. Redemption returns the specified
+// BadRequest reason and message while retaining unused code state and an empty
+// use-call record.
 func TestRedeemRejectsInvitationCodeBeforeGrantingBenefits(t *testing.T) {
 	ctx := context.Background()
-	// The nil user repository makes any user lookup fail, checking that invitation codes are rejected before
-	// granting entitlements.
+	// A typed nil user fixture would panic if its GetByID override were
+	// reached, so the observed unsupported-type result checks rejection
+	// before that dependent lookup.
 	redeemRepo := &paymentOrderLifecycleRedeemRepo{
 		codesByCode: map[string]*billing.RedeemCode{
 			"INVITE-001": {

@@ -6,6 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A redacted administrator credential object leaves secret keys absent while
+// allowing ordinary fields to be replaced or removed. These tests inspect
+// omitted-secret inheritance, supplied replacement, input-map stability, and
+// removal of temporary login fields for platform-specific and platformless
+// writes.
+
+// TestSanitizeStoredCredentials_StripsEphemeralSSOSecrets supplies Grok tokens
+// alongside password, SSO, and cookie fields. Sanitization removes that
+// temporary login material while retaining the access token, refresh token, and
+// base URL.
 func TestSanitizeStoredCredentials_StripsEphemeralSSOSecrets(t *testing.T) {
 	creds := map[string]any{
 		"access_token":      "at",
@@ -30,8 +40,12 @@ func TestSanitizeStoredCredentials_StripsEphemeralSSOSecrets(t *testing.T) {
 	require.NotContains(t, out, "cookie")
 }
 
+// TestSanitizeStoredCredentials_AlwaysStripsCookie repeats sanitization for
+// OpenAI, Grok, and an omitted platform. Cookie and password disappear in every
+// case, while the submitted API Key remains.
 func TestSanitizeStoredCredentials_AlwaysStripsCookie(t *testing.T) {
-	// Bulk updates may omit the platform, but cookies must still be removed before storage.
+	// Bulk updates may omit the platform, but cookies must still be removed before
+	// storage.
 	for _, platform := range []string{PlatformOpenAI, PlatformGrok, ""} {
 		creds := map[string]any{
 			"cookie":   "session",
@@ -45,10 +59,17 @@ func TestSanitizeStoredCredentials_AlwaysStripsCookie(t *testing.T) {
 	}
 }
 
+// TestSanitizeStoredCredentials_NilSafe supplies a nil credential map to the
+// storage sanitizer. The result remains nil, allowing absent credentials to
+// pass through cleanup as an absent object.
 func TestSanitizeStoredCredentials_NilSafe(t *testing.T) {
 	require.Nil(t, SanitizeStoredCredentials(PlatformGrok, nil))
 }
 
+// TestMergePreservingSensitiveCreds_PreservesSensitiveWhenIncomingMissing
+// submits ordinary fields while omitting stored secret keys. Tokens and wallet
+// credentials remain from existing, while the new base URL and mapping come
+// from incoming.
 func TestMergePreservingSensitiveCreds_PreservesSensitiveWhenIncomingMissing(t *testing.T) {
 	existing := map[string]any{
 		"refresh_token":             "rt-old",
@@ -72,6 +93,9 @@ func TestMergePreservingSensitiveCreds_PreservesSensitiveWhenIncomingMissing(t *
 	require.Equal(t, map[string]any{"foo": "bar"}, out["model_mapping"])
 }
 
+// TestMergePreservingSensitiveCreds_OverwritesWhenIncomingProvidesSensitive
+// submits a refreshed token while omitting the existing API Key. The supplied
+// token replaces its prior value, and the omitted API Key remains available.
 func TestMergePreservingSensitiveCreds_OverwritesWhenIncomingProvidesSensitive(t *testing.T) {
 	existing := map[string]any{
 		"refresh_token": "rt-old",
@@ -86,6 +110,9 @@ func TestMergePreservingSensitiveCreds_OverwritesWhenIncomingProvidesSensitive(t
 	require.Equal(t, "sk-old", out["api_key"], "incoming 没传应保留")
 }
 
+// TestMergePreservingSensitiveCreds_DoesNotMutateInputs merges a stored refresh
+// token and an incoming base URL. Neither input gains the other map's key,
+// protecting top-level input ownership during the merge.
 func TestMergePreservingSensitiveCreds_DoesNotMutateInputs(t *testing.T) {
 	existing := map[string]any{"refresh_token": "rt"}
 	incoming := map[string]any{"base_url": "x"}
@@ -98,6 +125,9 @@ func TestMergePreservingSensitiveCreds_DoesNotMutateInputs(t *testing.T) {
 	require.NotContains(t, incoming, "refresh_token")
 }
 
+// TestMergePreservingSensitiveCreds_NilInputs exercises an absent stored object
+// and an absent incoming object separately. Incoming ordinary fields or
+// existing omitted secrets still appear in the corresponding result.
 func TestMergePreservingSensitiveCreds_NilInputs(t *testing.T) {
 	out := MergePreservingSensitiveCreds(nil, map[string]any{"base_url": "x"})
 	require.Equal(t, "x", out["base_url"])
@@ -107,6 +137,10 @@ func TestMergePreservingSensitiveCreds_NilInputs(t *testing.T) {
 	require.Equal(t, "rt", out2["refresh_token"])
 }
 
+// TestMergePreservingSensitiveCreds_NonSensitiveDeletionAllowed submits a new
+// base URL while omitting project_id and refresh_token. The secret is
+// inherited, the ordinary omitted project field disappears, and the base URL
+// changes.
 func TestMergePreservingSensitiveCreds_NonSensitiveDeletionAllowed(t *testing.T) {
 	existing := map[string]any{
 		"refresh_token": "rt",
@@ -123,6 +157,9 @@ func TestMergePreservingSensitiveCreds_NonSensitiveDeletionAllowed(t *testing.T)
 	require.NotContains(t, out, "project_id", "非敏感键 incoming 不传 = 删除")
 }
 
+// TestIsSensitiveCredentialKey checks selected token, API Key, signing, and
+// wallet credential names. Ordinary configuration keys and an empty name remain
+// outside the sensitive membership set.
 func TestIsSensitiveCredentialKey(t *testing.T) {
 	require.True(t, IsSensitiveCredentialKey("refresh_token"))
 	require.True(t, IsSensitiveCredentialKey("api_key"))

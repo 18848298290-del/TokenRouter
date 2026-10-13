@@ -9,6 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// A hydrated group must carry the saved image-generation permission into
+// routing reads. The fixture sets that permission on an Ent entity and checks
+// its converted value, protecting the administrator-controlled flag during
+// group mapping.
+
+// TestGroupEntityToService_PreservesImageGenerationControls maps a stored group
+// with image generation enabled. The result must be nonnil and retain that
+// permission so routing can read the saved flag.
 func TestGroupEntityToService_PreservesImageGenerationControls(t *testing.T) {
 	group := &dbent.Group{
 		ID:   1,

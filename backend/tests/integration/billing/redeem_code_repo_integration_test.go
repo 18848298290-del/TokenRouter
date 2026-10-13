@@ -18,13 +18,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Redeem-code storage distinguishes raw unused rows, effective invitation
+// expiry, and usage-history entries joined to plans. PostgreSQL suite cases use
+// rollback transactions so deliberate redemption and fixture writes disappear
+// after each case, while listing assertions check filters, counts, preload
+// relationships, and selected sorting.
+//
+// A used-code fixture writes its owning code before inserting the user's usage
+// row with the same redemption timestamp. History tests also update both
+// timestamp representations to establish deterministic ordering rather than
+// relying on close wall-clock calls. Single-use retries return a used-code
+// error, and all of these operations remain within the transaction created by
+// entitlementTx.
+
+// RedeemCodeRepoSuite keeps redeem storage and fixture creation in the same
+// case transaction.
 type RedeemCodeRepoSuite struct {
-	suite.Suite
-	ctx    context.Context
-	client *dbent.Client
-	repo   *billingpostgres.RedeemStore
+	suite.Suite // assertion and suite lifecycle support
+	// ctx, client, and repo are replaced together before each case. Ent
+	// fixture writes and repository operations use the transaction rolled
+	// back by entitlementTx cleanup.
+	ctx    context.Context // case execution context
+	client *dbent.Client   // case transaction client
+	// transaction-bound code repository fixture
+	repo *billingpostgres.RedeemStore
 }
 
+// SetupTest obtains a rollback transaction and replaces the suite context,
+// client, and redeem repository together. Repository calls and Ent fixture
+// writes therefore use the current case's transaction.
 func (s *RedeemCodeRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := entitlementTx(s.T())
@@ -32,10 +54,16 @@ func (s *RedeemCodeRepoSuite) SetupTest() {
 	s.repo = billingpostgres.NewRedeemCodeRepository(s.client)
 }
 
+// TestRedeemCodeRepoSuite runs redeem repository cases on the shared migrated
+// PostgreSQL fixture. Each case uses a fresh transaction to inspect code rows
+// and redemption history.
 func TestRedeemCodeRepoSuite(t *testing.T) {
 	suite.Run(t, new(RedeemCodeRepoSuite))
 }
 
+// createUser inserts a fixture user with the supplied email and a test password
+// hash. It fails the current suite case on storage errors and returns the
+// persisted entity.
 func (s *RedeemCodeRepoSuite) createUser(email string) *dbent.User {
 	u, err := s.client.User.Create().
 		SetEmail(email).
@@ -45,6 +73,9 @@ func (s *RedeemCodeRepoSuite) createUser(email string) *dbent.User {
 	return u
 }
 
+// createPlan inserts a thirty-day subscription plan for sale at the fixture
+// price. It fails the suite case on storage errors and returns the saved plan
+// entity.
 func (s *RedeemCodeRepoSuite) createPlan(name string) *dbent.SubscriptionPlan {
 	plan, err := s.client.SubscriptionPlan.Create().
 		SetName(name).
@@ -61,6 +92,14 @@ func (s *RedeemCodeRepoSuite) createPlan(name string) *dbent.SubscriptionPlan {
 	return plan
 }
 
+// createUsedCode persists a used code and its corresponding user usage record
+// with the supplied redemption time. A nonnil plan ID is attached to the code
+// for history preload tests.
+//
+// The usage row follows code insertion so it references the stored code ID, and
+// both representations use the same user and timestamp. The suite client
+// determines their shared transaction; save failures fail the case, whose
+// entitlementTx cleanup rolls back any earlier fixture write.
 func (s *RedeemCodeRepoSuite) createUsedCode(codeType, code string, userID int64, usedAt time.Time, planID *int64) *dbent.RedeemCode {
 	create := s.client.RedeemCode.Create().
 		SetCode(code).
@@ -79,6 +118,9 @@ func (s *RedeemCodeRepoSuite) createUsedCode(codeType, code string, userID int64
 	redeemCode, err := create.Save(s.ctx)
 	s.Require().NoError(err, "create used redeem code")
 
+	// Insert usage after saving the code so history can join the stored
+	// code ID; the suite transaction retains both rows until case rollback
+	// cleanup runs.
 	_, err = s.client.RedeemCodeUsage.Create().
 		SetRedeemCodeID(redeemCode.ID).
 		SetUserID(userID).
@@ -89,6 +131,9 @@ func (s *RedeemCodeRepoSuite) createUsedCode(codeType, code string, userID int64
 	return redeemCode
 }
 
+// TestCreate persists an unused balance code through the suite repository and
+// reloads it by ID. Creation fills a nonzero ID and the read returns
+// TEST-CREATE.
 func (s *RedeemCodeRepoSuite) TestCreate() {
 	code := &billing.RedeemCode{
 		Code:   "TEST-CREATE",
@@ -106,6 +151,9 @@ func (s *RedeemCodeRepoSuite) TestCreate() {
 	s.Require().Equal("TEST-CREATE", got.Code)
 }
 
+// TestCreateBatch stores two balance codes with distinct entitlement values
+// through one repository call. Credential lookup returns both codes with their
+// expected values of ten and twenty.
 func (s *RedeemCodeRepoSuite) TestCreateBatch() {
 	codes := []billing.RedeemCode{
 		{Code: "BATCH-1", Type: billing.RedeemTypeBalance, Value: 10, Status: billing.StatusUnused},
@@ -124,12 +172,18 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch() {
 	s.Require().Equal(float64(20), got2.Value)
 }
 
+// TestGetByID_NotFound requests a numeric code ID absent from the suite
+// fixture. The repository returns an error carrying the RedeemCodeNotFound
+// identity for that row.
 func (s *RedeemCodeRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeNotFound)
 }
 
+// TestGetByCode inserts a code directly through the suite Ent client before
+// repository lookup. The returned domain code contains the same supplied
+// GET-BY-CODE credential.
 func (s *RedeemCodeRepoSuite) TestGetByCode() {
 	_, err := s.client.RedeemCode.Create().
 		SetCode("GET-BY-CODE").
@@ -145,12 +199,18 @@ func (s *RedeemCodeRepoSuite) TestGetByCode() {
 	s.Require().Equal("GET-BY-CODE", got.Code)
 }
 
+// TestGetByCode_NotFound requests a credential absent from the current suite
+// transaction. The repository returns an error carrying RedeemCodeNotFound for
+// the missing code value.
 func (s *RedeemCodeRepoSuite) TestGetByCode_NotFound() {
 	_, err := s.repo.GetByCode(s.ctx, "NON-EXISTENT")
 	s.Require().Error(err, "expected error for non-existent code")
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeNotFound)
 }
 
+// TestDelete creates a code and removes it through the suite repository. A
+// subsequent ID lookup returns RedeemCodeNotFound for the previously stored row
+// in this transaction.
 func (s *RedeemCodeRepoSuite) TestDelete() {
 	created, err := s.client.RedeemCode.Create().
 		SetCode("TO-DELETE").
@@ -169,6 +229,9 @@ func (s *RedeemCodeRepoSuite) TestDelete() {
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeNotFound)
 }
 
+// TestList inserts two unused balance codes before requesting the first ten
+// list rows. The response contains both codes and pagination metadata whose
+// total equals two.
 func (s *RedeemCodeRepoSuite) TestList() {
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "LIST-1", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "LIST-2", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
@@ -179,6 +242,9 @@ func (s *RedeemCodeRepoSuite) TestList() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListWithFilters_Type stores balance and subscription codes then filters
+// for subscriptions. The repository returns a single result with the
+// subscription type in the suite fixture.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_Type() {
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "TYPE-BAL", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "TYPE-SUB", Type: billing.RedeemTypeSubscription, Value: 0, Status: billing.StatusUnused}))
@@ -189,6 +255,8 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_Type() {
 	s.Require().Equal(billing.RedeemTypeSubscription, codes[0].Type)
 }
 
+// TestListWithFilters_Status stores unused and used balance codes then selects
+// used status. The returned list contains one code whose domain status is used.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_Status() {
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "STAT-UNUSED", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{
@@ -206,6 +274,9 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_Status() {
 	s.Require().Equal(billing.StatusUsed, codes[0].Status)
 }
 
+// TestListWithFilters_StatusExpiredIncludesInvitationExpiry stores an unused
+// invitation whose expiry is in the past. An expired-status filter returns that
+// invitation with effective expired status.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_StatusExpiredIncludesInvitationExpiry() {
 	past := time.Now().UTC().Add(-time.Hour)
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{
@@ -224,6 +295,9 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_StatusExpiredIncludesInvitatio
 	s.Require().Equal(billing.StatusExpired, codes[0].Status)
 }
 
+// TestListWithFilters_Search stores ALPHA and BETA code values and searches
+// with a lowercase alpha fragment. The list contains one code whose credential
+// includes ALPHA.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_Search() {
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "ALPHA-CODE", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "BETA-CODE", Type: billing.RedeemTypeBalance, Value: 0, Status: billing.StatusUnused}))
@@ -234,6 +308,9 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_Search() {
 	s.Require().Contains(codes[0].Code, "ALPHA")
 }
 
+// TestListWithFilters_PlanPreload creates a subscription code referencing a
+// persisted fixture plan. Unfiltered listing returns that code with a nonnil
+// plan carrying the expected plan ID.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_PlanPreload() {
 	plan := s.createPlan(uniqueTestValue(s.T(), "plan-preload"))
 	_, err := s.client.RedeemCode.Create().
@@ -253,6 +330,9 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_PlanPreload() {
 	s.Require().Equal(plan.ID, codes[0].Plan.ID)
 }
 
+// TestUpdate edits an existing unused balance code from value ten to fifty
+// through the repository. Reloading by its ID returns the newly persisted
+// value.
 func (s *RedeemCodeRepoSuite) TestUpdate() {
 	code := &billing.RedeemCode{
 		Code:   "UPDATE-ME",
@@ -271,6 +351,9 @@ func (s *RedeemCodeRepoSuite) TestUpdate() {
 	s.Require().Equal(float64(50), got.Value)
 }
 
+// TestUse redeems a single-use code for a persisted fixture user. Reloading
+// records used status, the user's ID in UsedBy, and a nonnil redemption
+// timestamp.
 func (s *RedeemCodeRepoSuite) TestUse() {
 	user := s.createUser(uniqueTestValue(s.T(), "use") + "@example.com")
 	code := &billing.RedeemCode{
@@ -293,6 +376,9 @@ func (s *RedeemCodeRepoSuite) TestUse() {
 	s.Require().NotNil(got.UsedAt)
 }
 
+// TestUse_Idempotency calls Use twice for one single-use code and user. The
+// initial call succeeds and the repeated call returns the RedeemCodeUsed error
+// identity.
 func (s *RedeemCodeRepoSuite) TestUse_Idempotency() {
 	user := s.createUser(uniqueTestValue(s.T(), "idem") + "@example.com")
 	code := &billing.RedeemCode{
@@ -313,6 +399,9 @@ func (s *RedeemCodeRepoSuite) TestUse_Idempotency() {
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeUsed)
 }
 
+// TestUse_AlreadyUsed seeds a single-use code whose status and usage count
+// already indicate redemption. Attempting Use returns RedeemCodeUsed for that
+// exhausted fixture code.
 func (s *RedeemCodeRepoSuite) TestUse_AlreadyUsed() {
 	user := s.createUser(uniqueTestValue(s.T(), "already") + "@example.com")
 	code := &billing.RedeemCode{
@@ -330,6 +419,9 @@ func (s *RedeemCodeRepoSuite) TestUse_AlreadyUsed() {
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeUsed)
 }
 
+// TestUse_ExpiredInvitationRejected attempts Use on an unused invitation whose
+// expiry is an hour earlier. The repository returns RedeemCodeUsed for the
+// expired invitation credential.
 func (s *RedeemCodeRepoSuite) TestUse_ExpiredInvitationRejected() {
 	user := s.createUser(uniqueTestValue(s.T(), "expired-invite") + "@example.com")
 	past := time.Now().UTC().Add(-time.Hour)
@@ -348,13 +440,17 @@ func (s *RedeemCodeRepoSuite) TestUse_ExpiredInvitationRejected() {
 	s.Require().ErrorIs(err, billing.ErrRedeemCodeUsed)
 }
 
-// listUserHistory reads the first ten redemptions, enough for each fixture in this suite.
+// listUserHistory returns the first ten usage-history codes for the supplied
+// user with no type filter. Read failures fail the suite case before its
+// history assertions.
 func (s *RedeemCodeRepoSuite) listUserHistory(userID int64) []billing.RedeemCode {
 	codes, _, err := s.repo.ListByUserPaginated(s.ctx, userID, pagination.PaginationParams{Page: 1, PageSize: 10}, "")
 	s.Require().NoError(err, "ListByUserPaginated")
 	return codes
 }
 
+// TestListByUser creates two used-code fixtures one hour apart for the same
+// user. The history list returns both codes with the later timestamp first.
 func (s *RedeemCodeRepoSuite) TestListByUser() {
 	user := s.createUser(uniqueTestValue(s.T(), "listby") + "@example.com")
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -369,6 +465,9 @@ func (s *RedeemCodeRepoSuite) TestListByUser() {
 	s.Require().Equal("USER-1", codes[1].Code)
 }
 
+// TestListByUser_WithPlanPreload inserts one used subscription code with a plan
+// reference. User history returns one row whose loaded plan has the expected
+// fixture ID.
 func (s *RedeemCodeRepoSuite) TestListByUser_WithPlanPreload() {
 	user := s.createUser(uniqueTestValue(s.T(), "grp") + "@example.com")
 	plan := s.createPlan(uniqueTestValue(s.T(), "plan-listby"))
@@ -380,6 +479,9 @@ func (s *RedeemCodeRepoSuite) TestListByUser_WithPlanPreload() {
 	s.Require().Equal(plan.ID, codes[0].Plan.ID)
 }
 
+// TestListByUser_Pages creates three used-code fixtures at distinct timestamps
+// and requests page two with size two. It returns the oldest row while total
+// remains three.
 func (s *RedeemCodeRepoSuite) TestListByUser_Pages() {
 	user := s.createUser(uniqueTestValue(s.T(), "pages") + "@example.com")
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -387,7 +489,8 @@ func (s *RedeemCodeRepoSuite) TestListByUser_Pages() {
 	s.createUsedCode(billing.RedeemTypeBalance, "PAGE-2", user.ID, base.Add(time.Hour), nil)
 	s.createUsedCode(billing.RedeemTypeBalance, "PAGE-3", user.ID, base.Add(2*time.Hour), nil)
 
-	// The second page contains the oldest entry while Total counts all three.
+	// The second page contains the oldest entry while Total counts all
+	// three.
 	codes, result, err := s.repo.ListByUserPaginated(s.ctx, user.ID, pagination.PaginationParams{Page: 2, PageSize: 2}, "")
 	s.Require().NoError(err)
 	s.Require().Len(codes, 1)
@@ -395,6 +498,10 @@ func (s *RedeemCodeRepoSuite) TestListByUser_Pages() {
 	s.Require().Equal(int64(3), result.Total)
 }
 
+// TestCreateBatch_Filters_Use_Idempotency_ListByUser combines batch creation,
+// filtered plan loading, redemption, and history reads. Reuse reports
+// RedeemCodeUsed, and synchronized fixture timestamps place CODEA first in
+// history.
 func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser() {
 	user := s.createUser(uniqueTestValue(s.T(), "rc") + "@example.com")
 	plan := s.createPlan(uniqueTestValue(s.T(), "plan-rc"))
@@ -423,7 +530,9 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	codeA, err := s.repo.GetByCode(s.ctx, "CODEA")
 	s.Require().NoError(err, "GetByCode")
 
-	// Fixed timestamps make the redemption order deterministic.
+	// Set both code and usage timestamps to the same fixed times so history
+	// ordering follows the joined usage records rather than
+	// near-simultaneous redemption calls.
 	codeBUsedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	_, err = s.client.RedeemCode.UpdateOneID(codeB.ID).
 		SetUsedAt(codeBUsedAt).
@@ -457,13 +566,17 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	s.Require().Equal("CODEA", used[0].Code, "expected newest used code first")
 }
 
-// uniqueTestValue derives a stable fixture name from the prefix and test name.
+// uniqueTestValue returns prefix plus the current test name after replacing
+// slashes and spaces with underscores.
 func uniqueTestValue(t *testing.T, prefix string) string {
 	t.Helper()
 	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
 	return fmt.Sprintf("%s-%s", prefix, safeName)
 }
 
+// TestListWithFilters_SortByValueAsc stores values twenty then ten and requests
+// ascending value sorting. Both rows return with the ten-value code preceding
+// the twenty-value code.
 func (s *RedeemCodeRepoSuite) TestListWithFilters_SortByValueAsc() {
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "VALUE-20", Type: billing.RedeemTypeBalance, Value: 20, Status: billing.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &billing.RedeemCode{Code: "VALUE-10", Type: billing.RedeemTypeBalance, Value: 10, Status: billing.StatusUnused}))

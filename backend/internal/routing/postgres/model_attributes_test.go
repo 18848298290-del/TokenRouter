@@ -14,7 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestAttributeBatchLookup checks one row per shared profile and limits results to requested groups.
+// Batch profile reads return one decoded object to all requested groups sharing
+// that profile. SQL expectations check subset filtering, explicit false
+// attributes, and query or decoding failures, while a failed association insert
+// verifies rollback of the surrounding profile save.
+
+// TestAttributeBatchLookup supplies one profile associated with requested and
+// unrelated groups. It checks that only requested groups appear, shared groups
+// reuse one pointer, and an explicit false attribute survives decoding.
 func TestAttributeBatchLookup(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -32,7 +39,9 @@ func TestAttributeBatchLookup(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestAttributeBatchLookupFailure discards partial query results and skips SQL for an empty group list.
+// TestAttributeBatchLookupFailure injects query, JSON decoding, and first-row
+// read failures. Each failed lookup returns an error and nil result, while an
+// empty group list succeeds without a SQL query.
 func TestAttributeBatchLookupFailure(t *testing.T) {
 	for _, failure := range []string{"query", "decode", "rows"} {
 		t.Run(failure, func(t *testing.T) {
@@ -66,12 +75,18 @@ func TestAttributeBatchLookupFailure(t *testing.T) {
 	}
 }
 
+// TestAttributeAssociationConflictRollsBackEntireConfig injects an association
+// conflict after the mocked profile insertion. It checks that Save requests
+// rollback and returns ErrAttributeConfigConflict, covering transaction cleanup
+// and error translation.
 func TestAttributeAssociationConflictRollsBackEntireConfig(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	store := NewModelAttributeStore(db)
 	config := &routing.ModelAttributeConfig{Name: "new", Status: "active", GroupIDs: []int64{7}, Rules: []routing.ModelAttributeRule{}}
+	// Fail after the profile insert to require rollback of preceding writes; a
+	// constraint error must not leave a committed unassociated profile.
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO model_attribute_configs").WithArgs("new", "", "active", "[]").WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at"}).AddRow(5, time.Now(), time.Now()))
 	mock.ExpectExec("DELETE FROM model_attribute_config_groups").WithArgs(int64(5)).WillReturnResult(sqlmock.NewResult(0, 0))

@@ -7,6 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Pause observations store upstream status, a matched rule keyword and a
+// zero-based rule index alongside deadline and trigger times. The fixture uses
+// a 503 overloaded response and checks both times in Unix seconds.
+
+// TestTempUnschedState constructs a pause with a five-minute deadline and
+// upstream failure evidence. It checks status, matched keyword, rule index and
+// both Unix-second times remain the supplied values.
 func TestTempUnschedState(t *testing.T) {
 	now := time.Now()
 	until := now.Add(5 * time.Minute)

@@ -8,6 +8,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Usage configuration tests exercise default inheritance, scalar normalization
+// and rejection of credential or template fields. The same fixture also checks
+// unsafe root formatting and the ordered administrator adapter choices, tying
+// effective reads to persisted configuration validation.
+
+// TestEffectiveUpstreamUsageConfigDefaultsAndNormalization exercises absent,
+// disabled and malformed usage choices alongside adapter selection. It checks
+// normalized fields, structured errors for unsupported and sensitive input,
+// unsafe URL rejection and manual catalog order.
 func TestEffectiveUpstreamUsageConfigDefaultsAndNormalization(t *testing.T) {
 	provider := &Record{Type: capability.ProviderTypeAPIKey}
 	config, err := EffectiveUpstreamUsageConfig(provider)

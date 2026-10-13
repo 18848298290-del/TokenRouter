@@ -17,7 +17,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestModelAttributeBatchLookup covers shared, disabled, and unassociated profiles in PostgreSQL.
+// Attribute profiles can serve several groups, while each group can bind at
+// most one profile. PostgreSQL fixtures exercise that association constraint,
+// disabled-profile lookup, and JSONB presence values that distinguish an
+// inherited attribute from a deliberate empty or zero override.
+
+// TestModelAttributeBatchLookup binds two groups to one active profile beside
+// disabled and unassociated groups. It checks shared result pointers, requested
+// subsets, and removal from lookup after disabling the active profile.
 func TestModelAttributeBatchLookup(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := context.Background()
@@ -45,6 +52,10 @@ func TestModelAttributeBatchLookup(t *testing.T) {
 	require.Empty(t, result)
 }
 
+// TestModelAttributeMigrationAndConcurrentAssociation races two profile saves
+// for one group after applying migrations again. It checks one committed
+// winner, one conflict with its profile rolled back, disabled lookup, and
+// cascading association deletion.
 func TestModelAttributeMigrationAndConcurrentAssociation(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := context.Background()
@@ -53,6 +64,8 @@ func TestModelAttributeMigrationAndConcurrentAssociation(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, `INSERT INTO groups(name) VALUES ('attribute-test') RETURNING id`).Scan(&groupID))
 	store := NewModelAttributeStore(db)
 	var wg sync.WaitGroup
+	// Buffer one outcome per concurrent save so both writers can finish before the
+	// test waits and drains their results.
 	errors := make(chan error, 2)
 	for _, name := range []string{"first", "second"} {
 		wg.Go(func() {
@@ -60,6 +73,8 @@ func TestModelAttributeMigrationAndConcurrentAssociation(t *testing.T) {
 			errors <- store.Save(ctx, value)
 		})
 	}
+	// Wait for both saves before closing the result channel; ranging afterward
+	// observes each outcome without racing a sender with closure.
 	wg.Wait()
 	close(errors)
 	successes, conflicts := 0, 0
@@ -90,6 +105,10 @@ func TestModelAttributeMigrationAndConcurrentAssociation(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestModelAttributeRulesJSONBRoundTrip stores scoped reasoning and media
+// overrides with empty collections, nil effort, and zero bounds. It compares
+// all rules after JSONB loading and checks that replacing attributes clears
+// optional reasoning and media values.
 func TestModelAttributeRulesJSONBRoundTrip(t *testing.T) {
 	db := postgrescontainer.New(t)
 	store := NewModelAttributeStore(db)

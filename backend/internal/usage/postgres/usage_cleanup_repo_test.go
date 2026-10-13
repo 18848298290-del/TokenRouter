@@ -20,10 +20,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Cleanup metadata can be stored through Ent or direct SQL, while batch filters
+// share one inclusive time-range builder. SQLite fixtures exercise Ent
+// persistence and state changes; SQL mocks exercise returned metadata, idle
+// claims, failures, and bound deletion arguments. The two paths retain the same
+// task-facing result shapes.
+
+// newUsageCleanupEntRepo creates an Ent cleanup fixture on a named
+// shared-memory SQLite database with foreign keys enabled. It registers
+// database and client cleanup with the test and returns both handles for
+// persistence assertions.
 func newUsageCleanupEntRepo(t *testing.T) (*CleanupStore, *dbent.Client) {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:usage_cleanup?mode=memory&cache=shared")
 	require.NoError(t, err)
+	// Register database cleanup immediately, with later client cleanup running
+	// first. Each constructed handle is released if setup ends at an assertion.
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
 	require.NoError(t, err)
@@ -36,6 +48,9 @@ func newUsageCleanupEntRepo(t *testing.T) (*CleanupStore, *dbent.Client) {
 	return repo, client
 }
 
+// TestUsageCleanupRepositoryEntCreateAndList persists pending and running tasks
+// through Ent. Listing reports both rows, places the newer task first, and
+// restores the earlier task's time filters.
 func TestUsageCleanupRepositoryEntCreateAndList(t *testing.T) {
 	repo, _ := newUsageCleanupEntRepo(t)
 
@@ -65,6 +80,9 @@ func TestUsageCleanupRepositoryEntCreateAndList(t *testing.T) {
 	require.Equal(t, end, tasks[1].Filters.EndTime)
 }
 
+// TestUsageCleanupRepositoryEntListEmpty queries a freshly created Ent cleanup
+// fixture. An empty task table returns no task items and a pagination total of
+// zero.
 func TestUsageCleanupRepositoryEntListEmpty(t *testing.T) {
 	repo, _ := newUsageCleanupEntRepo(t)
 
@@ -74,6 +92,9 @@ func TestUsageCleanupRepositoryEntListEmpty(t *testing.T) {
 	require.Equal(t, int64(0), result.Total)
 }
 
+// TestUsageCleanupRepositoryEntGetStatusAndProgress reads a persisted pending
+// task and updates its deletion count. A missing task matches both sentinels,
+// while the stored existing task retains the supplied progress.
 func TestUsageCleanupRepositoryEntGetStatusAndProgress(t *testing.T) {
 	repo, client := newUsageCleanupEntRepo(t)
 
@@ -98,6 +119,9 @@ func TestUsageCleanupRepositoryEntGetStatusAndProgress(t *testing.T) {
 	require.Equal(t, int64(42), loaded.DeletedRows)
 }
 
+// TestUsageCleanupRepositoryEntCancelAndFinish cancels a pending task and
+// inspects cancellation metadata. Changing the stored state to succeeded makes
+// a later cancellation report that no eligible task changed.
 func TestUsageCleanupRepositoryEntCancelAndFinish(t *testing.T) {
 	repo, client := newUsageCleanupEntRepo(t)
 
@@ -120,6 +144,8 @@ func TestUsageCleanupRepositoryEntCancelAndFinish(t *testing.T) {
 	require.NotNil(t, loaded.FinishedAt)
 
 	loaded.Status = usage.UsageCleanupStatusSucceeded
+	// Put the canceled fixture into a terminal state before the second call,
+	// isolating the cancellation predicate from the first call's metadata checks.
 	_, err = client.UsageCleanupTask.Update().Where(dbusagecleanuptask.IDEQ(task.ID)).SetStatus(loaded.Status).Save(context.Background())
 	require.NoError(t, err)
 
@@ -128,6 +154,9 @@ func TestUsageCleanupRepositoryEntCancelAndFinish(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestUsageCleanupRepositoryEntCancelError closes the Ent client before
+// cancellation. The repository reports the persistence failure instead of
+// treating the attempted transition as a successful cancellation.
 func TestUsageCleanupRepositoryEntCancelError(t *testing.T) {
 	repo, client := newUsageCleanupEntRepo(t)
 
@@ -138,11 +167,16 @@ func TestUsageCleanupRepositoryEntCancelError(t *testing.T) {
 	}
 	require.NoError(t, repo.CreateTask(context.Background(), task))
 
+	// Close the shared persistence handle to make cancellation exercise the
+	// storage-error path after task creation has already succeeded.
 	require.NoError(t, client.Close())
 	_, err := repo.CancelTask(context.Background(), task.ID, 7)
 	require.Error(t, err)
 }
 
+// TestUsageCleanupRepositoryEntMarkResults finishes two running Ent tasks with
+// different outcomes. Success stores its count and finish time, while failure
+// stores the supplied error message.
 func TestUsageCleanupRepositoryEntMarkResults(t *testing.T) {
 	repo, client := newUsageCleanupEntRepo(t)
 
@@ -174,6 +208,9 @@ func TestUsageCleanupRepositoryEntMarkResults(t *testing.T) {
 	require.Equal(t, "boom", *loaded2.ErrorMessage)
 }
 
+// TestUsageCleanupRepositoryEntInvalidStatus creates a task with a status
+// outside the Ent enum. The schema-backed save rejects the task and returns an
+// error.
 func TestUsageCleanupRepositoryEntInvalidStatus(t *testing.T) {
 	repo, _ := newUsageCleanupEntRepo(t)
 
@@ -185,12 +222,17 @@ func TestUsageCleanupRepositoryEntInvalidStatus(t *testing.T) {
 	require.Error(t, repo.CreateTask(context.Background(), task))
 }
 
+// TestUsageCleanupRepositoryEntListInvalidFilters inserts invalid filter bytes
+// through the underlying SQLite driver. Listing through Ent returns an error
+// when the stored row cannot be decoded.
 func TestUsageCleanupRepositoryEntListInvalidFilters(t *testing.T) {
 	repo, client := newUsageCleanupEntRepo(t)
 
 	now := time.Now().UTC()
 	driver, ok := client.Driver().(*entsql.Driver)
 	require.True(t, ok)
+	// Write malformed filters below Ent so the fixture can represent invalid
+	// stored bytes that normal task creation would JSON-encode first.
 	_, err := driver.DB().ExecContext(
 		context.Background(),
 		`INSERT INTO usage_cleanup_tasks (status, filters, created_by, deleted_rows, created_at, updated_at)
@@ -208,6 +250,9 @@ func TestUsageCleanupRepositoryEntListInvalidFilters(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestUsageCleanupTaskFromEntFull converts an Ent row carrying all optional
+// metadata pointers. The result retains task identity and status, with error,
+// cancellation, start, and finish fields present.
 func TestUsageCleanupTaskFromEntFull(t *testing.T) {
 	start := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -244,6 +289,9 @@ func TestUsageCleanupTaskFromEntFull(t *testing.T) {
 	require.NotNil(t, task.FinishedAt)
 }
 
+// TestUsageCleanupTaskFromEntInvalidFilters converts an Ent row with malformed
+// filter JSON. Conversion reports an error and returns an empty task rather
+// than partially decoded metadata.
 func TestUsageCleanupTaskFromEntInvalidFilters(t *testing.T) {
 	task, err := usageCleanupTaskFromEnt(&dbent.UsageCleanupTask{
 		Filters: json.RawMessage("invalid-json"),
@@ -252,12 +300,18 @@ func TestUsageCleanupTaskFromEntInvalidFilters(t *testing.T) {
 	require.Empty(t, task)
 }
 
+// TestNewUsageCleanupRepository constructs cleanup persistence with a nil Ent
+// client and mocked SQL database. The constructor returns a nonnil repository
+// with those supplied persistence dependencies bound.
 func TestNewUsageCleanupRepository(t *testing.T) {
 	db, _ := newSQLMock(t)
 	repo := NewUsageCleanupRepository(nil, db)
 	require.NotNil(t, repo)
 }
 
+// TestUsageCleanupRepositoryCreateTask mocks a successful task INSERT with
+// returned identity and timestamps. CreateTask writes those returned values
+// into the supplied task and satisfies the expected arguments.
 func TestUsageCleanupRepositoryCreateTask(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -283,6 +337,9 @@ func TestUsageCleanupRepositoryCreateTask(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryCreateTaskNil passes no task to a SQL-backed
+// cleanup repository. The call succeeds and satisfies an empty mock expectation
+// set without inserting task metadata.
 func TestUsageCleanupRepositoryCreateTaskNil(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -292,6 +349,9 @@ func TestUsageCleanupRepositoryCreateTaskNil(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryCreateTaskQueryError injects a connection failure
+// into the task INSERT. CreateTask returns an error and consumes the expected
+// query with its initial task arguments.
 func TestUsageCleanupRepositoryCreateTaskQueryError(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -311,6 +371,9 @@ func TestUsageCleanupRepositoryCreateTaskQueryError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryListTasksEmpty makes the SQL count query report
+// zero tasks. Listing returns an empty result and zero pagination total with no
+// page-row expectation.
 func TestUsageCleanupRepositoryListTasksEmpty(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -325,6 +388,9 @@ func TestUsageCleanupRepositoryListTasksEmpty(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryListTasks supplies one SQL task row with encoded
+// filters and optional metadata. Listing decodes its identity, status, creator,
+// progress, error and lifecycle fields alongside the counted total.
 func TestUsageCleanupRepositoryListTasks(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -377,6 +443,9 @@ func TestUsageCleanupRepositoryListTasks(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryListTasksQueryError returns a positive count
+// followed by a page-query failure. Listing reports the error and consumes the
+// expected pagination arguments.
 func TestUsageCleanupRepositoryListTasksQueryError(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -392,6 +461,9 @@ func TestUsageCleanupRepositoryListTasksQueryError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryListTasksInvalidFilters returns a SQL row
+// containing malformed filter JSON. Listing fails during decoding and satisfies
+// both count and page-query expectations.
 func TestUsageCleanupRepositoryListTasksInvalidFilters(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -426,6 +498,9 @@ func TestUsageCleanupRepositoryListTasksInvalidFilters(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryClaimNextPendingTaskNone returns no row from the
+// claim statement with a thirty-minute stale threshold. The repository returns
+// a nil task and no error for that idle poll.
 func TestUsageCleanupRepositoryClaimNextPendingTaskNone(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -443,6 +518,9 @@ func TestUsageCleanupRepositoryClaimNextPendingTaskNone(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryClaimNextPendingTask supplies a running task
+// returned by the claim statement. The repository exposes its ID, creator and
+// start time while retaining a missing error message.
 func TestUsageCleanupRepositoryClaimNextPendingTask(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -484,6 +562,9 @@ func TestUsageCleanupRepositoryClaimNextPendingTask(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryClaimNextPendingTaskError injects a connection
+// failure into the claim statement. Claiming returns an error after using the
+// expected pending, running and stale-time arguments.
 func TestUsageCleanupRepositoryClaimNextPendingTaskError(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -497,6 +578,9 @@ func TestUsageCleanupRepositoryClaimNextPendingTaskError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryClaimNextPendingTaskInvalidFilters returns a
+// claimed row with malformed filter JSON. The call reports a decoding error;
+// the mock does not establish database rollback of the earlier claim.
 func TestUsageCleanupRepositoryClaimNextPendingTaskInvalidFilters(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -526,6 +610,9 @@ func TestUsageCleanupRepositoryClaimNextPendingTaskInvalidFilters(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryMarkTaskSucceeded mocks a successful terminal
+// metadata update. The repository forwards success status, cumulative
+// deleted-row count and task ID in the expected SQL argument order.
 func TestUsageCleanupRepositoryMarkTaskSucceeded(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -539,6 +626,9 @@ func TestUsageCleanupRepositoryMarkTaskSucceeded(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryMarkTaskFailed mocks a failed-outcome metadata
+// update. The repository forwards failure status, cumulative count, supplied
+// error text and task ID in SQL argument order.
 func TestUsageCleanupRepositoryMarkTaskFailed(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -552,6 +642,9 @@ func TestUsageCleanupRepositoryMarkTaskFailed(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryGetTaskStatus returns a pending value from the
+// mocked status query. The repository exposes that returned string and uses
+// the requested task ID.
 func TestUsageCleanupRepositoryGetTaskStatus(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -566,6 +659,9 @@ func TestUsageCleanupRepositoryGetTaskStatus(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryGetTaskStatusQueryError fails the SQL status query
+// for a requested task ID. The repository returns an error and satisfies that
+// single query expectation.
 func TestUsageCleanupRepositoryGetTaskStatusQueryError(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -579,6 +675,9 @@ func TestUsageCleanupRepositoryGetTaskStatusQueryError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryUpdateTaskProgress mocks a successful
+// cumulative-count update. The repository forwards the supplied deletion count
+// and task ID in the expected SQL argument order.
 func TestUsageCleanupRepositoryUpdateTaskProgress(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -592,6 +691,9 @@ func TestUsageCleanupRepositoryUpdateTaskProgress(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryCancelTask returns an ID from the conditional
+// cancellation statement. The result reports a changed task after sending the
+// operator and eligible pending/running states.
 func TestUsageCleanupRepositoryCancelTask(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -606,6 +708,9 @@ func TestUsageCleanupRepositoryCancelTask(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryCancelTaskNoRows returns no ID from conditional
+// cancellation. The repository reports false with no error when that statement
+// changes no eligible task.
 func TestUsageCleanupRepositoryCancelTaskNoRows(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -620,6 +725,10 @@ func TestUsageCleanupRepositoryCancelTaskNoRows(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryDeleteUsageLogsBatchMissingRange passes zero-valued
+// cleanup filters to a SQL-backed repository. The assertion checks the
+// returned error, leaving its category and any attempted query outside the
+// asserted behavior.
 func TestUsageCleanupRepositoryDeleteUsageLogsBatchMissingRange(t *testing.T) {
 	db, _ := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -628,6 +737,9 @@ func TestUsageCleanupRepositoryDeleteUsageLogsBatchMissingRange(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestUsageCleanupRepositoryDeleteUsageLogsBatch supplies two deleted IDs for a
+// filtered batch. The count is two, and bound SQL arguments include the trimmed
+// model plus the requested limit.
 func TestUsageCleanupRepositoryDeleteUsageLogsBatch(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -653,6 +765,9 @@ func TestUsageCleanupRepositoryDeleteUsageLogsBatch(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageCleanupRepositoryDeleteUsageLogsBatchQueryError injects a connection
+// error for a bounded deletion range. The repository reports failure after
+// forwarding the requested timestamps and batch limit.
 func TestUsageCleanupRepositoryDeleteUsageLogsBatchQueryError(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &CleanupStore{sql: db}
@@ -670,6 +785,9 @@ func TestUsageCleanupRepositoryDeleteUsageLogsBatchQueryError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestBuildUsageCleanupWhere supplies time, identity, model, stream and billing
+// filters together. The builder emits inclusive endpoints and ordered
+// placeholders, with the trimmed model in the matching argument position.
 func TestBuildUsageCleanupWhere(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -699,6 +817,9 @@ func TestBuildUsageCleanupWhere(t *testing.T) {
 	require.Equal(t, []any{start, end, userID, apiKeyID, providerID, groupID, teamID, "gpt-4", stream, billingType}, args)
 }
 
+// TestBuildUsageCleanupWhereRequestTypePriority combines websocket request type
+// with a false Stream selector. The request-type predicate wins and includes
+// legacy websocket records instead of adding an incompatible Stream condition.
 func TestBuildUsageCleanupWhereRequestTypePriority(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -716,6 +837,9 @@ func TestBuildUsageCleanupWhereRequestTypePriority(t *testing.T) {
 	require.Equal(t, []any{start, end, requestType}, args)
 }
 
+// TestBuildUsageCleanupWhereRequestTypeLegacyFallback selects streaming
+// requests from explicit and legacy representations. The predicate accepts
+// zero-type streamed records when their websocket flag is false.
 func TestBuildUsageCleanupWhereRequestTypeLegacyFallback(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -731,6 +855,9 @@ func TestBuildUsageCleanupWhereRequestTypeLegacyFallback(t *testing.T) {
 	require.Equal(t, []any{start, end, requestType}, args)
 }
 
+// TestBuildUsageCleanupWhereModelEmpty supplies whitespace as the model filter.
+// The builder omits that equality and leaves the two inclusive timestamp
+// predicates and their arguments.
 func TestBuildUsageCleanupWhereModelEmpty(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)

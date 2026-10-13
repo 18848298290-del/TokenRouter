@@ -11,8 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestPropagateProviderProxyToShadows checks that proxy changes from CRS or admin
-// updates reach shadows, which share their parent's outbound proxy.
+// A Spark shadow follows its parent's proxy and credential health while
+// retaining an independent scheduling and quota window. These tests propagate
+// proxy replacement and clearing, then compare parent identity, status,
+// expiration, and temporary suspension with the parent's separate scheduling
+// controls.
+
+// TestPropagateProviderProxyToShadows starts parent and shadow records on the
+// same proxy. Updating and clearing the parent proxy through the shared
+// propagation function produces the corresponding stored shadow selection.
 func TestPropagateProviderProxyToShadows(t *testing.T) {
 	ctx := context.Background()
 	repo := newCRSShadowStore()
@@ -46,7 +53,10 @@ func TestPropagateProviderProxyToShadows(t *testing.T) {
 	require.Nil(t, got.ProxyID, "clearing parent proxy must clear the shadow proxy too")
 }
 
-// TestParentHealthyForShadow checks the parent health rule shared by scheduling and forwarding.
+// TestParentHealthyForShadow varies the shared parent's identity and health
+// conditions. Missing, inactive, expired, suspended, or non-OAuth parents block
+// the shadow, while parent scheduling switches, global rate limits, and
+// overload windows stay independent.
 func TestParentHealthyForShadow(t *testing.T) {
 	pid := int64(100)
 

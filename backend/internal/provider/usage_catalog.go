@@ -2,19 +2,30 @@ package provider
 
 import "github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 
+// Usage queries expose three administrator-selectable relay formats and four
+// platform-selected CN formats. The catalog keeps those categories together so
+// diagnostics can name every adapter while administrator choices remain limited
+// to the manual formats.
+
+// Adapter identifiers select fixed registered usage formats and identify
+// normalized results returned by manual queries or CN monitoring.
 const (
-	UpstreamUsageAdapterSub2API         = usageview.UpstreamUsageAdapterSub2API
-	UpstreamUsageAdapterNewAPI          = usageview.UpstreamUsageAdapterNewAPI
-	UpstreamUsageAdapterZivv            = usageview.UpstreamUsageAdapterZivv
-	UpstreamUsageAdapterKimiCoding      = usageview.UpstreamUsageAdapterKimiCoding
-	UpstreamUsageAdapterZhipuCoding     = usageview.UpstreamUsageAdapterZhipuCoding
-	UpstreamUsageAdapterKimiBalance     = usageview.UpstreamUsageAdapterKimiBalance
-	UpstreamUsageAdapterDeepseekBalance = usageview.UpstreamUsageAdapterDeepseekBalance
-	NewAPIUserAccessTokenCredentialKey  = "new_api_user_access_token"
-	NewAPIUserIDCredentialKey           = "new_api_user_id"
-	UpstreamUsageDefaultAdapter         = UpstreamUsageAdapterSub2API
+	UpstreamUsageAdapterSub2API         = usageview.UpstreamUsageAdapterSub2API         // Sub2API relay usage format
+	UpstreamUsageAdapterNewAPI          = usageview.UpstreamUsageAdapterNewAPI          // New API usage format
+	UpstreamUsageAdapterZivv            = usageview.UpstreamUsageAdapterZivv            // Zivv wallet usage format
+	UpstreamUsageAdapterKimiCoding      = usageview.UpstreamUsageAdapterKimiCoding      // Kimi coding percentage format
+	UpstreamUsageAdapterZhipuCoding     = usageview.UpstreamUsageAdapterZhipuCoding     // Zhipu coding percentage format
+	UpstreamUsageAdapterKimiBalance     = usageview.UpstreamUsageAdapterKimiBalance     // Kimi wallet balance format
+	UpstreamUsageAdapterDeepseekBalance = usageview.UpstreamUsageAdapterDeepseekBalance // DeepSeek multicurrency balance format
+	// Wallet credential keys supply optional New API user authentication when
+	// an API Key cannot read its wallet balance.
+	NewAPIUserAccessTokenCredentialKey = "new_api_user_access_token" // wallet access token key
+	NewAPIUserIDCredentialKey          = "new_api_user_id"           // wallet user ID key
+	UpstreamUsageDefaultAdapter        = UpstreamUsageAdapterSub2API // default relay query format
 )
 
+// usageAdapterCatalog associates each supported format with its display name and
+// automatic selection rule for catalog and administrator-option consumers.
 var usageAdapterCatalog = []UsageAdapterSpec{
 	{Name: UpstreamUsageAdapterSub2API, Label: "Sub2API / TokenRouter", Automatic: false},
 	{Name: UpstreamUsageAdapterNewAPI, Label: "New API", Automatic: false},
@@ -25,18 +36,24 @@ var usageAdapterCatalog = []UsageAdapterSpec{
 	{Name: UpstreamUsageAdapterDeepseekBalance, Label: "DeepSeek Balance", Automatic: true},
 }
 
-// UsageAdapterSpec describes an adapter in the usage catalog.
+// UsageAdapterSpec names a usage format and its selection category.
 type UsageAdapterSpec struct {
-	Name, Label string
-	Automatic   bool
+	Name, Label string // registered adapter name and administrator display label
+	// Automatic excludes the adapter from administrator choices because CN platform
+	// and provider mode determine the matching query format.
+	Automatic bool // platform selects adapter
 }
 
-// UpstreamUsageAdapterCatalog returns a copy callers may modify independently.
+// UpstreamUsageAdapterCatalog returns a new slice containing every catalog entry
+// in registration order. Entries contain strings and a boolean, so callers may
+// edit the returned values independently.
 func UpstreamUsageAdapterCatalog() []UsageAdapterSpec {
 	return append([]UsageAdapterSpec(nil), usageAdapterCatalog...)
 }
 
-// UpstreamUsageAdapterOptions returns manually selectable adapters in catalog order.
+// UpstreamUsageAdapterOptions returns administrator choices in catalog order,
+// excluding adapters selected automatically by CN platform and mode. Each call
+// builds a new slice of name and label values.
 func UpstreamUsageAdapterOptions() []UpstreamUsageAdapterOption {
 	options := make([]UpstreamUsageAdapterOption, 0, len(usageAdapterCatalog))
 	for _, registration := range usageAdapterCatalog {

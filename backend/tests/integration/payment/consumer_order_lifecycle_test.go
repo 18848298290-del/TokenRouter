@@ -21,23 +21,59 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// An order query can discover payment without safely cancelling or fulfilling
+// the order. SQLite lifecycle cases supply pending, paid, processing, or failed
+// provider responses and inspect resulting order transitions, query references,
+// cancellation attempts, and audit records. A paid response with zero amount
+// remains unfulfilled unless a later query supplies a usable amount.
+//
+// The provider fixture records each reference before returning a configured
+// error or response, allowing cases to distinguish a query retry from a
+// cancellation requery. Fixed-clock expiry cases observe backoff across the
+// configured delay, while reconcile cases cover stale records, retained
+// fulfillment audits, and progress past the first batch. Entitlement callbacks
+// and provider responses are local fixtures; the sequential cases do not
+// exercise PostgreSQL worker contention.
+
+// paymentOrderLifecycleQueryProvider records sequential query and close
+// attempts with configured outcomes.
 type paymentOrderLifecycleQueryProvider struct {
-	key               string
-	lastQueryTradeNo  string
-	queryTradeNos     []string
-	lastCancelTradeNo string
-	queryCalls        int
-	cancelCalls       int
-	responses         []*payment.QueryOrderResponse
-	resp              *payment.QueryOrderResponse
-	queryErr          error
-	cancelErr         error
+	// key selects the provider type; an empty key makes ProviderKey return
+	// Alipay, affecting registry selection and reference choice for this
+	// fixture's responses.
+	key string // configured provider lookup key
+	// lastQueryTradeNo, queryTradeNos, and queryCalls record each query
+	// before error selection; lastCancelTradeNo and cancelCalls record each
+	// close before its configured error. Callers serialize these
+	// observations.
+	lastQueryTradeNo  string   // latest queried order reference
+	queryTradeNos     []string // ordered query reference observations
+	lastCancelTradeNo string   // latest requested close reference
+	queryCalls        int      // recorded provider query count
+	cancelCalls       int      // recorded provider close count
+	// queryErr, responses, and resp select each query outcome. An error
+	// rejects the call first; otherwise responses supplies its current head
+	// or an empty list selects resp. responses retains supplied pointers
+	// and advances only while more than one entry remains, so the last
+	// configured response repeats on later queries.
+	responses []*payment.QueryOrderResponse // ordered borrowed query responses
+	// resp is the borrowed result when responses is empty; nil can be
+	// returned with no error, and caller mutations remain visible in later
+	// fixture queries.
+	resp      *payment.QueryOrderResponse // fallback borrowed query response
+	queryErr  error                       // configured provider query failure
+	cancelErr error                       // configured provider close failure
 }
 
+// Name returns the fixed display name for lifecycle query and cancellation
+// tests.
 func (p *paymentOrderLifecycleQueryProvider) Name() string {
 	return "payment-order-lifecycle-query-provider"
 }
 
+// ProviderKey returns the configured key, defaulting to Alipay when key is
+// empty. This selects registry lookup and query-reference rules for the same
+// fixture; no provider request is made.
 func (p *paymentOrderLifecycleQueryProvider) ProviderKey() string {
 	if p.key != "" {
 		return p.key
@@ -45,14 +81,22 @@ func (p *paymentOrderLifecycleQueryProvider) ProviderKey() string {
 	return payment.TypeAlipay
 }
 
+// SupportedTypes returns a new slice containing the key selected by
+// ProviderKey.
 func (p *paymentOrderLifecycleQueryProvider) SupportedTypes() []payment.PaymentType {
 	return []payment.PaymentType{p.ProviderKey()}
 }
 
+// CreatePayment panics when lifecycle tests unexpectedly request provider
+// payment creation.
 func (p *paymentOrderLifecycleQueryProvider) CreatePayment(context.Context, payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	panic("unexpected call")
 }
 
+// QueryOrder records the reference and call count before applying queryErr. A
+// nonempty responses list returns its first borrowed pointer, dropping it while
+// another entry remains; the last entry repeats. An empty list returns resp,
+// including nil, and context is ignored.
 func (p *paymentOrderLifecycleQueryProvider) QueryOrder(_ context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	p.lastQueryTradeNo = tradeNo
 	p.queryTradeNos = append(p.queryTradeNos, tradeNo)
@@ -60,6 +104,9 @@ func (p *paymentOrderLifecycleQueryProvider) QueryOrder(_ context.Context, trade
 	if p.queryErr != nil {
 		return nil, p.queryErr
 	}
+	// Keep the final scripted result available for repeated verification or
+	// scans; earlier entries advance only when the fixture has another
+	// response to expose.
 	if len(p.responses) > 0 {
 		resp := p.responses[0]
 		if len(p.responses) > 1 {
@@ -70,20 +117,31 @@ func (p *paymentOrderLifecycleQueryProvider) QueryOrder(_ context.Context, trade
 	return p.resp, nil
 }
 
+// VerifyNotification panics when lifecycle tests unexpectedly request webhook
+// verification.
 func (p *paymentOrderLifecycleQueryProvider) VerifyNotification(context.Context, string, map[string]string) (*payment.PaymentNotification, error) {
 	panic("unexpected call")
 }
 
+// Refund panics when lifecycle tests unexpectedly request a provider refund.
 func (p *paymentOrderLifecycleQueryProvider) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
 	panic("unexpected call")
 }
 
+// CancelPayment records the requested reference and increments cancelCalls
+// before returning cancelErr. It ignores context and adds no synchronization;
+// callers observe configured cancellation outcomes through sequential fixture
+// use.
 func (p *paymentOrderLifecycleQueryProvider) CancelPayment(_ context.Context, tradeNo string) error {
 	p.lastCancelTradeNo = tradeNo
 	p.cancelCalls++
 	return p.cancelErr
 }
 
+// TestVerifyOrderByOutTradeNoBackfillsTradeNoFromPaidQuery supplies a paid
+// provider response for a pending SQLite order. Verification records the
+// returned provider trade number, completes fulfillment, and checks the
+// fixture's balance and redemption observations.
 func TestVerifyOrderByOutTradeNoBackfillsTradeNoFromPaidQuery(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -177,6 +235,10 @@ func TestVerifyOrderByOutTradeNoBackfillsTradeNoFromPaidQuery(t *testing.T) {
 	require.Equal(t, user.ID, redeemRepo.useCalls[0].userID)
 }
 
+// TestVerifyOrderByOutTradeNoRetriesZeroAmountPaidQueryOnce supplies a paid
+// response with zero amount followed by a usable paid amount. Verification
+// queries twice, completes the order, and records the expected entitlement
+// observations.
 func TestVerifyOrderByOutTradeNoRetriesZeroAmountPaidQueryOnce(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -267,6 +329,10 @@ func TestVerifyOrderByOutTradeNoRetriesZeroAmountPaidQueryOnce(t *testing.T) {
 	require.Equal(t, "upstream-trade-retry", got.PaymentTradeNo)
 }
 
+// TestVerifyOrderByOutTradeNoRejectsPaidQueryWithZeroAmount keeps returning a
+// paid response whose amount is zero. Verification leaves the SQLite order
+// pending, retains its empty trade number, and records no balance credit or
+// redemption.
 func TestVerifyOrderByOutTradeNoRejectsPaidQueryWithZeroAmount(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -351,6 +417,10 @@ func TestVerifyOrderByOutTradeNoRejectsPaidQueryWithZeroAmount(t *testing.T) {
 	require.Empty(t, redeemRepo.useCalls)
 }
 
+// TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsForAlipay
+// seeds a provider trade number on a pending Alipay order. Verification queries
+// the local out-trade reference and returns the expected provider trade number
+// from the supplied paid response.
 func TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsForAlipay(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -433,6 +503,9 @@ func TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsFor
 	require.Equal(t, "upstream-trade-existing", got.PaymentTradeNo)
 }
 
+// TestVerifyOrderByOutTradeNoDoesNotCancelPendingUpstreamOrder supplies a
+// pending provider response during ordinary verification. The SQLite order
+// stays pending after one query, and the cancellation counter remains zero.
 func TestVerifyOrderByOutTradeNoDoesNotCancelPendingUpstreamOrder(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -483,6 +556,9 @@ func TestVerifyOrderByOutTradeNoDoesNotCancelPendingUpstreamOrder(t *testing.T) 
 	require.Equal(t, 0, provider.cancelCalls)
 }
 
+// TestCancelOrderStillClosesPendingUpstreamOrder supplies a pending provider
+// response for explicit cancellation. The provider receives the order's local
+// reference for close, and the SQLite order becomes cancelled.
 func TestCancelOrderStillClosesPendingUpstreamOrder(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -537,6 +613,10 @@ func TestCancelOrderStillClosesPendingUpstreamOrder(t *testing.T) {
 	require.Equal(t, payment.OrderStatusCancelled, reloaded.Status)
 }
 
+// TestForceExpireOrderRecordsAuditAndRejectsRepeatedTransition force-expires a
+// pending SQLite order with an administrator reason. Its audit retains that
+// reason, and repeating the transition returns HTTP 409 with
+// ORDER_STATUS_CHANGED.
 func TestForceExpireOrderRecordsAuditAndRejectsRepeatedTransition(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -555,12 +635,18 @@ func TestForceExpireOrderRecordsAuditAndRejectsRepeatedTransition(t *testing.T) 
 	require.NoError(t, err)
 	require.Contains(t, audit.Detail, "provider endpoint returned HTML")
 
+	// Repeat the administrator transition after expiry so the status
+	// conflict is observed on the stored terminal order whose first audit
+	// already contains the supplied reason.
 	err = svc.ForceExpireOrder(ctx, order.ID, "repeat")
 	require.Error(t, err)
 	require.Equal(t, 409, httpx.ErrorCode(err))
 	require.Equal(t, "ORDER_STATUS_CHANGED", apperror.Reason(err))
 }
 
+// TestForceExpireOrderRollsBackWhenAuditWriteFails seeds the force-expiry audit
+// under the unique order/action index. The duplicate audit write fails and the
+// SQLite order remains pending after the attempted transition.
 func TestForceExpireOrderRollsBackWhenAuditWriteFails(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -583,6 +669,10 @@ func TestForceExpireOrderRollsBackWhenAuditWriteFails(t *testing.T) {
 	require.Equal(t, payment.OrderStatusPending, reloaded.Status)
 }
 
+// TestCancelOrderReturnsStatusUnavailableWhenProviderQueryFails injects
+// provider query failure during explicit cancellation. It returns HTTP 503 with
+// PAYMENT_STATUS_UNAVAILABLE, retains pending order state, and records
+// cancellation failure.
 func TestCancelOrderReturnsStatusUnavailableWhenProviderQueryFails(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -603,6 +693,10 @@ func TestCancelOrderReturnsStatusUnavailableWhenProviderQueryFails(t *testing.T)
 	require.True(t, svc.HasAuditLog(ctx, order.ID, "PAYMENT_CANCEL_FAILED"))
 }
 
+// TestCancelOrderMovesToProcessingWhenCloseRacesWithCheckoutCompletion supplies
+// pending then processing responses around a rejected close. Sequential
+// observations show two queries, one cancellation, a processing outcome with an
+// error, and persisted processing state.
 func TestCancelOrderMovesToProcessingWhenCloseRacesWithCheckoutCompletion(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -630,6 +724,10 @@ func TestCancelOrderMovesToProcessingWhenCloseRacesWithCheckoutCompletion(t *tes
 	require.Equal(t, payment.OrderStatusProcessing, reloaded.Status)
 }
 
+// TestExpireTimedOutOrdersKeepsPendingWhenCloseAndRequeryRemainUncertain
+// supplies a close error and two pending responses for an overdue order. Expiry
+// count stays zero after one close and two queries, retaining pending state and
+// cancellation-failure audit.
 func TestExpireTimedOutOrdersKeepsPendingWhenCloseAndRequeryRemainUncertain(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -658,6 +756,10 @@ func TestExpireTimedOutOrdersKeepsPendingWhenCloseAndRequeryRemainUncertain(t *t
 	require.True(t, svc.HasAuditLog(ctx, order.ID, "PAYMENT_CANCEL_FAILED"))
 }
 
+// TestExpireTimedOutOrdersBacksOffAfterProviderFailure scans one overdue order
+// using supplied times before and after the retry delay. Query failure retains
+// pending state, skips the intermediate provider attempt, and permits the later
+// query.
 func TestExpireTimedOutOrdersBacksOffAfterProviderFailure(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -673,6 +775,9 @@ func TestExpireTimedOutOrdersBacksOffAfterProviderFailure(t *testing.T) {
 	require.Zero(t, expired)
 	require.Equal(t, 1, provider.queryCalls)
 
+	// Inspect the same overdue order inside its failure backoff, then after
+	// the configured delay; query counts distinguish a skipped scan from
+	// another provider attempt.
 	expired, err = svc.ExpireTimedOutOrdersAt(ctx, now.Add(time.Minute))
 	require.NoError(t, err)
 	require.Zero(t, expired)
@@ -688,10 +793,17 @@ func TestExpireTimedOutOrdersBacksOffAfterProviderFailure(t *testing.T) {
 	require.Equal(t, payment.OrderStatusPending, reloaded.Status)
 }
 
+// TestReconcileProcessingOrdersFinalizesFailureAndAuditsStaleOnlyOnce
+// repeatedly scans an aged processing order before changing its response to
+// failed. It retains one stale audit, then expires the order with a failure
+// audit and zero paid recoveries.
 func TestReconcileProcessingOrdersFinalizesFailureAndAuditsStaleOnlyOnce(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
 	staleOrder := createPaymentOrderLifecycleOrder(t, ctx, client, payment.OrderStatusProcessing, time.Now().Add(time.Hour))
+	// Move the processing timestamp beyond the stale threshold while
+	// keeping the order's expiry in the future so repeated scans exercise
+	// the stale audit path.
 	staleOrder, err := client.PaymentOrder.UpdateOneID(staleOrder.ID).
 		SetUpdatedAt(time.Now().Add(-payment.LifecycleProcessingStaleAfter - time.Hour)).
 		Save(ctx)
@@ -726,6 +838,10 @@ func TestReconcileProcessingOrdersFinalizesFailureAndAuditsStaleOnlyOnce(t *test
 	require.True(t, svc.HasAuditLog(ctx, staleOrder.ID, "PAYMENT_FAILED"))
 }
 
+// TestReconcileProcessingOrdersRecoversPaidOrderAfterServiceRestart constructs
+// a lifecycle facade over seeded processing order and assignment-audit rows in
+// SQLite. Reconciliation queries the checkout-session reference and completes
+// the order with the returned paid trade number.
 func TestReconcileProcessingOrdersRecoversPaidOrderAfterServiceRestart(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -770,9 +886,13 @@ func TestReconcileProcessingOrdersRecoversPaidOrderAfterServiceRestart(t *testin
 	require.Equal(t, "pi_restart_recovery", reloaded.PaymentTradeNo)
 }
 
+// TestReconcilePageIDsCyclesAcrossEntireBacklog supplies forty-five IDs and
+// three cursor values to the pure page selector. Each page respects the
+// reconcile limit and their collected IDs cover the supplied backlog.
 func TestReconcilePageIDsCyclesAcrossEntireBacklog(t *testing.T) {
 	t.Parallel()
 
+	// Use more IDs than two full pages can hold.
 	ids := make([]int64, 45)
 	for i := range ids {
 		ids[i] = int64(i + 1)
@@ -788,6 +908,10 @@ func TestReconcilePageIDsCyclesAcrossEntireBacklog(t *testing.T) {
 	require.Len(t, seen, len(ids))
 }
 
+// TestReconcileProcessingOrdersCyclesPastFirstBatch stores one more processing
+// order than a reconcile batch can hold. Two scans query every distinct order
+// reference while the configured processing response yields zero paid
+// recoveries.
 func TestReconcileProcessingOrdersCyclesPastFirstBatch(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -818,6 +942,10 @@ func TestReconcileProcessingOrdersCyclesPastFirstBatch(t *testing.T) {
 	require.Len(t, uniqueTradeNos, payment.LifecycleProcessingReconcileLimit+1)
 }
 
+// TestReconcilePaidFulfillmentOrdersRetriesAfterQueryRecoveryFailure first
+// records paid-query recovery failure with no subscription service. A
+// reconstructed facade and later retry time complete the same SQLite order
+// through its retained assignment audit.
 func TestReconcilePaidFulfillmentOrdersRetriesAfterQueryRecoveryFailure(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -859,7 +987,9 @@ func TestReconcilePaidFulfillmentOrdersRetriesAfterQueryRecoveryFailure(t *testi
 	require.Equal(t, payment.OrderStatusFailed, failed.Status)
 	require.NotNil(t, failed.PaidAt)
 
-	// Rebuild runtime dependencies to recover the same persisted order.
+	// Supply the missing subscription dependency on the same SQLite client
+	// and registry, then advance beyond fulfillment backoff so the retained
+	// assignment audit can complete recovery.
 	svc = paymenttestkit.Lifecycle(client, registry, nil, &billing.SubscriptionService{}, nil, true)
 	recovered, err = svc.ReconcilePaidFulfillmentOrdersAt(ctx, time.Now().Add(payment.LifecycleFulfillmentRetryDelay+time.Minute))
 	require.NoError(t, err)
@@ -869,6 +999,10 @@ func TestReconcilePaidFulfillmentOrdersRetriesAfterQueryRecoveryFailure(t *testi
 	require.Equal(t, payment.OrderStatusCompleted, reloaded.Status)
 }
 
+// TestReconcilePaidFulfillmentOrdersRecoversOnlyExpiredLease stores fresh and
+// aged recharging orders with assigned-subscription audits. Reconciliation
+// completes the aged order, reports one recovery, and leaves the fresh order
+// recharging.
 func TestReconcilePaidFulfillmentOrdersRecoversOnlyExpiredLease(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -905,6 +1039,10 @@ func TestReconcilePaidFulfillmentOrdersRecoversOnlyExpiredLease(t *testing.T) {
 	require.Equal(t, payment.OrderStatusRecharging, reloadedFresh.Status)
 }
 
+// TestReconcilePendingPaymentOrdersBackfillsPaidOrder supplies a paid WeChat
+// response for a pending SQLite order. Reconciliation reports one recovery,
+// completes the order, records its fixture credit and redemption, and makes no
+// cancellation call.
 func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -999,6 +1137,9 @@ func TestReconcilePendingPaymentOrdersBackfillsPaidOrder(t *testing.T) {
 	require.Len(t, redeemRepo.useCalls, 1)
 }
 
+// TestReconcilePendingPaymentOrdersQueriesAlipayOrder supplies a pending Alipay
+// response to the pending-order scan. The scan reports zero recoveries and
+// makes one provider query using that order's local out-trade reference.
 func TestReconcilePendingPaymentOrdersQueriesAlipayOrder(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -1049,6 +1190,10 @@ func TestReconcilePendingPaymentOrdersQueriesAlipayOrder(t *testing.T) {
 	require.Equal(t, order.OutTradeNo, provider.lastQueryTradeNo)
 }
 
+// TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsForAlipayUpstreamRegression
+// supplies an existing provider trade number on a pending Alipay order. The
+// regression checks the queried local out-trade reference and returned provider
+// trade number.
 func TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsForAlipayUpstreamRegression(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
@@ -1131,6 +1276,10 @@ func TestVerifyOrderByOutTradeNoUsesOutTradeNoWhenPaymentTradeNoAlreadyExistsFor
 	require.Equal(t, "upstream-trade-existing", got.PaymentTradeNo)
 }
 
+// TestPaymentOrderAllowsRegistryFallbackOnlyForLegacyOrdersWithoutPinnedProviderState
+// supplies three order representations to the registry predicate. A plain
+// legacy order permits lookup, while an instance ID or version-two snapshot
+// disables it.
 func TestPaymentOrderAllowsRegistryFallbackOnlyForLegacyOrdersWithoutPinnedProviderState(t *testing.T) {
 	t.Parallel()
 
@@ -1153,6 +1302,10 @@ func TestPaymentOrderAllowsRegistryFallbackOnlyForLegacyOrdersWithoutPinnedProvi
 	})))
 }
 
+// TestPaymentOrderQueryReferenceUsesOutTradeNoForOfficialProviders supplies a
+// WeChat order with distinct local and provider references. Both exercised
+// official-provider selections use the local out-trade reference for their
+// query.
 func TestPaymentOrderQueryReferenceUsesOutTradeNoForOfficialProviders(t *testing.T) {
 	t.Parallel()
 
@@ -1168,6 +1321,9 @@ func TestPaymentOrderQueryReferenceUsesOutTradeNoForOfficialProviders(t *testing
 	}))
 }
 
+// TestPaymentOrderQueryReferenceUsesInvoiceIDForStripeOrders supplies distinct
+// invoice, payment-intent, and local references. Selection returns the Stripe
+// invoice ID with either a configured Stripe provider or nil provider.
 func TestPaymentOrderQueryReferenceUsesInvoiceIDForStripeOrders(t *testing.T) {
 	t.Parallel()
 
@@ -1187,6 +1343,10 @@ func TestPaymentOrderQueryReferenceUsesInvoiceIDForStripeOrders(t *testing.T) {
 	require.Equal(t, "in_123", payment.PaymentOrderQueryReference(paymentpostgres.OrderFromEntity(order), nil))
 }
 
+// TestPaymentOrderQueryReferenceKeepsCheckoutSessionForProcessingStripeOrders
+// supplies a Stripe checkout-session reference alongside an invoice ID. The
+// query helper retains that session reference for the supplied order instead of
+// selecting its invoice.
 func TestPaymentOrderQueryReferenceKeepsCheckoutSessionForProcessingStripeOrders(t *testing.T) {
 	t.Parallel()
 
@@ -1205,6 +1365,9 @@ func TestPaymentOrderQueryReferenceKeepsCheckoutSessionForProcessingStripeOrders
 	}))
 }
 
+// TestPaymentOrderQueryReferenceFallsBackToTradeNoForLegacyStripeOrders
+// supplies a Stripe order with a legacy payment-intent reference and no
+// invoice. The query helper returns the stored provider trade number.
 func TestPaymentOrderQueryReferenceFallsBackToTradeNoForLegacyStripeOrders(t *testing.T) {
 	t.Parallel()
 

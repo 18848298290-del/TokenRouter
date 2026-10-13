@@ -14,16 +14,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Attribute profiles bind ordered JSON rules to groups, and the association
+// table gives each group at most one profile. Saving a profile replaces its
+// complete association set within the same transaction as its rules. A name
+// collision, group collision, or invalid group reference therefore prevents the
+// replacement from committing.
+//
+// Read queries collect all group IDs for each profile before decoding its
+// rules. Active batch lookup shares that decoded profile among requested
+// groups, so consumers needing mutable request data clone it. Optional JSON
+// pointers and empty collections retain their stored meanings, and missing rule
+// identifiers are supplied on read for subsequent editing.
+
+// attributeSelect reads a profile and its complete, sorted group association
+// set in one row for single and batch decoders.
 const attributeSelect = `SELECT c.id,c.name,c.description,c.status,c.rules,c.created_at,c.updated_at,
  COALESCE((SELECT array_agg(g.group_id ORDER BY g.group_id) FROM model_attribute_config_groups g WHERE g.config_id=c.id),'{}'::bigint[])
  FROM model_attribute_configs c `
 
-// ModelAttributeStore saves profiles and replaces their group associations in a transaction.
-type ModelAttributeStore struct{ db *sql.DB }
+// ModelAttributeStore persists attribute profiles and their exclusive group
+// associations in PostgreSQL.
+type ModelAttributeStore struct {
+	// db is the application's borrowed connection pool. Save starts its own
+	// transaction, and the application keeps the pool open through all store
+	// calls.
+	db *sql.DB
+}
 
+// NewModelAttributeStore retains db for profile reads and transactional saves.
+// The application owns the connection pool and its lifetime; constructing the
+// store performs no database work or migration.
 func NewModelAttributeStore(db *sql.DB) *ModelAttributeStore { return &ModelAttributeStore{db: db} }
 
-func scanAttributeConfig(row interface{ Scan(...any) error }) (*routing.ModelAttributeConfig, error) {
+// scanAttributeConfig decodes one profile row, including its JSON rules and
+// ordered group IDs. Malformed JSON fails the read; missing rule IDs are
+// supplied in the returned value without a database write.
+func scanAttributeConfig(row interface {
+	// Scan fills the profile decoder's destinations from one selected database
+	// row.
+	Scan(...any) error
+},
+) (*routing.ModelAttributeConfig, error) {
 	var result routing.ModelAttributeConfig
 	var body []byte
 	var groups pq.Int64Array
@@ -34,10 +65,15 @@ func scanAttributeConfig(row interface{ Scan(...any) error }) (*routing.ModelAtt
 		return nil, err
 	}
 	result.GroupIDs = []int64(groups)
+	// Supply missing rule IDs in the decoded profile so later translation and
+	// editing operations have identifiers even for stored rules without them.
 	routing.EnsureModelRuleIDs(&result)
 	return &result, nil
 }
 
+// List returns profiles with their rules and associated group IDs, newest
+// creation first with descending ID ties. It includes disabled profiles for
+// administration and returns an allocated empty slice when none exist.
 func (s *ModelAttributeStore) List(ctx context.Context) ([]routing.ModelAttributeConfig, error) {
 	rows, err := s.db.QueryContext(ctx, attributeSelect+"ORDER BY c.created_at DESC,c.id DESC")
 	if err != nil {
@@ -55,6 +91,9 @@ func (s *ModelAttributeStore) List(ctx context.Context) ([]routing.ModelAttribut
 	return result, rows.Err()
 }
 
+// Get reads one profile and its complete group associations by ID. A missing
+// row returns ErrAttributeConfigNotFound; decoding errors return to the caller
+// instead of a usable profile.
 func (s *ModelAttributeStore) Get(ctx context.Context, id int64) (*routing.ModelAttributeConfig, error) {
 	value, err := scanAttributeConfig(s.db.QueryRowContext(ctx, attributeSelect+"WHERE c.id=$1", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -63,6 +102,9 @@ func (s *ModelAttributeStore) Get(ctx context.Context, id int64) (*routing.Model
 	return value, err
 }
 
+// ForGroup reads the active profile associated with a group. Missing
+// associations and disabled profiles return nil without error, letting runtime
+// consumers use catalog attributes; malformed stored rules return an error.
 func (s *ModelAttributeStore) ForGroup(ctx context.Context, id int64) (*routing.ModelAttributeConfig, error) {
 	value, err := scanAttributeConfig(s.db.QueryRowContext(ctx, attributeSelect+"WHERE c.status='active' AND EXISTS (SELECT 1 FROM model_attribute_config_groups g WHERE g.config_id=c.id AND g.group_id=$1)", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -71,7 +113,10 @@ func (s *ModelAttributeStore) ForGroup(ctx context.Context, id int64) (*routing.
 	return value, err
 }
 
-// ForGroups reads active profiles for the requested groups, decoding each shared profile once.
+// ForGroups reads active profiles for the requested groups, decoding each
+// shared profile once. Unassociated groups have no map entry, and groups
+// sharing a profile share its pointer; clone before mutating returned
+// configuration.
 func (s *ModelAttributeStore) ForGroups(ctx context.Context, ids []int64) (map[int64]*routing.ModelAttributeConfig, error) {
 	result := make(map[int64]*routing.ModelAttributeConfig, len(ids))
 	if len(ids) == 0 {
@@ -103,6 +148,9 @@ func (s *ModelAttributeStore) ForGroups(ctx context.Context, ids []int64) (map[i
 	return result, nil
 }
 
+// attributeStoreError maps PostgreSQL unique conflicts and invalid group
+// references to routing errors. Other errors pass through, preserving failures
+// from JSON encoding, optimistic version checks, and transaction completion.
 func attributeStoreError(err error) error {
 	if pg, ok := errors.AsType[*pq.Error](err); ok {
 		if pg.Code == "23505" {
@@ -115,6 +163,16 @@ func attributeStoreError(err error) error {
 	return err
 }
 
+// Save writes a nonnil profile and replaces its complete group association set
+// in one transaction. ID zero inserts a new profile; an existing ID updates it,
+// and a nonzero ExpectedUpdatedAt requires that stored version to match.
+// Missing or mismatched updates return a conflict.
+//
+// Rules are encoded before the transaction begins. After writing the profile,
+// old links are removed and new links inserted; a name, association, or
+// foreign-key failure rolls back these database changes. Returned IDs and
+// timestamps are assigned to config before commit, so a failed save can leave
+// those in-memory fields changed.
 func (s *ModelAttributeStore) Save(ctx context.Context, config *routing.ModelAttributeConfig) (err error) {
 	defer func() { err = attributeStoreError(err) }()
 	body, err := json.Marshal(config.Rules)
@@ -125,6 +183,9 @@ func (s *ModelAttributeStore) Save(ctx context.Context, config *routing.ModelAtt
 	if err != nil {
 		return err
 	}
+	// Roll back profile and link writes on an earlier error; waiting until every
+	// link succeeds prevents a rejected association from leaving a separately
+	// saved profile.
 	defer func() { _ = tx.Rollback() }()
 	if config.ID == 0 {
 		err = tx.QueryRowContext(ctx, `INSERT INTO model_attribute_configs(name,description,status,rules) VALUES ($1,$2,$3,$4) RETURNING id,created_at,updated_at`, config.Name, config.Description, config.Status, string(body)).Scan(&config.ID, &config.CreatedAt, &config.UpdatedAt)
@@ -137,6 +198,8 @@ func (s *ModelAttributeStore) Save(ctx context.Context, config *routing.ModelAtt
 	if err != nil {
 		return err
 	}
+	// Replace links after the profile write on the same transaction, allowing the
+	// unique group constraint to reject and roll back the whole replacement.
 	if _, err = tx.ExecContext(ctx, `DELETE FROM model_attribute_config_groups WHERE config_id=$1`, config.ID); err != nil {
 		return err
 	}
@@ -145,9 +208,14 @@ func (s *ModelAttributeStore) Save(ctx context.Context, config *routing.ModelAtt
 			return err
 		}
 	}
+	// Commit after every group link succeeds so readers cannot observe the saved
+	// rules paired with a partially replaced association set.
 	return tx.Commit()
 }
 
+// Delete removes a profile and lets PostgreSQL cascade its association rows. A
+// successful delete affecting no rows returns ErrAttributeConfigNotFound; a
+// failure to read the affected-row count is returned.
 func (s *ModelAttributeStore) Delete(ctx context.Context, id int64) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM model_attribute_configs WHERE id=$1`, id)
 	if err != nil {
@@ -160,7 +228,9 @@ func (s *ModelAttributeStore) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// optionalAttributeTimestamp returns nil for an unset optimistic-lock version.
+// optionalAttributeTimestamp converts an unset expected version into SQL null.
+// Save uses null to skip its optimistic timestamp predicate, while a supplied
+// time requires the stored version to match.
 func optionalAttributeTimestamp(value time.Time) any {
 	if value.IsZero() {
 		return nil

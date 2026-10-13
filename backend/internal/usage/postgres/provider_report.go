@@ -9,26 +9,57 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// providerReportData holds four report breakdowns collected in one scan of a shared range.
+// Provider reports need daily history, model totals, and both inbound and
+// upstream endpoint totals for the same raw request range. One GROUPING SETS
+// query emits four representations of each request, identified by a grouping
+// tag so records enter the corresponding result collection. User charges and
+// provider statistics cost remain separate, including the recorded provider
+// multiplier.
+//
+// Duration sums and nonnull counts are accumulated from daily rows alone;
+// adding every grouping would count each observation four times. Results are
+// sorted for report consumers after scanning. A database-backed reader runs in
+// a read-only transaction with JIT disabled locally, while a supplied executor
+// is read directly using its existing session and transaction settings.
+
+// providerReportData holds sorted provider breakdowns and the duration inputs
+// used by report summaries.
 type providerReportData struct {
+	// history, models, endpoints, and upstreamEndpoints contain separate
+	// groupings of the same scoped requests; adding across these collections
+	// would count the same request more than once.
+	// chronological daily usage history
 	history           []ProviderUsageHistory
-	models            []ModelStat
-	endpoints         []EndpointStat
-	upstreamEndpoints []EndpointStat
-	durationSum       int64
-	durationCount     int64
+	models            []ModelStat    // models ordered by token total
+	endpoints         []EndpointStat // inbound endpoints by request count
+	upstreamEndpoints []EndpointStat // upstream endpoints by request count
+	// durationSum and durationCount accumulate daily grouping rows alone.
+	// Their ratio is the overall measured-request average even though the query
+	// returns the same duration observations in several other groupings.
+	durationSum   int64 // measured duration sum in milliseconds
+	durationCount int64 // requests with nonnull durations
 }
 
-// readProviderReport disables JIT in a dedicated read-only transaction when a database handle is available.
+// readProviderReport reads provider breakdowns for [start, end) on the supplied
+// executor when no database handle exists. With a database handle, it opens a
+// read-only transaction, sets transaction-local JIT off, and returns results
+// only after commit succeeds. Query errors leave cleanup to deferred rollback.
 func (r *Store) readProviderReport(ctx context.Context, id int64, start, end time.Time) (*providerReportData, error) {
 	if r.db == nil {
+		// The supplied executor keeps its existing session and transaction
+		// settings. Setting JIT locally requires the transaction created on the
+		// database handle below.
 		return r.scanProviderReport(ctx, id, start, end)
 	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
+	// Rollback releases the transaction on a JIT-setting or query failure; a
+	// successful commit completes it before the deferred cleanup attempt.
 	defer func() { _ = tx.Rollback() }()
+	// Set JIT within this transaction so the report query uses that setting
+	// without changing later queries on the pooled connection.
 	if _, err := tx.ExecContext(ctx, "SET LOCAL jit = off"); err != nil {
 		return nil, err
 	}
@@ -43,7 +74,16 @@ func (r *Store) readProviderReport(ctx context.Context, id int64, start, end tim
 	return data, nil
 }
 
-// scanProviderReport uses GROUPING SETS for daily, model, and endpoint totals and counts non-null durations for averaging.
+// scanProviderReport returns four sorted breakdowns over one provider's raw
+// [start, end) usage. Empty results contain initialized empty slices. SQL dates
+// use the database session timezone. Models prefer trimmed internal model,
+// then historical requested_model, and blank endpoint labels become unknown.
+//
+// Grouping tags distinguish daily, model, inbound, and upstream rows
+// representing the same requests. Only daily rows contribute to overall
+// duration inputs, counting nonnull timings independently of requests. Daily
+// ActualCost stores provider cost and UserCost stores user charges; model and
+// endpoint ActualCost instead store user charges.
 func (r *Store) scanProviderReport(ctx context.Context, id int64, start, end time.Time) (*providerReportData, error) {
 	query := `WITH scoped AS (
 	 SELECT TO_CHAR(created_at,'YYYY-MM-DD') AS day,
@@ -66,6 +106,9 @@ func (r *Store) scanProviderReport(ctx context.Context, id int64, start, end tim
 	if err != nil {
 		return nil, err
 	}
+	// Keep all four grouping sets on the same result stream until scanning
+	// finishes; deferred closing releases that stream while retaining scan and
+	// iteration errors.
 	defer func() { _ = rows.Close() }()
 	data := &providerReportData{history: make([]ProviderUsageHistory, 0), models: make([]ModelStat, 0), endpoints: make([]EndpointStat, 0), upstreamEndpoints: make([]EndpointStat, 0)}
 	for rows.Next() {
@@ -78,8 +121,13 @@ func (r *Store) scanProviderReport(ctx context.Context, id int64, start, end tim
 		tokens := input + output + creation + read
 		switch kind {
 		case "day":
+			// SQL emits date-only labels for daily rows. A parse error leaves the
+			// zero date for display formatting while retaining the SQL Date string.
 			date, _ := time.Parse(time.DateOnly, label)
 			data.history = append(data.history, ProviderUsageHistory{Date: label, Label: date.Format("01/02"), Requests: requests, Tokens: tokens, Cost: cost, ActualCost: providerCost, UserCost: userCost})
+			// Each request also appears in model and endpoint groupings. Accumulate
+			// duration inputs here so the overall average counts each measured
+			// request once across the four representations.
 			data.durationSum += duration
 			data.durationCount += count
 		case "model":

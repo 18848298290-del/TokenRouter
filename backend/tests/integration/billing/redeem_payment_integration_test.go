@@ -22,7 +22,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// createEligibilityOrder creates a payment fixture; paid_at marks confirmed payment.
+// Payment-gated redeem codes require the recipient's positive confirmed payment
+// history before any entitlement is granted. PostgreSQL cases distinguish
+// paid_at from order status and cumulative recharge, check unavailable lookups,
+// and confirm that the same unused code succeeds after payment eligibility
+// changes.
+
+// createEligibilityOrder persists a payment row with selected status and
+// amount, setting paid_at when paid is true. It snapshots user fields and
+// registers explicit order deletion during test cleanup.
 func createEligibilityOrder(t *testing.T, client *ent.Client, user *ent.User, status string, paid bool, amount float64) *ent.PaymentOrder {
 	t.Helper()
 	builder := client.PaymentOrder.Create().
@@ -43,12 +51,16 @@ func createEligibilityOrder(t *testing.T, client *ent.Client, user *ent.User, st
 	}
 	order, err := builder.Save(context.Background())
 	require.NoError(t, err)
-	// Payment orders retain user snapshots and need their own cleanup.
+	// Delete this fixture order before committed user cleanup runs so its
+	// stored user snapshot and payment history cannot carry into the next
+	// entitlement case.
 	t.Cleanup(func() { require.NoError(t, client.PaymentOrder.DeleteOneID(order.ID).Exec(context.Background())) })
 	return order
 }
 
-// TestRedeemRequiresPayment checks rejected grants, retries after payment, duplicate redemption, and each entitlement type.
+// TestRedeemRequiresPayment attempts payment-gated balance, concurrency, and
+// subscription grants before the recipient pays. Rejected attempts retain
+// entitlement and usage state, then confirmed payment permits one redemption.
 func TestRedeemRequiresPayment(t *testing.T) {
 	for _, kind := range []string{billing.RedeemTypeBalance, billing.RedeemTypeConcurrency, billing.RedeemTypeSubscription} {
 		t.Run(kind, func(t *testing.T) {
@@ -68,6 +80,9 @@ func TestRedeemRequiresPayment(t *testing.T) {
 			order := createEligibilityOrder(t, client, user, payment.OrderStatusPending, false, 0.01)
 			plan, err := client.SubscriptionPlan.Create().SetName("test payment eligibility").SetPrice(1).SetValidityDays(7).Save(ctx)
 			require.NoError(t, err)
+			// Attempt independent plan cleanup before committed
+			// user truncation runs. Its error is discarded here, so
+			// a rejected delete can leave the plan row behind.
 			t.Cleanup(func() { _ = client.SubscriptionPlan.DeleteOneID(plan.ID).Exec(ctx) })
 			repo := billingpostgres.NewRedeemCodeRepository(client)
 			admin := billing.NewRedeemAdmin(repo, billingpostgres.NewRedeemAdministrationMutations(client), time.Now)
@@ -104,6 +119,9 @@ func TestRedeemRequiresPayment(t *testing.T) {
 			stored, err = repo.GetByID(ctx, code.ID)
 			require.NoError(t, err)
 			require.Zero(t, stored.UsedCount)
+			// Mark the recipient's existing small order paid before
+			// retrying the same unused code, separating payment
+			// eligibility from another user's paid order.
 			require.NoError(t, client.PaymentOrder.UpdateOneID(order.ID).SetStatus(payment.OrderStatusPaid).SetPaidAt(time.Now()).Exec(ctx))
 			_, err = service.Redeem(ctx, user.ID, code.Code)
 			require.NoError(t, err)
@@ -129,13 +147,15 @@ func TestRedeemRequiresPayment(t *testing.T) {
 	}
 }
 
-// TestPaymentHistoryEligibility requires a positive confirmed payment regardless of later fulfillment or refund status.
+// TestPaymentHistoryEligibility varies order status, confirmation timestamp,
+// and paid amount in PostgreSQL. Positive confirmed payments qualify across the
+// tested later statuses, while absent confirmation or zero amount does not.
 func TestPaymentHistoryEligibility(t *testing.T) {
 	for _, tc := range []struct {
-		status string
-		paid   bool
-		amount float64
-		want   bool
+		status string  // stored payment order status
+		paid   bool    // whether paid_at is supplied
+		amount float64 // USD payment amount
+		want   bool    // expected payment eligibility result
 	}{
 		{payment.OrderStatusPending, false, 1, false},
 		{payment.OrderStatusCancelled, false, 1, false},
@@ -159,7 +179,9 @@ func TestPaymentHistoryEligibility(t *testing.T) {
 	}
 }
 
-// TestRedeemPaymentAdministration checks the default, omitted updates, disabling, invitation restrictions, and migration replay.
+// TestRedeemPaymentAdministration creates and edits the payment requirement,
+// including omitted updates and invitation codes. Defaults remain disabled,
+// edits persist, invitation gating fails, and migration reapplication succeeds.
 func TestRedeemPaymentAdministration(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -181,6 +203,9 @@ func TestRedeemPaymentAdministration(t *testing.T) {
 	require.ErrorIs(t, err, billing.ErrRedeemPaymentRequirementUnsupported)
 	migration, err := migrations.FS.ReadFile("287_redeem_code_requires_payment.sql")
 	require.NoError(t, err)
+	// Execute the already-applied migration body against edited records to
+	// check idempotent schema replay while retaining the final disabled
+	// requirement value.
 	_, err = integrationDB.ExecContext(ctx, string(migration))
 	require.NoError(t, err)
 	code, err := repo.GetByID(ctx, id)

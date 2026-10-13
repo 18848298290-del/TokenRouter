@@ -32,14 +32,40 @@ import (
 	usagepg "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// Usage settlement allocates completed costs across subscriptions and the
+// paying user's balance, then records key and provider counters under a durable
+// request identity. PostgreSQL cases inspect overflow debt, plan coverage and
+// rates, expiring quota windows, scheduler outbox transitions, and replay after
+// deduplication archival. Returned allocation amounts are compared with raw
+// stored values to expose partially applied or repeated effects.
+//
+// Lock-order fixtures hold a subscription row, wait until settlement has locked
+// the payer, and start a synchronous usage-log insert that also references that
+// subscription. A key-share probe checks compatibility with the payer lock
+// before the blocker is released. Buffered completion channels retain both
+// results for bounded joins, after which tests inspect funding totals, optional
+// member usage, and exactly one usage row.
+
+// usageBillingApplyOutcome carries the settlement report and failure returned
+// by an overlapping worker.
 type usageBillingApplyOutcome struct {
+	// completed settlement effect report
 	result *billing.UsageBillingApplyResult
-	err    error
+	err    error // settlement worker operation error
 }
 
-// directUsageExecutor writes usage synchronously through SQL for lock-order tests.
-type directUsageExecutor struct{ infra.Executor }
+// directUsageExecutor hides the concrete SQL pool type so usage Create follows
+// its synchronous single-row path.
+type directUsageExecutor struct {
+	// Executor retains the borrowed pool's SQL methods while the wrapper's
+	// concrete type prevents the usage repository from initializing its
+	// SQL-pool batching path.
+	infra.Executor
+}
 
+// TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling settles a cost
+// exceeding the payer's balance and key quota, then repeats the request.
+// Balance debt and key counters reflect one charge with one deduplication row.
 func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -78,6 +104,8 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	require.NotNil(t, result1)
 	require.True(t, result1.Applied)
 	require.True(t, result1.APIKeyQuotaExhausted)
+	// Amounts permit a micro-dollar comparison gap when checking one charge
+	// and its resulting debt.
 	require.InDelta(t, 1.25, result1.BalanceAmountUSD, 0.000001)
 	require.NotNil(t, result1.NewBalance)
 	require.InDelta(t, -0.25, *result1.NewBalance, 0.000001)
@@ -108,6 +136,9 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	require.Equal(t, 1, dedupCount)
 }
 
+// TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling applies the
+// same automatically funded request twice against an available subscription.
+// The first applies, replay does not, and stored daily usage equals one charge.
 func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -164,9 +195,15 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 
 	var dailyUsage float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT daily_usage_usd FROM user_subscriptions WHERE id = $1", subscription.ID).Scan(&dailyUsage))
+	// The stored daily amount allows a micro-dollar difference from the
+	// single expected charge.
 	require.InDelta(t, 2.5, dailyUsage, 0.000001)
 }
 
+// TestUsageBillingRepositoryResolveUsableSubscriptionForGroup creates a
+// currently valid subscription whose plan includes the selected group.
+// Resolution returns that subscription and its expected plan ID in the
+// PostgreSQL fixture.
 func TestUsageBillingRepositoryResolveUsableSubscriptionForGroup(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -206,6 +243,10 @@ func TestUsageBillingRepositoryResolveUsableSubscriptionForGroup(t *testing.T) {
 	require.Equal(t, plan.ID, got.PlanID)
 }
 
+// TestUsageBillingRepositoryResolveUsableSubscriptionForGroup_NormalizesTailWindows
+// supplies exhausted and refreshable tail-window candidates. Resolution selects
+// the refreshable grant, clears its daily usage, and retains monthly usage plus
+// its plan group rate.
 func TestUsageBillingRepositoryResolveUsableSubscriptionForGroup_NormalizesTailWindows(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -280,10 +321,16 @@ func TestUsageBillingRepositoryResolveUsableSubscriptionForGroup_NormalizesTailW
 	require.Equal(t, target.ID, got.ID, "应跳过当前窗口已耗尽的候选并选择可刷新尾段窗口的订阅")
 	require.Zero(t, got.DailyUsageUSD, "倍率解析应看到与最终扣费一致的已刷新日窗口")
 	require.NotNil(t, got.DailyWindowStart)
+	// A small numeric tolerance checks retained monthly usage and the
+	// selected plan rate.
 	require.InDelta(t, 860, got.MonthlyUsageUSD, 0.000001)
 	require.InDelta(t, 0.5, got.Plan.GroupRateMultipliers[group.ID], 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit
+// charges two hundred during a subscription's final two hours. The reset daily
+// window takes remaining monthly capacity and the balance funds the uncovered
+// sixty.
 func TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -325,7 +372,8 @@ func TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit(t *
 		MonthlyUsageUSD:    860,
 	})
 
-	// A large charge in the final two hours checks that the daily reset still respects the remaining monthly quota.
+	// A large charge in the final two hours checks that the daily reset
+	// still respects the remaining monthly quota.
 	result, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 		RequestID:         uuid.NewString(),
 		APIKeyID:          apiKey.ID,
@@ -335,6 +383,8 @@ func TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit(t *
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// Numeric comparisons allow a micro-dollar difference while checking
+	// the capped subscription and wallet split.
 	require.InDelta(t, 140, result.SubscriptionAmountUSD, 0.000001, "日窗口刷新后仍受剩余月额度约束")
 	require.InDelta(t, 60, result.BalanceAmountUSD, 0.000001, "超过月额度的部分应继续走余额")
 
@@ -348,6 +398,10 @@ func TestUsageBillingRepositoryApply_ResetsDailyTailWithinFiniteMonthlyLimit(t *
 	require.InDelta(t, 1000, monthlyUsage, 0.000001, "有限月额度必须保持订阅尾段的硬上限")
 }
 
+// TestUsageBillingRepositoryApply_DeductsBalanceDeficitAfterPartialSubscription
+// settles against nearly exhausted subscription windows and a zero wallet.
+// Usage reaches the subscription cap, and uncovered cost becomes persisted
+// negative balance.
 func TestUsageBillingRepositoryApply_DeductsBalanceDeficitAfterPartialSubscription(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -398,6 +452,8 @@ func TestUsageBillingRepositoryApply_DeductsBalanceDeficitAfterPartialSubscripti
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// Allow a micro-dollar difference when comparing the capped
+	// subscription portion and resulting wallet debt.
 	require.InDelta(t, 0.01, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 1.24, result.BalanceAmountUSD, 0.000001)
 	require.NotNil(t, result.NewBalance)
@@ -412,6 +468,10 @@ func TestUsageBillingRepositoryApply_DeductsBalanceDeficitAfterPartialSubscripti
 	require.InDelta(t, 10.0, dailyUsage, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_PreferredSubscriptionChargesOverflowToBalance
+// uses a selected subscription with distinct subscription and wallet rates.
+// Stored windows cap at ten, overflow creates wallet debt, and reported
+// allocations match the combined rate.
 func TestUsageBillingRepositoryApply_PreferredSubscriptionChargesOverflowToBalance(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -469,6 +529,8 @@ func TestUsageBillingRepositoryApply_PreferredSubscriptionChargesOverflowToBalan
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// The small comparison tolerance covers allocation amounts and the
+	// resulting combined rate ratio.
 	require.InDelta(t, 0.2, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 1.2, result.BalanceAmountUSD, 0.000001)
 	require.NotNil(t, result.NewBalance)
@@ -491,21 +553,45 @@ func TestUsageBillingRepositoryApply_PreferredSubscriptionChargesOverflowToBalan
 		FROM user_subscriptions
 		WHERE id = $1
 	`, subscription.ID).Scan(&dailyUsage, &weeklyUsage, &monthlyUsage))
-	// Subscription usage stays capped, leaving no quota for subsequent admission checks.
+	// Compare all saved windows after overflow settlement so each finite
+	// period remains capped at its limit when later requests check
+	// subscription admission.
 	require.InDelta(t, 10, dailyUsage, 0.000001)
 	require.InDelta(t, 10, weeklyUsage, 0.000001)
 	require.InDelta(t, 10, monthlyUsage, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_DeadlockLockOrderAllowsConcurrentPersonalUsageLogInsert
+// holds a subscription during overlapping settlement and personal usage
+// insertion. Both complete after release with the expected funding split and
+// one stored usage row.
 func TestUsageBillingRepositoryApply_DeadlockLockOrderAllowsConcurrentPersonalUsageLogInsert(t *testing.T) {
 	runUsageBillingConcurrentUsageLogInsert(t, false)
 }
 
+// TestUsageBillingRepositoryApply_DeadlockLockOrderAllowsConcurrentTeamUsageLogInsert
+// holds a subscription during overlapping team settlement and usage insertion.
+// Both complete after release with owner funding, member usage, and one stored
+// usage row.
 func TestUsageBillingRepositoryApply_DeadlockLockOrderAllowsConcurrentTeamUsageLogInsert(t *testing.T) {
 	runUsageBillingConcurrentUsageLogInsert(t, true)
 }
 
-// runUsageBillingConcurrentUsageLogInsert checks that personal and team usage inserts can complete alongside settlement.
+// runUsageBillingConcurrentUsageLogInsert coordinates overlapping PostgreSQL
+// settlement and synchronous usage insertion for a personal or team request. It
+// owns a ten-second context and retains a blocker transaction until both
+// operations have been launched.
+//
+// The blocker first locks the subscription so settlement can hold the payer
+// while waiting. A NOWAIT probe observes payer-lock contention, and a separate
+// KEY SHARE probe checks the lock needed by usage foreign keys. The usage
+// insert is then observed incomplete for one hundred milliseconds before
+// blocker commit releases both operations.
+//
+// Buffered result channels allow each worker to report independently of receive
+// order. The helper joins both results within its context budget before
+// checking subscription, wallet, optional member spending, and persisted usage
+// count. Deferred rollback releases the blocker on an early exit.
 func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -570,9 +656,14 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 		MonthlyUsageUSD:    0.9,
 	})
 
-	// Hold the subscription row so settlement waits for it while holding the paying-user lock.
+	// Hold the subscription row before settlement starts so the later
+	// payer-lock observation occurs while settlement waits on this
+	// deliberately blocked subscription.
 	blockerTx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Retain rollback until the asserted commit succeeds so an early
+	// failure releases the subscription row and lets context-bound
+	// competing operations finish.
 	blockerReleased := false
 	defer func() {
 		if !blockerReleased {
@@ -584,6 +675,9 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 		`SELECT id FROM user_subscriptions WHERE id = $1 FOR UPDATE`, subscription.ID,
 	).Scan(&blockedSubscriptionID))
 
+	// Buffer settlement completion independently of the test's receive
+	// order; the lock probe can report premature completion before the
+	// normal result join.
 	applyDone := make(chan usageBillingApplyOutcome, 1)
 	go func() {
 		result, applyErr := billingRepo.Apply(ctx, &billing.UsageBillingCommand{
@@ -616,18 +710,27 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 		ActualCost:     1,
 		CreatedAt:      time.Now().UTC(),
 	}
+	// The wrapper disables usage batching by hiding the concrete SQL pool
+	// type, so this worker's completion reflects its synchronous insert and
+	// foreign-key waits.
 	insertDone := make(chan error, 1)
 	go func() {
 		_, insertErr := usagepg.NewUsageLogRepositoryWithSQL(client, directUsageExecutor{integrationDB}, timezone.NewCalendar(time.Local)).Create(ctx, usageLog)
 		insertDone <- insertErr
 	}()
 
+	// Keep the subscription blocker while sampling insert completion for
+	// one hundred milliseconds; the subsequent commit should release its
+	// foreign-key lock wait.
 	select {
 	case insertErr := <-insertDone:
 		require.FailNow(t, "用量日志应在订阅行被占用时等待", "unexpected error: %v", insertErr)
 	case <-time.After(100 * time.Millisecond):
 	}
 
+	// Release the subscription blocker before receiving the two operation
+	// results, allowing both settlement mutation and usage foreign-key
+	// checks to complete their work.
 	require.NoError(t, blockerTx.Commit())
 	blockerReleased = true
 
@@ -640,6 +743,8 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 	require.NoError(t, outcome.err)
 	require.NotNil(t, outcome.result)
 	require.True(t, outcome.result.Applied)
+	// A micro-dollar tolerance compares the reported split with saved
+	// wallet, subscription, and member amounts.
 	require.InDelta(t, 0.1, outcome.result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 0.9, outcome.result.BalanceAmountUSD, 0.000001)
 
@@ -671,11 +776,16 @@ func runUsageBillingConcurrentUsageLogInsert(t *testing.T, teamRequest bool) {
 	require.Equal(t, 1, usageCount)
 }
 
-// assertUsageBillingUserLockAllowsKeyShare checks that the settlement lock permits the key-share lock used by usage_logs foreign keys.
+// assertUsageBillingUserLockAllowsKeyShare probes the payer row with FOR KEY
+// SHARE NOWAIT and fails the test if it cannot acquire that lock. Its probe
+// transaction is rolled back before returning.
 func assertUsageBillingUserLockAllowsKeyShare(t *testing.T, ctx context.Context, userID int64) {
 	t.Helper()
 	probeTx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Release the successful key-share probe before the helper returns; an
+	// assertion failure also rolls it back, keeping this fixture's extra
+	// lock short lived.
 	defer func() { _ = probeTx.Rollback() }()
 	var lockedUserID int64
 	require.NoError(t, probeTx.QueryRowContext(ctx,
@@ -683,9 +793,22 @@ func assertUsageBillingUserLockAllowsKeyShare(t *testing.T, ctx context.Context,
 	).Scan(&lockedUserID))
 }
 
-// waitForUsageBillingUserLock waits until settlement holds the user row before the concurrent test operation proceeds.
+// waitForUsageBillingUserLock polls the payer row with FOR UPDATE NOWAIT until
+// PostgreSQL reports lock contention. Other probe failures return their errors,
+// while a completed settlement result or canceled context ends the wait
+// unsuccessfully.
+//
+// Every probe transaction is rolled back before interpreting its result,
+// releasing a successfully acquired lock before the next attempt. SQLSTATE
+// 55P03 identifies contention and wins immediately when observed. Between
+// successful probes, a ten-millisecond ticker avoids spinning and the helper
+// can consume applyDone to report premature settlement completion; callers
+// account for that consumed result.
 func waitForUsageBillingUserLock(ctx context.Context, userID int64, applyDone <-chan usageBillingApplyOutcome) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
+	// Stop the polling ticker on every return so this helper's retry
+	// cadence ends as soon as contention, another failure, or context
+	// cancellation is observed.
 	defer ticker.Stop()
 	for {
 		probeTx, err := integrationDB.BeginTx(ctx, nil)
@@ -694,9 +817,15 @@ func waitForUsageBillingUserLock(ctx context.Context, userID int64, applyDone <-
 		}
 		var lockedUserID int64
 		err = probeTx.QueryRowContext(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE NOWAIT`, userID).Scan(&lockedUserID)
+		// Release a successful probe lock before retrying so the probe
+		// cannot become the contention source it is trying to observe
+		// on the paying user row.
 		_ = probeTx.Rollback()
 		if err == nil {
-			// The probe acquired the row, so wait for settlement to reach its user lock.
+			// This probe acquired the row, so settlement has not
+			// yet created observed contention. Wait for its
+			// completion signal, context cancellation, or the next
+			// tick.
 		} else {
 			var pgErr *pq.Error
 			if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
@@ -715,6 +844,10 @@ func waitForUsageBillingUserLock(ctx context.Context, userID int64, applyDone <-
 	}
 }
 
+// TestUsageBillingRepositoryApply_PricesByActualSubscriptionAllocations
+// combines a small discounted plan and a larger expensive plan for one group.
+// Actual plan allocations determine three dollars of subscription cost and
+// leave wallet balance unchanged.
 func TestUsageBillingRepositoryApply_PricesByActualSubscriptionAllocations(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -789,6 +922,8 @@ func TestUsageBillingRepositoryApply_PricesByActualSubscriptionAllocations(t *te
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// Allow a micro-dollar comparison difference across the summed plan
+	// cost and each saved source amount.
 	require.InDelta(t, 3.0, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 0.0, result.BalanceAmountUSD, 0.000001)
 
@@ -805,6 +940,10 @@ func TestUsageBillingRepositoryApply_PricesByActualSubscriptionAllocations(t *te
 	require.InDelta(t, 10.0, balance, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription
+// exhausts a discounted plan partway through three base dollars. The remaining
+// base dollar uses the wallet rate, and stored amounts match the reported
+// effective multiplier.
 func TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -845,7 +984,8 @@ func TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription(t *
 		MonthlyLimitUSD: float64Ptr(1),
 	})
 
-	// The plan covers $2 of base cost at 0.5x; the remaining $1 uses the 0.25x balance rate.
+	// The plan covers $2 of base cost at 0.5x; the remaining $1 uses the
+	// 0.25x balance rate.
 	result, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 		RequestID:                       uuid.NewString(),
 		APIKeyID:                        apiKey.ID,
@@ -860,6 +1000,8 @@ func TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription(t *
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// Compare the source amounts and effective rate with the same small
+	// numeric tolerance.
 	require.InDelta(t, 1.0, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 0.25, result.BalanceAmountUSD, 0.000001)
 	require.NotNil(t, result.EffectiveRateMultiplier)
@@ -874,6 +1016,9 @@ func TestUsageBillingRepositoryApply_UsesBalanceRateAfterPartialSubscription(t *
 	require.InDelta(t, 9.75, balance, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_UsesOnlySubscriptionPlansContainingRequestGroup
+// creates group A and B grants then settles a group B command. Usage remains
+// zero on A and increases on B.
 func TestUsageBillingRepositoryApply_UsesOnlySubscriptionPlansContainingRequestGroup(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -949,6 +1094,8 @@ func TestUsageBillingRepositoryApply_UsesOnlySubscriptionPlansContainingRequestG
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// The micro-dollar tolerance checks the selected grant charge and the
+	// untouched other-group amount.
 	require.InDelta(t, 2.5, result.SubscriptionAmountUSD, 0.000001)
 
 	var usageA float64
@@ -960,6 +1107,9 @@ func TestUsageBillingRepositoryApply_UsesOnlySubscriptionPlansContainingRequestG
 	require.InDelta(t, 2.5, usageB, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_GlobalPlanAppliesToNewRequestGroup creates an
+// unrestricted plan before creating a request group. A later command for that
+// group is fully charged to the existing subscription.
 func TestUsageBillingRepositoryApply_GlobalPlanAppliesToNewRequestGroup(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1008,6 +1158,8 @@ func TestUsageBillingRepositoryApply_GlobalPlanAppliesToNewRequestGroup(t *testi
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// A micro-dollar tolerance compares the reported subscription cost with
+	// its saved usage.
 	require.InDelta(t, 2.5, result.SubscriptionAmountUSD, 0.000001)
 
 	var usage float64
@@ -1015,6 +1167,10 @@ func TestUsageBillingRepositoryApply_GlobalPlanAppliesToNewRequestGroup(t *testi
 	require.InDelta(t, 2.5, usage, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_UnlimitedSubscriptionDoesNotDeductBalance
+// settles a request with an unlimited subscription and zero wallet. The
+// subscription funds the cost while the persisted wallet balance and daily
+// usage counter remain zero.
 func TestUsageBillingRepositoryApply_UnlimitedSubscriptionDoesNotDeductBalance(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1052,6 +1208,8 @@ func TestUsageBillingRepositoryApply_UnlimitedSubscriptionDoesNotDeductBalance(t
 
 	require.NoError(t, err)
 	require.True(t, result.Applied)
+	// A micro-dollar tolerance checks funded cost alongside zero wallet and
+	// finite-window amounts.
 	require.InDelta(t, 1.25, result.SubscriptionAmountUSD, 0.000001)
 	require.InDelta(t, 0.0, result.BalanceAmountUSD, 0.000001)
 	require.Nil(t, result.NewBalance)
@@ -1065,6 +1223,9 @@ func TestUsageBillingRepositoryApply_UnlimitedSubscriptionDoesNotDeductBalance(t
 	require.InDelta(t, 0.0, dailyUsage, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_RequestFingerprintConflict repeats one
+// request and key identity with a different charge amount. The second command
+// returns UsageBillingRequestConflict after the first has successfully applied.
 func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1099,6 +1260,9 @@ func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {
 	require.ErrorIs(t, err, billing.ErrUsageBillingRequestConflict)
 }
 
+// TestUsageBillingRepositoryApply_UpdatesProviderQuota supplies provider quota
+// cost with no payer charge in its command. The persisted provider extra data
+// records the expected quota usage of 3.5.
 func TestUsageBillingRepositoryApply_UpdatesProviderQuota(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1133,9 +1297,15 @@ func TestUsageBillingRepositoryApply_UpdatesProviderQuota(t *testing.T) {
 
 	var quotaUsed float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE((extra->>'quota_used')::numeric, 0) FROM providers WHERE id = $1", provider.ID).Scan(&quotaUsed))
+	// Compare the numeric value extracted from provider JSON within a
+	// micro-dollar difference.
 	require.InDelta(t, 3.5, quotaUsed, 0.000001)
 }
 
+// TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing
+// crosses daily and weekly provider quotas in PostgreSQL. Below-limit and later
+// above-limit increments retain the expected event count, while each first
+// crossing enqueues once.
 func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1174,7 +1344,9 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		apiKeyID, providerID := newFixture(t, map[string]any{
 			"quota_daily_limit": 10.0,
 		})
-		// Below the daily limit, no outbox event is needed.
+		// Begin below the configured daily quota so later event counts
+		// distinguish the first crossing from ordinary increments in
+		// the same provider window.
 		_, err := repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1185,7 +1357,9 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		require.NoError(t, err)
 		require.Equal(t, 0, outboxCountFor(t, providerID), "below limit should not enqueue")
 
-		// Crossing the daily limit emits one outbox event.
+		// Add enough cost to cross the saved daily quota; this
+		// transition should produce the scheduling event counted for
+		// this provider before later increments.
 		_, err = repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1196,7 +1370,9 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		require.NoError(t, err)
 		require.Equal(t, 1, outboxCountFor(t, providerID), "crossing daily limit should enqueue once")
 
-		// Further usage above the limit does not emit another crossing event.
+		// Add cost after exhaustion is already recorded so the event
+		// count can expose duplicate crossing notifications within the
+		// same exhausted provider window.
 		_, err = repo.Apply(ctx, &billing.UsageBillingCommand{
 			RequestID:         uuid.NewString(),
 			APIKeyID:          apiKeyID,
@@ -1224,12 +1400,17 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 	})
 }
 
+// TestDashboardAggregationRepositoryCleanupUsageBillingDedup_BatchDeletesOldRows
+// supplies old and recent request claims around a cleanup cutoff. Cleanup
+// removes the old active row, archives it, and retains the recent claim.
 func TestDashboardAggregationRepositoryCleanupUsageBillingDedup_BatchDeletesOldRows(t *testing.T) {
 	ctx := context.Background()
 	repo := newAggregationFixture(integrationDB)
 
 	oldRequestID := "dedup-old-" + uuid.NewString()
 	newRequestID := "dedup-new-" + uuid.NewString()
+	// Four hundred elapsed days put the old fixture beyond the one-year
+	// cutoff.
 	oldCreatedAt := time.Now().UTC().AddDate(0, 0, -400)
 	newCreatedAt := time.Now().UTC().Add(-time.Hour)
 
@@ -1257,6 +1438,9 @@ func TestDashboardAggregationRepositoryCleanupUsageBillingDedup_BatchDeletesOldR
 	require.Equal(t, 1, archivedCount)
 }
 
+// TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey archives the
+// claim for a successfully billed request before retry. Replay remains
+// unapplied and the payer balance still reflects exactly one charge.
 func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -1286,6 +1470,9 @@ func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T
 	require.NoError(t, err)
 	require.True(t, result1.Applied)
 
+	// Age the applied claim before archival so retry reads its durable
+	// archived identity after cleanup removes the active claim from the hot
+	// deduplication table.
 	_, err = integrationDB.ExecContext(ctx, `
 		UPDATE usage_billing_dedup
 		SET created_at = $1
@@ -1300,9 +1487,16 @@ func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T
 
 	var balance float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	// A micro-dollar tolerance checks the unchanged payer amount after
+	// replay of the archived identity.
 	require.InDelta(t, 98.75, balance, 0.000001)
 }
 
+// mustCreateProvider saves selected provider fields and fills the supplied
+// record's stored ID and timestamps. Empty platform, type, and status select
+// Anthropic, OAuth, and active; zero concurrency and priority select three and
+// fifty, false schedulability becomes true, and nil credential or extra maps
+// become empty.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -1390,7 +1584,9 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
-// newAggregationFixture wires billing-deduplication archival into the aggregation store.
+// newAggregationFixture retains q for aggregation and billing-claim archival
+// using the process-local calendar. The caller owns its executor lifetime, and
+// the bound archival callback uses that same executor for cleanup work.
 func newAggregationFixture(q infra.Executor) *usagepg.AggregationStore {
 	return usagepg.NewAggregationStoreWithSQL(q, timezone.NewCalendar(time.Local), func(ctx context.Context, t time.Time) error {
 		return postgres.ArchiveUsageDedup(ctx, q, t)

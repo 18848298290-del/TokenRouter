@@ -12,7 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// TestGroupProbeLatestResults covers timestamp ties, latest results outside the window, and groups with no probes.
+// The latest probe can lie outside the availability window, and equal start
+// times need a deterministic winner. PostgreSQL fixtures separate recent counts
+// from latest status and include a group with no history to exercise the
+// unknown result.
+
+// TestGroupProbeLatestResults inserts tied recent probes, an older probe, and
+// an empty group. It checks ID tie resolution, window totals, an older latest
+// status, and an absent latest timestamp.
 func TestGroupProbeLatestResults(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := context.Background()
@@ -20,12 +27,17 @@ func TestGroupProbeLatestResults(t *testing.T) {
 	for i, name := range []string{"probe-recent", "probe-old", "probe-empty"} {
 		require.NoError(t, db.QueryRow("INSERT INTO groups(name) VALUES($1) RETURNING id", name).Scan(&ids[i]))
 	}
+	// Use whole seconds so PostgreSQL timestamp storage keeps the equality
+	// assertion exact.
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, row := range []struct {
-		group  int64
-		status string
-		start  time.Time
-		finish time.Time
+		group  int64  // owning fixture group
+		status string // stored probe outcome
+		// start and finish describe the observation separately: ties on start use
+		// insertion ID for latest selection, and the returned timestamp comes from
+		// finish.
+		start  time.Time // latest ordering timestamp
+		finish time.Time // returned completion timestamp
 	}{
 		{ids[0], "failed", now.Add(-time.Hour), now.Add(-time.Hour)},
 		{ids[0], "success", now.Add(-time.Hour), now.Add(-time.Hour + time.Minute)},

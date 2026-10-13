@@ -14,8 +14,23 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// TestAffiliateTransferLedgerFailureRollsBackFunds checks that a ledger failure rolls back quota clearing,
-// balance credit, and total recharged together.
+// Affiliate quota transfer clears available quota, credits the wallet, and
+// writes its ledger record in one PostgreSQL transaction. The injected ledger
+// trigger reads the updated wallet and cleared quota before rejecting the
+// insert, so the failure also checks that billing credit participates in the
+// transfer transaction.
+//
+// The fixture starts with ten available quota, balance three, and cumulative
+// recharge seven. Its trigger expects balance thirteen and zero available
+// quota; outside reads after rejection expect the starting values and no
+// transfer ledger row. Trigger removal is registered after function creation
+// and before trigger creation, allowing partial setup to be cleaned before the
+// independent database clone closes.
+
+// TestAffiliateTransferLedgerFailureRollsBackFunds rejects the transfer ledger
+// after verifying transaction-local credit and quota clearing. The wallet,
+// cumulative recharge, and available quota retain their preceding values, with
+// no transfer ledger row.
 func TestAffiliateTransferLedgerFailureRollsBackFunds(t *testing.T) {
 	ctx := context.Background()
 	client, integrationDB := testStore(t)
@@ -27,8 +42,14 @@ func TestAffiliateTransferLedgerFailureRollsBackFunds(t *testing.T) {
 	_, err = integrationDB.ExecContext(ctx, "UPDATE user_affiliates SET aff_quota=10, aff_history_quota=10 WHERE user_id=$1", user.ID)
 	require.NoError(t, err)
 	name := fmt.Sprintf("test_transfer_failure_%d", user.ID)
+	// Check credited balance and cleared quota in the ledger trigger before
+	// rejecting its insert; outside reads then expose earlier fund effects
+	// that escaped rollback.
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.user_id=%d AND NEW.action='transfer' THEN IF (SELECT balance FROM users WHERE id=%d)<>13 OR (SELECT aff_quota FROM user_affiliates WHERE user_id=%d)<>0 THEN RAISE EXCEPTION 'transfer was not visible in same transaction'; END IF; RAISE EXCEPTION 'test forced ledger failure'; END IF; RETURN NEW; END; $$`, name, user.ID, user.ID, user.ID))
 	require.NoError(t, err)
+	// Remove the failure trigger before its function after the rollback
+	// assertions; IF EXISTS also permits cleanup if setup exits after
+	// acquiring only part of the fixture.
 	t.Cleanup(func() {
 		_, e := integrationDB.ExecContext(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON user_affiliate_ledger; DROP FUNCTION IF EXISTS %s()", name, name))
 		require.NoError(t, e)

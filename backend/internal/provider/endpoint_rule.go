@@ -6,10 +6,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Endpoint eligibility combines a provider protocol set with type-specific
+// capability rules and workload configuration. An empty requested capability
+// means no extra restriction, while named capabilities require OpenAI-compatible
+// providers. Grok follows its own text/media path, including unobserved billing
+// candidates that forwarding must verify before media generation.
+//
+// Responses operations require a usable Responses route, and native compaction
+// adds its independent administrator switch before inheriting text-generation
+// checks. Live eligibility narrows OAuth authentication types; Alpha Search and
+// Embeddings impose their own type and configured-protocol requirements.
+// Workload defaults remain available when no capability set was saved, while an
+// explicit set determines the final eligibility result.
+
+// Capability values distinguish compatible operations whose platform, credential
+// and protocol requirements are checked before a provider reaches execution.
 const (
-	OpenAIEndpointCapabilityTextGeneration OpenAIEndpointCapability = "text_generation"
-	OpenAIEndpointCapabilityEmbeddings     OpenAIEndpointCapability = "embeddings"
-	OpenAIEndpointCapabilityAlphaSearch    OpenAIEndpointCapability = "alpha_search"
+	OpenAIEndpointCapabilityTextGeneration OpenAIEndpointCapability = "text_generation" // compatible text-generation operation
+	OpenAIEndpointCapabilityEmbeddings     OpenAIEndpointCapability = "embeddings"      // API Key embeddings operation
+	OpenAIEndpointCapabilityAlphaSearch    OpenAIEndpointCapability = "alpha_search"    // compatible Alpha Search operation
 	// OpenAIEndpointCapabilityLive identifies Frameless Live support for eligible ChatGPT OAuth providers.
 	OpenAIEndpointCapabilityLive OpenAIEndpointCapability = "live"
 	// OpenAIEndpointCapabilityGrokMediaGeneration excludes disabled or billing-ineligible Grok providers.
@@ -23,8 +38,20 @@ const (
 	OpenAIEndpointCapabilityRemoteCompactionV2 OpenAIEndpointCapability = "remote_compaction_v2"
 )
 
+// OpenAIEndpointCapability identifies an operation requested during compatible
+// provider eligibility checks.
 type OpenAIEndpointCapability string
 
+// SupportsOpenAIEndpointCapability checks the requested operation against
+// configured protocols, authentication type and workload choices. Nil records
+// fail, while an empty request imposes no capability restriction. Keep the
+// record and any media callback inputs stable during evaluation.
+//
+// Grok media needs a callback and admits billing_unobserved candidates for a
+// later forwarding probe; other Grok capabilities use its dedicated text rule.
+// Responses and native compaction require Responses routing before text workload
+// checks. Unknown capabilities fail, and an absent workload set permits the
+// applicable default behavior.
 func (r *Record) SupportsOpenAIEndpointCapability(requested OpenAIEndpointCapability, grokMedia func() (bool, string)) bool {
 	if r == nil {
 		return false
@@ -35,6 +62,9 @@ func (r *Record) SupportsOpenAIEndpointCapability(requested OpenAIEndpointCapabi
 	if !r.IsOpenAICompatible() {
 		return false
 	}
+	// A saved native set remains authoritative even when empty. Workload flags
+	// cannot re-enable an operation excluded by that set before its type-specific
+	// checks run.
 	if _, unified := r.Credentials[UpstreamProtocolsKey]; unified && !r.IsGrok() {
 		enabled := r.UpstreamProtocols()
 		has := func(p capability.ProtocolID) bool { return slices.Contains(enabled, p) }
@@ -56,6 +86,9 @@ func (r *Record) SupportsOpenAIEndpointCapability(requested OpenAIEndpointCapabi
 				return false
 			}
 		case OpenAIEndpointCapabilityAlphaSearch:
+			// Personal access tokens use the Responses route for converted Alpha Search,
+			// so their native selection can qualify through Responses while ordinary
+			// records need Alpha Search itself.
 			if !has(capability.ProtocolAlphaSearch) && (!r.IsOpenAIPersonalAccessToken() || !has(capability.ProtocolOpenAIResponses)) {
 				return false
 			}
@@ -98,14 +131,12 @@ func (r *Record) SupportsOpenAIEndpointCapability(requested OpenAIEndpointCapabi
 		) != TextProtocolResponses {
 			return false
 		}
-		// Responses also requires ordinary text-generation capability;
-		// reuse the text_generation configuration check below.
+		// Responses uses the text-generation workload after its route checks, so
+		// an explicitly disabled text workload also rejects the Responses operation.
 		requested = OpenAIEndpointCapabilityTextGeneration
 	case OpenAIEndpointCapabilityAlphaSearch:
-		// Alpha Search uses the provider type to select its endpoint:
-		// OAuth credentials use chatgpt.com/backend-api/codex/alpha/search, while API keys use
-		// {base_url}/v1/alpha/search (see openAIAlphaSearchURL).
-		// The forwarding layer handles upstream endpoint rejection and failover.
+		// Alpha Search requires OAuth or API Key authentication before workload
+		// admission; the execution adapter chooses its endpoint and handles rejection.
 		if r.Type != ProviderTypeOAuth && r.Type != ProviderTypeAPIKey {
 			return false
 		}
@@ -121,6 +152,8 @@ func (r *Record) SupportsOpenAIEndpointCapability(requested OpenAIEndpointCapabi
 	if !found {
 		return true
 	}
+	// Alpha Search inherits an enabled text workload so stored workload choices
+	// can admit it even when no separate alpha_search flag was saved.
 	if requested == OpenAIEndpointCapabilityAlphaSearch && configured[string(OpenAIEndpointCapabilityTextGeneration)] {
 		return true
 	}

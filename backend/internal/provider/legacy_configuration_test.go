@@ -6,8 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLegacyOpenAIConfigurationInputBoundary checks obsolete-field removal and compaction normalization without
-// mutating the input.
+// Obsolete-only Extra input should skip replacement, while an explicitly empty
+// object still requests clearing saved configuration. The compatibility test
+// combines retired fields with retained nested data and compaction switches,
+// then inspects replacement intent and the caller's original map.
+
+// TestLegacyOpenAIConfigurationInputBoundary supplies retired probe fields with
+// several unusable values, then adds retained data and compaction input. It
+// checks skip-versus-replace decisions, normalized switches, an explicit empty
+// replacement, and unchanged caller text.
 func TestLegacyOpenAIConfigurationInputBoundary(t *testing.T) {
 	for _, value := range []any{nil, false, true, "unsupported", []any{1}, map[string]any{"invalid": true}} {
 		extra := map[string]any{}

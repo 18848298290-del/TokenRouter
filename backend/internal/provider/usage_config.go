@@ -7,14 +7,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// These persisted extra keys are shared by platform adapters.
+// Administrator usage settings describe a fixed adapter and optional query root,
+// with credentials stored separately on the provider. Absent configuration
+// inherits platform defaults, while malformed objects or unsupported choices
+// return structured errors so a configured but unusable query does not silently
+// adopt another format.
+//
+// CN platform and provider mode select their adapter regardless of a supplied
+// generic adapter name. Write normalization accepts the same small field set and
+// creates a replacement object after validation. Query execution still performs
+// its own provider eligibility and URL policy checks; format validation here
+// establishes the shape of the saved query configuration.
+
+// These Extra keys name query configuration and platform-maintained usage
+// snapshots shared by provider administration, monitoring and usage display.
 const (
 	CNUsageMonitorSnapshotExtraKey   = "cn_usage_monitor_snapshot"
 	UpstreamUsageQueryExtraKey       = "upstream_usage_query"
 	OllamaCloudUsageSnapshotExtraKey = "ollama_cloud_usage_snapshot"
 )
 
-// EffectiveUpstreamUsageConfig resolves stored settings over platform defaults; Jev queries default to disabled.
+// EffectiveUpstreamUsageConfig resolves stored query choices over defaults for
+// the supplied provider. Nil input uses enabled Sub2API defaults, and Jev
+// defaults to disabled. A missing or nil configuration object inherits those
+// defaults.
+//
+// Present fields require their expected types, and unknown fields are rejected.
+// CN providers keep the adapter selected by platform and mode even when a
+// generic adapter name is supplied. Unsupported adapters and invalid query-root
+// formats return structured errors instead of replacing configured choices.
 func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, error) {
 	config := UpstreamUsageQueryConfig{Enabled: provider == nil || provider.Platform != PlatformJev, Adapter: UpstreamUsageDefaultAdapter}
 	if adapter := CNUpstreamUsageAdapterName(provider); adapter != "" {
@@ -43,6 +64,8 @@ func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, e
 		if !ok || strings.TrimSpace(parsed) == "" {
 			return UpstreamUsageQueryConfig{}, ErrUpstreamUsageConfigInvalid
 		}
+		// CN platform and mode own adapter selection; a supplied generic name cannot
+		// change their fixed query format, though its input type is still checked.
 		if !provider.IsCNProvider() {
 			config.Adapter = strings.TrimSpace(parsed)
 		}
@@ -70,7 +93,15 @@ func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, e
 	return config, nil
 }
 
-// NormalizeUpstreamUsageExtra validates and replaces query configuration in a create or update request.
+// NormalizeUpstreamUsageExtra validates a supplied query object and replaces its
+// Extra entry with normalized choices. A nil map or missing/nil entry succeeds
+// without replacement. Present objects default enabled and adapter fields, trim
+// strings and discard an empty root.
+//
+// Unknown fields, invalid types, unsupported adapter names and unsafe root
+// formats return before publishing the replacement object. This keeps
+// credentials and arbitrary request templates out of saved query configuration.
+// Callers own and synchronize the Extra map being updated.
 func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 	if extra == nil {
 		return nil
@@ -114,7 +145,8 @@ func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 			normalized["base_url"] = parsed
 		}
 	}
-	// Restrict fields so extra cannot carry credentials or arbitrary request templates.
+	// Reject unrecognized fields before publishing normalized choices so saved
+	// configuration cannot carry credentials, arbitrary headers or request templates.
 	for key := range object {
 		if key != "enabled" && key != "adapter" && key != "base_url" {
 			return ErrUpstreamUsageConfigInvalid
@@ -124,13 +156,18 @@ func NormalizeUpstreamUsageExtra(extra map[string]any) error {
 	return nil
 }
 
-// NormalizedUpstreamUsageConfigValue copies and normalizes a valid configuration.
-// Invalid configurations, including those with sensitive or template fields, return nil and false.
+// NormalizedUpstreamUsageConfigValue normalizes supplied configuration into a
+// replacement object. Nil interface input or invalid values return nil with
+// false; a typed nil map is accepted as an empty object by UpstreamUsageConfigMap.
+// Successful output has fresh top-level storage for its scalar choices.
 func NormalizedUpstreamUsageConfigValue(value any) (any, bool) {
 	if value == nil {
 		return nil, false
 	}
 	extra := map[string]any{UpstreamUsageQueryExtraKey: value}
+	// Admin.UpdateProvider uses this result when carrying saved query settings
+	// into the replacement map it validates. An invalid saved value supplies no
+	// normalized object for that map.
 	if err := NormalizeUpstreamUsageExtra(extra); err != nil {
 		return nil, false
 	}
@@ -138,10 +175,17 @@ func NormalizedUpstreamUsageConfigValue(value any) (any, bool) {
 	return normalized, ok
 }
 
+// UpstreamUsageConfigMap returns a supplied map[string]any directly, including
+// a typed nil map, with true. Other inputs use JSON conversion; encoding failure,
+// non-object JSON or null returns false. Treat a returned direct map as borrowed
+// while reading it.
 func UpstreamUsageConfigMap(raw any) (map[string]any, bool) {
 	if object, ok := raw.(map[string]any); ok {
 		return object, true
 	}
+	// Inputs outside map[string]any use storage's JSON representation. Encoding
+	// failures or non-object JSON provide no usable configuration object to
+	// validate.
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		return nil, false
@@ -153,6 +197,8 @@ func UpstreamUsageConfigMap(raw any) (map[string]any, bool) {
 	return object, object != nil
 }
 
+// IsKnownUpstreamUsageAdapter reports whether name exactly matches a registered
+// query format.
 func IsKnownUpstreamUsageAdapter(name string) bool {
 	for _, registration := range usageAdapterCatalog {
 		if registration.Name == name {
@@ -162,6 +208,9 @@ func IsKnownUpstreamUsageAdapter(name string) bool {
 	return false
 }
 
+// CNUpstreamUsageAdapterName selects a fixed query adapter from CN platform and
+// Coding Plan mode. Nil, non-CN and unsupported mode/platform combinations
+// return empty so query execution can report unsupported.
 func CNUpstreamUsageAdapterName(provider *Record) string {
 	if provider == nil || !provider.IsCNProvider() {
 		return ""
@@ -182,7 +231,8 @@ func CNUpstreamUsageAdapterName(provider *Record) string {
 	case PlatformDeepseek:
 		return UpstreamUsageAdapterDeepseekBalance
 	default:
-		// Zhipu PAYG has no supported balance adapter, so the caller reports unsupported.
+		// Zhipu PAYG and unsupported CN combinations have no registered balance
+		// format; an empty adapter lets query execution report unsupported before HTTP.
 		return ""
 	}
 }

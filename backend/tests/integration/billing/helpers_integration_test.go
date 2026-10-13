@@ -26,15 +26,39 @@ import (
 	schedulerpostgres "github.com/TokenFlux/TokenRouter/internal/scheduler/postgres"
 )
 
-// subscriptionContractEmptyGroups returns no group details for these entitlement fixtures.
+// Billing scenarios use a package-wide migrated PostgreSQL database for
+// committed rows and transaction-bound Ent clients for rollback suites. Fixture
+// constructors fill selected defaults and persist domain relationships through
+// the supplied client, so callers choose whether writes commit or belong to an
+// outer transaction. Shared user-table truncation requires committed cases to
+// finish their work before cleanup.
+//
+// User creation writes allowed-group rows after obtaining the stored user ID,
+// and plan creation writes group mappings after the plan row is saved. Those
+// helpers fail the test on any step and leave transaction completion to their
+// caller. Billing user conversion copies notification-email entries while
+// retaining the supplied slices and pointers for other selected fields, which
+// matters when fixtures are later mutated.
+
+// subscriptionContractEmptyGroups supplies absent routing-group detail for
+// subscription entitlement fixtures.
 type subscriptionContractEmptyGroups struct{}
 
-// billingUsersForContract reads paying-user details for balance and entitlement tests.
-type billingUsersForContract struct{ repository identity.UserRepository }
+// billingUsersForContract adapts identity repository results into selected
+// billing user summaries.
+type billingUsersForContract struct {
+	repository identity.UserRepository // borrowed user lookup repository
+}
 
-// committedEntitlementClient returns the shared client and registers user-table cleanup for the test.
+// committedEntitlementClient returns the package-shared Ent client and
+// registers cascading user-table truncation. Callers finish their workers
+// before cleanup and serialize test lifetimes because truncation affects every
+// user fixture in this database.
 func committedEntitlementClient(t *testing.T) *dbent.Client {
 	t.Helper()
+	// Clear all users and their dependent rows after a committed case,
+	// including reset IDs. The shared database requires other committed
+	// fixtures to have ended.
 	t.Cleanup(func() {
 		_, err := integrationDB.ExecContext(context.Background(), "TRUNCATE users RESTART IDENTITY CASCADE")
 		require.NoError(t, err)
@@ -42,16 +66,23 @@ func committedEntitlementClient(t *testing.T) *dbent.Client {
 	return integrationEntClient
 }
 
-// entitlementTx starts a transaction and registers rollback at test cleanup.
+// entitlementTx starts an Ent transaction on the shared PostgreSQL client and
+// registers rollback cleanup. Callers use its client for fixture writes and own
+// any earlier commit or rollback.
 func entitlementTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 	tx, err := integrationEntClient.Tx(context.Background())
 	require.NoError(t, err)
+	// Roll back case-owned writes at test completion; discarding an
+	// already-completed transaction error lets callers perform their
+	// asserted commit or rollback earlier.
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx
 }
 
-// billingUserForContract copies the user details needed by billing tests.
+// billingUserForContract copies selected user values into a billing summary and
+// returns nil for nil input. Notification-email entries get a new slice; other
+// copied slices and pointer fields retain their source storage.
 func billingUserForContract(u *identity.User) *billing.UserSummary {
 	if u == nil {
 		return nil
@@ -78,6 +109,9 @@ func billingUserForContract(u *identity.User) *billing.UserSummary {
 		APIKeyLimit:                u.APIKeyLimit,
 		DeletedAt:                  u.DeletedAt,
 	}
+	// Allocate notification-email storage for the summary so mutating its
+	// entries cannot modify the source user; other pointer and slice fields
+	// remain shared.
 	if u.BalanceNotifyExtraEmails != nil {
 		out.BalanceNotifyExtraEmails = make([]billing.NotifyEmailSummary, len(u.BalanceNotifyExtraEmails))
 		copy(out.BalanceNotifyExtraEmails, u.BalanceNotifyExtraEmails)
@@ -85,11 +119,17 @@ func billingUserForContract(u *identity.User) *billing.UserSummary {
 	return out
 }
 
+// GetByIDLite supplies no group details for every supplied ID. It reports
+// success with a nil value so these entitlement cases can construct services
+// without querying routing-group fixtures.
 func (subscriptionContractEmptyGroups) GetByIDLite(context.Context, int64) (*billing.SubscriptionPlanGroup, error) {
 	return nil, nil
 }
 
-// newSettlementFixture wires creative and batch-image task persistence into the settlement store.
+// newSettlementFixture constructs settlement storage with the supplied SQL pool
+// and the process-local calendar. Creative and batch-image task writers share
+// each funding transaction, and provider quota changes use the PostgreSQL
+// outbox callback.
 func newSettlementFixture(db *sql.DB) *billingpostgres.SettlementStore {
 	store := billingpostgres.NewSettlementStore(db, timezone.NewCalendar(time.Local), schedulerpostgres.EnqueueProviderQuotaChangedInTx, billingpostgres.TaskProjectionFactories{
 		creative.FundingScope: func(tx *sql.Tx, ref billing.TaskReference) billingpostgres.TaskProjection {
@@ -102,17 +142,34 @@ func newSettlementFixture(db *sql.DB) *billingpostgres.SettlementStore {
 	return store
 }
 
+// testEntClient returns the package-shared Ent client after marking the caller
+// as a test helper. The package runner owns its lifetime, and cases use
+// transactions or their own row cleanup.
 func testEntClient(t *testing.T) *dbent.Client { t.Helper(); return integrationEntClient }
 
+// GetByID delegates user lookup and converts the returned user to selected
+// billing fields. It returns the delegate error unchanged, with
+// billingUserForContract determining nil handling and shared nested storage.
 func (r billingUsersForContract) GetByID(ctx context.Context, id int64) (*billing.UserSummary, error) {
 	user, err := r.repository.GetByID(ctx, id)
 	return billingUserForContract(user), err
 }
 
+// uniqueTeamTestEmail returns a team-prefixed fixture email containing the
+// supplied prefix and a fresh UUID.
 func uniqueTeamTestEmail(prefix string) string {
 	return fmt.Sprintf("team-%s-%s@example.com", prefix, uuid.NewString())
 }
 
+// mustCreateUser persists selected user fields, then fills its ID and stored
+// timestamps on the supplied object. Empty email, password, role, and status
+// receive fixture values, and zero concurrency becomes five.
+//
+// Allowed-group rows are inserted afterward using the new user ID. The supplied
+// client determines whether these writes share a caller transaction; a later
+// mapping failure fails the test after earlier writes have occurred. Callers
+// retain transaction or committed-fixture cleanup ownership, and this helper
+// uses a background context.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()
@@ -156,6 +213,9 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	u.CreatedAt = created.CreatedAt
 	u.UpdatedAt = created.UpdatedAt
 
+	// Persist group memberships after obtaining the user ID. The supplied
+	// client controls their common transaction, and partial committed
+	// fixtures require caller cleanup.
 	if len(u.AllowedGroups) > 0 {
 		for _, groupID := range u.AllowedGroups {
 			_, err := client.UserAllowedGroup.Create().
@@ -169,6 +229,9 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	return u
 }
 
+// mustCreateGroup persists selected routing fields and writes the stored ID and
+// timestamps into g. Empty status becomes active; caller-supplied timestamps
+// are used when present, and failures fail the test.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -202,6 +265,15 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
+// mustCreatePlan persists a subscription plan and its selected group mappings,
+// then fills stored identity and timestamps on p. Zero validity selects thirty
+// days and empty validity unit selects day.
+//
+// Each mapping follows plan insertion so it can reference the stored plan ID.
+// Positive group multipliers are stored, while absent or nonpositive values
+// produce a null mapping multiplier. Caller-supplied clients determine
+// transaction scope, and a mapping failure can follow earlier successful writes
+// before the test fails.
 func mustCreatePlan(t *testing.T, client *dbent.Client, p *billing.SubscriptionPlan) *billing.SubscriptionPlan {
 	t.Helper()
 	ctx := context.Background()
@@ -247,6 +319,9 @@ func mustCreatePlan(t *testing.T, client *dbent.Client, p *billing.SubscriptionP
 
 	created, err := create.Save(ctx)
 	require.NoError(t, err, "create subscription plan")
+	// Write group mapping rows after the plan is saved so they reference
+	// its storage ID; repeated mappings update the multiplier in the
+	// supplied client scope.
 	for _, groupID := range p.GroupIDs {
 		var rate any
 		if p.GroupRateMultipliers != nil {
@@ -269,6 +344,11 @@ func mustCreatePlan(t *testing.T, client *dbent.Client, p *billing.SubscriptionP
 	return p
 }
 
+// mustCreateApiKey persists selected credential, quota, spending-window, group,
+// team, and timestamp fields and fills k's stored identity. Empty status,
+// credential, and name receive fixture defaults; the caller supplies storage
+// scope and owns cleanup. A nonnil GroupID is stored on the key, while funding
+// commands can independently name their requested group.
 func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *apikey.APIKey {
 	t.Helper()
 	ctx := context.Background()
@@ -346,6 +426,10 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *api
 	return k
 }
 
+// mustCreateSubscription persists selected subscription funding and window
+// fields and fills stored identity on s. Empty status becomes active, zero
+// dates receive current-time defaults, and the caller supplies its transaction
+// or committed client.
 func mustCreateSubscription(t *testing.T, client *dbent.Client, s *billing.UserSubscription) *billing.UserSubscription {
 	t.Helper()
 	ctx := context.Background()
@@ -422,6 +506,8 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *billing.UserS
 	return s
 }
 
+// float64Ptr returns a pointer to a distinct copy of the supplied
+// floating-point fixture value.
 func float64Ptr(v float64) *float64 {
 	return &v
 }

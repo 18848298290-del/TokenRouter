@@ -19,12 +19,28 @@ import (
 	paymentadapter "github.com/TokenFlux/TokenRouter/internal/payment/provider"
 )
 
+// PostgreSQL refund scenarios bind balance rights and order/audit writes to the
+// same Ent transaction while using a local provider transport. State assertions
+// read through the base client after workflow calls, comparing the payer
+// balance, order status, and retained success-audit count.
+
+// refundBalanceParticipant binds supported refund balance rights to the
+// caller's Ent transaction.
 type refundBalanceParticipant struct {
+	// RefundRights supplies promoted methods beyond deduction and
+	// compensation. It remains nil in these balance fixtures, so
+	// unsupported rights would panic if invoked.
 	payment.RefundRights
+	// balances is the BalanceInTx store selected by the refund transaction
+	// factory. Both overrides use that same store, and transaction
+	// completion belongs to refund storage.
 	balances *billingpostgres.BalanceStore
 }
 
-// assertRefundPostgresState reads balance, order status, and success audits outside the refund transaction.
+// assertRefundPostgresState reads the user, order, and refund-success audit
+// count through the supplied client and context. It fails the case on read
+// errors or mismatched expected values; callers use the base client after
+// transaction completion.
 func assertRefundPostgresState(t *testing.T, ctx context.Context, client *dbent.Client, userID, orderID int64, balance float64, status string, audits int) {
 	t.Helper()
 	user, err := client.User.Get(ctx, userID)
@@ -39,8 +55,15 @@ func assertRefundPostgresState(t *testing.T, ctx context.Context, client *dbent.
 	require.Equal(t, audits, count)
 }
 
+// testEntClient returns the package-shared migrated PostgreSQL Ent client and
+// registers cascading users-table truncation. Callers finish their workers
+// before cleanup and serialize fixture lifetimes because that truncation
+// affects all shared users.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
+	// Truncate shared users and cascading dependencies after this committed
+	// case, resetting IDs before later cases; independent orders and audits
+	// register their own cleanup.
 	t.Cleanup(func() {
 		_, err := integrationDB.ExecContext(context.Background(), "TRUNCATE users RESTART IDENTITY CASCADE")
 		require.NoError(t, err)
@@ -48,15 +71,30 @@ func testEntClient(t *testing.T) *dbent.Client {
 	return integrationEntClient
 }
 
+// DeductBalance delegates the requested refund deduction to the
+// transaction-bound balance store and returns its actual deducted amount. The
+// caller's refund transaction owns completion, and missing or invalid storage
+// results propagate unchanged.
 func (p refundBalanceParticipant) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	return p.balances.DeductRefundBalance(ctx, id, amount)
 }
 
+// CompensateBalance delegates restoration of the supplied refund amount to the
+// transaction-bound balance store. The caller owns transaction completion, and
+// this wrapper returns the balance store's failure unchanged.
 func (p refundBalanceParticipant) CompensateBalance(ctx context.Context, id int64, amount float64) error {
 	return p.balances.CompensateRefundBalance(ctx, id, amount)
 }
 
-// newPostgresRefundWorkflow binds balance deductions and refund writes to the same Ent transaction.
+// newPostgresRefundWorkflow constructs provider bindings and refund storage
+// using the supplied shared Ent client. Each refund transaction gets balance
+// rights from BalanceInTx; other promoted rights remain unsupported in this
+// fixture.
+//
+// Provider instance and provider selection delegate to the configured payment
+// adapters, while the runtime user callback reads current balance through the
+// base client. The caller owns client and provider-transport cleanup, including
+// the local Stripe backend override used by these scenarios.
 func newPostgresRefundWorkflow(client *dbent.Client) *payment.RefundWorkflow {
 	instances := paymentpostgres.NewInstanceStore(client)
 	bindings := payment.NewProviderBindings(instances, payment.NewRegistry(), payment.NewDefaultLoadBalancer(instances, nil), payment.BindingRuntime{Factory: paymentadapter.CreateProvider, RegistryFactory: paymentadapter.CreateProvider}, false)

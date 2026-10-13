@@ -10,11 +10,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMessageCredentialsPreserveStoredTypes checks credential values and errors for Messages provider types.
+// Messages credential selection combines provider type with the availability of
+// an injected token source. The tests inspect exact authentication labels,
+// stored-token behavior, source call counts, input identity, and returned
+// failures across OAuth, Setup Token, API Key, service-account, and Bedrock
+// branches.
+
+// TestMessageCredentialsPreserveStoredTypes resolves credentials with no
+// injected source across the supported provider branches. It checks exact token
+// bytes, authentication labels, and missing-token or unsupported-type errors,
+// including empty Bedrock credentials.
 func TestMessageCredentialsPreserveStoredTypes(t *testing.T) {
 	tests := []struct {
+		// An empty errorText selects successful resolution assertions. Failure
+		// cases keep token and auth empty while checking the returned message;
+		// platform and kind select the credential branch for either outcome.
+		// name: test case label; platform: upstream platform identifier.
+		// kind: provider authentication type; token: expected credential value.
+		// auth: expected authentication label; errorText: expected failure message.
 		name, platform, kind, token, auth, errorText string
-		credentials                                  map[string]any
+		credentials                                  map[string]any // stored credential test input
 	}{
 		{name: "api key preserves whitespace", platform: capability.PlatformAnthropic, kind: capability.ProviderTypeAPIKey, credentials: map[string]any{"api_key": " key "}, token: " key ", auth: "apikey"},
 		{name: "missing api key", platform: capability.PlatformAnthropic, kind: capability.ProviderTypeAPIKey, errorText: "api_key not found in credentials"},
@@ -42,6 +57,10 @@ func TestMessageCredentialsPreserveStoredTypes(t *testing.T) {
 	}
 }
 
+// TestMessageCredentialsReuseConfiguredSourceOnlyForOriginalBranches installs a
+// source for Anthropic OAuth, service accounts, and Setup Tokens. The first two
+// call it with the original record, Setup Tokens use stored credentials, and a
+// source failure is returned.
 func TestMessageCredentialsReuseConfiguredSourceOnlyForOriginalBranches(t *testing.T) {
 	for _, kind := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeServiceAccount, capability.ProviderTypeSetupToken} {
 		t.Run(kind, func(t *testing.T) {

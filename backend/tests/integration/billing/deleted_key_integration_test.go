@@ -14,7 +14,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestSettlementDeletedKey checks deletion interleavings and idempotent settlement retries against PostgreSQL.
+// Already admitted usage still needs settlement when its credential row has
+// been soft deleted. The PostgreSQL matrix checks balance and subscription
+// funding with quota-only, rolling-only, or combined key costs, while deletion
+// happens before, after, or concurrently with the initial settlement. A missing
+// key is a separate failure case whose balance and deduplication claim remain
+// unchanged.
+//
+// Concurrent deletion uses a buffered result channel and is joined before
+// settlement replay and raw-row assertions. The test retains the tombstoned
+// credential and deletion timestamp while inspecting selected counters and the
+// payer's funding source. Reapplying the same request reports unapplied, so
+// final amounts also expose a duplicated charge in the exercised deletion
+// schedules.
+
+// TestSettlementDeletedKey settles admitted usage around soft deletion across
+// funding and key-cost combinations. Replay changes no amounts, tombstones
+// remain, and a missing key rolls back balance and deduplication.
 func TestSettlementDeletedKey(t *testing.T) {
 	db := integrationDB
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -46,6 +62,11 @@ func TestSettlementDeletedKey(t *testing.T) {
 					if order == "before" {
 						require.NoError(t, remove())
 					}
+					// Launch deletion only for the
+					// overlapping schedule and keep its
+					// result buffered; the test joins it
+					// before replay and inspecting the
+					// tombstoned row.
 					var deletedDone chan error
 					if order == "concurrent" {
 						deletedDone = make(chan error, 1)
@@ -61,6 +82,10 @@ func TestSettlementDeletedKey(t *testing.T) {
 					if deletedDone != nil {
 						require.NoError(t, <-deletedDone)
 					}
+					// Reuse the settlement identity after
+					// deletion has completed so final
+					// funding and key counters reveal any
+					// repeated charge from this retry.
 					repeated, err := store.Apply(ctx, cmd)
 					require.NoError(t, err)
 					require.False(t, repeated.Applied)
@@ -96,6 +121,9 @@ func TestSettlementDeletedKey(t *testing.T) {
 			}
 		}
 	}
+	// A missing key makes settlement fail after its funding work begins;
+	// inspect both payer balance and the request claim to detect partially
+	// committed effects.
 	t.Run("missing_key_rolls_back", func(t *testing.T) {
 		var userID int64
 		require.NoError(t, db.QueryRowContext(ctx, `INSERT INTO users(email,password_hash,balance) VALUES('missing-key@test.local','test',10) RETURNING id`).Scan(&userID))

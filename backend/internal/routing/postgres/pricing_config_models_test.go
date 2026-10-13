@@ -15,17 +15,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Model prices store time-based multipliers as JSON alongside nullable price
+// columns. SQL mocks verify the selected column shape and write arguments,
+// while pure cases cover literal search escaping and PostgreSQL unique errors,
+// including a typed nil error pointer.
+
+// configPricingTimeColumns fixes the mocked row order used to decode
+// time-pricing entries alongside their nullable price and multiplier columns.
 var configPricingTimeColumns = []string{
 	"id", "pricing_config_id", "models", "billing_mode", "price_multiplier", "fast_mode_multiplier", "fast_multiplier", "flex_multiplier", "max_reasoning_effort_multiplier",
 	"input_price", "output_price", "cache_write_price", "cache_write_1h_price", "cache_read_price", "image_input_price", "image_output_price",
 	"per_request_price", "time_pricing", "created_at", "updated_at",
 }
 
+// TestEscapeLike supplies literal backslashes, SQL wildcard characters, and
+// ordinary text. Each case checks the exact escaped string, including empty
+// input and adjacent special characters.
 func TestEscapeLike(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name  string // displayed subtest name
+		input string // literal search input
+		want  string // expected escaped text
 	}{
 		{
 			name:  "no special chars",
@@ -71,11 +81,14 @@ func TestEscapeLike(t *testing.T) {
 	}
 }
 
+// TestIsUniqueViolation supplies direct and wrapped PostgreSQL errors alongside
+// nil and unrelated errors. It requires only code 23505 to match and a typed
+// nil pointer to return false.
 func TestIsUniqueViolation(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name string // displayed subtest name
+		err  error  // candidate database error
+		want bool   // expected unique-error classification
 	}{
 		{
 			name: "unique violation code 23505",
@@ -119,6 +132,9 @@ func TestIsUniqueViolation(t *testing.T) {
 	}
 }
 
+// TestConfigPricingTimeRoundTrip reads a mocked price row containing one daily
+// multiplier period. It checks decoded timezone and multiplier values and that
+// the interval lookup follows the model-price query.
 func TestConfigPricingTimeRoundTrip(t *testing.T) {
 	repo, mock := newConfigPricingTimeRepo(t)
 	created := time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)
@@ -141,6 +157,9 @@ func TestConfigPricingTimeRoundTrip(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestConfigPricingTimeCreateWritesJSON creates a price with a timezone and
+// daily multiplier while leaving billing mode empty. SQL expectations require
+// the token default and the exact time-pricing JSON argument.
 func TestConfigPricingTimeCreateWritesJSON(t *testing.T) {
 	repo, mock := newConfigPricingTimeRepo(t)
 	pricing := &routing.ModelPricingEntry{
@@ -160,6 +179,9 @@ func TestConfigPricingTimeCreateWritesJSON(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// newConfigPricingTimeRepo returns a store backed by an isolated sqlmock
+// database and its expectation recorder. The test owns expectations; registered
+// cleanup closes the database when that test finishes.
 func newConfigPricingTimeRepo(t *testing.T) (*PricingConfigStore, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

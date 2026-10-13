@@ -15,7 +15,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestTeamReportsAnalyticsParity compares raw and rollup reports across team, member, key, and partial-bucket filters.
+// Team reports combine membership with usage attributed to current and former
+// actors. This fixture includes a current member with no usage, multiple keys,
+// and records around report and aggregation endpoints. Raw and
+// analytics-selected reports are compared in UTC, New York and Kathmandu,
+// including Kathmandu's deliberate raw selection and the empty-history case
+// after deletion.
+
+// TestTeamReportsAnalyticsParity compares raw and selected report results
+// across team, actor, key and local-date conditions. Fractional-hour Kathmandu
+// selects raw, former actors retain history, current empty members remain, and
+// deleting all raw history removes stale-rollup totals.
 func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 	owner := mustCreateUser(s.T(), s.client, &identity.User{Email: "report-owner@test.local"})
 	member := mustCreateUser(s.T(), s.client, &identity.User{Email: "report-member@test.local"})
@@ -36,6 +46,8 @@ func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 	p := mustCreateProvider(s.T(), s.client, &provider.Record{Name: "report"})
 	start := time.Date(2026, 9, 1, 10, 20, 0, 0, time.UTC)
 	end := start.Add(96 * time.Hour)
+	// Use a rounded coverage start and a partial live watermark so raw edges
+	// meet hourly rows at different minute positions in the parity comparisons.
 	coverage := start.Add(12 * time.Hour).Truncate(time.Hour)
 	watermark := end.Add(-2 * time.Hour)
 	for i, actor := range []*identity.User{owner, member, former} {
@@ -52,6 +64,8 @@ func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 	s.Require().NoError(aggregation.AggregateUsageAnalyticsRange(s.ctx, coverage, watermark))
 	s.Require().NoError(aggregation.SaveUsageAnalyticsAggregationState(s.ctx, &usage.UsageAnalyticsAggregationState{CoverageStart: &coverage, LiveWatermark: watermark, Phase: "idle"}))
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})
+	// Use an integer-offset DST zone and a fractional-hour zone alongside UTC; the
+	// latter cannot assign whole UTC hours to local report dates.
 	for _, zone := range []string{"UTC", "America/New_York", "Asia/Kathmandu"} {
 		loc, err := time.LoadLocation(zone)
 		s.Require().NoError(err)
@@ -87,7 +101,9 @@ func (s *UsageLogRepoSuite) TestTeamReportsAnalyticsParity() {
 			}
 		}
 	}
-	// After deleting all usage, stale rollups contribute no totals; current members remain with zero usage.
+	// Leave the previously built rollups in place while removing their raw source;
+	// the final assertions exercise retained-history gating and membership-only
+	// zero summaries.
 	s.repo.calendar = timezone.NewCalendar(time.UTC)
 	_, err = s.tx.ExecContext(s.ctx, "DELETE FROM usage_logs WHERE team_id=$1", entity.ID)
 	s.Require().NoError(err)

@@ -9,6 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// TestDefaultOpenAIProviderScheduler_ShouldEscapeStickyProvider_ThresholdBoundary
+// supplies a TTFT sample exactly at its threshold and evolves error feedback
+// through successes and failures. It checks that equality remains accepted and
+// verifies the expected EWMA values after the additional failures.
 func TestDefaultOpenAIProviderScheduler_ShouldEscapeStickyProvider_ThresholdBoundary(t *testing.T) {
 	stats := NewRuntimeStats(time.Now)
 	providerID := int64(21501)

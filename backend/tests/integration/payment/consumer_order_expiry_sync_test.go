@@ -11,9 +11,19 @@ import (
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 )
 
+// A provider's nonzero expiry can replace the local checkout deadline when its
+// creation response is stored. SQLite cases inspect both returned and reloaded
+// provider expiry, while an omitted provider deadline leaves the returned order
+// using its existing local expiry.
+
+// TestPersistCreatePaymentResponseSyncsProviderExpiry supplies a provider
+// deadline later than the local order expiry. The returned and reloaded SQLite
+// order both record the supplied provider timestamp exactly.
 func TestPersistCreatePaymentResponseSyncsProviderExpiry(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
+	// Whole-second inputs make local and provider expiry exactly comparable
+	// after storage.
 	localExpiry := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
 	providerExpiry := time.Now().Add(31 * time.Minute).UTC().Truncate(time.Second)
 	order := createPaymentOrderLifecycleOrder(t, ctx, client, payment.OrderStatusPending, localExpiry)
@@ -35,9 +45,14 @@ func TestPersistCreatePaymentResponseSyncsProviderExpiry(t *testing.T) {
 	require.True(t, reloaded.ExpiresAt.Equal(providerExpiry))
 }
 
+// TestPersistCreatePaymentResponseKeepsLocalExpiryWhenProviderOmitsIt stores a
+// creation response with no provider expiry for a pending order. Its returned
+// order retains the earlier local timestamp supplied by the fixture.
 func TestPersistCreatePaymentResponseKeepsLocalExpiryWhenProviderOmitsIt(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)
+	// Whole-second input permits exact comparison of the retained local
+	// expiry timestamp.
 	localExpiry := time.Now().Add(20 * time.Minute).UTC().Truncate(time.Second)
 	order := createPaymentOrderLifecycleOrder(t, ctx, client, payment.OrderStatusPending, localExpiry)
 	svc := payment.NewCheckout(paymentpostgres.NewOrderStore(client), nil, nil, nil, payment.CheckoutRuntime{})

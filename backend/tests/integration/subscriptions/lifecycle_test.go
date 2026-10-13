@@ -15,17 +15,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// stoppableTLSFingerprintCache exposes the cache subscription lifecycle used by these tests.
+// Redis cache subscription shutdown must wait for a synchronous update callback
+// that is already running. The fixture blocks that callback for error rules,
+// TLS profiles, and TLS routers, then samples whether StopSubscription returns
+// before release and waits for its completion afterward.
+//
+// A buffered nonblocking arrival signal tells the publisher loop when one
+// callback has entered, while a shared release channel keeps it active during
+// the twenty-millisecond stop observation. Closing release lets subscriber work
+// finish before the one-second join deadline. A repeated stop call checks the
+// completed lifecycle path. The passing path releases and joins its callback;
+// this fixture registers no separate release cleanup for earlier failures.
+
+// stoppableTLSFingerprintCache supplies the synchronous subscription lifecycle
+// exercised by the cache adapter matrix.
 type stoppableTLSFingerprintCache interface {
+	// SubscribeUpdates starts the adapter's first tracked Redis subscriber
+	// with a nonnil context and synchronous handler. The handler must
+	// return for stopped subscriber work to finish.
 	SubscribeUpdates(context.Context, func())
+	// StopSubscription stops new admission, cancels subscriber receiving,
+	// and waits for an active callback. Invoke it outside that callback and
+	// before closing the borrowed Redis client.
 	StopSubscription()
 }
 
-// TestSubscriptionsWaitForInFlightCallback checks that StopSubscription waits for the active Redis callback before returning.
+// TestSubscriptionsWaitForInFlightCallback blocks an observed Redis callback
+// for each selected cache adapter while requesting shutdown. Stop stays
+// incomplete during the sample interval, finishes after callback release, and
+// tolerates a repeated call.
 func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 	for _, factory := range []struct {
-		name, channel string
-		make          func(*redis.Client) stoppableTLSFingerprintCache
+		name, channel string // adapter case name; Redis update topic
+		// make returns a new adapter borrowing the supplied Redis
+		// client. The case owns subscription stop before Redis fixture
+		// cleanup closes that shared client.
+		make func(*redis.Client) stoppableTLSFingerprintCache
 	}{
 		{"error", "error_passthrough_rules_updated", func(c *redis.Client) stoppableTLSFingerprintCache {
 			value, ok := gatewayredis.NewErrorPassthroughCache(c).(stoppableTLSFingerprintCache)
@@ -46,6 +71,10 @@ func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 		t.Run(factory.name, func(t *testing.T) {
 			client := rediscontainer.New(t)
 			cache := factory.make(client)
+			// Signal one callback entry without blocking on
+			// repeated notifications, then keep callback execution
+			// parked until release opens during the normal shutdown
+			// sequence.
 			entered, release := make(chan struct{}, 1), make(chan struct{})
 			cache.SubscribeUpdates(context.Background(), func() {
 				select {
@@ -54,6 +83,10 @@ func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 				}
 				<-release
 			})
+			// Publish until callback entry is observed because
+			// Redis subscription setup proceeds asynchronously; the
+			// polling budget bounds this fixture's readiness
+			// observation.
 			require.Eventually(t, func() bool {
 				require.NoError(t, client.Publish(context.Background(), factory.channel, "refresh").Err())
 				select {
@@ -63,6 +96,9 @@ func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 					return false
 				}
 			}, 2*time.Second, 10*time.Millisecond)
+			// Request stop on another goroutine so the test can
+			// observe its pending result while the synchronous
+			// callback remains blocked on the release channel.
 			stopped := make(chan struct{})
 			go func() { cache.StopSubscription(); close(stopped) }()
 			select {
@@ -70,6 +106,10 @@ func TestSubscriptionsWaitForInFlightCallback(t *testing.T) {
 				t.Fatal("订阅回调尚未完成")
 			case <-time.After(20 * time.Millisecond):
 			}
+			// Let the active callback return before joining stop,
+			// demonstrating that receiving cancellation alone
+			// cannot finish shutdown while callback work is still
+			// parked.
 			close(release)
 			select {
 			case <-stopped:

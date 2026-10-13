@@ -8,6 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// The public deprecated-Extra cleanup accepts the saved map directly and
+// removes retired billing and probe keys in place. The external-package test
+// verifies that consumers can use that cleanup while retaining an unrelated
+// configuration entry in the same object.
+
+// TestDiscardDeprecatedProviderExtra calls the public cleanup on malformed
+// retired fields and one ordinary entry. The supplied object retains just that
+// ordinary entry after the in-place removal.
 func TestDiscardDeprecatedProviderExtra(t *testing.T) {
 	extra := map[string]any{
 		"openai_long_context_billing_enabled": "malformed",

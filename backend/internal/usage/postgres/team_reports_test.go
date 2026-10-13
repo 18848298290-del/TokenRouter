@@ -13,7 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// TestTeamReportAggregationFailureUsesRaw checks a full raw-range query after aggregation state fails.
+// A team summary can still read raw usage when analytics progress is
+// unavailable. The mock first supplies a retained source timestamp, then
+// rejects state lookup and returns a raw GROUPING SETS summary. Cost and
+// request assertions identify the successful retry result.
+
+// TestTeamReportAggregationFailureUsesRaw fails analytics-state lookup for a
+// team with retained usage. The summary retries raw grouping and returns its
+// mocked cost and request count with no error.
 func TestTeamReportAggregationFailureUsesRaw(t *testing.T) {
 	db, mock := newSQLMock(t)
 	r := &Store{sql: db, preAggregation: preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{Usage: preaggregation.UsageOptions{Enabled: true}})}

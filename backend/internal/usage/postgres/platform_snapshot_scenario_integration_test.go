@@ -2,9 +2,6 @@
 
 package postgres
 
-// These scenarios cover usage_log_repo_insert.go, usage_log_repo_query.go, usage_log_repo_stats.go,
-// and usage_analytics_aggregation_repo.go, comparing their platform attribution with Ops reports.
-
 import (
 	"context"
 	"testing"
@@ -22,7 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestPlatformSnapshotSurvivesProviderChanges checks that raw queries and both rollups retain the recorded platform.
+// Recorded usage platform remains attached to the request when its provider
+// later changes platform. OpenAI and Anthropic rows share one group in this
+// fixture, exposing accidental attribution through mutable provider metadata.
+// Raw usage, usage hourly rollups and Ops hourly metrics are compared after the
+// provider becomes Gemini.
+
+// TestPlatformSnapshotSurvivesProviderChanges stores two platform snapshots in
+// the same group, then changes the provider to Gemini. The saved OpenAI row
+// and two non-Gemini raw groups survive; OpenAI usage hourly cost and Ops
+// hourly counts agree with the recorded request.
 func TestPlatformSnapshotSurvivesProviderChanges(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -35,6 +41,8 @@ func TestPlatformSnapshotSurvivesProviderChanges(t *testing.T) {
 	defer repo.StopUsageBatchers()
 	start := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
+	// Remove this scenario's hourly rollup rows before shared-database cleanup
+	// restarts user identities, so later fixtures cannot inherit its stored totals.
 	t.Cleanup(func() {
 		for _, table := range []string{"usage_analytics_hourly", "ops_metrics_hourly"} {
 			_, err := integrationDB.ExecContext(ctx, "DELETE FROM "+table+" WHERE bucket_start=$1", start)
@@ -45,12 +53,15 @@ func TestPlatformSnapshotSurvivesProviderChanges(t *testing.T) {
 	inserted, err := repo.Create(ctx, log)
 	require.NoError(t, err)
 	require.True(t, inserted)
-	// Anthropic usage within the same group must remain a separate platform total.
+	// Give the second request the same provider and group but a different recorded
+	// platform, so metadata-based regrouping would merge or relabel the fixture.
 	other := *log
 	other.RequestID, other.Platform, other.ActualCost = "snapshot-anthropic", "anthropic", 3
 	inserted, err = repo.Create(ctx, &other)
 	require.NoError(t, err)
 	require.True(t, inserted)
+	// Change current provider metadata before any raw report or hourly rebuild;
+	// attribution must come from the platform saved on each usage row.
 	_, err = integrationDB.ExecContext(ctx, "UPDATE providers SET platform='gemini' WHERE id=$1", provider.ID)
 	require.NoError(t, err)
 	loaded, err := repo.GetByID(ctx, log.ID)

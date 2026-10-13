@@ -23,9 +23,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-type failingProjection struct{ billingpg.TaskProjection }
+// Creative provider outcomes connect a run and its output state to a settlement
+// outbox record. A PostgreSQL trigger rejects that outbox insert so the fixture
+// can check that the run remains running, its output remains pending, and its
+// outcome timestamp remains absent.
+//
+// Removing the trigger permits identical outcome metadata to be recorded twice
+// while leaving one settlement operation. Completion then records lost delivery
+// and actual cost. Separate funding cases delegate the task reservation write
+// before injecting failure, inspect payer funds and request claims, and retry
+// through a working task writer. Native capture replay checks an unapplied
+// second result with one persisted charge.
 
-// TestProviderOutcomeRollbackAndDeliveryLost checks atomic outcome and outbox writes using output metadata.
+// failingProjection injects reservation failure after its delegate persists
+// task funding metadata.
+type failingProjection struct {
+	// TaskProjection uses the funding transaction for its writes;
+	// SaveReservation injects failure after that delegate succeeds so its
+	// caller can exercise rollback.
+	billingpg.TaskProjection
+}
+
+// TestProviderOutcomeRollbackAndDeliveryLost rejects a creative outbox insert
+// through a PostgreSQL trigger. Outcome state rolls back, retry creates one
+// settle record, and completion records lost delivery with actual cost.
 func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -39,6 +60,9 @@ func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 	require.NoError(t, repo.MarkCreativeRunRunning(ctx, id, 0, time.Now()))
 	outcomes, ok := repo.(creative.ProviderOutcomeStore)
 	require.True(t, ok)
+	// Reject the outbox insert after outcome writes have begun so the
+	// subsequent raw task reads can detect effects that escaped the
+	// enclosing PostgreSQL transaction.
 	_, err = integrationDB.ExecContext(ctx, `CREATE FUNCTION test_reject_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test outcome audit failure'; END $$;
  CREATE TRIGGER test_reject_outcome BEFORE INSERT ON creative_run_outbox FOR EACH ROW EXECUTE FUNCTION test_reject_outcome();`)
 	require.NoError(t, err)
@@ -46,6 +70,9 @@ func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 		_, err := integrationDB.ExecContext(context.Background(), `DROP TRIGGER IF EXISTS test_reject_outcome ON creative_run_outbox; DROP FUNCTION IF EXISTS test_reject_outcome();`)
 		require.NoError(t, err)
 	}
+	// Retain trigger removal for failing assertions, then also remove it
+	// before the successful retry; IF EXISTS makes the final cleanup safe
+	// to repeat.
 	t.Cleanup(cleanup)
 	now := time.Now()
 	expires := now.Add(time.Minute)
@@ -62,6 +89,9 @@ func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 	output, err := repo.GetCreativeRunOutput(ctx, id, 0)
 	require.NoError(t, err)
 	require.Equal(t, creative.CreativeRunOutputStatusPending, output.Status)
+	// Remove the injected outbox failure before replaying identical
+	// provider metadata; the two successful calls should leave a single
+	// settlement outbox operation.
 	cleanup()
 	require.NoError(t, outcomes.RecordProviderOutcome(ctx, id, 0, metadata, now))
 	require.NoError(t, outcomes.RecordProviderOutcome(ctx, id, 0, metadata, now))
@@ -73,9 +103,14 @@ func TestProviderOutcomeRollbackAndDeliveryLost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, creative.CreativeRunStatusResultLost, run.Status)
 	require.NotNil(t, run.ActualCost)
+	// Allow a small floating-point gap after reading persisted actual cost.
 	require.InDelta(t, 0.2, *run.ActualCost, 1e-10)
 }
 
+// SaveReservation delegates task reservation metadata persistence and returns
+// an injected error after successful writing. Delegate failures return
+// directly, letting the funding transaction exercise rollback after the real
+// task write.
 func (p failingProjection) SaveReservation(ctx context.Context, balance float64, alloc []billing.BillingAllocation, hold, estimated float64) error {
 	if err := p.TaskProjection.SaveReservation(ctx, balance, alloc, hold, estimated); err != nil {
 		return err
@@ -83,7 +118,9 @@ func (p failingProjection) SaveReservation(ctx context.Context, balance float64,
 	return errors.New("test projection failure")
 }
 
-// TestTaskFundingProjectionRollback checks that a failed task write rolls back balances, the task snapshot, and the deduplication claim.
+// TestTaskFundingProjectionRollback fails after task reservation metadata has
+// been written in PostgreSQL. Payer balance, frozen funds, and request claims
+// remain unchanged, and retry through a working writer applies.
 func TestTaskFundingProjectionRollback(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -100,6 +137,9 @@ func TestTaskFundingProjectionRollback(t *testing.T) {
 			return failingProjection{creativepg.NewFundingParticipant(tx, ref.ID)}
 		}})
 	cmd := &billing.TaskFundsCommand{Task: creative.FundingReference(id), UserID: user.ID, APIKeyID: key.ID, RequestID: "creative_hold:" + id, HoldAmount: 0.2}
+	// Let the task writer persist before its injected error aborts
+	// reservation, then inspect payer balances and the request claim before
+	// a working retry.
 	_, err = store.Reserve(ctx, cmd)
 	require.ErrorContains(t, err, "test projection failure")
 	var balance, frozen float64
@@ -120,7 +160,9 @@ func TestTaskFundingProjectionRollback(t *testing.T) {
 	require.True(t, result.Applied, fmt.Sprint(result))
 }
 
-// TestNativeCreativeFundingReplay checks that replaying capture for the same task charges it once.
+// TestNativeCreativeFundingReplay reserves creative funding and captures the
+// same request twice. The first applies, replay does not, balance is charged
+// once, frozen funds clear, and one claim remains.
 func TestNativeCreativeFundingReplay(t *testing.T) {
 	ctx := context.Background()
 	client := committedEntitlementClient(t)
@@ -140,11 +182,15 @@ func TestNativeCreativeFundingReplay(t *testing.T) {
 	first, err := funding.Capture(ctx, run, 1)
 	require.NoError(t, err)
 	require.True(t, first.Applied)
+	// Keep the same task capture identity on retry so the stored request
+	// claim can reject repeated charging while final payer balances expose
+	// any duplicate effect.
 	replay, err := funding.Capture(ctx, run, 1)
 	require.NoError(t, err)
 	require.False(t, replay.Applied)
 	var balance, frozen float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT balance,COALESCE(frozen_balance,0) FROM users WHERE id=$1`, user.ID).Scan(&balance, &frozen))
+	// Compare the decimal wallet result with its floating-point scan value.
 	require.InDelta(t, 9.8, balance, 1e-10)
 	require.Zero(t, frozen)
 	var count int

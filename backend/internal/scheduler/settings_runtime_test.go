@@ -13,24 +13,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// runtimeSettingFixture records the per-key read sequence after a batch failure.
+// runtimeSettingFixture supplies a fixed load weight and records individual
+// recovery reads.
 type runtimeSettingFixture struct {
-	RuntimeSettingSource
-	keys  []string
-	batch int
-	fail  bool
+	RuntimeSettingSource          // embedded unused setting source
+	keys                 []string // individual recovery read sequence
+	batch                int      // batch source read count
+	fail                 bool     // configured batch failure switch
 }
 
+// runtimeSettingReadFixture records setting lookups and their contexts for
+// sequential batch and recovery scenarios.
 type runtimeSettingReadFixture struct {
-	values        map[string]string
-	batchErr      error
-	valueErrors   map[string]error
-	batchKeys     []string
-	steps         []string
-	contexts      []context.Context
-	contextErrors []error
+	// values is returned directly by GetMultiple. Tests finish configuring the
+	// map before calling Load and serialize source operations because this
+	// fixture has no internal synchronization.
+	values   map[string]string // configured stored setting text
+	batchErr error             // configured batch read failure
+	// valueErrors is borrowed from the active table case and read by GetValue.
+	// Tests configure this map before Load and keep it stable throughout the
+	// sequential recovery reads.
+	valueErrors map[string]error // configured per-key read failures
+	batchKeys   []string         // copied requested batch keys
+	steps       []string         // ordered lookup and diagnostic events
+	// contexts and contextErrors record the same read calls in matching
+	// positions. Context references remain observable after Load cancels its
+	// budget, while contextErrors captures each call's earlier state.
+	contexts      []context.Context // retained read context references
+	contextErrors []error           // context errors captured during reads
 }
 
+// GetMultiple counts batch reads and returns a load-weight override of zero.
+// Setting fail returns the configured batch-failure scenario, causing
+// SettingsRuntime to use the fixture's individual-key methods.
 func (f *runtimeSettingFixture) GetMultiple(context.Context, []string) (map[string]string, error) {
 	f.batch++
 	if f.fail {
@@ -39,6 +54,9 @@ func (f *runtimeSettingFixture) GetMultiple(context.Context, []string) (map[stri
 	return map[string]string{SettingKeyAdvancedSchedulerWeightLoad: "0"}, nil
 }
 
+// GetValue records recovery key order and returns zero text for the load
+// weight. Other keys return empty text so the runtime leaves their overrides
+// absent or selects applicable defaults.
 func (f *runtimeSettingFixture) GetValue(_ context.Context, key string) (string, error) {
 	f.keys = append(f.keys, key)
 	if key == SettingKeyAdvancedSchedulerWeightLoad {
@@ -47,6 +65,9 @@ func (f *runtimeSettingFixture) GetValue(_ context.Context, key string) (string,
 	return "", nil
 }
 
+// TestSettingsRuntimePreservesFallbackAndIsolatesValues forces individual
+// reads after a batch failure. It checks key order, cache reuse, and
+// independent weight maps for returned values and Store input.
 func TestSettingsRuntimePreservesFallbackAndIsolatesValues(t *testing.T) {
 	source := &runtimeSettingFixture{fail: true}
 	runtime := NewSettingsRuntime(Diagnostics{})
@@ -65,6 +86,10 @@ func TestSettingsRuntimePreservesFallbackAndIsolatesValues(t *testing.T) {
 	require.Equal(t, 3, third.LbTopKOverride)
 }
 
+// TestSettingsRuntimeLoadsBatchAndFallback compares configured, missing, and
+// partly failed settings across batch and recovery reads. It checks values,
+// presence flags, lookup order, detached canceled-caller contexts, and their
+// shared two-second budget.
 func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 	defaults := policy.RuntimeSettings{
 		EwmaErrorRateAlpha: 0.2,
@@ -100,10 +125,10 @@ func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 	}
 	readErr := errors.New("setting read failed")
 	tests := []struct {
-		name        string
-		values      map[string]string
-		valueErrors map[string]error
-		want        policy.RuntimeSettings
+		name        string                 // scenario subtest display name
+		values      map[string]string      // supplied persistent scheduler text
+		valueErrors map[string]error       // configured individual read failures
+		want        policy.RuntimeSettings // expected parsed runtime settings
 	}{
 		{
 			name: "configured values",
@@ -200,6 +225,8 @@ func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 							source.steps = append(source.steps, level+":"+event)
 							require.Equal(t, []any{"error", source.batchErr}, fields)
 						}})
+						// Cancel the initiating request before loading settings. Recorded source contexts
+						// must still be live during reads and become canceled when Load returns.
 						ctx, cancel := context.WithCancel(context.Background())
 						cancel()
 						startedAt := time.Now()
@@ -231,6 +258,9 @@ func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 	})
 }
 
+// GetMultiple records copied batch keys, read order, context identity, and the
+// current context error. It returns the fixture's borrowed value map and
+// configured batch error for the active scenario.
 func (f *runtimeSettingReadFixture) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	f.batchKeys = append([]string(nil), keys...)
 	f.steps = append(f.steps, "batch")
@@ -239,6 +269,9 @@ func (f *runtimeSettingReadFixture) GetMultiple(ctx context.Context, keys []stri
 	return f.values, f.batchErr
 }
 
+// GetValue records one recovery lookup with its context and current
+// cancellation state. Missing map entries return empty text or nil errors,
+// matching the fixture's absent-setting scenarios.
 func (f *runtimeSettingReadFixture) GetValue(ctx context.Context, key string) (string, error) {
 	f.steps = append(f.steps, "value:"+key)
 	f.contexts = append(f.contexts, ctx)
@@ -246,8 +279,10 @@ func (f *runtimeSettingReadFixture) GetValue(ctx context.Context, key string) (s
 	return f.values[key], f.valueErrors[key]
 }
 
-// TestValidationWeightsReadFreshAndPropagateFailure checks fresh reads and batch error propagation
-// during admin validation.
+// TestValidationWeightsReadFreshAndPropagateFailure performs repeated
+// administrative validation reads followed by a batch error. It checks fresh
+// lookups, explicit zero weight overrides, and error propagation
+// without individual-key recovery.
 func TestValidationWeightsReadFreshAndPropagateFailure(t *testing.T) {
 	source := &runtimeSettingFixture{}
 	defaults := DefaultAdminSettingsDefaults()

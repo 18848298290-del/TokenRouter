@@ -18,13 +18,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Subscription console lists can present deleted grants as revoked while an
+// include-deleted detail read retains the stored status. PostgreSQL suite cases
+// inspect that distinction alongside effective-date filtering, plan coverage,
+// relation loading, source-order lookup, restoration, and spending-window
+// mutation through transaction-bound fixtures.
+
+// UserSubscriptionRepoSuite binds subscription storage and fixture builders to
+// one case transaction.
 type UserSubscriptionRepoSuite struct {
-	suite.Suite
-	ctx    context.Context
-	client *dbent.Client
-	repo   *billingpostgres.SubscriptionStore
+	suite.Suite // assertion and suite lifecycle support
+	// ctx, client, and repo are replaced together before each case. Ent
+	// builders and subscription reads share the transaction later rolled
+	// back by entitlementTx cleanup.
+	ctx    context.Context // case execution context
+	client *dbent.Client   // case transaction client
+	// transaction-bound subscription repository fixture
+	repo *billingpostgres.SubscriptionStore
 }
 
+// SetupTest replaces the suite context, client, and subscription repository
+// with a new rollback transaction. Ent fixture builders and repository
+// operations then observe the same case-local writes.
 func (s *UserSubscriptionRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := entitlementTx(s.T())
@@ -32,10 +47,16 @@ func (s *UserSubscriptionRepoSuite) SetupTest() {
 	s.repo = billingpostgres.NewUserSubscriptionRepository(s.client)
 }
 
+// TestUserSubscriptionRepoSuite runs PostgreSQL subscription storage cases with
+// per-case rollback fixtures. Its cases inspect loaded relations, status views,
+// filtering, restoration, and selected usage-window writes.
 func TestUserSubscriptionRepoSuite(t *testing.T) {
 	suite.Run(t, new(UserSubscriptionRepoSuite))
 }
 
+// mustCreateUser inserts an active fixture user and returns its identity view
+// after persistence. Empty role selects the ordinary user role, and save
+// failures fail the current suite case.
 func (s *UserSubscriptionRepoSuite) mustCreateUser(email string, role string) *identity.User {
 	s.T().Helper()
 	if role == "" {
@@ -52,6 +73,9 @@ func (s *UserSubscriptionRepoSuite) mustCreateUser(email string, role string) *i
 	return identitypostgres.UserFromEntity(user)
 }
 
+// mustCreatePlan inserts a subscription plan for sale at the fixture price and
+// returns its billing view. Nonpositive validity selects thirty days, and save
+// failures fail the suite case.
 func (s *UserSubscriptionRepoSuite) mustCreatePlan(name string, validityDays int) *billing.SubscriptionPlan {
 	s.T().Helper()
 	if validityDays <= 0 {
@@ -73,9 +97,14 @@ func (s *UserSubscriptionRepoSuite) mustCreatePlan(name string, validityDays int
 	return billingpostgres.PlanFromEntity(plan)
 }
 
+// mustCreateSubscription inserts an active grant with default start, expiry,
+// and assignment times rounded to whole seconds. A nonnil mutate callback edits
+// its builder before saving; errors fail the suite case.
 func (s *UserSubscriptionRepoSuite) mustCreateSubscription(userID, planID int64, mutate func(*dbent.UserSubscriptionCreate)) *dbent.UserSubscription {
 	s.T().Helper()
 
+	// Whole-second times keep persisted fixture dates comparable across
+	// storage reads.
 	now := time.Now().UTC().Truncate(time.Second)
 	create := s.client.UserSubscription.Create().
 		SetUserID(userID).
@@ -95,11 +124,16 @@ func (s *UserSubscriptionRepoSuite) mustCreateSubscription(userID, planID int64,
 	return sub
 }
 
+// TestCreateAndGetByID_WithPreloads creates a grant linked to an owner, plan,
+// and assigning administrator. Its ID read returns each loaded relationship
+// with the expected persisted identity.
 func (s *UserSubscriptionRepoSuite) TestCreateAndGetByID_WithPreloads() {
 	user := s.mustCreateUser("sub-create@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-create", 30)
 	admin := s.mustCreateUser("sub-admin@test.com", identity.RoleAdmin)
 
+	// Whole-second times keep persisted fixture dates comparable across
+	// storage reads.
 	now := time.Now().UTC().Truncate(time.Second)
 	sub := &billing.UserSubscription{
 		UserID:        user.ID,
@@ -129,6 +163,9 @@ func (s *UserSubscriptionRepoSuite) TestCreateAndGetByID_WithPreloads() {
 	s.Require().Equal(admin.ID, got.AssignedByUser.ID)
 }
 
+// TestGetLatestByUserIDAndPlanID creates an earlier grant and a later pending
+// grant for one user and plan. The latest lookup selects the later pending
+// fixture.
 func (s *UserSubscriptionRepoSuite) TestGetLatestByUserIDAndPlanID() {
 	user := s.mustCreateUser("latest@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-latest", 30)
@@ -149,6 +186,9 @@ func (s *UserSubscriptionRepoSuite) TestGetLatestByUserIDAndPlanID() {
 	s.Require().NotEqual(older.ID, got.ID)
 }
 
+// TestListByUserIDAndPlanID_OrderedByStartsAt creates successive grants with
+// fixed January and February start times. Listing both for their user and plan
+// returns increasing start order.
 func (s *UserSubscriptionRepoSuite) TestListByUserIDAndPlanID_OrderedByStartsAt() {
 	user := s.mustCreateUser("plan-list@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-list", 30)
@@ -170,6 +210,9 @@ func (s *UserSubscriptionRepoSuite) TestListByUserIDAndPlanID_OrderedByStartsAt(
 	s.Require().Equal(second.ID, subs[1].ID)
 }
 
+// TestListActiveByUserID_OnlyReturnsEffectiveSubscriptions creates current,
+// expired, and future pending grants on separate plans. The active list
+// contains the current grant with its matching plan ID.
 func (s *UserSubscriptionRepoSuite) TestListActiveByUserID_OnlyReturnsEffectiveSubscriptions() {
 	user := s.mustCreateUser("active-list@test.com", identity.RoleUser)
 	activePlan := s.mustCreatePlan("plan-active", 30)
@@ -198,6 +241,9 @@ func (s *UserSubscriptionRepoSuite) TestListActiveByUserID_OnlyReturnsEffectiveS
 	s.Require().Equal(activePlan.ID, subs[0].PlanID)
 }
 
+// TestFilterByGroup_KeepsGlobalAndMatchingPlans creates unrestricted and
+// group-specific active subscriptions. Filtering for group A retains the global
+// grant and group A grant while returning two rows.
 func (s *UserSubscriptionRepoSuite) TestFilterByGroup_KeepsGlobalAndMatchingPlans() {
 	user := s.mustCreateUser("group-filter@test.com", identity.RoleUser)
 	groupA := mustCreateGroup(s.T(), s.client, &routing.Group{
@@ -233,6 +279,9 @@ func (s *UserSubscriptionRepoSuite) TestFilterByGroup_KeepsGlobalAndMatchingPlan
 	s.Require().Contains(ids, subA.ID)
 }
 
+// TestList_FilterByPlanAndPendingStatus supplies two plans with current and
+// pending grants. A user, plan A, and pending-status query returns the pending
+// grant with total one.
 func (s *UserSubscriptionRepoSuite) TestList_FilterByPlanAndPendingStatus() {
 	user := s.mustCreateUser("filter@test.com", identity.RoleUser)
 	planA := s.mustCreatePlan("plan-filter-a", 30)
@@ -265,6 +314,9 @@ func (s *UserSubscriptionRepoSuite) TestList_FilterByPlanAndPendingStatus() {
 	s.Require().Equal(pending.ID, subs[0].ID)
 }
 
+// TestList_IncludesRevokedWhenStatusEmpty deletes one of two subscriptions
+// before an unfiltered status list. Both remain visible, and the deleted view
+// is revoked with user and plan loaded.
 func (s *UserSubscriptionRepoSuite) TestList_IncludesRevokedWhenStatusEmpty() {
 	user := s.mustCreateUser("revoked-all@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-revoked-all", 30)
@@ -302,6 +354,9 @@ func (s *UserSubscriptionRepoSuite) TestList_IncludesRevokedWhenStatusEmpty() {
 	s.Require().NotNil(byID[revoked.ID].Plan)
 }
 
+// TestList_FilterByRevokedStatus deletes one of two grants and requests revoked
+// status for their owner. The result contains the deleted grant with revoked
+// view status and a deletion timestamp.
 func (s *UserSubscriptionRepoSuite) TestList_FilterByRevokedStatus() {
 	user := s.mustCreateUser("revoked-filter@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-revoked-filter", 30)
@@ -326,6 +381,9 @@ func (s *UserSubscriptionRepoSuite) TestList_FilterByRevokedStatus() {
 	s.Require().NotNil(subs[0].DeletedAt)
 }
 
+// TestGetByIDIncludeDeleted_PreservesPersistedStatus deletes an active grant
+// before its include-deleted detail lookup. The result retains active stored
+// status, deletion time, and loaded user and plan.
 func (s *UserSubscriptionRepoSuite) TestGetByIDIncludeDeleted_PreservesPersistedStatus() {
 	user := s.mustCreateUser("include-deleted@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-include-deleted", 30)
@@ -342,6 +400,9 @@ func (s *UserSubscriptionRepoSuite) TestGetByIDIncludeDeleted_PreservesPersisted
 	s.Require().NotNil(got.Plan)
 }
 
+// TestRestore deletes a grant and restores it using an expired status request.
+// Both returned and reloaded values report expired status with their deletion
+// timestamp cleared.
 func (s *UserSubscriptionRepoSuite) TestRestore() {
 	user := s.mustCreateUser("restore@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-restore", 30)
@@ -361,6 +422,9 @@ func (s *UserSubscriptionRepoSuite) TestRestore() {
 	s.Require().Nil(got.DeletedAt)
 }
 
+// TestResetDailyUsage_StaleResetDoesNotClearNewWindowUsage advances a daily
+// window and records usage before retrying the old reset. The new window
+// retains its start and three usage units.
 func (s *UserSubscriptionRepoSuite) TestResetDailyUsage_StaleResetDoesNotClearNewWindowUsage() {
 	user := s.mustCreateUser("resetd-cas@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-resetd-cas", 30)
@@ -373,15 +437,22 @@ func (s *UserSubscriptionRepoSuite) TestResetDailyUsage_StaleResetDoesNotClearNe
 	newWindowStart := oldWindowStart.Add(24 * time.Hour)
 	s.Require().NoError(s.repo.ResetDailyUsage(s.ctx, sub.ID, &oldWindowStart, newWindowStart))
 	s.Require().NoError(s.repo.IncrementUsage(s.ctx, sub.ID, 3))
-	// A second request with the stale window start must leave the new window's usage intact.
+	// Reuse the old start after recording current-window usage so this
+	// retry can expose a stale reset that incorrectly clears the newer
+	// spending observation.
 	s.Require().NoError(s.repo.ResetDailyUsage(s.ctx, sub.ID, &oldWindowStart, newWindowStart))
 
 	got, err := s.repo.GetByID(s.ctx, sub.ID)
 	s.Require().NoError(err)
+	// Compare spending numerically and window timestamps within one
+	// microsecond.
 	s.Require().InDelta(3, got.DailyUsageUSD, 1e-6)
 	s.Require().WithinDuration(newWindowStart, *got.DailyWindowStart, time.Microsecond)
 }
 
+// TestResetUsageWindows_ClearsUsageAfterAutomaticWindowAdvance advances the
+// daily window and adds usage before an administrator reset. Daily usage clears
+// while the selected current window start remains.
 func (s *UserSubscriptionRepoSuite) TestResetUsageWindows_ClearsUsageAfterAutomaticWindowAdvance() {
 	user := s.mustCreateUser("admin-reset-current@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-admin-reset-current", 30)
@@ -398,13 +469,20 @@ func (s *UserSubscriptionRepoSuite) TestResetUsageWindows_ClearsUsageAfterAutoma
 
 	got, err := s.repo.GetByID(s.ctx, sub.ID)
 	s.Require().NoError(err)
+	// Compare the zeroed amount numerically and the retained start within
+	// one microsecond.
 	s.Require().InDelta(0, got.DailyUsageUSD, 1e-6)
 	s.Require().WithinDuration(newWindowStart, *got.DailyWindowStart, time.Microsecond)
 }
 
+// TestListBySourceOrderIDAndUsageMutations loads a grant by its source order,
+// resets all spending windows, and increments usage. Each counter becomes 2.5
+// and the daily start matches resetAt.
 func (s *UserSubscriptionRepoSuite) TestListBySourceOrderIDAndUsageMutations() {
 	user := s.mustCreateUser("source-order@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-source-order", 30)
+	// Whole-second times keep persisted fixture dates comparable across
+	// storage reads.
 	now := time.Now().UTC().Truncate(time.Second)
 	sourceOrderID := int64(12345)
 
@@ -438,6 +516,9 @@ func (s *UserSubscriptionRepoSuite) TestListBySourceOrderIDAndUsageMutations() {
 	s.Require().Equal(resetAt, *got.DailyWindowStart)
 }
 
+// TestBatchUpdateExpiredStatus creates one past-expiry active grant and one
+// currently valid active grant. The batch reports one changed row and reloads
+// the expired fixture with expired status.
 func (s *UserSubscriptionRepoSuite) TestBatchUpdateExpiredStatus() {
 	user := s.mustCreateUser("expire@test.com", identity.RoleUser)
 	plan := s.mustCreatePlan("plan-expire", 30)
