@@ -23,6 +23,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// Email-backed OAuth callbacks can send a new profile to password and
+// invitation completion while an existing active email account receives login
+// tokens directly. The cases invoke callbacks with supplied provider profiles
+// and inspect SQLite users, pending-session claims, cookie state, and identity
+// counts.
+//
+// Referral and promotion values travel through start cookies and retained
+// pending data before registration. Completion supplies a different request
+// email to check that the saved resolved email selects the new account, then
+// observes its password hash, recorded inviter relationship, and invitation
+// owner. The affiliate fixture captures those relationships in memory; the
+// callback profile injection supplies no external provider exchange.
+
+// TestEmailOAuthCallbackRequiresPendingRegistrationWhenInvitationEnabled
+// supplies a new GitHub profile while invitations are required. Callback
+// creates pending choice state and browser cookies, leaves the user absent, and
+// redirects without a login token.
 func TestEmailOAuthCallbackRequiresPendingRegistrationWhenInvitationEnabled(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, true)
 	ctx := context.Background()
@@ -86,6 +103,10 @@ func TestEmailOAuthCallbackRequiresPendingRegistrationWhenInvitationEnabled(t *t
 	require.NotNil(t, findCookie(recorder.Result().Cookies(), identityhttp.OauthPendingBrowserCookieName))
 }
 
+// TestEmailOAuthCallbackExistingEmailLogsInWhenInvitationEnabled supplies a
+// Google profile matching an active account. Callback redirects with a login
+// token and escaped local redirect, records one matching identity, and leaves
+// no pending row.
 func TestEmailOAuthCallbackExistingEmailLogsInWhenInvitationEnabled(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, true)
 	ctx := context.Background()
@@ -134,6 +155,10 @@ func TestEmailOAuthCallbackExistingEmailLogsInWhenInvitationEnabled(t *testing.T
 	_ = user
 }
 
+// TestEmailOAuthCallbackCreatesPasswordRegistrationSessionWithAffiliateCode
+// supplies a new GitHub profile and padded affiliate cookie. Callback retains
+// the trimmed affiliate code in pending registration claims, requires account
+// completion, and leaves the user absent.
 func TestEmailOAuthCallbackCreatesPasswordRegistrationSessionWithAffiliateCode(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -179,6 +204,9 @@ func TestEmailOAuthCallbackCreatesPasswordRegistrationSessionWithAffiliateCode(t
 	require.Equal(t, "ref-user@example.com", completion["resolved_email"])
 }
 
+// TestEmailOAuthStartAcceptsAffCodeQueryAlias starts enabled GitHub OAuth with
+// the aff_code query alias. The redirect response stores that supplied value in
+// the affiliate cookie using the handler's cookie encoding.
 func TestEmailOAuthStartAcceptsAffCodeQueryAlias(t *testing.T) {
 	handler, _ := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: map[string]string{
@@ -202,6 +230,9 @@ func TestEmailOAuthStartAcceptsAffCodeQueryAlias(t *testing.T) {
 	require.Equal(t, identityhttp.EncodeCookieValue("AFFALIAS"), affCookie.Value)
 }
 
+// TestEmailOAuthStartPreservesPromoCodeInPendingSession forwards the promotion
+// cookie from GitHub start into a supplied-profile callback. The resulting
+// pending session retains the same promotion code for account completion.
 func TestEmailOAuthStartPreservesPromoCodeInPendingSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: map[string]string{
@@ -250,6 +281,10 @@ func TestEmailOAuthStartPreservesPromoCodeInPendingSession(t *testing.T) {
 	require.Equal(t, "WELCOME2024", identityhttp.PendingOAuthPromoCode(identitypostgres.PendingAuthSessionFromEntity(session)))
 }
 
+// TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession
+// completes seeded Google registration with a different request email. It
+// creates the saved-email account with a hashed password, records the
+// configured inviter, and assigns invitation usage to that user.
 func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *testing.T) {
 	affiliateRepo := newOAuthPendingFlowAffiliateRepo()
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
@@ -299,6 +334,7 @@ func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *te
 			"step":  identityhttp.OauthPendingChoiceStep,
 			"error": "invitation_required",
 		}).
+		// Seed a future expiry for the following authentication-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -331,6 +367,9 @@ func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *te
 	require.Equal(t, user.ID, *storedInvitation.UsedBy)
 }
 
+// TestCompleteEmailOAuthRegistrationRequiresPassword submits an empty password
+// for seeded GitHub pending registration. Completion returns HTTP 400 and
+// leaves the saved resolved-email account absent from SQLite.
 func TestCompleteEmailOAuthRegistrationRequiresPassword(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -354,6 +393,7 @@ func TestCompleteEmailOAuthRegistrationRequiresPassword(t *testing.T) {
 			"step":  identityhttp.OauthPendingChoiceStep,
 			"error": "registration_completion_required",
 		}).
+		// Seed a future expiry for the following authentication-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)

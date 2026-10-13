@@ -14,7 +14,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestPricingDisplayPreservesDefaultRanges checks that leading, interior, and trailing gaps match the billed prices for the same context size.
+// Manual context intervals can leave gaps whose prices come from the card's
+// default amount. Marketplace quotes and billed amounts are checked at the
+// same left-open, right-closed boundaries, including explicit free prices and
+// ranges whose multiplier has no usable base.
+
+// TestPricingDisplayPreservesDefaultRanges supplies reversed manual intervals
+// with a priced default and optional Free Fast. It checks displayed gap
+// boundaries, the first source interval, Fast ratios, and billed amounts at
+// selected context endpoints.
 func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, freeFast := range []bool{false, true} {
@@ -22,7 +30,9 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 				card := routing.ModelPricingEntry{
 					Models: []string{"custom-ranges"}, BillingMode: routing.BillingModeToken,
 					InputPrice: testPtrFloat64(0.001), FastMultiplier: testPtrFloat64(3),
-					// Reverse order checks that display sorting leaves the configured intervals unchanged.
+					// Supply the later range first so quote sorting can be
+					// checked against the retained source order
+					// after display construction.
 					Intervals: []routing.PricingInterval{
 						{MinTokens: 200, MaxTokens: testPtrInt(300), InputPrice: testPtrFloat64(0.003)},
 						{MinTokens: 100, MaxTokens: testPtrInt(150), InputPrice: testPtrFloat64(0.002)},
@@ -51,10 +61,15 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 					} else {
 						require.Nil(t, display.ContextIntervals[i].MaxTokens)
 					}
+					// Displayed USD-per-token rates use an absolute tolerance
+					// for multiplier rounding.
 					require.InDelta(t, display.ContextIntervals[i].InputPricePerToken*fastRatio, display.ContextIntervals[i].FastInputPricePerToken, 1e-12)
 				}
 				for _, count := range []int{50, 100, 101, 150, 151, 200, 201, 300, 301} {
 					var displayed float64
+					// Use the quote's (min,max] convention for the expected
+					// amount, so exact endpoints exercise the same context
+					// range used by billing.
 					for _, interval := range display.ContextIntervals {
 						if count > interval.MinTokens && (interval.MaxTokens == nil || count <= *interval.MaxTokens) {
 							displayed = interval.InputPricePerToken
@@ -66,6 +81,8 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 						Tokens: pricing.UsageTokens{InputTokens: count}, RateMultiplier: group.RateMultiplier, Resolver: r,
 					})
 					require.NoError(t, err)
+					// The billed USD amount allows rounding of the
+					// displayed rate product.
 					require.InDelta(t, displayed*float64(count), cost.ActualCost, 1e-12, "context=%d", count)
 				}
 			})
@@ -73,7 +90,9 @@ func TestPricingDisplayPreservesDefaultRanges(t *testing.T) {
 	}
 }
 
-// TestPricingDisplayOnlyFlattensCompleteUniformRanges permits flattening when all ranges, including the default, have the same price.
+// TestPricingDisplayOnlyFlattensCompleteUniformRanges gives one interval the
+// same amount as an optional default price. It checks a flattened display when
+// all contexts are priced and retains the interval when the default is absent.
 func TestPricingDisplayOnlyFlattensCompleteUniformRanges(t *testing.T) {
 	rCalculator := billingtestkit.ResolverCalculator()
 	for _, pricedBase := range []bool{true, false} {
@@ -102,7 +121,10 @@ func TestPricingDisplayOnlyFlattensCompleteUniformRanges(t *testing.T) {
 	}
 }
 
-// TestPricingIntervalsDistinguishMissingBaseFromExplicitZero checks that multipliers require base prices and explicit zero prices remain free.
+// TestPricingIntervalsDistinguishMissingBaseFromExplicitZero supplies
+// multiplier intervals with missing, catalog, or explicit zero base amounts.
+// It checks unavailable versus priced display status and the corresponding
+// error or user cost.
 func TestPricingIntervalsDistinguishMissingBaseFromExplicitZero(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, kind := range []string{"missing", "builtin", "zero_base", "zero_interval"} {
@@ -150,6 +172,8 @@ func TestPricingIntervalsDistinguishMissingBaseFromExplicitZero(t *testing.T) {
 					if kind == "builtin" {
 						expected = 50 * 3e-6 * 2
 					}
+					// The interval USD charge allows rounding of token-rate
+					// products.
 					require.InDelta(t, expected, cost.ActualCost, 1e-12)
 				}
 			})
@@ -157,7 +181,10 @@ func TestPricingIntervalsDistinguishMissingBaseFromExplicitZero(t *testing.T) {
 	}
 }
 
-// TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice checks that a multiplier range with no base price remains unavailable.
+// TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice gives one
+// context range only a multiplier and another an absolute price. It checks
+// unavailable billing in the first range and exposes the priced second range
+// in the quote.
 func TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice(t *testing.T) {
 	rCalculator := billingtestkit.ResolverCalculator()
 	r := billingtestkit.SharedPriceResolver(rCalculator, 1, pricing.DefaultBillingSettings(), []routing.ModelPricingEntry{{Models: []string{"custom-partial"}, BillingMode: routing.BillingModeToken, Intervals: []routing.PricingInterval{{MinTokens: 0, MaxTokens: testPtrInt(100), InputMultiplier: testPtrFloat64(2)}, {MinTokens: 100, InputPrice: testPtrFloat64(0.003)}}}})
@@ -170,6 +197,7 @@ func TestPricingMissingMultiplierRangeDoesNotBorrowOtherIntervalPrice(t *testing
 			Ctx: context.Background(), Model: "custom-partial", GroupID: &group.ID,
 			Tokens: pricing.UsageTokens{InputTokens: count}, RateMultiplier: 1, Resolver: r,
 		})
+		// The first context range has no base price to multiply.
 		if count <= 100 {
 			require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
 		} else {

@@ -11,6 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Spark shadows retain their parent-provider identity and quota dimension when
+// persisted and loaded. Transaction-owned PostgreSQL fixtures check that
+// representation and that parent-based listing returns the requested shadow
+// among other parents and ordinary providers.
+
+// TestProviderRepoSparkShadowRoundTrip stores a parent and a Spark shadow in a
+// PostgreSQL transaction. Reading the shadow returns the same parent-provider
+// ID and the Spark quota dimension.
 func TestProviderRepoSparkShadowRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -49,6 +57,9 @@ func TestProviderRepoSparkShadowRoundTrip(t *testing.T) {
 	}
 }
 
+// TestListShadowsByParent creates two parent-shadow pairs and an ordinary
+// provider in one transaction. Querying the first parent returns exactly its
+// Spark shadow with the expected ID and quota dimension.
 func TestListShadowsByParent(t *testing.T) {
 	// uq_providers_spark_shadow_per_parent permits one Spark shadow per parent.
 	// Use two parents and a regular provider to check that the query returns the requested parent's shadow.

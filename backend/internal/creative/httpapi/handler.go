@@ -19,54 +19,104 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Creative HTTP requests use the authenticated user and browser workspace as
+// separate task-access inputs. Model and upload-capability reads need the
+// user, while task creation, history, content, and acknowledgment also require
+// a normalized workspace UUID. An optional activity callback keeps accepted
+// requests registered until their response finishes.
+//
+// Multipart parsing bounds the request body and cumulative file bytes before
+// submission validation. Uploaded sources retain arrival order and MIME
+// labels, text operations are normalized, and client output-format fields are
+// rejected. History responses place task arrays directly in the common
+// envelope; active pagination encodes a decimal offset in base64 rather than
+// capturing a stable task snapshot. Output content uses private no-store
+// headers instead of the JSON envelope.
+
 const (
-	// creativeMaxUploadPartSize is the default file-part limit; reading limit+1 detects oversize files.
+	// creativeMaxUploadPartSize supplies the parser file-part default when no
+	// positive service limit is available; the additional read byte detects overflow.
 	creativeMaxUploadPartSize = 40 << 20
 
-	// Allow multipart fields and boundaries in addition to the image input byte limit.
+	// creativeMultipartOverheadBytes adds room for text fields and boundaries to
+	// the request-body cap while file bytes retain their separate cumulative limit.
 	creativeMultipartOverheadBytes = 1 << 20
 )
 
-// CreativeHandler handles user-facing creative requests.
+// CreativeHandler serves authenticated creative model, task, and output
+// operations through HTTP.
 type CreativeHandler struct {
-	enter   func() (func(), error)
-	service CreativeUseCases
+	// enter optionally registers this request before authentication and returns
+	// a nonnil completion callback, which the handler defers until response exit.
+	enter   func() (func(), error) // optional request activity admission
+	service CreativeUseCases       // bound creative use case service
 }
 
-// creativeCreateRunRequest contains parsed multipart run inputs.
+// creativeCreateRunRequest retains parsed creative fields and uploaded image
+// buffers for submission.
 type creativeCreateRunRequest struct {
-	GroupID       int64
-	Model         string
-	Operation     string
-	Prompt        string
-	SourceImages  []creative.CreativeInputImage
-	Mask          *creative.CreativeInputImage
-	ImageSize     string
-	AspectRatio   string
-	Quality       string
-	Background    string
-	ThinkingLevel string
+	GroupID   int64  // requested target group identifier
+	Model     string // requested public model name
+	Operation string // normalized creative operation name
+	Prompt    string // trimmed multipart prompt text
+	// source uploads in arrival order
+	SourceImages []creative.CreativeInputImage
+	// Mask keeps the last nonempty mask upload, while later empty parts leave
+	// that value present. Submission validation checks its operation and size.
+	Mask          *creative.CreativeInputImage // last nonempty mask upload
+	ImageSize     string                       // requested image size tier
+	AspectRatio   string                       // requested image aspect ratio
+	Quality       string                       // requested image quality option
+	Background    string                       // normalized background option name
+	ThinkingLevel string                       // normalized thinking level name
 }
 
 // CreativeUseCases supplies run operations to the HTTP handler.
 type CreativeUseCases interface {
+	// ListModels returns user-bindable creative model entries for the HTTP
+	// directory response. A disabled feature returns an empty list through the
+	// service, while permission and storage errors remain errors.
 	ListModels(context.Context, int64) (*creative.CreativeModelsResponse, error)
+	// GetCapabilities returns creative upload limits and accepted image MIME
+	// types for clients.
 	GetCapabilities(context.Context) *creative.CreativeCapabilitiesResponse
+	// MaxAssetBytes returns the upload limit in bytes for one input file.
 	MaxAssetBytes() int64
+	// MaxTotalInputBytes returns the combined source and mask input limit in
+	// bytes.
 	MaxTotalInputBytes() int64
+	// CreateRun validates and provisions a task within the supplied
+	// user/workspace scope. Its idempotency key reuses an existing matching
+	// request or returns a fingerprint conflict for a changed body.
 	CreateRun(context.Context, creative.CreativeRunScope, creative.CreateCreativeRunParamsPublic, string) (*creative.CreativeRunPublic, error)
+	// ListRuns returns task and output metadata within the supplied
+	// user/workspace scope. The filter selects history or active states and
+	// pagination, while the response reports possible further rows.
 	ListRuns(context.Context, creative.CreativeRunScope, creative.CreativeRunFilter) (*creative.CreativeListRunsResponse, error)
+	// GetRun returns task details after the supplied scope passes ownership
+	// checks. A task outside that user or workspace is treated as missing by the
+	// service.
 	GetRun(context.Context, creative.CreativeRunScope, string) (*creative.CreativeRunPublic, error)
+	// GetOutputContent returns temporary image bytes and MIME after scope and
+	// state checks. Missing or expired delivery remains a typed service error for
+	// the HTTP layer to map.
 	GetOutputContent(context.Context, creative.CreativeRunScope, string, int) (*creative.CreativeOutputContent, error)
+	// AckOutput records client receipt within the supplied user/workspace scope
+	// before transient deletion. Repeat receipt succeeds under service rules, and
+	// successful acknowledgment returns no image body.
 	AckOutput(context.Context, creative.CreativeRunScope, string, int) error
 }
 
-// NewCreativeHandler creates a handler with the supplied run operations.
+// NewCreativeHandler binds required creative operations for user HTTP
+// requests. The returned handler has no activity gate until BindActivity is
+// called, and callers provide the service before serving requests.
 func NewCreativeHandler(service CreativeUseCases) *CreativeHandler {
 	return &CreativeHandler{service: service}
 }
 
-// creativeRunScopeFromRequest validates the browser workspace and binds it to the authenticated user.
+// creativeRunScopeFromRequest normalizes the browser workspace header and
+// pairs it with the supplied authenticated user ID. Missing or invalid UUID
+// input returns the corresponding workspace error before task operations run.
 func creativeRunScopeFromRequest(c *gin.Context, userID int64) (creative.CreativeRunScope, error) {
 	workspaceID, err := creative.NormalizeCreativeWorkspaceID(c.GetHeader(creative.CreativeWorkspaceHeader))
 	if err != nil {
@@ -75,8 +125,9 @@ func creativeRunScopeFromRequest(c *gin.Context, userID int64) (creative.Creativ
 	return creative.CreativeRunScope{UserID: userID, WorkspaceID: workspaceID}, nil
 }
 
-// ListModels returns group and image-model combinations available to the current user.
-// GET /api/v1/creative/models
+// ListModels returns the model array in the common success envelope for the
+// authenticated user. An installed activity gate can reject stopping requests
+// before authentication, and service errors retain their HTTP mapping.
 func (h *CreativeHandler) ListModels(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -101,8 +152,10 @@ func (h *CreativeHandler) ListModels(c *gin.Context) {
 	response.Success(c, got.Data)
 }
 
-// ListCapabilities returns creative input limits and accepted image MIME types.
-// GET /api/v1/creative/capabilities
+// ListCapabilities returns server input limits after requiring an
+// authenticated user. The route needs no workspace header, and an installed
+// activity gate covers the response until the deferred completion callback
+// runs.
 func (h *CreativeHandler) ListCapabilities(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -120,8 +173,12 @@ func (h *CreativeHandler) ListCapabilities(c *gin.Context) {
 	response.Success(c, h.service.GetCapabilities(c.Request.Context()))
 }
 
-// CreateRun parses multipart/form-data and creates a creative run.
-// POST /api/v1/creative/runs
+// CreateRun bounds and parses multipart uploads, then submits normalized
+// fields with the request idempotency key. It requires an authenticated user
+// and valid workspace before reading the upload body. Service limits override
+// parser defaults, upload-size errors retain their specific HTTP mapping, and
+// other parser failures become CREATIVE_INVALID_PARAMS. Successful creation
+// returns the public run in the common envelope.
 func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -150,7 +207,9 @@ func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	if h.service != nil && h.service.MaxTotalInputBytes() > 0 {
 		totalInputLimit = h.service.MaxTotalInputBytes()
 	}
-	// Limit the body before parsing so uploaded files cannot accumulate beyond the service input limit.
+	// Cap the entire body before multipart iteration so unread file and text
+	// bytes also share a finite request budget, with separate room for form
+	// boundaries beyond the cumulative image-byte limit.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, totalInputLimit+creativeMultipartOverheadBytes)
 	req, err := parseCreativeCreateRunMultipart(c, partLimit, totalInputLimit)
 	if err != nil {
@@ -181,10 +240,17 @@ func (h *CreativeHandler) CreateRun(c *gin.Context) {
 	response.Success(c, got)
 }
 
-// parseCreativeCreateRunMultipart parses run fields and file parts under byte limits.
-// It accepts model, operation, prompt, size, aspect ratio, quality, background,
-// thinking level, and group ID fields.
-// source_images accepts multiple uploads; mask supplies a single image.
+// parseCreativeCreateRunMultipart assembles creative input fields while
+// bounding file reads against per-part and cumulative limits. It requires a
+// parseable Content-Type with a nonblank boundary and defaults nonpositive
+// total limits to sixty-four MiB.
+//
+// File bytes count toward the total even when their field is ignored. Source
+// aliases preserve arrival order, later nonempty masks replace earlier masks,
+// and other recognized text fields keep the last trimmed value. File reads
+// include one extra byte to distinguish limit overflow; text reads retain at
+// most one MiB without a separate overflow error. Group ID is required, while
+// domain validation owns prompt, operation, MIME, and model rules.
 func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit int64) (*creativeCreateRunRequest, error) {
 	contentType := c.GetHeader("Content-Type")
 	_, params, err := mime.ParseMediaType(contentType)
@@ -201,6 +267,9 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 	}
 	var totalFileBytes int64
 	reader := multipart.NewReader(c.Request.Body, boundary)
+	// Every acquired part is closed after its read or before a guard returns.
+	// Closing consumes any unread remainder; close errors are discarded so the
+	// parser reports its read, limit, or field-validation result.
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -225,6 +294,11 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 				return nil, creative.ErrCreativeInputTooLarge
 			}
 			readLimit := min(remaining, partLimit)
+			// One extra byte distinguishes overflow from an exactly
+			// full file part.
+			// When cumulative remaining space is smaller, overflow
+			// belongs to the
+			// total-input error rather than the individual asset-size error.
 			data, readErr := io.ReadAll(io.LimitReader(part, readLimit+1))
 			_ = part.Close()
 			if readErr != nil {
@@ -241,6 +315,11 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 			}
 			totalFileBytes += int64(len(data))
 			partMIME := normalizeCreativeUploadMime(strings.TrimSpace(part.Header.Get("Content-Type")), data)
+			// Source aliases append to one ordered collection, so
+			// plain and bracketed
+			// field names preserve the same reference ordering.
+			// Nonempty mask uploads
+			// instead replace the prior mask used by submission validation.
 			switch {
 			case name == "mask":
 				if len(data) > 0 {
@@ -253,6 +332,9 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 			}
 			continue
 		}
+		// Text fields retain this bounded prefix without an overflow
+		// error; closing
+		// the part consumes its remainder before the next field is interpreted.
 		data, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 		_ = part.Close()
 		if readErr != nil {
@@ -279,7 +361,12 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 		case "quality":
 			req.Quality = value
 		case "output_format", "output_compression", "response_mime_type":
-			// Output format is determined by the provider adapter; client format options are rejected.
+			// Provider results determine saved MIME and format.
+			// Reject these client format
+			// controls so a submitted option cannot claim a
+			// different persisted output
+			// representation from the image bytes eventually
+			// returned by the adapter.
 			return nil, creative.ErrCreativeInvalidParams
 		case "background":
 			req.Background = strings.ToLower(value)
@@ -293,7 +380,9 @@ func parseCreativeCreateRunMultipart(c *gin.Context, partLimit, totalInputLimit 
 	return req, nil
 }
 
-// normalizeCreativeUploadMime normalizes known image MIME types, then tries byte signatures.
+// normalizeCreativeUploadMime returns a normalized recognized header MIME or a
+// sniffed label for known signatures. An unrecognized signature retains the
+// lowercased header, leaving definitive MIME checks to submission validation.
 func normalizeCreativeUploadMime(headerMIME string, data []byte) string {
 	switch strings.ToLower(strings.TrimSpace(headerMIME)) {
 	case "image/png":
@@ -303,6 +392,9 @@ func normalizeCreativeUploadMime(headerMIME string, data []byte) string {
 	case "image/webp":
 		return "image/webp"
 	}
+	// Recognized header labels returned above take precedence over byte signatures.
+	// Probe unrecognized headers here so uploads with missing or unusable labels
+	// can still reach domain validation with a supported image MIME.
 	if len(data) >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G' {
 		return "image/png"
 	}
@@ -315,8 +407,9 @@ func normalizeCreativeUploadMime(headerMIME string, data []byte) string {
 	return strings.ToLower(strings.TrimSpace(headerMIME))
 }
 
-// ListRuns returns runs for the authenticated user and browser workspace.
-// GET /api/v1/creative/runs
+// ListRuns returns the authenticated workspace history array in the response
+// envelope. Limit parsing can yield zero for invalid text, which the service
+// normalizes; history starts at offset zero.
 func (h *CreativeHandler) ListRuns(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -351,8 +444,15 @@ func (h *CreativeHandler) ListRuns(c *gin.Context) {
 	response.Success(c, got.Data)
 }
 
-// ListActiveRuns pages runs awaiting a deliverable terminal state using an opaque cursor.
-// GET /api/v1/creative/runs/active?limit=100&cursor=<opaque>
+// ListActiveRuns returns an active task page using a base64-encoded decimal
+// offset cursor. Authenticated workspace scope is required, invalid cursors
+// fail with CREATIVE_INVALID_PARAMS, and limits outside one to one hundred use
+// one hundred.
+//
+// The service active filter determines included states. HasMore produces the
+// next cursor from the current offset plus returned row count, so this
+// pagination follows changing offset-based lists rather than a frozen result
+// set. The response includes items, next_cursor, and has_more in one envelope.
 func (h *CreativeHandler) ListActiveRuns(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -378,6 +478,9 @@ func (h *CreativeHandler) ListActiveRuns(c *gin.Context) {
 		limit = 100
 	}
 	offset := 0
+	// The cursor encodes the next offset as URL-safe unpadded base64. Decode
+	// and validate it before listing so malformed or negative positions cannot
+	// enter the repository pagination filter.
 	if rawCursor := strings.TrimSpace(c.Query("cursor")); rawCursor != "" {
 		decoded, decodeErr := base64.RawURLEncoding.DecodeString(rawCursor)
 		if decodeErr != nil {
@@ -410,8 +513,9 @@ func (h *CreativeHandler) ListActiveRuns(c *gin.Context) {
 	})
 }
 
-// GetRun returns details for a run in the authenticated browser workspace.
-// GET /api/v1/creative/runs/:id
+// GetRun returns task details for the authenticated browser workspace using
+// the route identifier. The scope helper rejects invalid workspace headers
+// before the service applies resource ownership checks.
 func (h *CreativeHandler) GetRun(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -440,8 +544,10 @@ func (h *CreativeHandler) GetRun(c *gin.Context) {
 	response.Success(c, got)
 }
 
-// GetOutputContent returns transient image bytes or an expiry error mapped to HTTP 410.
-// GET /api/v1/creative/runs/:id/outputs/:index/content
+// GetOutputContent serves transient image bytes for the authenticated
+// workspace and nonnegative output index. Service errors use common HTTP
+// mapping; successful binary content carries private no-store and nosniff
+// headers.
 func (h *CreativeHandler) GetOutputContent(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -477,8 +583,9 @@ func (h *CreativeHandler) GetOutputContent(c *gin.Context) {
 	c.Data(http.StatusOK, content.ContentType, content.Content)
 }
 
-// AckOutput records client receipt and requests deletion of the transient output.
-// POST /api/v1/creative/runs/:id/outputs/:index/ack
+// AckOutput acknowledges the authenticated workspace output named by the route
+// and nonnegative index. The service records receipt and requests transient
+// deletion, and the handler returns an acked success object.
 func (h *CreativeHandler) AckOutput(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -511,5 +618,8 @@ func (h *CreativeHandler) AckOutput(c *gin.Context) {
 	response.Success(c, gin.H{"acked": true})
 }
 
-// BindActivity installs the shutdown admission check before serving requests; activity covers the response.
+// BindActivity installs the optional request activity admission callback
+// before serving requests. A successful callback returns a nonnil completion
+// function, and every handler defers that function until its response path
+// exits.
 func (h *CreativeHandler) BindActivity(enter func() (func(), error)) { h.enter = enter }

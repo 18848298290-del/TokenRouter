@@ -6,12 +6,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Recorded max remains max across the supplied model families and
+// qualifications. The inputs model an effort already sent upstream; the test
+// checks reporting consistency, while supported request values belong to the
+// separate capability resolver.
+
+// TestNormalizeOpenAIReasoningEffortForGPT56 records max for qualified, dated,
+// and cross-family model names. Each supplied case must keep max because this
+// recording helper ignores model capability inference.
 func TestNormalizeOpenAIReasoningEffortForGPT56(t *testing.T) {
 	tests := []struct {
-		name  string
-		raw   string
-		model string
-		want  string
+		name  string // subtest case display name
+		raw   string // recorded upstream effort value
+		model string // model ignored during recording
+		want  string // expected normalized recorded value
 	}{
 		{name: "Sol 保留 max", raw: "max", model: "gpt-5.6-sol", want: "max"},
 		{name: "供应商限定型号保留显式 max", raw: "max", model: "openai/gpt-5.6-terra", want: "max"},

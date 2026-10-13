@@ -24,32 +24,61 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// groupAdminFixture records calls and supplies data for group HTTP tests.
+// groupAdminFixture supplies group records and observes group-detail reads
+// for HTTP tests.
 type groupAdminFixture struct {
-	GroupAdministration
-	groups        []routing.Group
-	getGroupCalls int
+	// GroupAdministration provides promoted methods that this fixture does not
+	// implement; the embedded interface remains nil, so those methods cannot be
+	// called.
+	GroupAdministration // unused embedded administration methods
+	// groups is returned directly by fixture list methods; readers share its
+	// backing storage and keep it unchanged during these endpoint tests.
+	groups        []routing.Group // shared fixture group records
+	getGroupCalls int             // observed group-detail read count
 }
 
+// duplicateGroupAdminServiceStub records duplication identity and exposes a
+// recoverable fixture copy.
 type duplicateGroupAdminServiceStub struct {
-	GroupAdministration
-	group        *routing.Group
-	calls        int
-	recoverCalls int
-	groupID      int64
-	actorScope   string
-	operationKey string
-	recoverScope string
-	recoverKey   string
-	created      bool
+	// GroupAdministration provides promoted methods that this fixture does not
+	// implement; the embedded interface remains nil, so those methods cannot be
+	// called.
+	GroupAdministration // unused embedded administration methods
+	// group retains the supplied fixture pointer. DuplicateGroup and successful
+	// RecoverDuplicateGroup calls return that same pointer, so fixture edits
+	// remain visible to later calls.
+	group        *routing.Group // returned fixture duplicate pointer
+	calls        int            // observed duplication execution count
+	recoverCalls int            // observed duplication recovery count
+	// groupID, actorScope, and operationKey record the latest DuplicateGroup
+	// invocation. Tests compare this identity with the route, authenticated
+	// administrator, and supplied request key.
+	groupID      int64  // last duplication source ID
+	actorScope   string // last duplication actor scope
+	operationKey string // last duplication operation key
+	// recoverScope and recoverKey record the latest recovery identity. Recovery
+	// assertions compare these values with the same administrator and request
+	// key used for the original duplication.
+	recoverScope string // last recovery actor scope
+	recoverKey   string // last recovery operation key
+	// created becomes true when DuplicateGroup executes; RecoverDuplicateGroup
+	// returns the fixture copy only after that state records creation.
+	created bool // fixture copy availability flag
 }
 
-// failOnceMarkSucceededRepo fails the first success-response write to exercise idempotent recovery.
+// failOnceMarkSucceededRepo injects one idempotency completion failure after
+// the duplication callback.
 type failOnceMarkSucceededRepo struct {
-	*idempotencytest.MemoryStore
-	failNext bool
+	*idempotencytest.MemoryStore // underlying idempotency fixture store
+	// failNext is consumed before returning the injected success-marker error,
+	// so later MarkSucceeded calls delegate to the embedded memory store.
+	failNext bool // pending completion failure injection
 }
 
+// TestDuplicateGroupHandlerReturnsAdminDTOWithoutOperationMetadata duplicates
+// a fixture group containing an internal duplication identifier. It checks
+// copied product and provider fields appear in the successful administrator
+// response, while duplicate_operation_id and its stored value are omitted.
 func TestDuplicateGroupHandlerReturnsAdminDTOWithoutOperationMetadata(t *testing.T) {
 	svc := &duplicateGroupAdminServiceStub{group: duplicateGroupHandlerFixture()}
 	router := setupDuplicateGroupRouter(t, svc)
@@ -67,6 +96,9 @@ func TestDuplicateGroupHandlerReturnsAdminDTOWithoutOperationMetadata(t *testing
 	require.NotContains(t, recorder.Body.String(), "internal-operation-must-not-leak")
 }
 
+// TestDuplicateGroupHandlerRejectsInvalidID sends malformed, zero, and
+// negative source group IDs to duplication. Each request returns a bad
+// request before the fixture's duplication method is invoked.
 func TestDuplicateGroupHandlerRejectsInvalidID(t *testing.T) {
 	for _, id := range []string{"not-a-number", "0", "-1"} {
 		t.Run(id, func(t *testing.T) {
@@ -83,6 +115,10 @@ func TestDuplicateGroupHandlerRejectsInvalidID(t *testing.T) {
 	}
 }
 
+// TestDuplicateGroupHandlerReplaysSameIdempotencyKey sends the same
+// authenticated duplication request twice through a memory coordinator. It
+// checks one service invocation, propagated source/actor/key identity, and
+// the replay header on the second response.
 func TestDuplicateGroupHandlerReplaysSameIdempotencyKey(t *testing.T) {
 	svc := &duplicateGroupAdminServiceStub{group: duplicateGroupHandlerFixture()}
 	coordinator := idempotency.NewIdempotencyCoordinator(idempotencytest.NewMemoryStore(), idempotency.DefaultIdempotencyConfig())
@@ -108,6 +144,10 @@ func TestDuplicateGroupHandlerReplaysSameIdempotencyKey(t *testing.T) {
 	require.Equal(t, "true", second.Header().Get("X-Idempotency-Replayed"))
 }
 
+// TestDuplicateGroupHandlerRecoversAfterMarkSucceededFailure fails the first
+// completion marker after the copy is created. Two requests return recovered
+// success with the same actor/key, while the duplication side effect runs
+// once and recovery runs for each response.
 func TestDuplicateGroupHandlerRecoversAfterMarkSucceededFailure(t *testing.T) {
 	svc := &duplicateGroupAdminServiceStub{group: duplicateGroupHandlerFixture()}
 	repo := &failOnceMarkSucceededRepo{MemoryStore: idempotencytest.NewMemoryStore(), failNext: true}
@@ -135,6 +175,10 @@ func TestDuplicateGroupHandlerRecoversAfterMarkSucceededFailure(t *testing.T) {
 	require.Equal(t, "duplicate-group-42-recovery", svc.recoverKey)
 }
 
+// TestGroupHandlerEndpoints serves registered group list, detail, creation,
+// update, deletion, model-choice, and key queries through fixture services.
+// It checks successful responses, visible new-group model suggestions, and a
+// 404 for the removed group stats path.
 func TestGroupHandlerEndpoints(t *testing.T) {
 	router, _ := setupGroupAdminContractRouter()
 
@@ -159,6 +203,9 @@ func TestGroupHandlerEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "gpt-5.5")
 
+	// The create and update payloads below contain fixed strings. Their JSON
+	// shapes need no unsupported-value recovery, so setup uses Marshal's bytes
+	// directly while exercising the HTTP routes.
 	body, _ := json.Marshal(map[string]any{"name": "new"})
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/groups", bytes.NewReader(body))
@@ -189,7 +236,9 @@ func TestGroupHandlerEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestGroupRequestsDecodeOpenAIFast distinguishes true, false, and omitted Fast policy inputs.
+// TestGroupRequestsDecodeOpenAIFast decodes true creation, false update, and
+// omitted update Fast inputs. It checks the update pointer keeps a supplied
+// false distinct from omission.
 func TestGroupRequestsDecodeOpenAIFast(t *testing.T) {
 	var createReq CreateGroupRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"fast","force_openai_fast":true}`), &createReq))
@@ -205,6 +254,10 @@ func TestGroupRequestsDecodeOpenAIFast(t *testing.T) {
 	require.Nil(t, omitted.ForceOpenAIFast)
 }
 
+// TestGroupManagementRejectsRetiredFields binds creation and update requests
+// containing retired platform or default-group fields. It checks strict
+// rejection and accepts unified protocol fields with an explicit empty
+// conversion-target array.
 func TestGroupManagementRejectsRetiredFields(t *testing.T) {
 	for _, body := range []string{`{"name":"g","platform":"openai"}`, `{"name":"g","is_default":false}`} {
 		require.Error(t, bindGroupPlatformJSON(t, &CreateGroupRequest{}, body))
@@ -216,7 +269,10 @@ func TestGroupManagementRejectsRetiredFields(t *testing.T) {
 	require.NotNil(t, req.ProtocolFallbacks["anthropic_messages"])
 }
 
-// TestGroupManagementRejectsRetiredMessagesMapping rejects protocol-specific mappings and accepts group routing policy.
+// TestGroupManagementRejectsRetiredMessagesMapping binds an obsolete
+// Messages-specific mapping in both group request shapes. It checks rejection
+// and verifies that the supported group routing policy retains the requested
+// model mapping.
 func TestGroupManagementRejectsRetiredMessagesMapping(t *testing.T) {
 	body := `{"messages_dispatch_model_config":{"exact_model_mappings":{"claude-sonnet-4-6":"target"}}}`
 	require.Error(t, bindGroupPlatformJSON(t, &CreateGroupRequest{}, body))
@@ -226,6 +282,10 @@ func TestGroupManagementRejectsRetiredMessagesMapping(t *testing.T) {
 	require.Equal(t, "target", req.RoutingPolicy.ModelMapping["claude-sonnet-4-6"])
 }
 
+// TestUpdateGroupRequestReasoningEffortMappingsTriState decodes omitted,
+// empty, populated, and model-scoped mapping inputs. It checks pointer
+// presence, list contents, and model condition fields needed to distinguish
+// retention, clearing, and replacement.
 func TestUpdateGroupRequestReasoningEffortMappingsTriState(t *testing.T) {
 	t.Run("omitted means unchanged", func(t *testing.T) {
 		var req UpdateGroupRequest
@@ -261,7 +321,9 @@ func TestUpdateGroupRequestReasoningEffortMappingsTriState(t *testing.T) {
 	})
 }
 
-// TestGroupRequestReasoningEffortOverLimitAction checks decoding of the action above the effort ceiling.
+// TestGroupRequestReasoningEffortOverLimitAction decodes a deny action in an
+// update request. It checks the optional action pointer exists and retains
+// the supplied value for group administration.
 func TestGroupRequestReasoningEffortOverLimitAction(t *testing.T) {
 	var req UpdateGroupRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"max_reasoning_effort_over_limit":"deny"}`), &req))
@@ -269,6 +331,10 @@ func TestGroupRequestReasoningEffortOverLimitAction(t *testing.T) {
 	require.Equal(t, "deny", *req.MaxReasoningEffortOverLimit)
 }
 
+// TestUpdateGroupRequestAdvancedSchedulerOverridesTriState decodes omission,
+// an empty object, and populated overrides with false and zero. It checks
+// presence, cleared fields, and retained explicit scheduler values before
+// administration interprets the patch.
 func TestUpdateGroupRequestAdvancedSchedulerOverridesTriState(t *testing.T) {
 	t.Run("omitted means unchanged", func(t *testing.T) {
 		var req UpdateGroupRequest
@@ -300,6 +366,9 @@ func TestUpdateGroupRequestAdvancedSchedulerOverridesTriState(t *testing.T) {
 	})
 }
 
+// setupGroupAdminContractRouter registers group routes against fixed group
+// and key readers. It returns the router and shared group fixture so endpoint
+// tests can serve requests and inspect observed detail reads.
 func setupGroupAdminContractRouter() (*gin.Engine, *groupAdminFixture) {
 	now := time.Now().UTC()
 	source := &groupAdminFixture{groups: []routing.Group{{ID: 2, Name: "group", Status: billing.StatusActive, CreatedAt: now, UpdatedAt: now}}}
@@ -312,28 +381,45 @@ func setupGroupAdminContractRouter() (*gin.Engine, *groupAdminFixture) {
 	return router, source
 }
 
+// ListGroups returns the fixture's shared groups and their total count. It
+// ignores filters and pagination, allowing endpoint registration tests to
+// exercise HTTP mapping with one fixed list.
 func (s *groupAdminFixture) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]routing.Group, int64, error) {
 	return s.groups, int64(len(s.groups)), nil
 }
 
+// GetAllGroups returns the fixture's shared records for active-group
+// selection. It applies no status filtering, so this fixture tests endpoint
+// forwarding and serialization rather than repository eligibility.
 func (s *groupAdminFixture) GetAllGroups(ctx context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
+// GetAllGroupsByPlatform returns the fixture's shared group list for the
+// supplied query. The platform argument is ignored; the helper applies no
+// platform filtering to the retained records.
 func (s *groupAdminFixture) GetAllGroupsByPlatform(ctx context.Context, platform string) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
+// GetAllGroupsIncludingInactive returns all retained fixture records through
+// the administrative query. It shares the same storage as ordinary fixture
+// list reads and performs no independent status selection.
 func (s *groupAdminFixture) GetAllGroupsIncludingInactive(ctx context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
+// GetGroup counts a detail read and creates an active fixture group with the
+// requested ID.
 func (s *groupAdminFixture) GetGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	s.getGroupCalls++
 	group := routing.Group{ID: id, Name: "group", Status: billing.StatusActive}
 	return &group, nil
 }
 
+// GetGroupModelsListCandidates supplies two suggestions when the source ID is
+// zero. Other IDs receive one Claude model, and platform is ignored so tests
+// isolate the handler's new-group query path.
 func (s *groupAdminFixture) GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error) {
 	if id == 0 {
 		return []string{"gpt-5.5", "gpt-5.4"}, nil
@@ -341,29 +427,44 @@ func (s *groupAdminFixture) GetGroupModelsListCandidates(ctx context.Context, id
 	return []string{"claude-sonnet-4-6"}, nil
 }
 
+// CreateGroup returns an active fixture row using the submitted business
+// name.
 func (s *groupAdminFixture) CreateGroup(ctx context.Context, input *routing.CreateGroupInput) (*routing.Group, error) {
 	group := routing.Group{ID: 200, Name: input.Name, Status: billing.StatusActive}
 	return &group, nil
 }
 
+// DuplicateGroup returns a disabled fixture copy for group endpoint tests.
 func (s *groupAdminFixture) DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*routing.Group, error) {
 	group := routing.Group{ID: 201, Name: "group (Copy)", Status: "inactive"}
 	return &group, nil
 }
 
+// RecoverDuplicateGroup returns no committed fixture copy for the endpoint
+// stub. The nil result leaves recovery unsuccessful, while dedicated
+// duplication tests use duplicateGroupAdminServiceStub to provide a
+// recoverable row.
 func (s *groupAdminFixture) RecoverDuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*routing.Group, error) {
 	return nil, nil
 }
 
+// UpdateGroup returns an active fixture row with the submitted name and
+// requested ID.
 func (s *groupAdminFixture) UpdateGroup(ctx context.Context, id int64, input *routing.UpdateGroupInput) (*routing.Group, error) {
 	group := routing.Group{ID: id, Name: input.Name, Status: billing.StatusActive}
 	return &group, nil
 }
 
+// DeleteGroup acknowledges fixture deletion so HTTP tests can inspect the
+// response.
 func (s *groupAdminFixture) DeleteGroup(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DuplicateGroup records the supplied source, actor, and request key, marks
+// the fixture created, and returns its group pointer. Repeated direct calls
+// increment execution count so retry tests can detect an extra create
+// invocation.
 func (s *duplicateGroupAdminServiceStub) DuplicateGroup(_ context.Context, groupID int64, actorScope, operationKey string) (*routing.Group, error) {
 	s.calls++
 	s.groupID = groupID
@@ -373,6 +474,10 @@ func (s *duplicateGroupAdminServiceStub) DuplicateGroup(_ context.Context, group
 	return s.group, nil
 }
 
+// RecoverDuplicateGroup records recovery actor/key and increments its
+// observation count. It returns nil before creation and the shared fixture
+// group afterward, modeling the committed-copy lookup used after idempotency
+// failure.
 func (s *duplicateGroupAdminServiceStub) RecoverDuplicateGroup(_ context.Context, _ int64, actorScope, operationKey string) (*routing.Group, error) {
 	s.recoverCalls++
 	s.recoverScope = actorScope
@@ -383,6 +488,9 @@ func (s *duplicateGroupAdminServiceStub) RecoverDuplicateGroup(_ context.Context
 	return s.group, nil
 }
 
+// setupDuplicateGroupRouter registers duplication with administrator 77 in
+// the request context. When supplied, the first coordinator is bound before
+// requests; omission exercises the executor's direct-callback fixture path.
 func setupDuplicateGroupRouter(t *testing.T, svc GroupAdministration, coordinators ...*idempotency.IdempotencyCoordinator) *gin.Engine {
 	t.Helper()
 
@@ -399,6 +507,8 @@ func setupDuplicateGroupRouter(t *testing.T, svc GroupAdministration, coordinato
 	return router
 }
 
+// duplicateGroupHandlerFixture creates a disabled copied group with provider
+// counts and internal operation metadata for response omission assertions.
 func duplicateGroupHandlerFixture() *routing.Group {
 	return &routing.Group{
 		ID:   43,
@@ -413,7 +523,14 @@ func duplicateGroupHandlerFixture() *routing.Group {
 	}
 }
 
+// MarkSucceeded returns one injected completion-storage error before
+// delegating later writes to MemoryStore. The failNext flag is consumed on
+// that first call, allowing the test to distinguish an executed copy from
+// missing completion state.
 func (r *failOnceMarkSucceededRepo) MarkSucceeded(ctx context.Context, id int64, responseStatus int, responseBody string, expiresAt time.Time) error {
+	// Fail completion persistence after the duplication callback has produced
+	// its copy, creating the ambiguous state that HTTP recovery is expected to
+	// resolve.
 	if r.failNext {
 		r.failNext = false
 		return errors.New("mark succeeded failed")
@@ -421,7 +538,9 @@ func (r *failOnceMarkSucceededRepo) MarkSucceeded(ctx context.Context, id int64,
 	return r.MemoryStore.MarkSucceeded(ctx, id, responseStatus, responseBody, expiresAt)
 }
 
-// bindGroupPlatformJSON binds an admin request and rejects unknown fields.
+// bindGroupPlatformJSON binds body into the supplied target using strict HTTP
+// JSON decoding. It creates a JSON request and returns the binding error so
+// tests can inspect rejected fields without serving a complete route.
 func bindGroupPlatformJSON(t *testing.T, target any, body string) error {
 	t.Helper()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

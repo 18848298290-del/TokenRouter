@@ -13,8 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// UpdateDefaultPricing reloads the catalog for an administrative update request. Ordinary queries read the
-// published catalog.
+// Administrator catalog refreshes invoke the configured updater, while price
+// queries read the published catalog. Paged queries use a prepared catalog
+// index when available; snapshot-backed queries apply HTTP filters
+// and expose catalog status alongside the selected rows.
+
+// UpdateDefaultPricing requests a catalog reload through the configured
+// updater. A missing updater returns 503, an update error returns 502, and
+// success reports updated=true through the standard response envelope.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#gateway_default_pricing
 func (h *PricingHandler) UpdateDefaultPricing(c *gin.Context) {
 	if h.catalog == nil || h.catalog.Update == nil {
@@ -29,11 +35,17 @@ func (h *PricingHandler) UpdateDefaultPricing(c *gin.Context) {
 	httpx.Success(c, gin.H{"updated": true})
 }
 
-// ListDefaultPricing queries default prices already loaded in gateway memory.
+// ListDefaultPricing returns default catalog prices filtered by model search,
+// platform, and billing mode. It uses the optional paged query callback or
+// reads one snapshot, then returns the match count, catalog status, and
+// platform choices with the selected page. Snapshot results sort by model and
+// then platform.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#gateway_default_pricing
 func (h *PricingHandler) ListDefaultPricing(c *gin.Context) {
 	if h.catalog.Query != nil {
 		page, size := httpx.ParsePagination(c)
+		// Clamp oversized page offsets to the largest int so multiplication cannot
+		// wrap into a different catalog page.
 		offset := int(^uint(0) >> 1)
 		if page-1 <= offset/size {
 			offset = (page - 1) * size
@@ -42,6 +54,8 @@ func (h *PricingHandler) ListDefaultPricing(c *gin.Context) {
 		httpx.Success(c, gin.H{"items": result.Prices, "total": result.Total, "last_updated": result.UpdatedAt, "platforms": result.Platforms, "version": result.Version, "last_error": result.LastError})
 		return
 	}
+	// When the paged callback is absent, read one published snapshot so filtering
+	// and returned update metadata use the same catalog contents.
 	snapshot := h.catalog.Snapshot()
 	platformSet := make(map[string]struct{})
 	for _, row := range snapshot.Prices {
@@ -75,6 +89,8 @@ func (h *PricingHandler) ListDefaultPricing(c *gin.Context) {
 		}
 		return rows[i].Platform < rows[j].Platform
 	})
+	// Pages beyond the filtered result return an empty slice; test the quotient
+	// first so a large page cannot overflow its offset.
 	start := len(rows)
 	if page-1 <= len(rows)/pageSize {
 		start = (page - 1) * pageSize

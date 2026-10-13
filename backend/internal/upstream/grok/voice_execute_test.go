@@ -16,32 +16,66 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// voiceOutput captures synchronous emissions for assertions.
+// Voice metering uses character-based TTS units or STT hours after response
+// policy accepts a body. Local HTTP fixtures inspect token/header forwarding,
+// output bytes and cleanup counts; a handled HTTP-error fixture stops before
+// body reading, output or audio estimation.
+
+// voiceOutput retains synchronous output observations for Voice and Responses
+// assertions.
 type voiceOutput struct {
-	head   upstream.OutputHead
-	events []upstream.OutputEvent
+	// head retains the supplied Header map from Begin; tests inspect that shared
+	// map after the executor finishes output initialization.
+	head upstream.OutputHead // recorded output head
+	// events stores supplied event values without cloning their Data bytes; those
+	// slices remain stable until capture assertions finish.
+	events []upstream.OutputEvent // recorded output events
 }
 
+// voiceBody counts close invocations before delegating to its response body.
 type voiceBody struct {
-	io.ReadCloser
-	closed *atomic.Int64
+	// ReadCloser and closed participate in the same fixture: Close increments
+	// closed before invoking ReadCloser.Close, so the counter records cleanup
+	// attempts even when delegation fails.
+	io.ReadCloser               // counted response body
+	closed        *atomic.Int64 // body-close invocation counter
 }
 
+// Begin records the output head and accepts initialization for the fixture. The
+// retained Header remains shared with the supplied head, so the test inspects it
+// after execution rather than treating it as a cloned snapshot.
 func (s *voiceOutput) Begin(head upstream.OutputHead) error { s.head = head; return nil }
+
+// Emit appends an output event for later synchronous test assertions. Event Data
+// retains its supplied byte storage; callers keep that data stable until the
+// test finishes inspecting the captured event sequence.
 func (s *voiceOutput) Emit(event upstream.OutputEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }
 
+// Close increments the shared invocation counter and then delegates body
+// closure. Every invocation counts, including repeated calls or an underlying
+// close error; the fixture measures close attempts rather than successful
+// resource release.
 func (b *voiceBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
 
-// Local HTTP checks Voice request construction, output, audio units, and response cleanup.
+// TestVoiceExecuteLocalHTTP exchanges TTS, STT and custom-Voice fixtures through
+// a local HTTP server. It asserts request authentication/headers/body, emitted
+// response and request ID, single body cleanup, released activity, TTS character
+// units, STT hours and absent custom-Voice usage.
 func TestVoiceExecuteLocalHTTP(t *testing.T) {
 	cases := []struct {
-		endpoint                       string
-		proto                          protocol.ProtocolID
+		endpoint string              // Voice operation fixture
+		proto    protocol.ProtocolID // requested protocol identity
+		// request, response and contentType define one local HTTP exchange. The server
+		// compares request and returns response with contentType, which the sink must
+		// observe after execution. request: supplied Voice JSON; response: upstream
+		// response bytes; contentType: upstream response MIME
 		request, response, contentType string
-		units                          float64
+		// units is the expected TTS character-million quantity or STT hour quantity;
+		// zero selects the custom-Voice assertions requiring no AudioUsage.
+		units float64 // expected audio quantity
 	}{
 		{"tts", protocol.ProtocolTTS, `{"input":"你好世界"}`, "audio-bytes", "audio/mpeg", 4.0 / 1_000_000},
 		{"stt", protocol.ProtocolSTT, `{}`, `{"duration":3600,"text":"hello"}`, "application/json", 1},
@@ -71,6 +105,8 @@ func TestVoiceExecuteLocalHTTP(t *testing.T) {
 				Do: func(r *http.Request) (*http.Response, error) {
 					resp, err := server.Client().Do(r)
 					if resp != nil {
+						// Wrap each successful response with the invocation counter so executor
+						// cleanup can be asserted alongside the local server's request count.
 						resp.Body = &voiceBody{resp.Body, &closed}
 					}
 					return resp, err
@@ -102,7 +138,9 @@ func TestVoiceExecuteLocalHTTP(t *testing.T) {
 	}
 }
 
-// Error policy runs before output and metering; the executor still closes the response.
+// TestVoiceExecuteHTTPErrorDoesNotEmitOrMeter handles an injected HTTP 403
+// before the normal body reader runs. Execution must return the policy error,
+// emit no event, retain no audio usage and close the response once.
 func TestVoiceExecuteHTTPErrorDoesNotEmitOrMeter(t *testing.T) {
 	var closed atomic.Int64
 	req, err := http.NewRequest(http.MethodPost, "https://fixture.invalid", strings.NewReader(`{}`))

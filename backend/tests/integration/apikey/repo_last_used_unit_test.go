@@ -18,6 +18,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// Key console reads attach the latest nonempty usage-log IP and preserve
+// explicit last-used timestamps. SQLite checks those stored values and error
+// paths, while a separate string assertion checks PostgreSQL lateral-query
+// shape without executing or measuring that query.
+
+// mustCreateAPIKeyRepoProvider inserts an active OpenAI API-key provider and
+// returns its persisted ID. Save errors fail the test before a usage log can
+// reference the fixture.
 func mustCreateAPIKeyRepoProvider(t *testing.T, ctx context.Context, client *dbent.Client, name string) int64 {
 	t.Helper()
 	provider, err := client.Provider.Create().
@@ -31,6 +39,9 @@ func mustCreateAPIKeyRepoProvider(t *testing.T, ctx context.Context, client *dbe
 	return provider.ID
 }
 
+// mustCreateAPIKeyRepoUsageLog persists a gpt-5 usage row with the supplied
+// request ID and timestamp. A nil IP leaves that field unset, and save errors
+// fail the test.
 func mustCreateAPIKeyRepoUsageLog(t *testing.T, ctx context.Context, client *dbent.Client, userID, apiKeyID, providerID int64, requestID string, createdAt time.Time, ipAddress *string) {
 	t.Helper()
 	builder := client.UsageLog.Create().
@@ -47,6 +58,9 @@ func mustCreateAPIKeyRepoUsageLog(t *testing.T, ctx context.Context, client *dbe
 	require.NoError(t, err)
 }
 
+// TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP creates keys with usable,
+// empty, and absent IP histories. Listing attaches the latest nonempty IP to
+// the first key and nil to the other two.
 func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()
@@ -78,6 +92,8 @@ func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 	olderIP := "198.51.100.10"
 	newerEmptyIP := ""
 	newestIP := "203.0.113.20"
+	// Whole-second fixture times keep the SQLite timestamp comparisons
+	// deterministic.
 	base := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, withLogs.ID, providerID, "req-last-ip-older", base, &olderIP)
 	mustCreateAPIKeyRepoUsageLog(t, ctx, client, user.ID, withLogs.ID, providerID, "req-last-ip-empty", base.Add(time.Hour), &newerEmptyIP)
@@ -97,6 +113,9 @@ func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 	require.Nil(t, byID[noLogs.ID].LastUsedIP)
 }
 
+// TestLatestUsageLogIPsQueryPostgresUsesPerKeyLateralLookup builds SQL for two
+// key IDs without executing it. Assertions require lateral per-key lookup,
+// empty-IP filtering, descending tie ordering, and one argument.
 func TestLatestUsageLogIPsQueryPostgresUsesPerKeyLateralLookup(t *testing.T) {
 	query, args := query.KeyLatestUsageLogIPsQuery([]int64{11, 22}, dialect.Postgres)
 	normalizedQuery := strings.Join(strings.Fields(query), " ")
@@ -111,11 +130,16 @@ func TestLatestUsageLogIPsQueryPostgresUsesPerKeyLateralLookup(t *testing.T) {
 	require.Len(t, args, 1)
 }
 
+// TestAPIKeyRepository_CreateWithLastUsedAt supplies an earlier timestamp when
+// creating a SQLite key. The input object and subsequent repository read retain
+// that timestamp within one second.
 func TestAPIKeyRepository_CreateWithLastUsedAt(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()
 	user := mustCreateAPIKeyRepoUser(t, ctx, client, "create-last-used@test.com")
 
+	// Whole-second inputs and a one-second tolerance allow timestamp round-trip
+	// comparison.
 	lastUsed := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	key := &apikey.APIKey{
 		UserID:     user.ID,
@@ -135,6 +159,9 @@ func TestAPIKeyRepository_CreateWithLastUsedAt(t *testing.T) {
 	require.WithinDuration(t, lastUsed, *got.LastUsedAt, time.Second)
 }
 
+// TestAPIKeyRepository_UpdateLastUsed starts with a key whose last-used time is
+// nil. Updating to a supplied timestamp changes both LastUsedAt and UpdatedAt
+// within one second.
 func TestAPIKeyRepository_UpdateLastUsed(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()
@@ -152,6 +179,8 @@ func TestAPIKeyRepository_UpdateLastUsed(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, before.LastUsedAt)
 
+	// Whole-second inputs and a one-second tolerance compare both stored activity
+	// timestamps.
 	target := time.Now().UTC().Add(2 * time.Minute).Truncate(time.Second)
 	require.NoError(t, repo.UpdateLastUsed(ctx, key.ID, target))
 
@@ -162,6 +191,9 @@ func TestAPIKeyRepository_UpdateLastUsed(t *testing.T) {
 	require.WithinDuration(t, target, after.UpdatedAt, time.Second)
 }
 
+// TestAPIKeyRepository_UpdateLastUsedDeletedKey soft deletes a key before
+// attempting a timestamp update. The repository reports APIKeyNotFound for that
+// existing but deleted storage row.
 func TestAPIKeyRepository_UpdateLastUsedDeletedKey(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()
@@ -180,6 +212,9 @@ func TestAPIKeyRepository_UpdateLastUsedDeletedKey(t *testing.T) {
 	require.ErrorIs(t, err, apikey.ErrAPIKeyNotFound)
 }
 
+// TestAPIKeyRepository_UpdateLastUsedDBError closes the SQLite Ent client after
+// creating a key. The subsequent last-used write reports an error from the
+// unavailable database dependency.
 func TestAPIKeyRepository_UpdateLastUsedDBError(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()
@@ -193,11 +228,17 @@ func TestAPIKeyRepository_UpdateLastUsedDBError(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(ctx, key))
 
+	// Close the shared driver before the timestamp operation to make its storage
+	// dependency unavailable; the registered cleanup later tolerates another
+	// closure.
 	require.NoError(t, client.Close())
 	err := repo.UpdateLastUsed(ctx, key.ID, time.Now().UTC())
 	require.Error(t, err)
 }
 
+// TestAPIKeyRepository_CreateDuplicateKey creates two objects with the same
+// credential for one user. The first insertion succeeds and the second maps the
+// duplicate to APIKeyExists.
 func TestAPIKeyRepository_CreateDuplicateKey(t *testing.T) {
 	repo, client := newAPIKeyRepoSQLite(t)
 	ctx := context.Background()

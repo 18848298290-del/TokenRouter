@@ -8,7 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
-// TestDefaultBetaPolicy_Context1M_Sonnet5Whitelist checks that only listed Sonnet 5 forms pass the 1M beta.
+// TestDefaultBetaPolicy_Context1M_Sonnet5Whitelist resolves the default
+// context-1m action for direct, Vertex, and Bedrock model spellings. Listed
+// Sonnet 5 forms pass, while other families and similar names use the filter
+// fallback.
 func TestDefaultBetaPolicy_Context1M_Sonnet5Whitelist(t *testing.T) {
 	settings := DefaultBetaPolicySettings()
 
@@ -25,9 +28,9 @@ func TestDefaultBetaPolicy_Context1M_Sonnet5Whitelist(t *testing.T) {
 	require.NotEmpty(t, rule.ModelWhitelist, "context-1m must be scoped to sonnet-5 via whitelist")
 
 	cases := []struct {
-		model      string
-		wantAction string
-		desc       string
+		model      string // selected model spelling
+		wantAction string // expected resolved action
+		desc       string // assertion failure explanation
 	}{
 		// Direct API forms.
 		{"claude-sonnet-5", BetaPolicyActionPass, "sonnet-5 canonical"},

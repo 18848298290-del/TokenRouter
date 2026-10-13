@@ -1,11 +1,15 @@
-// Package anthropic builds Anthropic requests and handles OAuth, responses,
-// cache usage, and rate-limit observations.
+// Package anthropic prepares and executes Anthropic requests, including OAuth
+// identity, protocol recovery, cache usage, and quota observations. Request
+// preparation selects authentication-specific Headers and betas before
+// sanitizing dependent fields, while response handling reports usage and
+// failures to the gateway and provider callers.
 //
-// Start with execute.go for execution, request.go for Messages request building,
-// and stream.go for streaming responses and usage. Request and exchange files
-// include count_tokens and passthrough paths. Beta policy, OAuth body, message
-// cache, and tool rewrite files prepare request fields. Billing, headers, CLI
-// version, and metadata files maintain the client fingerprint. OAuth and usage
-// clients provide platform calls; session_digest.go hashes conversation input.
-// Dateline, signature, and thinking helpers normalize or classify protocol data.
+// Start with execute.go for one provider attempt and request.go for Messages
+// construction; stream.go owns streaming response and usage handling.
+// CountTokens and passthrough request paths sit alongside their exchange
+// variants. Beta, OAuth body, message cache, and tool rewrite files prepare
+// payloads; billing, Headers, CLI version, and metadata files maintain request
+// identity. OAuth and usage clients perform platform HTTP calls, Redis adapters
+// store fingerprints, and digest, dateline, signature, and thinking helpers
+// interpret request or error data.
 package anthropic

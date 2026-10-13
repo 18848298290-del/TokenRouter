@@ -18,7 +18,16 @@ import (
 	identitytestkit "github.com/TokenFlux/TokenRouter/internal/identity/testkit"
 )
 
-// TestPendingFinalizeRollbackAndCompensation checks rollback and compensation across two registration transactions in PostgreSQL.
+// Final account binding and pending-session consumption happen in a later
+// transaction than the fixture user's creation. The PostgreSQL completion hook
+// inspects binding and consumption inside that transaction and an unconsumed
+// session outside it, then selects successful commit or failure that triggers
+// compensation of the already created user.
+
+// TestPendingFinalizeRollbackAndCompensation observes identity binding and
+// session consumption before finalization commit in PostgreSQL. Hook failure
+// rolls both back and removes the created user; success retains the identity,
+// consumed session, and user.
 func TestPendingFinalizeRollbackAndCompensation(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx := context.Background()
@@ -38,6 +47,9 @@ func TestPendingFinalizeRollbackAndCompensation(t *testing.T) {
 			require.NoError(t, err)
 			failure := errors.New("test after identity binding and pending consume")
 			called := false
+			// Inspect the shared transaction before its commit so the hook can reject
+			// already-written binding and consumption, exercising rollback followed by
+			// account compensation.
 			request := identity.PendingAccountFinalization{Session: session, User: identity.CopyUser(user), BeforeCommit: func(txCtx context.Context, _ *identity.PendingAuthSession) error {
 				called = true
 				tx := dbent.TxFromContext(txCtx)
@@ -51,6 +63,9 @@ func TestPendingFinalizeRollbackAndCompensation(t *testing.T) {
 				outside, err := client.PendingAuthSession.Get(ctx, session.ID)
 				require.NoError(t, err)
 				require.Nil(t, outside.ConsumedAt, "提交前其他连接不能看到成功消费")
+				// Return failure after checking inside and outside visibility; compensation
+				// must then remove the account created before this finalization transaction
+				// began.
 				if fail {
 					return failure
 				}

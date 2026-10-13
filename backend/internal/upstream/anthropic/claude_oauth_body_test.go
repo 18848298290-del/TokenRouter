@@ -9,6 +9,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestNormalizeClaudeOAuthRequestBody_PreservesTopLevelFieldOrder normalizes
+// identity and absent-field defaults in a deliberately ordered request.
+// Existing top-level fields keep their order, explicit temperature survives,
+// and unusable tool choice is removed.
 func TestNormalizeClaudeOAuthRequestBody_PreservesTopLevelFieldOrder(t *testing.T) {
 	body := []byte(`{"alpha":1,"model":"claude-3-5-sonnet-latest","temperature":0.2,"system":"You are OpenCode, the best coding agent on the planet.","messages":[],"tool_choice":{"type":"auto"},"omega":2}`)
 
@@ -28,6 +32,9 @@ func TestNormalizeClaudeOAuthRequestBody_PreservesTopLevelFieldOrder(t *testing.
 	require.Contains(t, resultStr, `"max_tokens":128000`)
 }
 
+// TestInjectClaudeCodePrompt_PreservesFieldOrder injects identity into a
+// request whose system block has an extra id field. Top-level field order and
+// that block's id/type ordering remain visible after text prefixing.
 func TestInjectClaudeCodePrompt_PreservesFieldOrder(t *testing.T) {
 	body := []byte(`{"alpha":1,"system":[{"id":"block-1","type":"text","text":"Custom"}],"messages":[],"omega":2}`)
 
@@ -40,6 +47,9 @@ func TestInjectClaudeCodePrompt_PreservesFieldOrder(t *testing.T) {
 	require.Contains(t, resultStr, `{"id":"block-1","type":"text","text":"`+ClaudeCodeSystemPrompt+`\n\nCustom"}`)
 }
 
+// TestEnforceCacheControlLimit_PreservesTopLevelFieldOrder supplies five system
+// and message cache markers in an ordered request. Reduction leaves four
+// markers while keeping the top-level field sequence intact.
 func TestEnforceCacheControlLimit_PreservesTopLevelFieldOrder(t *testing.T) {
 	body := []byte(`{"alpha":1,"system":[{"type":"text","text":"s1","cache_control":{"type":"ephemeral"}},{"type":"text","text":"s2","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"m1","cache_control":{"type":"ephemeral"}},{"type":"text","text":"m2","cache_control":{"type":"ephemeral"}},{"type":"text","text":"m3","cache_control":{"type":"ephemeral"}}]}],"omega":2}`)
 
@@ -50,6 +60,9 @@ func TestEnforceCacheControlLimit_PreservesTopLevelFieldOrder(t *testing.T) {
 	require.Equal(t, 4, strings.Count(resultStr, `"cache_control"`))
 }
 
+// TestEnforceCacheControlLimit_CountsToolsAndPreservesMessageAnchorsFirst adds
+// a tool marker to three message markers and one system marker. Reduction
+// removes the tool marker first and retains all four system/message anchors.
 func TestEnforceCacheControlLimit_CountsToolsAndPreservesMessageAnchorsFirst(t *testing.T) {
 	body := []byte(`{"alpha":1,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"m1","cache_control":{"type":"ephemeral"}},{"type":"text","text":"m2","cache_control":{"type":"ephemeral"}},{"type":"text","text":"m3","cache_control":{"type":"ephemeral"}}]}],"tools":[{"name":"a","input_schema":{},"cache_control":{"type":"ephemeral"}}],"omega":2}`)
 
@@ -65,6 +78,10 @@ func TestEnforceCacheControlLimit_CountsToolsAndPreservesMessageAnchorsFirst(t *
 	require.False(t, gjson.GetBytes(result, "tools.0.cache_control").Exists())
 }
 
+// TestInjectAnthropicCacheControlTTL1h_OnlyUpdatesExistingEphemeralCacheControl
+// mixes top-level and block ephemeral markers with plain and persistent
+// content. Ephemeral TTLs become one hour, while missing markers and the
+// persistent TTL remain unchanged.
 func TestInjectAnthropicCacheControlTTL1h_OnlyUpdatesExistingEphemeralCacheControl(t *testing.T) {
 	body := []byte(`{"alpha":1,"cache_control":{"type":"ephemeral"},"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"5m"}},{"type":"text","text":"plain"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}},{"type":"text","text":"non","cache_control":{"type":"persistent","ttl":"5m"}}]}],"tools":[{"name":"a","input_schema":{},"cache_control":{"type":"ephemeral"}}],"omega":2}`)
 
@@ -80,9 +97,9 @@ func TestInjectAnthropicCacheControlTTL1h_OnlyUpdatesExistingEphemeralCacheContr
 	require.Equal(t, "1h", gjson.GetBytes(result, "tools.0.cache_control.ttl").String())
 }
 
-// Context-management defaults depend on thinking mode. Final beta gating runs
-// separately in SanitizeAnthropicBodyForBetaTokens.
-
+// TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingEnabled
+// normalizes a body with explicitly enabled thinking and no context field. The
+// result gains context management with the expected clear-thinking edit type.
 func TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingEnabled(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","thinking":{"type":"enabled","budget_tokens":1000},"messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
@@ -91,12 +108,20 @@ func TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingEnable
 		gjson.GetBytes(out, "context_management.edits.0.type").String())
 }
 
+// TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingAdaptive
+// normalizes an adaptive-thinking request with no context field. The result
+// contains context management, verifying that this thinking mode also triggers
+// the absent-field default.
 func TestNormalizeClaudeOAuthRequestBody_InjectsContextManagement_ThinkingAdaptive(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-7","thinking":{"type":"adaptive"},"messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
 	require.True(t, gjson.GetBytes(out, "context_management").Exists())
 }
 
+// TestNormalizeClaudeOAuthRequestBody_HaikuStillInjects_StripDeferredToSanitize
+// normalizes enabled thinking on a Haiku body before final beta sanitation.
+// Context management is present at this stage, so the model name does not
+// short-circuit injection.
 func TestNormalizeClaudeOAuthRequestBody_HaikuStillInjects_StripDeferredToSanitize(t *testing.T) {
 	// Normalization supplies the field for Haiku too; final beta gating may remove it.
 	body := []byte(`{"model":"claude-haiku-4-5","thinking":{"type":"enabled","budget_tokens":1000},"messages":[]}`)
@@ -105,6 +130,10 @@ func TestNormalizeClaudeOAuthRequestBody_HaikuStillInjects_StripDeferredToSaniti
 		"normalize 不再按 model 名短路；strip 责任移交 sanitize 层")
 }
 
+// TestNormalizeClaudeOAuthRequestBody_PreservesClientContextManagement supplies
+// a client context edit alongside enabled thinking. Normalization retains the
+// custom strategy, demonstrating that an existing context field takes
+// precedence over the default.
 func TestNormalizeClaudeOAuthRequestBody_PreservesClientContextManagement(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-7","context_management":{"edits":[{"type":"custom_strategy"}]},"thinking":{"type":"enabled","budget_tokens":1000},"messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
@@ -113,31 +142,45 @@ func TestNormalizeClaudeOAuthRequestBody_PreservesClientContextManagement(t *tes
 		"客户端透传的 context_management 内容必须原样保留")
 }
 
+// TestNormalizeClaudeOAuthRequestBody_NoThinking_NoInject normalizes a body
+// without thinking or context management. The result still lacks context
+// management, keeping the thinking-dependent default from appearing on an
+// ordinary request.
 func TestNormalizeClaudeOAuthRequestBody_NoThinking_NoInject(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
 	require.False(t, gjson.GetBytes(out, "context_management").Exists())
 }
 
-// TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel checks the client model is retained.
+// TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel normalizes an
+// ordinary Haiku request with missing defaults. The model field retains the
+// client's exact value after OAuth normalization has supplied other request
+// fields.
 func TestNormalizeClaudeOAuthRequestBody_PreservesHaikuModel(t *testing.T) {
 	body := []byte(`{"model":"claude-haiku-4-5","messages":[]}`)
 	out := NormalizeClaudeOAuthRequestBody(body, ClaudeOAuthNormalizeOptions{})
 	require.Equal(t, "claude-haiku-4-5", gjson.GetBytes(out, "model").String())
 }
 
+// TestSanitizeOpenCodeText_RewritesCanonicalSentence supplies exactly the
+// recognizable OpenCode identity sentence. The returned text equals the trimmed
+// Claude Code banner, pinning this canonical replacement rather than arbitrary
+// client identity text.
 func TestSanitizeOpenCodeText_RewritesCanonicalSentence(t *testing.T) {
 	in := "You are OpenCode, the best coding agent on the planet."
 	got := SanitizeSystemText(in)
 	require.Equal(t, strings.TrimSpace(ClaudeCodeSystemPrompt), got)
 }
 
-// TestSystemHasClaudeCodeBillingAttribution requires a complete system billing marker.
+// TestSystemHasClaudeCodeBillingAttribution covers billing marker placement,
+// missing entrypoint, lookalike prefix, scalar system, and malformed input.
+// Recognition requires the marker in a system-array text value with both
+// required text features.
 func TestSystemHasClaudeCodeBillingAttribution(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want bool
+		name string // case display name
+		body string // request JSON input
+		want bool   // expected comparison value
 	}{
 		{
 			name: "完整计费块",
@@ -174,7 +217,9 @@ func TestSystemHasClaudeCodeBillingAttribution(t *testing.T) {
 	}
 }
 
-// TestIsProxiedClaudeCodeRequest rejects arbitrary metadata.user_id values.
+// TestIsProxiedClaudeCodeRequest combines parseable metadata with a complete
+// system billing marker. Both features yield true, while arbitrary identity
+// text or a missing billing marker yields false.
 func TestIsProxiedClaudeCodeRequest(t *testing.T) {
 	validMetadata := FormatMetadataUserID(
 		"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -189,6 +234,10 @@ func TestIsProxiedClaudeCodeRequest(t *testing.T) {
 	require.False(t, IsProxiedClaudeCodeRequest([]byte(`{"system":[{"type":"text","text":"project"}]}`), validMetadata))
 }
 
+// TestRewriteSystemForNonClaudeCodeWithPrompt_UsesCustomExpansionPrompt
+// rewrites a custom client system prompt using a configured expansion string.
+// The default three-block layout remains, with that expansion text and its
+// ephemeral marker in the final block.
 func TestRewriteSystemForNonClaudeCodeWithPrompt_UsesCustomExpansionPrompt(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":"Project instructions","messages":[{"role":"user","content":"hello"}]}`)
 	customPrompt := "Custom Claude OAuth expansion prompt"
@@ -202,6 +251,10 @@ func TestRewriteSystemForNonClaudeCodeWithPrompt_UsesCustomExpansionPrompt(t *te
 	require.Equal(t, "ephemeral", system.Array()[2].Get("cache_control.type").String())
 }
 
+// TestRewriteSystemForNonClaudeCode_PreservesSystemCacheControlOnMigratedMessage
+// moves cached client system instructions into message history. The instruction
+// text and its ephemeral one-hour marker appear together on the injected user
+// message block.
 func TestRewriteSystemForNonClaudeCode_PreservesSystemCacheControlOnMigratedMessage(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":[{"type":"text","text":"Stable project instructions","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":"hello"}]}`)
 	system := []any{
@@ -219,6 +272,10 @@ func TestRewriteSystemForNonClaudeCode_PreservesSystemCacheControlOnMigratedMess
 	require.Equal(t, "1h", gjson.GetBytes(result, "messages.0.content.0.cache_control.ttl").String())
 }
 
+// TestRewriteSystemForNonClaudeCode_LeavesMigratedMessageUncachedWithoutSystemBreakpoint
+// moves client instructions from an unmarked system block into message history.
+// The injected instruction block has no cache_control, keeping absent client
+// caching absent on that migrated text.
 func TestRewriteSystemForNonClaudeCode_LeavesMigratedMessageUncachedWithoutSystemBreakpoint(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":[{"type":"text","text":"Project instructions"}],"messages":[{"role":"user","content":"hello"}]}`)
 	system := []any{
@@ -230,6 +287,10 @@ func TestRewriteSystemForNonClaudeCode_LeavesMigratedMessageUncachedWithoutSyste
 	require.False(t, gjson.GetBytes(result, "messages.0.content.0.cache_control").Exists())
 }
 
+// TestRewriteSystemForNonClaudeCodeWithPromptBlocks_UsesConfiguredBlocks
+// renders enabled, disabled, templated, and differently cached block settings.
+// Disabled text disappears, placeholders expand, and the retained blocks carry
+// their individually configured cache values.
 func TestRewriteSystemForNonClaudeCodeWithPromptBlocks_UsesConfiguredBlocks(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":"Project instructions","messages":[{"role":"user","content":"hello"}]}`)
 	blocks := `{
@@ -256,11 +317,14 @@ func TestRewriteSystemForNonClaudeCodeWithPromptBlocks_UsesConfiguredBlocks(t *t
 	require.Equal(t, "1h", arr[2].Get("cache_control.ttl").String())
 }
 
+// TestSystemIncludesClaudeCodePrompt covers string, array, and RawMessage
+// system values with recognized and unrelated text. Recognition works through
+// normalized representations and can find the banner in a later array element.
 func TestSystemIncludesClaudeCodePrompt(t *testing.T) {
 	tests := []struct {
-		name   string
-		system any
-		want   bool
+		name   string // case display name
+		system any    // input system representation
+		want   bool   // expected comparison value
 	}{
 		{
 			name:   "nil system",
@@ -350,16 +414,19 @@ func TestSystemIncludesClaudeCodePrompt(t *testing.T) {
 	}
 }
 
+// TestInjectClaudeCodePrompt covers missing, string, array, duplicate identity,
+// and RawMessage system input. Results start with a cached identity block and
+// retain eligible custom text with the expected prefix.
 func TestInjectClaudeCodePrompt(t *testing.T) {
 	claudePrefix := strings.TrimSpace(ClaudeCodeSystemPrompt)
 
 	tests := []struct {
-		name           string
-		body           string
-		system         any
-		wantSystemLen  int
-		wantFirstText  string
-		wantSecondText string
+		name           string // case display name
+		body           string // request JSON input
+		system         any    // input system representation
+		wantSystemLen  int    // expected system-block count
+		wantFirstText  string // expected identity text
+		wantSecondText string // expected prefixed instructions
 	}{
 		{
 			name:          "nil system",
@@ -474,16 +541,20 @@ func TestInjectClaudeCodePrompt(t *testing.T) {
 	}
 }
 
+// TestRewriteSystemForNonClaudeCode rewrites several system representations
+// alongside existing message histories. It checks the default system blocks,
+// the injected user/assistant pair in the first two positions, and total history
+// lengths that include the supplied turns.
 func TestRewriteSystemForNonClaudeCode(t *testing.T) {
 	tests := []struct {
-		name             string
-		body             string
-		system           any
-		wantSystemText   string // Text of the first system block.
-		wantMessagesLen  int
-		wantFirstMsgRole string
-		wantFirstMsgText string // content[0].text of the first message.
-		wantAckMsgText   string // content[0].text of the acknowledgment.
+		name             string // case display name
+		body             string // request JSON input
+		system           any    // input system representation
+		wantSystemText   string // expected identity prompt
+		wantMessagesLen  int    // expected history length
+		wantFirstMsgRole string // migrated instruction role
+		wantFirstMsgText string // migrated instruction text
+		wantAckMsgText   string // injected acknowledgment text
 	}{
 		{
 			name:            "nil system - no messages injected",

@@ -1,39 +1,51 @@
 package anthropic
 
-// Beta policy actions and provider scopes.
+// Beta policy defaults permit the context-1m token for the listed Sonnet 5
+// spellings and filter it for other models. The table includes direct, Vertex,
+// and Bedrock forms; delimiter-specific patterns keep similarly named model
+// families outside that permission.
+
+// Beta policy actions decide pass, removal, or rejection, while scopes select
+// the provider authentication flags considered during rule evaluation.
 const (
-	BetaPolicyActionPass   = "pass"   // Pass the token through.
-	BetaPolicyActionFilter = "filter" // Remove the token from the beta header.
-	BetaPolicyActionBlock  = "block"  // Reject the request.
+	BetaPolicyActionPass   = "pass"   // Leave handling to later request policy.
+	BetaPolicyActionFilter = "filter" // Contribute the token to the Header drop set.
+	BetaPolicyActionBlock  = "block"  // Report a matching rejection.
 
 	BetaPolicyScopeAll     = "all"     // All provider types.
-	BetaPolicyScopeOAuth   = "oauth"   // OAuth providers.
-	BetaPolicyScopeAPIKey  = "apikey"  // API Key providers.
+	BetaPolicyScopeOAuth   = "oauth"   // OAuth provider scope.
+	BetaPolicyScopeAPIKey  = "apikey"  // Neither OAuth nor Bedrock.
 	BetaPolicyScopeBedrock = "bedrock" // AWS Bedrock providers.
 )
 
-// BetaPolicyRule applies an action to one beta token.
+// BetaPolicyRule configures token handling by provider scope and model match.
 type BetaPolicyRule struct {
-	BetaToken            string   `json:"beta_token"`
-	Action               string   `json:"action"`                           // "pass" | "filter" | "block"
-	Scope                string   `json:"scope"`                            // "all" | "oauth" | "apikey" | "bedrock"
-	ErrorMessage         string   `json:"error_message,omitempty"`          // Custom message for action=block.
-	ModelWhitelist       []string `json:"model_whitelist,omitempty"`        // Model patterns; empty applies to every model.
-	FallbackAction       string   `json:"fallback_action,omitempty"`        // Action for models outside ModelWhitelist.
-	FallbackErrorMessage string   `json:"fallback_error_message,omitempty"` // Custom message for fallback_action=block.
+	BetaToken string `json:"beta_token"` // exact beta token
+	// Action and ErrorMessage apply when ModelWhitelist is empty or matches.
+	// FallbackAction and FallbackErrorMessage apply outside that whitelist, with
+	// an empty fallback resolving to pass.
+	Action string `json:"action"` // primary rule action
+	// Scope selects provider combinations through PolicyScopeMatches; an unknown
+	// scope string matches all combinations there, just like the all scope.
+	Scope                string   `json:"scope"`                            // provider authentication scope
+	ErrorMessage         string   `json:"error_message,omitempty"`          // primary block message
+	ModelWhitelist       []string `json:"model_whitelist,omitempty"`        // primary action models
+	FallbackAction       string   `json:"fallback_action,omitempty"`        // unmatched model action
+	FallbackErrorMessage string   `json:"fallback_error_message,omitempty"` // unmatched block message
 }
 
-// BetaPolicySettings contains the configured beta rules.
+// BetaPolicySettings holds ordered rules for Anthropic request capability
+// decisions.
 type BetaPolicySettings struct {
-	Rules []BetaPolicyRule `json:"rules"`
+	// Rules are evaluated in order, which determines the first block message while
+	// all matching filter actions can contribute tokens.
+	Rules []BetaPolicyRule `json:"rules"` // ordered policy rules
 }
 
-// DefaultBetaPolicySettings filters fast mode and permits the 1M beta for the
-// listed Sonnet 5 forms. Other models receive the filter action.
-//
-// The whitelist covers direct API names, Vertex date suffixes, and Bedrock
-// inference IDs. Exact names and delimited suffix patterns avoid matching
-// other names such as claude-sonnet-50 or claude-sonnet-5.1.
+// DefaultBetaPolicySettings returns fresh rules that filter fast mode and
+// restrict context-1m to listed Sonnet 5 model spellings. Nonmatching models
+// use the filter fallback; patterns include delimited direct, Vertex, and
+// Bedrock variants.
 func DefaultBetaPolicySettings() *BetaPolicySettings {
 	return &BetaPolicySettings{
 		Rules: []BetaPolicyRule{

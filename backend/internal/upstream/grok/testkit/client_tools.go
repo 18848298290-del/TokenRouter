@@ -2,7 +2,13 @@ package testkit
 
 import "fmt"
 
-// ClientToolsRequest supplies a shared tool fixture for protocol parsing and HTTP forwarding.
+// Client-tool round trips need replayed calls and outputs that still match their
+// declarations after conversion. The shared fixture combines custom patch input,
+// client tool search and a namespaced function with matching historical call
+// IDs, letting protocol and HTTP tests inspect one consistent conversation.
+
+// ClientToolsRequest returns fresh JSON bytes with declared client tools and
+// matched replay history, using stream as the encoded streaming flag.
 func ClientToolsRequest(stream bool) []byte {
 	return []byte(fmt.Sprintf(`{
 		"model":"grok","stream":%t,

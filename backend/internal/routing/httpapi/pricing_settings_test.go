@@ -9,12 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestBillingSettingsRequestPreservesNullablePrices distinguishes a null clearing an override from an omitted update.
+// TestBillingSettingsRequestPreservesNullablePrices decodes omitted, null,
+// and zero operation prices into a settings patch. It checks supplied-field
+// presence and nullable values, then verifies that explicit false, true, and
+// zero creation settings override defaults.
 func TestBillingSettingsRequestPreservesNullablePrices(t *testing.T) {
 	for _, tc := range []struct {
-		body     string
-		supplied bool
-		price    *float64
+		body     string   // serialized settings request body
+		supplied bool     // expected price presence flag
+		price    *float64 // expected optional price amount
 	}{
 		{`{}`, false, nil}, {`{"web_search_price_per_call":null}`, true, nil}, {`{"web_search_price_per_call":0}`, true, new(float64)},
 	} {

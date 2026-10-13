@@ -24,6 +24,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// Claude refresh may overlap an administrator's replacement of OAuth
+// credentials. A local HTTP token endpoint holds the exchange response until
+// the test either commits new credentials or leaves the original identity in
+// place.
+//
+// The production authorization, refresh coordinator, PostgreSQL store, and
+// Redis token cache complete the suspended request together. Each case expects
+// one exchange and compares the returned token with both persisted and cached
+// credentials. The changed identity returns the administrator token, while the
+// unchanged identity stores the exchanged token. A second token-source call
+// checks that the completed state is reused without another HTTP exchange.
+
+// TestClaudeTokenRefreshUsesOriginalCAS holds a Claude token response while an
+// administrator may commit replacement credentials. One exchange yields
+// matching returned, persisted, and cached tokens, and a second token-source
+// call reuses the completed result.
 func TestClaudeTokenRefreshUsesOriginalCAS(t *testing.T) {
 	for _, adminChange := range []bool{false, true} {
 		t.Run(fmt.Sprintf("administrator=%v", adminChange), func(t *testing.T) {
@@ -36,10 +52,14 @@ func TestClaudeTokenRefreshUsesOriginalCAS(t *testing.T) {
 			repo := newProviderStoreContract(client, integrationDB, nil)
 			value, err := repo.GetByID(ctx, row.ID)
 			require.NoError(t, err)
+			// Gate the HTTP token response after exchange entry so the administrator
+			// update can commit before production refresh compares the returned credentials.
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var calls atomic.Int32
 			var resumeOnce sync.Once
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Drain input before the exchange gate; the read outcome is discarded
+				// because this fixture uses no body data to choose its token response.
 				_, _ = io.Copy(io.Discard, r.Body)
 				if calls.Add(1) == 1 {
 					close(entered)
@@ -50,8 +70,12 @@ func TestClaudeTokenRefreshUsesOriginalCAS(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				// Token-source completion and comparisons determine the asserted result;
+				// this fixture discards the writer's return values after attempting fixed JSON.
 				_, _ = io.WriteString(w, `{"access_token":"refreshed","refresh_token":"rotated","token_type":"Bearer","expires_in":3600,"scope":"user:inference"}`)
 			}))
+			// Register release after server.Close so deferred calls unblock the token
+			// handler first, allowing server shutdown even when a later assertion fails.
 			defer server.Close()
 			defer resumeOnce.Do(func() { close(resume) })
 			native := anthropic.NewOAuthClient()
@@ -73,9 +97,10 @@ func TestClaudeTokenRefreshUsesOriginalCAS(t *testing.T) {
 					return refresh.RefreshIfNeeded(ctx, record, executor, window)
 				},
 			}}
+			// result carries one token-source completion through the buffered result channel.
 			type result struct {
-				token string
-				err   error
+				token string // returned access token
+				err   error  // returned token-source error
 			}
 			done := make(chan result, 1)
 			go func() {
@@ -107,7 +132,8 @@ func TestClaudeTokenRefreshUsesOriginalCAS(t *testing.T) {
 			cached, err := cache.GetAccessToken(ctx, provider.ClaudeTokenCacheKey(provider.CloneRecord(value)))
 			require.NoError(t, err)
 			require.Equal(t, expected, cached)
-			// A second call reads the cached token without another exchange.
+			// Count exchanges across a second read of the persisted provider to
+			// verify that the completed refresh result satisfies the token-source cache path.
 			token, err := tokenSource.GetAccessToken(ctx, provider.CloneRecord(persisted))
 			require.NoError(t, err)
 			require.Equal(t, expected, token)

@@ -16,16 +16,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Raw usage decoding must keep positional fields aligned while transport
+// compatibility and display-model selection interpret older records. SQL-mock
+// cases check filter precedence, request-ID lookup, internal-model predicates,
+// and personal scopes; typed scanner fixtures exercise nullable metadata without
+// relying on driver conversions.
+
+// usageLogScannerStub supplies already typed positional values to raw-row
+// decoding tests.
 type usageLogScannerStub struct {
+	// values retains the test's ordered storage without driver conversion. Each
+	// element's type must match Scan's writable destination before reflection
+	// assigns it.
 	values []any
 }
 
+// TestCoalesceTrimmedString supplies null, whitespace-only, and populated
+// display strings. It checks missing/blank text uses the fallback and a valid
+// populated value reaches the result.
 func TestCoalesceTrimmedString(t *testing.T) {
 	require.Equal(t, "fallback", coalesceTrimmedString(sql.NullString{}, "fallback"))
 	require.Equal(t, "fallback", coalesceTrimmedString(sql.NullString{Valid: true, String: "   "}, "fallback"))
 	require.Equal(t, "value", coalesceTrimmedString(sql.NullString{Valid: true, String: "value"}, "fallback"))
 }
 
+// TestUsageLogRepositoryListWithFiltersRequestTypePriority supplies an explicit
+// WebSocket type with conflicting stream selection. It checks counted and listed
+// SQL use request-type compatibility without an extra stream argument.
 func TestUsageLogRepositoryListWithFiltersRequestTypePriority(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -53,7 +70,9 @@ func TestUsageLogRepositoryListWithFiltersRequestTypePriority(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogRepositoryListWithFiltersRequestID checks that request-ID lookup receives the trimmed value.
+// TestUsageLogRepositoryListWithFiltersRequestID supplies padded request
+// identity in a broad listing. It checks trimmed lookup input, the
+// exact-local/upstream predicate, and fast pagination's extra-row limit.
 func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -71,6 +90,9 @@ func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryListWithFiltersInternalModelSource selects
+// requested/internal model filtering. It checks the generated compatibility
+// expression and bound model value on the fast listing query.
 func TestUsageLogRepositoryListWithFiltersInternalModelSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -91,6 +113,9 @@ func TestUsageLogRepositoryListWithFiltersInternalModelSource(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryListPersonalOnlyExcludesTeamUsage selects one actor with
+// personal-only scope. It checks both count and list predicates require a null
+// team ID and decode an empty page.
 func TestUsageLogRepositoryListPersonalOnlyExcludesTeamUsage(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -112,7 +137,9 @@ func TestUsageLogRepositoryListPersonalOnlyExcludesTeamUsage(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageLogScopeSource checks disjoint indexed branches for the owner and team.
+// TestBuildUsageLogScopeSource supplies a current team owner and existing SQL
+// argument. It checks disjoint actor/team branches, alias placement, empty
+// external predicate, and appended parameter order.
 func TestBuildUsageLogScopeSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -130,6 +157,10 @@ func TestBuildUsageLogScopeSource(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestScanUsageLogRequestTypeAndLegacyFallback provides typed rows with image
+// metadata, service tiers, explicit transport, and legacy flags. It checks
+// decoded media/tier fields and request-type/legacy normalization for each
+// fixture.
 func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 	t.Run("image_size_metadata_is_scanned", func(t *testing.T) {
 		now := time.Now().UTC()
@@ -416,6 +447,10 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 	})
 }
 
+// Scan assigns already typed fixture values into the positional destinations.
+// Count mismatch or a nonpointer destination returns an error; callers supply
+// writable nonnil pointers with matching types, because reflection can panic for
+// unusable destinations.
 func (s usageLogScannerStub) Scan(dest ...any) error {
 	if len(dest) != len(s.values) {
 		return fmt.Errorf("scan arg count mismatch: got %d want %d", len(dest), len(s.values))
@@ -425,6 +460,9 @@ func (s usageLogScannerStub) Scan(dest ...any) error {
 		if dv.Kind() != reflect.Pointer {
 			return fmt.Errorf("dest[%d] is not pointer", i)
 		}
+		// The fixture already carries destination-compatible types. Reflection assigns
+		// them directly, so this stub exercises column wiring rather than SQL
+		// conversions.
 		dv.Elem().Set(reflect.ValueOf(s.values[i]))
 	}
 	return nil

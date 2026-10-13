@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-// TestAuthorizeURLMatchesClaudeCodeCLI checks the browser OAuth endpoint and parameters.
+// TestAuthorizeURLMatchesClaudeCodeCLI parses the authorization URL built from
+// supplied state, challenge, and scope. The fixed browser endpoint and decoded
+// client, callback, scope, and S256 query values match expectations.
 func TestAuthorizeURLMatchesClaudeCodeCLI(t *testing.T) {
 	const want = "https://claude.com/cai/oauth/authorize"
 	if AuthorizeURL != want {

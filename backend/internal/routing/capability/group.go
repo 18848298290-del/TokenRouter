@@ -4,7 +4,14 @@ import (
 	"fmt"
 )
 
-// canonicalGroupClientProtocols derives ordering and validation coverage from the protocol catalog.
+// Group client admission is independent of provider platform selection. Public
+// entries come from the protocol catalogue, excluding upstream-only operations,
+// so mixed groups can expose the same ordered choices while provider route
+// resolution decides which candidates can execute each request.
+
+// canonicalGroupClientProtocols retains public protocol catalogue order for
+// group selection and validation; upstream-only identifiers stay outside this
+// admission list.
 var canonicalGroupClientProtocols = func() []ProtocolID {
 	out := []ProtocolID{}
 	for _, protocol := range protocolCatalog {
@@ -15,17 +22,23 @@ var canonicalGroupClientProtocols = func() []ProtocolID {
 	return out
 }()
 
-// SupportedGroupClientProtocols returns public entries; upstream eligibility is checked per provider.
+// SupportedGroupClientProtocols returns a new slice of public protocol
+// identifiers in catalogue order. The platform argument is retained for
+// callers, and every group receives the same choices.
 func SupportedGroupClientProtocols(_ string) []ProtocolID {
 	return append([]ProtocolID{}, canonicalGroupClientProtocols...)
 }
 
-// DefaultGroupClientProtocols enables the three text entries. Administrators opt in to other protocols.
+// DefaultGroupClientProtocols returns the three initially admitted text entries
+// in a new slice. The platform argument does not affect these defaults;
+// administrators separately enable other operations.
 func DefaultGroupClientProtocols(_ string) []ProtocolID {
 	return []ProtocolID{ProtocolAnthropicMessages, ProtocolOpenAIResponses, ProtocolOpenAIChatCompletions}
 }
 
-// ValidateGroupClientProtocols validates the set and returns a copy in catalog order.
+// ValidateGroupClientProtocols rejects unknown or duplicate client identifiers
+// and returns a new slice in catalogue order. Platform does not restrict group
+// admission, and an empty input produces an allocated empty selection.
 func ValidateGroupClientProtocols(platform string, protocols []ProtocolID) ([]ProtocolID, error) {
 	supported := make(map[ProtocolID]struct{})
 	for _, protocol := range SupportedGroupClientProtocols(platform) {
@@ -58,7 +71,9 @@ func ValidateGroupClientProtocols(platform string, protocols []ProtocolID) ([]Pr
 	return out, nil
 }
 
-// SetGroupClientProtocol updates one selection and returns protocols in catalog order.
+// SetGroupClientProtocol enables or removes target and returns a new
+// catalogue-ordered selection. Input duplicates and unknown identifiers are
+// discarded during rebuilding, and the input slice remains unchanged.
 func SetGroupClientProtocol(protocols []ProtocolID, target ProtocolID, enabled bool) []ProtocolID {
 	selected := make(map[ProtocolID]struct{}, len(protocols)+1)
 	for _, protocol := range protocols {
@@ -78,8 +93,10 @@ func SetGroupClientProtocol(protocols []ProtocolID, target ProtocolID, enabled b
 	return out
 }
 
-// DefaultProtocolFallbacks leaves entries absent for automatic matching; an explicit empty list requires
-// native execution.
+// DefaultProtocolFallbacks returns a new empty conversion map for
+// platform-independent group defaults. Missing source entries allow automatic
+// conversion matching; callers insert an explicit empty list to require native
+// execution.
 func DefaultProtocolFallbacks(_ string) map[ProtocolID][]ProtocolID {
 	return map[ProtocolID][]ProtocolID{}
 }

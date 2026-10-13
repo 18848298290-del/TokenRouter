@@ -1,7 +1,5 @@
 package provider_test
 
-// These scenarios check managed Ollama fields during creation and CRS synchronization.
-
 import (
 	"testing"
 	"time"
@@ -13,6 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestOllamaCloudUsageManagedExtraCannotBeImported supplies forged remote usage
+// fields during creation and CRS reconciliation. It checks creation rejects
+// those fields, existing local session state survives an unchanged API Key,
+// and rotating the identity removes the managed state.
 func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 	remoteExtra := map[string]any{
 		provider.OllamaCloudUsageSessionExtraKey:     "remote-ciphertext",

@@ -9,23 +9,40 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// AnthropicBetaContextManagementToken enables the context_management body field.
+// A final beta Header can omit capabilities that the client used in its request
+// body. Context management, fast speed, and refusal fallback fields therefore
+// need their own gate after Header selection, including any provider-specific
+// override.
+//
+// The fallback list requires the server-side token, while its credit value
+// accepts any one of three listed tokens. Independent gates delete only their
+// corresponding fields, so retaining context management does not retain
+// fallbacks. Successful edits accumulate as the next gate's input; logged
+// deletion failures keep that field and allow later checks to run. The changed
+// flag identifies successful work rather than complete removal of every
+// unsupported field.
+
+// AnthropicBetaContextManagementToken names the accepted capability used to
+// retain context_management during final request-body sanitization.
 const AnthropicBetaContextManagementToken = "context-management-2025-06-27"
 
-// SanitizeAnthropicBodyForBetaTokens removes fields unsupported by the final beta header.
-// Call it before building the upstream request, after selecting and filtering betas.
+// SanitizeAnthropicBodyForBetaTokens removes extension fields whose accepted
+// beta is absent from the final header. Call it after token selection and
+// provider overrides; context_management, fast speed, fallbacks, and
+// fallback_credit_token each use their own gate.
 //
-// context_management requires the context-management beta; speed=fast requires
-// the fast-mode beta. Client fallbacks require the server-side-fallback beta, while
-// fallback_credit_token also accepts either credit beta. OAuth mimic can replace
-// client betas, leaving body fields that the upstream schema would reject.
-//
-// The boolean reports a successful deletion. Failed deletions are logged and leave
-// the affected field unchanged.
+// The credit field accepts any of its three listed tokens, while fallbacks
+// requires server-side fallback. Updates accumulate in the returned body, and
+// the boolean reports at least one successful deletion. Failed deletions are
+// logged and keep the corresponding field, so callers cannot infer complete
+// sanitization from a true flag.
 func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string) ([]byte, bool) {
 	if len(body) == 0 {
 		return body, false
 	}
+	// Each successful gated-field deletion becomes the next field's input. Logged
+	// deletion failures retain that field while the remaining independent gates
+	// can still run.
 	updated := body
 	changed := false
 	if gjson.GetBytes(updated, "context_management").Exists() &&
@@ -37,7 +54,8 @@ func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 			logger.LegacyPrintf("service.gateway", "[CtxMgmtSanitize] 删除 context_management 失败: %v (body len=%d)", err, len(body))
 		}
 	}
-	// Remove fast speed when its required beta was filtered out.
+	// Final beta selection controls the fast-speed extension independently of
+	// context management, so filtering that capability also removes its body selector.
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(updated, "speed").String()), "fast") &&
 		!AnthropicBetaTokensContains(anthropicBetaHeader, BetaFastMode) {
 		if b, err := sjson.DeleteBytes(updated, "speed"); err == nil {
@@ -47,7 +65,9 @@ func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 			logger.LegacyPrintf("service.gateway", "[FastModeSanitize] 删除 speed 失败: %v (body len=%d)", err, len(body))
 		}
 	}
-	// Remove refusal fallback fields unless an accepted beta remains.
+	// The fallback list and credit value have different accepted-token sets;
+	// check each field separately so a credit beta cannot retain an unsupported
+	// fallback list.
 	if b, deleted := StripAnthropicBodyFieldUnlessBeta(updated, "fallbacks", anthropicBetaHeader, BetaServerSideFallback); deleted {
 		updated, changed = b, true
 	}
@@ -57,7 +77,9 @@ func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	return updated, changed
 }
 
-// StripAnthropicBodyFieldUnlessBeta removes field when none of requiredTokens is present.
+// StripAnthropicBodyFieldUnlessBeta deletes field when none of its accepted
+// tokens remains. It returns the supplied body and false for an absent field,
+// retained token, or logged deletion failure.
 func StripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader string, requiredTokens ...string) ([]byte, bool) {
 	if !gjson.GetBytes(body, field).Exists() {
 		return body, false
@@ -67,6 +89,8 @@ func StripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 			return body, false
 		}
 	}
+	// A failed field edit returns false so the sanitizer does not claim a deletion
+	// or replace its working bytes for this gate.
 	b, err := sjson.DeleteBytes(body, field)
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "[BetaFieldSanitize] 删除 %s 失败: %v (body len=%d)", field, err, len(body))
@@ -75,7 +99,9 @@ func StripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 	return b, true
 }
 
-// AnthropicBetaTokensContains matches a complete, case-sensitive token after trimming whitespace.
+// AnthropicBetaTokensContains reports exact, case-sensitive membership after
+// trimming each header part. Empty header or token input returns false, so an
+// absent final beta cannot retain a gated field.
 func AnthropicBetaTokensContains(header, token string) bool {
 	if header == "" || token == "" {
 		return false

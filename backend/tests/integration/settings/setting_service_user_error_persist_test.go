@@ -12,8 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestAllowUserViewErrorRequests_PersistsToDB checks that Save includes the user
-// error-visibility flag in the repository update batch.
+// The user error-request visibility flag needs to enter the composite settings
+// write batch. A capturing map fixture checks the key's presence and true
+// string value after Save, establishing the repository handoff while unexpected
+// single-value reads panic.
+
+// TestAllowUserViewErrorRequests_PersistsToDB saves an enabled error-request
+// visibility flag through a capturing repository fixture. Its recorded batch
+// contains the required key with true text; this case performs no database
+// write.
 func TestAllowUserViewErrorRequests_PersistsToDB(t *testing.T) {
 	// Leaving GetValue unstubbed also catches unexpected single-setting reads.
 	repo := &bmUpdateRepoStub{}

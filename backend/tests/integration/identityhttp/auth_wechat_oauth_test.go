@@ -28,6 +28,18 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// WeChat login uses unionid as its canonical subject when available and records
+// each app/channel openid separately. Local provider replies and SQLite rows
+// exercise current-user binding, legacy identity repair, ownership conflicts
+// and pending signup choices. The open and mp table cases each build their own
+// fixture and run sequentially. Payment OAuth separately checks the listed
+// resume-token claims and signing-key selection. Endpoint overrides are
+// package-global and are restored by testing cleanup after deferred fixture
+// closes.
+
+// TestWeChatOAuthStartRedirectsAndSetsPendingCookies starts open-mode login
+// with a local billing redirect. It checks the WeChat authorize host, app and
+// scope parameters plus state, redirect, mode and browser cookies.
 func TestWeChatOAuthStartRedirectsAndSetsPendingCookies(t *testing.T) {
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, map[string]string{
 		identitycore.SettingKeyWeChatConnectEnabled:             "true",
@@ -38,6 +50,8 @@ func TestWeChatOAuthStartRedirectsAndSetsPendingCookies(t *testing.T) {
 		identitycore.SettingKeyWeChatConnectRedirectURL:         "https://api.example.com/api/v1/auth/oauth/wechat/callback",
 		identitycore.SettingKeyWeChatConnectFrontendRedirectURL: "/auth/wechat/callback",
 	})
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -60,6 +74,9 @@ func TestWeChatOAuthStartRedirectsAndSetsPendingCookies(t *testing.T) {
 	require.NotEmpty(t, findCookie(cookies, identityhttp.OauthPendingBrowserCookieName))
 }
 
+// TestWeChatOAuthStart_AllowsOpenModeWhenBothCapabilitiesEnabled requests open
+// mode while the default mode is mp and both capabilities are enabled. Start
+// selects the QR-connect authorize path and snsapi_login scope.
 func TestWeChatOAuthStart_AllowsOpenModeWhenBothCapabilitiesEnabled(t *testing.T) {
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, map[string]string{
 		identitycore.SettingKeyWeChatConnectEnabled:             "true",
@@ -72,6 +89,8 @@ func TestWeChatOAuthStart_AllowsOpenModeWhenBothCapabilitiesEnabled(t *testing.T
 		identitycore.SettingKeyWeChatConnectRedirectURL:         "https://api.example.com/api/v1/auth/oauth/wechat/callback",
 		identitycore.SettingKeyWeChatConnectFrontendRedirectURL: "/auth/wechat/callback",
 	})
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	recorder := httptest.NewRecorder()
@@ -89,7 +108,13 @@ func TestWeChatOAuthStart_AllowsOpenModeWhenBothCapabilitiesEnabled(t *testing.T
 	require.Contains(t, location, "scope=snsapi_login")
 }
 
+// TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow returns matching
+// unionid and openid through local provider endpoints. Callback stores the
+// canonical union subject, synthetic email, both provider identifiers and
+// suggested profile values in pending state.
 func TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -98,6 +123,8 @@ func TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow(t *testing.T) {
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -114,6 +141,8 @@ func TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow(t *testing.T) {
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	recorder := httptest.NewRecorder()
@@ -149,7 +178,13 @@ func TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow(t *testing.T) {
 	require.Equal(t, "openid-123", session.UpstreamIdentityClaims["openid"])
 }
 
+// TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMode
+// returns a profile containing only openid in open mode. Pending login uses
+// that subject and synthetic email, redirects to the configured frontend, and
+// requires the third-party signup choice.
 func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMode(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -158,6 +193,8 @@ func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMo
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -174,6 +211,8 @@ func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMo
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, wechatOAuthTestSettings("open", "wx-open-app", "wx-open-secret", "https://app.example.com/auth/wechat/callback"))
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	recorder := httptest.NewRecorder()
@@ -207,7 +246,13 @@ func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMo
 	require.Equal(t, "third_party_signup", completion["choice_reason"])
 }
 
+// TestWeChatOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUserWithoutStoredTokens
+// returns the stored owner's union subject. Pending state targets that account
+// and local redirect, while its completion map contains neither access-token
+// nor refresh-token fields.
 func TestWeChatOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUserWithoutStoredTokens(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -216,6 +261,8 @@ func TestWeChatOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUserWit
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -232,6 +279,8 @@ func TestWeChatOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUserWit
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, wechatOAuthTestSettings("open", "wx-open-app", "wx-open-secret", "https://app.example.com/auth/wechat/callback"))
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -287,7 +336,12 @@ func TestWeChatOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUserWit
 	require.False(t, hasRefreshToken)
 }
 
+// TestWeChatOAuthCallbackRejectsDisabledExistingIdentityUser matches a local
+// provider profile to a disabled owner. Callback reports USER_NOT_ACTIVE,
+// issues no pending-session cookie, and leaves the pending table empty.
 func TestWeChatOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -296,6 +350,8 @@ func TestWeChatOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -312,6 +368,8 @@ func TestWeChatOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -352,13 +410,22 @@ func TestWeChatOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestWeChatPaymentOAuthCallbackRedirectsWithOpaqueResumeToken exchanges local
+// payment OAuth and saved purchase context. The redirect carries a resume token
+// and local destination, omits the listed payment fields, and parses back to
+// the supplied purchase claims.
 func TestWeChatPaymentOAuthCallbackRedirectsWithOpaqueResumeToken(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	t.Cleanup(func() {
 		wechatOAuthAccessTokenURL = originalAccessTokenURL
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The fixed payment token reply supplies openid and scope for resume claims.
+		// Write errors are discarded while the caller inspects the resulting
+		// redirect.
 		if strings.Contains(r.URL.Path, "/sns/oauth2/access_token") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"access_token":"wechat-access","openid":"openid-123","scope":"snsapi_base"}`))
@@ -370,6 +437,8 @@ func TestWeChatPaymentOAuthCallbackRedirectsWithOpaqueResumeToken(t *testing.T) 
 	wechatOAuthAccessTokenURL = upstream.URL + "/sns/oauth2/access_token"
 
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, wechatOAuthTestSettings("mp", "wx-mp-app", "wx-mp-secret", "/auth/wechat/callback"))
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 	handler.cfg.Totp.EncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	handler.cfg.Totp.EncryptionKeyConfigured = true
@@ -410,13 +479,24 @@ func TestWeChatPaymentOAuthCallbackRedirectsWithOpaqueResumeToken(t *testing.T) 
 	require.Equal(t, "/purchase?from=wechat", claims.RedirectTo)
 }
 
+// TestWeChatPaymentOAuthCallbackUsesExplicitPaymentResumeSigningKeyWhenMixedKeysConfigured
+// supplies environment signing text and hexadecimal legacy encryption material.
+// The resume token parses under the explicit key with the expected purchase
+// claims and fails under a separate ASCII comparison key. The rejection
+// assertion uses the first thirty-two hex characters as UTF-8 bytes; it does
+// not decode the configured legacy key for that comparison.
 func TestWeChatPaymentOAuthCallbackUsesExplicitPaymentResumeSigningKeyWhenMixedKeysConfigured(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	t.Cleanup(func() {
 		wechatOAuthAccessTokenURL = originalAccessTokenURL
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The fixed payment token reply supplies openid and scope for resume claims.
+		// Write errors are discarded while the caller inspects the resulting
+		// redirect.
 		if strings.Contains(r.URL.Path, "/sns/oauth2/access_token") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"access_token":"wechat-access","openid":"openid-mixed-key","scope":"snsapi_base"}`))
@@ -428,6 +508,8 @@ func TestWeChatPaymentOAuthCallbackUsesExplicitPaymentResumeSigningKeyWhenMixedK
 	wechatOAuthAccessTokenURL = upstream.URL + "/sns/oauth2/access_token"
 
 	handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, wechatOAuthTestSettings("mp", "wx-mp-app", "wx-mp-secret", "/auth/wechat/callback"))
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	legacyKeyHex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -471,13 +553,20 @@ func TestWeChatPaymentOAuthCallbackUsesExplicitPaymentResumeSigningKeyWhenMixedK
 	require.Error(t, err)
 }
 
+// TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels runs
+// independent open and mp binding fixtures sequentially. Each pending result
+// targets the current user with the same union subject and retains that case's
+// app, channel and openid values.
 func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *testing.T) {
 	testCases := []struct {
-		name      string
-		mode      string
-		appID     string
-		appSecret string
-		openID    string
+		name string // channel scenario label
+		// mode, appID, appSecret and openID form one independent channel fixture.
+		// Each subtest pairs those app credentials with its own application-scoped
+		// openid while sharing the supplied union subject across case definitions.
+		mode      string // requested OAuth channel
+		appID     string // selected channel application ID
+		appSecret string // matching channel client secret
+		openID    string // application-scoped provider subject
 	}{
 		{
 			name:      "open",
@@ -497,6 +586,8 @@ func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *test
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Save the package-global endpoint values for cleanup restoration. Deferred
+			// database and local-server closes run before this restoration callback.
 			originalAccessTokenURL := wechatOAuthAccessTokenURL
 			originalUserInfoURL := wechatOAuthUserInfoURL
 			t.Cleanup(func() {
@@ -505,6 +596,9 @@ func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *test
 			})
 
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Token and userinfo branches return fixed profile data for this case.
+				// Their write errors are discarded while the caller inspects callback
+				// results.
 				switch {
 				case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 					w.Header().Set("Content-Type", "application/json")
@@ -521,6 +615,8 @@ func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *test
 			wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 			handler, client := newWeChatOAuthTestHandlerWithSettings(t, false, wechatOAuthTestSettings(tc.mode, tc.appID, tc.appSecret, "/auth/wechat/callback"))
+			// Close the client on test return; testing cleanups run afterward, including
+			// task-stop callbacks registered by fixture construction.
 			defer func() { require.NoError(t, client.Close()) }()
 
 			currentUser, err := client.User.Create().
@@ -576,7 +672,13 @@ func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *test
 	}
 }
 
+// TestWeChatOAuthCallbackBindRejectsCanonicalOwnershipConflict returns a union
+// subject owned by another account during current-user binding. Callback
+// reports canonical ownership conflict, sets no pending-session cookie, and
+// creates no pending row.
 func TestWeChatOAuthCallbackBindRejectsCanonicalOwnershipConflict(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -585,6 +687,8 @@ func TestWeChatOAuthCallbackBindRejectsCanonicalOwnershipConflict(t *testing.T) 
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -601,6 +705,8 @@ func TestWeChatOAuthCallbackBindRejectsCanonicalOwnershipConflict(t *testing.T) 
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -654,7 +760,13 @@ func TestWeChatOAuthCallbackBindRejectsCanonicalOwnershipConflict(t *testing.T) 
 	require.Zero(t, count)
 }
 
+// TestWeChatOAuthCallbackBindRejectsChannelOwnershipConflict supplies an openid
+// whose app/channel relation belongs to another identity. Callback reports
+// channel ownership conflict, sets no pending-session cookie, and leaves the
+// pending table empty.
 func TestWeChatOAuthCallbackBindRejectsChannelOwnershipConflict(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -663,6 +775,8 @@ func TestWeChatOAuthCallbackBindRejectsChannelOwnershipConflict(t *testing.T) {
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -679,6 +793,8 @@ func TestWeChatOAuthCallbackBindRejectsChannelOwnershipConflict(t *testing.T) {
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -743,7 +859,13 @@ func TestWeChatOAuthCallbackBindRejectsChannelOwnershipConflict(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestWeChatOAuthCallbackBindRejectsLegacyProviderKeyOwnershipConflict seeds
+// the returned union subject under the legacy provider key on another account.
+// Current-user callback reports ownership conflict, sets no pending-session
+// cookie, and leaves the pending table empty.
 func TestWeChatOAuthCallbackBindRejectsLegacyProviderKeyOwnershipConflict(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -752,6 +874,8 @@ func TestWeChatOAuthCallbackBindRejectsLegacyProviderKeyOwnershipConflict(t *tes
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -768,6 +892,8 @@ func TestWeChatOAuthCallbackBindRejectsLegacyProviderKeyOwnershipConflict(t *tes
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -821,7 +947,13 @@ func TestWeChatOAuthCallbackBindRejectsLegacyProviderKeyOwnershipConflict(t *tes
 	require.Zero(t, count)
 }
 
+// TestCompleteWeChatOAuthRegistrationAfterInvitationPendingSessionReturnsPendingSession
+// submits an invitation and adoption choices after callback creates
+// signup-choice state. Completion returns that pending choice, leaves the row
+// unconsumed, and creates no user, identity, channel or adoption decision.
 func TestCompleteWeChatOAuthRegistrationAfterInvitationPendingSessionReturnsPendingSession(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -830,6 +962,8 @@ func TestCompleteWeChatOAuthRegistrationAfterInvitationPendingSessionReturnsPend
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -846,6 +980,8 @@ func TestCompleteWeChatOAuthRegistrationAfterInvitationPendingSessionReturnsPend
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, true)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -938,6 +1074,10 @@ func TestCompleteWeChatOAuthRegistrationAfterInvitationPendingSessionReturnsPend
 	require.Zero(t, decisionCount)
 }
 
+// TestCompleteWeChatOAuthRegistrationBindsIdentityWithoutAdoptionFlags
+// completes a seeded WeChat registration without profile choices. It issues
+// both tokens, creates the supplied username, binds the subject, and links an
+// identity decision with both adoption flags false.
 func TestCompleteWeChatOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -959,6 +1099,7 @@ func TestCompleteWeChatOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *tes
 			"channel_app_id":         "wx-open-app",
 			"channel_subject":        "openid-legacy",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1005,7 +1146,13 @@ func TestCompleteWeChatOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *tes
 	require.False(t, decision.AdoptAvatar)
 }
 
+// TestWeChatOAuthCallbackRepairsLegacyOpenIDOnlyIdentity seeds an existing
+// identity under openid before unionid becomes available. Callback targets the
+// same owner, changes the same identity to the union subject, removes the old
+// subject lookup, and links the app/channel openid.
 func TestWeChatOAuthCallbackRepairsLegacyOpenIDOnlyIdentity(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -1014,6 +1161,8 @@ func TestWeChatOAuthCallbackRepairsLegacyOpenIDOnlyIdentity(t *testing.T) {
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -1030,6 +1179,8 @@ func TestWeChatOAuthCallbackRepairsLegacyOpenIDOnlyIdentity(t *testing.T) {
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -1111,8 +1262,14 @@ func TestWeChatOAuthCallbackRepairsLegacyOpenIDOnlyIdentity(t *testing.T) {
 	require.Equal(t, repairedIdentity.ID, channel.IdentityID)
 }
 
+// TestCompleteWeChatOAuthRegistrationRejectsAdoptExistingUserSession sends
+// registration completion for an existing-account adoption intent. The handler
+// returns HTTP 400 and leaves its pending row unconsumed for the required
+// ownership-proof flow.
 func TestCompleteWeChatOAuthRegistrationRejectsAdoptExistingUserSession(t *testing.T) {
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -1142,6 +1299,7 @@ func TestCompleteWeChatOAuthRegistrationRejectsAdoptExistingUserSession(t *testi
 				"step": "bind_login_required",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1164,8 +1322,14 @@ func TestCompleteWeChatOAuthRegistrationRejectsAdoptExistingUserSession(t *testi
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestCompleteWeChatOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequired
+// submits completion against a forced-email signup choice. It returns
+// pending_session and the choice step, creates no user, and leaves the session
+// unconsumed.
 func TestCompleteWeChatOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequired(t *testing.T) {
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()
@@ -1189,6 +1353,7 @@ func TestCompleteWeChatOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequ
 				"force_email_on_signup": true,
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1220,7 +1385,13 @@ func TestCompleteWeChatOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequ
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestWeChatOAuthCallbackRepairsLegacyProviderKeyCanonicalIdentity seeds a
+// union subject under the legacy provider key. Callback retains its identity ID
+// and owner while moving lookup to the canonical key and recording the matching
+// app/channel relation.
 func TestWeChatOAuthCallbackRepairsLegacyProviderKeyCanonicalIdentity(t *testing.T) {
+	// Save the package-global endpoint values for cleanup restoration. Deferred
+	// database and local-server closes run before this restoration callback.
 	originalAccessTokenURL := wechatOAuthAccessTokenURL
 	originalUserInfoURL := wechatOAuthUserInfoURL
 	t.Cleanup(func() {
@@ -1229,6 +1400,8 @@ func TestWeChatOAuthCallbackRepairsLegacyProviderKeyCanonicalIdentity(t *testing
 	})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token and userinfo branches return fixed profile data for this case. Their
+		// write errors are discarded while the caller inspects callback results.
 		switch {
 		case strings.Contains(r.URL.Path, "/sns/oauth2/access_token"):
 			w.Header().Set("Content-Type", "application/json")
@@ -1245,6 +1418,8 @@ func TestWeChatOAuthCallbackRepairsLegacyProviderKeyCanonicalIdentity(t *testing
 	wechatOAuthUserInfoURL = upstream.URL + "/sns/userinfo"
 
 	handler, client := newWeChatOAuthTestHandler(t, false)
+	// Close the client on test return; testing cleanups run afterward, including
+	// task-stop callbacks registered by fixture construction.
 	defer func() { require.NoError(t, client.Close()) }()
 
 	ctx := context.Background()

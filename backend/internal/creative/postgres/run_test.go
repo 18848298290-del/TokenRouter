@@ -17,12 +17,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
+// Workspace repository fixtures use SQLite with Ent schema creation to compare
+// two browser partitions for the same user. Queries and idempotency lookups
+// return the matching task, while legacy rows without a workspace remain
+// hidden; these cases inspect stored results rather than PostgreSQL locking.
+
+// These UUIDs name two browser partitions for the same fixture user, allowing
+// stored task and idempotency queries to exercise workspace equality independently.
 const (
 	creativeRepoWorkspaceA = "11111111-1111-4111-8111-111111111111"
 	creativeRepoWorkspaceB = "22222222-2222-4222-8222-222222222222"
 )
 
-// openCreativeRunRepositoryForTest creates an in-memory database with the full Ent schema.
+// openCreativeRunRepositoryForTest opens a shared-memory SQLite database with
+// the full Ent schema and foreign keys enabled. It returns the repository and
+// a cleanup callback that callers register after fixture creation.
 func openCreativeRunRepositoryForTest(t *testing.T) (creative.CreativeRunRepository, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite", fmt.Sprintf("file:creative_run_scope_%s?mode=memory&cache=shared&_fk=1", t.Name()))
@@ -30,13 +39,17 @@ func openCreativeRunRepositoryForTest(t *testing.T) (creative.CreativeRunReposit
 	_, err = db.Exec("PRAGMA foreign_keys = ON")
 	require.NoError(t, err)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(entsql.OpenDB(dialect.SQLite, db))))
+	// The returned cleanup closes the Ent client and underlying SQLite pool after
+	// repository assertions finish; pool close errors do not replace fixture results.
 	return NewCreativeRunRepository(client), func() {
 		require.NoError(t, client.Close())
 		_ = db.Close()
 	}
 }
 
-// creativeRepoWorkspaceRunParams builds minimal run parameters for repository tests.
+// creativeRepoWorkspaceRunParams returns metadata for the supplied
+// run/workspace/key with zero output rows. User seven, group twelve, and a
+// placeholder Key identify the fixture; it does not reserve funds.
 func creativeRepoWorkspaceRunParams(runID, workspaceID string, key *string) creative.CreateCreativeRunParams {
 	return creative.CreateCreativeRunParams{
 		RunID:                runID,
@@ -56,7 +69,10 @@ func creativeRepoWorkspaceRunParams(runID, workspaceID string, key *string) crea
 	}
 }
 
-// TestCreativeRunRepositoryWorkspaceScope checks isolation by user and workspace.
+// TestCreativeRunRepositoryWorkspaceScope creates two same-user tasks sharing
+// a key across different workspaces. It checks separate lists and replay
+// lookups, cross-workspace denial, and exclusion of a legacy row with no
+// workspace.
 func TestCreativeRunRepositoryWorkspaceScope(t *testing.T) {
 	repo, cleanup := openCreativeRunRepositoryForTest(t)
 	t.Cleanup(cleanup)

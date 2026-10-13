@@ -25,10 +25,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage repository scenarios exercise the migrated PostgreSQL schema through
+// rollback-isolated suite transactions and committed pool-backed batches.
+// Persisted requests keep database identity, diagnostic fields, monetary
+// measures, and display associations aligned across writes, filtered lists,
+// dashboards, and reports.
+//
+// Queue fixtures explicitly separate full admission queues, cancellation while
+// queued, and worker results; some replace the real consumer with a controlled
+// acknowledgement and therefore test coordination rather than persistence.
+// Aggregation fixtures compare selected raw and bucket metrics, including late
+// records and current team ownership. Other cases establish the actual
+// assertions for zero input, bounded ranges, model grouping, provider expense,
+// and nullable response evidence; they do not imply untested
+// financial-settlement guarantees.
+
+// TestUsageLogRepoSuite runs repository scenarios against migrated PostgreSQL
+// with UsageLogRepoSuite's rollback fixtures. The suite provides shared setup so
+// each method's assertions observe its own transactional writes.
 func TestUsageLogRepoSuite(t *testing.T) {
 	suite.Run(t, new(UsageLogRepoSuite))
 }
 
+// TestCreate supplies a charged usage row without a request ID to the
+// transactional store. It checks Create succeeds and populates a nonzero
+// database row identity.
 func (s *UsageLogRepoSuite) TestCreate() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "create@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-create", Name: "k"})
@@ -50,6 +71,9 @@ func (s *UsageLogRepoSuite) TestCreate() {
 	s.Require().NotZero(log.ID)
 }
 
+// TestUsageLogRepositoryCreate_BatchPathConcurrent submits sixteen distinct
+// pool-backed requests concurrently. It checks each caller reports insertion
+// with a nonzero ID and the database contains sixteen key-scoped rows.
 func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -64,6 +88,8 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	errs := make([]error, total)
 	logs := make([]*usage.UsageLog, total)
 
+	// Every caller owns its result slice slot and row. Join all submissions before
+	// inspecting insertion flags or querying the committed batch record count.
 	var wg sync.WaitGroup
 	wg.Add(total)
 	for i := range total {
@@ -97,6 +123,9 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	require.Equal(t, total, count)
 }
 
+// TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID writes the same
+// request/key pair twice through the pool path. It checks first insertion,
+// duplicate recovery to the same row ID, and one stored record.
 func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -145,6 +174,10 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
+// TestUsageLogRepositoryFlushCreateBatch_DeduplicatesSameKeyInMemory places
+// eight differing payloads under one request/key identity. It checks one caller
+// reports insertion, every caller receives the same row ID, and one row
+// persists.
 func TestUsageLogRepositoryFlushCreateBatch_DeduplicatesSameKeyInMemory(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -205,6 +238,9 @@ func TestUsageLogRepositoryFlushCreateBatch_DeduplicatesSameKeyInMemory(t *testi
 	require.Equal(t, 1, count)
 }
 
+// TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID submits the
+// same request/key pair twice to best-effort Create. It checks both calls
+// succeed and one matching row is eventually stored.
 func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -243,6 +279,8 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 	require.NoError(t, repo.CreateBestEffort(ctx, log1))
 	require.NoError(t, repo.CreateBestEffort(ctx, log2))
 
+	// Poll the committed table so this assertion observes persistence, with a
+	// three-second budget and twenty-millisecond checks after successful writes.
 	require.Eventually(t, func() bool {
 		var count int
 		err := integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&count)
@@ -250,8 +288,13 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 	}, 3*time.Second, 20*time.Millisecond)
 }
 
+// TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline fills a
+// controlled acknowledgement queue with no consumer. It checks the call waits
+// near its deadline before returning a Dropped error.
 func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *testing.T) {
-	// A full queue waits until the caller's deadline before marking the log dropped (issue #3656).
+	// Prefill a queue with no worker so admission cannot proceed; the returned
+	// disposition must come from the caller deadline rather than database
+	// execution.
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
@@ -276,19 +319,29 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *t
 
 	require.Error(t, err)
 	require.True(t, usage.IsUsageLogCreateDropped(err))
+	// Allow a fifty-millisecond margin around the configured admission deadline.
 	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond)
 }
 
+// TestUsageLogRepositoryCreateBestEffort_QueueFullWaitsForDrain fills a
+// controlled queue and drains it after a delay. It checks the blocked submission
+// succeeds after its synthetic acknowledgement, without asserting database
+// persistence.
 func TestUsageLogRepositoryCreateBestEffort_QueueFullWaitsForDrain(t *testing.T) {
-	// The waiting log enters the queue after space becomes available.
+	// A controlled consumer removes the placeholder and acknowledges the submitted
+	// request, isolating queue-space recovery from real database persistence.
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
 	repo.bestEffortBatchCh <- usageLogBestEffortRequest{}
 
+	// Delay the synthetic drain until the submitting caller has encountered the
+	// full queue, then acknowledge its request to finish the admission scenario.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		<-repo.bestEffortBatchCh // Remove the placeholder to release the blocked enqueue.
+		// Remove the placeholder before receiving the waiting request, creating queue
+		// space that must release its blocked send and preserve its acknowledgement.
+		<-repo.bestEffortBatchCh
 		req := <-repo.bestEffortBatchCh
 		sendUsageLogBestEffortResult(req.resultCh, nil)
 	}()
@@ -312,6 +365,9 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullWaitsForDrain(t *testing.T)
 	require.NoError(t, err)
 }
 
+// TestUsageLogRepositoryCreate_BatchPathCanceledContextMarksNotPersisted
+// supplies an already canceled context to pool-backed Create. It checks false
+// insertion and a confirmed-unwritten marker in the returned error.
 func TestUsageLogRepositoryCreate_BatchPathCanceledContextMarksNotPersisted(t *testing.T) {
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
@@ -341,8 +397,13 @@ func TestUsageLogRepositoryCreate_BatchPathCanceledContextMarksNotPersisted(t *t
 	require.True(t, usage.IsUsageLogCreateNotPersisted(err))
 }
 
+// TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted fills a
+// controlled result-aware queue until the caller deadline. It checks admission
+// waits, insertion remains false, and the error carries confirmed-nonpersistence
+// disposition.
 func TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted(t *testing.T) {
-	// A full queue waits until the caller's deadline before marking the log not persisted (issue #3656).
+	// Hold result-aware admission behind a prefilled queue with no consumer, making
+	// the deadline reject the request before any worker can claim processing.
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
 	repo.createBatchCh = make(chan usageLogCreateRequest, 1)
@@ -372,9 +433,13 @@ func TestUsageLogRepositoryCreate_BatchPathQueueFullMarksNotPersisted(t *testing
 	require.False(t, inserted)
 	require.Error(t, err)
 	require.True(t, usage.IsUsageLogCreateNotPersisted(err))
+	// Allow a fifty-millisecond margin around the configured admission deadline.
 	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond)
 }
 
+// TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted
+// holds an admitted request before worker processing. It cancels the caller,
+// checks the confirmed-unwritten error, then acknowledges the captured request.
 func TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted(t *testing.T) {
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
@@ -387,6 +452,8 @@ func TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted(t
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 
+	// Submit on a separate goroutine so the test can capture admission, cancel
+	// before processing, and join the caller through errCh.
 	go func() {
 		_, err := repo.createBatched(ctx, &usage.UsageLog{
 			UserID:       user.ID,
@@ -403,6 +470,8 @@ func TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted(t
 		errCh <- err
 	}()
 
+	// Receive but do not claim processing. Cancellation can then win the queued
+	// state transition, making the returned disposition independent of SQL timing.
 	req := <-repo.createBatchCh
 	require.NotNil(t, req.shared)
 	cancel()
@@ -410,9 +479,14 @@ func TestUsageLogRepositoryCreate_BatchPathCanceledAfterQueueMarksNotPersisted(t
 	err := <-errCh
 	require.Error(t, err)
 	require.True(t, usage.IsUsageLogCreateNotPersisted(err))
+	// Finish the captured request after the caller leaves so the fixture has no
+	// unresolved worker acknowledgement when its database cleanup begins.
 	completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: usage.MarkUsageLogCreateNotPersisted(context.Canceled)})
 }
 
+// TestUsageLogRepositoryFlushCreateBatch_CanceledRequestReturnsNotPersisted
+// passes a request already marked canceled to direct flushing. It checks the
+// result reports no insertion and carries the confirmed-unwritten disposition.
 func TestUsageLogRepositoryFlushCreateBatch_CanceledRequestReturnsNotPersisted(t *testing.T) {
 	client := testEntClient(t)
 	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
@@ -439,6 +513,8 @@ func TestUsageLogRepositoryFlushCreateBatch_CanceledRequestReturnsNotPersisted(t
 		shared:   &usageLogCreateShared{},
 		resultCh: make(chan usageLogCreateResult, 1),
 	}
+	// Mark queued state canceled before flushing so the worker cannot claim this
+	// request for SQL processing and must acknowledge confirmed nonpersistence.
 	req.shared.state.Store(usageLogCreateStateCanceled)
 
 	repo.flushCreateBatch(integrationDB, []usageLogCreateRequest{req})
@@ -449,6 +525,9 @@ func TestUsageLogRepositoryFlushCreateBatch_CanceledRequestReturnsNotPersisted(t
 	require.True(t, usage.IsUsageLogCreateNotPersisted(res.err))
 }
 
+// TestGetByID creates one charged fixture and reads it by database identity. It
+// checks the row ID and input-token count survive the persistence/readback
+// sequence.
 func (s *UsageLogRepoSuite) TestGetByID() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "getbyid@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-getbyid", Name: "k"})
@@ -462,11 +541,17 @@ func (s *UsageLogRepoSuite) TestGetByID() {
 	s.Require().Equal(10, got.InputTokens)
 }
 
+// TestGetByID_NotFound queries a database identity absent from the fixture
+// transaction. It checks GetByID returns an error, without asserting a more
+// specific error value.
 func (s *UsageLogRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+// TestGetByID_ReturnsProviderRateMultiplier persists a nonnil provider
+// multiplier beside unequal base/user costs. It checks readback retains a nonnil
+// multiplier with the supplied value.
 func (s *UsageLogRepoSuite) TestGetByID_ReturnsProviderRateMultiplier() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "getbyid-mult@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-getbyid-mult", Name: "k"})
@@ -493,9 +578,13 @@ func (s *UsageLogRepoSuite) TestGetByID_ReturnsProviderRateMultiplier() {
 	got, err := s.repo.GetByID(s.ctx, log.ID)
 	s.Require().NoError(err)
 	s.Require().NotNil(got.ProviderRateMultiplier)
+	// Use a relative tolerance for the numeric multiplier's float64 readback.
 	s.Require().InEpsilon(0.5, *got.ProviderRateMultiplier, 0.0001)
 }
 
+// TestGetByID_ReturnsOpenAIWSMode records legacy WebSocket evidence with a
+// charged row. It checks reading the persisted row retains the true OpenAIWSMode
+// flag.
 func (s *UsageLogRepoSuite) TestGetByID_ReturnsOpenAIWSMode() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "getbyid-ws@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-getbyid-ws", Name: "k"})
@@ -523,6 +612,9 @@ func (s *UsageLogRepoSuite) TestGetByID_ReturnsOpenAIWSMode() {
 	s.Require().True(got.OpenAIWSMode)
 }
 
+// TestGetByID_ReturnsRequestTypeAndLegacyFallback records explicit WebSocket
+// type with inconsistent legacy flags. It checks readback uses that type and
+// normalizes both legacy transport flags to true.
 func (s *UsageLogRepoSuite) TestGetByID_ReturnsRequestTypeAndLegacyFallback() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "getbyid-request-type@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-getbyid-request-type", Name: "k"})
@@ -554,6 +646,9 @@ func (s *UsageLogRepoSuite) TestGetByID_ReturnsRequestTypeAndLegacyFallback() {
 	s.Require().True(got.OpenAIWSMode)
 }
 
+// TestDelete creates one analytical usage record and deletes its database
+// identity. It checks deletion succeeds and a subsequent GetByID query returns
+// an error.
 func (s *UsageLogRepoSuite) TestDelete() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "delete@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-delete", Name: "k"})
@@ -568,6 +663,8 @@ func (s *UsageLogRepoSuite) TestDelete() {
 	s.Require().Error(err, "expected error after delete")
 }
 
+// TestListByUser records two requests for one actor in the suite transaction. It
+// checks the user listing contains both rows and reports an exact total of two.
 func (s *UsageLogRepoSuite) TestListByUser() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "listbyuser@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-listbyuser", Name: "k"})
@@ -582,6 +679,8 @@ func (s *UsageLogRepoSuite) TestListByUser() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListByAPIKey records two requests under one key in the suite transaction.
+// It checks the key listing returns both rows with an exact total of two.
 func (s *UsageLogRepoSuite) TestListByAPIKey() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "listbyapikey@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-listbyapikey", Name: "k"})
@@ -596,6 +695,9 @@ func (s *UsageLogRepoSuite) TestListByAPIKey() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListByProvider records one request through the selected execution
+// provider. It checks the provider listing returns that row and reports an exact
+// total of one.
 func (s *UsageLogRepoSuite) TestListByProvider() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "listbyprovider@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-listbyprovider", Name: "k"})
@@ -609,6 +711,9 @@ func (s *UsageLogRepoSuite) TestListByProvider() {
 	s.Require().Equal(int64(1), page.Total)
 }
 
+// TestGetUserStats records two actor requests inside a fixed bounded interval.
+// It checks request count and separate input/output token sums from the raw
+// summary.
 func (s *UsageLogRepoSuite) TestGetUserStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "userstats@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-userstats", Name: "k"})
@@ -627,6 +732,9 @@ func (s *UsageLogRepoSuite) TestGetUserStats() {
 	s.Require().Equal(int64(45), stats.OutputTokens)
 }
 
+// TestListWithFilters selects one fixture actor after recording its usage. It
+// checks the filtered listing contains one row and the counted page reports one
+// match.
 func (s *UsageLogRepoSuite) TestListWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "filters@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-filters", Name: "k"})
@@ -641,6 +749,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters() {
 	s.Require().Equal(int64(1), page.Total)
 }
 
+// TestDashboardStats_TodayTotalsAndPerformance adds users, key/provider states,
+// current/older usage, and rollups beside a baseline dashboard. It checks
+// selected count/cost/token increments and raw recent-rate parity.
 func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	now := time.Now().UTC()
 	todayStart := truncateToDayUTC(now)
@@ -743,7 +854,8 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	s.Require().Equal(baseStats.TotalTokens+int64(51), stats.TotalTokens, "TotalTokens mismatch")
 	s.Require().Equal(baseStats.TotalCost+2.3, stats.TotalCost, "TotalCost mismatch")
 	s.Require().Equal(baseStats.TotalActualCost+2.0, stats.TotalActualCost, "TotalActualCost mismatch")
-	// provider_cost falls back to total_cost when provider_stats_cost is NULL
+	// These rows omit provider-specific bases/multipliers, so provider expense uses
+	// their base costs and remains distinct from the lower actual user charges.
 	s.Require().Equal(baseStats.TotalProviderCost+2.3, stats.TotalProviderCost, "TotalProviderCost mismatch")
 	s.Require().GreaterOrEqual(stats.TodayRequests, int64(1), "expected TodayRequests >= 1")
 	s.Require().GreaterOrEqual(stats.TodayCost, 0.0, "expected TodayCost >= 0")
@@ -755,6 +867,9 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	s.Require().Equal(wantTpm, stats.Tpm, "Tpm mismatch")
 }
 
+// TestDashboardStatsWithRange_Fallback records one row outside and two rows
+// inside the requested raw span. It checks bounded totals, separate monetary
+// measures, and the all-request duration average.
 func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
 	now := time.Now().UTC()
 	todayStart := truncateToDayUTC(now)
@@ -826,11 +941,14 @@ func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
 	s.Require().Equal(int64(45), stats.TotalTokens)
 	s.Require().Equal(1.5, stats.TotalCost)
 	s.Require().Equal(1.4, stats.TotalActualCost)
-	// provider_cost = COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1) = total_cost
+	// Absent provider bases and multipliers make provider expense equal the fixture
+	// base costs. Use relative float tolerance for the returned duration average.
 	s.Require().Equal(1.5, stats.TotalProviderCost)
 	s.Require().InEpsilon(150.0, stats.AverageDurationMs, 0.0001)
 }
 
+// TestGetUserDashboardStats records one actor request under one key in the suite
+// transaction. It checks the dashboard reports one key and one retained request.
 func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "userdash@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-userdash", Name: "k"})
@@ -844,7 +962,9 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 	s.Require().Equal(int64(1), stats.TotalRequests)
 }
 
-// TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates checks owner-visible team usage without double counting.
+// TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates records
+// owner/member personal and team-key usage. It checks owner visibility counts
+// team rows once and the member's actor view retains its two requests.
 func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDuplicates() {
 	owner := mustCreateUser(s.T(), s.client, &identity.User{Email: "userdash-owner@test.com"})
 	member := mustCreateUser(s.T(), s.client, &identity.User{Email: "userdash-member@test.com"})
@@ -875,9 +995,11 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDup
 	memberTeamKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: member.ID, TeamID: &teamID, Key: "sk-userdash-member-team"})
 	memberPersonalKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: member.ID, Key: "sk-userdash-member-personal"})
 
-	// Fixed timestamps test all-time totals; today's totals depend on the test date.
+	// Fixed timestamps test all-time totals; today's totals depend on the test
+	// date.
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	// Rows cover the owner, a team member, the owner's team key, and a member's personal key.
+	// Rows cover the owner, a team member, the owner's team key, and a member's
+	// personal key.
 	logs := []*usage.UsageLog{
 		{
 			UserID: owner.ID, BillingUserID: owner.ID, APIKeyID: ownerPersonalKey.ID, ProviderID: provider.ID,
@@ -913,6 +1035,7 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDup
 	s.Require().Equal(int64(60), ownerStats.TotalInputTokens)
 	s.Require().Equal(int64(6), ownerStats.TotalOutputTokens)
 	s.Require().Equal(int64(66), ownerStats.TotalTokens)
+	// Allow float summation differences in the owner's three retained row costs.
 	s.Require().InDelta(0.6, ownerStats.TotalCost, 0.000001)
 
 	memberStats, err := s.repo.GetUserDashboardStats(s.ctx, member.ID)
@@ -923,6 +1046,9 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStatsIncludesOwnedTeamWithoutDup
 	s.Require().Equal(int64(6), memberStats.TotalOutputTokens)
 }
 
+// TestGetProviderTodayStats records current-day provider usage with nonunit and
+// zero multipliers. It checks requests, cache-inclusive tokens, and distinct
+// provider/base/user cost sums.
 func (s *UsageLogRepoSuite) TestGetProviderTodayStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "acctoday@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-acctoday", Name: "k"})
@@ -966,21 +1092,27 @@ func (s *UsageLogRepoSuite) TestGetProviderTodayStats() {
 	s.Require().NoError(err, "GetProviderTodayStats")
 	s.Require().Equal(int64(2), stats.Requests)
 	s.Require().Equal(int64(40), stats.Tokens)
-	// provider cost = SUM(total_cost * provider_rate_multiplier)
+	// The zero multiplier removes the second row from provider expense while both
+	// base costs and user charges remain. Apply one relative float tolerance to
+	// these three independently summed monetary measures.
 	s.Require().InEpsilon(1.5, stats.Cost, 0.0001)
-	// standard cost = SUM(total_cost)
 	s.Require().InEpsilon(1.5, stats.StandardCost, 0.0001)
-	// user cost = SUM(actual_cost)
 	s.Require().InEpsilon(3.0, stats.UserCost, 0.0001)
 }
 
+// TestDashboardAggregationConsistency records two completed hours and builds
+// dashboard plus analytics rollups. It checks selected hourly/daily metrics,
+// then adds a late row and checks recomputed hourly totals.
 func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	now := time.Now().UTC().Truncate(time.Second)
-	// Use two completed hours on the same UTC day so both can be aggregated.
+	// Pick completed UTC hours on one date so dashboard day totals can be compared
+	// with their hourly fixtures before the later recomputation scenario.
 	dayStart := truncateToDayUTC(now)
 	hour1 := dayStart.Add(2 * time.Hour) // 02:00 UTC
 	hour2 := dayStart.Add(3 * time.Hour) // 03:00 UTC
-	// Use yesterday if today's second hour has not ended yet.
+	// If the second fixture hour is still live, move both hours to yesterday so
+	// aggregation assertions inspect complete hours regardless of the current test
+	// time.
 	if now.Before(hour2.Add(time.Hour)) {
 		dayStart = dayStart.Add(-24 * time.Hour)
 		hour1 = dayStart.Add(2 * time.Hour)
@@ -1047,16 +1179,18 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().NoError(aggRepo.AggregateRange(s.ctx, aggStart, aggEnd))
 	s.Require().NoError(aggRepo.AggregateUsageAnalyticsRange(s.ctx, aggStart, aggEnd))
 
+	// hourlyRow holds the selected dashboard bucket metrics asserted by this
+	// fixture.
 	type hourlyRow struct {
-		totalRequests       int64
-		inputTokens         int64
-		outputTokens        int64
-		cacheCreationTokens int64
-		cacheReadTokens     int64
-		totalCost           float64
-		actualCost          float64
-		totalDurationMs     int64
-		activeUsers         int64
+		totalRequests       int64   // requests in selected bucket
+		inputTokens         int64   // recorded input token sum
+		outputTokens        int64   // recorded output token sum
+		cacheCreationTokens int64   // recorded cache-creation token sum
+		cacheReadTokens     int64   // recorded cache-read token sum
+		totalCost           float64 // base costs in USD
+		actualCost          float64 // user charges in USD
+		totalDurationMs     int64   // milliseconds
+		activeUsers         int64   // distinct bucket actor count
 	}
 	fetchHourly := func(bucketStart time.Time) hourlyRow {
 		var row hourlyRow
@@ -1096,15 +1230,15 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().Equal(int64(1), hour2Row.activeUsers)
 
 	var daily struct {
-		totalRequests       int64
-		inputTokens         int64
-		outputTokens        int64
-		cacheCreationTokens int64
-		cacheReadTokens     int64
-		totalCost           float64
-		actualCost          float64
-		totalDurationMs     int64
-		activeUsers         int64
+		totalRequests       int64   // requests in selected bucket
+		inputTokens         int64   // recorded input token sum
+		outputTokens        int64   // recorded output token sum
+		cacheCreationTokens int64   // recorded cache-creation token sum
+		cacheReadTokens     int64   // recorded cache-read token sum
+		totalCost           float64 // base costs in USD
+		actualCost          float64 // user charges in USD
+		totalDurationMs     int64   // milliseconds
+		activeUsers         int64   // distinct bucket actor count
 	}
 	err = scanSingleRow(s.ctx, s.tx, `
 		SELECT total_requests, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
@@ -1126,7 +1260,8 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().Equal(int64(450), daily.totalDurationMs)
 	s.Require().Equal(int64(2), daily.activeUsers)
 
-	// Hourly user totals must match raw records over the same range.
+	// Read the selected actor's first hourly range from analytics and compare its
+	// request, token, duration, and cost sums to the corresponding fixture inputs.
 	var analyticsRequests, analyticsInput, analyticsOutput, analyticsDuration int64
 	var analyticsTotalCost, analyticsActualCost float64
 	err = scanSingleRow(s.ctx, s.tx, `
@@ -1142,10 +1277,12 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().Equal(int64(15), analyticsInput)
 	s.Require().Equal(int64(25), analyticsOutput)
 	s.Require().Equal(int64(300), analyticsDuration)
+	// Allow numeric-to-float conversion differences in both initial bucket costs.
 	s.Require().InDelta(1.5, analyticsTotalCost, 0.000001)
 	s.Require().InDelta(1.4, analyticsActualCost, 0.000001)
 
-	// Recomputing a completed hour replaces its aggregate to include late records.
+	// Insert a late row into an already computed hour, then rebuild that range; its
+	// increased metrics must reflect all retained rows in the bucket.
 	lateDuration := 50
 	_, err = s.repo.Create(s.ctx, &usage.UsageLog{
 		UserID: user1.ID, APIKeyID: apiKey1.ID, ProviderID: provider.ID,
@@ -1169,11 +1306,15 @@ func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	s.Require().Equal(int64(18), analyticsInput)
 	s.Require().Equal(int64(29), analyticsOutput)
 	s.Require().Equal(int64(350), analyticsDuration)
+	// Apply the same absolute float tolerance to the rebuilt bucket's cost sums.
 	s.Require().InDelta(1.7, analyticsTotalCost, 0.000001)
 	s.Require().InDelta(1.55, analyticsActualCost, 0.000001)
 }
 
-// TestUsageAnalyticsQueriesExecuteOnPostgreSQL checks PostgreSQL parameter typing for hourly, batch, and group queries.
+// TestUsageAnalyticsQueriesExecuteOnPostgreSQL establishes covered
+// Honolulu-window buckets with a fixed Calendar. It checks actual trend,
+// summary, batch cost, and group queries execute and return the expected
+// selected metrics.
 func (s *UsageLogRepoSuite) TestUsageAnalyticsQueriesExecuteOnPostgreSQL() {
 	loc, err := time.LoadLocation("Pacific/Honolulu")
 	s.Require().NoError(err)
@@ -1199,6 +1340,9 @@ func (s *UsageLogRepoSuite) TestUsageAnalyticsQueriesExecuteOnPostgreSQL() {
 
 	aggRepo := NewAggregationStoreWithSQL(s.tx, calendar)
 	s.Require().NoError(aggRepo.AggregateUsageAnalyticsRange(s.ctx, yesterdayStart, now))
+	// Publish fixture coverage after bucket construction completes, allowing the
+	// following analytics reads to select those known rows with matching watermark
+	// metadata.
 	_, err = s.tx.ExecContext(s.ctx, `
 		UPDATE usage_analytics_aggregation_state
 		SET live_watermark = $1, coverage_start = $2, backfill_cursor = $2,
@@ -1220,6 +1364,8 @@ func (s *UsageLogRepoSuite) TestUsageAnalyticsQueriesExecuteOnPostgreSQL() {
 	s.Require().True(ok)
 	s.Require().Equal(int64(1), stats.TotalRequests)
 
+	// Use the same absolute float tolerance for key, actor, and group charge
+	// readbacks below; each represents the fixture's decimal amount.
 	keyStats, ok, err := s.repo.getBatchAPIKeyUsageStatsFromAnalytics(s.ctx, []int64{apiKey.ID}, todayStart, now)
 	s.Require().NoError(err)
 	s.Require().True(ok)
@@ -1244,6 +1390,9 @@ func (s *UsageLogRepoSuite) TestUsageAnalyticsQueriesExecuteOnPostgreSQL() {
 	s.Require().True(foundGroup)
 }
 
+// TestGetBatchUserUsageStats records two actors and requests a zero-bound batch
+// summary. It checks both requested map entries exist, without asserting their
+// monetary values.
 func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats() {
 	user1 := mustCreateUser(s.T(), s.client, &identity.User{Email: "batch1@test.com"})
 	user2 := mustCreateUser(s.T(), s.client, &identity.User{Email: "batch2@test.com"})
@@ -1261,12 +1410,18 @@ func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats() {
 	s.Require().NotNil(stats[user2.ID])
 }
 
+// TestGetBatchUserUsageStats_Empty supplies no actor IDs with zero time bounds.
+// It checks the batch reader succeeds with an empty result rather than querying
+// fixture usage.
 func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats_Empty() {
 	stats, err := s.repo.GetBatchUserUsageStats(s.ctx, []int64{}, time.Time{}, time.Time{})
 	s.Require().NoError(err)
 	s.Require().Empty(stats)
 }
 
+// TestGetBatchApiKeyUsageStats records usage for two keys and requests
+// zero-bound summaries. It checks two result entries are returned, without
+// asserting each decoded charge.
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "batchkey@test.com"})
 	apiKey1 := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
@@ -1281,12 +1436,17 @@ func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats() {
 	s.Require().Len(stats, 2)
 }
 
+// TestGetBatchApiKeyUsageStats_Empty supplies an empty key-ID list with zero
+// bounds. It checks the batch reader returns no error and an empty result.
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats_Empty() {
 	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{}, time.Time{}, time.Time{})
 	s.Require().NoError(err)
 	s.Require().Empty(stats)
 }
 
+// TestGetGlobalStats records two rows in a fixed half-open query span. It checks
+// global request count and separate input/output token totals for that selected
+// window.
 func (s *UsageLogRepoSuite) TestGetGlobalStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "global@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-global", Name: "k"})
@@ -1303,6 +1463,9 @@ func (s *UsageLogRepoSuite) TestGetGlobalStats() {
 	s.Require().Equal(int64(45), stats.TotalOutputTokens)
 }
 
+// TestListByUserAndTimeRange records two rows inside a bounded actor span and
+// one earlier row. It checks the selected listing returns exactly the two
+// in-range records.
 func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "timerange@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-timerange", Name: "k"})
@@ -1320,6 +1483,9 @@ func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
 	s.Require().Len(logs, 2)
 }
 
+// TestListByAPIKeyAndTimeRange records two rows inside a bounded key span and
+// one earlier row. It checks the returned listing contains two matching usage
+// records.
 func (s *UsageLogRepoSuite) TestListByAPIKeyAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "keytimerange@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-keytimerange", Name: "k"})
@@ -1337,6 +1503,9 @@ func (s *UsageLogRepoSuite) TestListByAPIKeyAndTimeRange() {
 	s.Require().Len(logs, 2)
 }
 
+// TestListByProviderAndTimeRange records two rows inside a bounded provider span
+// and one earlier row. It checks the selected provider listing returns exactly
+// two records.
 func (s *UsageLogRepoSuite) TestListByProviderAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "acctimerange@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-acctimerange", Name: "k"})
@@ -1354,6 +1523,9 @@ func (s *UsageLogRepoSuite) TestListByProviderAndTimeRange() {
 	s.Require().Len(logs, 2)
 }
 
+// TestListByModelAndTimeRange records two matching stored models and one
+// different model in the selected span. It checks the model equality listing
+// returns two rows.
 func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "modeltimerange@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-modeltimerange", Name: "k"})
@@ -1361,7 +1533,6 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	// Create logs with different models
 	log1 := &usage.UsageLog{
 		UserID:       user.ID,
 		APIKeyID:     apiKey.ID,
@@ -1411,6 +1582,9 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	s.Require().Len(logs, 2)
 }
 
+// TestGetProviderWindowStats records two requests after the lower bound and one
+// older request. It checks request count and input/output token sums for the
+// open-ended provider window.
 func (s *UsageLogRepoSuite) TestGetProviderWindowStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "windowstats@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-windowstats", Name: "k"})
@@ -1429,6 +1603,9 @@ func (s *UsageLogRepoSuite) TestGetProviderWindowStats() {
 	s.Require().Equal(int64(70), stats.Tokens) // (10+20) + (15+25)
 }
 
+// TestGetUserUsageTrendByUserID places actor usage on two UTC fixture dates. It
+// checks day-granularity query returns two populated buckets, without asserting
+// each bucket's numeric totals.
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "usertrend@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-usertrend", Name: "k"})
@@ -1446,6 +1623,9 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
 	s.Require().Len(trend, 2) // 2 different days
 }
 
+// TestGetUserUsageTrendByUserID_HourlyGranularity records requests in three
+// distinct fixture hours. It checks hour-granularity actor trends contain three
+// populated buckets in the selected interval.
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "usertrendhourly@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-usertrendhourly", Name: "k"})
@@ -1463,6 +1643,9 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
 	s.Require().Len(trend, 3) // 3 different hours
 }
 
+// TestGetUserModelStats records two internal model identities with unequal token
+// totals. It checks two groups are returned and the larger token model occupies
+// the first position.
 func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "modelstats@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-modelstats", Name: "k"})
@@ -1470,7 +1653,6 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	// Create logs with different models
 	log1 := &usage.UsageLog{
 		UserID:       user.ID,
 		APIKeyID:     apiKey.ID,
@@ -1505,11 +1687,13 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	s.Require().NoError(err, "GetUserModelStats")
 	s.Require().Len(stats, 2)
 
-	// Models are ordered by descending total tokens.
 	s.Require().Equal("claude-3-opus", stats[0].Model)
 	s.Require().Equal(int64(300), stats[0].TotalTokens)
 }
 
+// TestGetUsageTrendWithFilters records usage on two dates under one actor/key
+// pair. It checks actor, key, and combined base selectors each return two
+// populated daily buckets.
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "trendfilters@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-trendfilters", Name: "k"})
@@ -1522,22 +1706,22 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(48 * time.Hour)
 
-	// Test with user filter
 	trend, err := s.repo.GetUsageTrendWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "", nil, nil, nil)
 	s.Require().NoError(err, "GetUsageTrendWithFilters user filter")
 	s.Require().Len(trend, 2)
 
-	// Test with apiKey filter
 	trend, err = s.repo.GetUsageTrendWithFilters(s.ctx, startTime, endTime, "day", 0, apiKey.ID, 0, 0, "", nil, nil, nil)
 	s.Require().NoError(err, "GetUsageTrendWithFilters apiKey filter")
 	s.Require().Len(trend, 2)
 
-	// Test with both filters
 	trend, err = s.repo.GetUsageTrendWithFilters(s.ctx, startTime, endTime, "day", user.ID, apiKey.ID, 0, 0, "", nil, nil, nil)
 	s.Require().NoError(err, "GetUsageTrendWithFilters both filters")
 	s.Require().Len(trend, 2)
 }
 
+// TestGetUsageTrendWithFilters_HourlyGranularity records two actor requests in
+// separate fixture hours. It checks the selected hour-granularity query returns
+// two populated trend buckets.
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "trendfilters-h@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-trendfilters-h", Name: "k"})
@@ -1555,6 +1739,9 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 	s.Require().Len(trend, 2)
 }
 
+// TestGetModelStatsWithFilters records two models with separate provider, base,
+// and user costs. It checks actor/key/provider selectors and distinct monetary
+// columns under provider filtering.
 func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "modelfilters@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-modelfilters", Name: "k"})
@@ -1599,25 +1786,29 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(2 * time.Hour)
 
-	// Test with user filter
 	stats, err := s.repo.GetModelStatsWithFilters(s.ctx, startTime, endTime, user.ID, 0, 0, 0, nil, nil, nil)
 	s.Require().NoError(err, "GetModelStatsWithFilters user filter")
 	s.Require().Len(stats, 2)
 
-	// Test with apiKey filter
 	stats, err = s.repo.GetModelStatsWithFilters(s.ctx, startTime, endTime, 0, apiKey.ID, 0, 0, nil, nil, nil)
 	s.Require().NoError(err, "GetModelStatsWithFilters apiKey filter")
 	s.Require().Len(stats, 2)
 
-	// Filtering by provider keeps user charges, provider costs, and standard costs distinct.
+	// Filtering by provider keeps user charges, provider costs, and standard costs
+	// distinct.
 	stats, err = s.repo.GetModelStatsWithFilters(s.ctx, startTime, endTime, 0, 0, provider.ID, 0, nil, nil, nil)
 	s.Require().NoError(err, "GetModelStatsWithFilters provider filter")
 	s.Require().Len(stats, 2)
+	// Allow numeric-to-float conversion differences across the separately decoded
+	// user, provider, and base amounts.
 	s.Require().InDelta(25, stats[0].ActualCost, 0.000001)
 	s.Require().InDelta(0.8, stats[0].ProviderCost, 0.000001)
 	s.Require().InDelta(0.5, stats[0].Cost, 0.000001)
 }
 
+// TestGetGeminiUsageTotalsBatchUsesProviderCost supplies one Pro and one Flash
+// model with larger user charges. It checks recorded provider-cost
+// bases/multipliers and one request in each category.
 func (s *UsageLogRepoSuite) TestGetGeminiUsageTotalsBatchUsesProviderCost() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "gemini-cost@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-gemini-cost", Name: "k"})
@@ -1626,7 +1817,8 @@ func (s *UsageLogRepoSuite) TestGetGeminiUsageTotalsBatchUsesProviderCost() {
 	proRate, proStatsCost := 2.0, 0.4
 	flashRate, flashStatsCost := 1.5, 0.1
 
-	// User charges exceed provider costs in these rows, making cost-source mistakes observable.
+	// User charges exceed provider costs in these rows, making cost-source mistakes
+	// observable.
 	logs := []*usage.UsageLog{
 		{
 			UserID:                 user.ID,
@@ -1663,12 +1855,16 @@ func (s *UsageLogRepoSuite) TestGetGeminiUsageTotalsBatchUsesProviderCost() {
 	totals, err := s.repo.GetGeminiUsageTotalsBatch(s.ctx, []int64{provider.ID}, base.Add(-time.Hour), base.Add(time.Hour))
 
 	s.Require().NoError(err)
+	// Use absolute float tolerance for both multiplied provider-cost readbacks.
 	s.Require().InDelta(0.8, totals[provider.ID].ProCost, 0.000001)
 	s.Require().InDelta(0.15, totals[provider.ID].FlashCost, 0.000001)
 	s.Require().Equal(int64(1), totals[provider.ID].ProRequests)
 	s.Require().Equal(int64(1), totals[provider.ID].FlashRequests)
 }
 
+// TestGetProviderUsageStats records two provider models on two fixture dates. It
+// checks two history rows, combined requests/tokens, and two model groups in the
+// report.
 func (s *UsageLogRepoSuite) TestGetProviderUsageStats() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "accstats@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-accstats", Name: "k"})
@@ -1676,7 +1872,6 @@ func (s *UsageLogRepoSuite) TestGetProviderUsageStats() {
 
 	base := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
 
-	// Create logs on different days
 	log1 := &usage.UsageLog{
 		UserID:       user.ID,
 		APIKeyID:     apiKey.ID,
@@ -1717,6 +1912,9 @@ func (s *UsageLogRepoSuite) TestGetProviderUsageStats() {
 	s.Require().Len(resp.Models, 2)
 }
 
+// TestGetProviderUsageStats_EmptyRange queries a provider with no selected usage
+// records. It checks history is empty and the report's request total remains
+// zero.
 func (s *UsageLogRepoSuite) TestGetProviderUsageStats_EmptyRange() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-emptystats"})
 
@@ -1731,6 +1929,9 @@ func (s *UsageLogRepoSuite) TestGetProviderUsageStats_EmptyRange() {
 	s.Require().Equal(int64(0), resp.Summary.TotalRequests)
 }
 
+// TestGetUserUsageTrend records two payers across two fixture dates with
+// different token totals. It checks the selected top-user daily trend returns at
+// least two rows.
 func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	user1 := mustCreateUser(s.T(), s.client, &identity.User{Email: "usertrend1@test.com"})
 	user2 := mustCreateUser(s.T(), s.client, &identity.User{Email: "usertrend2@test.com"})
@@ -1751,6 +1952,9 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	s.Require().GreaterOrEqual(len(trend), 2)
 }
 
+// TestGetAPIKeyUsageTrend records two keys across two fixture dates with
+// different token totals. It checks the selected top-key daily trend returns at
+// least two rows.
 func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "keytrend@test.com"})
 	apiKey1 := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-keytrend1", Name: "k1"})
@@ -1770,6 +1974,9 @@ func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend() {
 	s.Require().GreaterOrEqual(len(trend), 2)
 }
 
+// TestGetAPIKeyUsageTrend_HourlyGranularity records two requests under one key
+// in separate fixture hours. It checks the selected top-key query returns two
+// populated hourly rows.
 func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "keytrendh@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-keytrendh", Name: "k"})
@@ -1787,6 +1994,8 @@ func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend_HourlyGranularity() {
 	s.Require().Len(trend, 2)
 }
 
+// TestListWithFilters_ApiKeyFilter records one request and selects its key ID.
+// It checks the listing contains one row with an exact page total of one.
 func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "filterskey@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-filterskey", Name: "k"})
@@ -1801,6 +2010,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
 	s.Require().Equal(int64(1), page.Total)
 }
 
+// TestListWithFilters_TimeRange records two selected rows and one older row
+// before the query span. It checks filtered listing length and the observed
+// fast-page total both equal two.
 func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "filterstime@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-filterstime", Name: "k"})
@@ -1820,6 +2032,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListWithFilters_CombinedFilters combines actor, key, and bounded
+// timestamps over two requests. It checks both matching rows remain in the page
+// and its exact total is two.
 func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "filterscombined@test.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-filterscombined", Name: "k"})
@@ -1843,7 +2058,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
-// TestResponseModelRoundTrip checks known response models alongside historical unknown values.
+// TestResponseModelRoundTrip records absent, matching, and differing nullable
+// response-model evidence through direct suite writes. It checks both diagnostic
+// fields equal their supplied values after readback.
 func (s *UsageLogRepoSuite) TestResponseModelRoundTrip() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "response-model@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "response-model-key", Name: "model"})
@@ -1868,12 +2085,14 @@ func (s *UsageLogRepoSuite) TestResponseModelRoundTrip() {
 	}
 }
 
-// truncateToDayUTC returns the start of the UTC day.
+// truncateToDayUTC returns UTC midnight for the date containing the supplied
+// instant.
 func truncateToDayUTC(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
+// testMaxTime returns the later instant, choosing b when both compare equal.
 func testMaxTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a

@@ -6,11 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGrokTokenCacheKey supplies ordinary, metadata-bearing, zero-ID, and nil
+// provider records. It asserts keys depend on decimal provider identity and the
+// nil case shares the zero-ID sentinel.
 func TestGrokTokenCacheKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *Record
-		expected string
+		name     string  // table case display name
+		provider *Record // supplied provider identity fixture
+		expected string  // expected provider cache key
 	}{
 		{
 			name: "basic_provider",
@@ -51,6 +54,9 @@ func TestGrokTokenCacheKey(t *testing.T) {
 	}
 }
 
+// TestGrokTokenCacheKeySeparatesProvidersWithSameEmail assigns the same email
+// to two distinct stored provider IDs. It asserts their cache keys differ so
+// email metadata cannot merge those provider identities.
 func TestGrokTokenCacheKeySeparatesProvidersWithSameEmail(t *testing.T) {
 	first := &Record{
 		ID: 351,

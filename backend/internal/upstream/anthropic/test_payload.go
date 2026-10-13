@@ -8,8 +8,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// testSessionString creates a random CLI-style identity using the metadata
-// format matching the User-Agent in DefaultHeaders.
+// Administrative Anthropic probes use the package's CLI-style system prompt and
+// metadata format alongside a streaming user message. Random device and session
+// identifiers keep each prepared probe self-contained, while a trimmed prompt
+// defaults to hi for an empty administrative input.
+
+// testSessionString returns CLI probe metadata with a 64-hex device value and
+// new session UUID, formatted for the User-Agent version in DefaultHeaders.
+// Device bytes use crypto/rand.Read, whose source errors terminate the process;
+// uuid.New panics when session UUID generation fails.
 func testSessionString() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -21,7 +28,11 @@ func testSessionString() (string, error) {
 	return FormatMetadataUserID(hex64, "", sessionUUID, uaVersion), nil
 }
 
-// TestPayloadWithPrompt builds a streaming CLI-style probe, defaulting a blank prompt to "hi".
+// TestPayloadWithPrompt returns a streaming administrative probe for modelID.
+// The prompt is trimmed and defaults to hi when blank. The body includes the
+// CLI system prompt, cache markers, and fresh session metadata. Identifier
+// generation inherits testSessionString's random-read termination and UUID
+// panic behavior.
 func TestPayloadWithPrompt(modelID string, prompt string) (map[string]any, error) {
 	sessionID, err := testSessionString()
 	if err != nil {
@@ -60,6 +71,7 @@ func TestPayloadWithPrompt(modelID string, prompt string) (map[string]any, error
 		"metadata": map[string]string{
 			"user_id": sessionID,
 		},
+		// Bound administrative probe output with a fixed generated-token ceiling.
 		"max_tokens":  1024,
 		"temperature": 1,
 		"stream":      true,

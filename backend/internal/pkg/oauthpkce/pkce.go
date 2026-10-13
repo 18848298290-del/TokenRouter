@@ -12,9 +12,10 @@ import (
 // OpenAI OAuth wrapper requests the longer hexadecimal form before deriving its
 // challenge.
 
-// RandomBytes returns n cryptographically random bytes or the random source
-// error. A zero length returns an empty slice, and a negative length panics
-// during allocation before reading randomness.
+// RandomBytes returns n cryptographically random bytes with a nil error.
+// A zero length returns an empty slice, and a negative length panics during
+// allocation. crypto/rand.Read terminates the program when io.ReadFull reports
+// an error.
 func RandomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)
 	_, err := rand.Read(b)
@@ -30,8 +31,8 @@ func Base64URL(b []byte) string {
 }
 
 // Verifier returns an unpadded base64url verifier derived from 32 random bytes.
-// The output has 43 characters; a random source failure returns an error for
-// the OAuth caller to handle.
+// The result has 43 characters and a nil error when generation returns.
+// An io.ReadFull error terminates the program through RandomBytes.
 func Verifier() (string, error) {
 	b, err := RandomBytes(32)
 	if err != nil {
@@ -41,8 +42,9 @@ func Verifier() (string, error) {
 }
 
 // HexVerifier returns a lowercase hexadecimal verifier derived from 64 random
-// bytes. Its 128-character output supports the OpenAI OAuth wrapper, and a
-// random source failure is returned to the caller.
+// bytes for the OpenAI OAuth wrapper. The result has 128 characters and a nil
+// error when generation returns. An io.ReadFull error terminates the program
+// through RandomBytes.
 func HexVerifier() (string, error) {
 	b, err := RandomBytes(64)
 	if err != nil {

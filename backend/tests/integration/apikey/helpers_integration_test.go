@@ -23,29 +23,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// APIKeyRepoSuite shares database and repository fixtures across API key storage tests.
+// API Key storage suites reuse a migrated PostgreSQL database but isolate each
+// suite case in a rollback transaction. Standalone concurrency cases request
+// separate databases so their repository writes can commit and become visible
+// across connections.
+
+// APIKeyRepoSuite binds each repository case to a rollback transaction in its
+// suite database.
 type APIKeyRepoSuite struct {
-	root *dbent.Client
-	suite.Suite
-	ctx    context.Context
-	client *dbent.Client
-	repo   *apikeypostgres.KeyStore
+	// root owns the suite database connection and stays usable until the suite
+	// cleanup closes it.
+	root        *dbent.Client
+	suite.Suite // assertion and suite lifecycle support
+	// ctx, client, and repo are replaced together before each case. client and
+	// repo use that case transaction, which its test cleanup rolls back after
+	// assertions.
+	ctx    context.Context          // case execution context
+	client *dbent.Client            // case transaction client
+	repo   *apikeypostgres.KeyStore // transaction-bound key storage fixture
 }
 
-// SetupSuite creates one isolated database for the suite; SetupTest wraps each test in a rolled-back transaction.
+// SetupSuite starts the suite database through keyDatabase and retains its Ent
+// client. Suite-level test cleanup closes that client after the transaction
+// cleanup registered by individual cases.
 func (s *APIKeyRepoSuite) SetupSuite() {
 	_, s.root = keyDatabase(s.T())
 }
 
+// SetupTest opens a fresh transaction and binds key storage and usage totals to
+// its executor. Each case leaves transaction completion to cleanup, which rolls
+// back its writes.
 func (s *APIKeyRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx, err := s.root.Tx(s.ctx)
 	s.Require().NoError(err)
+	// Roll back after each case so later suite cases start with no rows from it;
+	// cleanup deliberately discards errors from an already completed transaction.
 	s.T().Cleanup(func() { _ = tx.Rollback() })
 	s.client = tx.Client()
 	s.repo = newKeyStoreFixture(s.client, tx)
 }
 
+// mustCreateUser inserts an active ordinary user with a fixture password hash
+// and returns its identity view. Creation failures fail the current test before
+// its repository operation begins.
 func (s *APIKeyRepoSuite) mustCreateUser(email string) *identity.User {
 	s.T().Helper()
 
@@ -59,6 +80,9 @@ func (s *APIKeyRepoSuite) mustCreateUser(email string) *identity.User {
 	return identitypostgres.UserFromEntity(u)
 }
 
+// mustCreateGroup inserts an active routing group and returns its domain view
+// for key assignments. The group belongs to the current case transaction and
+// disappears during rollback cleanup.
 func (s *APIKeyRepoSuite) mustCreateGroup(name string) *routing.Group {
 	s.T().Helper()
 
@@ -70,6 +94,9 @@ func (s *APIKeyRepoSuite) mustCreateGroup(name string) *routing.Group {
 	return routingpostgres.GroupFromEnt(g)
 }
 
+// mustCreateApiKey persists an active key for userID with the supplied optional
+// ordinary group. The returned object contains storage-assigned identity and
+// timestamps inside the current transaction.
 func (s *APIKeyRepoSuite) mustCreateApiKey(userID int64, key, name string, groupID *int64) *apikey.APIKey {
 	s.T().Helper()
 
@@ -84,11 +111,15 @@ func (s *APIKeyRepoSuite) mustCreateApiKey(userID int64, key, name string, group
 	return k
 }
 
-// keyDatabase creates an isolated database that supports committed transactions for concurrency tests.
+// keyDatabase returns SQL and Ent access to a dedicated migrated PostgreSQL
+// container. Test cleanup closes the Ent client before the pool and container
+// cleanups registered by postgrescontainer.New.
 func keyDatabase(t *testing.T) (*sql.DB, *dbent.Client) {
 	t.Helper()
 	db := postgrescontainer.New(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	// Ent shares the SQL pool created by postgrescontainer.New. Its later cleanup
+	// runs first, and repeated pool closure errors are discarded by this callback.
 	t.Cleanup(func() { _ = client.Close() })
 	return db, client
 }

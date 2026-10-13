@@ -16,15 +16,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// refreshExchange pauses token exchange so an administrator credential update can commit first.
+// Refresh credential writes must match the identity observed before exchange
+// and keep scheduling events with the credential update. PostgreSQL cases check
+// stale comparisons, caller-owned rollback, and a trigger that rejects outbox
+// persistence.
+//
+// The public refresh case pauses an exchange through channels while an
+// administrator commits new credentials. After release, the coordinator returns
+// the current provider with Refreshed false and leaves the administrator token
+// stored. The exchange fixture reports its first invocation before waiting,
+// then returns either its fixed late credentials or the context error.
+// This makes the competing update observable before completion.
+
+// refreshExchange gates one token exchange so a committed administrator write
+// can precede completion.
 type refreshExchange struct {
-	started chan struct{}
-	release chan struct{}
-	calls   int
+	// started and release gate one exchange: Refresh closes started before
+	// waiting, and the test closes release after committing its administrator
+	// update. The fixture instance is used for one exchange call.
+	started chan struct{} // exchange-entry signal channel
+	release chan struct{} // exchange-completion gate channel
+	// calls is incremented by Refresh and read after completion; the single-call
+	// fixture provides no concurrent counter synchronization.
+	calls int // observed exchange call count
 }
 
-// TestRefreshCredentialsCASAndOuterRollback checks stale-version rejection and transaction isolation.
-// Credential updates inside an outer transaction remain pending until its caller commits.
+// TestRefreshCredentialsCASAndOuterRollback applies stale and current
+// credential versions on PostgreSQL, including a caller-owned transaction.
+// Outside reads retain committed credentials until completion, rollback
+// restores them, and disabled identity rejects the later write.
 func TestRefreshCredentialsCASAndOuterRollback(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -56,8 +76,11 @@ func TestRefreshCredentialsCASAndOuterRollback(t *testing.T) {
 	pending, err := tx.Client().Provider.Get(txCtx, row.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.Credentials["refresh_token"])
-	// A separate connection still sees committed credentials while the outer transaction is pending.
+	// Read through the separate store connection while the transaction remains
+	// open, making visibility of the pending credential update observable before rollback.
 	require.Equal(t, "administrator", readVersion().Credentials["refresh_token"])
+	// End the caller-owned transaction after its pending read; the next
+	// committed-data read checks that the credential replacement was rolled back.
 	require.NoError(t, tx.Rollback())
 	require.Equal(t, "administrator", readVersion().Credentials["refresh_token"])
 
@@ -73,6 +96,10 @@ func TestRefreshCredentialsCASAndOuterRollback(t *testing.T) {
 	require.Equal(t, "committed", readVersion().Credentials["refresh_token"])
 }
 
+// TestRefreshCredentialsOutboxFailureRollsBack installs a provider-specific
+// trigger that rejects scheduler event insertion or update. The conditional
+// credential write returns an error and false, and a fresh read retains the
+// original refresh token.
 func TestRefreshCredentialsOutboxFailureRollsBack(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -82,8 +109,12 @@ func TestRefreshCredentialsOutboxFailureRollsBack(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, client.Provider.DeleteOneID(row.ID).Exec(context.Background())) })
 	functionName := fmt.Sprintf("test_credential_outbox_fail_%d", suffix)
 	triggerName := fmt.Sprintf("test_credential_outbox_trigger_%d", suffix)
+	// Limit the failing outbox trigger to this provider and give its objects
+	// unique names, so unrelated committed fixtures can continue enqueueing events.
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.provider_id = %d THEN RAISE EXCEPTION 'test forced outbox failure'; END IF; RETURN NEW; END $$`, functionName, row.ID))
 	require.NoError(t, err)
+	// Remove the trigger before its function when cleanup runs, releasing the
+	// injected failure path before another test uses this shared outbox table.
 	t.Cleanup(func() {
 		_, e := integrationDB.ExecContext(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON scheduler_outbox", triggerName))
 		require.NoError(t, e)
@@ -102,15 +133,32 @@ func TestRefreshCredentialsOutboxFailureRollsBack(t *testing.T) {
 	require.Equal(t, "first", current.Credentials["refresh_token"])
 }
 
+// CanRefresh reports whether the fixture record is an OpenAI OAuth provider.
 func (e *refreshExchange) CanRefresh(a *providercore.Record) bool {
 	return a.Platform == capability.PlatformOpenAI && a.Type == capability.ProviderTypeOAuth
 }
+
+// NeedsRefresh requests an exchange for every record admitted by the fixture.
 func (e *refreshExchange) NeedsRefresh(*providercore.Record, time.Duration) bool { return true }
+
+// CacheKey returns a provider-specific key for the fixture's refresh
+// coordination.
 func (e *refreshExchange) CacheKey(a *providercore.Record) string {
 	return fmt.Sprintf("test-refresh:%d", a.ID)
 }
 
+// Refresh records one exchange and announces its start before waiting for
+// release or cancellation. Each fixture instance accepts one call because
+// closing started again would panic.
+//
+// Selecting release returns the fixture's fixed late token; selecting
+// cancellation returns ctx.Err. When both channels are ready, select may take
+// either branch. The test changes persisted credentials between start and
+// release so the coordinator can compare that response with the current
+// identity after exchange.
 func (e *refreshExchange) Refresh(ctx context.Context, _ *providercore.Record) (map[string]any, error) {
+	// Announce entry before waiting so the test can change PostgreSQL state while
+	// the exchange result remains pending at this fixture's completion gate.
 	e.calls++
 	close(e.started)
 	select {
@@ -121,6 +169,10 @@ func (e *refreshExchange) Refresh(ctx context.Context, _ *providercore.Record) (
 	}
 }
 
+// TestRefreshPublicEntryPreservesConcurrentAdminCredentials suspends the
+// exchange until an administrator commits a new refresh token. Completion
+// returns the administrator record with Refreshed false and no new credentials,
+// while storage retains the administrator token.
 func TestRefreshPublicEntryPreservesConcurrentAdminCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -132,10 +184,13 @@ func TestRefreshPublicEntryPreservesConcurrentAdminCredentials(t *testing.T) {
 	original, err := repo.GetByID(ctx, row.ID)
 	require.NoError(t, err)
 	executor := &refreshExchange{started: make(chan struct{}), release: make(chan struct{})}
+	// result carries refresh coordination output to the waiting integration test.
 	type result struct {
-		value *providercore.OAuthRefreshResult
-		err   error
+		value *providercore.OAuthRefreshResult // completed refresh coordination result
+		err   error                            // returned refresh coordination error
 	}
+	// Buffer the refresh result so its goroutine can finish publishing after
+	// the exchange gate is released, even before the test starts receiving.
 	done := make(chan result, 1)
 	go func() {
 		v, e := providercore.NewOAuthRefreshAPI(repo, nil, providercore.RefreshOptions{Platform: providercore.ProviderRefreshPlatformPolicy()}).RefreshIfNeeded(ctx, original, executor, time.Minute)

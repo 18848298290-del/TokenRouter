@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// TestCalculateAnthropic429ResetTime_Only5hExceeded supplies an exhausted
+// session window and a nonexhausted weekly window. The selected reset is
+// five-hour timing, which is also retained separately for session accounting.
 func TestCalculateAnthropic429ResetTime_Only5hExceeded(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.02")
@@ -22,6 +25,9 @@ func TestCalculateAnthropic429ResetTime_Only5hExceeded(t *testing.T) {
 	}
 }
 
+// TestCalculateAnthropic429ResetTime_Only7dExceeded supplies weekly exhaustion
+// alongside a parsed five-hour reset. Weekly timing controls the selected
+// cooldown, while the shorter reset remains available in FiveHourReset.
 func TestCalculateAnthropic429ResetTime_Only7dExceeded(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "0.50")
@@ -38,6 +44,9 @@ func TestCalculateAnthropic429ResetTime_Only7dExceeded(t *testing.T) {
 	}
 }
 
+// TestCalculateAnthropic429ResetTime_BothExceeded supplies exhausted five-hour
+// and seven-day windows with both resets. The selected cooldown follows the
+// weekly reset, recording its precedence when both windows report exhaustion.
 func TestCalculateAnthropic429ResetTime_BothExceeded(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.10")
@@ -49,6 +58,10 @@ func TestCalculateAnthropic429ResetTime_BothExceeded(t *testing.T) {
 	assertAnthropicResult(t, result, 1771549200)
 }
 
+// TestCalculateAnthropic429ResetTime_NoPerWindowHeaders supplies an aggregate
+// reset without either per-window reset Header. This parser returns nil,
+// leaving aggregate handling to its caller rather than selecting that value
+// here.
 func TestCalculateAnthropic429ResetTime_NoPerWindowHeaders(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-reset", "1771549200")
@@ -59,6 +72,9 @@ func TestCalculateAnthropic429ResetTime_NoPerWindowHeaders(t *testing.T) {
 	}
 }
 
+// TestCalculateAnthropic429ResetTime_NoHeaders passes an empty response Header
+// map to the 429 reset parser. It returns nil because neither per-window reset
+// can contribute an observation.
 func TestCalculateAnthropic429ResetTime_NoHeaders(t *testing.T) {
 	result := CalculateRateLimitReset(http.Header{}, nil)
 	if result != nil {
@@ -66,6 +82,9 @@ func TestCalculateAnthropic429ResetTime_NoHeaders(t *testing.T) {
 	}
 }
 
+// TestCalculateAnthropic429ResetTime_SurpassedThreshold supplies true five-hour
+// and false seven-day threshold flags with reset values. The five-hour flag
+// selects its matching reset despite the other available endpoint.
 func TestCalculateAnthropic429ResetTime_SurpassedThreshold(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-surpassed-threshold", "true")
@@ -77,6 +96,9 @@ func TestCalculateAnthropic429ResetTime_SurpassedThreshold(t *testing.T) {
 	assertAnthropicResult(t, result, 1770998400)
 }
 
+// TestCalculateAnthropic429ResetTime_UtilizationExactlyOne reports utilization
+// exactly one for the five-hour window and below one for weekly usage. The
+// selected reset follows the fully utilized short window.
 func TestCalculateAnthropic429ResetTime_UtilizationExactlyOne(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.0")
@@ -88,6 +110,9 @@ func TestCalculateAnthropic429ResetTime_UtilizationExactlyOne(t *testing.T) {
 	assertAnthropicResult(t, result, 1770998400)
 }
 
+// TestCalculateAnthropic429ResetTime_NeitherExceeded_UsesShorter supplies two
+// nonexhausted windows with different reset endpoints. The selected result uses
+// the earlier five-hour reset when no exhaustion signal decides the window.
 func TestCalculateAnthropic429ResetTime_NeitherExceeded_UsesShorter(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "0.95")
@@ -99,6 +124,9 @@ func TestCalculateAnthropic429ResetTime_NeitherExceeded_UsesShorter(t *testing.T
 	assertAnthropicResult(t, result, 1770998400)
 }
 
+// TestCalculateAnthropic429ResetTime_Only5hResetHeader supplies five-hour
+// exhaustion and only its reset Header. That endpoint becomes the selected
+// result even though there is no weekly endpoint to compare.
 func TestCalculateAnthropic429ResetTime_Only5hResetHeader(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.05")
@@ -108,6 +136,9 @@ func TestCalculateAnthropic429ResetTime_Only5hResetHeader(t *testing.T) {
 	assertAnthropicResult(t, result, 1770998400)
 }
 
+// TestCalculateAnthropic429ResetTime_Only7dResetHeader supplies weekly
+// exhaustion and only its reset Header. The result selects weekly timing and
+// leaves FiveHourReset nil because no session reset was supplied.
 func TestCalculateAnthropic429ResetTime_Only7dResetHeader(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-7d-utilization", "1.03")
@@ -121,12 +152,15 @@ func TestCalculateAnthropic429ResetTime_Only7dResetHeader(t *testing.T) {
 	}
 }
 
+// TestIsAnthropicWindowExceeded covers utilization around full capacity,
+// threshold flags, case variation, and absent Headers. The parser reports the
+// expected exhaustion decision for each listed window signal.
 func TestIsAnthropicWindowExceeded(t *testing.T) {
 	tests := []struct {
-		name     string
-		headers  http.Header
-		window   string
-		expected bool
+		name     string      // case display name
+		headers  http.Header // input quota Headers
+		window   string      // parsed window label
+		expected bool        // expected comparison result
 	}{
 		{
 			name:     "utilization above 1.0",
@@ -182,6 +216,9 @@ func TestIsAnthropicWindowExceeded(t *testing.T) {
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_RejectedStatus supplies rejected Fable
+// weekly status with a future reset. The selected limit carries that exact
+// endpoint and the Fable-specific persistence reason.
 func TestSelectAnthropicFableWindowLimit_RejectedStatus(t *testing.T) {
 	now := time.Now()
 	reset := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -204,6 +241,9 @@ func TestSelectAnthropicFableWindowLimit_RejectedStatus(t *testing.T) {
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_UtilizationOnly supplies full Fable
+// utilization with a usable reset and no status Header. The limit is still
+// selected, demonstrating exhaustion from the numeric signal alone.
 func TestSelectAnthropicFableWindowLimit_UtilizationOnly(t *testing.T) {
 	// Full utilization indicates exhaustion even without a status header.
 	now := time.Now()
@@ -222,6 +262,9 @@ func TestSelectAnthropicFableWindowLimit_UtilizationOnly(t *testing.T) {
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_AllowedReturnsNil supplies allowed Fable
+// status, partial utilization, and a future reset. Selection returns nil
+// because the window has a deadline but lacks an exhaustion signal.
 func TestSelectAnthropicFableWindowLimit_AllowedReturnsNil(t *testing.T) {
 	now := time.Now()
 	headers := http.Header{}
@@ -234,12 +277,19 @@ func TestSelectAnthropicFableWindowLimit_AllowedReturnsNil(t *testing.T) {
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_NoHeadersReturnsNil passes an empty
+// Header map to Fable window selection. It returns nil, so absent window
+// signals cannot synthesize a model-specific quota observation.
 func TestSelectAnthropicFableWindowLimit_NoHeadersReturnsNil(t *testing.T) {
 	if limit := SelectFableWindowLimit(http.Header{}, time.Now()); limit != nil {
 		t.Errorf("expected nil limit for empty headers, got %+v", limit)
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_FallsBackToAggregateReset supplies
+// rejected Fable status and a future aggregate reset without its dedicated
+// reset. Selection uses the aggregate endpoint and returns a model-specific
+// limit.
 func TestSelectAnthropicFableWindowLimit_FallsBackToAggregateReset(t *testing.T) {
 	// A missing 7d_oi reset uses the aggregate reset header.
 	now := time.Now()
@@ -258,6 +308,9 @@ func TestSelectAnthropicFableWindowLimit_FallsBackToAggregateReset(t *testing.T)
 	}
 }
 
+// TestSelectAnthropicFableWindowLimit_RejectedWithoutAnyResetReturnsNil
+// supplies rejected Fable status with no reset values. Selection returns nil
+// because exhaustion alone cannot supply a usable endpoint for a quota limit.
 func TestSelectAnthropicFableWindowLimit_RejectedWithoutAnyResetReturnsNil(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-7d_oi-status", "rejected")
@@ -267,15 +320,18 @@ func TestSelectAnthropicFableWindowLimit_RejectedWithoutAnyResetReturnsNil(t *te
 	}
 }
 
+// TestParseAnthropicAggregateReset covers future seconds and milliseconds
+// alongside empty, malformed, past, and distant timestamps. Valid future inputs
+// resolve to the expected second-precision time, while invalid horizons fail.
 func TestParseAnthropicAggregateReset(t *testing.T) {
 	now := time.Now()
 	future := now.Add(80 * time.Hour).Truncate(time.Second)
 
 	tests := []struct {
-		name   string
-		value  string
-		want   time.Time
-		wantOK bool
+		name   string    // case display name
+		value  string    // candidate reset timestamp
+		want   time.Time // expected comparison value
+		wantOK bool      // expected timestamp acceptance
 	}{
 		{"valid seconds", strconv.FormatInt(future.Unix(), 10), future, true},
 		{"valid milliseconds", strconv.FormatInt(future.UnixMilli(), 10), future, true},
@@ -302,6 +358,9 @@ func TestParseAnthropicAggregateReset(t *testing.T) {
 	}
 }
 
+// TestIsAnthropicWindowRejected supplies mixed-case rejected Fable status,
+// allowed five-hour status, and no weekly status. Each window reports rejection
+// according to its own status Header.
 func TestIsAnthropicWindowRejected(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-7d_oi-status", "Rejected")
@@ -318,8 +377,9 @@ func TestIsAnthropicWindowRejected(t *testing.T) {
 	}
 }
 
-// assertAnthropicResult is a test helper that verifies the result is non-nil and
-// has the expected resetAt unix timestamp.
+// assertAnthropicResult requires a nonnil rate-limit result and compares its
+// selected reset with wantUnix seconds. It marks the call as a helper and stops
+// the test before dereferencing an absent result.
 func assertAnthropicResult(t *testing.T, result *RateLimitReset, wantUnix int64) {
 	t.Helper()
 	if result == nil {
@@ -332,6 +392,7 @@ func assertAnthropicResult(t *testing.T, result *RateLimitReset, wantUnix int64)
 	}
 }
 
+// makeHeader returns one canonical Header entry with the supplied value.
 func makeHeader(key, value string) http.Header {
 	h := http.Header{}
 	h.Set(key, value)

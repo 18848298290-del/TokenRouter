@@ -7,11 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestFingerprintKey formats normal, zero, negative, and maximal provider
+// identifiers into Redis keys. Each value retains its signed decimal text after
+// the fingerprint namespace prefix.
 func TestFingerprintKey(t *testing.T) {
 	tests := []struct {
-		name       string
-		providerID int64
-		expected   string
+		name       string // case display name
+		providerID int64  // input provider identifier
+		expected   string // expected comparison result
 	}{
 		{
 			name:       "normal_account_id",

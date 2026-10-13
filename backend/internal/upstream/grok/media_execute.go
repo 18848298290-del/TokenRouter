@@ -13,35 +13,85 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Successful Grok image responses need observable image data before the gateway
+// emits a response. Media execution checks that output before applying a body
+// transformation, and returns MissingImageOutput to caller policy when an
+// accepted HTTP response contains no counted images.
+
+// MediaTarget provides a prepared media request and synchronous
+// response-processing callbacks.
 type MediaTarget struct {
-	ProviderID     int64
-	Endpoint       GrokMediaEndpoint
-	Request        *http.Request `json:"-"`
-	StartedAt      time.Time
-	Do             func(*http.Request) (*http.Response, error)
-	Enter          func() (func(), error)
-	AfterExchange  func(time.Duration, error) error
-	BeforeResponse func(*http.Response) (bool, error)
-	ReadBody       func(io.Reader) ([]byte, error)
-	CountImages    func([]byte) int
-	TransformBody  func([]byte) []byte
-	CopyHeaders    func(http.Header, http.Header)
+	ProviderID int64 // selected provider identifier
+	// Endpoint controls the image-count check independently of the accepted input
+	// protocol; configure CountImages for image generation or editing.
+	Endpoint GrokMediaEndpoint // selected media operation
+	// Request owns the exchange context and body; the separate Execute context does
+	// not replace this prepared request's cancellation policy.
+	Request *http.Request `json:"-"` // prepared upstream request
+	// StartedAt anchors final Duration at the caller's chosen start, which can
+	// include preparation; AfterExchange measures the current HTTP call separately.
+	StartedAt time.Time // supplied attempt start
+	// Do supplies a response with a readable body when the final AfterExchange
+	// error is nil; cleanup begins after that exchange is accepted.
+	Do func(*http.Request) (*http.Response, error) // required HTTP exchange
+	// Enter returns a callable release function after registration; Execute defers
+	// it through response processing and body closure.
+	Enter func() (func(), error) // optional activity registration
+	// AfterExchange receives HTTP-call duration and transport error; its returned
+	// error determines whether the response is accepted for cleanup and reading.
+	AfterExchange func(time.Duration, error) error // optional exchange observation
+	// BeforeResponse stops normal reading when handled or error is returned;
+	// replacement of a live body requires cleanup of the displaced body.
+	BeforeResponse func(*http.Response) (bool, error) // optional response policy
+	// ReadBody consumes the accepted response using the caller's size policy;
+	// returned bytes stay available for image checks, transformation and output.
+	ReadBody func(io.Reader) ([]byte, error) // required response reader
+	// CountImages examines original response bytes before TransformBody runs and
+	// decides whether image output is sufficient.
+	CountImages func([]byte) int // image output counter
+	// TransformBody runs after image validation; its returned bytes are shared by
+	// client output and MediaBody, so keep them stable through both consumers.
+	TransformBody func([]byte) []byte // optional body conversion
+	// CopyHeaders selects output headers before body emission; its source is the
+	// upstream map also retained in the attempt result.
+	CopyHeaders func(http.Header, http.Header) // optional response headers
 }
 
-// MissingImageOutput reports a success response without image data. The caller decides whether to fail over.
+// MissingImageOutput carries an image success response that contains no counted
+// outputs.
 type MissingImageOutput struct {
-	Body    []byte
-	Headers http.Header
+	// Body retains the bytes returned by ReadBody; caller policy can inspect them
+	// when choosing failover after an empty image result.
+	Body []byte // original response bytes
+	// Headers is cloned from the accepted upstream response so caller failure
+	// handling can retain an independent header map.
+	Headers http.Header // cloned response headers
 }
 
+// MediaExecutor exchanges one prepared Grok image or video request.
 type MediaExecutor struct{}
 
-func (t *MediaTarget) TargetID() int64  { return t.ProviderID }
-func (*MediaTarget) String() string     { return "grok media target" }
+// TargetID returns the selected provider identifier for media attempt
+// accounting.
+func (t *MediaTarget) TargetID() int64 { return t.ProviderID }
+
+// String returns a fixed diagnostic label for Grok media targets.
+func (*MediaTarget) String() string { return "grok media target" }
+
+// GoString returns the media target's fixed label for formatted diagnostics.
 func (t *MediaTarget) GoString() string { return t.String() }
 
+// Error returns the stable missing-image message used by caller failure policy.
 func (*MissingImageOutput) Error() string { return "xAI upstream returned no image output" }
 
+// Execute reads a prepared media response, checks image outputs, and optionally
+// emits its transformed body. Request.Context carries cancellation; Enter
+// supplies a callable release function. Accepted responses are closed after
+// processing, and BeforeResponse can end the attempt before reading. Image
+// endpoints require CountImages; a nonpositive count returns original bytes and
+// cloned headers before output. Duration uses StartedAt, while AfterExchange
+// measures this HTTP call. Successful results retain shared response headers
+// and the emitted byte storage; copy either before independent mutation.
 func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	target, ok := input.Target.(*MediaTarget)
 	if !ok || target == nil || target.Request == nil || target.Do == nil || target.ReadBody == nil {
@@ -57,6 +107,8 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		if err != nil {
 			return result, err
 		}
+		// Keep activity registered through reading and output; deferred body closure
+		// runs before release so transport occupancy ends first.
 		defer done()
 	}
 	started := time.Now()
@@ -67,6 +119,8 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 	if err != nil {
 		return result, err
 	}
+	// Close the current response body at exit after policy, read or output paths
+	// have finished using it.
 	defer func() { _ = resp.Body.Close() }()
 	if target.BeforeResponse != nil {
 		handled, err := target.BeforeResponse(resp)
@@ -79,6 +133,8 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		return result, err
 	}
 	if target.Endpoint == GrokMediaEndpointImagesGenerations || target.Endpoint == GrokMediaEndpointImagesEdits {
+		// Count the untransformed response before committing output so caller policy
+		// can switch providers when the image payload is empty.
 		result.ObservedImages = target.CountImages(data)
 		if result.ObservedImages <= 0 {
 			return result, &MissingImageOutput{Body: data, Headers: resp.Header.Clone()}
@@ -104,11 +160,16 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 	result.UpstreamHeaders = resp.Header
 	result.MediaBody = data
 	result.Served = len(data) > 0
+	// Measure media Duration from the supplied start, which may precede this HTTP
+	// call; AfterExchange measures that current exchange independently.
 	result.Duration = time.Since(target.StartedAt)
 	return result, nil
 }
 
-// BuildMediaRequest applies CLI headers, then Content-Type, then provider overrides.
+// BuildMediaRequest creates the endpoint's HTTP method and includes bytes only
+// when that endpoint requires a body. CLI headers precede Content-Type and
+// overrides. Blank body content type selects application/json; callers validate
+// targetURL and retain supplied body bytes throughout the exchange.
 func BuildMediaRequest(ctx context.Context, endpoint GrokMediaEndpoint, targetURL, token, contentType string, body []byte, cliHeaders, overrides func(http.Header)) (*http.Request, error) {
 	var reader io.Reader
 	if endpoint.RequiresRequestBody() {

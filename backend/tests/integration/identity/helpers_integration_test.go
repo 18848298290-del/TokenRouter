@@ -29,25 +29,52 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// UserRepoSuite shares the database and user store across repository tests.
+// Identity repository fixtures use separate databases cloned from a migrated
+// PostgreSQL template, allowing committed operations and independent
+// connections inside one case. The user repository suite reuses one clone
+// across its cases and clears user-related rows before and after each case.
+// Group and plan fixtures can remain in that suite database, so user cleanup
+// does not make every table empty.
+//
+// Direct user construction saves the owning row before inserting allowed-group
+// memberships with its generated ID. The caller's supplied Ent client
+// determines whether those writes share a transaction. Group deletion fixtures
+// bind provider links, user access, and scheduler event writes to the deletion
+// executor, while key fixtures bind usage totals to their storage executor.
+// Test cleanup closes the Ent wrapper before the cloned pool is dropped by
+// databaseSuite.
+
+// UserRepoSuite retains one PostgreSQL clone while replacing user storage state
+// for each case.
 type UserRepoSuite struct {
-	db *sql.DB
-	suite.Suite
-	ctx    context.Context
-	client *dbent.Client
-	repo   *postgres.UserStore
+	// db and client share the suite's cloned database until suite cleanup closes
+	// the Ent wrapper and pool. SetupTest replaces ctx and repo before each case,
+	// while sequential cases reuse db and client after clearing user-related rows.
+	db          *sql.DB             // borrowed suite connection pool
+	suite.Suite                     // assertion and suite lifecycle support
+	ctx         context.Context     // case execution context
+	client      *dbent.Client       // borrowed suite Ent client
+	repo        *postgres.UserStore // case user storage fixture
 }
 
-// identityDatabase creates an isolated database and Ent client for tests that commit transactions.
+// identityDatabase returns SQL and Ent access to an independent migrated clone
+// from databaseSuite. Test cleanup closes its Ent client before the suite's
+// pool-close and forced-database-drop cleanup runs.
 func identityDatabase(t *testing.T) (*sql.DB, *dbent.Client) {
 	t.Helper()
 	db := databaseSuite.New(t)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	// Close the Ent wrapper before databaseSuite closes and drops its cloned pool;
+	// this callback discards the wrapper's error while the suite checks pool
+	// cleanup.
 	t.Cleanup(func() { _ = client.Close() })
 	return db, client
 }
 
-// newGroupStoreFixture connects group storage to provider links, user grants, and scheduler events.
+// newGroupStoreFixture retains group storage dependencies and supplies
+// provider-link, user-access, and scheduler-event participants for group
+// deletion. Each participant uses the deletion executor, and the caller owns
+// the supplied client and executor lifetimes.
 func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *routingpostgres.GroupStore {
 	return routingpostgres.NewGroupStore(client, db, routingpostgres.GroupStoreOptions{
 		Providers: func(exec postgresinfra.Executor) routingpostgres.GroupLinkParticipant {
@@ -62,14 +89,25 @@ func newGroupStoreFixture(client *dbent.Client, db postgresinfra.Executor) *rout
 	})
 }
 
-// newKeyStoreFixture binds key storage and batch usage reads to the supplied client and executor.
+// newKeyStoreFixture retains client and exec for key storage and batched
+// usage-total reads. Callers own these dependencies and supply matching
+// transaction scope when the usage reader must observe uncommitted key
+// fixtures.
 func newKeyStoreFixture(client *dbent.Client, exec postgresinfra.Executor) *keypostgres.KeyStore {
 	return keypostgres.NewKeyStoreWithSQL(client, exec, func(ctx context.Context, ids []int64) (map[int64]float64, error) {
 		return usagepostgres.ReadAPIKeyUsageTotals(ctx, exec, nil, ids)
 	})
 }
 
-// mustCreateUser creates a user and group grants, then fills database-generated fields.
+// mustCreateUser saves selected user fields and fills generated identity and
+// timestamps on the supplied object. Empty email, password, role, and status
+// receive fixture values, and zero concurrency becomes five.
+//
+// Allowed-group memberships follow user insertion so they can reference its
+// stored ID. The supplied client determines their common transaction, and the
+// helper uses a background context. A later membership failure fails the test
+// after earlier writes have occurred, leaving rollback or committed-row cleanup
+// to the caller.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()
@@ -113,6 +151,9 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	u.CreatedAt = created.CreatedAt
 	u.UpdatedAt = created.UpdatedAt
 
+	// Insert memberships after the user ID is available; these dependent writes
+	// share the supplied client's scope, whose owner handles rollback after a
+	// later failure.
 	if len(u.AllowedGroups) > 0 {
 		for _, groupID := range u.AllowedGroups {
 			_, err := client.UserAllowedGroup.Create().
@@ -126,7 +167,10 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	return u
 }
 
-// mustCreateApiKey creates an API Key and fills database-generated fields.
+// mustCreateApiKey saves selected key ownership, group, team, quota,
+// spending-window, expiry, and timestamp fields. Empty status, credential, and
+// name receive fixture defaults; storage fills k's ID and timestamps, and the
+// caller owns cleanup.
 func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *apikey.APIKey {
 	t.Helper()
 	ctx := context.Background()
@@ -204,7 +248,10 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *api
 	return k
 }
 
-// mustCreateGroup creates a group and fills database-generated fields.
+// mustCreateGroup saves selected routing group fields and fills generated
+// identity and timestamps on g. Empty status becomes active; explicit
+// description and timestamps are used when present, and save failures fail the
+// test.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -238,21 +285,36 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
-// SetupSuite creates an isolated database for the user store suite.
+// SetupSuite obtains one migrated clone for all user repository suite cases and
+// retains its pool and Ent client. Suite cleanup owns connection closure and
+// clone deletion after the cases finish.
 func (s *UserRepoSuite) SetupSuite() {
 	s.db, s.client = identityDatabase(s.T())
 }
 
-// SetupTest clears user data and creates the store for the current test.
+// SetupTest constructs the user store and clears user-related fixture rows
+// before each suite case. It registers a cascading users-table truncation after
+// the case, whose errors fail the test.
+//
+// Before-case deletion visits identity channels before identities, then
+// subscriptions, allowed-group grants, and users. Those individual deletion
+// errors are discarded and can leave partial cleanup. The suite's pool and Ent
+// client remain shared across these sequential cases; this setup does not clear
+// routing groups or subscription plans.
 func (s *UserRepoSuite) SetupTest() {
 	s.ctx = context.Background()
+	// Truncate users and cascading dependencies after case work ends, resetting
+	// IDs before the next suite case; this cleanup reports its database error
+	// through assertions.
 	s.T().Cleanup(func() {
 		_, err := s.db.ExecContext(context.Background(), "TRUNCATE users RESTART IDENTITY CASCADE")
 		s.Require().NoError(err)
 	})
 	s.repo = postgres.NewUserStoreWithSQL(s.client, s.db)
 
-	// Clear identities, subscriptions, grants, and users before each test.
+	// Delete dependent identity and entitlement rows before their user owners so
+	// this shared suite can reuse fixture emails. Individual cleanup errors are
+	// discarded.
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM auth_identity_channels")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM auth_identities")
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
@@ -260,7 +322,9 @@ func (s *UserRepoSuite) SetupTest() {
 	_, _ = s.db.ExecContext(s.ctx, "DELETE FROM users")
 }
 
-// mustCreateUser supplies default fields before creating a test user.
+// mustCreateUser applies suite email, password, role, status, and concurrency
+// defaults before invoking UserStore.Create. It mutates the supplied object and
+// fails the current case if repository creation fails.
 func (s *UserRepoSuite) mustCreateUser(u *identity.User) *identity.User {
 	s.T().Helper()
 
@@ -284,7 +348,9 @@ func (s *UserRepoSuite) mustCreateUser(u *identity.User) *identity.User {
 	return u
 }
 
-// mustCreateGroup creates an enabled test group.
+// mustCreateGroup inserts an active group in the shared suite database and
+// returns its routing view. Creation errors fail the current case, and user
+// cleanup leaves this group table intact.
 func (s *UserRepoSuite) mustCreateGroup(name string) *routing.Group {
 	s.T().Helper()
 

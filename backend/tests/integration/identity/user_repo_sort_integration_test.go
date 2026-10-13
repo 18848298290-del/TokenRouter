@@ -18,7 +18,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// mustCreateProvider creates a sorting fixture and fills database-generated fields.
+// A user can have recent profile activity and older usage, so administrator
+// ordering needs to select the requested timestamp source. The PostgreSQL cases
+// give those sources competing dates, check the position of missing timestamps,
+// and round fixture times to the precision used by each comparison.
+//
+// Usage observations reference both a key and provider. The fixture creates
+// those dependencies before inserting its usage row through the shared suite
+// pool. Suite user cleanup removes dependent user data after each case, while
+// provider fixtures remain until the cloned database is dropped. Setup errors
+// fail the current case before its ordering assertions can proceed.
+
+// mustCreateProvider saves selected provider fields for usage fixtures and
+// fills stored identity on a. Empty platform, type, and status select
+// Anthropic, OAuth, and active; zero concurrency and priority become three and
+// fifty, false schedulability becomes true, and nil maps become empty.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -106,12 +120,23 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
+// mustInsertUsageLog inserts one committed usage observation at createdAt.UTC
+// for the supplied user. It creates a provider and owned key first so the usage
+// row has both foreign-key references.
+//
+// All writes use the shared suite client and pool. A later insertion failure
+// fails the case after its dependencies may already exist; suite user cleanup
+// removes user-dependent rows, and provider fixtures remain until clone cleanup
+// drops the database.
 func (s *UserRepoSuite) mustInsertUsageLog(userID int64, createdAt time.Time) {
 	s.T().Helper()
 
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "usage-log-provider"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: userID})
 
+	// Insert usage after creating its key and provider so the row satisfies
+	// foreign-key relationships and can drive the database-maintained latest-use
+	// observation.
 	_, err := s.db.ExecContext(
 		s.ctx,
 		`INSERT INTO usage_logs (user_id, api_key_id, provider_id, model, input_tokens, output_tokens, total_cost, actual_cost, created_at)
@@ -124,6 +149,9 @@ func (s *UserRepoSuite) mustInsertUsageLog(userID int64, createdAt time.Time) {
 	s.Require().NoError(err)
 }
 
+// TestListWithFilters_SortByEmailAsc inserts users in reverse alphabetical
+// email order. The selected ascending email list returns both with a-first
+// before z-last in the current suite database.
 func (s *UserRepoSuite) TestListWithFilters_SortByEmailAsc() {
 	s.mustCreateUser(&identity.User{Email: "z-last@example.com", Username: "z-user"})
 	s.mustCreateUser(&identity.User{Email: "a-first@example.com", Username: "a-user"})
@@ -140,6 +168,9 @@ func (s *UserRepoSuite) TestListWithFilters_SortByEmailAsc() {
 	s.Require().Equal("z-last@example.com", users[1].Email)
 }
 
+// TestList_DefaultSortByNewestFirst creates two users sequentially with default
+// timestamps before requesting ordinary pagination. The returned order places
+// the second created fixture before the first.
 func (s *UserRepoSuite) TestList_DefaultSortByNewestFirst() {
 	first := s.mustCreateUser(&identity.User{Email: "first@example.com"})
 	second := s.mustCreateUser(&identity.User{Email: "second@example.com"})
@@ -151,7 +182,12 @@ func (s *UserRepoSuite) TestList_DefaultSortByNewestFirst() {
 	s.Require().Equal(first.ID, users[1].ID)
 }
 
+// TestCreateAndRead_PreservesSignupSourceAndActivityTimestamps creates a
+// LinuxDo-sourced user with explicit login and activity times. Reloading
+// retains the source and both microsecond-rounded timestamps exactly.
 func (s *UserRepoSuite) TestCreateAndRead_PreservesSignupSourceAndActivityTimestamps() {
+	// Use PostgreSQL timestamp precision so exact round-trip comparisons retain
+	// these times.
 	lastLoginAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Microsecond)
 	lastActiveAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)
 
@@ -171,8 +207,13 @@ func (s *UserRepoSuite) TestCreateAndRead_PreservesSignupSourceAndActivityTimest
 	s.Require().True(got.LastActiveAt.Equal(lastActiveAt))
 }
 
+// TestUpdate_PersistsSignupSourceAndActivityTimestamps selects signup source,
+// login time, and activity time in one user update. Reloading returns oidc and
+// both supplied microsecond-rounded timestamps exactly.
 func (s *UserRepoSuite) TestUpdate_PersistsSignupSourceAndActivityTimestamps() {
 	created := s.mustCreateUser(&identity.User{Email: "identity-update@example.com"})
+	// Round both activity inputs to microseconds before exact persisted-time
+	// comparisons.
 	lastLoginAt := time.Now().Add(-90 * time.Minute).UTC().Truncate(time.Microsecond)
 	lastActiveAt := time.Now().Add(-15 * time.Minute).UTC().Truncate(time.Microsecond)
 
@@ -191,7 +232,12 @@ func (s *UserRepoSuite) TestUpdate_PersistsSignupSourceAndActivityTimestamps() {
 	s.Require().True(got.LastActiveAt.Equal(lastActiveAt))
 }
 
+// TestListWithFilters_SortByLastActiveAtAsc supplies earlier, later, and nil
+// profile activity timestamps. The ascending list places the observed times in
+// order and the nil fixture last.
 func (s *UserRepoSuite) TestListWithFilters_SortByLastActiveAtAsc() {
+	// Microsecond fixture precision retains the distinct timestamps used for
+	// activity ordering.
 	earlier := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Microsecond)
 	later := time.Now().Add(-45 * time.Minute).UTC().Truncate(time.Microsecond)
 
@@ -212,7 +258,12 @@ func (s *UserRepoSuite) TestListWithFilters_SortByLastActiveAtAsc() {
 	s.Require().Equal("nil-active@example.com", users[2].Email)
 }
 
+// TestGetLatestUsedAtByUserIDs_UsesUsageLogs gives one user two usage
+// timestamps and another no usage rows. Batch lookup returns the newer
+// timestamp for the first user and omits the other.
 func (s *UserRepoSuite) TestGetLatestUsedAtByUserIDs_UsesUsageLogs() {
+	// Whole-second inputs make the expected latest usage timestamp exactly
+	// comparable after storage.
 	older := time.Now().Add(-4 * time.Hour).UTC().Truncate(time.Second)
 	newer := time.Now().Add(-90 * time.Minute).UTC().Truncate(time.Second)
 
@@ -229,7 +280,13 @@ func (s *UserRepoSuite) TestGetLatestUsedAtByUserIDs_UsesUsageLogs() {
 	s.Require().True(got[userWithUsage.ID].Equal(newer))
 }
 
+// TestListWithFilters_SortByLastUsedAtDesc_UsesUsageLogsNotLastActiveAt
+// supplies competing profile activity and usage timestamps. Descending usage
+// order places the newer usage first, the older usage second, and absent usage
+// last.
 func (s *UserRepoSuite) TestListWithFilters_SortByLastUsedAtDesc_UsesUsageLogsNotLastActiveAt() {
+	// Separate usage and profile observations at whole-second precision to expose
+	// source selection.
 	lastUsedOlder := time.Now().Add(-6 * time.Hour).UTC().Truncate(time.Second)
 	lastUsedNewer := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
 	lastActiveVeryRecent := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
@@ -257,4 +314,7 @@ func (s *UserRepoSuite) TestListWithFilters_SortByLastUsedAtDesc_UsesUsageLogsNo
 	s.Require().Equal(nilUsage.ID, users[2].ID)
 }
 
+// TestUserRepoSortSuiteSmoke is an empty entry in the identity sort test
+// package. It performs no setup or assertions, so it supplies no sorting or
+// storage coverage.
 func TestUserRepoSortSuiteSmoke(_ *testing.T) {}

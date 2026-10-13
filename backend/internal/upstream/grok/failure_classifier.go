@@ -11,60 +11,104 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const (
-	GrokFailureNone          GrokUpstreamFailureClass = ""
-	GrokFailureFreeUsage     GrokUpstreamFailureClass = "subscription:free-usage-exhausted"
-	GrokFailureBilling       GrokUpstreamFailureClass = "billing_quota"
-	GrokFailureEmptyUpstream GrokUpstreamFailureClass = "empty_upstream"
-	GrokFailureModelCapacity GrokUpstreamFailureClass = "model_capacity"
-	GrokFailureRateLimit     GrokUpstreamFailureClass = "rate_limit"
-	GrokFailureAuth          GrokUpstreamFailureClass = "auth_error"
-	GrokFailureServer        GrokUpstreamFailureClass = "server_error"
-	// GrokFailureCompatibility identifies replay or body formats the selected upstream
-	// cannot process. The caller can try another provider without cooling down
-	// credentials for a request compatibility failure.
-	GrokFailureCompatibility GrokUpstreamFailureClass = "compatibility_error"
+// Grok quota messages can survive a proxy's rewritten HTTP status, so failure
+// classification combines message text, structured codes and the observed
+// status. Free usage exhaustion wins before billing, compatibility, empty
+// output, capacity, rate limits and server errors, with each class supplying its
+// own failover and cooldown recommendation.
+//
+// The classifier returns recommendations for caller policy to apply after
+// content refusal has been excluded. Model identity comes from message text,
+// structured fields or the requested model; token pairs are retained for Free
+// usage diagnostics when parsing succeeds. Compatibility failures permit another
+// provider without a cooldown, while capacity takes precedence over ordinary 429
+// handling and does not mark the team-model quota overlay. The fixed Free
+// cooldown schedules another probe rather than estimating a reset from
+// rolling-window language.
 
-	GrokFreeUsageProbeCooldown = 10 * time.Minute
+// These failure labels identify caller policy outcomes, and the Free probe
+// interval schedules re-observation after included usage is exhausted.
+const (
+	GrokFailureNone          GrokUpstreamFailureClass = ""                                  // no selected failure
+	GrokFailureFreeUsage     GrokUpstreamFailureClass = "subscription:free-usage-exhausted" // included usage exhausted
+	GrokFailureBilling       GrokUpstreamFailureClass = "billing_quota"                     // billing or credit exhaustion
+	GrokFailureEmptyUpstream GrokUpstreamFailureClass = "empty_upstream"                    // missing usable upstream output
+	GrokFailureModelCapacity GrokUpstreamFailureClass = "model_capacity"                    // temporary model request pressure
+	GrokFailureRateLimit     GrokUpstreamFailureClass = "rate_limit"                        // ordinary provider rate limit
+	GrokFailureAuth          GrokUpstreamFailureClass = "auth_error"                        // authentication failure class label
+	GrokFailureServer        GrokUpstreamFailureClass = "server_error"                      // generic upstream server failure
+	// GrokFailureCompatibility identifies replay or body formats the selected
+	// upstream cannot process. The caller can try another provider without cooling
+	// down credentials for a request compatibility failure.
+	GrokFailureCompatibility GrokUpstreamFailureClass = "compatibility_error" // unsupported replay-state representation
+
+	GrokFreeUsageProbeCooldown = 10 * time.Minute // Free quota probe interval
 )
 
 var (
+	// ReGrokTokenPair accepts decimal actual/limit token evidence used to retain
+	// Free quota diagnostics and evaluate a reached limit.
 	ReGrokTokenPair = regexp.MustCompile(`(?i)tokens?\s*(?:\(actual\s*/\s*limit\))?\s*[:=]?\s*(\d+)\s*/\s*(\d+)`)
-	ReGrokModelFor  = regexp.MustCompile(`(?i)(?:for\s+model|model|模型)\s*[:：]?\s*([a-z0-9][a-z0-9._-]{2,80})`)
+	// ReGrokModelFor extracts a model mentioned by the error text before structured
+	// fields or the requested model are considered.
+	ReGrokModelFor = regexp.MustCompile(`(?i)(?:for\s+model|model|模型)\s*[:：]?\s*([a-z0-9][a-z0-9._-]{2,80})`)
 )
 
-// GrokUpstreamFailureClass determines cooldowns and failover before response commitment.
-// Body matching recognizes quota and empty-output errors even when proxies rewrite status codes.
+// GrokUpstreamFailureClass names the failure category used by Grok caller
+// policy.
 type GrokUpstreamFailureClass string
 
-// GrokUpstreamFailureDecision describes the state changes for the caller to apply.
+// GrokUpstreamFailureDecision carries pure recommendations and evidence for
+// caller-applied provider changes.
 type GrokUpstreamFailureDecision struct {
-	Class          GrokUpstreamFailureClass
-	Model          string
-	Cooldown       time.Duration
-	ShouldCooldown bool
-	// ShouldFailover requests another provider before finalizing the response. Content policy is
-	// handled separately.
-	ShouldFailover bool
-	// BlockModel scopes empty-output cooldowns to a known model; free-usage exhaustion cools the provider.
-	BlockModel   bool
-	Reason       string
-	TokensActual *int64
-	TokensLimit  *int64
+	Class GrokUpstreamFailureClass // selected failure category
+	// Model records the selected error identity; GrokHealth uses it in
+	// model-specific Free quota and capacity handling before applying provider
+	// temporary state.
+	Model string // diagnostic failure model
+	// Cooldown and ShouldCooldown recommend whether and for how long caller policy
+	// should cool a target. Consumers choose persistence and scope; GrokHealth
+	// handles quota/capacity classes before provider temporary state.
+	Cooldown       time.Duration // recommended cooldown duration
+	ShouldCooldown bool          // cooldown application flag
+	// ShouldFailover recommends another provider; the caller still checks response
+	// commitment and excludes content-policy refusals before classification.
+	ShouldFailover bool // provider-switch recommendation
+	// BlockModel recommends model scope for billing or empty-output decisions with
+	// a nonblank Model. The current GrokHealth chooses its actual state-write scope
+	// from Class and Model.
+	BlockModel bool   // model scope recommendation
+	Reason     string // selected diagnostic message
+	// TokensActual and TokensLimit are populated together for classified Free usage
+	// when decimal pair parsing succeeds; nil means no pair was retained.
+	TokensActual *int64 // observed token count
+	TokensLimit  *int64 // observed token limit
 }
 
-// ClassifyGrokUpstreamFailure prioritizes free usage, billing, compatibility, empty output,
-// capacity, rate limits, and 5xx errors. Ordinary validation failures have no cooldown.
-// Callers must exclude content-policy 403 responses before classification.
+// ClassifyGrokUpstreamFailure combines status and body evidence into a
+// caller-applied failure decision. Callers exclude content-policy responses
+// first. The function reads evidence without updating provider state, and an
+// unmatched failure returns its selected message as Reason.
+//
+// Free quota precedes billing, then compatibility, empty output, capacity,
+// ordinary rate limits and 5xx. That order prevents a rewritten status from
+// overriding a more specific body classification. Model scope and cooldown are
+// class-dependent; token actual/limit pointers appear only for parsed Free quota
+// evidence. Callers separately determine whether current output commitment
+// permits the recommended failover.
 func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedModel string) GrokUpstreamFailureDecision {
 	text, code, low := GrokUpstreamErrorCorpus(statusCode, responseBody)
 	model := ExtractGrokFailureModel(text, responseBody, requestedModel)
 	actual, limit, hasTokens := ParseGrokTokenPair(text)
+	// Selected messages can omit token details retained by the raw body. Retry pair
+	// parsing there before losing Free quota diagnostics.
 	if !hasTokens {
 		actual, limit, hasTokens = ParseGrokTokenPair(string(responseBody))
 	}
 
-	// Free or rolling usage exhaustion takes precedence over the HTTP status.
+	// Body evidence for Free quota can survive a rewritten transport status. Apply
+	// that class first so later billing, rate-limit or server branches cannot mask
+	// it.
 	if IsGrokFreeUsageExhaustedText(low) || IsGrokFreeUsageCode(code) || IsGrokFreeUsageCode(text) {
 		d := GrokUpstreamFailureDecision{
 			Class: GrokFailureFreeUsage,
@@ -89,7 +133,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		return d
 	}
 
-	// Billing exhaustion uses a 30-minute cooldown, including HTTP 402 responses.
+	// Billing text or HTTP 402 selects the billing cooldown before generic failure
+	// handling; a missing message still needs a diagnostic reason for caller
+	// policy.
 	if IsGrokBillingQuotaText(low) || statusCode == http.StatusPaymentRequired {
 		reason := firstNonEmpty(text, "billing quota")
 		if statusCode == http.StatusPaymentRequired && text == "" {
@@ -112,9 +158,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// Replay and compaction formats may fail on a particular Grok deployment.
-	// Classify recognized decoding errors before empty-output failures so retries
-	// do not persist a provider cooldown for request compatibility problems.
+	// Compaction compatibility is a request-format failure for this deployment.
+	// Select failover before empty-output handling so it receives no provider
+	// cooldown.
 	if IsGrokCompatibilityError(statusCode, low, code) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureCompatibility,
@@ -129,7 +175,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// Empty HTTP 200 / empty model output (often rewritten to synthetic 502).
+	// A specific empty-output marker determines this class even when transport
+	// status was rewritten, keeping its model-scoped cooldown ahead of generic
+	// server errors.
 	if IsGrokEmptyModelOutputText(low) || IsGrokEmptyModelOutputCode(code) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureEmptyUpstream,
@@ -148,7 +196,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// Capacity failures indicate model overload.
+	// Capacity evidence precedes generic rate limiting so caller policy can retry
+	// HTTP 429 capacity failures with its bounded allowance while keeping sibling
+	// credentials outside the quota overlay.
 	if IsGrokModelCapacityText(low) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureModelCapacity,
@@ -167,7 +217,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// Handle ordinary rate limits after excluding free-usage exhaustion.
+	// Earlier quota and capacity branches already selected their own scopes. Apply
+	// the ordinary provider rate-limit cooldown to the remaining 429 or text
+	// evidence.
 	if statusCode == http.StatusTooManyRequests || IsGrokRateLimitText(low) {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureRateLimit,
@@ -186,7 +238,9 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		}
 	}
 
-	// Other 5xx errors get a short cooldown; synthetic empty-output errors were handled above.
+	// Specific body classifications have already chosen their policy. Remaining 5xx
+	// failures receive the short provider cooldown associated with generic server
+	// errors.
 	if statusCode >= 500 && statusCode <= 599 {
 		return GrokUpstreamFailureDecision{
 			Class: GrokFailureServer,
@@ -204,21 +258,37 @@ func ClassifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 	return GrokUpstreamFailureDecision{Reason: text}
 }
 
+// GrokUpstreamErrorCorpus returns selected text, code and lowercase matching
+// text from a response body. Status is handled by the classifier rather than
+// this text helper. A recognized status-prefix wrapper is removed before flat or
+// nested JSON parsing.
+//
+// A parsed message replaces raw text when it is sufficiently long or contains
+// quota language. Original-body fields can further supply a quota message and
+// take precedence for code. The lowercase corpus prefixes a code absent from the
+// selected text, keeping code evidence available when a message was chosen for
+// readable diagnostics.
 func GrokUpstreamErrorCorpus(statusCode int, responseBody []byte) (text, code, low string) {
 	_ = statusCode // The classifier handles transport status separately from the response text.
 	raw := strings.TrimSpace(string(responseBody))
-	// Unwrap the status prefix before matching quota and billing messages.
+	// Wrapper prefixes can surround the upstream JSON body. Remove that wrapper so
+	// structured quota messages and codes remain available to later classification.
 	if _, unwrappedBody, ok := UnwrapGrokUpstreamErrorText(raw); ok {
 		raw = unwrappedBody
 	}
 	text = raw
 	codeFromJSON, msgFromJSON := ParseGrokUpstreamErrorJSON(raw)
 	if msgFromJSON != "" {
+		// A substantial message or quota wording replaces serialized envelope text,
+		// keeping readable diagnostics while retaining quota evidence for class
+		// selection.
 		if text == "" || len(msgFromJSON) > len(text)/2 || LooksLikeGrokQuotaMessage(msgFromJSON) {
 			text = msgFromJSON
 		}
 	}
-	// Prefer structured fields in the original body when available.
+	// The supplied body may carry direct structured fields even after wrapper
+	// parsing. Let its code and quota message contribute to the final diagnostic
+	// corpus.
 	if len(responseBody) > 0 {
 		if m := strings.TrimSpace(firstNonEmpty(
 			gjson.GetBytes(responseBody, "error.message").String(),
@@ -242,6 +312,10 @@ func GrokUpstreamErrorCorpus(statusCode int, responseBody []byte) (text, code, l
 	return text, code, low
 }
 
+// UnwrapGrokUpstreamErrorText parses the recognized upstream status or status
+// prefix followed by decimal digits. A positive parsed status returns the
+// trimmed remainder after an optional colon. Unmatched or malformed prefixes
+// return false for ordinary text handling.
 func UnwrapGrokUpstreamErrorText(errText string) (status int, body string, ok bool) {
 	text := strings.TrimSpace(errText)
 	if text == "" {
@@ -270,12 +344,18 @@ func UnwrapGrokUpstreamErrorText(errText string) (status int, body string, ok bo
 	return 0, "", false
 }
 
+// ParseGrokUpstreamErrorJSON extracts trimmed code and message from a JSON
+// object string. Top-level fields precede nested error fields, and a string
+// error supplies a missing message. Invalid or non-object input returns two
+// empty strings.
 func ParseGrokUpstreamErrorJSON(errText string) (code, message string) {
 	text := strings.TrimSpace(errText)
 	if text == "" || text[0] != '{' {
 		return "", ""
 	}
 	var payload map[string]any
+	// Failed object decoding yields no extracted fields here, leaving the owning
+	// error corpus's raw text available for its unstructured classification.
 	if json.Unmarshal([]byte(text), &payload) != nil {
 		return "", ""
 	}
@@ -299,6 +379,8 @@ func ParseGrokUpstreamErrorJSON(errText string) (code, message string) {
 	return strings.TrimSpace(code), strings.TrimSpace(message)
 }
 
+// LooksLikeGrokQuotaMessage finds broad quota wording used when selecting
+// diagnostic messages.
 func LooksLikeGrokQuotaMessage(s string) bool {
 	low := strings.ToLower(s)
 	return strings.Contains(low, "quota") ||
@@ -308,6 +390,8 @@ func LooksLikeGrokQuotaMessage(s string) bool {
 		strings.Contains(low, "free")
 }
 
+// IsGrokFreeUsageCode recognizes normalized Free or usage-limit exhaustion code
+// markers.
 func IsGrokFreeUsageCode(code string) bool {
 	c := strings.ToLower(strings.TrimSpace(code))
 	if c == "" {
@@ -324,6 +408,16 @@ func IsGrokFreeUsageCode(code string) bool {
 		(strings.Contains(c, "exhaust") || strings.Contains(c, "exceed") || strings.Contains(c, "limit"))
 }
 
+// IsGrokFreeUsageExhaustedText recognizes selected quota phrases and exhausted
+// token pairs in lowercase text. Callers provide the lowercase error corpus;
+// direct Free markers and the selected Chinese quota phrases can establish this
+// classification without a numeric pair.
+//
+// Broader quota or usage language needs its accompanying exhaustion and quota
+// context. The numeric path additionally requires a positive limit reached by
+// actual tokens and one of the selected quota-context words. A zero limit or
+// failed signed-integer parse cannot establish exhaustion through that path,
+// while independent phrase evidence can still match.
 func IsGrokFreeUsageExhaustedText(low string) bool {
 	if low == "" {
 		return false
@@ -382,6 +476,9 @@ func IsGrokFreeUsageExhaustedText(low string) bool {
 	return false
 }
 
+// IsGrokBillingQuotaText recognizes billing, payment and exhausted-credit
+// phrases in lowercase error text. Callers test Free usage evidence first
+// because messages can contain language relevant to more than one quota class.
 func IsGrokBillingQuotaText(low string) bool {
 	if low == "" {
 		return false
@@ -405,11 +502,16 @@ func IsGrokBillingQuotaText(low string) bool {
 	return false
 }
 
-// ShouldMarkGrokTeamModelRateLimit controls the process-local sibling-provider
-// overlay. Model-capacity responses are request pressure, not a team quota;
-// marking them would hide healthy sibling credentials while the bounded
-// same-provider retry is still in progress. Ordinary 429s and free-usage
-// exhaustion mark the team quota overlay.
+// ShouldMarkGrokTeamModelRateLimit decides whether an error can mark the
+// sibling-provider quota overlay. Callers apply that process-local mark
+// separately; this predicate performs no state update. HTTP 429 or classified
+// Free quota ordinarily permits marking.
+//
+// Classified model capacity takes precedence over the 429 status and returns
+// false. HTTP 429 capacity has a bounded same-provider retry policy, and
+// marking the team overlay would exclude sibling credentials during that
+// request-pressure condition. Other non-429 classes leave the overlay unchanged
+// unless their body establishes Free usage exhaustion.
 func ShouldMarkGrokTeamModelRateLimit(statusCode int, responseBody []byte) bool {
 	decision := ClassifyGrokUpstreamFailure(statusCode, responseBody, "")
 	if decision.Class == GrokFailureModelCapacity {
@@ -418,13 +520,18 @@ func ShouldMarkGrokTeamModelRateLimit(statusCode int, responseBody []byte) bool 
 	return statusCode == http.StatusTooManyRequests || decision.Class == GrokFailureFreeUsage
 }
 
+// IsGrokCompatibilityError recognizes selected compaction markers in HTTP 400 or
+// 422 text and code. Other statuses return false. Generic decoder-shape failures
+// are handled by IsGrokDecoderCompatibilityError at the gateway's separate
+// compatibility decision.
 func IsGrokCompatibilityError(statusCode int, low, code string) bool {
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
 		return false
 	}
 	combined := strings.ToLower(strings.TrimSpace(low + " " + code))
-	// Recognize compaction decoding failures returned as HTTP 400 or 422.
-	// JSON decoder shape errors are also checked below.
+	// Compaction phrases identify replay-state incompatibility on the allowed
+	// client error statuses; generic shape decoding has its separate gateway
+	// predicate.
 	for _, phrase := range []string{
 		"could not decode the compaction blob",
 		"cannot decode the compaction blob",
@@ -447,6 +554,10 @@ func IsGrokCompatibilityError(statusCode int, low, code string) bool {
 	return false
 }
 
+// IsGrokModelCapacityText recognizes the selected capacity and
+// concurrent-request phrases in lowercase text. The classifier tests it before
+// ordinary rate-limit evidence so an overloaded model does not become a team
+// quota condition.
 func IsGrokModelCapacityText(low string) bool {
 	return strings.Contains(low, "capacity") ||
 		strings.Contains(low, "overloaded") ||
@@ -455,6 +566,8 @@ func IsGrokModelCapacityText(low string) bool {
 		strings.Contains(low, "engine_overloaded")
 }
 
+// IsGrokRateLimitText recognizes selected English and Chinese lowercase
+// rate-limit phrases.
 func IsGrokRateLimitText(low string) bool {
 	return strings.Contains(low, "rate limit") ||
 		strings.Contains(low, "rate_limit") ||
@@ -463,6 +576,8 @@ func IsGrokRateLimitText(low string) bool {
 		strings.Contains(low, "速率限制")
 }
 
+// IsGrokEmptyModelOutputText recognizes selected lowercase empty-output and
+// client-content failure phrases.
 func IsGrokEmptyModelOutputText(low string) bool {
 	if low == "" {
 		return false
@@ -474,6 +589,8 @@ func IsGrokEmptyModelOutputText(low string) bool {
 		strings.Contains(low, "empty upstream")
 }
 
+// IsGrokEmptyModelOutputCode recognizes normalized empty-output codes and
+// supported embedded markers.
 func IsGrokEmptyModelOutputCode(code string) bool {
 	c := strings.ToLower(strings.TrimSpace(code))
 	if c == "" {
@@ -486,12 +603,19 @@ func IsGrokEmptyModelOutputCode(code string) bool {
 		strings.Contains(c, "empty-model-output")
 }
 
+// GrokFreeUsageCooldownDuration returns the fixed interval before another Free
+// quota probe. The text argument currently does not affect the duration;
+// rolling-window wording provides no absolute reset time for this selection.
 func GrokFreeUsageCooldownDuration(low string) time.Duration {
-	// A rolling 24-hour usage window does not imply a 24-hour cooldown from observation.
-	// Use a short probe interval when no absolute reset time is available.
+	// Rolling-window language gives no absolute reset timestamp, so another probe
+	// uses the fixed short interval before caller policy observes quota again.
 	return GrokFreeUsageProbeCooldown
 }
 
+// ParseGrokTokenPair parses decimal actual/limit values matched by
+// ReGrokTokenPair. Missing pairs or values outside signed int64 return false. A
+// successfully parsed zero limit remains zero for the classifier's separate
+// exhaustion check.
 func ParseGrokTokenPair(errText string) (actual, limit int64, ok bool) {
 	m := ReGrokTokenPair.FindStringSubmatch(errText)
 	if len(m) != 3 {
@@ -499,12 +623,23 @@ func ParseGrokTokenPair(errText string) (actual, limit int64, ok bool) {
 	}
 	a, errA := strconv.ParseInt(m[1], 10, 64)
 	b, errB := strconv.ParseInt(m[2], 10, 64)
+	// Out-of-range decimal values cannot supply signed token diagnostics; report no
+	// pair so classification keeps its text evidence without numeric usage fields.
 	if errA != nil || errB != nil {
 		return 0, 0, false
 	}
 	return a, b, true
 }
 
+// ExtractGrokFailureModel selects a diagnostic model token from text, structured
+// fields or fallback. Text matching has precedence, followed by error.model and
+// model, then the caller's requested identity. Selected strings are trimmed and
+// stripped of trailing punctuation.
+//
+// A matched earlier source prevents selection of a later one. Text uses
+// ReGrokModelFor's token shape, which excludes slash qualifiers; structured and
+// fallback values can retain those qualifiers. The result can be empty, and
+// callers then apply their class-specific missing-model handling.
 func ExtractGrokFailureModel(text string, responseBody []byte, fallback string) string {
 	if m := ReGrokModelFor.FindStringSubmatch(text); len(m) == 2 {
 		return NormalizeGrokFailureModelID(m[1])
@@ -520,7 +655,8 @@ func ExtractGrokFailureModel(text string, responseBody []byte, fallback string) 
 	return NormalizeGrokFailureModelID(fallback)
 }
 
-// NormalizeGrokFailureModelID removes surrounding whitespace and trailing punctuation.
+// NormalizeGrokFailureModelID trims surrounding whitespace and trailing message
+// punctuation from model text.
 func NormalizeGrokFailureModelID(model string) string {
 	model = strings.TrimSpace(model)
 	model = strings.TrimRight(model, ".,;:!?")

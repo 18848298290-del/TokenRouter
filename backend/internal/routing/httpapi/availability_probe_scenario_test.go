@@ -1,7 +1,5 @@
 package httpapi
 
-// These scenarios check probe configuration normalization and administrative HTTP error statuses.
-
 import (
 	"net/http"
 	"reflect"
@@ -13,12 +11,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// TestNormalizeGroupAvailabilityProbeConfig exercises disabled and enabled
+// probe inputs, including explicit zero retries. It checks normalized values
+// and rejects missing required text, invalid timing/retry bounds, oversized
+// User-Agent values, and injected header characters.
 func TestNormalizeGroupAvailabilityProbeConfig(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   routing.GroupAvailabilityProbeConfig
-		want    routing.GroupAvailabilityProbeConfig
-		wantErr bool
+		name    string                               // normalization scenario display name
+		input   routing.GroupAvailabilityProbeConfig // submitted probe configuration value
+		want    routing.GroupAvailabilityProbeConfig // expected normalized configuration value
+		wantErr bool                                 // expected configuration rejection flag
 	}{
 		{
 			name:  "disabled clears detail fields",
@@ -111,6 +113,10 @@ func TestNormalizeGroupAvailabilityProbeConfig(t *testing.T) {
 	}
 }
 
+// TestNormalizeGroupAvailabilityProbeConfigForAdminWriteReturnsBadRequest
+// submits a retry count above the allowed bound. It checks that the
+// administrator write wrapper returns HTTP 400 with
+// INVALID_AVAILABILITY_PROBE_CONFIG as its reason.
 func TestNormalizeGroupAvailabilityProbeConfigForAdminWriteReturnsBadRequest(t *testing.T) {
 	_, err := routing.NormalizeGroupAvailabilityProbeConfigForAdminWrite(routing.GroupAvailabilityProbeConfig{
 		Enabled:    true,
@@ -127,7 +133,8 @@ func TestNormalizeGroupAvailabilityProbeConfigForAdminWriteReturnsBadRequest(t *
 	}
 }
 
-// groupAvailabilityProbeRetryPointer distinguishes omitted retry counts from explicit zero in tests.
+// groupAvailabilityProbeRetryPointer allocates a retry value for
+// optional-count normalization assertions.
 func groupAvailabilityProbeRetryPointer(value int) *int {
 	return &value
 }

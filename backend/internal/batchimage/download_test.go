@@ -12,8 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// Indexed custom IDs select image parts while the caller owns the returned
+// download permit. These cases inspect decoded bytes, permit release,
+// filename conversion, owner and state rejection, ZIP contents and mixed
+// provider envelopes using in-memory result streams and archives.
+
+// The encoded first-image sample makes it possible to compare downloaded
+// bytes and detect accidental payload echo in diagnostics.
 const batchImageDownloadTestBase64 = "Zmlyc3Q="
 
+// TestBatchImageDownloadService_OpenItemContent opens a later image part and
+// closes its returned Reader repeatedly. It checks decoded bytes, response
+// metadata and one permit release, then exercises owner, state, item and
+// index failures.
 func TestBatchImageDownloadService_OpenItemContent(t *testing.T) {
 	ctx := context.Background()
 
@@ -36,12 +47,12 @@ func TestBatchImageDownloadService_OpenItemContent(t *testing.T) {
 	})
 
 	tests := []struct {
-		name   string
-		mutate func(*fakeBatchImageRepository)
-		id     string
-		item   string
-		index  int
-		want   error
+		name   string                          // scenario display name
+		mutate func(*fakeBatchImageRepository) // scenario setup mutation
+		id     string                          // requested batch identity
+		item   string                          // requested custom identity
+		index  int                             // requested image offset
+		want   error                           // expected observable result
 	}{
 		{name: "non_owner", id: "imgbatch_download", item: "cover/../001", mutate: func(r *fakeBatchImageRepository) {
 			v := int64(999)
@@ -74,6 +85,10 @@ func TestBatchImageDownloadService_OpenItemContent(t *testing.T) {
 	}
 }
 
+// TestBatchImageDownloadService_StreamZip builds an archive from successful
+// indexed items and one provider failure. It checks decoded files, manifest
+// metadata, sanitized errors and permit release, plus limiter and item-cap
+// rejection before output.
 func TestBatchImageDownloadService_StreamZip(t *testing.T) {
 	ctx := context.Background()
 
@@ -104,11 +119,11 @@ func TestBatchImageDownloadService_StreamZip(t *testing.T) {
 		require.NotContains(t, zipText, "gs://")
 
 		var manifest struct {
-			Files []struct {
-				CustomID   string `json:"custom_id"`
-				Filename   string `json:"filename"`
-				MimeType   string `json:"mime_type"`
-				ImageIndex int    `json:"image_index"`
+			Files []struct { // completed archive file metadata
+				CustomID   string `json:"custom_id"`   // submitted item identity
+				Filename   string `json:"filename"`    // sanitized archive image name
+				MimeType   string `json:"mime_type"`   // image MIME type
+				ImageIndex int    `json:"image_index"` // zero based image index
 			} `json:"files"`
 		}
 		require.NoError(t, json.Unmarshal(files["manifest.json"], &manifest))
@@ -147,13 +162,17 @@ func TestBatchImageDownloadService_StreamZip(t *testing.T) {
 	})
 }
 
+// TestExtractBatchImagePartsFromResultLine feeds supported identity,
+// inline-image and failure envelope spellings into download extraction. It
+// checks retained image metadata and error categories, and rejects missing
+// custom IDs without echoing the encoded sample.
 func TestExtractBatchImagePartsFromResultLine(t *testing.T) {
 	tests := []struct {
-		name      string
-		line      string
-		wantID    string
-		wantMime  string
-		wantError string
+		name      string // scenario display name
+		line      string // provider JSON input
+		wantID    string // expected custom identity
+		wantMime  string // expected image MIME
+		wantError string // expected failure category
 	}{
 		{name: "inlineData_mimeType_response", line: `{"key":"a","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"` + batchImageDownloadTestBase64 + `"}}]}}]}}`, wantID: "a", wantMime: "image/png"},
 		{name: "inline_data_mime_type_top_level", line: `{"custom_id":"b","candidates":[{"content":{"parts":[{"inline_data":{"mime_type":"image/jpeg","data":"` + batchImageDownloadTestBase64 + `"}}]}}]}`, wantID: "b", wantMime: "image/jpeg"},
@@ -182,11 +201,19 @@ func TestExtractBatchImagePartsFromResultLine(t *testing.T) {
 	require.NotContains(t, err.Error(), batchImageDownloadTestBase64)
 }
 
+// TestBatchImageDownloadFilenames uses path-shaped and quote-containing
+// custom names in filename and header helpers. The assertions protect the
+// exact sanitized image filename and quoted attachment header emitted for
+// these fixtures.
 func TestBatchImageDownloadFilenames(t *testing.T) {
 	require.Equal(t, "___secret_name.png", batchimage.BatchImageSafeDownloadFilename("../../secret\nname", "png"))
 	require.Equal(t, `attachment; filename="cover_001.png"`, batchimage.BatchImageContentDispositionAttachment(`cover"001.png`))
 }
 
+// TestExtractBatchImagePartsFromResultLine_MixedEnvelopes combines nested and
+// top-level candidates with malformed and empty image parts. It checks
+// ordered accepted images, trimmed values and deferred base64 validation
+// while excluding ignored parts.
 func TestExtractBatchImagePartsFromResultLine_MixedEnvelopes(t *testing.T) {
 	line := `{"key":"mixed","response":{"candidates":[null,{}, {"content":{"parts":[
 		null,{"text":"none"},{"inlineData":{"mimeType":"text/plain","data":"dGV4dA=="}},
@@ -208,6 +235,10 @@ func TestExtractBatchImagePartsFromResultLine_MixedEnvelopes(t *testing.T) {
 	}, got.Images)
 }
 
+// TestExtractBatchImageInlineImages_EmptyInputReturnsNil supplies absent and
+// incompatible candidate inputs before an empty response envelope. It checks
+// nil image slices and the EMPTY_IMAGE_OUTPUT category used by failed
+// download extraction.
 func TestExtractBatchImageInlineImages_EmptyInputReturnsNil(t *testing.T) {
 	for _, raw := range []any{nil, map[string]any{}, []any{}, []any{nil, map[string]any{"content": nil}}} {
 		require.Nil(t, batchimage.ExtractBatchImageInlineImages(raw))

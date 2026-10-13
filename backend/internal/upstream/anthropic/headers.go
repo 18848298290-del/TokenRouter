@@ -5,9 +5,25 @@ import (
 	"strings"
 )
 
+// Claude Header spelling can differ from Go's canonical map keys. Request
+// builders read exact, mapped, and canonical spellings and store selected wire
+// keys directly, so outbound fingerprint replacement also needs to clear values
+// under the recognized alternative spellings.
+//
+// Casing maps identify names accepted for forwarding and names used in
+// diagnostics. Diagnostic ordering deduplicates case-insensitive names, chooses
+// the retained map key, and places known names in the configured sequence; it
+// does not control HTTP transport serialization. Header mutations require a
+// caller-owned, initialized map and caller synchronization when that map is
+// shared, since these helpers add no locks.
+
+// Header maps govern supported wire spelling, diagnostic ordering, and client
+// forwarding permission; callers treat these initialized shared values as
+// read-only.
 var (
-	// HeaderWireCasing restores CLI header spelling after Go canonicalizes incoming
-	// keys. The casing is based on Claude CLI HTTPS traffic to api.anthropic.com.
+	// HeaderWireCasing maps recognized lowercase names to the spelling used by
+	// outgoing request builders; callers use canonical lookup separately for
+	// incoming Headers.
 	HeaderWireCasing = map[string]string{
 		// Title case
 		"accept":     "Accept",
@@ -41,7 +57,9 @@ var (
 		"content-length":           "content-length",
 	}
 
-	// HeaderWireOrder orders diagnostic output to match observed CLI traffic.
+	// HeaderWireOrder selects the configured order of recognized names in
+	// diagnostic output; HTTP serialization order remains with the request
+	// transport.
 	HeaderWireOrder = []string{
 		"Accept",
 		"X-Stainless-Retry-Count",
@@ -68,10 +86,14 @@ var (
 		"x-stainless-helper-method",
 	}
 
-	// HeaderWireOrderSet contains lowercase keys from HeaderWireOrder.
+	// HeaderWireOrderSet holds lowercase membership built by init from
+	// HeaderWireOrder for callers checking which names belong to that diagnostic
+	// sequence.
 	HeaderWireOrderSet map[string]struct{}
 
-	// AllowedHeaders lists client headers eligible for forwarding.
+	// AllowedHeaders identifies lowercase client Header names eligible for
+	// platform forwarding; request builders supply authentication and other
+	// controlled values separately.
 	AllowedHeaders = map[string]bool{
 		"accept":                                    true,
 		"x-stainless-retry-count":                   true,
@@ -97,6 +119,8 @@ var (
 	}
 )
 
+// init builds lowercase membership for the configured diagnostic Header
+// sequence.
 func init() {
 	HeaderWireOrderSet = make(map[string]struct{}, len(HeaderWireOrder))
 	for _, k := range HeaderWireOrder {
@@ -104,8 +128,9 @@ func init() {
 	}
 }
 
-// ResolveWireCasing maps a recognized header to CLI wire casing.
-// Unrecognized keys retain their supplied casing.
+// ResolveWireCasing returns the configured spelling for a case-insensitive
+// recognized name. Unknown keys retain their supplied spelling, allowing
+// callers to apply their own policy before storing them.
 func ResolveWireCasing(key string) string {
 	if wk, ok := HeaderWireCasing[strings.ToLower(key)]; ok {
 		return wk
@@ -113,12 +138,19 @@ func ResolveWireCasing(key string) string {
 	return key
 }
 
-// SetHeaderRaw sets a header bypassing Go's canonical-case normalization.
-// The key is stored exactly as provided, preserving original casing.
+// SetHeaderRaw replaces value at the exact key while clearing its canonical and
+// configured wire forms. Callers provide an initialized Header map and
+// synchronize access when that map is shared.
 //
-// It removes values under the canonical, mapped wire, and supplied raw keys
-// before storing the replacement.
+// Direct map insertion retains the selected spelling for request serialization.
+// Deleting the recognized alternatives prevents a previously forwarded value
+// from surviving under one of those forms, but arbitrary other spellings are
+// outside this lookup. The helper changes the caller's map and replaces the
+// value slice with one value.
 func SetHeaderRaw(h http.Header, key, value string) {
+	// Clear the named casing alternatives before exact-key insertion so
+	// replacement cannot leave a recognized forwarded value reachable through
+	// another helper lookup.
 	h.Del(key) // remove canonical form (e.g. "Anthropic-Beta")
 	if wk := ResolveWireCasing(key); wk != key {
 		delete(h, wk) // remove wire casing form if different
@@ -127,13 +159,16 @@ func SetHeaderRaw(h http.Header, key, value string) {
 	h[key] = []string{value}
 }
 
-// AddHeaderRaw appends a header value bypassing Go's canonical-case normalization.
+// AddHeaderRaw appends value under key's exact spelling on the supplied Header
+// map. Callers provide an initialized map and synchronization for shared
+// access; existing alternative spellings remain separate entries.
 func AddHeaderRaw(h http.Header, key, value string) {
 	h[key] = append(h[key], value)
 }
 
-// DeleteHeaderAllForms removes the raw, mapped wire, and canonical forms of key
-// so forwarded values do not survive under one of those spellings.
+// DeleteHeaderAllForms removes the supplied, canonical, and configured wire
+// forms of key. Nil maps and empty names return directly, and callers
+// synchronize access when mutating a shared Header map.
 func DeleteHeaderAllForms(h http.Header, key string) {
 	if h == nil || key == "" {
 		return
@@ -145,17 +180,16 @@ func DeleteHeaderAllForms(h http.Header, key string) {
 	}
 }
 
-// GetHeaderRaw reads a header value, trying multiple key forms to handle the mismatch
-// between Go canonical keys, wire casing keys, and raw keys:
-//  1. exact key as provided
-//  2. wire casing form (from HeaderWireCasing)
-//  3. Go canonical form (via http.Header.Get)
+// GetHeaderRaw reads the first value under the exact key, then its mapped wire
+// form, then Go's canonical lookup. Nil maps return empty, and arbitrary
+// alternative casing is outside these three choices.
 func GetHeaderRaw(h http.Header, key string) string {
 	// 1. exact key
 	if vals := h[key]; len(vals) > 0 {
 		return vals[0]
 	}
-	// 2. wire casing (e.g. looking up "Anthropic-Dangerous-Direct-Browser-Access" finds "anthropic-dangerous-direct-browser-access")
+	// 2. wire casing (e.g. looking up "Anthropic-Dangerous-Direct-Browser-Access"
+	// finds "anthropic-dangerous-direct-browser-access")
 	if wk := ResolveWireCasing(key); wk != key {
 		if vals := h[wk]; len(vals) > 0 {
 			return vals[0]
@@ -165,9 +199,19 @@ func GetHeaderRaw(h http.Header, key string) string {
 	return h.Get(key)
 }
 
-// SortHeadersByWireOrder returns one key per case-insensitive header name.
-// Known names follow HeaderWireOrder; other names follow in unspecified order.
+// SortHeadersByWireOrder returns one retained key for each case-insensitive
+// Header name, with recognized names first in HeaderWireOrder. Unrecognized
+// names follow in map iteration order, and nil input produces an empty slice.
+//
+// The lowercase index lets the configured order find whatever spelling the map
+// contains. When several spellings represent one name, map traversal chooses
+// the representative, so callers cannot rely on which spelling wins. This
+// result supports diagnostics; HTTP transport order is determined elsewhere and
+// the input map is left unchanged.
 func SortHeadersByWireOrder(h http.Header) []string {
+	// The lowercase index coalesces spellings for diagnostic order; duplicate
+	// representatives follow map traversal, which gives callers no stable choice
+	// of retained spelling.
 	present := make(map[string]string, len(h))
 	for k := range h {
 		present[strings.ToLower(k)] = k

@@ -7,11 +7,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Chat tool removal needs the image in the final user turn and must keep
+// explicit or required tool intent representable. These fixtures compare
+// non-target requests byte for byte, then inspect removal of all tool controls
+// when the inline image makes an automatic tool redundant.
+
+// TestStripRedundantGrokChatViewImageToolLeavesNonTargetRequestsByteExact covers
+// a final turn without images, historical images, and named or required
+// view_image choices.
+// Each request must return identical bytes, protecting the cases where native
+// Chat tool intent stays unchanged.
 func TestStripRedundantGrokChatViewImageToolLeavesNonTargetRequestsByteExact(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		body string
+		name string // scenario display label
+		body string // supplied Chat JSON
 	}{
 		{
 			name: "current turn has no inline image",
@@ -42,6 +52,10 @@ func TestStripRedundantGrokChatViewImageToolLeavesNonTargetRequestsByteExact(t *
 	}
 }
 
+// TestStripRedundantGrokChatViewImageToolDropsOnlyToolMetadata supplies an
+// inline image with automatic view_image and parallel control. The patched
+// request must omit tools, tool_choice and parallel_tool_calls after the last
+// redundant declaration disappears.
 func TestStripRedundantGrokChatViewImageToolDropsOnlyToolMetadata(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{

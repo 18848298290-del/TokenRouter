@@ -25,13 +25,28 @@ import (
 	groupdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
-// adminResetGroupProjection forwards group reads to the injected repository.
+// An administrator request can combine group assignment with spending-window
+// reset. PostgreSQL-backed HTTP cases reject an invalid group before its resets
+// persist and inject a group-write trigger failure to check that a combined
+// update leaves its earlier counters and binding unchanged until successful
+// retry.
+
+// adminResetGroupProjection overrides the group read used by administrator
+// binding validation.
 type adminResetGroupProjection struct {
+	// GroupRepository supplies promoted methods other than GetByID. These fixtures
+	// leave it nil and exercise the overridden read; calling promoted methods
+	// would fail.
 	apikey.GroupRepository
+	// reader is required for GetByID and remains borrowed from the case's group
+	// store, whose database fixture owns its connection lifetime and transaction
+	// scope.
 	reader routing.GroupRepository
 }
 
-// TestAdminKeyResetAndInvalidGroupAreAtomic checks that a failed request rolls back usage resets.
+// TestAdminKeyResetAndInvalidGroupAreAtomic submits an invalid group with a
+// spending-reset request. HTTP returns BadRequest, all three stored counters
+// remain unchanged, and the five-hour start remains within one millisecond.
 func TestAdminKeyResetAndInvalidGroupAreAtomic(t *testing.T) {
 	ctx := context.Background()
 	integrationDB, client := identityDatabase(t)
@@ -39,6 +54,8 @@ func TestAdminKeyResetAndInvalidGroupAreAtomic(t *testing.T) {
 	keys := newKeyStoreFixture(client, integrationDB)
 	user := mustCreateUser(t, client, &identity.User{})
 	key := mustCreateApiKey(t, client, &apikey.APIKey{UserID: user.ID, Key: "test-reset-" + uuid.NewString()})
+	// Whole-second input and a millisecond tolerance compare the retained window
+	// timestamp.
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := integrationDB.ExecContext(ctx, "UPDATE api_keys SET usage_5h=12,usage_1d=13,usage_7d=14,window_5h_start=$2,window_1d_start=$2,window_7d_start=$2 WHERE id=$1", key.ID, now)
 	require.NoError(t, err)
@@ -60,7 +77,10 @@ func TestAdminKeyResetAndInvalidGroupAreAtomic(t *testing.T) {
 	require.WithinDuration(t, now, *stored.Window5hStart, time.Millisecond)
 }
 
-// TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure checks reset rollback after a database write fails.
+// TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure rejects group changes
+// through a PostgreSQL trigger during a combined reset request. Failure retains
+// counters and binding; removing the trigger allows the group and reset writes
+// to succeed.
 func TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure(t *testing.T) {
 	ctx := context.Background()
 	integrationDB, client := identityDatabase(t)
@@ -72,8 +92,14 @@ func TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure(t *testing.T) {
 	_, err := integrationDB.ExecContext(ctx, "UPDATE api_keys SET usage_5h=12,usage_1d=13,usage_7d=14,window_5h_start=NOW(),window_1d_start=NOW(),window_7d_start=NOW() WHERE id=$1", key.ID)
 	require.NoError(t, err)
 	name := fmt.Sprintf("test_reject_key_%d", key.ID)
+	// Reject the selected group mutation after reset processing can begin so
+	// outside reads reveal whether the combined write retains a partial reset on
+	// failure.
 	_, err = integrationDB.ExecContext(ctx, fmt.Sprintf("CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test reject key configuration'; END; $$", name))
 	require.NoError(t, err)
+	// Attempt trigger removal before removing its function on every test exit; IF
+	// EXISTS tolerates the successful path's earlier removal, and cleanup errors
+	// are discarded.
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(ctx, "DROP TRIGGER IF EXISTS "+name+" ON api_keys")
 		_, _ = integrationDB.ExecContext(ctx, "DROP FUNCTION IF EXISTS "+name+"()")
@@ -100,6 +126,9 @@ func TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure(t *testing.T) {
 	require.Equal(t, 14.0, stored.Usage7d)
 	require.Nil(t, stored.GroupID)
 	require.NotNil(t, stored.Window5hStart)
+	// Remove the injected database rejection before replaying the same combined
+	// request so success can check both new group assignment and cleared spending
+	// windows.
 	_, err = integrationDB.ExecContext(ctx, "DROP TRIGGER "+name+" ON api_keys")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, send().Code)
@@ -114,6 +143,9 @@ func TestAdminKeyCombinedWriteRollsBackOnDatabaseFailure(t *testing.T) {
 	require.Equal(t, group.ID, *stored.GroupID)
 }
 
+// GetByID delegates to the injected routing reader and clones its result for
+// key administration. The reader error returns unchanged, and nil input to
+// GroupFromRouting remains a nil group.
 func (p adminResetGroupProjection) GetByID(ctx context.Context, id int64) (*routing.Group, error) {
 	value, err := p.reader.GetByID(ctx, id)
 	return apikey.GroupFromRouting(value), err

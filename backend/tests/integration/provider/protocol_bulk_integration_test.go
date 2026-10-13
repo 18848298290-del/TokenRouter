@@ -9,8 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestUnifiedProtocolBulkUpdate checks that JSONB merging applies per-provider protocol patches
-// alongside credential updates and removes obsolete routing fields.
+// Bulk edits can assign different upstream protocol sets to providers in the
+// same request. PostgreSQL assertions check those per-provider patches
+// alongside a shared API-key update, then verify an empty protocol set and
+// cleanup of the retired text-route field.
+
+// TestUnifiedProtocolBulkUpdate edits two protocol sets with a shared API-key
+// patch. Reads check both protocol sets, the first API key, and the second
+// custom Extra; a later patch empties the first set and removes the retired
+// text-route field.
 func (s *ProviderRepoSuite) TestUnifiedProtocolBulkUpdate() {
 	first := &provider.Record{Name: "protocol-one", Platform: capability.PlatformKimi, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Credentials: map[string]any{"api_key": "before", "upstream_protocols": []string{"anthropic_messages"}}, Extra: map[string]any{"keep": true}}
 	second := &provider.Record{Name: "protocol-two", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Credentials: map[string]any{"api_key": "before", "upstream_protocols": []string{"openai_responses"}}, Extra: map[string]any{"keep": true}}

@@ -5,7 +5,14 @@ import (
 	"slices"
 )
 
-// NormalizeNativeProtocols validates and orders enabled protocols. An empty selection stays empty.
+// Saved protocol selections are checked against the platform and authentication
+// choices used by route resolution. Empty selections retain an intentional
+// disable, while conversion validation checks catalogue-supported targets and
+// leaves actual provider availability to candidate resolution.
+
+// NormalizeNativeProtocols validates enabled identifiers against this
+// provider's native options and rejects duplicates. It returns a new slice in
+// catalogue order; an empty selection stays allocated and empty.
 func NormalizeNativeProtocols(provider ProviderProtocols) ([]ProtocolID, error) {
 	options := NativeProtocolOptions(provider.Platform, provider.Type, provider.AuthMode)
 	seen := make(map[ProtocolID]bool)
@@ -24,7 +31,9 @@ func NormalizeNativeProtocols(provider ProviderProtocols) ([]ProtocolID, error) 
 	return normalized, nil
 }
 
-// ValidateProtocolFallbacks checks that each target is a supported single-step conversion.
+// ValidateProtocolFallbacks rejects unknown client sources and duplicate or
+// unsupported automatic conversion targets. Platform is ignored for mixed-group
+// policy; empty target lists are valid and require native routing when used.
 func ValidateProtocolFallbacks(_ string, fallbacks map[ProtocolID][]ProtocolID) error {
 	for source, targets := range fallbacks {
 		if !slices.Contains(canonicalGroupClientProtocols, source) {
@@ -41,7 +50,9 @@ func ValidateProtocolFallbacks(_ string, fallbacks map[ProtocolID][]ProtocolID) 
 	return nil
 }
 
-// NormalizeResponsesImagePolicy defaults to inherit and validates the four named policies.
+// NormalizeResponsesImagePolicy validates the named Responses image-tool policy
+// and maps an empty value to inherit. Other accepted values are returned
+// unchanged; unknown spellings produce an error without trimming.
 func NormalizeResponsesImagePolicy(policy string) (string, error) {
 	switch policy {
 	case "":

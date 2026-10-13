@@ -7,21 +7,34 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// A rejected nonadaptive thinking budget can be rewritten into an enabled
+// 32000-token budget. The output limit is raised only when it is too small for
+// that budget, and adaptive requests keep their supplied thinking
+// configuration.
+//
+// Repair updates type, budget, and output limit separately because the exchange
+// caller needs to know whether any JSON edit succeeded before replaying the
+// body. A later failure does not undo earlier edits, and an unchanged
+// sufficiently large max_tokens value remains available for generation. Error
+// matching requires a budget term, a thinking term, and a recognized 1024-token
+// minimum phrase, keeping repair tied to the identified constraint.
+
+// Thinking repair values set the retry budget and output limit, with a separate
+// minimum deciding when an existing output limit needs replacement.
 const (
 	// BudgetRectifyBudgetTokens is the budget_tokens value to set when rectifying.
 	BudgetRectifyBudgetTokens = 32000
 	// BudgetRectifyMaxTokens is the max_tokens value to set when rectifying.
 	BudgetRectifyMaxTokens = 64000
-	// BudgetRectifyMinMaxTokens is the smallest output limit above the rectified thinking budget.
+	// BudgetRectifyMinMaxTokens is the smallest output limit above the rectified
+	// thinking budget.
 	BudgetRectifyMinMaxTokens = 32001
 )
 
-// IsThinkingBudgetConstraintError detects whether an upstream error message indicates
-// a budget_tokens constraint violation (e.g. "budget_tokens >= 1024").
-// Matches three conditions (all must be true):
-//  1. Contains "budget_tokens" or "budget tokens"
-//  2. Contains "thinking"
-//  3. Contains ">= 1024" or "greater than or equal to 1024" or ("1024" + "input should be")
+// IsThinkingBudgetConstraintError matches a thinking-budget error with a
+// recognized 1024 minimum phrase. Lowercased text needs both a budget term and
+// thinking, then either an equality-bound phrase or the input-validation
+// wording.
 func IsThinkingBudgetConstraintError(errMsg string) bool {
 	m := strings.ToLower(errMsg)
 
@@ -34,6 +47,9 @@ func IsThinkingBudgetConstraintError(errMsg string) bool {
 		return false
 	}
 
+	// The supported minimum appears in comparison or input-validation wording.
+	// Recognizing those alternatives keeps the same budget repair available for
+	// each listed error-text form.
 	if strings.Contains(m, ">= 1024") || strings.Contains(m, "greater than or equal to 1024") {
 		return true
 	}
@@ -44,16 +60,28 @@ func IsThinkingBudgetConstraintError(errMsg string) bool {
 	return false
 }
 
-// RectifyThinkingBudget skips adaptive thinking. Otherwise it sets enabled
-// thinking with a 32000-token budget and raises max_tokens to 64000 when below
-// 32001. JSON update failures leave that field unchanged; the boolean reports
-// whether any update succeeded.
+// RectifyThinkingBudget rewrites nonadaptive requests toward enabled thinking
+// with BudgetRectifyBudgetTokens and a sufficient output limit. The literal
+// adaptive type returns unchanged body and false; an existing max_tokens at least
+// BudgetRectifyMinMaxTokens retains its value.
+//
+// Type, budget, and output limit edits run separately, and only successful
+// edits replace the working body or set changed. An edit failure can therefore
+// leave a partial repair for the exchange caller to inspect. Raising the output
+// limit to BudgetRectifyMaxTokens keeps it above the configured thinking budget
+// for retry construction.
 func RectifyThinkingBudget(body []byte) ([]byte, bool) {
 	thinkingType := gjson.GetBytes(body, "thinking.type").String()
+	// This recovery hook can receive several thinking representations. Returning
+	// adaptive bytes keeps the nonadaptive repair from constructing an
+	// enabled-thinking payload for that request.
 	if thinkingType == "adaptive" {
 		return body, false
 	}
 
+	// Apply type, thinking budget, and output-limit edits independently so a later
+	// JSON failure keeps earlier successful repair bytes available to the exchange
+	// caller.
 	modified := body
 	changed := false
 
@@ -73,6 +101,9 @@ func RectifyThinkingBudget(body []byte) ([]byte, bool) {
 	}
 
 	maxTokens := gjson.GetBytes(modified, "max_tokens").Int()
+	// Raise undersized output limits above the repaired thinking budget while
+	// leaving larger client limits intact, maintaining the threshold used to
+	// construct the retry body.
 	if maxTokens < int64(BudgetRectifyMinMaxTokens) {
 		if result, err := sjson.SetBytes(modified, "max_tokens", BudgetRectifyMaxTokens); err == nil {
 			modified = result

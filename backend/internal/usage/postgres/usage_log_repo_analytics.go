@@ -14,32 +14,69 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// A report can start before continuous analytics coverage and end after the live
+// watermark. The query window keeps those unaggregated edges as raw records
+// while the covered middle uses UTC hourly buckets and a date-based daily span
+// derived from the rounded bucket bounds.
+//
+// The final live hour may contain data only through the watermark, so its bucket
+// endpoint differs from the raw tail's starting instant. Rounding during UTC's
+// final hour can include the current date in the daily span, while live daily
+// rebuilding handles closed dates. Daily date parameters are kept separate from
+// hourly timestamps to preserve PostgreSQL's inferred types. User dashboards and batch cost reports then combine each source's
+// metrics while retaining actor/team ownership, independently chosen today
+// ranges, and raw recent-rate reads. Missing usable coverage asks callers to
+// choose a complete raw query.
+
+// usageAnalyticsWindow describes report instants, covered bucket bounds, and raw
+// edges.
 type usageAnalyticsWindow struct {
-	start          time.Time
-	end            time.Time
-	aggregateStart time.Time
-	aggregateEnd   time.Time
-	dailyStart     time.Time
-	dailyEnd       time.Time
-	rawTailStart   time.Time
+	// start and end bound the requested half-open UTC range. aggregateStart and
+	// aggregateEnd select the covered bucket interval that supplies the report's
+	// middle.
+	start          time.Time // requested UTC range start
+	end            time.Time // requested UTC range end
+	aggregateStart time.Time // covered bucket range start
+	aggregateEnd   time.Time // covered bucket range end
+	// dailyStart and dailyEnd delimit date-based selection inside rounded aggregate
+	// bounds. Their shape can cover the current date when its partial live hour
+	// rounds into tomorrow; dailySplit retains hourly selection for an empty span.
+	dailyStart time.Time // daily SQL span start
+	dailyEnd   time.Time // daily SQL span end
+	// rawTailStart resumes raw reads at the watermark when the final live bucket
+	// is partial, and at aggregateEnd for a complete historical interval.
+	rawTailStart time.Time // raw records resume instant
 }
 
-// usageAnalyticsDailySplit separates daily date bounds from the surrounding hourly timestamp bounds.
+// usageAnalyticsDailySplit separates hourly timestamp parameters from daily date
+// strings.
 type usageAnalyticsDailySplit struct {
-	hourlyHeadEnd   time.Time
-	hourlyTailStart time.Time
-	dailyStartDate  string
-	dailyEndDate    string
+	// hourlyHeadEnd and hourlyTailStart limit the hourly portions around the daily
+	// range. dailyStartDate and dailyEndDate use distinct SQL date arguments so
+	// timestamp bounds cannot inherit date coercion from the daily query.
+	hourlyHeadEnd   time.Time // first hourly portion end
+	hourlyTailStart time.Time // second hourly portion start
+	dailyStartDate  string    // YYYY-MM-DD
+	dailyEndDate    string    // YYYY-MM-DD
 }
 
-// dailySplit separates timestamp and date parameters so PostgreSQL does not infer hourly bounds as dates.
+// dailySplit returns separate timestamp and date bounds for daily-enabled SQL
+// queries. The hourly head/tail timestamps surround the computed daily span,
+// while daily values become date-only strings for SQL date predicates.
+//
+// When the computed date span is empty, both hourly split points use
+// aggregateStart and both date strings use dailyEnd. The empty daily range leaves
+// the full aggregate span for hourly selection. Keeping representations separate
+// prevents date casts from coercing timestamp parameters and including earlier
+// hours in a local-today query.
 func (window usageAnalyticsWindow) dailySplit() usageAnalyticsDailySplit {
 	hourlyHeadEnd := window.dailyStart
 	hourlyTailStart := window.dailyEnd
 	dailyStart := window.dailyStart
 	dailyEnd := window.dailyEnd
 	if !dailyEnd.After(dailyStart) {
-		// With no complete UTC day, the daily range is empty and hourly buckets cover the aggregate range.
+		// An empty computed date span uses aggregateStart for both hourly split points,
+		// keeping the hourly source inside the requested covered middle.
 		hourlyHeadEnd = window.aggregateStart
 		hourlyTailStart = window.aggregateStart
 		dailyStart = window.dailyEnd
@@ -53,20 +90,31 @@ func (window usageAnalyticsWindow) dailySplit() usageAnalyticsDailySplit {
 	}
 }
 
-// args returns hourly head end, hourly tail start, daily start, and daily end in query order.
+// args returns the split's hourly timestamps followed by daily date strings.
 func (split usageAnalyticsDailySplit) args() []any {
 	return []any{split.hourlyHeadEnd, split.hourlyTailStart, split.dailyStartDate, split.dailyEndDate}
 }
 
-// resolveUsageAnalyticsWindow splits the requested range into covered aggregate buckets and raw edges.
+// resolveUsageAnalyticsWindow derives a covered middle and raw edges for [start,
+// end). Disabled settings, invalid ranges, absent coverage, or unusable
+// watermarks return false so callers can choose raw records; state-query
+// failures return an error.
+//
+// The aggregate start rounds the requested start to an hour and advances to
+// persisted coverage when needed. Ranges after the live watermark retain that
+// partial live-hour bucket but start raw tail reads at the watermark. Historical
+// ends use complete hours and a raw partial final hour. Daily bounds derive
+// from rounded aggregateEnd; in UTC's final hour they can include the current
+// date, whose daily rows live aggregation has not rebuilt yet. This resolver
+// checks persisted window state, leaving actual daily-row availability unchecked.
 func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time.Time) (usageAnalyticsWindow, bool, error) {
 	window := usageAnalyticsWindow{start: start.UTC(), end: end.UTC()}
 	if r == nil || r.preAggregation == nil || !end.After(start) || !r.preAggregation.UsageEnabled(ctx) {
 		return window, false, nil
 	}
 	var state struct {
-		watermark time.Time
-		coverage  sql.NullTime
+		watermark time.Time    // persisted live processed instant
+		coverage  sql.NullTime // optional continuous history start
 	}
 	if err := scanSingleRow(ctx, r.sql, `
 		SELECT live_watermark, coverage_start
@@ -81,15 +129,18 @@ func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time
 
 	window.aggregateStart = ceilHourUTC(window.start)
 	if coverageStart := state.coverage.Time.UTC(); coverageStart.After(window.aggregateStart) {
-		// Read the unbackfilled head from raw records.
+		// Persisted coverage starts after the requested first complete hour; advance
+		// the aggregate head and let raw records answer the unbackfilled interval.
 		window.aggregateStart = coverageStart
 	}
 	if end.UTC().After(state.watermark.UTC()) {
-		// The current hour is aggregated through the watermark; raw records supply the remaining tail.
+		// A partial live-hour bucket was scanned only through the watermark. Keep its
+		// bucket in analytics and read later instants from raw rows exactly once.
 		window.aggregateEnd = ceilHourUTC(state.watermark.UTC())
 		window.rawTailStart = state.watermark.UTC()
 	} else {
-		// Historical ranges use complete hours and read the partial final hour from raw records.
+		// A historical end can split a full stored bucket; stop aggregate selection at
+		// that hour boundary and let raw rows provide the requested partial hour.
 		window.aggregateEnd = end.UTC().Truncate(time.Hour)
 		window.rawTailStart = window.aggregateEnd
 	}
@@ -104,12 +155,18 @@ func (r *Store) resolveUsageAnalyticsWindow(ctx context.Context, start, end time
 	}
 	window.dailyStart = ceilDayUTC(window.aggregateStart)
 	window.dailyEnd = window.aggregateEnd.Truncate(24 * time.Hour)
-	// Without a complete UTC day, hourly buckets cover the aggregate range.
+	// The daily span uses rounded aggregateEnd. An empty span keeps hourly
+	// selection, but these bounds do not establish that the selected daily rows
+	// exist.
 	return window, true, nil
 }
 
+// ceilHourUTC returns the first UTC hour boundary at or after value. Exact
+// boundaries stay unchanged; other instants advance from their truncated UTC
+// hour by one elapsed hour.
 func ceilHourUTC(value time.Time) time.Time {
 	value = value.UTC()
+	// UTC hours use fixed elapsed-hour boundaries for bucket selection.
 	floor := value.Truncate(time.Hour)
 	if value.Equal(floor) {
 		return floor
@@ -117,8 +174,12 @@ func ceilHourUTC(value time.Time) time.Time {
 	return floor.Add(time.Hour)
 }
 
+// ceilDayUTC returns the first UTC midnight at or after value. Exact boundaries
+// stay unchanged, while other instants advance from their UTC day floor by
+// twenty-four elapsed hours.
 func ceilDayUTC(value time.Time) time.Time {
 	value = value.UTC()
+	// UTC days use fixed twenty-four-hour boundaries for bucket selection.
 	floor := value.Truncate(24 * time.Hour)
 	if value.Equal(floor) {
 		return floor
@@ -126,6 +187,9 @@ func ceilDayUTC(value time.Time) time.Time {
 	return floor.Add(24 * time.Hour)
 }
 
+// getOwnedTeamID returns the team ID from a current owner membership. No
+// matching row produces zero through the nullable scalar query; database errors
+// propagate, and membership authorization remains the caller's responsibility.
 func (r *Store) getOwnedTeamID(ctx context.Context, userID int64) (int64, error) {
 	var teamID sql.NullInt64
 	err := scanSingleRow(ctx, r.sql, `
@@ -141,7 +205,17 @@ func (r *Store) getOwnedTeamID(ctx context.Context, userID int64) (int64, error)
 	return teamID.Int64, nil
 }
 
-// getUserDashboardStatsFromAnalytics combines daily and hourly aggregates with up to two raw edges.
+// getUserDashboardStatsFromAnalytics returns actor and owned-team dashboard
+// metrics when analytics coverage is usable. Missing settings/source bounds or
+// unusable coverage return false; query failures let the public caller retry its
+// complete raw dashboard.
+//
+// Retained totals combine daily/hourly buckets with raw edges, while today's
+// metrics use Calendar midnight through a separately sampled current time. Key
+// counts, totals, today, and recent rates execute through an errgroup, and any
+// query failure discards the combined response. Duration averages divide by
+// nonnull duration count; raw five-minute rates keep their own denominator and
+// token definition.
 func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID int64) (*usage.UserDashboardStats, bool, error) {
 	if r == nil || r.preAggregation == nil || !r.preAggregation.UsageEnabled(ctx) {
 		return nil, false, nil
@@ -172,7 +246,8 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 	var rpm, tpm int64
 	group, groupCtx := errgroup.WithContext(ctx)
 
-	// Key counts, all-time usage, today's usage, and recent rates can be queried independently.
+	// These queries write disjoint result fields. Wait for their errgroup before
+	// combining totals so a failed member cannot publish a partial dashboard.
 	group.Go(func() error {
 		return scanSingleRow(groupCtx, r.sql, `
 			WITH scoped AS (
@@ -262,7 +337,8 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 		)
 	})
 	group.Go(func() error {
-		// Today's range starts at business-timezone midnight, which can split a UTC daily bucket.
+		// Calendar midnight can split a UTC daily bucket. Build a separate bounded
+		// today query so the full retained range does not determine today's edges.
 		todayStart := r.calendar.Today()
 		todayEnd := time.Now().UTC()
 		todayFilters := UsageLogFilters{
@@ -305,6 +381,15 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 	return stats, true, nil
 }
 
+// getPerformanceStatsForScope returns integer five-minute average RPM and text
+// TPM for the actor and supplied team. A positive teamID adds other team actors
+// to the actor's own retained usage; a nonpositive value selects that actor alone.
+//
+// Excluding userID from the team branch keeps the actor's team-key requests from
+// entering both counters twice. Both branches use one lower time bound, so
+// future-dated records participate. Input/output tokens determine text TPM,
+// cache tokens are excluded, and integer division discards fractional
+// per-minute counts before the dashboard receives them.
 func (r *Store) getPerformanceStatsForScope(ctx context.Context, userID, teamID int64) (int64, int64, error) {
 	var requests, tokens int64
 	err := scanSingleRow(ctx, r.sql, `
@@ -317,9 +402,21 @@ func (r *Store) getPerformanceStatsForScope(ctx context.Context, userID, teamID 
 		)
 		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0) FROM scoped
 	`, []any{userID, teamID, time.Now().Add(-5 * time.Minute)}, &requests, &tokens)
+	// Convert five-minute counts to integer per-minute averages, truncating
+	// fractions.
 	return requests / 5, tokens / 5, err
 }
 
+// getBatchAPIKeyUsageStatsFromAnalytics returns bounded-range and today charges
+// for the supplied key IDs when both sources are usable. Requested keys start
+// with zero-valued entries, and any query or coverage failure discards the
+// partial batch result.
+//
+// The first scan combines daily/hourly buckets and raw edges over start/end. A
+// separate hourly-enabled combined query covers Calendar midnight through the
+// current instant and appends the key array after that query's time arguments.
+// Keeping each parameter position with its query prevents the array from
+// occupying a date/timestamp slot when daily bounds are absent.
 func (r *Store) getBatchAPIKeyUsageStatsFromAnalytics(ctx context.Context, apiKeyIDs []int64, start, end time.Time) (map[int64]*usage.BatchAPIKeyUsageStats, bool, error) {
 	window, ok, err := r.resolveUsageAnalyticsWindow(ctx, start, end)
 	if err != nil || !ok {
@@ -358,6 +455,9 @@ func (r *Store) getBatchAPIKeyUsageStatsFromAnalytics(ctx context.Context, apiKe
 	if err != nil {
 		return nil, false, err
 	}
+	// Release range rows after scanning or an early return. This helper ignores
+	// close errors while returning query, scan, and iteration failures to its
+	// caller.
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
@@ -389,6 +489,8 @@ func (r *Store) getBatchAPIKeyUsageStatsFromAnalytics(ctx context.Context, apiKe
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the independent today result even when merging fails; close failures
+	// are ignored here, while scan and iteration errors discard the partial batch.
 	defer func() { _ = todayRows.Close() }()
 	for todayRows.Next() {
 		var id int64
@@ -406,6 +508,16 @@ func (r *Store) getBatchAPIKeyUsageStatsFromAnalytics(ctx context.Context, apiKe
 	return result, true, nil
 }
 
+// getBatchUserUsageStatsFromAnalytics returns actor charges and platform rows
+// from covered analytics plus raw edges. Requested users begin with zero totals;
+// unusable coverage or any query failure makes the public caller choose a
+// complete raw batch.
+//
+// Range totals group by user and stored platform, with positive-cost filtering
+// on raw edges. Today's separate combined query filters positive actual_cost
+// across its source and uses Calendar midnight through the current instant.
+// Those today rows merge into matching platform entries or add a new platform,
+// while empty platform labels still contribute to user totals.
 func (r *Store) getBatchUserUsageStatsFromAnalytics(ctx context.Context, userIDs []int64, start, end time.Time) (map[int64]*usage.BatchUserUsageStats, bool, error) {
 	window, ok, err := r.resolveUsageAnalyticsWindow(ctx, start, end)
 	if err != nil || !ok {
@@ -446,6 +558,9 @@ func (r *Store) getBatchUserUsageStatsFromAnalytics(ctx context.Context, userIDs
 	if err != nil {
 		return nil, false, err
 	}
+	// Release range rows after scanning or an early return. This helper ignores
+	// close errors while returning query, scan, and iteration failures to its
+	// caller.
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
@@ -485,6 +600,8 @@ func (r *Store) getBatchUserUsageStatsFromAnalytics(ctx context.Context, userIDs
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the independent today result even when merging fails; close failures
+	// are ignored here, while scan and iteration errors discard the partial batch.
 	defer func() { _ = todayRows.Close() }()
 	for todayRows.Next() {
 		var id int64

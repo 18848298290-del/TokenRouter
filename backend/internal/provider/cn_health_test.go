@@ -11,17 +11,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// cnHealthFailureStore records health-operation order and inputs.
+// cnHealthFailureStore records a failed temporary-pause write after runtime
+// notification.
 type cnHealthFailureStore struct {
-	HealthStore
+	HealthStore // unused health store operations
+	// order points to the event slice also appended by the block callback
+	// during this serial test.
 	order *[]string
 }
 
+// SetTempUnschedulable appends a store event and returns the fixture error. The
+// order pointer is shared with the block callback, allowing the test to compare
+// both operations in one sequence.
 func (s cnHealthFailureStore) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	*s.order = append(*s.order, "store")
 	return errors.New("fixture persistence failed")
 }
 
+// TestCNConcurrencyRepositoryFailureKeepsRuntimeBlock makes temporary-pause
+// persistence fail after a Kimi concurrency response. It asserts the block
+// callback precedes storage and receives the same record with the configured
+// deadline and runtime reason.
 func TestCNConcurrencyRepositoryFailureKeepsRuntimeBlock(t *testing.T) {
 	var order []string
 	var blocked *Record
@@ -38,7 +48,10 @@ func TestCNConcurrencyRepositoryFailureKeepsRuntimeBlock(t *testing.T) {
 	require.Same(t, original, blocked)
 }
 
-// TestCNProviderQuotaSnapshotReset checks the earliest future Coding Plan reset used for 429 cooldowns.
+// TestCNProviderQuotaSnapshotReset supplies expired and future Coding Plan
+// resets in identity-valid snapshots. It asserts the earliest future deadline
+// wins, wholly expired windows return nil, and pay-as-you-go records ignore
+// those windows.
 func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -75,7 +88,9 @@ func TestCNProviderQuotaSnapshotReset(t *testing.T) {
 	})
 	require.Nil(t, CNProviderQuotaSnapshotReset(expired, now))
 
-	// Pay-as-you-go providers use balance monitoring rather than Coding Plan windows.
+	// Pay-as-you-go providers use balance monitoring rather than Coding
+	// Plan
+	// windows.
 	payg := cnCodingTestProvider(capability.PlatformKimi)
 	payg.Credentials["provider_mode"] = ProviderModePayG
 	require.Nil(t, CNProviderQuotaSnapshotReset(payg, now))

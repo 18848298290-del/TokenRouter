@@ -8,13 +8,16 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestSyncBillingHeaderVersion covers fingerprinted markers, plain markers,
+// absent system content, and unusable User-Agent values. Matching inputs update
+// version text, while identity cases keep the supplied body bytes.
 func TestSyncBillingHeaderVersion(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		userAgent string
-		wantSub   string // substring expected in result
-		unchanged bool   // expect body to remain the same
+		name      string // case display name
+		body      string // request JSON input
+		userAgent string // candidate User-Agent value
+		wantSub   string // expected marker substring
+		unchanged bool   // expected identity outcome
 	}{
 		{
 			name:      "replaces cc_version and recomputes message-derived suffix",
@@ -67,7 +70,10 @@ func TestSyncBillingHeaderVersion(t *testing.T) {
 	}
 }
 
-// TestSyncBillingHeaderVersion_RecomputesSuffixAndIsIdempotent checks suffix updates and unchanged user messages.
+// TestSyncBillingHeaderVersion_RecomputesSuffixAndIsIdempotent updates a
+// fingerprinted system marker for a fixed user message. The suffix matches the
+// selected version, user messages remain equal, and repeating synchronization
+// returns the same body.
 func TestSyncBillingHeaderVersion_RecomputesSuffixAndIsIdempotent(t *testing.T) {
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.81.df2; cc_entrypoint=cli;"}],"messages":[{"role":"user","content":"hello world"}]}`)
 	version := "2.1.22"

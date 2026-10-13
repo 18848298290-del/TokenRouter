@@ -17,37 +17,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/oauth"
 )
 
+// ClaudeOAuthServiceSuite exercises OAuth HTTP payloads using injected
+// synchronous transports.
 type ClaudeOAuthServiceSuite struct {
-	suite.Suite
-	client *OAuthClient
+	suite.Suite              // assertion and subtest support
+	client      *OAuthClient // injected OAuth HTTP client
 }
 
-// requestCapture holds request data for assertions in the test goroutine.
+// requestCapture records the OAuth request inspected by its test assertions.
 type requestCapture struct {
-	path        string
-	method      string
-	cookies     []*http.Cookie
-	body        []byte
-	bodyJSON    map[string]any
-	contentType string
+	path        string         // observed URL path
+	method      string         // observed HTTP method
+	cookies     []*http.Cookie // observed request cookies
+	body        []byte         // raw request bytes
+	bodyJSON    map[string]any // decoded request fields
+	contentType string         // observed content type
 }
 
+// roundTripFunc adapts a request callback to the HTTP transport interface.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// newTestReqClient installs the supplied RoundTripper on a req client for
+// synchronous fixtures. Transport behavior remains with rt, allowing handlers
+// to inspect payloads without opening a network listener.
 func newTestReqClient(rt http.RoundTripper) *req.Client {
 	c := req.C()
 	c.GetClient().Transport = rt
 	return c
 }
 
+// TestGetOrganizationUUID injects synchronous success, unauthorized, and
+// malformed-response handlers for cookie organization lookup. It checks
+// returned UUID or errors and verifies the request path and supplied session
+// cookie.
 func (s *ClaudeOAuthServiceSuite) TestGetOrganizationUUID() {
 	tests := []struct {
-		name       string
-		handler    http.HandlerFunc
-		wantErr    bool
-		errContain string
-		wantUUID   string
-		validate   func(captured requestCapture)
+		name       string                        // case display name
+		handler    http.HandlerFunc              // fixture response handler
+		wantErr    bool                          // expected error presence
+		errContain string                        // required error substring
+		wantUUID   string                        // expected organization identifier
+		validate   func(captured requestCapture) // captured request assertions
 	}{
 		{
 			name: "success",
@@ -116,13 +126,17 @@ func (s *ClaudeOAuthServiceSuite) TestGetOrganizationUUID() {
 	}
 }
 
+// TestGetAuthorizationCode injects redirect responses with and without an
+// authorization code. It checks joined code/state output, missing-code failure,
+// and captured organization, client, callback, cookie, and request state
+// values.
 func (s *ClaudeOAuthServiceSuite) TestGetAuthorizationCode() {
 	tests := []struct {
-		name     string
-		handler  http.HandlerFunc
-		wantErr  bool
-		wantCode string
-		validate func(captured requestCapture)
+		name     string                        // case display name
+		handler  http.HandlerFunc              // fixture response handler
+		wantErr  bool                          // expected error presence
+		wantCode string                        // expected joined proof
+		validate func(captured requestCapture) // captured request assertions
 	}{
 		{
 			name: "parses_redirect_uri",
@@ -190,15 +204,19 @@ func (s *ClaudeOAuthServiceSuite) TestGetAuthorizationCode() {
 	}
 }
 
+// TestExchangeCodeForToken captures regular and setup-flag exchange payloads
+// using local transports. Embedded state reaches JSON, both supplied flag
+// values omit expires_in, selected token fields are returned, and an
+// unsuccessful status returns an error.
 func (s *ClaudeOAuthServiceSuite) TestExchangeCodeForToken() {
 	tests := []struct {
-		name         string
-		handler      http.HandlerFunc
-		code         string
-		isSetupToken bool
-		wantErr      bool
-		wantResp     *oauth.TokenResponse
-		validate     func(captured requestCapture)
+		name         string                        // case display name
+		handler      http.HandlerFunc              // fixture response handler
+		code         string                        // authorization code input
+		isSetupToken bool                          // supplied setup-token flag
+		wantErr      bool                          // expected error presence
+		wantResp     *oauth.TokenResponse          // expected token fields
+		validate     func(captured requestCapture) // captured request assertions
 	}{
 		{
 			name: "sends_state_when_embedded",
@@ -295,13 +313,16 @@ func (s *ClaudeOAuthServiceSuite) TestExchangeCodeForToken() {
 	}
 }
 
+// TestRefreshToken captures refresh grant requests and returns ordinary,
+// rotated, or unauthorized responses. It checks JSON proof fields, returned
+// access/refresh values, and the unsuccessful response's error path.
 func (s *ClaudeOAuthServiceSuite) TestRefreshToken() {
 	tests := []struct {
-		name     string
-		handler  http.HandlerFunc
-		wantErr  bool
-		wantResp *oauth.TokenResponse
-		validate func(captured requestCapture)
+		name     string                        // case display name
+		handler  http.HandlerFunc              // fixture response handler
+		wantErr  bool                          // expected error presence
+		wantResp *oauth.TokenResponse          // expected token fields
+		validate func(captured requestCapture) // captured request assertions
 	}{
 		{
 			name: "sends_json_format",
@@ -336,7 +357,7 @@ func (s *ClaudeOAuthServiceSuite) TestRefreshToken() {
 					AccessToken:  "at",
 					TokenType:    "bearer",
 					ExpiresIn:    28800,
-					RefreshToken: "rotated_rt", // Anthropic rotates refresh tokens
+					RefreshToken: "rotated_rt", // fixture returns a rotated token
 				})
 			},
 			wantResp: &oauth.TokenResponse{
@@ -388,17 +409,28 @@ func (s *ClaudeOAuthServiceSuite) TestRefreshToken() {
 	}
 }
 
+// TestClaudeOAuthServiceSuite runs the OAuth client suite against injected
+// in-process HTTP transports. The suite assertions cover organization lookup,
+// redirect extraction, code exchange, and refresh payload/result handling.
 func TestClaudeOAuthServiceSuite(t *testing.T) {
 	suite.Run(t, new(ClaudeOAuthServiceSuite))
 }
 
+// RoundTrip invokes f to produce the request's response or error.
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// newInProcessTransport captures and restores the body before calling the handler in process.
+// newInProcessTransport runs handler synchronously and optionally captures
+// request bytes. It reads and closes an existing body, restores a readable
+// copy, and returns the recorder response for the req client to consume.
+// Read and close errors are discarded; a failed read can leave callbacks with
+// partial bytes while the synthetic transport still returns no error.
 func newInProcessTransport(handler http.HandlerFunc, capture func(r *http.Request, body []byte)) http.RoundTripper {
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body []byte
 		if r.Body != nil {
+			// Capture whatever bytes the read produced, then close the original body
+			// before installing a copy. Both callbacks inspect that captured data even
+			// when a read or close error was discarded.
 			body, _ = io.ReadAll(r.Body)
 			_ = r.Body.Close()
 			r.Body = io.NopCloser(bytes.NewReader(body))

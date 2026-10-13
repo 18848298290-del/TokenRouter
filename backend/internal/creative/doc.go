@@ -1,4 +1,7 @@
-// Package creative provides model discovery, submission, execution, and result delivery for image runs.
+// Package creative manages personal image tasks whose persistent rows contain
+// hashes, funding snapshots, and delivery metadata. Prompts and image bytes live
+// in expiring transient storage, while workers and recovery actions advance the
+// task through provider execution, charging, and client acknowledgment.
 //
 // Reading entry points:
 //   - public.go: lists available models, validates requests, and creates runs.

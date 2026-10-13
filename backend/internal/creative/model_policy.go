@@ -10,19 +10,41 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// groupModelPolicy snapshots group admission rules for one query or execution attempt, independently of pricing.
+// Creative directory names come from finite configuration candidates rather
+// than the entire model metadata catalogue. Group mappings and provider rules
+// resolve each candidate to a concrete upstream image route, with restrictions
+// applied at their configured requested, group-mapped, or upstream stage.
+// Wildcard settings cannot themselves become request names, but wildcard rules
+// can match the finite candidates.
+//
+// A query reads each eligible platform provider list once and shares a
+// model-attribute session across resolutions. An available route is selected
+// in OpenAI, Gemini, then Grok order, combining capabilities across eligible
+// providers and separately across each operation. Display resolution can
+// continue after attribute errors using name recognition, while submission
+// resolution returns those errors before the task is created.
+
+// groupModelPolicy snapshots group admission rules for one query or execution
+// attempt, independently of pricing.
 type groupModelPolicy struct {
-	view *routing.GroupPolicyView
+	view *routing.GroupPolicyView // cloned enabled group policy view
 }
 
 // creativeModelQuery reuses provider records and model rules for one group.
 type creativeModelQuery struct {
+	// query shared model attribute session
 	attributes *routing.ModelAttributeSession
-	group      *GroupView
-	policy     groupModelPolicy
-	providers  map[string][]CatalogProvider
+	// group retains the supplied view while policy clones its routing policy.
+	// Callers keep group operation and fallback maps stable throughout this query.
+	group  *GroupView       // supplied group view pointer
+	policy groupModelPolicy // cloned group model restriction policy
+	// queried eligible providers by platform
+	providers map[string][]CatalogProvider
 }
 
+// newGroupModelPolicy clones an enabled group routing policy for creative
+// admission. A disabled policy yields a nil view, whose routing methods
+// preserve the requested model and allow unrestricted admission.
 func newGroupModelPolicy(policy routing.GroupRoutingPolicy) groupModelPolicy {
 	if !policy.Enabled {
 		return groupModelPolicy{}
@@ -32,7 +54,9 @@ func newGroupModelPolicy(policy routing.GroupRoutingPolicy) groupModelPolicy {
 	}}
 }
 
-// resolve applies one group mapping and defers upstream restrictions until provider model resolution.
+// resolve returns the single group-mapped model when the configured
+// restriction stage permits it. Upstream-stage restrictions are deferred until
+// provider model resolution supplies the actual model being sent.
 func (p groupModelPolicy) resolve(requested string) (string, bool) {
 	mapped := p.view.ResolveModel(requested)
 	if p.view.RestrictionSource() != routing.BillingModelSourceUpstream {
@@ -44,16 +68,32 @@ func (p groupModelPolicy) resolve(requested string) (string, bool) {
 	return mapped, true
 }
 
+// allowsUpstream reports whether the final provider model passes an
+// upstream-stage group restriction. Other stages were checked during group
+// resolution, and a disabled policy permits the model.
 func (p groupModelPolicy) allowsUpstream(model string) bool {
 	return p.view.RestrictionSource() != routing.BillingModelSourceUpstream || !p.view.IsModelRestricted(model)
 }
 
-// candidates merges concrete request names; wildcard rules are applied during later matching.
+// candidates returns sorted concrete names collected from supplied
+// configuration, group policy, and schedulable providers. Blank names and
+// names containing wildcard characters are omitted.
+//
+// Both source and target names in group mappings contribute finite candidates,
+// while providers contribute configured request names and mapping sources.
+// Candidate inclusion alone grants no route permission: resolve later checks
+// group restrictions, provider support, protocols, and image capability before
+// a name reaches the catalogue.
 func (p groupModelPolicy) candidates(configured []string, providers []CatalogProvider) []string {
 	models := make(map[string]struct{})
 	add := func(values ...string) {
 		for _, model := range values {
 			model = strings.TrimSpace(model)
+			// Rules may contain wildcard patterns, but the
+			// directory submits concrete names.
+			// Keep patterns out of this finite candidate set so
+			// route matching, rather
+			// than a pattern string itself, determines each public entry.
 			if model != "" && !strings.ContainsAny(model, "*?") {
 				models[model] = struct{}{}
 			}
@@ -83,7 +123,9 @@ func (p groupModelPolicy) candidates(configured []string, providers []CatalogPro
 	return result
 }
 
-// prepareCreativeModels reads providers once per platform with enabled operations.
+// prepareCreativeModels reads eligible providers once for each platform with
+// group operations. Missing provider readers, nil groups, or ClaudeCodeOnly
+// groups return a nil query; provider read errors abort preparation.
 func (s *Public) prepareCreativeModels(ctx context.Context, group *GroupView) (*creativeModelQuery, error) {
 	if s.ProviderRepo == nil || group == nil || group.ClaudeCodeOnly {
 		return nil, nil
@@ -103,6 +145,8 @@ func (s *Public) prepareCreativeModels(ctx context.Context, group *GroupView) (*
 	return query, nil
 }
 
+// creativeSettingsModels returns model names configured for the exact supplied
+// group identifier.
 func creativeSettingsModels(settings []CreativeModelSetting, groupID int64) []string {
 	var models []string
 	for _, setting := range settings {
@@ -113,6 +157,9 @@ func creativeSettingsModels(settings []CreativeModelSetting, groupID int64) []st
 	return models
 }
 
+// candidates combines configured names with the supplied group custom model
+// list. A nil query returns nil, and the cloned policy filters and sorts
+// candidates across the prepared platform providers.
 func (q *creativeModelQuery) candidates(configured []string) []string {
 	if q == nil {
 		return nil
@@ -126,6 +173,10 @@ func (q *creativeModelQuery) candidates(configured []string) []string {
 	return q.policy.candidates(models, providers)
 }
 
+// resolveModels returns routes for distinct input names that resolve
+// successfully. Cancellation returns the context error before each name,
+// unavailable routes are omitted, and display attribute errors follow resolve
+// display handling.
 func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string) (map[string]creativeModelRoute, error) {
 	out := make(map[string]creativeModelRoute)
 	for _, model := range models {
@@ -144,7 +195,17 @@ func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string)
 	return out, nil
 }
 
-// resolve validates a concrete model and selects image capabilities in OpenAI, Gemini, Grok order.
+// resolve selects the first platform with an eligible image route for a
+// concrete request name. Nil queries, cancelled contexts, blank names, and
+// wildcard names report unavailable with no error.
+//
+// Group mapping precedes provider mapping and staged restrictions. Each
+// provider operation must pass its protocol route before attribute resolution,
+// and known output modalities override name-based image recognition. In
+// display mode an attribute error becomes an empty resolution; submission mode
+// returns the error. Shared capabilities are computed across matching
+// providers and per operation, with OpenAI, Gemini, then Grok defining
+// platform precedence.
 func (q *creativeModelQuery) resolve(ctx context.Context, model string, display bool) (creativeModelRoute, bool, error) {
 	if q == nil || ctx.Err() != nil || strings.TrimSpace(model) == "" || strings.ContainsAny(model, "*?") {
 		return creativeModelRoute{}, false, nil
@@ -171,6 +232,9 @@ func (q *creativeModelQuery) resolve(ctx context.Context, model string, display 
 				}
 				target := modelcatalog.Target{Platform: platform, Model: finalModel}
 				if aware, ok := provider.(interface {
+					// AttributeTarget supplies
+					// provider-specific identity for
+					// selected model attributes.
 					AttributeTarget(string) modelcatalog.Target
 				}); ok {
 					target = aware.AttributeTarget(finalModel)
@@ -182,6 +246,12 @@ func (q *creativeModelQuery) resolve(ctx context.Context, model string, display 
 					if !display {
 						return creativeModelRoute{}, false, err
 					}
+					// Display requests keep name-recognized
+					// image routes visible when attributes
+					// cannot load. Submission returns the
+					// same resolution error above instead
+					// of accepting a task with unavailable
+					// route attributes.
 					resolved = modelcatalog.Resolution{}
 				}
 				modalities := resolved.Attributes.OutputModalities

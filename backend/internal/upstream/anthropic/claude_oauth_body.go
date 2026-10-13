@@ -14,57 +14,103 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// ClaudeFableOAuthSystemPromptBlocks keeps the Claude Code identity required by
-// OAuth credentials without the generic CLI expansion block. Fable 5 rejects
-// that expansion upstream with stop_reason=refusal and zero output tokens,
-// while the native billing + identity shape is accepted. Original client
-// system instructions are still migrated into the message history by
-// RewriteSystemForNonClaudeCodeWithPromptBlocks.
+// OAuth request preparation replaces recognizable client identity text and can
+// rebuild the system prompt as configured Claude blocks. Migrated client
+// instructions become joined text in an injected message block, with one
+// selected cache marker attached to that same block. Other client system
+// markers lose their separate positions during this conversion.
+//
+// Raw JSON field edits retain the surrounding request's layout. Configuration
+// distinguishes invalid JSON from an empty block list, with the latter
+// selecting defaults; disabled or blank configured blocks are skipped. Cache
+// handling then removes thinking-block markers and reduces block markers in a
+// defined priority order. These edits are best effort, so callers can receive
+// partially normalized bodies when an individual JSON mutation fails.
+
+// ClaudeFableOAuthSystemPromptBlocks supplies billing and Claude Code identity
+// blocks for models matching the Fable selector. The template omits the general
+// expansion; RewriteSystemForNonClaudeCodeWithPromptBlocks can still migrate
+// eligible client instructions into history.
 const ClaudeFableOAuthSystemPromptBlocks = `[
 	{"type":"text","text":"{billing_header}"},
 	{"type":"text","text":"{claude_code_system_prompt}"}
 ]`
 
+// AnthropicCacheControlPayload encodes an optional lifetime for an ephemeral
+// marker.
 type AnthropicCacheControlPayload struct {
-	Type string `json:"type"`
-	TTL  string `json:"ttl,omitempty"`
+	Type string `json:"type"`          // cache directive type
+	TTL  string `json:"ttl,omitempty"` // optional duration text
 }
+
+// AnthropicSystemTextBlockPayload represents system text with an optional cache
+// marker.
 type AnthropicSystemTextBlockPayload struct {
-	Type         string                        `json:"type"`
-	Text         string                        `json:"text"`
-	CacheControl *AnthropicCacheControlPayload `json:"cache_control,omitempty"`
+	Type         string                        `json:"type"`                    // content block type
+	Text         string                        `json:"text"`                    // system instruction text
+	CacheControl *AnthropicCacheControlPayload `json:"cache_control,omitempty"` // nil omits marker
 }
+
+// AnthropicMetadataPayload encodes the user identity string in request
+// metadata.
 type AnthropicMetadataPayload struct {
-	UserID string `json:"user_id"`
+	UserID string `json:"user_id"` // encoded client identity
 }
+
+// ClaudeOAuthNormalizeOptions selects optional identity insertion and system
+// cache-marker removal.
 type ClaudeOAuthNormalizeOptions struct {
-	InjectMetadata          bool
-	MetadataUserID          string
-	StripSystemCacheControl bool
+	// InjectMetadata and MetadataUserID jointly enable absent-identity insertion
+	// in NormalizeClaudeOAuthRequestBody. Existing nonempty string identity takes
+	// precedence over the supplied candidate.
+	InjectMetadata bool   // identity insertion flag
+	MetadataUserID string // candidate identity text
+	// StripSystemCacheControl removes markers from system-array elements during
+	// system normalization, including elements whose text is left unchanged.
+	StripSystemCacheControl bool // system marker removal
 }
 
+// ClaudeOAuthSystemPromptBlockConfig describes one configurable text template
+// and cache marker.
 type ClaudeOAuthSystemPromptBlockConfig struct {
-	Enabled      *bool           `json:"enabled,omitempty"`
-	Type         string          `json:"type,omitempty"`
-	Text         string          `json:"text,omitempty"`
-	CacheControl json.RawMessage `json:"cache_control,omitempty"`
+	// Enabled selects whether BuildClaudeOAuthSystemPromptBlocksJSON includes this
+	// block; nil means enabled, while settings validation still checks disabled
+	// blocks.
+	Enabled *bool `json:"enabled,omitempty"` // optional inclusion switch
+	// Type defaults to text after trimming. Settings validation rejects other
+	// kinds for every block; rendering checks the kind of included blocks.
+	Type string `json:"type,omitempty"` // configured block kind
+	Text string `json:"text,omitempty"` // expandable instruction template
+	// CacheControl accepts omitted, null, false, true, or object JSON; true
+	// creates the default ephemeral marker during block rendering.
+	CacheControl json.RawMessage `json:"cache_control,omitempty"` // raw marker configuration
 }
+
+// ClaudeOAuthSystemPromptBlocksEnvelope wraps ordered block configuration for
+// object-form settings input.
 type ClaudeOAuthSystemPromptBlocksEnvelope struct {
-	Blocks []ClaudeOAuthSystemPromptBlockConfig `json:"blocks"`
+	// Blocks supplies render order; an empty decoded list selects defaults in
+	// BuildClaudeOAuthSystemPromptBlocksJSON, while a nonempty disabled list stays
+	// empty.
+	Blocks []ClaudeOAuthSystemPromptBlockConfig `json:"blocks"` // ordered block configurations
 }
 
+// CacheControlPath pairs a removable cache path with its success log.
 type CacheControlPath struct {
-	Path string
-	Log  string
+	Path string // sjson deletion path
+	Log  string // successful removal message
 }
 
-// SanitizeSystemText replaces the fixed OpenCode identity sentence.
-// Other user instructions remain unchanged.
+// SanitizeSystemText replaces each occurrence of the canonical OpenCode
+// identity sentence with the trimmed Claude Code banner. Empty input stays
+// empty, and all surrounding client text remains in the returned string.
 func SanitizeSystemText(text string) string {
 	if text == "" {
 		return text
 	}
-	// Replace the recognizable client banner with the Claude Code identity.
+	// Restrict identity replacement to the full known OpenCode sentence so
+	// surrounding application instructions retain their supplied text during this
+	// compatibility rewrite.
 	text = strings.ReplaceAll(
 		text,
 		"You are OpenCode, the best coding agent on the planet.",
@@ -73,6 +119,9 @@ func SanitizeSystemText(text string) string {
 	return text
 }
 
+// MarshalAnthropicSystemTextBlock encodes a text block with optional ephemeral
+// cache control. The cache flag selects DefaultCacheControlTTL; returned bytes
+// form a complete JSON object for raw array assembly.
 func MarshalAnthropicSystemTextBlock(text string, includeCacheControl bool) ([]byte, error) {
 	block := AnthropicSystemTextBlockPayload{
 		Type: "text",
@@ -87,6 +136,9 @@ func MarshalAnthropicSystemTextBlock(text string, includeCacheControl bool) ([]b
 	return json.Marshal(block)
 }
 
+// MarshalAnthropicSystemTextBlockWithCacheControl encodes a text block and an
+// optional supplied cache value. Nil omits cache_control, while values that
+// encoding/json cannot marshal return an error to the builder.
 func MarshalAnthropicSystemTextBlockWithCacheControl(text string, cacheControl any) ([]byte, error) {
 	block := map[string]any{
 		"type": "text",
@@ -98,10 +150,15 @@ func MarshalAnthropicSystemTextBlockWithCacheControl(text string, cacheControl a
 	return json.Marshal(block)
 }
 
+// MarshalAnthropicMetadata encodes userID as the metadata object's user_id
+// string.
 func MarshalAnthropicMetadata(userID string) ([]byte, error) {
 	return json.Marshal(AnthropicMetadataPayload{UserID: userID})
 }
 
+// BuildJSONArrayRaw joins supplied encoded items into a JSON array, returning
+// [] for no items. Callers provide complete valid JSON values because this
+// helper copies bytes without validating or re-encoding them.
 func BuildJSONArrayRaw(items [][]byte) []byte {
 	if len(items) == 0 {
 		return []byte("[]")
@@ -125,7 +182,12 @@ func BuildJSONArrayRaw(items [][]byte) []byte {
 	return buf
 }
 
+// SetJSONValueBytes sets path through sjson's ordinary value encoding and
+// returns whether that edit succeeded. An error returns the supplied body and
+// false, leaving recovery decisions with its caller.
 func SetJSONValueBytes(body []byte, path string, value any) ([]byte, bool) {
+	// Normalizers advance their working bytes only on a true result, so a failed
+	// value edit leaves prior successful request normalization in place.
 	next, err := sjson.SetBytes(body, path, value)
 	if err != nil {
 		return body, false
@@ -133,7 +195,12 @@ func SetJSONValueBytes(body []byte, path string, value any) ([]byte, bool) {
 	return next, true
 }
 
+// SetJSONRawBytes installs raw JSON at path and reports success. Callers
+// validate raw before supplying it; an edit failure returns the supplied body
+// and false for the normalization caller.
 func SetJSONRawBytes(body []byte, path string, raw []byte) ([]byte, bool) {
+	// Raw edits carry serialized blocks into an existing request; failed insertion
+	// returns false so callers can retain their current body or choose recovery.
 	next, err := sjson.SetRawBytes(body, path, raw)
 	if err != nil {
 		return body, false
@@ -141,7 +208,13 @@ func SetJSONRawBytes(body []byte, path string, raw []byte) ([]byte, bool) {
 	return next, true
 }
 
+// DeleteJSONPathBytes removes path and reports whether sjson accepted the edit.
+// An error returns the supplied body and false; success does not distinguish an
+// absent path from a deleted value.
 func DeleteJSONPathBytes(body []byte, path string) ([]byte, bool) {
+	// Marker-limit callers collect and recheck paths before using a successful
+	// deletion to reduce excess. Generic callers cannot infer that a field existed
+	// from the success flag alone.
 	next, err := sjson.DeleteBytes(body, path)
 	if err != nil {
 		return body, false
@@ -149,6 +222,10 @@ func DeleteJSONPathBytes(body []byte, path string) ([]byte, bool) {
 	return next, true
 }
 
+// NormalizeClaudeOAuthSystemBody rewrites recognized identity text in string or
+// array system content. The strip option additionally deletes array cache
+// markers, with successful edits accumulated and failed edits retaining their
+// corresponding fields.
 func NormalizeClaudeOAuthSystemBody(body []byte, opts ClaudeOAuthNormalizeOptions) ([]byte, bool) {
 	sys := gjson.GetBytes(body, "system")
 	if !sys.Exists() {
@@ -158,6 +235,9 @@ func NormalizeClaudeOAuthSystemBody(body []byte, opts ClaudeOAuthNormalizeOption
 	out := body
 	modified := false
 
+	// Normalize a scalar prompt or each array text field at its existing path.
+	// Optional marker stripping traverses array elements independently of whether
+	// their banner text changes.
 	switch {
 	case sys.Type == gjson.String:
 		sanitized := SanitizeSystemText(sys.String())
@@ -199,11 +279,23 @@ func NormalizeClaudeOAuthSystemBody(body []byte, opts ClaudeOAuthNormalizeOption
 	return out, modified
 }
 
+// EnsureClaudeOAuthMetadataUserID supplies userID when usable existing metadata
+// identity is absent. Blank supplied IDs leave the body unchanged, and a
+// nonempty string user_id in an object takes precedence.
+//
+// Missing, null, or nonobject metadata is replaced by a metadata object; an
+// existing object gains only the user_id field so other attributes survive.
+// Whitespace-only existing IDs are treated as nonempty. Each path reports
+// successful writes through the boolean, while serialization or field-update
+// failure returns the supplied body and false.
 func EnsureClaudeOAuthMetadataUserID(body []byte, userID string) ([]byte, bool) {
 	if strings.TrimSpace(userID) == "" {
 		return body, false
 	}
 
+	// Retain usable object identity before choosing a replacement representation.
+	// Filling object user_id keeps other metadata attributes, whereas missing or
+	// nonobject metadata is replaced as one object.
 	metadata := gjson.GetBytes(body, "metadata")
 	if !metadata.Exists() || metadata.Type == gjson.Null {
 		raw, err := MarshalAnthropicMetadata(userID)
@@ -229,7 +321,16 @@ func EnsureClaudeOAuthMetadataUserID(body []byte, userID string) ([]byte, bool) 
 	return SetJSONRawBytes(body, "metadata", raw)
 }
 
-// NormalizeClaudeOAuthRequestBody normalizes OAuth prompts, tools, caching, and context settings.
+// NormalizeClaudeOAuthRequestBody applies OAuth system normalization, metadata
+// options, and absent-field defaults to body. Empty body returns directly.
+// Absent tools, temperature, and max_tokens receive [], 1, and 128000;
+// supplied values and existing context_management remain available.
+//
+// Exact enabled or adaptive thinking can supply context management, which final
+// beta sanitization may later remove. A missing or empty tools array also makes
+// tool_choice removable, while nonempty tools retain that choice for tool-name
+// rewriting. JSON edit failures keep the affected field, and a body with no
+// successful modification is returned as supplied.
 func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptions) []byte {
 	if len(body) == 0 {
 		return body
@@ -243,7 +344,6 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		modified = true
 	}
 
-	// Include an empty tools array when the client omits it.
 	if !gjson.GetBytes(out, "tools").Exists() {
 		if next, ok := SetJSONRawBytes(out, "tools", []byte("[]")); ok {
 			out = next
@@ -258,7 +358,6 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// Use the CLI temperature default only when the client omits the field.
 	if !gjson.GetBytes(out, "temperature").Exists() {
 		if next, ok := SetJSONValueBytes(out, "temperature", 1); ok {
 			out = next
@@ -266,7 +365,6 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// Match the CLI max_tokens default when absent.
 	if !gjson.GetBytes(out, "max_tokens").Exists() {
 		if next, ok := SetJSONValueBytes(out, "max_tokens", 128000); ok {
 			out = next
@@ -274,9 +372,10 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// Enabled or adaptive thinking supplies the CLI context-management default.
-	// SanitizeAnthropicBodyForBetaTokens later removes it if the final header lacks
-	// the required beta, after provider overrides have been applied.
+	// Thinking defaults add context management before the final Header is known.
+	// Later beta sanitation applies provider overrides to decide whether this
+	// extension can remain, keeping normalization and final capability selection
+	// ordered.
 	if !gjson.GetBytes(out, "context_management").Exists() {
 		thinkingType := gjson.GetBytes(out, "thinking.type").String()
 		if thinkingType == "enabled" || thinkingType == "adaptive" {
@@ -288,8 +387,9 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 		}
 	}
 
-	// Keep tool_choice when tools exist. ApplyToolNameRewriteToBody maps named
-	// choices alongside tool declarations; an empty tools list makes the choice unusable.
+	// An empty or nonarray tools value cannot supply a declared tool for
+	// tool_choice. Remove that selector here; nonempty declarations remain available
+	// for ApplyToolNameRewriteToBody to rewrite named choices with their tools.
 	if !gjson.GetBytes(out, "tools").IsArray() || len(gjson.GetBytes(out, "tools").Array()) == 0 {
 		if gjson.GetBytes(out, "tool_choice").Exists() {
 			if next, ok := DeleteJSONPathBytes(out, "tool_choice"); ok {
@@ -306,9 +406,10 @@ func NormalizeClaudeOAuthRequestBody(body []byte, opts ClaudeOAuthNormalizeOptio
 	return out
 }
 
-// BuildStableSessionSeed combines provider ID, client identity, and first user text.
-// These anchors stay stable when turns are appended, allowing a stateless proxy
-// to derive a repeatable metadata session UUID. Sticky routing hashes are separate.
+// BuildStableSessionSeed joins provider ID, client discriminator, and first
+// user text for a repeatable metadata seed. Equal inputs produce equal seeds;
+// callers choose the discriminator and keep that value and the opening text
+// consistent when later turns need the same identity.
 func BuildStableSessionSeed(providerID int64, clientDiscriminator, firstUserText string) string {
 	var b strings.Builder
 	_, _ = b.WriteString(strconv.FormatInt(providerID, 10))
@@ -319,8 +420,9 @@ func BuildStableSessionSeed(providerID int64, clientDiscriminator, firstUserText
 	return b.String()
 }
 
-// NormalizeSystemParam decodes json.RawMessage so callers can switch on string,
-// []any, or nil. Empty or invalid JSON becomes nil.
+// NormalizeSystemParam decodes json.RawMessage into the ordinary JSON value
+// representation. Other inputs pass through, while empty or invalid raw JSON
+// returns nil for callers that switch on system shape.
 func NormalizeSystemParam(system any) any {
 	raw, ok := system.(json.RawMessage)
 	if !ok {
@@ -330,14 +432,18 @@ func NormalizeSystemParam(system any) any {
 		return nil
 	}
 	var parsed any
+	// Consumers switch on the normalized system value; failed raw decoding
+	// therefore selects their nil-input path, including identity-only prompt
+	// injection and empty instruction extraction.
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil
 	}
 	return parsed
 }
 
-// SystemIncludesClaudeCodePrompt reports whether system contains a recognized
-// Claude Code prefix, including Agent SDK variants.
+// SystemIncludesClaudeCodePrompt reports a recognized banner at the start of
+// system text. Raw JSON is normalized first, and arrays inspect string text
+// fields regardless of the block's type.
 func SystemIncludesClaudeCodePrompt(system any) bool {
 	system = NormalizeSystemParam(system)
 	switch v := system.(type) {
@@ -355,7 +461,7 @@ func SystemIncludesClaudeCodePrompt(system any) bool {
 	return false
 }
 
-// HasClaudeCodePrefix reports whether text starts with a recognized Claude Code banner.
+// HasClaudeCodePrefix reports an exact recognized banner at text's start.
 func HasClaudeCodePrefix(text string) bool {
 	for _, prefix := range ClaudeCodePromptPrefixes {
 		if strings.HasPrefix(text, prefix) {
@@ -365,16 +471,28 @@ func HasClaudeCodePrefix(text string) bool {
 	return false
 }
 
-// InjectClaudeCodePrompt prepends a Claude Code block to null, string, or array system content.
+// InjectClaudeCodePrompt constructs a system array starting with a cached
+// Claude Code identity block. It removes matching standalone identity entries
+// and can prefix a later nonempty text block so client instructions still carry
+// the identity.
+//
+// When body already contains a system array, its raw elements supply the
+// rebuilt content. Otherwise supplied []any maps are serialized, and a prefixed
+// map can be mutated in place; callers must account for that sharing. Marshal
+// failures can skip fallback elements, while a final system write failure
+// returns the supplied body.
 func InjectClaudeCodePrompt(body []byte, system any) []byte {
 	system = NormalizeSystemParam(system)
+	// Build the identity block before selecting replacement content, so an
+	// encoding failure can return the supplied request instead of installing an
+	// incomplete system array.
 	claudeCodeBlock, err := MarshalAnthropicSystemTextBlock(ClaudeCodeSystemPrompt, true)
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to build Claude Code prompt block: %v", err)
 		return body
 	}
-	// Keep the identity in its own block and prefix the next instruction too,
-	// so the identity remains visible when upstream concatenates system text.
+	// Put identity into its own cached block, then prefix an additional client
+	// text instruction when needed so both positions carry the recognized banner.
 	claudeCodePrefix := strings.TrimSpace(ClaudeCodeSystemPrompt)
 
 	var items [][]byte
@@ -383,11 +501,13 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 	case nil:
 		items = [][]byte{claudeCodeBlock}
 	case string:
-		// Be tolerant of older/newer clients that may differ only by trailing whitespace/newlines.
+		// Trim the identity comparison so surrounding whitespace does not create
+		// another instruction block alongside the generated banner for the same text.
 		if strings.TrimSpace(v) == "" || strings.TrimSpace(v) == strings.TrimSpace(ClaudeCodeSystemPrompt) {
 			items = [][]byte{claudeCodeBlock}
 		} else {
-			// Prefix the client instruction while retaining the separate identity block.
+			// Retain the custom string as a separate instruction after adding its banner,
+			// so replacing system shape does not intentionally discard the client's prompt.
 			merged := v
 			if !strings.HasPrefix(v, claudeCodePrefix) {
 				merged = claudeCodePrefix + "\n\n" + v
@@ -413,7 +533,9 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 				}
 
 				raw := []byte(item.Raw)
-				// Prefix the first subsequent text system block once.
+				// Prefix an eligible subsequent raw text block and retain its other fields.
+				// A failed edit leaves that block available and allows a later candidate to
+				// be tried.
 				if !prefixedNext && item.Get("type").String() == "text" && textResult.Exists() && textResult.Type == gjson.String {
 					text := textResult.String()
 					if strings.TrimSpace(text) != "" && !strings.HasPrefix(text, claudeCodePrefix) {
@@ -431,6 +553,9 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 			for _, item := range v {
 				m, ok := item.(map[string]any)
 				if !ok {
+					// An unsupported fallback element can fail JSON serialization. Skip that
+					// element so remaining encodable items still follow the generated identity
+					// block in order.
 					raw, marshalErr := json.Marshal(item)
 					if marshalErr == nil {
 						items = append(items, raw)
@@ -443,11 +568,17 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 				if !prefixedNext {
 					if blockType, _ := m["type"].(string); blockType == "text" {
 						if text, ok := m["text"].(string); ok && strings.TrimSpace(text) != "" && !strings.HasPrefix(text, claudeCodePrefix) {
+							// This fallback has caller-supplied maps rather than body raw elements;
+							// prefixing writes into that map before serialization, so callers can
+							// observe the mutation.
 							m["text"] = claudeCodePrefix + "\n\n" + text
 							prefixedNext = true
 						}
 					}
 				}
+				// Fallback map serialization is best effort; a failed map is omitted after
+				// any prefix mutation, while subsequent encodable elements can still be
+				// added.
 				raw, marshalErr := json.Marshal(m)
 				if marshalErr == nil {
 					items = append(items, raw)
@@ -466,6 +597,9 @@ func InjectClaudeCodePrompt(body []byte, system any) []byte {
 	return result
 }
 
+// ClaudeOAuthSystemPromptBlocksForModel selects the fixed Fable template when
+// model contains fable, ignoring case. Other models keep configured text as
+// supplied, leaving configuration decoding to the block builder.
 func ClaudeOAuthSystemPromptBlocksForModel(model, configured string) string {
 	if IsAnthropicFableModel(model) {
 		return ClaudeFableOAuthSystemPromptBlocks
@@ -473,6 +607,9 @@ func ClaudeOAuthSystemPromptBlocksForModel(model, configured string) string {
 	return configured
 }
 
+// DefaultClaudeOAuthExpansionPrompt trims a configured expansion or returns the
+// built-in prompt when empty. The returned text is used by both default blocks
+// and expansion placeholders in configured blocks.
 func DefaultClaudeOAuthExpansionPrompt(expansionPrompt string) string {
 	expansionPrompt = strings.TrimSpace(expansionPrompt)
 	if expansionPrompt == "" {
@@ -481,6 +618,9 @@ func DefaultClaudeOAuthExpansionPrompt(expansionPrompt string) string {
 	return expansionPrompt
 }
 
+// ParseClaudeOAuthSystemPromptBlocksConfig decodes an array or an envelope
+// containing blocks. Blank input returns nil without error; malformed JSON
+// returns its decode error, and an envelope may contain no blocks.
 func ParseClaudeOAuthSystemPromptBlocksConfig(raw string) ([]ClaudeOAuthSystemPromptBlockConfig, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -500,7 +640,13 @@ func ParseClaudeOAuthSystemPromptBlocksConfig(raw string) ([]ClaudeOAuthSystemPr
 	return envelope.Blocks, nil
 }
 
+// DecodeClaudeOAuthSystemPromptCacheControl interprets blank, null, or false as
+// no marker and true as the default ephemeral object. Object JSON passes
+// through after decoding; other shapes and malformed JSON return errors.
 func DecodeClaudeOAuthSystemPromptCacheControl(raw json.RawMessage) (any, error) {
+	// Boolean cache settings are configuration shorthand: true expands to an
+	// ephemeral marker, while false and null omit the field before system block
+	// serialization.
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("false")) {
 		return nil, nil
@@ -521,6 +667,10 @@ func DecodeClaudeOAuthSystemPromptCacheControl(raw json.RawMessage) (any, error)
 	return value, nil
 }
 
+// ExpandClaudeOAuthSystemPromptTextTemplate replaces recognized billing,
+// version, fingerprint, identity, and expansion placeholders. Empty text
+// returns empty, a blank expansion selects the default, and unknown placeholder
+// text remains literal.
 func ExpandClaudeOAuthSystemPromptTextTemplate(body []byte, text string, expansionPrompt string) (string, error) {
 	if text == "" {
 		return "", nil
@@ -541,6 +691,9 @@ func ExpandClaudeOAuthSystemPromptTextTemplate(body []byte, text string, expansi
 	return replacer.Replace(text), nil
 }
 
+// DefaultClaudeOAuthSystemPromptBlockConfig returns enabled billing, identity,
+// and expansion blocks in that order. The expansion owns default cache control;
+// all enabled pointers refer to the same locally created boolean.
 func DefaultClaudeOAuthSystemPromptBlockConfig() []ClaudeOAuthSystemPromptBlockConfig {
 	enabled := true
 	return []ClaudeOAuthSystemPromptBlockConfig{
@@ -565,11 +718,24 @@ func DefaultClaudeOAuthSystemPromptBlockConfig() []ClaudeOAuthSystemPromptBlockC
 	}
 }
 
+// BuildClaudeOAuthSystemPromptBlocksJSON renders configured text blocks into
+// complete JSON objects. A missing or empty decoded block list selects
+// defaults, while malformed configuration returns an error before any blocks
+// are produced.
+//
+// Disabled blocks and blank expanded text are omitted in supplied order.
+// Missing types become text; unsupported types and invalid cache control return
+// indexed errors. Cache control is decoded after expansion, so a blank block is
+// skipped before its cache payload is examined. The returned list is ready for
+// BuildJSONArrayRaw.
 func BuildClaudeOAuthSystemPromptBlocksJSON(body []byte, expansionPrompt string, blocksConfig string) ([][]byte, error) {
 	blocks, err := ParseClaudeOAuthSystemPromptBlocksConfig(blocksConfig)
 	if err != nil {
 		return nil, err
 	}
+	// An empty parsed list selects defaults. A nonempty configuration can render
+	// zero blocks when all its entries are disabled or their expanded text is
+	// blank.
 	if len(blocks) == 0 {
 		blocks = DefaultClaudeOAuthSystemPromptBlockConfig()
 	}
@@ -606,6 +772,10 @@ func BuildClaudeOAuthSystemPromptBlocksJSON(body []byte, expansionPrompt string,
 	return items, nil
 }
 
+// ValidateClaudeOAuthSystemPromptBlocksConfig checks parseability, supported
+// text types, and cache-control shapes for settings input. Blank input
+// succeeds, and invalid configuration becomes a BadRequest; disabled blocks
+// still undergo type and cache validation.
 func ValidateClaudeOAuthSystemPromptBlocksConfig(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -629,6 +799,15 @@ func ValidateClaudeOAuthSystemPromptBlocksConfig(raw string) error {
 	return nil
 }
 
+// ExtractSystemTextAndCacheControl gathers system text and the cache marker
+// selected for message migration. A string is trimmed; arrays join nonblank
+// string text fields in order, accepting fields from any map block type.
+//
+// The last nonnil cache_control attached to an included text item becomes the
+// returned marker. It remains the supplied object, so callers should treat
+// shared maps as immutable during serialization. Unsupported system shapes
+// return empty text and nil, and earlier block-specific markers cannot all fit
+// on the single migrated message block.
 func ExtractSystemTextAndCacheControl(system any) (string, any) {
 	switch v := system.(type) {
 	case string:
@@ -646,8 +825,9 @@ func ExtractSystemTextAndCacheControl(system any) (string, any) {
 				continue
 			}
 			parts = append(parts, text)
-			// The system text is merged into one message block. Keep the last cache
-			// breakpoint and its TTL as the closest available representation.
+			// Several system blocks become one instruction message, so multiple markers
+			// cannot keep their separate positions. Retain the last supplied nonnil marker
+			// from included text with its TTL for that merged message.
 			if cc, exists := m["cache_control"]; exists && cc != nil {
 				cacheControl = cc
 			}
@@ -658,14 +838,26 @@ func ExtractSystemTextAndCacheControl(system any) (string, any) {
 	}
 }
 
+// RewriteSystemForNonClaudeCodeWithPromptBlocks replaces system with configured
+// OAuth blocks and may prepend client instructions plus an assistant
+// acknowledgment to messages. Raw system values are decoded first; blank
+// instructions or joined text beginning with a recognized Claude banner skip
+// migration.
+//
+// Invalid configured blocks retry with defaults, and failure before system
+// replacement returns body. After replacement succeeds, later serialization or
+// messages-update failure can return the replaced system without the injected
+// pair. Original messages are copied as raw elements behind the pair, and the
+// selected client cache marker travels with the instruction block.
 func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expansionPrompt string, blocksConfig string) []byte {
 	system = NormalizeSystemParam(system)
 	expansionPrompt = DefaultClaudeOAuthExpansionPrompt(expansionPrompt)
 
 	originalSystemText, originalSystemCacheControl := ExtractSystemTextAndCacheControl(system)
 
-	// Build the configured system blocks. Defaults contain billing attribution,
-	// the Claude Code identity, and a tool-independent expansion with a cache breakpoint.
+	// Try configured blocks before replacing system so malformed settings can
+	// recover to the default billing, identity, and cached expansion layout while
+	// the original request is still available if both builds fail.
 	systemBlocks, blockErr := BuildClaudeOAuthSystemPromptBlocksJSON(body, expansionPrompt, blocksConfig)
 	if blockErr != nil {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to build configured Claude OAuth system blocks: %v", blockErr)
@@ -681,8 +873,9 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 		return body
 	}
 
-	// Move client system instructions into a user/assistant pair so they remain
-	// available after the system field is replaced.
+	// Pair migrated client instructions with an acknowledgment before appending
+	// raw history, keeping that instruction exchange ahead of every supplied turn
+	// after OAuth blocks have replaced the system field.
 	ccPromptTrimmed := strings.TrimSpace(ClaudeCodeSystemPrompt)
 	if originalSystemText != "" && originalSystemText != ccPromptTrimmed && !HasClaudeCodePrefix(originalSystemText) {
 		instructionBlock := map[string]any{
@@ -718,6 +911,9 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 			})
 		}
 
+		// Original history follows the injected pair as raw elements to keep its
+		// field layout. If this messages replacement fails, the earlier system
+		// replacement remains in out.
 		if next, setOk := SetJSONRawBytes(out, "messages", BuildJSONArrayRaw(items)); setOk {
 			out = next
 		}
@@ -726,6 +922,10 @@ func RewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expa
 	return out
 }
 
+// CollectCacheControlPaths records array block cache paths for subsequent
+// deletion. Thinking markers in system or message content are separated as
+// invalid; top-level cache_control is outside this traversal, and tool markers
+// form their own ordered list.
 func CollectCacheControlPaths(body []byte) (invalidThinking []CacheControlPath, messagePaths []string, toolPaths []string, systemPaths []string) {
 	system := gjson.GetBytes(body, "system")
 	if system.IsArray() {
@@ -790,8 +990,15 @@ func CollectCacheControlPaths(body []byte) (invalidThinking []CacheControlPath, 
 	return invalidThinking, messagePaths, toolPaths, systemPaths
 }
 
-// EnforceCacheControlLimit removes invalid thinking breakpoints and limits the rest to four.
-// It removes tool breakpoints first, then message breakpoints, then system breakpoints.
+// EnforceCacheControlLimit removes collected thinking markers and reduces other
+// collected block markers toward MaxCacheControlBlocks. It counts message,
+// tool, and system paths, with top-level cache_control outside the count.
+//
+// Excess deletion prefers tools from the end, then messages from the start,
+// then system blocks from the end. This order retains message anchors ahead of
+// tool markers and delays system removal until needed. Failed deletions keep
+// their fields and do not decrement excess, so the returned body can still
+// exceed the intended limit when edits fail.
 func EnforceCacheControlLimit(body []byte) []byte {
 	if len(body) == 0 {
 		return body
@@ -801,7 +1008,9 @@ func EnforceCacheControlLimit(body []byte) []byte {
 	out := body
 	modified := false
 
-	// Thinking blocks do not support cache_control.
+	// Thinking marker paths are excluded from the quota count even when their
+	// deletion fails. Remove them first, accumulating successful cleanup before
+	// reducing the other collected paths.
 	for _, item := range invalidThinking {
 		if !gjson.GetBytes(out, item.Path).Exists() {
 			continue
@@ -815,6 +1024,9 @@ func EnforceCacheControlLimit(body []byte) []byte {
 		logger.LegacyPrintf("service.gateway", "%s", item.Log)
 	}
 
+	// Count collected nonthinking block markers after attempted cleanup. The
+	// collected paths exclude top-level cache_control, so that separate marker
+	// does not affect this reduction.
 	count := len(messagePaths) + len(toolPaths) + len(systemPaths)
 	if count <= MaxCacheControlBlocks {
 		if modified {
@@ -823,6 +1035,9 @@ func EnforceCacheControlLimit(body []byte) []byte {
 		return body
 	}
 
+	// Reduce excess by removing later tool markers, earlier message markers, then
+	// later system markers. Decrement excess only after a successful deletion,
+	// retaining other candidate paths when an edit fails.
 	remaining := count - MaxCacheControlBlocks
 	for i := len(toolPaths) - 1; i >= 0 && remaining > 0; i-- {
 		path := toolPaths[i]
@@ -874,11 +1089,17 @@ func EnforceCacheControlLimit(body []byte) []byte {
 	return body
 }
 
-// InjectAnthropicCacheControlTTL1h sets existing ephemeral cache breakpoints to one hour.
+// InjectAnthropicCacheControlTTL1h changes existing ephemeral cache markers
+// through ForceEphemeralCacheControlTTL. It includes top-level and block
+// markers, leaves other cache types alone, and returns the body's accumulated
+// successful edits.
 func InjectAnthropicCacheControlTTL1h(body []byte) []byte {
 	return ForceEphemeralCacheControlTTL(body, CacheTTLTarget1h)
 }
 
+// ForceEphemeralCacheControlTTL sets ttl on existing ephemeral markers at top
+// level and in system, message, or tool arrays. Empty body or ttl returns
+// unchanged bytes; failed individual writes leave that marker's value in place.
 func ForceEphemeralCacheControlTTL(body []byte, ttl string) []byte {
 	if len(body) == 0 || ttl == "" {
 		return body
@@ -939,6 +1160,9 @@ func ForceEphemeralCacheControlTTL(body []byte, ttl string) []byte {
 		})
 	}
 
+	// Apply TTL edits after collecting paths so traversal sees one body snapshot.
+	// Each failed write leaves that marker unchanged while later paths can still
+	// receive the requested TTL.
 	for _, path := range paths {
 		if next, err := sjson.SetBytes(out, path, ttl); err == nil {
 			out = next
@@ -947,8 +1171,9 @@ func ForceEphemeralCacheControlTTL(body []byte, ttl string) []byte {
 	return out
 }
 
-// SystemHasClaudeCodeBillingAttribution recognizes a CLI billing marker in system.
-// It detects proxied client traffic; it is not a ClaudeCodeOnly authorization check.
+// SystemHasClaudeCodeBillingAttribution reports a system-array text value with
+// the billing prefix and an entrypoint marker. This identifies proxied traffic;
+// callers use separate Claude Code-only validation for authorization.
 func SystemHasClaudeCodeBillingAttribution(body []byte) bool {
 	system := gjson.GetBytes(body, "system")
 	if !system.IsArray() {
@@ -966,7 +1191,9 @@ func SystemHasClaudeCodeBillingAttribution(body []byte) bool {
 	return found
 }
 
-// IsProxiedClaudeCodeRequest requires both valid metadata and a CLI billing marker.
+// IsProxiedClaudeCodeRequest reports parsed metadata identity together with
+// system billing attribution. Both checks need to succeed for the request to
+// qualify, while authorization policy remains with the caller.
 func IsProxiedClaudeCodeRequest(body []byte, metadataUserID string) bool {
 	return ParseMetadataUserID(metadataUserID) != nil && SystemHasClaudeCodeBillingAttribution(body)
 }

@@ -18,14 +18,32 @@ import (
 	identityprovider "github.com/TokenFlux/TokenRouter/internal/identity/provider"
 )
 
+// Google One Tap enters the shared authentication flow through a supplied
+// credential and configured verifier. SQLite cases inspect pending
+// registration, existing-account token responses, and rejection before state
+// creation. Captured verifier inputs check credential and audience forwarding;
+// configured claims and errors isolate handler decisions from Google token
+// verification.
+
+// googleIDTokenVerifierStub captures verifier inputs and returns supplied claim
+// and error values.
 type googleIDTokenVerifierStub struct {
-	claims     *identityprovider.GoogleIDTokenClaims
-	err        error
-	calls      int
-	credential string
-	audience   string
+	// claims retains caller-owned data and is returned alongside err, including a
+	// nonnil pointer with an error. The handler decides whether those claims are
+	// usable.
+	claims *identityprovider.GoogleIDTokenClaims // borrowed Google claims
+	err    error                                 // configured verifier error
+	// calls, credential, and audience record each invocation before returning the
+	// configured result. They hold unsynchronized sequential observations, with
+	// the strings replaced by the latest call.
+	calls      int    // recorded verifier invocation count
+	credential string // most recently supplied credential
+	audience   string // most recently supplied audience
 }
 
+// Verify records the credential, audience, and call count before returning
+// claims and err together. The claims pointer is borrowed, context is ignored,
+// and the unsynchronized observations require sequential fixture use.
 func (s *googleIDTokenVerifierStub) Verify(_ context.Context, credential string, audience string) (*identityprovider.GoogleIDTokenClaims, error) {
 	s.calls++
 	s.credential = credential
@@ -33,6 +51,9 @@ func (s *googleIDTokenVerifierStub) Verify(_ context.Context, credential string,
 	return s.claims, s.err
 }
 
+// googleOneTapTestSettings returns a fresh settings map enabling One Tap with
+// complete Google OAuth credentials and local callback configuration. Callers
+// can mutate that map independently before constructing each handler fixture.
 func googleOneTapTestSettings() map[string]string {
 	return map[string]string{
 		identity.SettingKeyGoogleOneTapEnabled:            "true",
@@ -44,6 +65,9 @@ func googleOneTapTestSettings() map[string]string {
 	}
 }
 
+// performGoogleOneTapRequest invokes the fixture's One Tap handler with body as
+// JSON and returns its recorder. It creates a direct Gin context, so handler
+// behavior is exercised without router middleware.
 func performGoogleOneTapRequest(t *testing.T, handler *authHTTPFixture, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	recorder := httptest.NewRecorder()
@@ -55,6 +79,10 @@ func performGoogleOneTapRequest(t *testing.T, handler *authHTTPFixture, body str
 	return recorder
 }
 
+// TestGoogleOneTapCreatesPendingRegistrationForNewUser supplies verified Google
+// claims for an unregistered email. The response requires registration,
+// forwards credential and audience, and saves subject, referral, promotion, and
+// browser pending state.
 func TestGoogleOneTapCreatesPendingRegistrationForNewUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: googleOneTapTestSettings(),
@@ -87,6 +115,9 @@ func TestGoogleOneTapCreatesPendingRegistrationForNewUser(t *testing.T) {
 	require.NotNil(t, findCookie(recorder.Result().Cookies(), identityhttp.OauthPendingBrowserCookieName))
 }
 
+// TestGoogleOneTapLogsInExistingUser supplies Google claims matching an active
+// SQLite account. It receives a Bearer token pair with no-store response
+// caching and records the Google identity on that user.
 func TestGoogleOneTapLogsInExistingUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: googleOneTapTestSettings(),
@@ -125,6 +156,9 @@ func TestGoogleOneTapLogsInExistingUser(t *testing.T) {
 	require.Equal(t, 1, identityCount)
 }
 
+// TestGoogleOneTapRejectsDisabledExistingUser supplies Google claims for a
+// disabled SQLite account. The handler returns HTTP 403, omits access-token
+// text, and leaves no pending session.
 func TestGoogleOneTapRejectsDisabledExistingUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: googleOneTapTestSettings(),
@@ -153,11 +187,20 @@ func TestGoogleOneTapRejectsDisabledExistingUser(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestGoogleOneTapFailsClosedBeforeIdentityLookup varies disabled or incomplete
+// settings, verifier failure, unverified email, and captcha activation. Each
+// request fails with no pending row or supplied sensitive text; the
+// settings-gated cases invoke no verifier.
 func TestGoogleOneTapFailsClosedBeforeIdentityLookup(t *testing.T) {
 	tests := []struct {
-		name           string
-		settingsMutate func(map[string]string)
-		verifier       *googleIDTokenVerifierStub
+		name string // credential rejection scenario
+		// settingsMutate is invoked for each case's fresh settings map; every case
+		// supplies a nonnil callback before constructing its authentication handler.
+		settingsMutate func(map[string]string) // settings mutation callback
+		// verifier is installed after handler construction; the fixture adapter reads
+		// this pointer during Verify so the case can inspect its retained
+		// observations.
+		verifier *googleIDTokenVerifierStub // injected verifier fixture
 	}{
 		{
 			name: "One Tap 已关闭",
@@ -216,6 +259,9 @@ func TestGoogleOneTapFailsClosedBeforeIdentityLookup(t *testing.T) {
 	}
 }
 
+// TestGoogleOneTapRejectsNewUserWhenRegistrationDisabled supplies verified
+// claims for a new email while registration is disabled. The handler returns
+// HTTP 403 and creates no pending session for that profile.
 func TestGoogleOneTapRejectsNewUserWhenRegistrationDisabled(t *testing.T) {
 	settings := googleOneTapTestSettings()
 	settings[identity.SettingKeyRegistrationEnabled] = "false"
@@ -236,15 +282,25 @@ func TestGoogleOneTapRejectsNewUserWhenRegistrationDisabled(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestGoogleOneTapRejectsOversizedCredential supplies one ASCII byte beyond the
+// credential limit with absent authentication dependencies. The handler returns
+// HTTP 400 and its invalid-credential message.
 func TestGoogleOneTapRejectsOversizedCredential(t *testing.T) {
 	handler := newAuthHTTPFixture(t, &authHTTPFixture{})
+	// Cross the credential bound while keeping the request syntactically valid
+	// JSON.
 	recorder := performGoogleOneTapRequest(t, handler, `{"credential":"`+strings.Repeat("x", identityhttp.GoogleOneTapCredentialMaxBytes+1)+`"}`)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "Google credential is invalid")
 }
 
+// TestGoogleOneTapRejectsOversizedRequestBeforeBinding pads otherwise valid
+// JSON beyond the whole-request limit with absent dependencies. The handler
+// returns HTTP 400 with Invalid request and omits AUTH_SERVICE_NOT_READY.
 func TestGoogleOneTapRejectsOversizedRequestBeforeBinding(t *testing.T) {
 	handler := newAuthHTTPFixture(t, &authHTTPFixture{})
+	// Keep the credential small while padding exceeds the whole JSON request
+	// limit.
 	body := `{"credential":"valid-token","padding":"` + strings.Repeat("x", identityhttp.GoogleOneTapRequestMaxBytes) + `"}`
 
 	recorder := performGoogleOneTapRequest(t, handler, body)

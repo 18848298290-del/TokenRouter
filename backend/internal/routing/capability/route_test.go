@@ -6,7 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAntigravityRetiredSnapshot checks that stale declared protocols cannot restore an unsupported provider type.
+// Persisted protocol declarations can outlive the provider type that originally
+// supplied them. These cases check authentication-based route rejection and
+// demonstrate how one Chat entry chooses distinct native or converted targets
+// for providers in a mixed group.
+
+// TestAntigravityRetiredSnapshot supplies stale protocol declarations for
+// retired Antigravity authentication types. Each route must fail, while OAuth
+// routes for the same supplied sources resolve to GenerateContent.
 func TestAntigravityRetiredSnapshot(t *testing.T) {
 	protocols := []ProtocolID{ProtocolAnthropicMessages, ProtocolGeminiGenerateContent, ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses}
 	for _, kind := range []string{ProviderTypeAPIKey, ProviderTypeUpstream, ProviderTypeSetupToken} {
@@ -23,11 +30,13 @@ func TestAntigravityRetiredSnapshot(t *testing.T) {
 	}
 }
 
+// TestMixedGroupAutomaticAndExplicitRoutes sends Chat to Anthropic, OpenAI, and
+// Gemini candidates. Automatic routing must select each candidate's usable
+// target, and explicit empty fallbacks retain only OpenAI's native route.
 func TestMixedGroupAutomaticAndExplicitRoutes(t *testing.T) {
-	// The same Chat request selects a route per provider, preferring an enabled native protocol.
 	for _, tc := range []struct {
-		platform string
-		target   ProtocolID
+		platform string     // candidate provider platform name
+		target   ProtocolID // expected usable upstream protocol
 	}{
 		{PlatformAnthropic, ProtocolAnthropicMessages},
 		{PlatformOpenAI, ProtocolOpenAIChatCompletions},

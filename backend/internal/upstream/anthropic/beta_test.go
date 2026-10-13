@@ -9,6 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMergeAnthropicBeta merges required tokens with repeated and
+// whitespace-padded client entries. Required order is retained, duplicate
+// entries disappear, and unique incoming tokens follow in their encounter
+// order.
 func TestMergeAnthropicBeta(t *testing.T) {
 	got := MergeAnthropicBeta(
 		[]string{"oauth-2025-04-20", "interleaved-thinking-2025-05-14"},
@@ -17,6 +21,9 @@ func TestMergeAnthropicBeta(t *testing.T) {
 	require.Equal(t, "oauth-2025-04-20,interleaved-thinking-2025-05-14,foo,bar", got)
 }
 
+// TestMergeAnthropicBeta_EmptyIncoming merges a required list with an empty
+// client Header. The result consists of the required tokens in supplied order
+// with no empty token appended.
 func TestMergeAnthropicBeta_EmptyIncoming(t *testing.T) {
 	got := MergeAnthropicBeta(
 		[]string{"oauth-2025-04-20", "interleaved-thinking-2025-05-14"},
@@ -25,12 +32,15 @@ func TestMergeAnthropicBeta_EmptyIncoming(t *testing.T) {
 	require.Equal(t, "oauth-2025-04-20,interleaved-thinking-2025-05-14", got)
 }
 
+// TestStripBetaTokens covers drops at different positions, multiple drops,
+// empty inputs, and retained tokens. Results keep surviving token order and
+// leave unfiltered Headers as supplied.
 func TestStripBetaTokens(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
-		tokens []string
-		want   string
+		name   string   // case display name
+		header string   // client beta Header
+		tokens []string // requested dropped tokens
+		want   string   // expected comparison value
 	}{
 		{
 			name:   "single token in middle",
@@ -102,6 +112,9 @@ func TestStripBetaTokens(t *testing.T) {
 	}
 }
 
+// TestMergeAnthropicBetaDropping_Context1M combines required OAuth tokens with
+// a client context token and another beta. Dropping context removes that token
+// while retaining the ordered required and remaining client values.
 func TestMergeAnthropicBetaDropping_Context1M(t *testing.T) {
 	required := []string{"oauth-2025-04-20", "interleaved-thinking-2025-05-14"}
 	incoming := "context-1m-2025-08-07,foo-beta,oauth-2025-04-20"
@@ -112,6 +125,9 @@ func TestMergeAnthropicBetaDropping_Context1M(t *testing.T) {
 	require.NotContains(t, got, "context-1m-2025-08-07")
 }
 
+// TestMergeAnthropicBetaDropping_DroppedBetas uses the currently empty static
+// drop set with several client tokens. All unique tokens remain in order,
+// including context and fast-mode capabilities supplied by the client.
 func TestMergeAnthropicBetaDropping_DroppedBetas(t *testing.T) {
 	required := []string{"oauth-2025-04-20", "interleaved-thinking-2025-05-14"}
 	incoming := "context-1m-2025-08-07,fast-mode-2026-02-01,foo-beta,oauth-2025-04-20"
@@ -124,6 +140,9 @@ func TestMergeAnthropicBetaDropping_DroppedBetas(t *testing.T) {
 	require.Contains(t, got, "fast-mode-2026-02-01")
 }
 
+// TestMergeAnthropicBetaDropping_PreservesIncomingRedactThinking adds a client
+// redact-thinking token to the full mimic set. The merged result retains that
+// client capability when the static drop set excludes no tokens.
 func TestMergeAnthropicBetaDropping_PreservesIncomingRedactThinking(t *testing.T) {
 	required := FullClaudeCodeMimicryBetas()
 	incoming := BetaRedactThinking
@@ -133,6 +152,9 @@ func TestMergeAnthropicBetaDropping_PreservesIncomingRedactThinking(t *testing.T
 	require.Contains(t, got, BetaRedactThinking)
 }
 
+// TestDroppedBetaSet compares the base copy with an extended caller-requested
+// set. The base size follows DroppedBetas, and adding Claude Code increases the
+// extended set by one token.
 func TestDroppedBetaSet(t *testing.T) {
 	// The base set reflects DroppedBetas.
 	base := DroppedBetaSet()
@@ -144,6 +166,9 @@ func TestDroppedBetaSet(t *testing.T) {
 	require.Len(t, extended, len(DroppedBetas)+1)
 }
 
+// TestBuildBetaTokenSet supplies duplicates and an empty token before also
+// checking nil input. The populated set contains the two nonempty unique
+// values, while nil produces an empty set.
 func TestBuildBetaTokenSet(t *testing.T) {
 	got := BuildBetaTokenSet([]string{"foo", "", "bar", "foo"})
 	require.Len(t, got, 2)
@@ -155,12 +180,15 @@ func TestBuildBetaTokenSet(t *testing.T) {
 	require.Empty(t, empty)
 }
 
+// TestContainsBetaToken covers token positions, whitespace, absent values, and
+// a longer prefix-sharing entry. Exact complete entries match while empty or
+// partial matches return false.
 func TestContainsBetaToken(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
-		token  string
-		want   bool
+		name   string // case display name
+		header string // client beta Header
+		token  string // sought complete token
+		want   bool   // expected comparison value
 	}{
 		{"present in middle", "oauth-2025-04-20,fast-mode-2026-02-01,interleaved-thinking-2025-05-14", "fast-mode-2026-02-01", true},
 		{"present at start", "fast-mode-2026-02-01,oauth-2025-04-20", "fast-mode-2026-02-01", true},
@@ -181,12 +209,18 @@ func TestContainsBetaToken(t *testing.T) {
 	}
 }
 
+// TestStripBetaTokensWithSet_EmptyDropSet supplies an OAuth and thinking Header
+// with an empty lookup map. The complete Header string remains unchanged
+// because the caller has requested no drops.
 func TestStripBetaTokensWithSet_EmptyDropSet(t *testing.T) {
 	header := "oauth-2025-04-20,interleaved-thinking-2025-05-14"
 	got := StripBetaTokensWithSet(header, map[string]struct{}{})
 	require.Equal(t, header, got)
 }
 
+// TestFilterBetaTokens filters one token from a supplied slice and tries nil
+// inputs. The remaining order is retained, nil filters leave tokens equal, and
+// nil token input stays nil.
 func TestFilterBetaTokens(t *testing.T) {
 	tokens := []string{"interleaved-thinking-2025-05-14", "tool-search-tool-2025-10-19"}
 	filterSet := map[string]struct{}{
@@ -198,6 +232,10 @@ func TestFilterBetaTokens(t *testing.T) {
 	assert.Nil(t, FilterBetaTokens(nil, filterSet))
 }
 
+// TestComputeFinalAnthropicBeta_OAuthMimic_NonHaiku_IncludesContextManagement
+// selects a non-Haiku OAuth mimic Header with default injection disabled. The
+// result is marked for setting and includes context management alongside OAuth
+// and Claude Code.
 func TestComputeFinalAnthropicBeta_OAuthMimic_NonHaiku_IncludesContextManagement(t *testing.T) {
 	s := false
 	final, ok := ComputeFinalAnthropicBeta("oauth", true, "claude-sonnet-4-6", http.Header{}, []byte(`{}`), nil, s)
@@ -208,6 +246,9 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_NonHaiku_IncludesContextManagement
 	require.True(t, AnthropicBetaTokensContains(final, BetaClaudeCode))
 }
 
+// TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesFullClaudeCodeBetas
+// selects a Haiku OAuth mimic Header with no client betas. The result equals
+// the full ordered mimic set and contains every token in that set.
 func TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesFullClaudeCodeBetas(t *testing.T) {
 	s := false
 	final, ok := ComputeFinalAnthropicBeta("oauth", true, "claude-haiku-4-5", http.Header{}, []byte(`{}`), nil, s)
@@ -219,6 +260,9 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_Haiku_IncludesFullClaudeCodeBetas(
 	}
 }
 
+// TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta supplies a custom
+// experimental client beta to Messages OAuth mimic. The selected Header is
+// marked for setting and excludes that client token.
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta(t *testing.T) {
 	// Messages mimic ignores client betas.
 	s := false
@@ -230,6 +274,10 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBeta(t *testing.T) {
 		"mimic 路径必须忽略客户端 anthropic-beta header")
 }
 
+// TestComputeFinalAnthropicBeta_OAuthTransparent_NonHaiku_PreservesClientContextManagement
+// passes a client context-management token through non-Haiku OAuth forwarding.
+// The selected Header remains enabled and retains the client capability in its
+// complete token list.
 func TestComputeFinalAnthropicBeta_OAuthTransparent_NonHaiku_PreservesClientContextManagement(t *testing.T) {
 	// Passthrough retains the client-enabled context-management beta.
 	s := false
@@ -240,6 +288,10 @@ func TestComputeFinalAnthropicBeta_OAuthTransparent_NonHaiku_PreservesClientCont
 	require.True(t, AnthropicBetaTokensContains(final, BetaContextManagement))
 }
 
+// TestComputeFinalAnthropicBeta_OAuthTransparent_Haiku_RealCCPreservesContextManagement
+// passes a Claude-style client Header through Haiku OAuth forwarding. The
+// context-management token remains present even though Haiku's absent-client
+// defaults use a smaller set.
 func TestComputeFinalAnthropicBeta_OAuthTransparent_Haiku_RealCCPreservesContextManagement(t *testing.T) {
 	// Haiku retains the beta supplied by the client.
 	s := false
@@ -251,6 +303,9 @@ func TestComputeFinalAnthropicBeta_OAuthTransparent_Haiku_RealCCPreservesContext
 		"真 CC + haiku + 客户端带 context-management beta → 透传必须保留")
 }
 
+// TestComputeFinalAnthropicBeta_APIKey_PassesClientBetaThroughDropSet supplies
+// client OAuth and custom beta tokens on an API Key request. With no drops, the
+// final Header is enabled and retains both supplied tokens.
 func TestComputeFinalAnthropicBeta_APIKey_PassesClientBetaThroughDropSet(t *testing.T) {
 	s := false
 	hdr := http.Header{}
@@ -261,6 +316,9 @@ func TestComputeFinalAnthropicBeta_APIKey_PassesClientBetaThroughDropSet(t *test
 	require.True(t, AnthropicBetaTokensContains(final, "custom-beta"))
 }
 
+// TestComputeFinalAnthropicBeta_APIKey_NoClientBetaInjectOff_ShouldNotSet uses
+// an API Key request with no client Header and injection disabled. The selected
+// string is empty and its set flag remains false.
 func TestComputeFinalAnthropicBeta_APIKey_NoClientBetaInjectOff_ShouldNotSet(t *testing.T) {
 	s := false
 	final, ok := ComputeFinalAnthropicBeta("apikey", false, "claude-sonnet-4-6", http.Header{}, []byte(`{}`), nil, s)
@@ -268,6 +326,10 @@ func TestComputeFinalAnthropicBeta_APIKey_NoClientBetaInjectOff_ShouldNotSet(t *
 	require.Equal(t, "", final)
 }
 
+// TestComputeFinalAnthropicBeta_APIKeyHaiku_StillUsesAPIKeyBetas enables
+// default injection for a Haiku API Key body containing thinking. The selected
+// value matches the Haiku API Key default and excludes OAuth and Claude Code
+// tokens.
 func TestComputeFinalAnthropicBeta_APIKeyHaiku_StillUsesAPIKeyBetas(t *testing.T) {
 	s := true
 	body := []byte(`{"model":"claude-haiku-4-5","thinking":{"type":"enabled"},"messages":[]}`)
@@ -278,6 +340,10 @@ func TestComputeFinalAnthropicBeta_APIKeyHaiku_StillUsesAPIKeyBetas(t *testing.T
 	require.False(t, AnthropicBetaTokensContains(final, BetaClaudeCode))
 }
 
+// TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_AlwaysIncludesContextManagement
+// selects CountTokens OAuth mimic for Haiku with no client tokens. The Header
+// is enabled and contains both context management and the token-counting
+// capability.
 func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_AlwaysIncludesContextManagement(t *testing.T) {
 	// Count-token mimic includes the mimic set and token-counting beta.
 	s := false
@@ -289,8 +355,10 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_AlwaysIncludesContextMa
 		"count_tokens 路径必须含 token-counting beta")
 }
 
-// TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta checks client beta merging.
-
+// TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta
+// supplies custom and context client tokens to CountTokens OAuth mimic. The
+// result retains them alongside the full mimic context capability and the
+// counting token.
 func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *testing.T) {
 	s := false
 	hdr := http.Header{}
@@ -307,8 +375,10 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *
 		"同时补齐 token-counting beta")
 }
 
-// TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit checks the built-in Messages mimic set.
-
+// TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit supplies
+// an experimental token to the Messages mimic branch. The result sets the
+// Header but excludes that token, pinning this branch's use of its built-in
+// set.
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testing.T) {
 	s := false
 	hdr := http.Header{}
@@ -320,6 +390,9 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testi
 			"与 count_tokens mimic 是不同的设计，不能合并为同一函数。")
 }
 
+// TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_NoClientBetaInjectsDefault
+// uses Haiku OAuth passthrough without a client beta Header. The enabled result
+// equals CountTokensBetaHeader and omits context management from that default.
 func TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_NoClientBetaInjectsDefault(t *testing.T) {
 	// A missing client header selects CountTokensBetaHeader.
 	s := false
@@ -330,6 +403,10 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_NoClientBetaInjec
 	require.False(t, AnthropicBetaTokensContains(final, BetaContextManagement))
 }
 
+// TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_AppendsBetaTokenCounting
+// passes client OAuth and context tokens through CountTokens forwarding. The
+// result adds the missing counting token and keeps the client's existing
+// context capability.
 func TestComputeFinalCountTokensAnthropicBeta_OAuthTransparent_AppendsBetaTokenCounting(t *testing.T) {
 	s := false
 	hdr := http.Header{}

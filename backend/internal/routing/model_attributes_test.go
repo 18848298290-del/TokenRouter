@@ -13,42 +13,73 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// attributeRepoFixture counts attribute queries and supplies profiles by group.
+// Model display attributes combine saved profile overrides with final upstream
+// identities, independently of request aliases and pricing names. The fixtures
+// cover language resolution, exact-rule priority, multi-route aggregation, and
+// batched group reads; their benchmarks measure repeated equivalent routes and
+// provider-address variants.
+
+// attributeRepoFixture supplies mutable profiles and counts single or batch
+// display reads.
 type attributeRepoFixture struct {
-	config      *ModelAttributeConfig
-	groups      map[int64]*ModelAttributeConfig
-	batchCalls  int
-	singleCalls int
-	requested   []int64
-	err         error
+	// config and groups supply shared profiles for single and batch calls. Tests
+	// mutate profile status between completed queries so later display resolution
+	// observes the same stored value changing.
+	config      *ModelAttributeConfig           // shared single-group fixture profile
+	groups      map[int64]*ModelAttributeConfig // shared profiles by group
+	batchCalls  int                             // completed batch read count
+	singleCalls int                             // completed single-group read count
+	// requested borrows the ID slice from the latest batch read. The test inspects
+	// it after resolution and keeps that input stable.
+	requested []int64
+	err       error // configured batch query failure
 }
 
+// List returns one value copied from the fixture's configured profile. The
+// fixture requires a nonnil config; nested data remains shared because this
+// helper models repository reads rather than isolation.
 func (r *attributeRepoFixture) List(context.Context) ([]ModelAttributeConfig, error) {
 	return []ModelAttributeConfig{*r.config}, nil
 }
 
+// Get returns the fixture's shared profile pointer for any identifier.
+// Save-validation tests can inspect the same value and its retained timestamps
+// before subsequent administrative operations.
 func (r *attributeRepoFixture) Get(context.Context, int64) (*ModelAttributeConfig, error) {
 	return r.config, nil
 }
 
+// ForGroup counts a single-group read and returns the shared fixture profile.
+// The err field configures batch reads, while this single-group fixture returns
+// nil as its error.
 func (r *attributeRepoFixture) ForGroup(context.Context, int64) (*ModelAttributeConfig, error) {
 	r.singleCalls++
 	return r.config, nil
 }
 
+// ForGroups counts a batch read, retains the supplied ID slice, and returns its
+// configured map and error. Tests inspect requested IDs after the call and keep
+// their storage stable.
 func (r *attributeRepoFixture) ForGroups(_ context.Context, ids []int64) (map[int64]*ModelAttributeConfig, error) {
 	r.batchCalls++
 	r.requested = ids
 	return r.groups, r.err
 }
 
+// Save retains the supplied profile pointer for assertions after validation. It
+// models a successful repository write without assigning timestamps or cloning
+// configuration, so tests observe the service's prepared value.
 func (r *attributeRepoFixture) Save(_ context.Context, value *ModelAttributeConfig) error {
 	r.config = value
 	return nil
 }
+
+// Delete clears the fixture's stored profile and reports success.
 func (r *attributeRepoFixture) Delete(context.Context, int64) error { r.config = nil; return nil }
 
-// TestModelAttributesRequestLanguage checks that single and batch reads use the request language.
+// TestModelAttributesRequestLanguage reads one localized profile in English and
+// Simplified Chinese. Single-group and batch resolution must choose the same
+// requested-language display name and return equal presentation values.
 func TestModelAttributesRequestLanguage(t *testing.T) {
 	en := "en"
 	content := locale.Update[string]{Content: locale.Content[string]{
@@ -74,6 +105,10 @@ func TestModelAttributesRequestLanguage(t *testing.T) {
 	}
 }
 
+// TestModelAttributesUseFinalModelsWithoutChangingRoutes resolves an alias with
+// two upstream identities and independent price metadata. Results must combine
+// their limits and support, preserve the input route value, and restore
+// defaults after profile disabling.
 func TestModelAttributesUseFinalModelsWithoutChangingRoutes(t *testing.T) {
 	yes, no := true, false
 	large, small := 100, 1
@@ -92,7 +127,8 @@ func TestModelAttributesUseFinalModelsWithoutChangingRoutes(t *testing.T) {
 	require.Equal(t, 1, *result["public-alias"].OutputLimit)
 	require.False(t, *result["public-alias"].ToolCall)
 	require.True(t, result["public-alias"].RouteDifferences)
-	// An exact rule supplies the output limit and takes precedence over wildcard rules.
+	// An exact rule supplies the output limit and takes precedence over wildcard
+	// rules.
 	result, err = service.ResolveModels(context.Background(), 1, []RequestableModel{{ID: "single", UpstreamModels: []string{"upstream-a"}}})
 	require.NoError(t, err)
 	require.True(t, *result["single"].ToolCall)
@@ -103,7 +139,9 @@ func TestModelAttributesUseFinalModelsWithoutChangingRoutes(t *testing.T) {
 	require.True(t, *result["public-alias"].ToolCall)
 }
 
-// TestModelAttributesBatchReads checks group isolation, one batch read, and visibility of updates on the next query.
+// TestModelAttributesBatchReads supplies shared profiles, an unconfigured
+// group, and an empty group. Resolution must issue one batch read, omit the
+// empty group, and observe profile disabling on the next query.
 func TestModelAttributesBatchReads(t *testing.T) {
 	no := false
 	limit := 100
@@ -137,7 +175,9 @@ func TestModelAttributesBatchReads(t *testing.T) {
 	require.Nil(t, result[1]["alias-a"].ToolCall)
 }
 
-// TestModelAttributesBatchEmptyAndFailure covers empty catalogues and repository failures.
+// TestModelAttributesBatchEmptyAndFailure compares empty visible models with a
+// failing repository. Empty input must skip the query, while nonempty input
+// returns the configured failure and no result map.
 func TestModelAttributesBatchEmptyAndFailure(t *testing.T) {
 	repo := &attributeRepoFixture{err: errors.New("database unavailable")}
 	service := ModelAttributeService{Repo: repo}
@@ -151,6 +191,10 @@ func TestModelAttributesBatchEmptyAndFailure(t *testing.T) {
 	require.Equal(t, 1, repo.batchCalls)
 }
 
+// TestAttributeConfigValidation supplies invalid status, duplicate groups,
+// internal stars, and a nonpositive output limit. Each invalid profile must
+// fail, while a wildcard rule with an explicit false override saves
+// successfully.
 func TestAttributeConfigValidation(t *testing.T) {
 	service := ModelAttributeService{Repo: &attributeRepoFixture{}}
 	zero := 0
@@ -167,6 +211,9 @@ func TestAttributeConfigValidation(t *testing.T) {
 	require.NoError(t, service.Save(context.Background(), &valid))
 }
 
+// TestAttributeRulesSeparateRoutesAndStableIDs saves identical model patterns
+// scoped to two platforms. Their generated IDs and output overrides must
+// differ, and collapsing both selectors to unrestricted rules must be rejected.
 func TestAttributeRulesSeparateRoutesAndStableIDs(t *testing.T) {
 	one, two := 1, 2
 	config := &ModelAttributeConfig{Name: "routes", Status: StatusActive, Rules: []ModelAttributeRule{
@@ -182,6 +229,9 @@ func TestAttributeRulesSeparateRoutesAndStableIDs(t *testing.T) {
 	require.Error(t, (&ModelAttributeService{Repo: &attributeRepoFixture{}}).Save(context.Background(), config))
 }
 
+// BenchmarkModelAttributeRoutes measures batched display resolution for 186
+// aliases with one or 65 repeated route sets. Setup stays outside the timer so
+// measurements cover catalogue resolution and aggregation.
 func BenchmarkModelAttributeRoutes(b *testing.B) {
 	view := testkit.OfflineView()
 	for _, count := range []int{1, 65} {
@@ -207,6 +257,10 @@ func BenchmarkModelAttributeRoutes(b *testing.B) {
 	}
 }
 
+// TestModelAttributesReuseEquivalentRelays supplies duplicated and distinct
+// relay routes with one injected attribute lookup. Equivalent services must
+// reuse attributes while keeping route inputs and searchable text; adding an
+// official service requires another lookup.
 func TestModelAttributesReuseEquivalentRelays(t *testing.T) {
 	lookups := 0
 	svc := &ModelAttributeService{Catalog: ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes {
@@ -234,6 +288,9 @@ func TestModelAttributesReuseEquivalentRelays(t *testing.T) {
 	require.Equal(t, 2, lookups)
 }
 
+// BenchmarkModelAttributeDistinctRoutes measures 186 models across 65 providers
+// and three client protocols with shared or distinct relay addresses. Setup is
+// excluded so the workload measures display resolution and route-key reuse.
 func BenchmarkModelAttributeDistinctRoutes(b *testing.B) {
 	for _, distinctRelays := range []bool{false, true} {
 		b.Run(fmt.Sprint(distinctRelays), func(b *testing.B) {

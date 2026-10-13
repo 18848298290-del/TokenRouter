@@ -12,32 +12,66 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// A request can retry providers or switch protocols while model metadata is
+// published independently. Its attribute session pins one catalogue View, reads
+// each group's profile once, and resolves later attempts against that retained
+// input.
+//
+// A single mutex protects first profile reads and route-cache publication,
+// including the repository call and JSON copying. Read or copy failures remain
+// cached so later attempts cannot switch to a different configuration
+// mid-request. Cached resolutions use complete value-based target keys and
+// detached copies; a newly computed result can still retain its input target's
+// output-cap pointer. Renewing a session lets the next request or WebSocket
+// turn observe a new catalogue and profile.
+
+// modelAttributeContextKey identifies the request-local attribute session in
+// context values.
 type modelAttributeContextKey struct{}
 
-// ModelAttributeMatch restricts overrides to matching routes; empty fields match any value.
+// ModelAttributeMatch narrows an override to routes matching every populated
+// field.
 type ModelAttributeMatch struct {
-	Platform         string `json:"platform,omitempty"`
-	ProviderType     string `json:"provider_type,omitempty"`
-	ProviderMode     string `json:"provider_mode,omitempty"`
-	Site             string `json:"site,omitempty"`
-	ClientProtocol   string `json:"client_protocol,omitempty"`
+	// optional provider platform selector
+	Platform string `json:"platform,omitempty"`
+	// optional provider authentication selector
+	ProviderType string `json:"provider_type,omitempty"`
+	// optional payg or coding selector
+	ProviderMode string `json:"provider_mode,omitempty"`
+	Site         string `json:"site,omitempty"` // optional regional site selector
+	// optional client entry selector
+	ClientProtocol string `json:"client_protocol,omitempty"`
+	// optional upstream protocol selector
 	UpstreamProtocol string `json:"upstream_protocol,omitempty"`
 }
 
+// attributeGroupResult retains one group's loaded configuration, failure, and
+// resolved route cache.
 type attributeGroupResult struct {
-	config      *ModelAttributeConfig
-	err         error
+	// config and err retain the first profile load and JSON copy result.
+	// resolutions uses that retained profile until a new session is created,
+	// including after a failure.
+	config *ModelAttributeConfig // retained copied group profile
+	err    error                 // retained profile loading failure
+	// detached resolutions by route value
 	resolutions map[modelcatalog.TargetKey]modelcatalog.Resolution
 }
 
-// ModelAttributeSession pins the catalogue and caches group configuration reads across a request's attempts.
+// ModelAttributeSession pins a catalogue view and serializes group profile
+// loading across request attempts.
 type ModelAttributeSession struct {
-	service *ModelAttributeService
-	view    modelcatalog.View
-	mu      sync.Mutex
-	groups  map[int64]attributeGroupResult
+	service *ModelAttributeService // service creating this session
+	view    modelcatalog.View      // pinned catalogue publication view
+	// mu protects groups, including repository reads and profile copying on the
+	// first access. Resolve serializes route computation under this same lock
+	// before publishing cache entries.
+	mu     sync.Mutex                     // profile and route-cache mutex
+	groups map[int64]attributeGroupResult // profile results by group identifier
 }
 
+// Matches reports whether every populated selector equals its target field
+// exactly. A nil receiver or empty selector matches all routes; callers supply
+// selector spellings consistent with the resolved target values.
 func (m *ModelAttributeMatch) Matches(target modelcatalog.Target) bool {
 	if m == nil {
 		return true
@@ -50,6 +84,10 @@ func (m *ModelAttributeMatch) Matches(target modelcatalog.Target) bool {
 	return true
 }
 
+// Validate checks populated route selectors against declared platform,
+// provider, mode, site, and protocol values. Nil receivers are valid, and each
+// field is checked independently rather than validating complete provider
+// combinations.
 func (m *ModelAttributeMatch) Validate() error {
 	if m == nil {
 		return nil
@@ -84,6 +122,9 @@ func (m *ModelAttributeMatch) Validate() error {
 	return nil
 }
 
+// view returns the service's current catalogue View when its provider is
+// configured. A nil service or absent View callback produces a zero view for
+// local platform resolution.
 func (s *ModelAttributeService) view() modelcatalog.View {
 	if s != nil && s.Catalog.View != nil {
 		return s.Catalog.View()
@@ -91,6 +132,9 @@ func (s *ModelAttributeService) view() modelcatalog.View {
 	return modelcatalog.View{}
 }
 
+// viewForContext reuses a context session's pinned View when that session
+// belongs to this service. Sessions from another service are ignored, and the
+// current View callback supplies a fresh view.
 func (s *ModelAttributeService) viewForContext(ctx context.Context) modelcatalog.View {
 	if session := ModelAttributesFromContext(ctx); session != nil && session.service == s {
 		return session.view
@@ -98,20 +142,31 @@ func (s *ModelAttributeService) viewForContext(ctx context.Context) modelcatalog
 	return s.view()
 }
 
+// NewSession pins the current catalogue View and allocates empty per-group
+// resolution storage. It performs no profile reads; the first Resolve call
+// loads the requested group under the session mutex.
 func (s *ModelAttributeService) NewSession() *ModelAttributeSession {
 	return &ModelAttributeSession{service: s, view: s.view(), groups: map[int64]attributeGroupResult{}}
 }
 
-// WithModelAttributes attaches a request catalogue snapshot. Call it separately for each WS turn or background task.
+// WithModelAttributes attaches a new attribute session to the supplied context
+// and pins its catalogue. Callers create separate sessions for independent
+// background work and each WebSocket turn that should observe updates.
 func WithModelAttributes(ctx context.Context, service *ModelAttributeService) context.Context {
 	return context.WithValue(ctx, modelAttributeContextKey{}, service.NewSession())
 }
 
+// ModelAttributesFromContext returns the attribute session stored under the
+// private context key. Missing or differently typed values return nil, allowing
+// callers to use service-level resolution instead.
 func ModelAttributesFromContext(ctx context.Context) *ModelAttributeSession {
 	value, _ := ctx.Value(modelAttributeContextKey{}).(*ModelAttributeSession)
 	return value
 }
 
+// RenewModelAttributes replaces an existing context session with a fresh
+// session from its service. Contexts without a session are returned unchanged;
+// renewed sessions observe later catalogue and profile reads.
 func RenewModelAttributes(ctx context.Context) context.Context {
 	if session := ModelAttributesFromContext(ctx); session != nil {
 		return WithModelAttributes(ctx, session.service)
@@ -119,6 +174,9 @@ func RenewModelAttributes(ctx context.Context) context.Context {
 	return ctx
 }
 
+// CopyModelAttributes attaches source's existing attribute session to target
+// when present. The contexts then share the same pinned catalogue, profile
+// failures, and route cache; absent sessions leave target unchanged.
 func CopyModelAttributes(target, source context.Context) context.Context {
 	if session := ModelAttributesFromContext(source); session != nil {
 		return context.WithValue(target, modelAttributeContextKey{}, session)
@@ -126,10 +184,24 @@ func CopyModelAttributes(target, source context.Context) context.Context {
 	return target
 }
 
+// Resolve returns attributes for a group and complete route using this
+// session's pinned catalogue. A missing session or service resolves through a
+// zero view, while a positive group ID can load its profile from the
+// repository.
+//
+// The mutex covers loading, JSON copying, and cache updates, so concurrent
+// attempts use one stored profile or failure. Load and copy errors become
+// MODEL_ATTRIBUTES_UNAVAILABLE and remain cached. Successful resolutions are
+// cached as detached clones, and cache hits return another clone. The first
+// computed result can retain target's output-cap pointer, so its caller
+// controls that input's mutation.
 func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, target modelcatalog.Target) (modelcatalog.Resolution, error) {
 	if s == nil || s.service == nil {
 		return (modelcatalog.View{}).Resolve(target, modelcatalog.Attributes{}), nil
 	}
+	// Serialize the first repository read with profile copying and route cache
+	// publication so simultaneous attempts cannot retain different inputs for one
+	// group.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	group, found := s.groups[groupID]
@@ -138,6 +210,8 @@ func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, targ
 		if groupID > 0 && s.service.Repo != nil {
 			group.config, group.err = s.service.Repo.ForGroup(ctx, groupID)
 			if group.err == nil && group.config != nil {
+				// Detach the repository profile through its JSON representation so later
+				// stored-value edits cannot alter this request's rules or localization.
 				var body []byte
 				body, group.err = json.Marshal(group.config)
 				if group.err == nil {
@@ -149,6 +223,8 @@ func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, targ
 		s.groups[groupID] = group
 	}
 	if group.err != nil {
+		// The retained load or copy failed, so report configuration unavailability on
+		// every attempt instead of silently resolving against a different profile.
 		return modelcatalog.Resolution{}, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model attribute configuration is unavailable")
 	}
 	key := target.Key()
@@ -156,10 +232,22 @@ func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, targ
 		return result.Clone(), nil
 	}
 	result := s.service.resolve(s.view, group.config, target, s.service.identityCandidates())
+	// Retain detached values before returning the computed result; caller edits to
+	// its attributes or input cap cannot modify a later cache-hit resolution.
 	group.resolutions[key] = result.Clone()
 	return result, nil
 }
 
+// resolve detects the target's service identity and merges its matching active
+// profile into the supplied catalogue View. Inactive or absent profiles supply
+// no override.
+//
+// Production resolves platform and adapter rules through the pinned View. A
+// service configured with Lookup and no View replaces the resulting attributes
+// with that callback's merged values, supporting injected single-model lookups.
+// The resolution retains the outbound route identity while rule matching can
+// expand equivalent resource spellings; callers choose whether returned values
+// need additional cloning.
 func (s *ModelAttributeService) resolve(view modelcatalog.View, config *ModelAttributeConfig, target modelcatalog.Target, candidates func(string) []string) modelcatalog.Resolution {
 	target = target.WithServiceIdentity()
 	override := modelcatalog.Attributes{}
@@ -167,14 +255,21 @@ func (s *ModelAttributeService) resolve(view modelcatalog.View, config *ModelAtt
 		override = config.match(target.Model, candidates, target)
 	}
 	result := view.Resolve(target, override)
-	// Callers may inject single-model lookup; production uses a pinned catalogue View.
+	// An injected single-model reader supplies attributes when no catalogue View
+	// callback exists. Production retains the View result and its adapter-resolved
+	// values.
 	if s.Catalog.View == nil && s.Catalog.Lookup != nil {
 		result.Attributes = modelcatalog.Merge(s.Catalog.Lookup(target.Model), override)
 	}
 	return result
 }
 
-// Preview applies a draft to the group's saved routes, or loads the saved profile when draft is nil.
+// Preview resolves a model through the group's saved provider routes and
+// applies a draft profile or the stored profile when draft is nil. Client
+// protocol filters returned routes when supplied, and models outside the finite
+// saved candidate set yield an empty result. A present Catalogue needs its
+// Read callback configured, and a nil draft requires Repo; missing Catalogue
+// returns configuration unavailability before those reads.
 func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, model, clientProtocol string, draft *ModelAttributeConfig) ([]modelcatalog.Resolution, error) {
 	if s.Catalogue == nil {
 		return nil, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model catalogue is unavailable")
@@ -204,7 +299,9 @@ func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, mode
 	return result, nil
 }
 
-// Unavailable reports whether any group configuration read failed in this session.
+// Unavailable reports whether the session retains any group profile loading or
+// copying error. A nil session returns false, and the mutex provides a
+// consistent inspection while route resolution continues.
 func (s *ModelAttributeSession) Unavailable() bool {
 	if s == nil {
 		return false
@@ -219,6 +316,9 @@ func (s *ModelAttributeSession) Unavailable() bool {
 	return false
 }
 
+// identityCandidates obtains the configured model-identity expansion function
+// for override matching. An absent provider returns nil, leaving matches based
+// on the supplied full model identity alone.
 func (s *ModelAttributeService) identityCandidates() func(string) []string {
 	if s.Catalog.Candidates != nil {
 		return s.Catalog.Candidates()

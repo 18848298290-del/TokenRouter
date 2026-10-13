@@ -16,12 +16,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// creativeImageResponseBody records closure to check that generation releases its connection before download.
+// OpenAI image fixtures simulate response bodies and download callbacks to
+// observe delivery order without real transport. Tests inspect exact request
+// fields, base64 preference, signed URL preservation, bounded download counts,
+// and fixed result errors under synctest timing and injected cancellation.
+
+// creativeImageResponseBody wraps the fixture reader and records
+// close-before-download observations.
 type creativeImageResponseBody struct {
-	io.Reader
-	closed bool
+	io.Reader // simulated response body reader
+	// closed records the simulated body Close call. The download fixture checks
+	// this flag to observe cleanup order before fetching the returned image URL.
+	closed bool // fixture body close observed flag
 }
 
+// TestParseCreativeOpenAIImageOutputs supplies two encoded results and then an
+// empty array. It checks the first decoded bytes and zero index, while empty
+// data returns the asserted retryable 502 error.
 func TestParseCreativeOpenAIImageOutputs(t *testing.T) {
 	img1 := base64.StdEncoding.EncodeToString([]byte("png-bytes-1"))
 	img2 := base64.StdEncoding.EncodeToString([]byte("png-bytes-2"))
@@ -49,7 +60,9 @@ func TestParseCreativeOpenAIImageOutputs(t *testing.T) {
 	require.True(t, upstreamErr.Retryable)
 }
 
-// TestBuildCreativeOpenAIRequestBody checks generation and edit request fields.
+// TestBuildCreativeOpenAIRequestBody inspects JSON generation and multipart
+// inpaint fields using a two-output run. Requests still use one PNG output;
+// the fixture checks DALL-E response_format and the listed four-K dimensions.
 func TestBuildCreativeOpenAIRequestBody(t *testing.T) {
 	// Generation uses JSON.
 	run := creative.CreativeRun{Operation: creative.CreativeOperationGenerate, ImageSize: "1K", RequestedOutputCount: 2}
@@ -108,12 +121,17 @@ func TestBuildCreativeOpenAIRequestBody(t *testing.T) {
 	require.Contains(t, string(body), `name="background"`)
 }
 
+// Close records that the fixture response body was closed and returns success.
+// URL-download callbacks inspect this flag to establish cleanup ordering after
+// generation reads in the simulated exchange.
 func (b *creativeImageResponseBody) Close() error {
 	b.closed = true
 	return nil
 }
 
-// TestOpenAIImageURLResults checks download retries and generation counts across models and operations.
+// TestOpenAIImageURLResults injects one failed download followed by usable
+// bytes for the listed models and operations. Assertions require a closed
+// generation body, preserved signed URL, one generation, and two fetches.
 func TestOpenAIImageURLResults(t *testing.T) {
 	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
 		for _, operation := range []string{"generate", "edit", "inpaint"} {
@@ -154,12 +172,17 @@ func TestOpenAIImageURLResults(t *testing.T) {
 	}
 }
 
-// TestOpenAIImageResultFailures checks error classification and filtering of sensitive download addresses.
+// TestOpenAIImageResultFailures supplies malformed responses and failed or
+// cancelled URL fetching under synctest. It checks result codes, nonretryable
+// classification, exact fetch counts, and omission of the supplied secret
+// text.
 func TestOpenAIImageResultFailures(t *testing.T) {
 	for _, test := range []struct {
+		// name labels the case; body supplies response text; code names expected
+		// failure
 		name, body, code string
-		cancel           bool
-		wantDownloads    int
+		cancel           bool // cancel injected during image fetch
+		wantDownloads    int  // expected image fetch call count
 	}{
 		{name: "download exhausted", body: `{"data":[{"url":"https://cdn.example.com/private?sig=secret"}]}`, code: "IMAGE_DOWNLOAD_FAILED", wantDownloads: 3},
 		{name: "cancelled download", body: `{"data":[{"url":"https://cdn.example.com/private?sig=secret"}]}`, code: "IMAGE_DOWNLOAD_FAILED", cancel: true, wantDownloads: 1},
@@ -170,10 +193,19 @@ func TestOpenAIImageResultFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
+				// This scenario owns the cancellable context.
+				// Release that lifetime on exit;
+				// the fetch hook can also cancel it earlier to
+				// stop further download retries.
 				defer cancel()
 				downloads := 0
 				target := &Target{OpenAI: &OpenAIOptions{FetchImage: func(context.Context, string) (string, error) {
 					downloads++
+					// Cancel from the first injected fetch
+					// so the adapter context, not a
+					// generation retry, stops later
+					// download attempts in this fixture
+					// case.
 					if test.cancel {
 						cancel()
 					}
@@ -191,7 +223,9 @@ func TestOpenAIImageResultFailures(t *testing.T) {
 	}
 }
 
-// TestOpenAIImageBase64Preferred checks that decodable Base64 avoids a URL download.
+// TestOpenAIImageBase64Preferred supplies both a URL and decodable base64 in
+// one item. The returned bytes match base64 and the download callback fails
+// the test if unexpectedly invoked.
 func TestOpenAIImageBase64Preferred(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		target := &Target{OpenAI: &OpenAIOptions{FetchImage: func(context.Context, string) (string, error) {

@@ -13,51 +13,93 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AffiliateHandler manages custom invitation codes and rebate rates,
-// including user lookup, paginated records, and batch rate updates.
+// Administrator edits can change an invitation code and a rebate override
+// through separate persistent calls. Code replacement happens before a rate
+// edit; clearing settings removes the rate before generating a replacement
+// code, so a later failure can leave the earlier write applied.
+//
+// Audit lists accept either RFC3339 instants or local calendar dates.
+// Date-only end bounds use the next local midnight minus one nanosecond,
+// retaining an entire requested day across daylight-saving changes. Invalid
+// date text contributes no time predicate, and the injected calendar
+// interprets dates when a requested user timezone cannot be loaded.
+
+// AffiliateHandler serves affiliate administrator edits, recipient lookup,
+// and paged audit records.
 type AffiliateHandler struct {
+	// affiliateService is retained for administrator edits and record queries.
+	// Callers provide an initialized service and coordinate its lifetime with
+	// the handler.
+	// shared affiliate administrator operations
 	affiliateService *promotion.AffiliateService
-	lookupUsers      func(context.Context, string) ([]AffiliateUserSummary, error)
-	calendar         timezone.Calendar
+	// lookupUsers receives nonempty q text and the request context.
+	// providePromotionAffiliateHTTP installs a callback returning at most twenty
+	// matching account identities.
+	// recipient selector search callback
+	lookupUsers func(context.Context, string) ([]AffiliateUserSummary, error)
+	// calendar interprets date-only filters when no valid user timezone is
+	// supplied. Its injected location also determines daylight-saving
+	// transitions for inclusive day endings.
+	calendar timezone.Calendar // local date interpretation calendar
 }
 
-// UpdateAffiliateUserRequest updates a user's affiliate settings.
+// UpdateAffiliateUserRequest carries independent code replacement and
+// inviter-rate edits.
 // PUT /api/v1/admin/affiliates/users/:user_id
-//
-// Both settings are optional and are applied independently.
 type UpdateAffiliateUserRequest struct {
-	AffCode              *string  `json:"aff_code"`
+	// AffCode nil leaves the saved invitation code unchanged. A supplied value
+	// is handled first and can persist even if the later rate edit fails.
+	// optional replacement invitation code
+	AffCode *string `json:"aff_code"`
+	// AffRebateRatePercent requests a replacement when present, while
+	// ClearRebateRate takes precedence and requests SQL NULL. Omission of both
+	// retains the existing percentage override.
+	// optional inviter percentage override
 	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent"`
-	// ClearRebateRate writes NULL to remove the override, distinguishing a clear from an omitted field.
+	// remove saved rate override
 	ClearRebateRate bool `json:"clear_rebate_rate"`
 }
 
-// BatchSetRateRequest sets or clears one rate for multiple users.
-//
-// When clear is true, aff_rebate_rate_percent is ignored and overrides are removed.
-// Otherwise aff_rebate_rate_percent is required and applies to every supplied user ID.
-// The clear flag distinguishes removal from an omitted or null JSON rate.
-//
+// BatchSetRateRequest carries one rate replacement or removal for submitted
+// user IDs.
 // POST /api/v1/admin/affiliates/users/batch-rate
 type BatchSetRateRequest struct {
-	UserIDs              []int64  `json:"user_ids" binding:"required"`
+	// UserIDs is required and cannot be empty at the handler. The service
+	// filters nonpositive IDs, while the response still counts all submitted
+	// entries.
+	// submitted target account identifiers
+	UserIDs []int64 `json:"user_ids" binding:"required"`
+	// AffRebateRatePercent supplies the replacement percentage when Clear is
+	// false and is then required. Clear takes precedence over a supplied value
+	// and requests removal of every selected override.
+	// optional replacement inviter percentage
 	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent"`
-	Clear                bool     `json:"clear"`
+	// remove selected rate overrides
+	Clear bool `json:"clear"`
 }
 
-// AffiliateUserSummary contains the user fields needed by the lookup selector.
+// AffiliateUserSummary identifies a recipient in the administrator lookup
+// selector.
 type AffiliateUserSummary struct {
-	ID       int64  `json:"id"`
-	Email    string `json:"email"`
-	Username string `json:"username"`
+	ID       int64  `json:"id"`       // candidate account identifier
+	Email    string `json:"email"`    // candidate account email
+	Username string `json:"username"` // candidate account display name
 }
 
-// NewAffiliateHandler builds the admin affiliate handler.
+// NewAffiliateHandler retains affiliate operations, recipient lookup, and a
+// calendar for administrator endpoints.
+//
+// Callers provide usable dependencies; each request passes its context to
+// operations and lookup while calendar state remains shared.
 func NewAffiliateHandler(affiliate *promotion.AffiliateService, lookup func(context.Context, string) ([]AffiliateUserSummary, error), calendar timezone.Calendar) *AffiliateHandler {
 	return &AffiliateHandler{affiliateService: affiliate, lookupUsers: lookup, calendar: calendar}
 }
 
-// ListUsers returns a page of users with custom affiliate settings.
+// ListUsers returns the paged accounts with custom invitation-code or
+// percentage settings.
+//
+// It passes search and parsed pagination to the service and uses the shared
+// error mapper for failed queries.
 // GET /api/v1/admin/affiliates/users
 func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -75,6 +117,14 @@ func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 	httpx.Paginated(c, entries, total, page, pageSize)
 }
 
+// UpdateUserSettings applies optional code and rate edits for a positive
+// user_id.
+//
+// JSON omission retains each setting; ClearRebateRate takes precedence over a
+// supplied rate. The code update runs first, then a rate removal or
+// replacement is attempted. These calls have separate persistence ownership,
+// so a rate failure can return an error after the code is already saved.
+// Success reports the requested user ID.
 func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
 	if err != nil || userID <= 0 {
@@ -88,6 +138,8 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 		return
 	}
 
+	// The handler supplies no combined transaction for these calls, so repository
+	// completion of the code write can precede the rate operation.
 	if req.AffCode != nil {
 		if err := h.affiliateService.AdminUpdateUserAffCode(c.Request.Context(), userID, *req.AffCode); err != nil {
 			httpx.ErrorFrom(c, err)
@@ -110,10 +162,14 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 	httpx.Success(c, gin.H{"user_id": userID})
 }
 
-// ClearUserSettings clears the user's rebate override and generates
-// a replacement invitation code.
+// ClearUserSettings removes the user's rebate override and requests a
+// generated invitation code.
 //
-// The writes run sequentially; a failure may leave the rate cleared before the code is reset.
+// It rejects nonpositive user_id before writing, then clears the rate before
+// resetting the code. These calls are separate persistent operations, so
+// code-reset failure can return an error after the override has already been
+// removed. Successful completion reports the requested user ID; existing
+// referral relationships continue to reference that user's identity.
 // DELETE /api/v1/admin/affiliates/users/:user_id
 func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -121,6 +177,9 @@ func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 		httpx.BadRequest(c, "Invalid user_id")
 		return
 	}
+	// Send nil to the rate repository before generating code. Each service call
+	// handles its own transaction participation, leaving no handler-owned
+	// rollback across both operations.
 	if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, nil); err != nil {
 		httpx.ErrorFrom(c, err)
 		return
@@ -132,6 +191,11 @@ func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 	httpx.Success(c, gin.H{"user_id": userID})
 }
 
+// BatchSetRate replaces or removes one inviter percentage for the submitted
+// account list.
+//
+// Clear takes precedence; otherwise a rate is required. The affected response
+// is the submitted list length, including entries the service discards.
 func (h *AffiliateHandler) BatchSetRate(c *gin.Context) {
 	var req BatchSetRateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -157,7 +221,10 @@ func (h *AffiliateHandler) BatchSetRate(c *gin.Context) {
 	httpx.Success(c, gin.H{"affected": len(req.UserIDs)})
 }
 
-// LookupUsers searches by email or username for the custom-user dialog.
+// LookupUsers returns recipient selector results for a nonempty q query.
+//
+// An empty query returns a nonnil empty list without invoking lookup. Search
+// errors use the shared HTTP error mapper.
 // GET /api/v1/admin/affiliates/users/lookup?q=
 func (h *AffiliateHandler) LookupUsers(c *gin.Context) {
 	keyword := c.Query("q")
@@ -174,7 +241,11 @@ func (h *AffiliateHandler) LookupUsers(c *gin.Context) {
 	httpx.Success(c, result)
 }
 
-// GetUserOverview returns a user's affiliate summary.
+// GetUserOverview returns the affiliate overview for a positive parsed
+// user_id.
+//
+// It reports invalid IDs as bad requests and delegates effective-rate
+// selection and available-quota observation to the service.
 // GET /api/v1/admin/affiliates/users/:user_id/overview
 func (h *AffiliateHandler) GetUserOverview(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -190,7 +261,11 @@ func (h *AffiliateHandler) GetUserOverview(c *gin.Context) {
 	httpx.Success(c, overview)
 }
 
-// ListInviteRecords returns inviter and invitee relationships across the site.
+// ListInviteRecords returns paged inviter relationships using search,
+// sorting, and inclusive time filters.
+//
+// It uses the calendar parsers and reports the normalized filter page and
+// size in the response.
 // GET /api/v1/admin/affiliates/invites
 func (h *AffiliateHandler) ListInviteRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -203,7 +278,11 @@ func (h *AffiliateHandler) ListInviteRecords(c *gin.Context) {
 	httpx.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
-// ListRebateRecords returns rebate records with their source-order details.
+// ListRebateRecords returns paged source-order accruals using search,
+// sorting, and inclusive time filters.
+//
+// It uses the calendar parsers and keeps price, charged money, and granted
+// quota in their service fields.
 // GET /api/v1/admin/affiliates/rebates
 func (h *AffiliateHandler) ListRebateRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -216,7 +295,11 @@ func (h *AffiliateHandler) ListRebateRecords(c *gin.Context) {
 	httpx.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
-// ListTransferRecords returns records of affiliate quota transfers into balance.
+// ListTransferRecords returns paged quota-transfer receipts using search,
+// sorting, and inclusive time filters.
+//
+// It uses the calendar parsers; old ledger receipts can expose missing
+// post-transfer snapshots.
 // GET /api/v1/admin/affiliates/transfers
 func (h *AffiliateHandler) ListTransferRecords(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
@@ -229,6 +312,11 @@ func (h *AffiliateHandler) ListTransferRecords(c *gin.Context) {
 	httpx.Paginated(c, items, total, filter.Page, filter.PageSize)
 }
 
+// parseAffiliateRecordFilter builds record criteria from HTTP queries and
+// supplied pagination.
+//
+// Sizes above one hundred are capped; only exact asc selects ascending order.
+// Unsupported date text leaves the corresponding bound unset.
 func parseAffiliateRecordFilter(c *gin.Context, page, pageSize int, calendar timezone.Calendar) promotion.AffiliateRecordFilter {
 	filter := promotion.AffiliateRecordFilter{
 		Search:   c.Query("search"),
@@ -238,6 +326,7 @@ func parseAffiliateRecordFilter(c *gin.Context, page, pageSize int, calendar tim
 		SortDesc: c.Query("sort_order") != "asc",
 	}
 	if filter.PageSize > 100 {
+		// The service applies this same audit-row ceiling.
 		filter.PageSize = 100
 	}
 	userTZ := c.Query("timezone")
@@ -250,6 +339,11 @@ func parseAffiliateRecordFilter(c *gin.Context, page, pageSize int, calendar tim
 	return filter
 }
 
+// parseAffiliateRecordStartTime returns a trimmed RFC3339 instant or a date's
+// midnight in the selected calendar location.
+//
+// Empty or unparseable text returns nil; a valid timestamp's offset takes
+// precedence over userTZ.
 func parseAffiliateRecordStartTime(raw string, userTZ string, calendar timezone.Calendar) *time.Time {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -258,12 +352,26 @@ func parseAffiliateRecordStartTime(raw string, userTZ string, calendar timezone.
 	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 		return &parsed
 	}
+	// Date-only input has no timestamp offset, so let the user location or
+	// injected calendar establish its midnight instant.
 	if parsed, err := calendar.ParseInUserLocation("2006-01-02", raw, userTZ); err == nil {
 		return &parsed
 	}
+	// Leave the lower bound unset when both layouts fail, keeping the
+	// administrator's remaining search and pagination filters available to the
+	// record query.
 	return nil
 }
 
+// parseAffiliateRecordEndTime returns the requested inclusive upper time
+// bound.
+//
+// An RFC3339 value keeps its instant and offset, while date-only input uses
+// the selected calendar location. Adding one calendar date before subtracting
+// a nanosecond reaches that local day's final instant even when a
+// daylight-saving transition changes its elapsed duration. Empty or
+// unparseable input returns nil, so the record query receives no upper-time
+// predicate.
 func parseAffiliateRecordEndTime(raw string, userTZ string, calendar timezone.Calendar) *time.Time {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -272,9 +380,16 @@ func parseAffiliateRecordEndTime(raw string, userTZ string, calendar timezone.Ca
 	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 		return &parsed
 	}
+	// A failed instant parse leaves date-only text to the selected calendar;
+	// a valid supplied timestamp would already have returned with its offset.
 	if parsed, err := calendar.ParseInUserLocation("2006-01-02", raw, userTZ); err == nil {
+		// Advance to the next local date before subtracting a nanosecond; a fixed
+		// daily duration would miss daylight-saving day-length changes.
 		end := parsed.AddDate(0, 0, 1).Add(-time.Nanosecond)
 		return &end
 	}
+	// Leave the upper bound unset when both layouts fail, keeping the
+	// administrator's remaining search and pagination filters available to the
+	// record query.
 	return nil
 }

@@ -11,6 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// A queue visit returns a scheduling decision while the processor controls
+// persistent progress. These RunOnce cases use a recording queue to
+// distinguish default polling, requested delays, terminal acknowledgement,
+// processor failure retries and lock-contention recovery before any task
+// execution.
+
+// TestBatchImageWorker_ProcessesJobOnce runs one configured reservation with
+// an undecided processor result. It checks the processed batch identity,
+// default delayed revisit and one deferred lease release.
 func TestBatchImageWorker_ProcessesJobOnce(t *testing.T) {
 	queue := newFakeBatchImageQueue("imgbatch_worker_once")
 	processor := &fakeBatchImageProcessor{}
@@ -23,6 +32,10 @@ func TestBatchImageWorker_ProcessesJobOnce(t *testing.T) {
 	require.Equal(t, 1, queue.releaseCount)
 }
 
+// TestBatchImageWorker_RequeuesNonTerminalResultWithRequestedDelay returns a
+// positive polling delay from a nonterminal processor. The visit is requeued
+// with that duration and its batch identity while acknowledgement stays
+// empty.
 func TestBatchImageWorker_RequeuesNonTerminalResultWithRequestedDelay(t *testing.T) {
 	queue := newFakeBatchImageQueue("imgbatch_worker_requeue")
 	processor := &fakeBatchImageProcessor{result: batchimage.BatchImageProcessResult{RequeueAfter: 42 * time.Second}}
@@ -35,6 +48,9 @@ func TestBatchImageWorker_RequeuesNonTerminalResultWithRequestedDelay(t *testing
 	require.Empty(t, queue.acked)
 }
 
+// TestBatchImageWorker_AcksTerminalResult returns terminal completion from
+// the configured processor. The reserved batch is acknowledged and receives
+// no delayed revisit, protecting the worker's completion scheduling decision.
 func TestBatchImageWorker_AcksTerminalResult(t *testing.T) {
 	queue := newFakeBatchImageQueue("imgbatch_worker_terminal")
 	processor := &fakeBatchImageProcessor{result: batchimage.BatchImageProcessResult{Terminal: true}}
@@ -45,6 +61,9 @@ func TestBatchImageWorker_AcksTerminalResult(t *testing.T) {
 	require.Empty(t, queue.requeued)
 }
 
+// TestBatchImageWorker_RequeuesOnProcessorError injects a processor error
+// during an owned visit. The queue receives the configured error retry delay
+// and no acknowledgement, keeping incomplete persistent work available.
 func TestBatchImageWorker_RequeuesOnProcessorError(t *testing.T) {
 	queue := newFakeBatchImageQueue("imgbatch_worker_error")
 	processor := &fakeBatchImageProcessor{err: errors.New("processor failed")}
@@ -56,14 +75,17 @@ func TestBatchImageWorker_RequeuesOnProcessorError(t *testing.T) {
 	require.Empty(t, queue.acked)
 }
 
+// TestBatchImageWorker_RequeuesWhenJobLockNotAcquired reserves a batch whose
+// lock cannot be acquired. It checks the requested contention delay and
+// confirms the processor and acknowledgement paths remain unused.
 func TestBatchImageWorker_RequeuesWhenJobLockNotAcquired(t *testing.T) {
 	queue := newFakeBatchImageQueue("imgbatch_worker_locked")
 	queue.lockAcquired = false
 	processor := &fakeBatchImageProcessor{}
 	worker := batchimage.NewBatchImageWorker(queue, processor, batchimage.BatchImageWorkerOptions{LockConflictDelay: 3 * time.Second})
 
-	// Lock contention requests a delayed requeue; dropping the job leaves it active
-	// until StaleActiveAfter recovery (ten minutes by default).
+	// This recording queue accepts the contention requeue without modeling a
+	// stored lock token. The assertions inspect the requested scheduling decision.
 	require.NoError(t, worker.RunOnce(context.Background()))
 	require.Empty(t, processor.processed)
 	require.Len(t, queue.requeued, 1)

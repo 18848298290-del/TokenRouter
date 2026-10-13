@@ -9,6 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// cloneQoderFailedCredentials recursively copies map[string]any fixture
+// containers and preserves other values as supplied. Nil remains nil; nested
+// slices and other mutable values are still shared, so fixture mutation is
+// limited to copied maps.
 func cloneQoderFailedCredentials(src map[string]any) map[string]any {
 	if src == nil {
 		return nil
@@ -24,6 +28,11 @@ func cloneQoderFailedCredentials(src map[string]any) map[string]any {
 	return dst
 }
 
+// TestQoderGatewayRefreshExecutorNeedsRefreshUsesFailedCredentialSnapshot
+// compares failed authentication fields with rotated credentials and unrelated
+// model changes. It checks matching failures bypass expiry, mapping changes
+// still qualify, and missing refresh tokens or changed authentication suppress
+// another refresh.
 func TestQoderGatewayRefreshExecutorNeedsRefreshUsesFailedCredentialSnapshot(t *testing.T) {
 	now := time.Now()
 	failedProvider := Record{

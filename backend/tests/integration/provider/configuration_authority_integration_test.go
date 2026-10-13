@@ -17,13 +17,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Inject committed database changes after reads to reproduce configuration, refresh, usage, and health-write
-// interleavings.
+// Administrator edits can start from a record older than the current
+// credentials, health state, and quota counters. A one-shot read callback
+// commits replacement values before the edit continues, allowing each requested
+// edit to be compared with the newer runtime values stored at write time.
+
+// configurationInterleave injects one committed database change after a
+// successful provider read.
 type configurationInterleave struct {
-	*providerpostgres.ProviderStore
+	*providerpostgres.ProviderStore // delegated PostgreSQL store
+	// afterRead injects one change after a successful read and is cleared before
+	// invocation so nested reads cannot repeat the same fixture mutation.
 	afterRead func()
 }
 
+// GetByID returns the provider read before the pending database injection.
+// Successful reads consume one callback; failed reads leave it queued, while
+// the returned record and error come from the original store read.
 func (r *configurationInterleave) GetByID(ctx context.Context, id int64) (*provider.Record, error) {
 	v, err := r.ProviderStore.GetByID(ctx, id)
 	if err == nil && r.afterRead != nil {
@@ -34,6 +44,10 @@ func (r *configurationInterleave) GetByID(ctx context.Context, id int64) (*provi
 	return v, err
 }
 
+// TestConfigurationWriteAuthority injects a new API key, error text, quota
+// counters, and a paused scheduling switch after an administrator read. Every
+// edit mode retains those asserted values; Extra and status cases also check
+// their requested values.
 func TestConfigurationWriteAuthority(t *testing.T) {
 	for _, mode := range []string{"name", "extra", "status", "credentials"} {
 		t.Run(mode, func(t *testing.T) {
@@ -46,6 +60,9 @@ func TestConfigurationWriteAuthority(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, client.Provider.DeleteOneID(row.ID).Exec(context.Background())) })
 			repo := &configurationInterleave{ProviderStore: newProviderStoreContract(client, integrationDB, nil)}
+			// Commit replacement credentials and health data after the underlying store
+			// read but before returning its snapshot to the edit, so persistence receives
+			// input assembled from the earlier record.
 			repo.afterRead = func() {
 				_, err := integrationDB.ExecContext(ctx, `UPDATE providers SET
 				 credentials=jsonb_set(credentials,'{api_key}','"new-test-key"'),

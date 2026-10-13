@@ -14,7 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestBatchImageLostOwner checks that a stale Redis lock holder cannot renew or acknowledge a successor job.
+// Replacing a Redis lock token models a worker losing ownership before its
+// next operation. The integration cases check that renewal reports loss and an
+// old holder's acknowledgement leaves the successor's active membership
+// available for processing.
+
+// TestBatchImageLostOwner replaces a holder's Redis lock with a successor
+// acquisition. Renewal must return an error, and old-token acknowledgement
+// must report lease loss while the successor's active member remains present.
 func TestBatchImageLostOwner(t *testing.T) {
 	t.Run("renewal_reports_loss", func(t *testing.T) {
 		ctx := context.Background()
@@ -23,6 +30,9 @@ func TestBatchImageLostOwner(t *testing.T) {
 		old, ok, err := q.TryAcquireJobLock(ctx, "imgbatch_test", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
+		// Delete the old lock before reacquisition to model expiry deterministically.
+		// The old handle retains its token, so renewal tests ownership rather than
+		// elapsed wall-clock time.
 		require.NoError(t, db.Del(ctx, "batch_image:queue:lock:imgbatch_test").Err())
 		next, ok, err := q.TryAcquireJobLock(ctx, "imgbatch_test", time.Minute)
 		require.NoError(t, err)
@@ -42,6 +52,9 @@ func TestBatchImageLostOwner(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		defer func() { require.NoError(t, old.Release(ctx)) }()
+		// Delete the old lock and acquire a new token before installing successor
+		// activity. An acknowledgement through the old handle must reject that
+		// ownership change before touching active membership.
 		require.NoError(t, db.Del(ctx, "batch_image:queue:lock:"+id).Err())
 		next, ok, err := q.TryAcquireJobLock(ctx, id, time.Minute)
 		require.NoError(t, err)

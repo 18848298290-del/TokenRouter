@@ -21,10 +21,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMediaAllocationRatesPreserveBalanceMultiplier checks separate subscription and balance rates in both gateway paths; peak pricing applies to token billing.
+// Media completion submits separate subscription and balance factors alongside
+// a user cost calculated from preliminary plan evidence. The fixtures inspect
+// captured commands and logs across recorder paths, applying peak scaling to
+// token mode while image, per-request, and video modes retain
+// their media rates.
+
+// TestMediaAllocationRatesPreserveBalanceMultiplier records token and media
+// fixtures through OpenAI and Messages completion. It checks the submitted
+// funding factors, token-only peak scale, and the log's
+// preliminary subscription-plan rate.
 func TestMediaAllocationRatesPreserveBalanceMultiplier(t *testing.T) {
 	for _, gatewayKind := range []string{"openai", "generic"} {
 		for _, mode := range []routing.BillingMode{routing.BillingModeToken, routing.BillingModeImage, routing.BillingModePerRequest, routing.BillingModeVideo} {
+			// Video is supplied through OpenAIResult in this table. Skip the
+			// Messages row because that fixture is constructed
+			// with image quantities.
 			if gatewayKind == "generic" && mode == routing.BillingModeVideo {
 				continue
 			}
@@ -79,15 +91,24 @@ func TestMediaAllocationRatesPreserveBalanceMultiplier(t *testing.T) {
 						}
 						require.NoError(t, svc.RecordMessages(context.Background(), &gatewaycapture.MessagesCapture{Result: result, APIKey: key, User: user, Provider: gatewaycapture.ExecutionCompletionRecord(provider), Subscription: subscription}))
 					}
+					// These expected command factors include the configured
+					// peak only for token mode; preliminary plan pricing is
+					// checked separately below.
 					scale := 1.0
 					if mode == routing.BillingModeToken && peak {
 						scale = 3
 					}
 					require.NotNil(t, billingRepo.LastCmd)
+					// Dimensionless allocation and plan factors allow a small
+					// floating-point comparison residue.
 					require.InDelta(t, 2*scale, billingRepo.LastCmd.SubscriptionRateMultiplier, 1e-12)
 					require.InDelta(t, 2*scale, billingRepo.LastCmd.BalanceRateMultiplier, 1e-12)
 					require.InDelta(t, scale, billingRepo.LastCmd.SubscriptionRateMultiplierScale, 1e-12)
-					// The subscription receives the 0.5x rate while balance allocation retains its own rate.
+					// The log carries preliminary plan pricing, while the
+					// captured command retains the separate factors needed for
+					// a later funds allocation. Dimensionless allocation and
+					// plan factors allow a small
+					// floating-point comparison residue.
 					require.InDelta(t, 0.5*scale, logs.LastLog.RateMultiplier, 1e-12)
 				})
 			}

@@ -23,14 +23,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Integration fixtures use the migrated shared database while each
+// UsageLogRepoSuite test selects an Ent transaction for rollback isolation.
+// Tests that exercise committed pool-backed batches instead register truncation
+// cleanup, keeping those records out of later retained-usage assertions.
+//
+// Fixture constructors fill practical defaults and mutate their supplied domain
+// values with persistent identity and timestamps. Provider defaults force
+// schedulability, and key/user constructors synthesize text when missing, so
+// tests that need other states use explicit post-creation updates or different
+// setup. Stores receive the transaction's SQL executor and Calendar, while
+// uniquely identified usage rows prevent accidental fixture deduplication.
+
+// UsageLogRepoSuite runs repository scenarios against one rollback-isolated Ent
+// transaction.
 type UsageLogRepoSuite struct {
-	suite.Suite
-	ctx    context.Context
-	tx     *dbent.Tx
-	client *dbent.Client
-	repo   *Store
+	suite.Suite // assertions and suite lifecycle
+	// ctx, tx, client, and repo are reset by SetupTest for each method. client and
+	// repo use tx's connection, whose registered cleanup rolls back fixture writes.
+	ctx    context.Context // current fixture query context
+	tx     *dbent.Tx       // current rollback-owned transaction
+	client *dbent.Client   // transaction scoped Ent client
+	repo   *Store          // transaction scoped usage repository
 }
 
+// mustCreateUser inserts a fixture user and writes its identity/timestamps back
+// into u. Missing email, password hash, role, and status use fixture defaults,
+// while zero concurrency becomes five.
+//
+// The provided Ent client determines transaction ownership. After the user is
+// saved, requested allowed-group links are inserted in sequence; any persistence
+// error fails the test immediately, and the surrounding fixture transaction or
+// registered cleanup owns rollback/removal. The helper returns the same supplied
+// pointer, so later assertions see its generated ID and timestamps.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()
@@ -74,6 +99,8 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	u.CreatedAt = created.CreatedAt
 	u.UpdatedAt = created.UpdatedAt
 
+	// The user ID must exist before membership links are written. The caller's
+	// transaction and cleanup own recovery if a later allowed-group insert fails.
 	if len(u.AllowedGroups) > 0 {
 		for _, groupID := range u.AllowedGroups {
 			_, err := client.UserAllowedGroup.Create().
@@ -87,6 +114,9 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	return u
 }
 
+// mustCreateGroup inserts a fixture group and mutates g with its persistent
+// identity/timestamps. Empty status becomes active, supplied nonzero timestamps
+// are used, and the selected Ent client owns any surrounding transaction.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -120,6 +150,10 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
+// mustCreateProvider inserts a fixture provider and writes identity/timestamps
+// into a. Missing platform/type/status use fixture values, zero
+// concurrency/priority choose defaults, and false Schedulable is forced true;
+// nullable settings are copied when supplied.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -207,6 +241,10 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
+// mustCreateApiKey inserts a fixture key and mutates its identity/timestamps.
+// Missing status, key text, or name use fixture defaults; optional ownership,
+// limit, and window fields are persisted when their represented values are
+// supplied.
 func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *apikey.APIKey {
 	t.Helper()
 	ctx := context.Background()
@@ -284,30 +322,41 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *api
 	return k
 }
 
-// testEntClient returns the shared Ent client for tests that commit their own transactions.
-// Cleanup truncates users and dependent tables to remove committed test data.
+// testEntClient returns the shared Ent client for tests whose writes commit. It
+// registers a cascading user-table truncation with identity restart after the
+// test, so callers serialize use of this shared committed-fixture database.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	t.Cleanup(func() {
-		// Cascade from users to clear fixtures while retaining migration-seeded groups for later tests.
+		// Committed batch fixtures cannot be rolled back by testEntTx. Cascade from
+		// users to remove dependent rows and restart identities before later
+		// scenarios.
 		_, err := integrationDB.ExecContext(context.Background(), "TRUNCATE users RESTART IDENTITY CASCADE")
 		require.NoError(t, err, "清理集成测试提交的数据")
 	})
 	return integrationEntClient
 }
 
-// testEntTx starts an Ent transaction and rolls it back during test cleanup.
+// testEntTx starts a shared-database Ent transaction and registers rollback
+// cleanup. The caller chooses its transaction client/executor for test writes;
+// cleanup ignores rollback errors, including a transaction already completed by
+// the test.
 func testEntTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 
 	tx, err := integrationEntClient.Tx(context.Background())
 	require.NoError(t, err, "begin ent tx")
 	t.Cleanup(func() {
+		// Roll back fixture work on every test exit; an already completed transaction
+		// may return an error, which this cleanup deliberately ignores.
 		_ = tx.Rollback()
 	})
 	return tx
 }
 
+// SetupTest creates a rollback-isolated Ent transaction for one suite method.
+// The suite stores its context, transaction client, and usage repository using
+// the same executor, with a Calendar based on current time.Local.
 func (s *UsageLogRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := testEntTx(s.T())
@@ -316,12 +365,16 @@ func (s *UsageLogRepoSuite) SetupTest() {
 	s.repo = NewUsageLogRepositoryWithSQL(s.client, tx, timezone.NewCalendar(time.Local))
 }
 
+// createUsageLog creates one charged fixture row with a unique request identity.
+// The supplied actor/key/provider and timestamp are persisted through the suite
+// store; failures stop the test, and the returned row carries its database
+// identity.
 func (s *UsageLogRepoSuite) createUsageLog(user *identity.User, apiKey *apikey.APIKey, provider *providercore.Record, inputTokens, outputTokens int, cost float64, createdAt time.Time) *usage.UsageLog {
 	log := &usage.UsageLog{
 		UserID:       user.ID,
 		APIKeyID:     apiKey.ID,
 		ProviderID:   provider.ID,
-		RequestID:    uuid.New().String(), // Unique IDs prevent fixture deduplication.
+		RequestID:    uuid.New().String(), // Separate requests cannot collapse under the request/key uniqueness rule.
 		Model:        "claude-3",
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,

@@ -20,7 +20,14 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestMaxReasoningPricing_IntervalsAndBillingModes checks interval and cache prices with group rates, and excludes reasoning multipliers from non-token modes.
+// Token calculations use the final forwarded effort when applying a configured
+// Max multiplier. The fixtures separate interval token amounts, independent
+// provider-cost cards, and recorder effort evidence so requested audit
+// metadata cannot become the price selector after a downgrade.
+
+// TestMaxReasoningPricing_IntervalsAndBillingModes compares max and xhigh for
+// interval token amounts and cache buckets. It checks group-rate scaling and
+// the unmodified operation totals of the supplied non-token resolved fixtures.
 func TestMaxReasoningPricing_IntervalsAndBillingModes(t *testing.T) {
 	bs := newCalculator(nil)
 	resolver := billingtestkit.PriceResolver(nil, bs)
@@ -43,12 +50,18 @@ func TestMaxReasoningPricing_IntervalsAndBillingModes(t *testing.T) {
 		input.ReasoningEffort = "xhigh"
 		standard, err := bs.CalculateCostUnified(input)
 		require.NoError(t, err)
+		// The four standard token buckets sum to $1.75. Max scales those
+		// buckets before the user's separate twofold rate, with dollar
+		// tolerances allowing arithmetic rounding.
 		require.InDelta(t, 1.75, standard.TotalCost, 1e-12)
 		require.InDelta(t, 1.75*factor, maxCost.TotalCost, 1e-12)
 		require.InDelta(t, 3.5*factor, maxCost.ActualCost, 1e-12)
 		require.InDelta(t, 0.3*factor, maxCost.CacheCreationCost, 1e-12)
 		require.InDelta(t, 0.05*factor, maxCost.CacheReadCost, 1e-12)
 	}
+	// These resolved operation fixtures carry a default amount and no
+	// BasePricing record. Their totals check mode dispatch with the supplied
+	// max effort present.
 	for _, mode := range []routing.BillingMode{routing.BillingModePerRequest, routing.BillingModeImage, routing.BillingModeVideo} {
 		cost, err := bs.CalculateCostUnified(billing.CostInput{
 			Model: "claude-fable-5-1", ReasoningEffort: "max",
@@ -56,11 +69,14 @@ func TestMaxReasoningPricing_IntervalsAndBillingModes(t *testing.T) {
 			Resolved: &pricing.ResolvedPricing{Mode: mode, DefaultPerRequestPrice: 0.1},
 		})
 		require.NoError(t, err)
+		// Operation USD totals allow a small absolute rounding difference.
 		require.InDelta(t, 0.2, cost.TotalCost, 1e-12)
 	}
 }
 
-// TestMaxReasoningPricing_ProviderStatsPriority checks custom provider costs first, then catalog costs at the final reasoning effort.
+// TestMaxReasoningPricing_ProviderStatsPriority supplies an independent
+// provider-cost card before removing it. It checks the custom amount first,
+// then the historical catalog's threefold max-effort amount relative to xhigh.
 func TestMaxReasoningPricing_ProviderStatsPriority(t *testing.T) {
 	bs := newCalculator(nil)
 	pricingConfig := &routingtestkit.Configuration{ID: 1, Status: billing.StatusActive, ProviderStatsPricingRules: []routing.ProviderStatsPricingRule{{
@@ -70,6 +86,7 @@ func TestMaxReasoningPricing_ProviderStatsPriority(t *testing.T) {
 	tokens := pricing.UsageTokens{InputTokens: 100}
 	cost := contractProviderStatsCost(context.Background(), cs, bs, "", 1, 10, "claude-fable-5-1", "", tokens, 1, 9, "priority", "max")
 	require.NotNil(t, cost)
+	// Provider-cost USD comparisons allow rounding in token-rate products.
 	require.InDelta(t, 1, *cost, 1e-12)
 	pricingConfig.ProviderStatsPricingRules = nil
 	cs = newTestPricingConfigServiceForStats(t, pricingConfig, 10, capability.PlatformAnthropic)
@@ -77,10 +94,14 @@ func TestMaxReasoningPricing_ProviderStatsPriority(t *testing.T) {
 	cost = contractProviderStatsCost(context.Background(), cs, bs, "", 1, 10, "claude-fable-5-1", "", tokens, 1, 9, "", "max")
 	require.NotNil(t, standard)
 	require.NotNil(t, cost)
+	// Provider-cost USD comparisons allow rounding in token-rate products.
 	require.InDelta(t, *standard*3, *cost, 1e-12)
 }
 
-// TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort checks that billing uses the final effort while the requested effort remains audit data.
+// TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort keeps requested effort at
+// max while changing the forwarded effort. It checks threefold cost scaling
+// after forwarding max, with both catalog-only and
+// resolver-backed recorder dependencies.
 func TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort(t *testing.T) {
 	bs := newCalculator(nil)
 	for _, resolver := range []*billing.PriceResolver{nil, billingtestkit.PriceResolver(nil, bs)} {
@@ -95,11 +116,15 @@ func TestMaxReasoningPricing_OpenAIUsageUsesFinalEffort(t *testing.T) {
 		final = "max"
 		cost, err := svc.CalculateOpenAIRecordUsageCostAt(context.Background(), gatewaycapture.ProjectOpenAICompletionResult(result, nil), gatewaycapture.ProjectCompletionKey(key), []string{"claude-fable-5-1"}, 2, 1, 1, 1, tokens, "", time.Time{})
 		require.NoError(t, err)
+		// The effort-scaled USD totals allow an absolute rounding difference.
 		require.InDelta(t, standard.TotalCost*3, cost.TotalCost, 1e-12)
 		require.InDelta(t, standard.ActualCost*3, cost.ActualCost, 1e-12)
 	}
 }
 
+// TestMaxReasoningPricing_RejectsInvalidMultipliers supplies zero, negative,
+// NaN, and infinite Max factors to card validation. It checks that each
+// invalid token-pricing multiplier produces an error.
 func TestMaxReasoningPricing_RejectsInvalidMultipliers(t *testing.T) {
 	for _, factor := range []float64{0, -1, math.NaN(), math.Inf(1)} {
 		require.Error(t, routing.CheckBillingModeRequirements(routing.ModelPricingEntry{BillingMode: routing.BillingModeToken, MaxReasoningEffortMultiplier: &factor}))

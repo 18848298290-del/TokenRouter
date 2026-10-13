@@ -14,12 +14,21 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// CN-compatible Messages usage can include cached tokens inside the reported
+// input total. The fixtures pass Kimi, GLM, and DeepSeek observations through
+// Anthropic parsing and OpenAI adaptation before checking that only the
+// uncached remainder receives the input price.
+
+// TestCNProviderAnthropicUsageBillsUncachedInput supplies three CN-compatible
+// usage payloads with cached input included in their totals. It checks the
+// uncached remainder and its positive dollar charge against the fixture
+// model's per-token price.
 func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 	tests := []struct {
-		name      string
-		model     string
-		body      string
-		wantInput int
+		name      string // subtest provider label
+		model     string // priced fixture model
+		body      string // serialized usage response
+		wantInput int    // expected uncached input tokens
 	}{
 		{
 			name:      "Kimi",
@@ -46,10 +55,15 @@ func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			claudeUsage := protocolanthropic.ParseClaudeUsageFromResponseBody([]byte(tt.body))
 			openAIUsage := openaiforward.AnthropicUsageToOpenAI(claudeUsage)
+			// The OpenAI adapter includes cache reads and writes in
+			// InputTokens. Subtract those buckets before charging uncached
+			// input, and clamp inconsistent totals at zero.
 			uncachedInput := max(openAIUsage.InputTokens-openAIUsage.CacheReadInputTokens-openAIUsage.CacheCreationInputTokens, 0)
 			require.Equal(t, tt.wantInput, uncachedInput)
 
-			// Use a fixed off-peak time to isolate the charge for uncached input.
+			// Fix the pricing instant so the input-cost comparison uses the
+			// same request conditions for each
+			// normalized provider-usage fixture.
 			cost, err := billing.CalculateCostUnified(billingcore.CostInput{
 				Ctx: context.Background(), Model: tt.model, RateMultiplier: 1,
 				Resolver:  billingtestkit.PriceResolver(nil, billing),
@@ -65,6 +79,8 @@ func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 
 			pricing, err := billing.GetModelPricing(tt.model)
 			require.NoError(t, err)
+			// Compare the uncached-input USD charge with an
+			// absolute rounding tolerance.
 			require.InDelta(t, float64(tt.wantInput)*pricing.InputPricePerToken, cost.InputCost, 1e-12)
 		})
 	}

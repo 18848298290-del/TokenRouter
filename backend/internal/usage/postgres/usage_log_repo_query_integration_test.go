@@ -20,13 +20,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// TestUsageRequestIDConditionUsesIndexes checks results and plans for sparse matches and external ID collisions.
+// Exact local request identity takes precedence when an unrelated upstream alias
+// uses the same text. A sparse PostgreSQL fixture checks returned IDs and
+// usage-table access plans, while transaction-scoped scenarios verify
+// response-model migration defaults, historical deleted-user hydration, and
+// requested display-model ordering.
+
+// TestUsageRequestIDConditionUsesIndexes creates sparse indexed records with a
+// conflicting upstream alias and legacy null ID. It checks selected IDs and
+// rejects usage_logs sequential-scan nodes in outer EXPLAIN plans.
 func TestUsageRequestIDConditionUsesIndexes(t *testing.T) {
 	ctx := t.Context()
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Roll back the temporary lookup fixture on every test exit, removing its
+	// copied tables and data even when a result or plan assertion fails.
 	defer func() { _ = tx.Rollback() }()
-	// Temporary tables retain production indexes and isolate lookup candidates from other test records.
+	// Copy production index shapes into temporary tables before sparse fixture
+	// insertion, isolating lookup candidates while retaining the access paths being
+	// checked.
 	_, err = tx.ExecContext(ctx, `
 CREATE TEMP TABLE usage_logs (LIKE public.usage_logs INCLUDING ALL) ON COMMIT DROP;
 CREATE TEMP TABLE request_records (LIKE public.request_records INCLUDING ALL) ON COMMIT DROP;
@@ -45,8 +57,8 @@ ANALYZE ops_error_logs;
 ANALYZE ops_system_logs;`)
 	require.NoError(t, err)
 	for _, test := range []struct {
-		search string
-		want   string
+		search string // local or external lookup text
+		want   string // expected sole decoded request
 	}{
 		{"request-1", "request-1"},
 		{"upstream-3", "request-3"},
@@ -64,6 +76,9 @@ ANALYZE ops_system_logs;`)
 				got = append(got, id)
 			}
 			require.NoError(t, rows.Err())
+			// Finish and release selected rows before EXPLAIN reuses this
+			// transaction; a cleanup error fails the same lookup case rather
+			// than passing its result.
 			require.NoError(t, rows.Close())
 			if test.want == "" {
 				require.Empty(t, got)
@@ -72,13 +87,15 @@ ANALYZE ops_system_logs;`)
 			}
 			var raw []byte
 			require.NoError(t, tx.QueryRowContext(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+query, 1, test.search).Scan(&raw))
+			// planNode represents one recursive PostgreSQL EXPLAIN node for
+			// usage access checks.
 			type planNode struct {
-				Type     string     `json:"Node Type"`
-				Relation string     `json:"Relation Name"`
-				Plans    []planNode `json:"Plans"`
+				Type     string     `json:"Node Type"`     // PostgreSQL access node kind
+				Relation string     `json:"Relation Name"` // accessed database relation name
+				Plans    []planNode `json:"Plans"`         // recursively nested query nodes
 			}
 			var plans []struct {
-				Plan planNode `json:"Plan"`
+				Plan planNode `json:"Plan"` // root analyzed query plan
 			}
 			require.NoError(t, json.Unmarshal(raw, &plans))
 			seen := false
@@ -98,7 +115,9 @@ ANALYZE ops_system_logs;`)
 	}
 }
 
-// TestResponseModelMigrationPreservesHistory recreates the old columns in a transaction and checks historical NULL values.
+// TestResponseModelMigrationPreservesHistory removes the diagnostic columns from
+// an existing transactional fixture, then reruns their migration twice. It
+// checks historical rows read both response-model fields as nil.
 func (s *UsageLogRepoSuite) TestResponseModelMigrationPreservesHistory() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "response-history@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "response-history", Name: "history"})
@@ -118,6 +137,9 @@ func (s *UsageLogRepoSuite) TestResponseModelMigrationPreservesHistory() {
 	s.Nil(loaded.UpstreamModelMismatch)
 }
 
+// TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser records active and
+// later-deleted users in one transaction. It checks historical email/deletion
+// metadata remains hydrated and the active user's deletion time stays nil.
 func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -133,8 +155,8 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 
 	now := time.Now().UTC()
 	for _, u := range []struct {
-		uid int64
-		kid int64
+		uid int64 // fixture acting user identifier
+		kid int64 // fixture caller key identifier
 	}{{deleted.ID, apiKey.ID}, {active.ID, apiKey2.ID}} {
 		_, err := repo.Create(ctx, &usage.UsageLog{
 			UserID: u.uid, APIKeyID: u.kid, ProviderID: provider.ID,
@@ -144,7 +166,8 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// The SoftDeleteMixin hook turns deletion into an update of deleted_at.
+	// Deleting the identity marks its deletion time through the soft-delete hook;
+	// retained usage must still resolve that historical identity in the listing.
 	require.NoError(t, client.User.DeleteOneID(deleted.ID).Exec(ctx))
 
 	logs, _, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 50},
@@ -156,19 +179,24 @@ func TestUsageLog_ListWithFilters_ResolvesSoftDeletedUser(t *testing.T) {
 		byUser[l.UserID] = l
 	}
 
-	// Historical log hydration includes the deleted user's email and deletion time.
+	// Historical identity hydration bypasses the user deletion filter, exposing
+	// stored email and deletion time for the already selected usage record.
 	delLog, ok := byUser[deleted.ID]
 	require.True(t, ok, "deleted user's usage log must still be listed")
 	require.NotNil(t, delLog.User, "deleted user identity must resolve")
 	require.Equal(t, "deleted-listfilter@test.com", delLog.User.Email)
 	require.NotNil(t, delLog.User.DeletedAt, "DeletedAt must be set for soft-deleted user")
 
-	// Active users have a nil DeletedAt.
+	// The neighboring active identity was never deleted; its hydrated view must
+	// keep the absence marker distinct from the historical deleted user.
 	actLog := byUser[active.ID]
 	require.NotNil(t, actLog.User)
 	require.Nil(t, actLog.User.DeletedAt)
 }
 
+// TestListWithFilters_SortByModelAsc records display models in reverse
+// alphabetical order with differing timestamps. It checks model-ascending
+// listing returns a-model before z-model regardless of insertion chronology.
 func (s *UsageLogRepoSuite) TestListWithFilters_SortByModelAsc() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "usage-sort@example.com"})
 	apiKey := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "sk-usage-sort", Name: "k"})

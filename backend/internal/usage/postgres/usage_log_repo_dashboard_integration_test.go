@@ -13,7 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestAPIKeyDashboardAnalyticsParity covers local date changes, null durations, zero costs, and future records.
+// Key dashboard totals combine retained usage, local today, nonnull duration
+// averages, and recent raw rates. A Kathmandu fixture compares raw and analytics
+// results with future records, then deletes older rows to check that stale
+// rollup history does not enlarge the retained total.
+
+// TestAPIKeyDashboardAnalyticsParity records usage around Kathmandu dates with
+// null timings, zero costs, and future instants. It compares complete
+// raw/analytics dashboards, then checks parity after retained raw history
+// shrinks.
 func (s *UsageLogRepoSuite) TestAPIKeyDashboardAnalyticsParity() {
 	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "key-analytics@test.local"})
 	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "key-analytics"})
@@ -47,7 +55,9 @@ func (s *UsageLogRepoSuite) TestAPIKeyDashboardAnalyticsParity() {
 	got, err := s.repo.GetAPIKeyDashboardStats(s.ctx, key.ID)
 	s.Require().NoError(err)
 	s.Require().Equal(want, got)
-	// Deleting the oldest records must exclude stale aggregate history from all-time totals.
+	// Delete retained history without rebuilding old buckets, then compare readers;
+	// the key's oldest remaining raw record must bound its retained analytics
+	// total.
 	_, err = s.tx.ExecContext(s.ctx, "DELETE FROM usage_logs WHERE api_key_id=$1 AND created_at<$2", key.ID, now.Add(-24*time.Hour))
 	s.Require().NoError(err)
 	got, err = s.repo.GetAPIKeyDashboardStats(s.ctx, key.ID)

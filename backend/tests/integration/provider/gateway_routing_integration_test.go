@@ -16,15 +16,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// GatewayRoutingSuite tests provider routing queries against PostgreSQL.
-// It checks platform and group filtering used during provider selection.
+// Provider routing queries select active, schedulable records within the
+// requested platform set and group membership. PostgreSQL fixtures distinguish
+// Gemini, Antigravity, and Anthropic records; the final dispatch test compares
+// stored platform values with a local branch that represents a handler
+// decision.
+
+// GatewayRoutingSuite exercises platform and group candidate queries within
+// rollback-owned PostgreSQL transactions.
 type GatewayRoutingSuite struct {
-	suite.Suite
-	ctx          context.Context
-	client       *dbent.Client
-	providerRepo *providerpostgres.ProviderStore
+	suite.Suite // test assertions and runner
+	// ctx, client, and providerRepo share the transaction created by SetupTest.
+	// Each suite method creates fixture rows on that client, and testEntTx
+	// registers rollback after the method finishes.
+	ctx          context.Context                 // current test query context
+	client       *dbent.Client                   // transaction-bound Ent client
+	providerRepo *providerpostgres.ProviderStore // provider query store under test
 }
 
+// SetupTest creates a rollback-owned PostgreSQL transaction and binds the suite
+// client and provider store to it. Each test receives its own transaction, with
+// rollback registered by testEntTx.
 func (s *GatewayRoutingSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := testEntTx(s.T())
@@ -32,11 +44,17 @@ func (s *GatewayRoutingSuite) SetupTest() {
 	s.providerRepo = newProviderStoreContract(s.client, tx, nil)
 }
 
+// TestGatewayRoutingSuite runs PostgreSQL query cases with transaction-owned
+// fixtures for each suite test. The suite checks platform and group membership
+// filters, scheduling exclusions, and stored platform values used by a
+// simulated dispatch branch.
 func TestGatewayRoutingSuite(t *testing.T) {
 	suite.Run(t, new(GatewayRoutingSuite))
 }
 
-// TestListSchedulableByPlatforms_GeminiAndAntigravity checks a multi-platform query.
+// TestListSchedulableByPlatforms_GeminiAndAntigravity creates providers from
+// three platforms and queries a two-platform set. The results contain the
+// Gemini and Antigravity fixture IDs and exclude the Anthropic record.
 func (s *GatewayRoutingSuite) TestListSchedulableByPlatforms_GeminiAndAntigravity() {
 	geminiAcc := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "gemini-oauth",
@@ -95,7 +113,9 @@ func (s *GatewayRoutingSuite) TestListSchedulableByPlatforms_GeminiAndAntigravit
 	s.Require().True(ids[antigravityAcc.ID])
 }
 
-// TestListSchedulableByGroupIDAndPlatforms_WithGroupBinding checks group membership filtering.
+// TestListSchedulableByGroupIDAndPlatforms_WithGroupBinding creates bound and
+// unbound Antigravity providers in a mixed-platform query. The result contains
+// exactly the group member and excludes the otherwise matching unbound record.
 func (s *GatewayRoutingSuite) TestListSchedulableByGroupIDAndPlatforms_WithGroupBinding() {
 	// The group can contain providers from different platforms.
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{
@@ -133,7 +153,9 @@ func (s *GatewayRoutingSuite) TestListSchedulableByGroupIDAndPlatforms_WithGroup
 	}
 }
 
-// TestListSchedulableByPlatform_Antigravity checks a single-platform query.
+// TestListSchedulableByPlatform_Antigravity creates Gemini and Antigravity
+// providers before issuing a single-platform query. Exactly the Antigravity
+// fixture is returned with its stored platform value.
 func (s *GatewayRoutingSuite) TestListSchedulableByPlatform_Antigravity() {
 	mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "gemini-1",
@@ -157,7 +179,9 @@ func (s *GatewayRoutingSuite) TestListSchedulableByPlatform_Antigravity() {
 	s.Require().Equal(capability.PlatformAntigravity, providers[0].Platform)
 }
 
-// TestSchedulableFilter_ExcludesInactive checks schedulability and status filters.
+// TestSchedulableFilter_ExcludesInactive disables scheduling on one active
+// provider and creates another with error status. The query returns exactly the
+// remaining active, schedulable fixture.
 func (s *GatewayRoutingSuite) TestSchedulableFilter_ExcludesInactive() {
 	activeAcc := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "active-antigravity",
@@ -189,8 +213,10 @@ func (s *GatewayRoutingSuite) TestSchedulableFilter_ExcludesInactive() {
 	s.Require().Equal(activeAcc.ID, providers[0].ID)
 }
 
-// TestPlatformRoutingDecision checks platform values read from storage
-// against a simulated handler dispatch decision.
+// TestPlatformRoutingDecision reads persisted Gemini and Antigravity platform
+// values and applies a local dispatch branch. The resulting service-name
+// strings match the table's expected labels; the fixture does not invoke those
+// forwarding services.
 func (s *GatewayRoutingSuite) TestPlatformRoutingDecision() {
 	geminiAcc := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "gemini-route-test",
@@ -207,9 +233,9 @@ func (s *GatewayRoutingSuite) TestPlatformRoutingDecision() {
 	})
 
 	tests := []struct {
-		name            string
-		providerID      int64
-		expectedService string
+		name            string // simulated dispatch scenario label
+		providerID      int64  // persisted provider fixture ID
+		expectedService string // expected simulated service label
 	}{
 		{
 			name:            "Gemini提供商路由到ForwardNative",

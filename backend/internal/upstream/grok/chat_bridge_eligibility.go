@@ -7,11 +7,29 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// A Chat request can use the Grok Responses bridge when the shared converter can
+// represent its supplied fields and message history faithfully. Unknown fields,
+// non-null stop or effort controls, legacy function controls and token caps
+// below the converter's floor keep the request eligible for the caller's native
+// Chat path instead of silently changing its intent.
+//
+// Eligibility combines declaration shape, tool choice and message role: required
+// tool choice needs declarations, and an assistant with no ordinary text needs
+// tool calls or reasoning content. Content parts accept text and image tags
+// while later conversion handles their payload. Runtime selection additionally
+// limits the bridge to its fixed model set and a nonblank cache identity,
+// and cache-intent preparation clears ineffective choices only after the
+// converter has omitted tools.
+
+// These endpoint paths let Chat execution record whether the selected attempt
+// uses the Responses bridge or native Chat exchange.
 const (
-	GrokChatResponsesEndpoint = "/v1/responses"
-	GrokChatRawEndpoint       = "/v1/chat/completions"
+	GrokChatResponsesEndpoint = "/v1/responses"        // Responses bridge endpoint path
+	GrokChatRawEndpoint       = "/v1/chat/completions" // native Chat endpoint path
 )
 
+// grokChatResponsesBridgeTopLevelFields limits bridge input to fields
+// represented by the shared converter and the eligibility checks below.
 var grokChatResponsesBridgeTopLevelFields = map[string]struct{}{
 	"model": {},
 
@@ -52,16 +70,26 @@ var grokChatResponsesBridgeTopLevelFields = map[string]struct{}{
 	"service_tier": {},
 }
 
-// GrokChatResponsesBridgeEligibility accepts Chat requests whose fields can be
-// represented by the Responses converter and returns a rejection reason otherwise.
+// GrokChatResponsesBridgeEligibility reports representability and a rejection
+// reason for a Chat body. It validates supported top-level shapes, model
+// presence, output caps, declarations and message roles before the caller
+// chooses Responses or native Chat. A successful result has an empty reason.
+//
+// Tool choice and message content are checked together with their supporting
+// declarations or history: required needs tools, and absent, null or blank
+// string assistant content needs reasoning or calls. An empty content array
+// needs reasoning even when tool calls exist. Image tags establish representation
+// without URL validation. Unknown map fields produce a corresponding rejection
+// reason, whose selection follows map iteration rather than input-field order.
 func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil || root == nil {
 		return false, "invalid_json"
 	}
 
-	// JSON null has no effect for these fields and is accepted for SDK compatibility.
-	// Non-null values cannot be represented by the Responses converter.
+	// Null stop or effort controls contribute no request setting here. Admit that
+	// empty representation while populated controls keep the request on the
+	// caller's native Chat path.
 	for _, field := range []string{"stop", "reasoning_effort"} {
 		if raw, exists := root[field]; exists && !m.GrokChatJSONNull(raw) {
 			return false, "unsupported_" + field
@@ -98,6 +126,8 @@ func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string
 			return false, reason
 		}
 		var choice string
+		// Required choice has meaning only with declared tools. Reject missing
+		// declarations before conversion can drop its supporting request controls.
 		if json.Unmarshal(raw, &choice) == nil && choice == "required" && !m.GrokChatHasFunctionDeclarations(root) {
 			return false, "required_tool_choice_without_tools"
 		}
@@ -144,6 +174,8 @@ func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string
 		}
 	}
 
+	// The shared converter floors output caps at 128 tokens. Reject smaller
+	// supplied caps so bridge selection cannot enlarge the client's limit.
 	for _, field := range []string{"max_tokens", "max_completion_tokens"} {
 		if raw, ok := root[field]; ok {
 			var value *int
@@ -228,8 +260,8 @@ func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string
 				continue
 			}
 			if ok, reason := m.GrokChatStructuredContentBridgeable(raw); !ok {
-				// An empty content array can accompany a separate reasoning_content part.
-				// Malformed or unsupported content parts still fail validation.
+				// Reasoning content can carry an otherwise empty assistant turn. Admit that
+				// specific empty-array result while keeping unsupported parts rejected.
 				if !hasReasoningContent || reason != "empty_message_content" {
 					return false, reason
 				}
@@ -254,6 +286,10 @@ func (m BodyCodec) GrokChatResponsesBridgeEligibility(body []byte) (bool, string
 	return true, ""
 }
 
+// GrokChatFunctionDeclarationsBridgeable checks null or arrays of supported Chat
+// function declarations. It restricts tool and function keys, requires a
+// nonblank name and object parameters, and checks optional description/strict
+// decoding. Schema contents remain for later conversion or upstream validation.
 func (m BodyCodec) GrokChatFunctionDeclarationsBridgeable(raw json.RawMessage) (bool, string) {
 	if strings.TrimSpace(string(raw)) == "null" {
 		return true, ""
@@ -316,6 +352,10 @@ func (m BodyCodec) GrokChatFunctionDeclarationsBridgeable(raw json.RawMessage) (
 	return true, ""
 }
 
+// GrokChatToolChoiceBridgeable accepts JSON null or exact auto, none and
+// required strings. Named-object and unknown-string choices return
+// unsupported_tool_choice; the caller separately checks whether required has
+// supporting function declarations.
 func (m BodyCodec) GrokChatToolChoiceBridgeable(raw json.RawMessage) (bool, string) {
 	if strings.TrimSpace(string(raw)) == "null" {
 		return true, ""
@@ -332,6 +372,10 @@ func (m BodyCodec) GrokChatToolChoiceBridgeable(raw json.RawMessage) (bool, stri
 	}
 }
 
+// GrokChatHasFunctionDeclarations reports a populated decodable tools or
+// functions array in root. It does not validate individual entries; eligibility
+// validates declarations separately before using this count to admit required
+// tool choice.
 func (m BodyCodec) GrokChatHasFunctionDeclarations(root map[string]json.RawMessage) bool {
 	for _, field := range []string{"tools", "functions"} {
 		raw, exists := root[field]
@@ -346,6 +390,10 @@ func (m BodyCodec) GrokChatHasFunctionDeclarations(root map[string]json.RawMessa
 	return false
 }
 
+// GrokChatMessageFieldsBridgeable checks every message key against the supplied
+// allowedFields set. Unknown keys return a reason naming one rejected field; map
+// iteration means multiple unsupported fields have no guaranteed rejection
+// order.
 func (m BodyCodec) GrokChatMessageFieldsBridgeable(message map[string]json.RawMessage, allowedFields ...string) (bool, string) {
 	allowed := make(map[string]struct{}, len(allowedFields))
 	for _, field := range allowedFields {
@@ -359,6 +407,10 @@ func (m BodyCodec) GrokChatMessageFieldsBridgeable(message map[string]json.RawMe
 	return true, ""
 }
 
+// GrokChatRequiredMessageContentBridgeable admits a nonblank string or supported
+// structured content. Whitespace-only strings return empty_message_content.
+// Non-string values pass to the structured-content checker, whose result
+// distinguishes empty arrays from unsupported parts.
 func (m BodyCodec) GrokChatRequiredMessageContentBridgeable(raw json.RawMessage) (bool, string) {
 	var content string
 	if json.Unmarshal(raw, &content) == nil {
@@ -372,6 +424,10 @@ func (m BodyCodec) GrokChatRequiredMessageContentBridgeable(raw json.RawMessage)
 	return m.GrokChatStructuredContentBridgeable(raw)
 }
 
+// GrokChatAssistantToolCallsBridgeable validates function-call history and
+// returns its call count. Null yields zero without a rejection reason. Calls
+// need nonblank identifiers and names, JSON argument strings and supported keys;
+// supplied indices may be null or nonnegative integers.
 func (m BodyCodec) GrokChatAssistantToolCallsBridgeable(raw json.RawMessage) (int, string) {
 	if strings.TrimSpace(string(raw)) == "null" {
 		return 0, ""
@@ -426,6 +482,10 @@ func (m BodyCodec) GrokChatAssistantToolCallsBridgeable(raw json.RawMessage) (in
 	return len(calls), ""
 }
 
+// GrokChatStructuredContentBridgeable checks an array for supported text and
+// image-tagged parts. At least one nonblank text or image tag is needed;
+// unsupported types reject the array. Image payload details are left for
+// conversion and upstream validation.
 func (m BodyCodec) GrokChatStructuredContentBridgeable(raw json.RawMessage) (bool, string) {
 	var parts []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
@@ -461,6 +521,8 @@ func (m BodyCodec) GrokChatStructuredContentBridgeable(raw json.RawMessage) (boo
 	return true, ""
 }
 
+// GrokChatNullOrNone recognizes JSON null or a trimmed case-insensitive none
+// string.
 func (m BodyCodec) GrokChatNullOrNone(raw json.RawMessage) bool {
 	if strings.TrimSpace(string(raw)) == "null" {
 		return true
@@ -469,10 +531,12 @@ func (m BodyCodec) GrokChatNullOrNone(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &value) == nil && strings.EqualFold(strings.TrimSpace(value), "none")
 }
 
+// GrokChatJSONNull reports whether trimmed input is the literal JSON null.
 func (m BodyCodec) GrokChatJSONNull(raw json.RawMessage) bool {
 	return strings.TrimSpace(string(raw)) == "null"
 }
 
+// GrokChatNullOrEmptyArray recognizes JSON null or a decodable empty array.
 func (m BodyCodec) GrokChatNullOrEmptyArray(raw json.RawMessage) bool {
 	if strings.TrimSpace(string(raw)) == "null" {
 		return true
@@ -481,9 +545,14 @@ func (m BodyCodec) GrokChatNullOrEmptyArray(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &values) == nil && len(values) == 0
 }
 
+// GrokChatResponsesCacheIntentBody copies body or removes an ineffective
+// auto/none choice when tools is absent. A present tools field, including empty
+// or null, keeps that choice. The rewritten case decodes and re-encodes JSON;
+// unchanged cases return independent byte storage.
 func (m BodyCodec) GrokChatResponsesCacheIntentBody(body []byte) ([]byte, error) {
-	// The converter omits an empty tools array. Remove its ineffective auto/none
-	// choice so requests without tools can use cache routing; retain populated tools.
+	// Conversion can omit tools entirely. Remove ineffective auto/none choices in
+	// that case so the cache-intent payload describes the available request
+	// controls.
 	if gjson.GetBytes(body, "tools").Exists() {
 		return append([]byte(nil), body...), nil
 	}
@@ -499,7 +568,8 @@ func (m BodyCodec) GrokChatResponsesCacheIntentBody(body []byte) ([]byte, error)
 	return json.Marshal(root)
 }
 
-// GrokChatResponsesBridgeModel reports whether the model supports the Chat bridge.
+// GrokChatResponsesBridgeModel recognizes the fixed 4.5 and 4.6 Chat bridge
+// identities.
 func (m BodyCodec) GrokChatResponsesBridgeModel(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
 	case "grok-4.5", "grok-4.6", "grok-4.6-latest":
@@ -509,6 +579,9 @@ func (m BodyCodec) GrokChatResponsesBridgeModel(model string) bool {
 	}
 }
 
+// GrokChatResponsesRuntimeEligible admits a supported bridge model with a
+// nonblank cache identity. Both inputs are required by runtime selection; false
+// leaves the caller's native Chat execution path available for this dispatch.
 func (m BodyCodec) GrokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity string) bool {
 	return m.GrokChatResponsesBridgeModel(upstreamModel) && strings.TrimSpace(cacheIdentity) != ""
 }

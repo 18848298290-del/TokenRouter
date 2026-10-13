@@ -10,6 +10,14 @@ import (
 	identitycore "github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// Persisted ordinary emails become email authentication subjects, while the
+// reserved LinuxDo placeholder address stays a synthetic profile value.
+// PostgreSQL suite cases inspect the corresponding identity row during creation
+// and replace that row when the user's selected email field changes.
+
+// TestCreate_CreatesEmailAuthIdentityForNormalEmail creates a user with an
+// ordinary email through the repository. A matching email provider tuple is
+// persisted and belongs to the new user ID.
 func (s *UserRepoSuite) TestCreate_CreatesEmailAuthIdentityForNormalEmail() {
 	user := &identitycore.User{
 		Email:        "repo-create@example.com",
@@ -33,6 +41,9 @@ func (s *UserRepoSuite) TestCreate_CreatesEmailAuthIdentityForNormalEmail() {
 	s.Require().Equal(user.ID, identity.UserID)
 }
 
+// TestCreate_SkipsEmailAuthIdentityForSyntheticLinuxDoEmail creates a user at
+// the reserved LinuxDo placeholder domain. Its provider=email and key=email
+// identity count remains zero for that created user.
 func (s *UserRepoSuite) TestCreate_SkipsEmailAuthIdentityForSyntheticLinuxDoEmail() {
 	user := &identitycore.User{
 		Email:        "linuxdo-legacy-user@linuxdo-connect.invalid",
@@ -55,6 +66,9 @@ func (s *UserRepoSuite) TestCreate_SkipsEmailAuthIdentityForSyntheticLinuxDoEmai
 	s.Require().Zero(count)
 }
 
+// TestUpdate_ReplacesEmailAuthIdentityWhenEmailChanges selects email in a
+// persisted user update. The new email identity belongs to that user, and the
+// preceding subject has no remaining matching identity.
 func (s *UserRepoSuite) TestUpdate_ReplacesEmailAuthIdentityWhenEmailChanges() {
 	user := s.mustCreateUser(&identitycore.User{
 		Email: "before-update@example.com",

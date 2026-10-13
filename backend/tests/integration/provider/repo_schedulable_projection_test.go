@@ -14,6 +14,15 @@ import (
 	_ "github.com/TokenFlux/TokenRouter/ent/runtime"
 )
 
+// Schedulable load data consists of provider ID, concurrency, and load factor
+// while candidate eligibility still uses health and expiry predicates. A
+// captured Ent query checks the selected columns, absence of joins, ordering,
+// and effective load values from mock rows.
+
+// TestListSchedulableProviderLoadsUsesSingleProjectionQuery captures one
+// three-column Ent query and supplies mock concurrency/load-factor rows. The
+// output uses effective capacity values, retains eligibility and priority
+// predicates, and performs no group or proxy joins.
 func TestListSchedulableProviderLoadsUsesSingleProjectionQuery(t *testing.T) {
 	var capturedSQL string
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))

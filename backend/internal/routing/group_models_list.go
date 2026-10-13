@@ -4,6 +4,15 @@ import (
 	"strings"
 )
 
+// Custom model lists preserve the administrator's selected order and
+// distinguish a disabled list from a configured list with usable names.
+// Normalization trims blank entries and removes exact duplicates before catalog
+// and probe selectors consume the values.
+
+// NormalizeGroupModelsListConfig returns a trimmed list with the first
+// occurrence of each case-sensitive model ID. Enabled is retained independently
+// of the entries; an empty or wholly blank list has nil Models, and the output
+// slice has separate storage when the result contains entries.
 func NormalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListConfig {
 	out := GroupModelsListConfig{Enabled: cfg.Enabled}
 	if len(cfg.Models) == 0 {
@@ -29,6 +38,9 @@ func NormalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListCo
 	return out
 }
 
+// CustomModelsListEnabled reports whether the group enables a list with at
+// least one stored entry. Nil groups, disabled lists, and empty lists return
+// false; callers normalize model text separately before relying on the entries.
 func (g *Group) CustomModelsListEnabled() bool {
 	return g != nil && g.ModelsListConfig.Enabled && len(g.ModelsListConfig.Models) > 0
 }

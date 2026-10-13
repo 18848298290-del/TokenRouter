@@ -29,11 +29,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// A pending browser session separates an external subject from proof that it
+// may create or bind a local account. SQLite cases seed intent, target,
+// suggested profile and completion data, then compare preview, finalization and
+// rejected requests against the stored user, identity, decision and consumption
+// fields. Existing-login exchange also checks issued token versions and removal
+// of saved legacy credentials.
+//
+// Invitation, referral and first-bind scenarios inspect their respective
+// persisted rows or in-memory observations. Subscription assertions read
+// captured assignment inputs, while TOTP sessions use a borrowed-pointer map
+// cache and plaintext encryptor fixture. Injected failure and
+// ownership-conflict cases inspect the state left after rejection; their setup
+// calls differ from a complete external OAuth login, and the choice-state
+// attack case directly seeds its pending row.
+
+// oauthPendingFlowAvatarRecord holds the two avatar columns asserted after
+// profile adoption.
 type oauthPendingFlowAvatarRecord struct {
-	StorageProvider string
-	URL             string
+	StorageProvider string // avatar storage provider
+	URL             string // saved avatar URL
 }
 
+// TestApplySuggestedProfileToCompletionResponse starts with a token-bearing
+// payload and supplied profile suggestions. The helper adds the display name,
+// avatar URL and adoption_required=true to that response map.
 func TestApplySuggestedProfileToCompletionResponse(t *testing.T) {
 	payload := map[string]any{
 		"access_token": "token",
@@ -50,6 +70,10 @@ func TestApplySuggestedProfileToCompletionResponse(t *testing.T) {
 	require.Equal(t, true, payload["adoption_required"])
 }
 
+// TestApplySuggestedProfileToCompletionResponseKeepsExistingPayloadValues
+// supplies an existing display name and adoption_required=false. The helper
+// retains that name, adds the missing avatar suggestion, and changes
+// adoption_required to true.
 func TestApplySuggestedProfileToCompletionResponseKeepsExistingPayloadValues(t *testing.T) {
 	payload := map[string]any{
 		"suggested_display_name": "Existing",
@@ -67,6 +91,10 @@ func TestApplySuggestedProfileToCompletionResponseKeepsExistingPayloadValues(t *
 	require.Equal(t, true, payload["adoption_required"])
 }
 
+// TestSetOAuthPendingSessionCookieUsesProviderCompletionPathPrefix emits a
+// pending cookie from an OIDC callback context. Its path covers
+// /api/v1/auth/oauth so later provider completion requests can send the same
+// browser state.
 func TestSetOAuthPendingSessionCookieUsesProviderCompletionPathPrefix(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
@@ -79,6 +107,11 @@ func TestSetOAuthPendingSessionCookieUsesProviderCompletionPathPrefix(t *testing
 	require.Equal(t, "/api/v1/auth/oauth", cookie.Path)
 }
 
+// TestExchangePendingOAuthCompletionPreviewThenFinalizeAppliesAdoptionDecision
+// previews saved profile suggestions before submitting both adoption flags.
+// Preview leaves username and consumption unchanged; finalization updates
+// username, identity metadata, avatar and decision linkage, then consumes the
+// row.
 func TestExchangePendingOAuthCompletionPreviewThenFinalizeAppliesAdoptionDecision(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -112,6 +145,7 @@ func TestExchangePendingOAuthCompletionPreviewThenFinalizeAppliesAdoptionDecisio
 				"redirect":     "/dashboard",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -191,6 +225,10 @@ func TestExchangePendingOAuthCompletionPreviewThenFinalizeAppliesAdoptionDecisio
 	require.NotNil(t, consumed.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionSkipsInvalidAvatarAdoptionWithoutBlockingCompletion
+// requests both profile choices with a relative avatar URL. Exchange completes
+// display-name adoption and consumes the session, while identity metadata and
+// avatar storage omit that invalid URL.
 func TestExchangePendingOAuthCompletionSkipsInvalidAvatarAdoptionWithoutBlockingCompletion(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -224,6 +262,7 @@ func TestExchangePendingOAuthCompletionSkipsInvalidAvatarAdoptionWithoutBlocking
 				"redirect":     "/dashboard",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -263,6 +302,11 @@ func TestExchangePendingOAuthCompletionSkipsInvalidAvatarAdoptionWithoutBlocking
 	require.NotNil(t, consumed.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionBindCurrentUserPreviewThenFinalizeBindsIdentityWithoutAdoption
+// previews current-user binding, then submits both flags as false. Preview
+// creates no identity; finalization binds the subject with retained
+// suggestions, preserves username, links false decisions and consumes pending
+// state.
 func TestExchangePendingOAuthCompletionBindCurrentUserPreviewThenFinalizeBindsIdentityWithoutAdoption(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -296,6 +340,7 @@ func TestExchangePendingOAuthCompletionBindCurrentUserPreviewThenFinalizeBindsId
 				"redirect":     "/settings/profile",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -380,6 +425,10 @@ func TestExchangePendingOAuthCompletionBindCurrentUserPreviewThenFinalizeBindsId
 	require.NotNil(t, consumed.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionBindCurrentUserOwnershipConflict targets a
+// user while the external subject belongs to another owner. Exchange reports an
+// adoption-apply error, retains that owner, leaves the decision unlinked with
+// false flags, and keeps the session unconsumed.
 func TestExchangePendingOAuthCompletionBindCurrentUserOwnershipConflict(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -429,6 +478,7 @@ func TestExchangePendingOAuthCompletionBindCurrentUserOwnershipConflict(t *testi
 				"access_token": "access-token",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -467,6 +517,10 @@ func TestExchangePendingOAuthCompletionBindCurrentUserOwnershipConflict(t *testi
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionLoginFalseFalseBindsIdentityWithoutAdoption
+// submits both profile flags as false for seeded login state. Exchange binds
+// the selected user, records the false decisions against that identity and
+// consumes the pending row.
 func TestExchangePendingOAuthCompletionLoginFalseFalseBindsIdentityWithoutAdoption(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -498,6 +552,7 @@ func TestExchangePendingOAuthCompletionLoginFalseFalseBindsIdentityWithoutAdopti
 				"access_token": "access-token",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -541,6 +596,10 @@ func TestExchangePendingOAuthCompletionLoginFalseFalseBindsIdentityWithoutAdopti
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionLoginReassignsExistingDecisionIdentityReference
+// seeds an earlier decision pointing at the same identity. Finalizing a later
+// session clears the earlier reference, links the current decision to that
+// identity and consumes the current row.
 func TestExchangePendingOAuthCompletionLoginReassignsExistingDecisionIdentityReference(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -577,6 +636,7 @@ func TestExchangePendingOAuthCompletionLoginReassignsExistingDecisionIdentityRef
 				"access_token": "previous-access-token",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -607,6 +667,7 @@ func TestExchangePendingOAuthCompletionLoginReassignsExistingDecisionIdentityRef
 				"access_token": "access-token",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -649,6 +710,10 @@ func TestExchangePendingOAuthCompletionLoginReassignsExistingDecisionIdentityRef
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionLoginWithoutDecisionStillBindsIdentity
+// seeds login completion without an adoption-decision row. Exchange still
+// creates the subject binding for the target user and consumes the matching
+// browser session.
 func TestExchangePendingOAuthCompletionLoginWithoutDecisionStillBindsIdentity(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -679,6 +744,7 @@ func TestExchangePendingOAuthCompletionLoginWithoutDecisionStillBindsIdentity(t 
 				"access_token": "access-token",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -711,6 +777,11 @@ func TestExchangePendingOAuthCompletionLoginWithoutDecisionStillBindsIdentity(t 
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionExistingLoginWithSuggestedProfileSkipsAdoptionPrompt
+// seeds an existing identity and legacy token fields in completion. Exchange
+// issues different tokens with the current user version, returns suggestions
+// without an adoption prompt, records one decision, and scrubs stored token
+// fields.
 func TestExchangePendingOAuthCompletionExistingLoginWithSuggestedProfileSkipsAdoptionPrompt(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -757,6 +828,7 @@ func TestExchangePendingOAuthCompletionExistingLoginWithSuggestedProfileSkipsAdo
 				"redirect":      "/dashboard",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -809,6 +881,9 @@ func TestExchangePendingOAuthCompletionExistingLoginWithSuggestedProfileSkipsAdo
 	require.Equal(t, "/dashboard", completion["redirect"])
 }
 
+// TestExchangePendingOAuthCompletionBlocksBackendModeBeforeReturningTokenPayload
+// supplies saved login state for a regular user while backend mode is enabled.
+// Exchange returns HTTP 403 and leaves that pending session unconsumed.
 func TestExchangePendingOAuthCompletionBlocksBackendModeBeforeReturningTokenPayload(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: map[string]string{
@@ -843,6 +918,7 @@ func TestExchangePendingOAuthCompletionBlocksBackendModeBeforeReturningTokenPayl
 				"token_type":    "Bearer",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -863,6 +939,9 @@ func TestExchangePendingOAuthCompletionBlocksBackendModeBeforeReturningTokenPayl
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionRejectsDisabledTargetUser seeds login state
+// targeting a disabled account with a profile suggestion. Exchange returns HTTP
+// 403 and leaves the saved browser session unconsumed.
 func TestExchangePendingOAuthCompletionRejectsDisabledTargetUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -893,6 +972,7 @@ func TestExchangePendingOAuthCompletionRejectsDisabledTargetUser(t *testing.T) {
 				"redirect": "/dashboard",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -913,12 +993,14 @@ func TestExchangePendingOAuthCompletionRejectsDisabledTargetUser(t *testing.T) {
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity directly
+// seeds choice state targeting a victim with an attacker's external subject.
+// Submitting adoption flags returns the choice step without a token, identity
+// binding, username change or session consumption.
 func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing.T) {
-	// Exercise an account-takeover attempt through the create-account step.
-	// The attacker signs in with their OAuth account and submits the victim's email.
-	// The existing email sends the pending session to the choice step with the victim
-	// as TargetUserID. No password or email-code proof has been supplied, so an
-	// exchange request with an adoption decision must not bind the attacker's identity.
+	// Directly seed a choice row targeting the victim to isolate exchange from the
+	// earlier OAuth and create-account endpoints. Adoption flags supply no
+	// password or email-code proof of that target account's ownership.
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
 
@@ -957,6 +1039,7 @@ func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing
 				"redirect":                  "/dashboard",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -977,7 +1060,6 @@ func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing
 	require.NotContains(t, data, "access_token")
 	require.Equal(t, identityhttp.OauthPendingChoiceStep, data["step"])
 
-	// Returning the choice step must not create the attacker's identity binding.
 	identityCount, err := client.AuthIdentity.Query().
 		Where(
 			authidentity.ProviderTypeEQ("linuxdo"),
@@ -988,17 +1070,19 @@ func TestExchangePendingOAuthCompletionChoiceStateDoesNotBindIdentity(t *testing
 	require.NoError(t, err)
 	require.Zero(t, identityCount)
 
-	// The victim's username remains unchanged.
 	storedVictim, err := client.User.Get(ctx, victim.ID)
 	require.NoError(t, err)
 	require.Equal(t, "victim-user", storedVictim.Username)
 
-	// The session stays unconsumed while proof of account ownership is required.
 	storedSession, err := client.PendingAuthSession.Get(ctx, session.ID)
 	require.NoError(t, err)
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestNormalizePendingOAuthCompletionResponseScrubsLegacyTokenPayload supplies
+// saved access, refresh, lifetime and token-type fields beside a redirect.
+// Normalization removes those credential fields while retaining the local
+// redirect value.
 func TestNormalizePendingOAuthCompletionResponseScrubsLegacyTokenPayload(t *testing.T) {
 	payload := identityhttp.NormalizePendingOAuthCompletionResponse(map[string]any{
 		"access_token":  "legacy-access-token",
@@ -1015,6 +1099,10 @@ func TestNormalizePendingOAuthCompletionResponseScrubsLegacyTokenPayload(t *test
 	require.Equal(t, "/dashboard", payload["redirect"])
 }
 
+// TestExchangePendingOAuthCompletionInvitationRequiredFalseFalsePersistsDecisionWithoutBinding
+// submits false adoption flags while a seeded completion still requires
+// invitation proof. Exchange retains that error, creates an unlinked false
+// decision, binds no subject, and leaves the session unconsumed.
 func TestExchangePendingOAuthCompletionInvitationRequiredFalseFalsePersistsDecisionWithoutBinding(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, true)
 	ctx := context.Background()
@@ -1035,6 +1123,7 @@ func TestExchangePendingOAuthCompletionInvitationRequiredFalseFalsePersistsDecis
 				"error": "invitation_required",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1080,6 +1169,10 @@ func TestExchangePendingOAuthCompletionInvitationRequiredFalseFalsePersistsDecis
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession submits
+// a seeded verification code and password for a new email. The response
+// contains a Bearer token pair, the active account owns the OIDC subject, and
+// the browser session is consumed.
 func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "fresh@example.com", "246810")
 	ctx := context.Background()
@@ -1097,6 +1190,7 @@ func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *tes
 			"suggested_avatar_url":   "https://cdn.example/fresh.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1139,6 +1233,10 @@ func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *tes
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+// TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState
+// submits an existing account's email during pending signup. It returns
+// suggestions and a choice targeting that account, updates resolved email,
+// creates no subject binding, and keeps pending state unconsumed.
 func TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
 	ctx := context.Background()
@@ -1165,6 +1263,7 @@ func TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState(t *
 			"suggested_avatar_url":   "https://cdn.example/existing.png",
 		}).
 		SetRedirectTo("/dashboard").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1213,6 +1312,10 @@ func TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState(t *
 	require.Zero(t, identityCount)
 }
 
+// TestCreateOIDCOAuthAccountExistingEmailNormalizesLegacySpacingAndCase matches
+// a lowercase request email to a padded, mixed-case stored account. The
+// returned choice and saved pending target select that account with normalized
+// resolved email.
 func TestCreateOIDCOAuthAccountExistingEmailNormalizesLegacySpacingAndCase(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
 	ctx := context.Background()
@@ -1239,6 +1342,7 @@ func TestCreateOIDCOAuthAccountExistingEmailNormalizesLegacySpacingAndCase(t *te
 			"suggested_avatar_url":   "https://cdn.example/existing.png",
 		}).
 		SetRedirectTo("/dashboard").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1268,6 +1372,10 @@ func TestCreateOIDCOAuthAccountExistingEmailNormalizesLegacySpacingAndCase(t *te
 	require.Equal(t, "owner@example.com", storedSession.ResolvedEmail)
 }
 
+// TestCreateOIDCOAuthAccountRejectsEmailOutsideRegistrationSuffixWhitelist
+// seeds a valid code for an email excluded by the configured suffix list.
+// Account creation reports EMAIL_SUFFIX_NOT_ALLOWED and leaves that email
+// absent from users.
 func TestCreateOIDCOAuthAccountRejectsEmailOutsideRegistrationSuffixWhitelist(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		emailVerifyEnabled: true,
@@ -1276,6 +1384,8 @@ func TestCreateOIDCOAuthAccountRejectsEmailOutsideRegistrationSuffixWhitelist(t 
 				"foo@gmail.com": {
 					Code:      "135790",
 					CreatedAt: time.Now().UTC(),
+					// Give mismatched attempts a future expiry for their remaining-lifetime
+					// update.
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
 				},
 			},
@@ -1296,6 +1406,7 @@ func TestCreateOIDCOAuthAccountRejectsEmailOutsideRegistrationSuffixWhitelist(t 
 		SetUpstreamIdentityClaims(map[string]any{
 			"username": "oidc_user",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1320,6 +1431,10 @@ func TestCreateOIDCOAuthAccountRejectsEmailOutsideRegistrationSuffixWhitelist(t 
 	require.Zero(t, count)
 }
 
+// TestSendPendingOAuthVerifyCodeExistingEmailReturnsBindLoginState submits an
+// existing email to the pending verification-code endpoint. It returns a choice
+// response and updates the session's target, login intent and resolved email to
+// that account.
 func TestSendPendingOAuthVerifyCodeExistingEmailReturnsBindLoginState(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
 	ctx := context.Background()
@@ -1346,6 +1461,7 @@ func TestSendPendingOAuthVerifyCodeExistingEmailReturnsBindLoginState(t *testing
 			},
 		}).
 		SetRedirectTo("/dashboard").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1377,6 +1493,10 @@ func TestSendPendingOAuthVerifyCodeExistingEmailReturnsBindLoginState(t *testing
 	require.Equal(t, "owner@example.com", storedSession.ResolvedEmail)
 }
 
+// TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser supplies a
+// seeded verification code and password while backend mode is enabled. The
+// request returns HTTP 403, creates no matching user, and leaves pending state
+// unconsumed.
 func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		emailVerifyEnabled: true,
@@ -1385,6 +1505,8 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 				"fresh@example.com": {
 					Code:      "246810",
 					CreatedAt: time.Now().UTC(),
+					// Give mismatched attempts a future expiry for their remaining-lifetime
+					// update.
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
 				},
 			},
@@ -1405,6 +1527,7 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 		SetUpstreamIdentityClaims(map[string]any{
 			"username": "oidc_user",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1431,6 +1554,9 @@ func TestCreateOIDCOAuthAccountBlocksBackendModeBeforeCreatingUser(t *testing.T)
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestLogoutClearsPendingOAuthAndBindCookies sends pending-session, browser and
+// temporary bind cookies to logout. The handler succeeds and emits negative
+// MaxAge for each of those three cookie names.
 func TestLogoutClearsPendingOAuthAndBindCookies(t *testing.T) {
 	handler, _ := newOAuthPendingFlowTestHandler(t, false)
 
@@ -1451,6 +1577,10 @@ func TestLogoutClearsPendingOAuthAndBindCookies(t *testing.T) {
 	require.Equal(t, -1, findCookie(recorder.Result().Cookies(), identityhttp.OauthBindAccessTokenCookieName).MaxAge)
 }
 
+// TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails seeds a
+// subject already owned by another account, plus invitation and referral
+// inputs. Rejection leaves the requested account absent, inviter count
+// unchanged, invitation unused and pending state unconsumed.
 func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T) {
 	affiliateRepo := newOAuthPendingFlowAffiliateRepo()
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
@@ -1461,6 +1591,8 @@ func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T
 				"fresh@example.com": {
 					Code:      "246810",
 					CreatedAt: time.Now().UTC(),
+					// Give mismatched attempts a future expiry for their remaining-lifetime
+					// update.
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
 				},
 			},
@@ -1521,6 +1653,7 @@ func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T
 			"username": "oidc_user",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1554,6 +1687,10 @@ func TestCreateOIDCOAuthAccountRollsBackCreatedUserWhenBindingFails(t *testing.T
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit
+// injects a failure after binding with deletion guarded against remaining
+// identities. The HTTP error leaves both the requested user and subject binding
+// absent, while the pending row remains unconsumed.
 func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		emailVerifyEnabled: true,
@@ -1562,6 +1699,8 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 				"fresh@example.com": {
 					Code:      "246810",
 					CreatedAt: time.Now().UTC(),
+					// Give mismatched attempts a future expiry for their remaining-lifetime
+					// update.
 					ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
 				},
 			},
@@ -1583,10 +1722,14 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 			"username": "oidc_user",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
 
+	// Fail the account flow after binding through its package-global hook, then
+	// reset the hook at cleanup so subsequent fixtures do not inherit that
+	// failure.
 	pendingOAuthCreateAccountPreCommitHook = func(context.Context, *dbent.PendingAuthSession) error {
 		return errors.New("forced post-bind failure")
 	}
@@ -1626,6 +1769,10 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestBindOIDCOAuthLoginBindsExistingUserAndConsumesSession submits the
+// selected account's password against its seeded hash for account adoption. It
+// receives a Bearer token pair, assigns the OIDC subject to that account and
+// consumes the session.
 func TestBindOIDCOAuthLoginBindsExistingUserAndConsumesSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -1657,6 +1804,7 @@ func TestBindOIDCOAuthLoginBindsExistingUserAndConsumesSession(t *testing.T) {
 			"suggested_avatar_url":   "https://cdn.example/bound.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1695,6 +1843,9 @@ func TestBindOIDCOAuthLoginBindsExistingUserAndConsumesSession(t *testing.T) {
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+// TestBindOIDCOAuthLoginBlocksBackendModeBeforeTokenIssue submits a valid
+// password for a regular account while backend mode is enabled. HTTP 403 leaves
+// the OIDC subject unbound and the pending row unconsumed.
 func TestBindOIDCOAuthLoginBlocksBackendModeBeforeTokenIssue(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: map[string]string{
@@ -1727,6 +1878,7 @@ func TestBindOIDCOAuthLoginBlocksBackendModeBeforeTokenIssue(t *testing.T) {
 		SetUpstreamIdentityClaims(map[string]any{
 			"username": "oidc_user",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1759,6 +1911,10 @@ func TestBindOIDCOAuthLoginBlocksBackendModeBeforeTokenIssue(t *testing.T) {
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestBindOIDCOAuthLoginRejectsInvalidPasswordWithoutConsumingSession supplies
+// the selected account's email with a wrong password. The handler reports
+// INVALID_CREDENTIALS with HTTP 401, creates no subject binding, and leaves
+// pending state unconsumed.
 func TestBindOIDCOAuthLoginRejectsInvalidPasswordWithoutConsumingSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -1789,6 +1945,7 @@ func TestBindOIDCOAuthLoginRejectsInvalidPasswordWithoutConsumingSession(t *test
 			"suggested_display_name": "Bound OIDC User",
 			"suggested_avatar_url":   "https://cdn.example/bound.png",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1823,6 +1980,10 @@ func TestBindOIDCOAuthLoginRejectsInvalidPasswordWithoutConsumingSession(t *test
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestBindOIDCOAuthLoginReclaimsIdentityOwnedBySoftDeletedUser deletes the
+// earlier owner before submitting the new target's valid password. Successful
+// binding changes the retained identity record's owner to that authenticated
+// target.
 func TestBindOIDCOAuthLoginReclaimsIdentityOwnedBySoftDeletedUser(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -1875,6 +2036,7 @@ func TestBindOIDCOAuthLoginReclaimsIdentityOwnedBySoftDeletedUser(t *testing.T) 
 			"suggested_display_name": "Recovered OIDC User",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1897,6 +2059,10 @@ func TestBindOIDCOAuthLoginReclaimsIdentityOwnedBySoftDeletedUser(t *testing.T) 
 	require.Equal(t, newOwner.ID, identity.UserID)
 }
 
+// TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce binds two different OIDC
+// subjects to the same account sequentially. Balance, concurrency and the grant
+// row reflect one award, while the subscription fixture captures exactly one
+// assignment input for that user and plan.
 func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 	defaultSubAssigner := &oauthPendingFlowDefaultSubAssignerStub{}
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
@@ -1938,6 +2104,7 @@ func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 			"suggested_avatar_url":   "https://cdn.example/bound.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -1979,6 +2146,7 @@ func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 			"suggested_avatar_url":   "https://cdn.example/second.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -2005,6 +2173,9 @@ func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 	require.Equal(t, 1, countProviderGrantRecords(t, client, existingUser.ID, "oidc", "first_bind"))
 }
 
+// TestResolvePendingOAuthTargetUserIDNormalizesLegacySpacingAndCase supplies
+// normalized resolved email beside a padded, mixed-case stored account. Target
+// resolution returns that existing account's ID from the saved pending session.
 func TestResolvePendingOAuthTargetUserIDNormalizesLegacySpacingAndCase(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	_ = handler
@@ -2027,6 +2198,7 @@ func TestResolvePendingOAuthTargetUserIDNormalizesLegacySpacingAndCase(t *testin
 		SetProviderSubject("oidc-target-123").
 		SetResolvedEmail("owner@example.com").
 		SetBrowserSessionKey("resolve-target-browser-session-key").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -2036,6 +2208,10 @@ func TestResolvePendingOAuthTargetUserIDNormalizesLegacySpacingAndCase(t *testin
 	require.Equal(t, existingUser.ID, resolvedUserID)
 }
 
+// TestBindOIDCOAuthLoginReturns2FAChallengeWhenUserHasTotp submits a valid
+// password for a TOTP-enabled account. It receives masked-email challenge data
+// and a cached pending-bind reference, while the identity remains absent and
+// browser state unconsumed.
 func TestBindOIDCOAuthLoginReturns2FAChallengeWhenUserHasTotp(t *testing.T) {
 	totpCache := &oauthPendingFlowTotpCacheStub{}
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
@@ -2049,6 +2225,7 @@ func TestBindOIDCOAuthLoginReturns2FAChallengeWhenUserHasTotp(t *testing.T) {
 
 	passwordHash, err := handler.authService.HashPassword("secret-123")
 	require.NoError(t, err)
+	// Supply prior enablement for an account already configured with TOTP.
 	totpEnabledAt := time.Now().UTC().Add(-time.Hour)
 	secret := "JBSWY3DPEHPK3PXP"
 
@@ -2078,6 +2255,7 @@ func TestBindOIDCOAuthLoginReturns2FAChallengeWhenUserHasTotp(t *testing.T) {
 			"suggested_avatar_url":   "https://cdn.example/bound.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -2123,6 +2301,10 @@ func TestBindOIDCOAuthLoginReturns2FAChallengeWhenUserHasTotp(t *testing.T) {
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestLogin2FACompletesPendingOAuthBindAndConsumesSession submits a generated
+// TOTP code for a seeded pending-bind challenge. It issues tokens with the
+// current version, binds the subject, consumes browser and temporary cache
+// state, and checks one balance/concurrency award with no subscription call.
 func TestLogin2FACompletesPendingOAuthBindAndConsumesSession(t *testing.T) {
 	totpCache := &oauthPendingFlowTotpCacheStub{}
 	defaultSubAssigner := &oauthPendingFlowDefaultSubAssignerStub{}
@@ -2141,6 +2323,7 @@ func TestLogin2FACompletesPendingOAuthBindAndConsumesSession(t *testing.T) {
 
 	passwordHash, err := handler.authService.HashPassword("secret-123")
 	require.NoError(t, err)
+	// Supply prior enablement for an account already configured with TOTP.
 	totpEnabledAt := time.Now().UTC().Add(-time.Hour)
 	secret := "JBSWY3DPEHPK3PXP"
 
@@ -2172,6 +2355,7 @@ func TestLogin2FACompletesPendingOAuthBindAndConsumesSession(t *testing.T) {
 			"suggested_avatar_url":   "https://cdn.example/bound.png",
 		}).
 		SetRedirectTo("/profile").
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -2244,6 +2428,9 @@ func TestLogin2FACompletesPendingOAuthBindAndConsumesSession(t *testing.T) {
 	require.Empty(t, defaultSubAssigner.calls)
 }
 
+// loadUserAvatarRecord reads the first matching SQLite avatar row through the
+// retained client and fails t on query or scan errors. A missing row returns
+// nil; cleanup closes rows while discarding its close error.
 func loadUserAvatarRecord(t *testing.T, client *dbent.Client, userID int64) *oauthPendingFlowAvatarRecord {
 	t.Helper()
 
@@ -2255,6 +2442,8 @@ func loadUserAvatarRecord(t *testing.T, client *dbent.Client, userID int64) *oau
 		&rows,
 	)
 	require.NoError(t, err)
+	// Release the result set after inspection. Close errors are discarded here;
+	// query, scan and the listed row assertions determine the helper result.
 	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
@@ -2268,6 +2457,9 @@ func loadUserAvatarRecord(t *testing.T, client *dbent.Client, userID int64) *oau
 	return &record
 }
 
+// countProviderGrantRecords returns the SQLite count for the supplied user,
+// provider and reason, failing t on query or scan errors. It requires one
+// result row and no second row; the final iteration does not check rows.Err.
 func countProviderGrantRecords(
 	t *testing.T,
 	client *dbent.Client,
@@ -2285,6 +2477,8 @@ func countProviderGrantRecords(
 		&rows,
 	)
 	require.NoError(t, err)
+	// Release the result set after inspection. Close errors are discarded here;
+	// query, scan and the listed row assertions determine the helper result.
 	defer func() { _ = rows.Close() }()
 
 	require.True(t, rows.Next())

@@ -18,22 +18,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// A completed OpenAI-compatible request can report zero tokens and still
+// provide successful provider-health evidence. Four provider platforms use the
+// recorder fixture to check one forbidden-counter reset and one usage-log call
+// after that completion is recorded.
+
+// openAI403CounterResetStub records provider identifiers reset by
+// the health fixture.
 type openAI403CounterResetStub struct {
-	resetCalls []int64
+	// resetCalls accumulates provider IDs during recorder completion; each
+	// subtest owns a fresh stub and inspects this slice
+	// after recording returns.
+	resetCalls []int64 // observed provider reset identifiers
 }
 
-// forbiddenResetFixture forwards completion counter resets to the provider health service.
-type forbiddenResetFixture struct{ core *providercore.HealthService }
+// forbiddenResetFixture connects recorder counter resets to the
+// provider health service.
+type forbiddenResetFixture struct {
+	// core receives completion reset calls through ResetForbiddenCounter. Its
+	// nil-safe method leaves counter state untouched when no health
+	// service is supplied.
+	core *providercore.HealthService // provider health service
+}
 
+// IncrementOpenAI403Count returns zero with no error for every increment
+// request. Provider identifiers, window arguments, and cancellation have no
+// effect on this stub result; the fixture records
+// reset observations separately.
 func (s *openAI403CounterResetStub) IncrementOpenAI403Count(context.Context, int64, int) (int64, error) {
 	return 0, nil
 }
 
+// ResetOpenAI403Count appends providerID to the stub's reset observations and
+// reports success. Callers supply a nonnil stub, and assertions read those
+// observations after the synchronous recorder call returns.
 func (s *openAI403CounterResetStub) ResetOpenAI403Count(_ context.Context, providerID int64) error {
 	s.resetCalls = append(s.resetCalls, providerID)
 	return nil
 }
 
+// TestOpenAIGatewayServiceRecordUsageResets403CounterForZeroUsage records
+// zero-token results on four OpenAI-compatible provider platforms. It checks a
+// successful return, one provider-counter reset, and one usage-log insertion
+// call for each fixture.
 func TestOpenAIGatewayServiceRecordUsageResets403CounterForZeroUsage(t *testing.T) {
 	for _, platform := range []string{capability.PlatformOpenAI, capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		t.Run(platform, func(t *testing.T) {
@@ -64,6 +91,9 @@ func TestOpenAIGatewayServiceRecordUsageResets403CounterForZeroUsage(t *testing.
 	}
 }
 
+// ResetOpenAI403Counter asks the provider health service to clear one
+// provider's forbidden counter. Nil services, absent counters, and nonpositive
+// identifiers produce no reset; deletion failures are observed by the service.
 func (f forbiddenResetFixture) ResetOpenAI403Counter(ctx context.Context, id int64) {
 	f.core.ResetForbiddenCounter(ctx, id)
 }

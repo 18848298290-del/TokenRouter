@@ -13,19 +13,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// countedCataloguePolicies counts billing-source reads per resolution.
+// Finite request catalogues combine saved model mappings with group
+// restrictions and provider eligibility. These fixtures measure policy read
+// reuse and selected-target checks while retaining Compact's dedicated final
+// model identity for attributes; the benchmark includes preparation of a fixed
+// multi-provider workload.
+
+// countedCataloguePolicies embeds group policy and counts independent
+// pricing-source reads.
 type countedCataloguePolicies struct {
-	*routing.PricingConfigService
-	pricingReads int
+	*routing.PricingConfigService     // group policy fixture implementation
+	pricingReads                  int // counted pricing-source query calls
 }
 
-// countedCatalogueRules counts eligibility checks for catalogue and selected-model queries.
+// countedCatalogueRules wraps prepared provider rules and records model
+// eligibility checks.
 type countedCatalogueRules struct {
-	routing.CatalogueRules
+	routing.CatalogueRules // wrapped prepared eligibility rules
+	// checks points to the test's eligibility count. Supports updates it
+	// synchronously during resolution so the test can compare selected-name work
+	// with full candidate enumeration.
 	checks *int
 }
 
-// TestCatalogueIncludesGroupMappingTargets checks that concrete group-mapping targets enter candidate validation.
+// TestCatalogueIncludesGroupMappingTargets supplies exact and wildcard group
+// mappings with a concrete target. The target must enter eligibility checks,
+// then disappear when requested-stage restrictions or provider whitelists
+// reject it.
 func TestCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"client-alias", "client-*"} {
 		t.Run(source, func(t *testing.T) {
@@ -60,7 +74,9 @@ func TestCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	}
 }
 
-// TestCatalogueReadsGroupOnce checks reuse of one group snapshot across catalogue and restriction stages.
+// TestCatalogueReadsGroupOnce evaluates a large candidate list under each model
+// restriction stage. The allowed result must retain its pricing identity while
+// group and pricing policy are each read once.
 func TestCatalogueReadsGroupOnce(t *testing.T) {
 	for _, stage := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		t.Run(stage, func(t *testing.T) {
@@ -85,19 +101,31 @@ func TestCatalogueReadsGroupOnce(t *testing.T) {
 	}
 }
 
-// GetPricingConfigForGroup counts billing-source reads.
+// GetPricingConfigForGroup counts a pricing read and returns upstream billing
+// identity for the fixture. The group ID is ignored so each test can isolate
+// read reuse from repository behavior.
 func (p *countedCataloguePolicies) GetPricingConfigForGroup(context.Context, int64) (*routing.PricingConfig, error) {
 	p.pricingReads++
 	return &routing.PricingConfig{BillingModelSource: routing.BillingModelSourceUpstream}, nil
 }
 
+// Supports increments the fixture counter before delegating prepared model
+// eligibility. The counter pointer must remain available during resolution, and
+// only selected names should contribute checks in the selected-query test.
 func (r countedCatalogueRules) Supports(ctx context.Context, model string) bool {
 	*r.checks++
 	return r.CatalogueRules.Supports(ctx, model)
 }
 
+// SupportsClientProtocol delegates invocation-shape checks when the wrapped
+// rules provide that capability. Otherwise it permits the protocol so this
+// counting wrapper retains the optional behavior expected by catalogue
+// resolution.
 func (r countedCatalogueRules) SupportsClientProtocol(model string, source protocol.ProtocolID) bool {
 	if rules, ok := r.CatalogueRules.(interface {
+		// SupportsClientProtocol reports invocation-shape eligibility for a mapped
+		// name and entry. The wrapper forwards this optional check before allowing
+		// its counted model-support callback to contribute a route.
 		SupportsClientProtocol(string, protocol.ProtocolID) bool
 	}); ok {
 		return rules.SupportsClientProtocol(model, source)
@@ -105,7 +133,9 @@ func (r countedCatalogueRules) SupportsClientProtocol(model string, source proto
 	return true
 }
 
-// TestSelectedCatalogueChecksOnlyTargets checks one policy read and eligibility checks limited to selected names.
+// TestSelectedCatalogueChecksOnlyTargets requests a mapping target, a custom
+// name, and an undeclared name. Only the two declared targets must reach
+// eligibility checks, with one group and one pricing read.
 func TestSelectedCatalogueChecksOnlyTargets(t *testing.T) {
 	groupID := int64(1)
 	reads := 0
@@ -127,8 +157,9 @@ func TestSelectedCatalogueChecksOnlyTargets(t *testing.T) {
 	require.ElementsMatch(t, []string{"alias", "target", "manual"}, routing.RequestableModelIDs(result.Models))
 }
 
-// BenchmarkRequestableConfiguredProviders measures cold resolution, including rule preparation, for 65 providers
-// and 186 entries.
+// BenchmarkRequestableConfiguredProviders measures cold resolution of 186
+// concrete names across 65 providers. Rule preparation stays inside the timer,
+// and each iteration checks that the complete configured catalogue is returned.
 func BenchmarkRequestableConfiguredProviders(b *testing.B) {
 	whitelist := make([]any, 186)
 	mapping := map[string]any{}
@@ -156,6 +187,10 @@ func BenchmarkRequestableConfiguredProviders(b *testing.B) {
 	}
 }
 
+// TestRequestableCompactAttributesUseFinalModel supplies an OpenAI OAuth
+// Compact mapping distinct from its ordinary requested model. The retained
+// attribute target must equal the final model selected by runtime Compact
+// mapping.
 func TestRequestableCompactAttributesUseFinalModel(t *testing.T) {
 	ctx := context.Background()
 	id := int64(1)

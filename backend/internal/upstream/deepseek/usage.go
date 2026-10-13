@@ -11,15 +11,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// DefaultTestModel is the model used for DeepSeek connection probes.
+// DeepSeek balance responses can contain several currencies, each with a
+// separately reported remaining amount. Every accepted entry stays in its
+// response order, while the first accepted entry also supplies the primary
+// Balance and Unit that single-balance consumers display. Invalid numeric
+// entries are skipped individually; an absent array or an array with no usable
+// amounts rejects the query.
+//
+// Availability is a separate observation and defaults to true when is_available
+// is absent. A missing currency label becomes CNY, and finite negative balances
+// remain available as wallet debt. The query uses a fixed management path and
+// the supplied transport snapshot, so provider orchestration determines the
+// destination policy and later monitoring decisions.
+
+// DefaultTestModel selects the DeepSeek model used by provider connection
+// probes. The probe exercises model access independently of balance queries.
 const DefaultTestModel = "deepseek-chat"
 
+// DeepseekBalanceUsageAdapter reads DeepSeek wallet balances through the
+// configured usage-query transport.
 type DeepseekBalanceUsageAdapter struct{}
 
+// Name returns the registry identifier for DeepSeek wallet-balance queries.
 func (*DeepseekBalanceUsageAdapter) Name() string {
 	return usageview.UpstreamUsageAdapterDeepseekBalance
 }
 
+// Query reads the fixed /user/balance endpoint and returns all entries with
+// parseable finite amounts. It requires a stable nonnil request with usable
+// transport and header callbacks; shared usageclient methods bound and close
+// the response.
+//
+// The first accepted entry determines the primary amount and unit, while the
+// complete accepted list remains available for multi-currency monitoring.
+// Missing currency text becomes CNY, and missing is_available becomes true. An
+// invalid entry is skipped, but an absent array or wholly unusable array
+// returns the invalid-response error.
 func (*DeepseekBalanceUsageAdapter) Query(ctx context.Context, input *usagecontract.Request) (*usageview.UpstreamUsageInfo, error) {
 	client := usageclient.New(input)
 	endpoint, err := usageclient.CnUsageEndpoint(client.BaseURL, "/user/balance", false)
@@ -46,9 +73,15 @@ func (*DeepseekBalanceUsageAdapter) Query(ctx context.Context, input *usagecontr
 		currency := strings.ToUpper(strings.TrimSpace(item.Get("currency").String()))
 		totalBalance := item.Get("total_balance")
 		value, ok := usageclient.CnParseF64(totalBalance.Value())
+		// A malformed currency entry cannot contribute a usable amount.
+		// Continue collecting other currencies so one damaged entry
+		// does not discard their reported balances.
 		if !totalBalance.Exists() || !ok || !usageview.ValidFiniteNumber(value) {
 			return true
 		}
+		// Use CNY for unlabeled entries so the primary balance and
+		// retained currency list have a concrete unit for display and
+		// monitoring.
 		if currency == "" {
 			currency = "CNY"
 		}

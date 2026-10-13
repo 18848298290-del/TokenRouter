@@ -1,16 +1,21 @@
-// Package batchimage manages submission, polling, settlement, and cleanup of batch image jobs.
+// Package batchimage manages asynchronous image jobs from validated submission
+// through provider execution, indexed results, funding settlement and resource
+// cleanup. PostgreSQL stores lifecycle state and submission snapshots; Redis
+// coordinates visits, leases, retries and download permits. Provider resource
+// names stay inside persisted records.
 //
-// Reading entry points:
-//   - public.go: validates requests, selects providers, and reserves funds.
-//   - worker.go: consumes queued jobs, maintains locks, and schedules retries.
-//   - pipeline.go: connects provider processing with terminal settlement.
+// Start here:
+//   - public.go: validates submission, binds the provider and checks ownership.
+//   - worker.go: coordinates queue visits and cancellation through held leases.
+//   - processor.go: polls the provider and reconciles results before settlement.
 //
 // File groups:
-//   - job.go, contracts.go: job states, items, repository interfaces, and request/response types.
-//   - public.go, public_values.go: public operations and response conversion.
-//   - provider_values.go, registry.go, value_helpers.go: provider registration and job field conversion.
-//   - worker.go, queue.go, runtime.go: queue consumption and background loop lifecycle.
-//   - processor.go, pipeline.go: upstream polling, result parsing, and settlement handoff.
-//   - billing.go, pricing.go, settlement.go, recovery.go: funding and stalled-job recovery.
-//   - download.go, cleanup.go: image and ZIP downloads and expired input/output cleanup.
+//   - job.go and contracts.go: define persisted records and provider/public values.
+//   - billing.go, pricing.go and settlement.go: reserve and settle frozen funding.
+//   - pipeline.go, recovery.go and runtime.go: resume stages and manage work loops.
+//   - download.go and cleanup.go: stream retained results and remove resources.
+//   - registry.go and model_attributes.go: select backends and validate model
+//     preferences. provider_values.go and public_values.go render persisted
+//     values; value_helpers.go supplies nullable-field and model-identity
+//     conversions.
 package batchimage

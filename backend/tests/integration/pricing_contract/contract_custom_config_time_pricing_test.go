@@ -13,11 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Daily token pricing uses validated wall-clock periods evaluated in a
+// supplied location. These fixtures connect routing validation with the pure
+// multiplier calculation, covering adjoining periods, midnight splits, weekday
+// selection, and a unit multiplier when timezone loading cannot
+// supply a location.
+
+// TestValidateTimePricingConfig supplies disabled schedules, adjacent periods,
+// and malformed daily pricing rules. It checks successful validation or the
+// expected error fragment for timezone, clock, overlap, precision,
+// and finite-multiplier cases.
 func TestValidateTimePricingConfig(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  *routing.TimePricingConfig
-		wantErr string
+		name    string                     // subtest selection label
+		config  *routing.TimePricingConfig // daily pricing schedule
+		wantErr string                     // expected validation error fragment
 	}{
 		{name: "nil disabled"},
 		{name: "empty disabled", config: pricingTimePricingTestConfig()},
@@ -56,6 +66,9 @@ func TestValidateTimePricingConfig(t *testing.T) {
 	}
 }
 
+// TestTimePricingConfigMultiplierAt evaluates one daily period at its start,
+// end, and preceding minute. It checks the Shanghai endpoints and a New York
+// local-time match for UTC instants.
 func TestTimePricingConfigMultiplierAt(t *testing.T) {
 	config := pricingTimePricingTestConfig(routing.TimePricingPeriod{StartTime: "09:00", EndTime: "12:00", Multiplier: 2})
 	require.Equal(t, 1.0, config.MultiplierAt(time.Date(2026, 6, 29, 0, 59, 0, 0, time.UTC), contractTimeLocation(config)))
@@ -66,6 +79,9 @@ func TestTimePricingConfigMultiplierAt(t *testing.T) {
 	require.Equal(t, 2.0, newYork.MultiplierAt(time.Date(2026, 6, 29, 14, 0, 0, 0, time.UTC), contractTimeLocation(newYork)))
 }
 
+// TestTimePricingConfigMultiplierAtWeekdaysOnly evaluates the same Shanghai
+// morning period on Monday, Saturday, and Sunday. It checks that the
+// configured factor applies on the weekday and becomes one on weekends.
 func TestTimePricingConfigMultiplierAtWeekdaysOnly(t *testing.T) {
 	config := &routing.TimePricingConfig{
 		Timezone:     "Asia/Shanghai",
@@ -76,9 +92,9 @@ func TestTimePricingConfigMultiplierAtWeekdaysOnly(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		at   time.Time
-		want float64
+		name string    // subtest selection label
+		at   time.Time // UTC evaluation instant
+		want float64   // expected dimensionless pricing factor
 	}{
 		{name: "Monday in configured timezone", at: time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC), want: 2},
 		{name: "Saturday in configured timezone", at: time.Date(2026, 7, 4, 1, 0, 0, 0, time.UTC), want: 1},
@@ -91,6 +107,10 @@ func TestTimePricingConfigMultiplierAtWeekdaysOnly(t *testing.T) {
 	}
 }
 
+// TestTimePricingConfigMultiplierAtMidnightSplit supplies separate
+// late-evening and early-morning periods with different factors. It checks the
+// factor immediately before midnight, at midnight, and at the
+// exclusive morning endpoint.
 func TestTimePricingConfigMultiplierAtMidnightSplit(t *testing.T) {
 	config := pricingTimePricingTestConfig(
 		routing.TimePricingPeriod{StartTime: "22:00", EndTime: "00:00", Multiplier: 2},
@@ -103,6 +123,10 @@ func TestTimePricingConfigMultiplierAtMidnightSplit(t *testing.T) {
 	require.Equal(t, 1.0, config.MultiplierAt(time.Date(2026, 6, 30, 2, 0, 0, 0, location), contractTimeLocation(config)))
 }
 
+// TestTimePricingConfigMultiplierAtDegradesForInvalidConfiguration evaluates
+// nil schedules and schedules whose timezone cannot be loaded. It checks a
+// unit factor for those inputs and a validation error for the
+// process-dependent Local name.
 func TestTimePricingConfigMultiplierAtDegradesForInvalidConfiguration(t *testing.T) {
 	var nilConfig *routing.TimePricingConfig
 	validAt := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
@@ -115,15 +139,24 @@ func TestTimePricingConfigMultiplierAtDegradesForInvalidConfiguration(t *testing
 	require.True(t, strings.Contains(err.Error(), "timezone"))
 }
 
+// pricingTimePricingTestConfig constructs a Shanghai daily schedule from
+// periods. The returned schedule retains the supplied slice, so callers keep
+// its elements stable while validating or evaluating that schedule. An empty slice
+// disables time pricing.
 func pricingTimePricingTestConfig(periods ...routing.TimePricingPeriod) *routing.TimePricingConfig {
 	return &routing.TimePricingConfig{Timezone: "Asia/Shanghai", Periods: periods}
 }
 
-// contractTimeLocation loads the fixture timezone; production code validates settings and computes multipliers.
+// contractTimeLocation loads the schedule's named timezone for multiplier
+// assertions. Nil schedules return nil, and load errors are discarded so
+// invalid timezone fixtures reach MultiplierAt with a missing location.
 func contractTimeLocation(value *pricing.TimePricingConfig) *time.Location {
 	if value == nil {
 		return nil
 	}
+	// Invalid timezone fixtures intentionally discard the loading error. The
+	// resulting nil location lets MultiplierAt exercise its unit-factor path
+	// during these assertions.
 	location, _ := provider.LoadPricingLocation(value.Timezone)
 	return location
 }

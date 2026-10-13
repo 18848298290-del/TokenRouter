@@ -18,12 +18,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/oauth"
 )
 
+// Claude cookie authorization discovers an organization, requests a redirect
+// containing an authorization code, and exchanges that code through the
+// platform token endpoint. These calls keep the session cookie in the two
+// browser-facing requests, while token exchange and refresh send JSON
+// credential proofs.
+//
+// The redirect's code and optional state travel as one code#state value between
+// methods. Exchange splits that value and sends its embedded state; its
+// separate state and setup-token arguments do not influence the payload. The
+// factory supplies each request's HTTP client and proxy choice, and request
+// contexts carry cancellation. Higher-level authorization and refresh services
+// own session validation, persistence, and competing credential updates.
+
+// OAuthClient performs Claude browser authorization and platform token HTTP
+// calls.
 type OAuthClient struct {
-	BaseURL       string
-	TokenURL      string
-	ClientFactory func(proxyURL string) (*req.Client, error)
+	// BaseURL and TokenURL select browser and credential endpoints. ClientFactory
+	// creates or supplies transport for each call; callers keep this configuration
+	// stable during concurrent use.
+	BaseURL  string // browser endpoint prefix
+	TokenURL string // credential exchange endpoint
+	// ClientFactory needs to return a usable req client on successful calls; each
+	// OAuth method invokes it before forming the HTTP request.
+	ClientFactory func(proxyURL string) (*req.Client, error) // per-call client supplier
 }
 
+// NewOAuthClient configures Claude browser and token endpoints with the default
+// client factory. Callers may replace fields for transport injection before
+// use, keeping shared configuration stable during concurrent requests.
 func NewOAuthClient() *OAuthClient {
 	return &OAuthClient{
 		BaseURL:       "https://claude.ai",
@@ -32,6 +55,16 @@ func NewOAuthClient() *OAuthClient {
 	}
 }
 
+// GetOrganizationUUID requests organizations with the supplied session cookie
+// and request context. Factory, HTTP, decoding, and unsuccessful-status errors
+// return to the caller; an empty organization list is also an error.
+//
+// A single returned organization is selected directly. With multiple
+// organizations, the first raven_type=team entry wins, and the first list entry
+// is selected when no team is present. This resolves cookie authorization's
+// organization choice using response order; the caller receives the chosen UUID
+// and remains responsible for the broader authorization session. The selected
+// UUID is returned as supplied, including empty text when its field is omitted.
 func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxyURL string) (string, error) {
 	client, err := s.ClientFactory(proxyURL)
 	if err != nil {
@@ -39,9 +72,12 @@ func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxy
 	}
 
 	var orgs []struct {
-		UUID      string  `json:"uuid"`
-		Name      string  `json:"name"`
-		RavenType *string `json:"raven_type"` // nil for personal, "team" for team organization
+		UUID string `json:"uuid"` // organization identifier text
+		Name string `json:"name"` // organization display name
+		// RavenType can be nil when the response omits classification. During
+		// multi-organization selection, GetOrganizationUUID treats that entry as a
+		// non-team candidate.
+		RavenType *string `json:"raven_type"` // optional team selection label
 	}
 
 	targetURL := s.BaseURL + "/api/organizations"
@@ -75,7 +111,8 @@ func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxy
 		return orgs[0].UUID, nil
 	}
 
-	// Prefer a team organization when the session belongs to several organizations.
+	// Multiple cookie organizations need one authorization target. Select the
+	// first team entry in response order before applying the first-entry default.
 	for _, org := range orgs {
 		if org.RavenType != nil && *org.RavenType == "team" {
 			logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 SUCCESS - Selected team org, UUID: %s, Name: %s, RavenType: %s",
@@ -84,11 +121,22 @@ func (s *OAuthClient) GetOrganizationUUID(ctx context.Context, sessionKey, proxy
 		}
 	}
 
-	// Use the first organization when no team is available.
+	// When no team entry matched, use response order to resolve the target;
+	// this keeps cookie authorization usable for sessions containing only other
+	// organization types.
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 SUCCESS - No team org found, using first org, UUID: %s, Name: %s", orgs[0].UUID, orgs[0].Name)
 	return orgs[0].UUID, nil
 }
 
+// GetAuthorizationCode posts organization, scope, state, and PKCE challenge
+// using the supplied session cookie. Request context reaches the HTTP call, and
+// unsuccessful responses or missing code information return errors.
+//
+// The response redirect is parsed as a URL and its code query value becomes the
+// result. When the redirect also contains state, the result joins them as
+// code#state for ExchangeCodeForToken to split. This method does not compare
+// returned state or validate the redirect host, so authorization-session checks
+// remain with its caller.
 func (s *OAuthClient) GetAuthorizationCode(ctx context.Context, sessionKey, orgUUID, scope, codeChallenge, state, proxyURL string) (string, error) {
 	client, err := s.ClientFactory(proxyURL)
 	if err != nil {
@@ -109,11 +157,14 @@ func (s *OAuthClient) GetAuthorizationCode(ctx context.Context, sessionKey, orgU
 	}
 
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 2: Getting authorization code from %s", authURL)
+	// The diagnostic map contains strings, so JSON encoding has no unsupported
+	// value to reject. Redaction affects the logged copy while the original map
+	// supplies authorization proof.
 	reqBodyJSON, _ := json.Marshal(logredact.RedactMap(reqBody))
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 2 Request Body: %s", string(reqBodyJSON))
 
 	var result struct {
-		RedirectURI string `json:"redirect_uri"`
+		RedirectURI string `json:"redirect_uri"` // code-bearing redirect URL
 	}
 
 	resp, err := client.R().
@@ -159,6 +210,9 @@ func (s *OAuthClient) GetAuthorizationCode(ctx context.Context, sessionKey, orgU
 		return "", fmt.Errorf("no authorization code in redirect_uri")
 	}
 
+	// Carry returned state beside the authorization code for the next exchange
+	// call. The joined value retains the response's state even when it differs
+	// from the requested state.
 	fullCode := authCode
 	if responseState != "" {
 		fullCode = authCode + "#" + responseState
@@ -168,13 +222,23 @@ func (s *OAuthClient) GetAuthorizationCode(ctx context.Context, sessionKey, orgU
 	return fullCode, nil
 }
 
+// ExchangeCodeForToken posts an authorization-code proof and decodes the
+// returned token response under ctx. Code may contain an embedded state after
+// its first hash separator; that state is sent when nonempty.
+//
+// The separate state argument and isSetupToken flag do not affect this payload.
+// Either setup flag value sends the client, callback, and verifier fields with no
+// expires_in request value. Factory, transport, decoding, and non-success
+// responses return errors; credential persistence and validation of the
+// authorization session remain with higher-level callers.
 func (s *OAuthClient) ExchangeCodeForToken(ctx context.Context, code, codeVerifier, state, proxyURL string, isSetupToken bool) (*oauth.TokenResponse, error) {
 	client, err := s.ClientFactory(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP client: %w", err)
 	}
 
-	// Parse code which may contain state in format "authCode#state"
+	// Recover the state carried by GetAuthorizationCode's joined result before
+	// serializing the exchange proof; only the first separator splits these two values.
 	authCode := code
 	codeState := ""
 	if before, after, ok := strings.Cut(code, "#"); ok {
@@ -195,6 +259,9 @@ func (s *OAuthClient) ExchangeCodeForToken(ctx context.Context, code, codeVerifi
 	}
 
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 3: Exchanging code for token at %s", s.TokenURL)
+	// The diagnostic copy uses only string values, allowing its encoding error to
+	// be discarded. Token exchange still serializes reqBody with its code,
+	// optional state, and verifier.
 	reqBodyJSON, _ := json.Marshal(logredact.RedactMap(reqBody))
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 3 Request Body: %s", string(reqBodyJSON))
 
@@ -223,6 +290,10 @@ func (s *OAuthClient) ExchangeCodeForToken(ctx context.Context, code, codeVerifi
 	return &tokenResp, nil
 }
 
+// RefreshToken posts the supplied refresh proof and returns decoded token data
+// under ctx. It returns client, request, decoding, and unsuccessful-status
+// errors; callers decide how returned credentials are persisted and coordinate
+// competing refreshes.
 func (s *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (*oauth.TokenResponse, error) {
 	client, err := s.ClientFactory(proxyURL)
 	if err != nil {
@@ -256,8 +327,13 @@ func (s *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL s
 	return &tokenResp, nil
 }
 
+// createReqClient builds an instrumented Chrome-impersonating req client with a
+// sixty-second timeout and no cookie jar. Proxy parsing errors return
+// immediately; a blank proxy uses the client's ordinary direct path.
 func createReqClient(proxyURL string) (*req.Client, error) {
-	// Disable cookie persistence so authorization flows cannot inherit session cookies.
+	// Disable the cookie jar on this client so authorization requests carry
+	// their supplied session cookie instead of accumulating cookies from earlier
+	// HTTP responses.
 	client := req.C().
 		SetTimeout(60 * time.Second).
 		ImpersonateChrome().

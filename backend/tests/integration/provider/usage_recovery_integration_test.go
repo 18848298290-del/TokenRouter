@@ -11,8 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestUsageRecoveryDatabaseIdentity checks that late recovery matches the observed identity and error state.
-// A rename remains eligible, and an outbox failure does not undo recovery.
+// Usage recovery changes a provider's error state when the observed credential
+// identity and error still match. Sequential PostgreSQL updates exercise
+// rejected observations, cancellation, harmless renames, and notification
+// failure, while checking that the manual scheduling switch stays disabled.
+
+// TestUsageRecoveryDatabaseIdentity observes an errored OAuth provider before
+// sequential identity or error changes. Recovery tolerates a rename and
+// notification failure, rejects stale state, and keeps the manual scheduling
+// switch disabled in every case.
 func TestUsageRecoveryDatabaseIdentity(t *testing.T) {
 	for _, change := range []string{"none", "name", "credentials", "status", "error", "proxy", "cancelled", "outbox_failure"} {
 		t.Run(change, func(t *testing.T) {

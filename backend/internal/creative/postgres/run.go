@@ -15,13 +15,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Creative run storage persists task identity, hashed inputs, funding
+// snapshots, and output metadata while image bytes remain transient. Creating
+// a queued run, its pending output rows, and provisioning outbox entry shares
+// one transaction, making task provisioning recoverable when later funding,
+// transient writes, or queue admission fail.
+//
+// User queries compare both user and workspace, while background processing
+// uses the internal run identifier. Version comparisons fence status
+// transitions against independently advancing writers; specialized identity
+// and counter updates have their own predicates. Acknowledged output rows
+// resist later delivery updates, and optional metadata fields are assigned
+// only when their input values are present. Funding participant writes use the
+// billing transaction separately from these ordinary Ent operations.
+
 // creativeRunRepository stores creative run metadata through Ent.
-// State transitions using version checks reject updates when another writer advances the run.
+// State transitions using version checks reject updates when another writer
+// advances the run.
 type creativeRunRepository struct {
-	client *dbent.Client
+	// client is retained from application wiring or a caller transaction adapter.
+	// Its owner controls lifetime; operations here use the supplied client
+	// connection.
+	client *dbent.Client // retained run metadata Ent client
 }
 
-// translatePersistenceError maps missing records and conflicts to run errors.
+// translatePersistenceError maps recognized missing-row and unique-conflict
+// errors to supplied domain errors. Nil error returns nil; absent mapping
+// arguments and other database failures preserve the original error for
+// callers.
 func translatePersistenceError(err error, notFound, conflict *apperror.ApplicationError) error {
 	if err == nil {
 		return nil
@@ -35,11 +56,23 @@ func translatePersistenceError(err error, notFound, conflict *apperror.Applicati
 	return err
 }
 
-// NewCreativeRunRepository creates a creative run repository.
+// NewCreativeRunRepository retains the Ent client for creative metadata
+// persistence. Callers supply a usable client and own its lifetime; this
+// constructor creates no connection or transaction itself.
 func NewCreativeRunRepository(client *dbent.Client) creative.CreativeRunRepository {
 	return &creativeRunRepository{client: client}
 }
 
+// CreateCreativeRun creates queued metadata, pending output rows, and
+// provisioning recovery in one transaction. A missing RunID is generated here,
+// while other parameters come from validated submission and funding snapshots.
+//
+// Only nonblank workspace values and nonnil idempotency keys are assigned to
+// their optional columns. Output indexes range from zero through
+// RequestedOutputCount minus one, and their initial state is pending. Any
+// task, output, outbox, or commit error prevents the complete creation from
+// being returned; recognized unique conflicts use the corresponding run or
+// output error.
 func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params creative.CreateCreativeRunParams) (*creative.CreativeRun, error) {
 	if params.RunID == "" {
 		runID, err := creative.NewCreativeRunID()
@@ -52,6 +85,9 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 	if err != nil {
 		return nil, err
 	}
+	// Run creation, pending output metadata, and provisioning recovery share this
+	// transaction. Roll back incomplete work on every early exit; discard rollback
+	// errors after a commit has already completed the transaction.
 	defer func() { _ = tx.Rollback() }()
 
 	builder := tx.CreativeRun.Create().
@@ -87,7 +123,9 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 	if err != nil {
 		return nil, translatePersistenceError(err, nil, creative.ErrCreativeRunExists)
 	}
-	// Create pending outputs in the run transaction so their metadata appears atomically.
+	// Publish pending output rows with the task so result delivery always has
+	// metadata indexes corresponding to the output count saved during validated
+	// submission, rather than creating those rows after queue execution starts.
 	outputBuilders := make([]*dbent.CreativeRunOutputCreate, 0, params.RequestedOutputCount)
 	for index := range params.RequestedOutputCount {
 		outputBuilders = append(outputBuilders, tx.CreativeRunOutput.Create().
@@ -100,7 +138,9 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 			return nil, translatePersistenceError(err, nil, creative.ErrCreativeOutputExists)
 		}
 	}
-	// Commit the provisioning outbox entry with the queued run so enqueue can be recovered.
+	// Persist provisioning recovery in the creation transaction. Later funding,
+	// transient storage, or enqueue failures can leave this queued metadata present,
+	// so recovery needs its action to appear with the task itself.
 	if _, err := tx.CreativeRunOutbox.Create().
 		SetRunID(params.RunID).
 		SetOperation(string(creative.CreativeRunOutboxProvision)).
@@ -114,6 +154,10 @@ func (r *creativeRunRepository) CreateCreativeRun(ctx context.Context, params cr
 	return creativeRunEntityToService(entity), nil
 }
 
+// GetCreativeRunByRunID loads internal task metadata by the supplied run
+// identifier. Background recovery uses this lookup after queue admission;
+// public callers establish owner/workspace access separately. Missing rows
+// become ErrCreativeRunNotFound.
 func (r *creativeRunRepository) GetCreativeRunByRunID(ctx context.Context, runID string) (*creative.CreativeRun, error) {
 	entity, err := r.client.CreativeRun.Query().
 		Where(creativerun.RunIDEQ(runID)).
@@ -124,6 +168,9 @@ func (r *creativeRunRepository) GetCreativeRunByRunID(ctx context.Context, runID
 	return creativeRunEntityToService(entity), nil
 }
 
+// GetCreativeRunByRunIDForOwner loads a task only when run, user, and
+// workspace all match. It uses supplied scope values directly, and either
+// absence or an ownership mismatch becomes ErrCreativeRunNotFound.
 func (r *creativeRunRepository) GetCreativeRunByRunIDForOwner(ctx context.Context, scope creative.CreativeRunScope, runID string) (*creative.CreativeRun, error) {
 	entity, err := r.client.CreativeRun.Query().
 		Where(
@@ -138,6 +185,10 @@ func (r *creativeRunRepository) GetCreativeRunByRunIDForOwner(ctx context.Contex
 	return creativeRunEntityToService(entity), nil
 }
 
+// GetCreativeRunByIdempotencyKey loads the latest matching user/workspace/key
+// row by descending ID. Callers normalize scope and key beforehand; no
+// matching row becomes ErrCreativeRunNotFound rather than searching another
+// workspace.
 func (r *creativeRunRepository) GetCreativeRunByIdempotencyKey(ctx context.Context, scope creative.CreativeRunScope, key string) (*creative.CreativeRun, error) {
 	entity, err := r.client.CreativeRun.Query().
 		Where(
@@ -153,6 +204,11 @@ func (r *creativeRunRepository) GetCreativeRunByIdempotencyKey(ctx context.Conte
 	return creativeRunEntityToService(entity), nil
 }
 
+// ListCreativeRunsForOwner lists supplied-scope rows by descending creation
+// time and row ID. Limits outside one to one hundred use twenty, and negative
+// offsets use zero. The active shortcut selects queued, running,
+// provider_succeeded, and settlement_pending; other nonblank status values
+// match exactly.
 func (r *creativeRunRepository) ListCreativeRunsForOwner(ctx context.Context, scope creative.CreativeRunScope, filter creative.CreativeRunFilter) ([]*creative.CreativeRun, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
@@ -193,7 +249,16 @@ func (r *creativeRunRepository) ListCreativeRunsForOwner(ctx context.Context, sc
 	return out, nil
 }
 
-// TransitionCreativeRunStatus validates the transition and updates with an optimistic version check.
+// TransitionCreativeRunStatus validates a status pair and applies it only at
+// the version that was read. Callers can supply a transition clock; otherwise
+// the current system time is used.
+//
+// Running records a start time, terminal states record completion, and
+// cancellation also records cancellation time. Failure, result loss, and
+// release-pending transitions accept supplied error details; release pending
+// defaults its target to failed. A zero affected-row result means another
+// writer changed the version and returns ErrCreativeInvalidTransition so
+// callers can reread before choosing recovery.
 func (r *creativeRunRepository) TransitionCreativeRunStatus(ctx context.Context, runID, toStatus string, opts creative.CreativeRunTransitionOptions) error {
 	now := time.Now()
 	if opts.Now != nil {
@@ -259,13 +324,25 @@ func (r *creativeRunRepository) TransitionCreativeRunStatus(ctx context.Context,
 		return err
 	}
 	if affected == 0 {
-		// A version conflict means another writer advanced the run; the caller can reread its state.
+		// The status was validated against the read version. A zero-row
+		// update means
+		// that version was displaced before writing, so the caller must
+		// reread state
+		// before selecting another transition or recovery action.
 		return creative.ErrCreativeInvalidTransition
 	}
 	return nil
 }
 
-// MarkCreativeRunRunning advances queued to running idempotently and records the provider.
+// MarkCreativeRunRunning advances a valid task to running with a version check
+// and start time. If the read row is already running, a positive changed
+// provider is updated directly by run ID and the method otherwise returns
+// successfully. The already-running provider update does not apply the version
+// predicate used for the initial transition.
+//
+// Provider reselection can reach this method after another attempt already
+// marked the task running. That path updates identity while retaining the
+// existing start time; callers check current cancellation before transport.
 func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runID string, providerID int64, now time.Time) error {
 	current, err := r.client.CreativeRun.Query().
 		Where(creativerun.RunIDEQ(runID)).
@@ -274,7 +351,11 @@ func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runI
 		return translatePersistenceError(err, creative.ErrCreativeRunNotFound, nil)
 	}
 	if current.Status == creative.CreativeRunStatusRunning {
-		// A retry of a running job succeeds and updates the provider when needed.
+		// Repeated running admission can refresh provider identity
+		// after reselection.
+		// This branch writes by run ID, so it carries neither the
+		// version fence nor
+		// the start-time update used by the first running transition.
 		if providerID > 0 && (current.ProviderID == nil || *current.ProviderID != providerID) {
 			_, err := r.client.CreativeRun.Update().
 				Where(creativerun.RunIDEQ(runID)).
@@ -310,7 +391,10 @@ func (r *creativeRunRepository) MarkCreativeRunRunning(ctx context.Context, runI
 	return nil
 }
 
-// SetCreativeRunExecution saves the selected provider and platform.
+// SetCreativeRunExecution records a positive provider identifier and supplied
+// platform before worker transport begins. Nonpositive provider values return
+// success, while no matching run returns ErrCreativeRunNotFound; this update
+// uses no version or status predicate.
 func (r *creativeRunRepository) SetCreativeRunExecution(ctx context.Context, runID string, providerID int64, platform string, now time.Time) error {
 	if providerID <= 0 {
 		return nil
@@ -330,7 +414,15 @@ func (r *creativeRunRepository) SetCreativeRunExecution(ctx context.Context, run
 	return nil
 }
 
-// MarkCreativeRunSucceeded records cost and succeeds a running, provider_succeeded, or settlement_pending run.
+// MarkCreativeRunSucceeded records cost and completion for running,
+// provider_succeeded, or settlement_pending rows. If no row updates, a current
+// succeeded or cancelled row returns success; other existing states return
+// ErrCreativeInvalidTransition.
+//
+// The status predicate protects a concurrently cancelled row from this success
+// update. A separate read classifies the zero-row result, so success can mean
+// the task was already complete or cancellation won before this write; callers
+// use provider outcome metadata to settle that work separately.
 func (r *creativeRunRepository) MarkCreativeRunSucceeded(ctx context.Context, runID string, actualCost float64, now time.Time) error {
 	affected, err := r.client.CreativeRun.Update().
 		Where(
@@ -365,8 +457,16 @@ func (r *creativeRunRepository) MarkCreativeRunSucceeded(ctx context.Context, ru
 	return nil
 }
 
-// MarkCreativeRunProviderSucceeded records provider success for settlement recovery.
-// Callers retain the generated output so settlement retries do not repeat generation.
+// MarkCreativeRunProviderSucceeded records provider work timing and an
+// optional provider ID against the read version. Already succeeded or
+// result_lost rows return success. Running changes to provider_succeeded;
+// other read states retain their status, and the affected-row count is not
+// checked before success is returned.
+//
+// The recorded timestamp restores a provider-work fact from succeeded output
+// metadata. A competing version update can suppress this write, so callers
+// reread current metadata through their recovery flow rather than treating the
+// nil error as a guarantee that this attempt installed its timestamp.
 func (r *creativeRunRepository) MarkCreativeRunProviderSucceeded(ctx context.Context, runID string, providerID int64, now time.Time) error {
 	current, err := r.client.CreativeRun.Query().Where(creativerun.RunIDEQ(runID)).Only(ctx)
 	if err != nil {
@@ -392,13 +492,25 @@ func (r *creativeRunRepository) MarkCreativeRunProviderSucceeded(ctx context.Con
 	return nil
 }
 
-// UpdateCreativeRunOutput updates output metadata while leaving acknowledged rows unchanged.
+// UpdateCreativeRunOutput changes metadata for an output that is not
+// acknowledged. Status and updated time are assigned; MIME, positive byte
+// size, expiry, code, and message are written only when supplied.
+//
+// Empty code or message therefore keeps the earlier stored text. An
+// acknowledged row remains unchanged and is treated as successful, while a
+// missing output returns ErrCreativeOutputNotFound. The existence read after a
+// zero-row update distinguishes those cases, allowing repeated delivery work
+// to leave client receipt intact.
 func (r *creativeRunRepository) UpdateCreativeRunOutput(ctx context.Context, runID string, outputIndex int, status, mimeType string, byteSize int64, transientExpiresAt *time.Time, errorCode, errorMessage string) error {
 	builder := r.client.CreativeRunOutput.Update().
 		Where(
 			creativerunoutput.RunIDEQ(runID),
 			creativerunoutput.OutputIndexEQ(outputIndex),
-			// Acknowledged output has already been received by the client and must not be overwritten.
+			// Receipt persists independently from repeated delivery
+			// writes. Exclude acked
+			// rows in this update predicate so recovery cannot
+			// replace the client receipt
+			// with another succeeded or failed metadata state.
 			creativerunoutput.StatusNEQ(creative.CreativeRunOutputStatusAcked),
 		).
 		SetStatus(status).
@@ -423,7 +535,11 @@ func (r *creativeRunRepository) UpdateCreativeRunOutput(ctx context.Context, run
 		return err
 	}
 	if affected == 0 {
-		// An acknowledged row is an idempotent success; a missing row is an error.
+		// The update excludes acknowledged rows, so zero affected rows
+		// alone cannot
+		// distinguish prior client receipt from a missing index. Check
+		// existence before
+		// classifying the delivery write as successful or absent.
 		exists, existsErr := r.client.CreativeRunOutput.Query().
 			Where(
 				creativerunoutput.RunIDEQ(runID),
@@ -440,6 +556,9 @@ func (r *creativeRunRepository) UpdateCreativeRunOutput(ctx context.Context, run
 	return nil
 }
 
+// GetCreativeRunOutput loads one output by exact run identifier and output
+// index. Public queries establish task ownership before using this internal
+// metadata lookup, and a missing output becomes ErrCreativeOutputNotFound.
 func (r *creativeRunRepository) GetCreativeRunOutput(ctx context.Context, runID string, outputIndex int) (*creative.CreativeRunOutput, error) {
 	entity, err := r.client.CreativeRunOutput.Query().
 		Where(
@@ -453,6 +572,9 @@ func (r *creativeRunRepository) GetCreativeRunOutput(ctx context.Context, runID 
 	return creativeRunOutputEntityToService(entity), nil
 }
 
+// ListCreativeRunOutputs lists metadata for an exact run identifier in
+// ascending output-index order. No rows yields an allocated empty slice, and
+// public callers establish task ownership before using this internal lookup.
 func (r *creativeRunRepository) ListCreativeRunOutputs(ctx context.Context, runID string) ([]*creative.CreativeRunOutput, error) {
 	entities, err := r.client.CreativeRunOutput.Query().
 		Where(creativerunoutput.RunIDEQ(runID)).
@@ -468,7 +590,9 @@ func (r *creativeRunRepository) ListCreativeRunOutputs(ctx context.Context, runI
 	return out, nil
 }
 
-// ListCreativeRunOutputsForRuns fetches output metadata for multiple history or active-list runs.
+// ListCreativeRunOutputsForRuns groups output metadata for supplied run
+// identifiers, ordered by run and output index. Empty input returns an
+// allocated empty map; runs without rows have no map entry.
 func (r *creativeRunRepository) ListCreativeRunOutputsForRuns(ctx context.Context, runIDs []string) (map[string][]*creative.CreativeRunOutput, error) {
 	result := make(map[string][]*creative.CreativeRunOutput, len(runIDs))
 	if len(runIDs) == 0 {
@@ -487,7 +611,15 @@ func (r *creativeRunRepository) ListCreativeRunOutputsForRuns(ctx context.Contex
 	return result, nil
 }
 
-// MarkCreativeRunOutputAcked acknowledges a succeeded output; repeated acknowledgments succeed.
+// MarkCreativeRunOutputAcked changes a succeeded output to acknowledged and
+// records receipt time. A zero-row update rereads the output: already
+// acknowledged succeeds, missing output reports absence, and another status
+// reports not ready.
+//
+// Receipt uses a succeeded-state predicate so a failed or pending output cannot
+// become acknowledged through this call. Concurrent receipt can win that update
+// first; the following read accepts its acked state, allowing the query caller
+// to retry transient deletion after either the initial or repeated receipt.
 func (r *creativeRunRepository) MarkCreativeRunOutputAcked(ctx context.Context, runID string, outputIndex int, now time.Time) error {
 	affected, err := r.client.CreativeRunOutput.Update().
 		Where(
@@ -520,7 +652,9 @@ func (r *creativeRunRepository) MarkCreativeRunOutputAcked(ctx context.Context, 
 	return nil
 }
 
-// ListCreativeRunsDueForTransientCleanup lists terminal runs completed at or before cutoff for transient cleanup.
+// ListCreativeRunsDueForTransientCleanup lists terminal tasks completed at or
+// before cutoff in ascending row-ID order. Limits outside one to one thousand
+// select one hundred; this read does not mark rows cleaned.
 func (r *creativeRunRepository) ListCreativeRunsDueForTransientCleanup(ctx context.Context, cutoff time.Time, limit int) ([]*creative.CreativeRun, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -548,7 +682,10 @@ func (r *creativeRunRepository) ListCreativeRunsDueForTransientCleanup(ctx conte
 	return out, nil
 }
 
-// IncrementCreativeRunAttempt atomically increments attempt_count and returns the new value.
+// IncrementCreativeRunAttempt atomically adds one execution attempt, then
+// independently reads the counter. A missing row reports
+// ErrCreativeRunNotFound, and a later concurrent increment can be included in
+// the returned count.
 func (r *creativeRunRepository) IncrementCreativeRunAttempt(ctx context.Context, runID string) (int, error) {
 	affected, err := r.client.CreativeRun.Update().
 		Where(creativerun.RunIDEQ(runID)).
@@ -571,14 +708,24 @@ func (r *creativeRunRepository) IncrementCreativeRunAttempt(ctx context.Context,
 	return entity.AttemptCount, nil
 }
 
+// IncrementCreativeRunSettlementAttempt adds one settlement recovery attempt
+// and then reads its stored counter. A later concurrent increment can be
+// included because incrementCreativeRunCounter performs a separate update and
+// read.
 func (r *creativeRunRepository) IncrementCreativeRunSettlementAttempt(ctx context.Context, runID string) (int, error) {
 	return r.incrementCreativeRunCounter(ctx, runID, true)
 }
 
+// IncrementCreativeRunReleaseAttempt adds one release recovery attempt and
+// then reads its stored counter. A later concurrent increment can be included
+// because incrementCreativeRunCounter performs a separate update and read.
 func (r *creativeRunRepository) IncrementCreativeRunReleaseAttempt(ctx context.Context, runID string) (int, error) {
 	return r.incrementCreativeRunCounter(ctx, runID, false)
 }
 
+// incrementCreativeRunCounter updates the selected settlement or release
+// counter and subsequently reads it. The separate read translates missing rows
+// and can observe increments applied by other writers after this update.
 func (r *creativeRunRepository) incrementCreativeRunCounter(ctx context.Context, runID string, settlement bool) (int, error) {
 	update := r.client.CreativeRun.Update().Where(creativerun.RunIDEQ(runID)).SetUpdatedAt(time.Now())
 	if settlement {
@@ -604,6 +751,9 @@ func (r *creativeRunRepository) incrementCreativeRunCounter(ctx context.Context,
 	return entity.ReleaseAttemptCount, nil
 }
 
+// SetCreativeRunProvisioningPhase writes a supplied nonblank provisioning
+// phase and update time by run ID. Blank phase text is rejected, but the
+// nonblank value is stored without trimming or enum validation.
 func (r *creativeRunRepository) SetCreativeRunProvisioningPhase(ctx context.Context, runID, phase string) error {
 	if strings.TrimSpace(phase) == "" {
 		return creative.ErrCreativeInvalidParams
@@ -622,7 +772,9 @@ func (r *creativeRunRepository) SetCreativeRunProvisioningPhase(ctx context.Cont
 	return nil
 }
 
-// SetCreativeRunAllowanceReserved persists the allowance reservation flag, cleared after release.
+// SetCreativeRunAllowanceReserved writes the reserved allowance marker for an
+// existing run. This ordinary Ent update is separate from funding
+// transactions; an absent row returns ErrCreativeRunNotFound for the caller.
 func (r *creativeRunRepository) SetCreativeRunAllowanceReserved(ctx context.Context, runID string, reserved bool) error {
 	affected, err := r.client.CreativeRun.Update().
 		Where(creativerun.RunIDEQ(runID)).
@@ -638,6 +790,9 @@ func (r *creativeRunRepository) SetCreativeRunAllowanceReserved(ctx context.Cont
 	return nil
 }
 
+// SetCreativeRunReconcileError writes recovery diagnostics and a next-attempt
+// timestamp by run ID. Blank message clears the error, nonblank message keeps
+// supplied spelling, and a zero next time clears the timestamp.
 func (r *creativeRunRepository) SetCreativeRunReconcileError(ctx context.Context, runID, message string, next time.Time) error {
 	builder := r.client.CreativeRun.Update().
 		Where(creativerun.RunIDEQ(runID)).
@@ -662,6 +817,10 @@ func (r *creativeRunRepository) SetCreativeRunReconcileError(ctx context.Context
 	return nil
 }
 
+// creativeRunEntityToService converts Ent metadata and defaults an empty
+// requested model to Model. Nil entities remain nil; optional pointers and
+// allocation storage are retained from the supplied entity rather than
+// independently cloned.
 func creativeRunEntityToService(entity *dbent.CreativeRun) *creative.CreativeRun {
 	if entity == nil {
 		return nil
@@ -719,6 +878,10 @@ func creativeRunEntityToService(entity *dbent.CreativeRun) *creative.CreativeRun
 	}
 }
 
+// creativeRunOutputEntityToService converts Ent output metadata while
+// retaining optional pointers from the entity. Nil input returns nil, and
+// callers treating those returned pointer values as immutable avoid shared
+// mutation.
 func creativeRunOutputEntityToService(entity *dbent.CreativeRunOutput) *creative.CreativeRunOutput {
 	if entity == nil {
 		return nil

@@ -22,12 +22,29 @@ import (
 	teampostgres "github.com/TokenFlux/TokenRouter/internal/team/postgres"
 )
 
-// failingMemberKeys fails after key writes to check that members and keys share a transaction.
+// Team membership and credential writes need the same PostgreSQL transaction so
+// failed participant work cannot leave a departed member with independently
+// disabled keys. Separate entitlement cases check caller-owned concurrency
+// adjustment, registration invitation consumption and restoration, and initial
+// funds that do not increase cumulative recharge.
+
+// failingMemberKeys injects a post-write error into transaction-bound member
+// key disabling.
 type failingMemberKeys struct {
+	// TeamKeys performs the actual key updates with the supplied transaction
+	// before this override returns an injected error to its team repository
+	// caller.
 	*keypostgres.TeamKeys
+	// err follows successful delegated disabling. Nil makes the wrapper report
+	// success, so rollback cases configure an error before requesting member
+	// removal.
 	err error
 }
 
+// DisableMemberInTx delegates member-key disabling with the supplied SQL
+// transaction before returning its configured error. Delegate failures return
+// directly, and the team repository owns rollback after an injected post-write
+// failure.
 func (p failingMemberKeys) DisableMemberInTx(ctx context.Context, tx *sql.Tx, teamID, userID int64, now time.Time) error {
 	if err := p.TeamKeys.DisableMemberInTx(ctx, tx, teamID, userID, now); err != nil {
 		return err
@@ -35,6 +52,9 @@ func (p failingMemberKeys) DisableMemberInTx(ctx context.Context, tx *sql.Tx, te
 	return p.err
 }
 
+// TestMemberRemovalRollsBackKeyParticipant fails after disabling a team
+// member's key inside removal. Both membership and key state remain active,
+// then a working removal succeeds and disables the key.
 func TestMemberRemovalRollsBackKeyParticipant(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx := context.Background()
@@ -55,6 +75,9 @@ func TestMemberRemovalRollsBackKeyParticipant(t *testing.T) {
 	broken := teampostgres.NewTeamRepository(integrationDB,
 		failingMemberKeys{TeamKeys: keypostgres.NewTeamKeys(integrationDB), err: failure},
 		billingpostgres.NewMemberUsageStore(integrationDB, nil))
+	// Fail after the key participant writes so outside membership and key reads
+	// can detect a component that committed independently of the enclosing removal
+	// transaction.
 	require.ErrorIs(t, broken.RemoveMember(ctx, current.Team.ID, member.ID, time.Now()), failure)
 	var leftAt sql.NullTime
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
@@ -69,11 +92,18 @@ func TestMemberRemovalRollsBackKeyParticipant(t *testing.T) {
 	require.Equal(t, "disabled", stored.Status)
 }
 
+// TestRedeemConcurrencyUsesOuterEntTransaction adjusts concurrency on an
+// uncommitted user through a billing participant. Positive and clamped negative
+// changes remain inside the outer transaction, leaving no visible user after
+// rollback.
 func TestRedeemConcurrencyUsesOuterEntTransaction(t *testing.T) {
 	ctx := context.Background()
 	_, client := identityDatabase(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
+	// Keep uncommitted fixture and participant writes under caller rollback on any
+	// early return; the later explicit rollback is asserted before checking
+	// external absence.
 	defer func() { _ = tx.Rollback() }()
 	user, err := tx.Client().User.Create().SetEmail("test-concurrency-" + uuid.NewString() + "@example.com").
 		SetPasswordHash("hash").SetConcurrency(3).SetBalance(10).Save(ctx)
@@ -95,6 +125,9 @@ func TestRedeemConcurrencyUsesOuterEntTransaction(t *testing.T) {
 	require.True(t, dbent.IsNotFound(err))
 }
 
+// TestInitialFundsDoNotCountAsRecharge creates an identity user with initial
+// balance through UserStore. The stored balance equals the supplied amount
+// while cumulative recharge remains zero for that registration-style funding.
 func TestInitialFundsDoNotCountAsRecharge(t *testing.T) {
 	ctx := context.Background()
 	integrationDB, client := identityDatabase(t)
@@ -109,17 +142,28 @@ func TestInitialFundsDoNotCountAsRecharge(t *testing.T) {
 	require.Zero(t, stored.TotalRecharged, "注册初始资金不能套用累计充值语义")
 }
 
-// TestRegistrationInvitationUsesOuterTransaction checks invitation consumption in the outer transaction without redeem usage rows.
+// TestRegistrationInvitationUsesOuterTransaction consumes and restores an
+// invitation inside an outer Ent transaction. It creates no ordinary usage
+// rows, rejects reuse, and rollback removes both uncommitted invitation and
+// user.
 func TestRegistrationInvitationUsesOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 	_, client := identityDatabase(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
+	// Keep uncommitted fixture and participant writes under caller rollback on any
+	// early return; the later explicit rollback is asserted before checking
+	// external absence.
 	defer func() { _ = tx.Rollback() }()
 	user, err := tx.Client().User.Create().SetEmail("test-invite-" + uuid.NewString() + "@example.invalid").SetPasswordHash("hash").Save(ctx)
 	require.NoError(t, err)
+	// Twenty-four UUID bytes plus the prefix fit the invitation fixture's code
+	// limit.
 	invitation, err := tx.Client().RedeemCode.Create().SetCode("test-" + uuid.NewString()[:24]).SetType("invitation").SetStatus("unused").SetValue(0).SetMaxUses(1).Save(ctx)
 	require.NoError(t, err)
+	// Bind invitation operations to the outer transaction so consumed state and
+	// snapshot restoration can be observed internally before rollback removes the
+	// fixture entirely.
 	participant := billingpostgres.RegistrationInvitationsInTx(tx)
 	require.NoError(t, participant.Consume(ctx, invitation.ID, user.ID))
 	usages, err := tx.Client().RedeemCodeUsage.Query().Where(redeemcodeusage.RedeemCodeIDEQ(invitation.ID)).Count(ctx)

@@ -15,6 +15,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Configured model availability is diagnosed from provider configuration even
+// while runtime windows block scheduling. Captured Ent SQL checks the requested
+// group, platform, status, and scheduling predicates, and excludes the
+// transient fields that would hide configured candidates.
+
+// TestListModelAvailabilityCandidates_GroupQueryIgnoresTransientState captures
+// a group-scoped configured-candidate query using an empty mock result. Its
+// WHERE clause includes configuration predicates and excludes expiry, overload,
+// rate-limit, and temporary-pause filtering.
 func TestListModelAvailabilityCandidates_GroupQueryIgnoresTransientState(t *testing.T) {
 	var capturedSQL string
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))

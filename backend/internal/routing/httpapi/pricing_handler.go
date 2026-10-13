@@ -14,181 +14,384 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// PricingHandler handles admin pricing configuration requests.
+// Shared price cards keep optional amount presence through request and
+// response conversion. Nil amounts stay unspecified, supplied zero values
+// remain present, and the current Fast multiplier takes precedence over its
+// legacy alias by pointer presence. The billing mode determines how price
+// consumers interpret token buckets, request/media amounts, and context or
+// labeled intervals.
+//
+// Administrator writes use strict JSON binding before price-service
+// validation and persistence. Collection pointers distinguish retaining
+// stored cards or associations from replacing them with an empty list, while
+// statistics rules retain request order for their ordered selection. Default
+// form autofill reads catalog amounts independently of shared cards and
+// reports an unsuccessful lookup through found=false.
+
+// PricingHandler serves shared price configuration administration and default
+// catalog queries.
 type PricingHandler struct {
-	pricingConfigs *routing.PricingConfigService
-	catalog        *routing.PricingCatalog
+	pricingConfigs *routing.PricingConfigService // shared price configuration service
+	catalog        *routing.PricingCatalog       // published default price catalog
 }
 
+// createPricingConfigRequest carries new shared cards, billing settings, and
+// group associations.
 type createPricingConfigRequest struct {
-	billingSettingsRequest
-	Name         string                `json:"name" binding:"required,max=100"`
-	Description  string                `json:"description"`
-	GroupIDs     []int64               `json:"group_ids"`
-	ModelPricing []modelPricingRequest `json:"model_pricing"`
+	billingSettingsRequest                       // supplied shared billing policy
+	Name                   string                `json:"name" binding:"required,max=100"` // shared configuration business name
+	Description            string                `json:"description"`                     // configuration display description
+	GroupIDs               []int64               `json:"group_ids"`                       // associated group identifier list
+	ModelPricing           []modelPricingRequest `json:"model_pricing"`                   // user-facing model price cards
 
-	BillingModelSource string `json:"billing_model_source" binding:"omitempty,oneof=requested upstream group_mapped"`
+	// BillingModelSource chooses the model identity used for charging; an empty
+	// creation input uses the service's group_mapped default.
+	BillingModelSource string `json:"billing_model_source" binding:"omitempty,oneof=requested upstream group_mapped"` // requested upstream or group_mapped
 
-	ProviderStatsPricingRules []providerStatsPricingRuleRequest `json:"provider_stats_pricing_rules"`
+	ProviderStatsPricingRules []providerStatsPricingRuleRequest `json:"provider_stats_pricing_rules"` // ordered provider-cost price rules
 }
 
+// updatePricingConfigRequest retains omission information for stored prices
+// and group associations.
 type updatePricingConfigRequest struct {
-	billingSettingsRequest
-	Name         string                 `json:"name" binding:"omitempty,max=100"`
-	Description  *string                `json:"description"`
-	Status       string                 `json:"status" binding:"omitempty,oneof=active disabled"`
-	GroupIDs     *[]int64               `json:"group_ids"`
-	ModelPricing *[]modelPricingRequest `json:"model_pricing"`
+	billingSettingsRequest // supplied shared billing policy
+	// Name changes the stored name when nonempty; an empty or omitted string
+	// leaves it unchanged during price-service update.
+	Name string `json:"name" binding:"omitempty,max=100"` // shared configuration business name
+	// Description retains the stored text when nil; a supplied empty string
+	// clears the description during price-service update.
+	Description *string `json:"description"` // configuration display description
+	// Status retains the stored state when empty; a supplied active or disabled
+	// value selects the configuration's activation state.
+	Status string `json:"status" binding:"omitempty,oneof=active disabled"` // active or disabled state patch
+	// GroupIDs and ModelPricing retain stored collections when nil. Supplied
+	// lists replace those collections, including empty arrays that remove group
+	// associations or user-facing cards.
+	GroupIDs     *[]int64               `json:"group_ids"`     // associated group identifier list
+	ModelPricing *[]modelPricingRequest `json:"model_pricing"` // user-facing model price cards
 
-	BillingModelSource string `json:"billing_model_source" binding:"omitempty,oneof=requested upstream group_mapped"`
+	// BillingModelSource retains the current model-source choice for an empty
+	// string; a supplied accepted value replaces that stored charging identity
+	// source.
+	BillingModelSource string `json:"billing_model_source" binding:"omitempty,oneof=requested upstream group_mapped"` // requested upstream or group_mapped
 
-	ProviderStatsPricingRules *[]providerStatsPricingRuleRequest `json:"provider_stats_pricing_rules"`
+	// ProviderStatsPricingRules retains stored statistics rules when nil; a
+	// supplied empty array removes them and other lists replace them in request
+	// order.
+	ProviderStatsPricingRules *[]providerStatsPricingRuleRequest `json:"provider_stats_pricing_rules"` // ordered provider-cost price rules
 }
 
+// modelPricingRequest carries optional model-card amounts, billing modifiers,
+// and interval inputs.
 type modelPricingRequest struct {
-	Models                       []string                 `json:"models" binding:"required,min=1,max=100"`
-	BillingMode                  string                   `json:"billing_mode" binding:"omitempty,oneof=token per_request image video"`
-	PriceMultiplier              *float64                 `json:"price_multiplier" binding:"omitempty,min=0"`
-	FastModeMultiplier           *float64                 `json:"fast_mode_multiplier" binding:"omitempty,min=0"`
-	FastMultiplier               *float64                 `json:"fast_multiplier" binding:"omitempty,gt=0"`
-	FlexMultiplier               *float64                 `json:"flex_multiplier" binding:"omitempty,gt=0"`
-	MaxReasoningEffortMultiplier *float64                 `json:"max_reasoning_effort_multiplier" binding:"omitempty,gt=0"`
-	InputPrice                   *float64                 `json:"input_price" binding:"omitempty,min=0"`
-	OutputPrice                  *float64                 `json:"output_price" binding:"omitempty,min=0"`
-	CacheWritePrice              *float64                 `json:"cache_write_price" binding:"omitempty,min=0"`
-	CacheWrite1hPrice            *float64                 `json:"cache_write_1h_price" binding:"omitempty,min=0"`
-	CacheReadPrice               *float64                 `json:"cache_read_price" binding:"omitempty,min=0"`
-	ImageInputPrice              *float64                 `json:"image_input_price" binding:"omitempty,min=0"`
-	ImageOutputPrice             *float64                 `json:"image_output_price" binding:"omitempty,min=0"`
-	PerRequestPrice              *float64                 `json:"per_request_price" binding:"omitempty,min=0"`
-	Intervals                    []pricingIntervalRequest `json:"intervals"`
-	TimePricing                  *timePricingRequest      `json:"time_pricing"`
+	// Models supplies complete IDs or trailing-star patterns for card matching;
+	// configuration validation checks the submitted patterns and overlapping
+	// model rules.
+	Models []string `json:"models" binding:"required,min=1,max=100"` // complete model identity patterns
+	// BillingMode chooses the card's charging units; an empty input or stored
+	// value is converted to token mode for service and HTTP use.
+	BillingMode string `json:"billing_mode" binding:"omitempty,oneof=token per_request image video"` // token request image or video
+	// PriceMultiplier scales user amounts after card overrides, with nil leaving
+	// those amounts unchanged. Service validation requires an explicit price for
+	// a supplied factor; provider statistics uses its configured amounts
+	// directly.
+	PriceMultiplier *float64 `json:"price_multiplier" binding:"omitempty,min=0"` // configured amount scaling factor
+	// FastModeMultiplier and FastMultiplier retain legacy and current inputs.
+	// Conversion prefers a present FastMultiplier, including zero. Service
+	// validation requires explicit prices for the legacy factor and rejects
+	// nonpositive or nonfinite effective Fast factors. Provider-statistics
+	// writes reject either factor.
+	FastModeMultiplier *float64 `json:"fast_mode_multiplier" binding:"omitempty,min=0"` // legacy Fast scaling factor
+	FastMultiplier     *float64 `json:"fast_multiplier" binding:"omitempty,gt=0"`       // preferred Fast scaling factor
+	// FlexMultiplier and MaxReasoningEffortMultiplier override user token-card
+	// factors; nil retains inherited metadata. Supplied factors must be finite
+	// and positive, and the Max factor applies when the final forwarded effort
+	// is max. Provider-statistics writes reject these factors.
+	FlexMultiplier               *float64 `json:"flex_multiplier" binding:"omitempty,gt=0"`                 // configured Flex scaling factor
+	MaxReasoningEffortMultiplier *float64 `json:"max_reasoning_effort_multiplier" binding:"omitempty,gt=0"` // final max-effort scaling factor
+	// InputPrice, OutputPrice, CacheWritePrice, CacheWrite1hPrice, and
+	// CacheReadPrice retain optional amount presence through conversion. Nil
+	// leaves a bucket unspecified; a supplied zero remains available for its
+	// billing consumer to interpret.
+	InputPrice      *float64 `json:"input_price" binding:"omitempty,min=0"`       // USD per text-input token
+	OutputPrice     *float64 `json:"output_price" binding:"omitempty,min=0"`      // USD per text-output token
+	CacheWritePrice *float64 `json:"cache_write_price" binding:"omitempty,min=0"` // USD per short-TTL cache-write token
+	// CacheWrite1hPrice can independently supply an hourly amount, including
+	// zero; when absent, a CacheWritePrice override also covers that hourly
+	// bucket.
+	CacheWrite1hPrice *float64 `json:"cache_write_1h_price" binding:"omitempty,min=0"` // USD per hourly cache-write token
+	CacheReadPrice    *float64 `json:"cache_read_price" binding:"omitempty,min=0"`     // USD per cache-read token
+	// ImageInputPrice is the image-input subset rate; user token-card
+	// application uses the selected text-input amount when this field is omitted
+	// or zero.
+	ImageInputPrice *float64 `json:"image_input_price" binding:"omitempty,min=0"` // USD per image-input token
+	// ImageOutputPrice is a separately recorded image-output rate. User token
+	// pricing treats omitted or zero overrides as free image-output tokens.
+	ImageOutputPrice *float64 `json:"image_output_price" binding:"omitempty,min=0"` // USD per image-output token
+	// PerRequestPrice supplies the default charge for a request, image, or video
+	// unit. Nil leaves that default unspecified; a supplied zero remains an
+	// explicit free unit amount.
+	PerRequestPrice *float64 `json:"per_request_price" binding:"omitempty,min=0"` // USD per request or media unit
+	// Intervals supplies context ranges or labeled unit tiers according to
+	// BillingMode; user token resolution can inherit missing buckets while
+	// provider statistics uses its independent card rules.
+	Intervals []pricingIntervalRequest `json:"intervals"` // context or labeled unit tiers
+	// TimePricing supplies a user token-card schedule. Nil leaves it
+	// unspecified, and service writes remove schedules with no periods;
+	// populated schedules are rejected for provider-statistics cards.
+	TimePricing *timePricingRequest `json:"time_pricing"` // configured daily token-price schedule
 }
 
-// timePricingRequest contains daily time-based multipliers submitted by an administrator.
+// timePricingRequest carries a daily token-price schedule for administrator
+// card input.
 type timePricingRequest struct {
-	Timezone     string                     `json:"timezone"`
-	WeekdaysOnly bool                       `json:"weekdays_only"`
-	Periods      []timePricingPeriodRequest `json:"periods"`
+	// Timezone, WeekdaysOnly, and Periods describe one daily token schedule.
+	// Billing callers load the timezone and evaluate local dates and clocks;
+	// times outside applicable periods use factor one.
+	Timezone     string                     `json:"timezone"`      // daily schedule timezone name
+	WeekdaysOnly bool                       `json:"weekdays_only"` // Monday-through-Friday schedule restriction
+	Periods      []timePricingPeriodRequest `json:"periods"`       // daily token-price multiplier periods
 }
 
+// timePricingPeriodRequest carries one local-clock range and its token-price
+// multiplier.
 type timePricingPeriodRequest struct {
-	StartTime  string  `json:"start_time"`
-	EndTime    string  `json:"end_time"`
-	Multiplier float64 `json:"multiplier"`
+	// StartTime and EndTime define a daily [start, end) range in HH:mm or
+	// HH:mm:ss form. An end of 00:00 or 00:00:00 represents the current day's
+	// end.
+	StartTime  string  `json:"start_time"` // inclusive local clock start
+	EndTime    string  `json:"end_time"`   // exclusive local clock end
+	Multiplier float64 `json:"multiplier"` // daily token-price scaling factor
 }
 
+// pricingIntervalRequest carries context endpoints, optional amounts, and
+// labeled unit pricing.
 type pricingIntervalRequest struct {
-	MinTokens            int      `json:"min_tokens"`
-	MaxTokens            *int     `json:"max_tokens"`
-	TierLabel            string   `json:"tier_label"`
-	InputPrice           *float64 `json:"input_price"`
-	OutputPrice          *float64 `json:"output_price"`
-	CacheWritePrice      *float64 `json:"cache_write_price"`
-	CacheWrite1hPrice    *float64 `json:"cache_write_1h_price"`
-	CacheReadPrice       *float64 `json:"cache_read_price"`
-	InputMultiplier      *float64 `json:"input_multiplier" binding:"omitempty,gt=0"`
-	OutputMultiplier     *float64 `json:"output_multiplier" binding:"omitempty,gt=0"`
-	CacheWriteMultiplier *float64 `json:"cache_write_multiplier" binding:"omitempty,gt=0"`
-	CacheReadMultiplier  *float64 `json:"cache_read_multiplier" binding:"omitempty,gt=0"`
-	PerRequestPrice      *float64 `json:"per_request_price"`
-	SortOrder            int      `json:"sort_order"`
+	// MinTokens and MaxTokens describe a (MinTokens, MaxTokens] context range. A
+	// nil upper endpoint leaves that range unbounded; billing mode also permits
+	// labeled request or media unit tiers.
+	MinTokens int    `json:"min_tokens"` // excluded lower context-token endpoint
+	MaxTokens *int   `json:"max_tokens"` // included upper context-token endpoint
+	TierLabel string `json:"tier_label"` // request or media tier label
+	// InputPrice, OutputPrice, CacheWritePrice, CacheWrite1hPrice, and
+	// CacheReadPrice retain optional interval amounts. User token intervals
+	// inherit missing buckets; provider statistics treats missing buckets under
+	// its independent price calculation.
+	InputPrice      *float64 `json:"input_price"`       // USD per interval input token
+	OutputPrice     *float64 `json:"output_price"`      // USD per interval output token
+	CacheWritePrice *float64 `json:"cache_write_price"` // USD per short-TTL interval cache-write token
+	// CacheWrite1hPrice supplies a separate hourly interval amount, including
+	// zero; absent hourly input lets an interval CacheWritePrice override cover
+	// that bucket.
+	CacheWrite1hPrice *float64 `json:"cache_write_1h_price"` // USD per hourly interval cache-write token
+	CacheReadPrice    *float64 `json:"cache_read_price"`     // USD per interval cache-read token
+	// InputMultiplier, OutputMultiplier, CacheWriteMultiplier, and
+	// CacheReadMultiplier scale inherited user token amounts when the
+	// corresponding explicit amount is absent. Provider statistics calculations
+	// ignore these interval factors.
+	InputMultiplier      *float64 `json:"input_multiplier" binding:"omitempty,gt=0"`       // interval input-price scaling factor
+	OutputMultiplier     *float64 `json:"output_multiplier" binding:"omitempty,gt=0"`      // interval output-price scaling factor
+	CacheWriteMultiplier *float64 `json:"cache_write_multiplier" binding:"omitempty,gt=0"` // interval cache-write scaling factor
+	CacheReadMultiplier  *float64 `json:"cache_read_multiplier" binding:"omitempty,gt=0"`  // interval cache-read scaling factor
+	// PerRequestPrice supplies this unit tier, including free pricing at zero.
+	// FilterValidRequestIntervals excludes rows with a nil amount from request
+	// or media unit matching.
+	PerRequestPrice *float64 `json:"per_request_price"` // USD per matched unit
+	SortOrder       int      `json:"sort_order"`        // stored interval ordering key
 }
 
+// providerStatsPricingRuleRequest carries ordered provider-cost selectors and
+// their independent model cards.
 type providerStatsPricingRuleRequest struct {
-	Name        string                `json:"name"`
-	GroupIDs    []int64               `json:"group_ids"`
-	ProviderIDs []int64               `json:"provider_ids"`
-	Pricing     []modelPricingRequest `json:"pricing"`
+	Name string `json:"name"` // administrator statistics-rule display name
+	// GroupIDs and ProviderIDs are alternative selectors for this statistics
+	// rule. Either matching list admits the rule; administrator writes require
+	// at least one selector and a nonempty Pricing list.
+	GroupIDs    []int64               `json:"group_ids"`    // matching group identifier list
+	ProviderIDs []int64               `json:"provider_ids"` // matching provider identifier list
+	Pricing     []modelPricingRequest `json:"pricing"`      // independent provider-cost model cards
 }
 
+// pricingConfigResponse exposes stored shared cards, billing settings, and
+// group associations.
 type pricingConfigResponse struct {
-	pricing.BillingSettings
-	ID                 int64  `json:"id"`
-	Name               string `json:"name"`
-	Description        string `json:"description"`
-	Status             string `json:"status"`
-	BillingModelSource string `json:"billing_model_source"`
+	pricing.BillingSettings        // copied shared billing policy
+	ID                      int64  `json:"id"`          // stored configuration row identifier
+	Name                    string `json:"name"`        // shared configuration business name
+	Description             string `json:"description"` // configuration display description
+	Status                  string `json:"status"`      // active or disabled state
+	// BillingModelSource uses group_mapped when the stored value is empty;
+	// callers receive the configured source otherwise for price administration.
+	BillingModelSource string `json:"billing_model_source"` // effective charging model source
 
-	GroupIDs     []int64                `json:"group_ids"`
-	ModelPricing []modelPricingResponse `json:"model_pricing"`
+	GroupIDs     []int64                `json:"group_ids"`     // associated group identifier list
+	ModelPricing []modelPricingResponse `json:"model_pricing"` // ordered user-facing model cards
 
-	ProviderStatsPricingRules []providerStatsPricingRuleResponse `json:"provider_stats_pricing_rules"`
-	CreatedAt                 string                             `json:"created_at"`
-	UpdatedAt                 string                             `json:"updated_at"`
+	ProviderStatsPricingRules []providerStatsPricingRuleResponse `json:"provider_stats_pricing_rules"` // ordered provider-cost price rules
+	// CreatedAt and UpdatedAt use second-resolution strings with a literal Z
+	// suffix. Conversion formats supplied times in their existing location, so
+	// stored time values determine the displayed clock.
+	CreatedAt string `json:"created_at"` // formatted creation clock text
+	UpdatedAt string `json:"updated_at"` // formatted update clock text
 }
 
+// modelPricingResponse exposes one card's optional amounts, modifiers, and
+// ordered intervals.
 type modelPricingResponse struct {
-	ID                           int64                     `json:"id"`
-	Models                       []string                  `json:"models"`
-	BillingMode                  string                    `json:"billing_mode"`
-	PriceMultiplier              *float64                  `json:"price_multiplier"`
-	FastModeMultiplier           *float64                  `json:"fast_mode_multiplier"`
-	FastMultiplier               *float64                  `json:"fast_multiplier"`
-	FlexMultiplier               *float64                  `json:"flex_multiplier"`
-	MaxReasoningEffortMultiplier *float64                  `json:"max_reasoning_effort_multiplier"`
-	InputPrice                   *float64                  `json:"input_price"`
-	OutputPrice                  *float64                  `json:"output_price"`
-	CacheWritePrice              *float64                  `json:"cache_write_price"`
-	CacheWrite1hPrice            *float64                  `json:"cache_write_1h_price"`
-	CacheReadPrice               *float64                  `json:"cache_read_price"`
-	ImageInputPrice              *float64                  `json:"image_input_price"`
-	ImageOutputPrice             *float64                  `json:"image_output_price"`
-	PerRequestPrice              *float64                  `json:"per_request_price"`
-	Intervals                    []pricingIntervalResponse `json:"intervals"`
-	TimePricing                  *timePricingResponse      `json:"time_pricing"`
+	ID int64 `json:"id"` // stored model-card row identifier
+	// Models supplies complete IDs or trailing-star patterns for card matching;
+	// configuration validation checks the submitted patterns and overlapping
+	// model rules.
+	Models []string `json:"models"` // complete model identity patterns
+	// BillingMode chooses the card's charging units; an empty input or stored
+	// value is converted to token mode for service and HTTP use.
+	BillingMode string `json:"billing_mode"` // token request image or video
+	// PriceMultiplier reports the stored user amount factor after overrides. Nil
+	// leaves user prices unscaled by this setting; provider statistics
+	// calculates its configured amounts directly.
+	PriceMultiplier *float64 `json:"price_multiplier"` // configured amount scaling factor
+	// FastModeMultiplier retains the stored legacy factor, and FastMultiplier
+	// reports the selected current factor. Conversion prefers a present current
+	// pointer, including zero; an absent current pointer exposes the legacy
+	// value through both fields.
+	FastModeMultiplier *float64 `json:"fast_mode_multiplier"` // legacy Fast scaling factor
+	FastMultiplier     *float64 `json:"fast_multiplier"`      // preferred Fast scaling factor
+	// FlexMultiplier and MaxReasoningEffortMultiplier report stored user token
+	// factors. Nil retains inherited metadata; the supplied Max factor scales
+	// token costs when the final forwarded effort is max. Provider statistics
+	// writes reject these factors.
+	FlexMultiplier               *float64 `json:"flex_multiplier"`                 // configured Flex scaling factor
+	MaxReasoningEffortMultiplier *float64 `json:"max_reasoning_effort_multiplier"` // final max-effort scaling factor
+	// InputPrice, OutputPrice, CacheWritePrice, CacheWrite1hPrice, and
+	// CacheReadPrice retain optional amount presence through conversion. Nil
+	// leaves a bucket unspecified; a supplied zero remains available for its
+	// billing consumer to interpret.
+	InputPrice      *float64 `json:"input_price"`       // USD per text-input token
+	OutputPrice     *float64 `json:"output_price"`      // USD per text-output token
+	CacheWritePrice *float64 `json:"cache_write_price"` // USD per short-TTL cache-write token
+	// CacheWrite1hPrice can independently supply an hourly amount, including
+	// zero; when absent, a CacheWritePrice override also covers that hourly
+	// bucket.
+	CacheWrite1hPrice *float64 `json:"cache_write_1h_price"` // USD per hourly cache-write token
+	CacheReadPrice    *float64 `json:"cache_read_price"`     // USD per cache-read token
+	// ImageInputPrice is the image-input subset rate; user token-card
+	// application uses the selected text-input amount when this field is omitted
+	// or zero.
+	ImageInputPrice *float64 `json:"image_input_price"` // USD per image-input token
+	// ImageOutputPrice is a separately recorded image-output rate. User token
+	// pricing treats omitted or zero overrides as free image-output tokens.
+	ImageOutputPrice *float64 `json:"image_output_price"` // USD per image-output token
+	// PerRequestPrice exposes the optional stored unit default. Nil means the
+	// card provides no default amount; zero represents a configured free unit.
+	PerRequestPrice *float64 `json:"per_request_price"` // USD per request or media unit
+	// Intervals supplies context ranges or labeled unit tiers according to
+	// BillingMode; user token resolution can inherit missing buckets while
+	// provider statistics uses its independent card rules.
+	Intervals []pricingIntervalResponse `json:"intervals"` // context or labeled unit tiers
+	// TimePricing exposes a stored user token-card schedule. Nil carries no
+	// card-level rule; service writes normalize empty period lists to nil and
+	// reject populated schedules in provider-statistics cards.
+	TimePricing *timePricingResponse `json:"time_pricing"` // configured daily token-price schedule
 }
 
+// timePricingResponse exposes a card's daily schedule with copied period
+// records.
 type timePricingResponse struct {
-	Timezone     string                      `json:"timezone"`
-	WeekdaysOnly bool                        `json:"weekdays_only"`
-	Periods      []timePricingPeriodResponse `json:"periods"`
+	// Timezone, WeekdaysOnly, and Periods describe one daily token schedule.
+	// Billing callers load the timezone and evaluate local dates and clocks;
+	// times outside applicable periods use factor one.
+	Timezone     string                      `json:"timezone"`      // daily schedule timezone name
+	WeekdaysOnly bool                        `json:"weekdays_only"` // Monday-through-Friday schedule restriction
+	Periods      []timePricingPeriodResponse `json:"periods"`       // daily token-price multiplier periods
 }
 
+// timePricingPeriodResponse exposes one stored daily clock range and
+// token-price multiplier.
 type timePricingPeriodResponse struct {
-	StartTime  string  `json:"start_time"`
-	EndTime    string  `json:"end_time"`
-	Multiplier float64 `json:"multiplier"`
+	// StartTime and EndTime define a daily [start, end) range in HH:mm or
+	// HH:mm:ss form. An end of 00:00 or 00:00:00 represents the current day's
+	// end.
+	StartTime  string  `json:"start_time"` // inclusive local clock start
+	EndTime    string  `json:"end_time"`   // exclusive local clock end
+	Multiplier float64 `json:"multiplier"` // daily token-price scaling factor
 }
 
+// pricingIntervalResponse exposes stored context endpoints, optional amounts,
+// and unit-tier labels.
 type pricingIntervalResponse struct {
-	ID                   int64    `json:"id"`
-	MinTokens            int      `json:"min_tokens"`
-	MaxTokens            *int     `json:"max_tokens"`
-	TierLabel            string   `json:"tier_label,omitempty"`
-	InputPrice           *float64 `json:"input_price"`
-	OutputPrice          *float64 `json:"output_price"`
-	CacheWritePrice      *float64 `json:"cache_write_price"`
-	CacheWrite1hPrice    *float64 `json:"cache_write_1h_price"`
-	CacheReadPrice       *float64 `json:"cache_read_price"`
-	InputMultiplier      *float64 `json:"input_multiplier"`
-	OutputMultiplier     *float64 `json:"output_multiplier"`
-	CacheWriteMultiplier *float64 `json:"cache_write_multiplier"`
-	CacheReadMultiplier  *float64 `json:"cache_read_multiplier"`
-	PerRequestPrice      *float64 `json:"per_request_price"`
-	SortOrder            int      `json:"sort_order"`
+	ID int64 `json:"id"` // stored interval row identifier
+	// MinTokens and MaxTokens describe a (MinTokens, MaxTokens] context range. A
+	// nil upper endpoint leaves that range unbounded; billing mode also permits
+	// labeled request or media unit tiers.
+	MinTokens int    `json:"min_tokens"`           // excluded lower context-token endpoint
+	MaxTokens *int   `json:"max_tokens"`           // included upper context-token endpoint
+	TierLabel string `json:"tier_label,omitempty"` // request or media tier label
+	// InputPrice, OutputPrice, CacheWritePrice, CacheWrite1hPrice, and
+	// CacheReadPrice retain optional interval amounts. User token intervals
+	// inherit missing buckets; provider statistics treats missing buckets under
+	// its independent price calculation.
+	InputPrice      *float64 `json:"input_price"`       // USD per interval input token
+	OutputPrice     *float64 `json:"output_price"`      // USD per interval output token
+	CacheWritePrice *float64 `json:"cache_write_price"` // USD per short-TTL interval cache-write token
+	// CacheWrite1hPrice supplies a separate hourly interval amount, including
+	// zero; absent hourly input lets an interval CacheWritePrice override cover
+	// that bucket.
+	CacheWrite1hPrice *float64 `json:"cache_write_1h_price"` // USD per hourly interval cache-write token
+	CacheReadPrice    *float64 `json:"cache_read_price"`     // USD per interval cache-read token
+	// InputMultiplier, OutputMultiplier, CacheWriteMultiplier, and
+	// CacheReadMultiplier scale inherited user token amounts when the
+	// corresponding explicit amount is absent. Provider statistics calculations
+	// ignore these interval factors.
+	InputMultiplier      *float64 `json:"input_multiplier"`       // interval input-price scaling factor
+	OutputMultiplier     *float64 `json:"output_multiplier"`      // interval output-price scaling factor
+	CacheWriteMultiplier *float64 `json:"cache_write_multiplier"` // interval cache-write scaling factor
+	CacheReadMultiplier  *float64 `json:"cache_read_multiplier"`  // interval cache-read scaling factor
+	// PerRequestPrice supplies this unit tier, including free pricing at zero.
+	// FilterValidRequestIntervals excludes rows with a nil amount from request
+	// or media unit matching.
+	PerRequestPrice *float64 `json:"per_request_price"` // USD per matched unit
+	SortOrder       int      `json:"sort_order"`        // stored interval ordering key
 }
 
+// providerStatsPricingRuleResponse exposes an ordered provider-cost rule and
+// its model cards.
 type providerStatsPricingRuleResponse struct {
-	ID          int64                  `json:"id"`
-	Name        string                 `json:"name"`
-	GroupIDs    []int64                `json:"group_ids"`
-	ProviderIDs []int64                `json:"provider_ids"`
-	Pricing     []modelPricingResponse `json:"pricing"`
+	ID   int64  `json:"id"`   // stored statistics-rule row identifier
+	Name string `json:"name"` // administrator statistics-rule display name
+	// GroupIDs and ProviderIDs are alternative selectors for this statistics
+	// rule. Either matching list admits the rule; administrator writes require
+	// at least one selector and a nonempty Pricing list.
+	GroupIDs    []int64                `json:"group_ids"`    // matching group identifier list
+	ProviderIDs []int64                `json:"provider_ids"` // matching provider identifier list
+	Pricing     []modelPricingResponse `json:"pricing"`      // independent provider-cost model cards
 }
 
+// NewPricingHandler binds shared-price administration and catalog queries.
+// Callers supply pricingConfigs for configuration routes and the catalog
+// readers used by their query routes. The refresh endpoint reports an absent
+// catalog or updater as unavailable.
 func NewPricingHandler(pricingConfigs *routing.PricingConfigService, catalog *routing.PricingCatalog) *PricingHandler {
 	return &PricingHandler{pricingConfigs: pricingConfigs, catalog: catalog}
 }
 
-// firstNonNilFloat prefers the current field over its legacy alias, including an explicit zero.
+// firstNonNilFloat selects primary when it is present and otherwise returns
+// fallback. Pointer presence gives an explicit zero priority over the legacy
+// amount, and the selected pointer remains shared with its input.
 func firstNonNilFloat(primary, fallback *float64) *float64 {
+	// Use pointer presence to resolve the current Fast field before its legacy
+	// alias, since an explicit zero is still supplied pricing input.
 	if primary != nil {
 		return primary
 	}
 	return fallback
 }
 
+// pricingConfigToResponse maps a stored shared configuration or returns nil
+// for nil input. Empty model-source values become group_mapped and absent
+// collections become empty arrays. Billing settings' optional amounts are
+// cloned, while group/provider selector slices, model-name slices, and
+// amount, modifier, or endpoint pointers can retain source storage. Callers
+// keep retained values stable during encoding.
 func pricingConfigToResponse(ch *routing.PricingConfig) *pricingConfigResponse {
 	if ch == nil {
 		return nil
@@ -242,6 +445,12 @@ func pricingConfigToResponse(ch *routing.PricingConfig) *pricingConfigResponse {
 	return resp
 }
 
+// pricingToResponse maps a nonnil model card into administrator JSON fields.
+// It defaults empty billing mode to token, represents missing model names as
+// an empty list, and selects current Fast input before its legacy alias.
+// Interval and time records are allocated; model-name slices and amount,
+// modifier, or endpoint pointers can retain source storage. Keep those
+// retained values read-only during encoding.
 func pricingToResponse(p *routing.ModelPricingEntry) modelPricingResponse {
 	models := p.Models
 	if models == nil {
@@ -278,6 +487,9 @@ func pricingToResponse(p *routing.ModelPricingEntry) modelPricingResponse {
 	}
 }
 
+// timePricingToResponse returns a new HTTP schedule and period list, or nil
+// for nil input. It retains the configured timezone, clock spellings, weekday
+// flag, and original period order for administrator display.
 func timePricingToResponse(value *routing.TimePricingConfig) *timePricingResponse {
 	if value == nil {
 		return nil
@@ -297,6 +509,10 @@ func timePricingToResponse(value *routing.TimePricingConfig) *timePricingRespons
 	}
 }
 
+// intervalToResponse maps a stored interval into administrator fields without
+// resolving inherited prices. Optional bounds, amount pointers, and
+// multiplier pointers remain shared with the interval, so consumers treat
+// them as read-only while encoding.
 func intervalToResponse(iv routing.PricingInterval) pricingIntervalResponse {
 	return pricingIntervalResponse{
 		ID:                   iv.ID,
@@ -317,6 +533,15 @@ func intervalToResponse(iv routing.PricingInterval) pricingIntervalResponse {
 	}
 }
 
+// pricingRequestToService converts HTTP cards into service entries in request
+// order. Nil or empty input returns a nonnil empty slice. Empty billing mode
+// becomes token and current Fast pointer presence takes precedence over its
+// legacy alias.
+//
+// It allocates entries, intervals, and daily schedule records, while model
+// slices, amount and modifier pointers, and upper endpoints remain shared
+// with decoded input. Nil and zero amounts retain distinct representations;
+// the service and pricing consumers validate and interpret those amounts.
 func pricingRequestToService(reqs []modelPricingRequest) []routing.ModelPricingEntry {
 	result := make([]routing.ModelPricingEntry, 0, len(reqs))
 	for _, r := range reqs {
@@ -366,6 +591,10 @@ func pricingRequestToService(reqs []modelPricingRequest) []routing.ModelPricingE
 	return result
 }
 
+// timePricingRequestToService returns a service schedule with newly allocated
+// period records. Nil input remains nil, and supplied timezone, clock
+// spellings, weekday restriction, and period order are copied for later
+// service validation.
 func timePricingRequestToService(value *timePricingRequest) *routing.TimePricingConfig {
 	if value == nil {
 		return nil
@@ -385,6 +614,10 @@ func timePricingRequestToService(value *timePricingRequest) *routing.TimePricing
 	}
 }
 
+// providerStatsPricingRuleRequestToService maps selectors and converts this
+// rule's model cards. Selector slices remain shared with decoded input; the
+// enclosing HTTP writer assigns rule order before passing the result to the
+// service.
 func providerStatsPricingRuleRequestToService(r providerStatsPricingRuleRequest) routing.ProviderStatsPricingRule {
 	return routing.ProviderStatsPricingRule{
 		Name:        r.Name,
@@ -394,12 +627,15 @@ func providerStatsPricingRuleRequestToService(r providerStatsPricingRuleRequest)
 	}
 }
 
-// List returns pricing configurations with pagination.
-// GET /api/v1/admin/pricing/configs
+// List returns shared configurations with requested status, search, sorting,
+// and pagination. Trimmed search is capped by bytes, and default ordering is
+// descending created_at; service results are mapped into administrator DTOs
+// with the returned matching total.
 func (h *PricingHandler) List(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
 	status := c.Query("status")
 	search := strings.TrimSpace(c.Query("search"))
+	// Cap filter bytes so price-configuration search input stays bounded.
 	if len(search) > 100 {
 		search = search[:100]
 	}
@@ -422,8 +658,10 @@ func (h *PricingHandler) List(c *gin.Context) {
 	httpx.Paginated(c, out, pag.Total, page, pageSize)
 }
 
-// GetByID returns a pricing configuration by ID.
-// GET /api/v1/admin/pricing/configs/:id
+// GetByID parses the route's numeric price-configuration ID and returns its
+// administrator DTO. Parse failures return INVALID_PRICING_CONFIG_ID, while
+// the service validates whether the parsed ID identifies a stored
+// configuration.
 func (h *PricingHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -440,8 +678,10 @@ func (h *PricingHandler) GetByID(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Create creates a pricing configuration.
-// POST /api/v1/admin/pricing/configs
+// Create strictly decodes shared price configuration input and forwards
+// converted cards and settings to the service. Statistics rules require a
+// group/provider selector and pricing entries; their request order becomes
+// SortOrder before the service validates and persists the configuration.
 func (h *PricingHandler) Create(c *gin.Context) {
 	var req createPricingConfigRequest
 	if err := httpx.BindJSONStrict(c, &req); err != nil {
@@ -464,6 +704,8 @@ func (h *PricingHandler) Create(c *gin.Context) {
 			return
 		}
 		rule := providerStatsPricingRuleRequestToService(r)
+		// Keep request priority in stored positions because provider-cost selection
+		// uses the first matching rule that can calculate this model's amount.
 		rule.SortOrder = i
 		statsRules = append(statsRules, rule)
 	}
@@ -487,8 +729,11 @@ func (h *PricingHandler) Create(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Update updates a pricing configuration.
-// PUT /api/v1/admin/pricing/configs/:id
+// Update strictly decodes changes for the route's numeric price-configuration
+// ID. Omitted collection pointers leave stored cards and statistics rules
+// unchanged; supplied collections replace them, with statistics rule request
+// order assigned to SortOrder. Service validation and persistence complete
+// before the administrator DTO is returned.
 func (h *PricingHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -529,6 +774,9 @@ func (h *PricingHandler) Update(c *gin.Context) {
 				return
 			}
 			rule := providerStatsPricingRuleRequestToService(r)
+			// Keep request priority in stored positions because provider-cost
+			// selection uses the first matching rule that can calculate this model's
+			// amount.
 			rule.SortOrder = i
 			statsRules = append(statsRules, rule)
 		}
@@ -544,8 +792,10 @@ func (h *PricingHandler) Update(c *gin.Context) {
 	httpx.Success(c, pricingConfigToResponse(pricingConfig))
 }
 
-// Delete deletes a pricing configuration.
-// DELETE /api/v1/admin/pricing/configs/:id
+// Delete parses the route's numeric price-configuration ID and delegates
+// removal to the service. Parsing and service errors use standard HTTP
+// responses; success returns the configuration deletion message after removal
+// completes.
 func (h *PricingHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -561,8 +811,11 @@ func (h *PricingHandler) Delete(c *gin.Context) {
 	httpx.Success(c, gin.H{"message": "PricingConfig deleted successfully"})
 }
 
-// GetModelDefaultPricing returns catalogue prices for form autofill.
-// GET /api/v1/admin/pricing/defaults/model?model=claude-sonnet-4
+// GetModelDefaultPricing returns catalog token amounts for model-form
+// autofill. A nonblank trimmed model is required; any lookup error produces
+// successful found=false. Cache-write autofill uses a positive 5m rate when
+// breakdown is supported, otherwise retains the aggregate rate, and exposes
+// the 1h rate whenever breakdown is supported.
 func (h *PricingHandler) GetModelDefaultPricing(c *gin.Context) {
 	model := strings.TrimSpace(c.Query("model"))
 	if model == "" {
@@ -571,6 +824,8 @@ func (h *PricingHandler) GetModelDefaultPricing(c *gin.Context) {
 		return
 	}
 	pricing, err := h.catalog.DefaultPricing(model)
+	// Autofill treats a failed catalog lookup as an unavailable default, letting
+	// the administrator continue entering a manual model price.
 	if err != nil {
 		httpx.Success(c, gin.H{"found": false})
 		return
@@ -578,6 +833,8 @@ func (h *PricingHandler) GetModelDefaultPricing(c *gin.Context) {
 
 	cacheWritePrice := pricing.CacheCreationPricePerToken
 	var cacheWrite1hPrice *float64
+	// Keep the aggregate cache-write amount when no positive 5m amount exists;
+	// breakdown metadata still exposes its 1h amount, including zero.
 	if pricing.SupportsCacheBreakdown {
 		if pricing.CacheCreation5mPrice > 0 {
 			cacheWritePrice = pricing.CacheCreation5mPrice

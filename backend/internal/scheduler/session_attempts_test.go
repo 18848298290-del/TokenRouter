@@ -8,17 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sessionAttemptCache records the provider IDs whose sessions were unregistered.
+// sessionAttemptCache implements session removal for logical attempt cleanup
+// tests. The remaining embedded methods are unimplemented, so these tests
+// restrict cache calls to UnregisterSession.
 type sessionAttemptCache struct {
-	SessionLimitCache
-	unregistered []int64
+	SessionLimitCache // unused session method delegation
+	// unregistered retains provider IDs in callback order. The fixture appends
+	// and reads this slice sequentially because it supplies no synchronization
+	// for concurrent session removals.
+	unregistered []int64 // ordered removed provider identifiers
 }
 
+// UnregisterSession records the provider ID and returns successful session
+// cleanup. The fixture appends to shared slice storage, so tests invoke
+// removals sequentially before inspecting their order.
 func (c *sessionAttemptCache) UnregisterSession(_ context.Context, id int64, _ string) error {
 	c.unregistered = append(c.unregistered, id)
 	return nil
 }
 
+// TestSessionAttemptsPreservePartialOutcomeAfterEarlyRelease returns physical
+// capacity before finishing the tracked attempt as served. It checks one
+// physical release and no session removal even after a later repeated failed
+// finish.
 func TestSessionAttemptsPreservePartialOutcomeAfterEarlyRelease(t *testing.T) {
 	cache := &sessionAttemptCache{}
 	attempts := NewSessionAttempts(cache, Diagnostics{})
@@ -33,6 +45,9 @@ func TestSessionAttemptsPreservePartialOutcomeAfterEarlyRelease(t *testing.T) {
 	require.Empty(t, cache.unregistered)
 }
 
+// TestSessionAttemptsAbandonResetAndFinalCleanup abandons one provider, resets
+// another, then finishes a new unsuccessful attempt. It checks ordered session
+// removals and one owned release despite repeated abandon and finish calls.
 func TestSessionAttemptsAbandonResetAndFinalCleanup(t *testing.T) {
 	cache := &sessionAttemptCache{}
 	attempts := NewSessionAttempts(cache, Diagnostics{})

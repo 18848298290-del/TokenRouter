@@ -26,22 +26,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// bedrockRoutingTransport records signed requests and returns configured test responses.
+// Bedrock model routing chooses an invocation model and an endpoint in the
+// configured source region. Local transports compare the gateway and provider-
+// test requests for regional and global routes, then check that unsupported
+// route combinations stop before transport execution.
+
+// bedrockRoutingTransport records submitted requests and supplies responses for
+// route assertions.
 type bedrockRoutingTransport struct {
-	lastReq      *http.Request
-	lastBody     []byte
-	lastProxyURL string
-	requests     []*http.Request
-	bodies       [][]byte
+	// lastReq, lastBody, lastProxyURL, requests, and bodies record each delegated
+	// request for route assertions. Request pointers remain shared; bodies stores
+	// a byte-slice copy for each readable request.
+	lastReq      *http.Request   // latest submitted request
+	lastBody     []byte          // latest read body
+	lastProxyURL string          // latest proxy URL
+	requests     []*http.Request // requests in call order
+	bodies       [][]byte        // captured request-body copies
 
-	resp      *http.Response
-	responses []*http.Response
-	err       error
+	// resp supplies the default response, responses supplies a consumed queue,
+	// and err takes precedence over both. Tests provide fresh response bodies
+	// for independent executions because consuming a queued response removes it.
+	resp      *http.Response   // default fixture response
+	responses []*http.Response // queued fixture responses
+	err       error            // configured transport failure
 
-	lastTLSProfile *tlsfingerprint.Profile
+	lastTLSProfile *tlsfingerprint.Profile // latest TLS profile
 }
 
-// newBedrockRoutingTestProvider builds a schedulable provider with fictitious AWS credentials.
+// newBedrockRoutingTestProvider returns an active Bedrock execution provider
+// with fictitious SigV4 credentials and the supplied source region. forceGlobal
+// adds the global-routing option; each call constructs credentials that the
+// test can edit independently.
 func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) gatewayprovider.ExecutionProvider {
 	provider := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -59,12 +74,18 @@ func newBedrockRoutingTestProvider(id int64, region string, forceGlobal bool) ga
 	return provider
 }
 
+// newBedrockRoutingTestContext returns a Messages request with a Gin test
+// recorder.
 func newBedrockRoutingTestContext() *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	return c
 }
 
+// newBedrockRoutingTestUpstream returns a transport holding one successful
+// Messages response. The response contains a readable body for one execution;
+// callers construct another fixture when they need an independent response
+// body.
 func newBedrockRoutingTestUpstream() *bedrockRoutingTransport {
 	return &bedrockRoutingTransport{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -73,12 +94,16 @@ func newBedrockRoutingTestUpstream() *bedrockRoutingTransport {
 	}}
 }
 
-// TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute checks matching model IDs, source endpoints, and
-// SigV4 scope.
+// TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute runs regional and
+// global models through gateway forwarding and provider testing with both
+// authentication modes. Their captured model paths and region endpoints match,
+// and the provider's credentials remain unchanged.
 func TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute(t *testing.T) {
 	for _, tc := range []struct {
+		// name labels the subtest, model is the requested alias, region selects
+		// the source endpoint, and wantID is the expected invocation model.
 		name, model, region, wantID string
-		global                      bool
+		global                      bool // forced global routing
 	}{
 		{name: "大阪地域", model: "claude-opus-4-7", region: "ap-northeast-3", wantID: "jp.anthropic.claude-opus-4-7"},
 		{name: "墨尔本地域", model: "claude-opus-4-7", region: "ap-southeast-4", wantID: "au.anthropic.claude-opus-4-7"},
@@ -124,12 +149,16 @@ func TestBedrockRegionRouting_ForwardAndProviderTestUseSameRoute(t *testing.T) {
 	}
 }
 
-// TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream checks rejection before requests or health writes,
-// with hints only for supported global routes.
+// TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream supplies unsupported
+// region and model combinations to both execution paths. They return errors
+// before transport calls, retain active scheduling state, and show
+// administrator hints for the asserted supported-global case.
 func TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream(t *testing.T) {
 	for _, tc := range []struct {
+		// name labels the subtest, model is the requested alias, and region
+		// selects the source endpoint used for this unsupported route.
 		name, model, region string
-		global, hint        bool
+		global, hint        bool // global: force global route; hint: expect global-routing advice
 	}{
 		{name: "可启用全局", model: "claude-sonnet-5", region: "ap-northeast-1", hint: true},
 		{name: "型号不支持全局", model: "claude-opus-4-1", region: "us-east-1", global: true},
@@ -162,10 +191,17 @@ func TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream(t *testing.T) {
 	}
 }
 
+// Do records the request, proxy URL, and readable request body before returning
+// a configured error or response. Reading errors are ignored, and a replacement
+// body supports later inspection; queued responses are consumed before the
+// default response.
 func (u *bedrockRoutingTransport) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	u.lastReq = req
 	u.lastProxyURL = proxyURL
 	if req != nil && req.Body != nil {
+		// Retain bytes returned even when reading fails, then close the consumed body
+		// and replace its reader for later assertions. Read and close errors do not
+		// replace this recorder's configured transport result.
 		b, _ := io.ReadAll(req.Body)
 		u.lastBody = b
 		u.bodies = append(u.bodies, append([]byte(nil), b...))
@@ -184,6 +220,9 @@ func (u *bedrockRoutingTransport) Do(req *http.Request, proxyURL string, provide
 	return u.resp, nil
 }
 
+// DoWithTLS records the supplied TLS profile and delegates to Do. It has the
+// same configured response sequence and body-recording behavior, and the caller
+// owns the returned response body.
 func (u *bedrockRoutingTransport) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.lastTLSProfile = profile
 	return u.Do(req, proxyURL, providerID, providerConcurrency)

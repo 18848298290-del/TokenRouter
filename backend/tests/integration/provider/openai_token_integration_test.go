@@ -26,15 +26,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAILocalTransport sends constructed token requests to a local TLS fixture.
+// OpenAI token refresh may finish after the provider's OAuth credentials have
+// been replaced. A local TLS endpoint pauses the encoded exchange while
+// PostgreSQL either retains the observed credentials or commits an
+// administrator token.
+//
+// The fixture injects the TLS client into production authorization and uses the
+// shared refresh coordinator with Redis. Each subtest expects one exchange and
+// compares the returned access token with both storage and cache, then makes
+// another token-source call to check reuse. The transport redirects the
+// endpoint while retaining the constructed request path, and the authorization
+// wrapper selects the TLS-capable refresh path.
+
+// openAILocalTransport redirects constructed OAuth requests to a local TLS HTTP
+// client.
 type openAILocalTransport struct {
-	client *http.Client
-	target *url.URL
+	client *http.Client // local TLS HTTP client
+	target *url.URL     // redirected token endpoint
 }
 
-// openAITLSClient exercises production OAuth encoding and parsing through the injectable TLS transport.
-type openAITLSClient struct{ *openai.OAuthClient }
+// openAITLSClient selects the production OAuth client's TLS-capable refresh
+// request path.
+type openAITLSClient struct {
+	*openai.OAuthClient // production OAuth request encoder
+}
 
+// TestOpenAITokenRefreshUsesOriginalCAS pauses a TLS-backed OpenAI refresh
+// while an administrator may replace OAuth credentials. The resulting token
+// matches PostgreSQL and Redis after one exchange, and a second call reuses it.
 func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 	for _, adminChange := range []bool{false, true} {
 		t.Run(fmt.Sprintf("administrator=%v", adminChange), func(t *testing.T) {
@@ -47,10 +66,14 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 			repo := newProviderStoreContract(client, integrationDB, nil)
 			value, err := repo.GetByID(ctx, row.ID)
 			require.NoError(t, err)
+			// Gate the HTTP token response after exchange entry so the administrator
+			// update can commit before production refresh compares the returned credentials.
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var calls atomic.Int32
 			var resumeOnce sync.Once
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Drain input before the exchange gate; the read outcome is discarded
+				// because this fixture uses no body data to choose its token response.
 				_, _ = io.Copy(io.Discard, r.Body)
 				if calls.Add(1) == 1 {
 					close(entered)
@@ -61,8 +84,12 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				// Token-source completion and comparisons determine the asserted result;
+				// this fixture discards the writer's return values after attempting fixed JSON.
 				_, _ = io.WriteString(w, `{"access_token":"refreshed","refresh_token":"rotated","token_type":"Bearer","expires_in":3600,"scope":"user:inference"}`)
 			}))
+			// Register release after server.Close so deferred calls unblock the token
+			// handler first, allowing server shutdown even when a later assertion fails.
 			defer server.Close()
 			defer resumeOnce.Do(func() { close(resume) })
 			target, err := url.Parse(server.URL)
@@ -86,9 +113,10 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 					return refresh.RefreshIfNeeded(ctx, record, executor, window)
 				},
 			}
+			// result carries one token-source completion through the buffered result channel.
 			type result struct {
-				token string
-				err   error
+				token string // returned access token
+				err   error  // returned token-source error
 			}
 			done := make(chan result, 1)
 			go func() {
@@ -120,7 +148,8 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 			cached, err := cache.GetAccessToken(ctx, provider.OpenAITokenCacheKey(provider.CloneRecord(value)))
 			require.NoError(t, err)
 			require.Equal(t, expected, cached)
-			// A second call reads the cached token without another exchange.
+			// Count exchanges across a second read of the persisted provider to
+			// verify that the completed refresh result satisfies the token-source cache path.
 			token, err := tokenSource.GetAccessToken(ctx, provider.CloneRecord(persisted))
 			require.NoError(t, err)
 			require.Equal(t, expected, token)
@@ -129,6 +158,9 @@ func TestOpenAITokenRefreshUsesOriginalCAS(t *testing.T) {
 	}
 }
 
+// DoWithTLS clones an encoded OAuth request and redirects its scheme and host
+// to the local TLS server. The fixture client executes it; its caller owns the
+// response body and request cancellation.
 func (t openAILocalTransport) DoWithTLS(request *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	copyRequest := request.Clone(request.Context())
 	copyRequest.URL.Scheme = t.target.Scheme
@@ -136,6 +168,10 @@ func (t openAILocalTransport) DoWithTLS(request *http.Request, _ string, _ int64
 	return t.client.Do(copyRequest)
 }
 
+// RefreshTokenWithClientID delegates refresh to the embedded OAuth client with
+// a nonnil TLS profile. That option selects the injected TLS transport; the
+// token, proxy, client ID, and context pass through to production encoding.
+// Supplied request options are replaced by the fixture's TLS option.
 func (c openAITLSClient) RefreshTokenWithClientID(ctx context.Context, token, proxy, clientID string, _ ...openai.OAuthTokenRequestOptions) (*openai.TokenResponse, error) {
 	return c.OAuthClient.RefreshTokenWithClientID(ctx, token, proxy, clientID, openai.OAuthTokenRequestOptions{TLSProfile: &tlsfingerprint.Profile{}})
 }

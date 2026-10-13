@@ -19,7 +19,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestOpenAIMediaPricingUsesModifierOnlyCards checks that token cards retain their multipliers when base prices come from the media catalog.
+// Modifier-only token cards can inherit token buckets from a catalog entry
+// whose model also produces media. These fixtures check that resolved token
+// mode receives the configured factors, then separately exercise media
+// operation rates and CN alias filtering for an
+// administrator-provided zero price.
+
+// TestOpenAIMediaPricingUsesModifierOnlyCards combines media catalog token
+// prices with Fast, Flex, Max, and time modifiers. It checks inherited catalog
+// source, token mode, combined base cost, and the supplied token user rate.
 func TestOpenAIMediaPricingUsesModifierOnlyCards(t *testing.T) {
 	for _, media := range []string{"image", "video"} {
 		model := "gpt-image-1"
@@ -70,6 +78,10 @@ func TestOpenAIMediaPricingUsesModifierOnlyCards(t *testing.T) {
 						pricing.UsageTokens{InputTokens: 100, OutputTokens: 50, ImageOutputTokens: 50}, tier, time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC))
 					require.NoError(t, err)
 					require.Equal(t, string(routing.BillingModeToken), cost.BillingMode)
+					// All reported output tokens are images here, so $0.10 of
+					// input and $0.20 of image output form the modifier-scaled
+					// token base. Token-bucket USD totals allow rounding in
+					// the composed modifier factors.
 					require.InDelta(t, 0.3*factor, cost.TotalCost, 1e-12)
 					require.InDelta(t, 0.3*factor*1.5, cost.ActualCost, 1e-12)
 				})
@@ -78,7 +90,10 @@ func TestOpenAIMediaPricingUsesModifierOnlyCards(t *testing.T) {
 	}
 }
 
-// TestOpenAIMediaModifiersPreserveInheritedRequestBilling checks image and video modes without token-only multipliers.
+// TestOpenAIMediaModifiersPreserveInheritedRequestBilling supplies complete
+// image and video operation cards alongside observed token usage. It checks
+// that each resolved media mode charges output units with its
+// corresponding media rate.
 func TestOpenAIMediaModifiersPreserveInheritedRequestBilling(t *testing.T) {
 	for _, mode := range []routing.BillingMode{routing.BillingModeImage, routing.BillingModeVideo} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -99,13 +114,17 @@ func TestOpenAIMediaModifiersPreserveInheritedRequestBilling(t *testing.T) {
 				pricing.UsageTokens{InputTokens: 100}, "priority", time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC))
 			require.NoError(t, err)
 			require.Equal(t, string(mode), cost.BillingMode)
+			// Media USD totals allow rounding of output-unit
+			// and funding-rate products.
 			require.InDelta(t, wantTotal, cost.TotalCost, 1e-12)
 			require.InDelta(t, wantTotal*rate, cost.ActualCost, 1e-12)
 		})
 	}
 }
 
-// TestCNProviderPricingModifiersDoNotCountAsExplicitPrices checks that multiplier-only cards cannot enable Claude catalog prices for CN providers.
+// TestCNProviderPricingModifiersDoNotCountAsExplicitPrices gives CN providers
+// a Claude alias with a multiplier-only card. It checks that filtering removes
+// the alias, then retains it when the card supplies an explicit zero price.
 func TestCNProviderPricingModifiersDoNotCountAsExplicitPrices(t *testing.T) {
 	for _, platform := range []string{capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		for _, scope := range []string{"channel"} {
@@ -121,7 +140,8 @@ func TestCNProviderPricingModifiersDoNotCountAsExplicitPrices(t *testing.T) {
 				key := &apikey.APIKey{Group: group}
 				require.NotNil(t, svc.ResolveConfigPricing(context.Background(), model, gatewaycapture.ProjectCompletionKey(key)))
 				require.Empty(t, svc.FilterCNProviderBillingModelCandidates(context.Background(), gatewaycapture.ProjectCompletionProvider(gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: platform}})), gatewaycapture.ProjectCompletionKey(key), []string{model}))
-				// An explicit zero price is an administrator-provided price, so the candidate remains billable.
+				// An explicit zero price is an administrator-provided price,
+				// so the candidate remains billable.
 				resolver = billingtestkit.SharedPriceResolver(newCalculator(nil), group.ID, pricing.DefaultBillingSettings(), []routing.ModelPricingEntry{{Models: []string{model}, InputPrice: testPtrFloat64(0)}})
 				svc = completion.NewRecorder(completion.Dependencies{Calculator: newCalculator(nil), Prices: resolver}, completion.RecorderOptions{DefaultMultiplier: 1})
 				require.Equal(t, []string{model}, svc.FilterCNProviderBillingModelCandidates(context.Background(), gatewaycapture.ProjectCompletionProvider(gatewaycapture.ExecutionCompletionRecord(&gatewaycapture.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: platform}})), gatewaycapture.ProjectCompletionKey(key), []string{model}))

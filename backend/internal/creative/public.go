@@ -29,6 +29,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Personal image submission checks current group access and one concrete
+// configured model before creating a task. User discovery reads administrator
+// allowlist entries directly, while administrator candidate discovery combines
+// finite configured names across providers and groups. Image capabilities
+// choose parameter options independently from pricing, whose quote
+// availability is checked before new task funding.
+//
+// Creation validates and moderates before idempotency lookup, so replay still
+// depends on current admission. A new task obtains a price snapshot and hidden
+// Key, then persists metadata before reservation, transient input writes, and
+// enqueue progress. Those cross-store steps keep separate recovery markers;
+// creation failures can leave earlier work present for outbox recovery. Prompt
+// and media hashes identify persisted requests while their actual content
+// remains in temporary storage.
+
+// Platform names select image routes and adapters; MIME and input-size limits
+// govern task defaults, PNG masks, and encoded Gemini request admission.
 const (
 	PlatformOpenAI = "openai"
 	PlatformGemini = "gemini"
@@ -40,170 +57,380 @@ const (
 	MaxCreativeGeminiInlineBytes = 20 << 20
 )
 
-// ErrCreativeContentBlocked reports a moderation rejection.
+// ErrCreativeContentBlocked identifies a returned content denial that blocks
+// submission before hidden Key creation and task funds reservation are attempted.
 var ErrCreativeContentBlocked = infraerrors.New(infraerrors.CategoryForbidden, "CREATIVE_CONTENT_BLOCKED", "creative content failed moderation")
 
 type (
-	UserAccess interface{ CanBindGroup(int64, bool) bool }
+	// UserAccess supplies current user group-binding permission for
+	// creative model and task admission.
+	UserAccess interface {
+		// CanBindGroup checks whether the authenticated user can bind
+		// the supplied
+		// group. The exclusive flag comes from the current group record, and
+		// admission checks this before any task is funded.
+		CanBindGroup(int64, bool) bool
+	}
+	// UserReader supplies authenticated user access data for creative group
+	// permission checks.
 	UserReader interface {
+		// GetByID returns binding access for the supplied user identifier. Public
+		// converts a read failure or absent value to its configured UserNotFound
+		// error before evaluating the selected creative group.
 		GetByID(context.Context, int64) (UserAccess, error)
 	}
 )
 
+// GroupView carries current creative admission flags, group display data, and
+// image model/protocol rules.
 type GroupView struct {
-	ID   int64
-	Name string
-	// ClaudeCodeOnly excludes the group from Creative Studio; no fallback group is selected.
-	ClaudeCodeOnly                            bool
+	ID   int64  // selected group row identifier
+	Name string // current group display name
+	// ClaudeCodeOnly excludes the group from Creative Studio; no fallback
+	// group is selected.
+	// client restricted group flag
+	ClaudeCodeOnly bool
+	// IsExclusive supplies the user binding check, while Active and
+	// AllowImageGeneration gate creative admission. Discovery and submission
+	// require these current group flags before a model can create funded work.
+	// IsExclusive is exclusive group binding flag; AllowImageGeneration is group
+	// image admission enabled flag; Active is current group active flag
 	IsExclusive, AllowImageGeneration, Active bool
-	RateMultiplier                            float64
-	Operations                                map[string][]string
-	ProtocolFallbacks                         map[protocol.ProtocolID][]protocol.ProtocolID
-	RoutingPolicy                             routing.GroupRoutingPolicy
-	// ModelsList contains the group's enabled custom request names.
-	ModelsList []string
+	RateMultiplier                            float64 // group default price multiplier
+	// Operations and ProtocolFallbacks retain the supplied route maps;
+	// RoutingPolicy is cloned by each query. Callers keep the supplied maps
+	// stable while model and operation eligibility is resolved.
+	// admitted operations by platform
+	Operations map[string][]string
+	// group protocol conversion route rules
+	ProtocolFallbacks map[protocol.ProtocolID][]protocol.ProtocolID
+	// current group model routing policy
+	RoutingPolicy routing.GroupRoutingPolicy
+	// ModelsList contains enabled custom request names included in finite
+	// administrator candidates. Queries keep this supplied slice stable while
+	// combining it with provider and policy names.
+	ModelsList []string // enabled custom public request names
 }
+
+// GroupReader supplies current group metadata for creative submission and
+// active model discovery.
 type GroupReader interface {
+	// GetByIDLite reads current creative flags and model policy for one exact
+	// group. Submission rejects a missing or inactive group before managed Key
+	// creation and funds reservation.
 	GetByIDLite(context.Context, int64) (*GroupView, error)
+	// ListActive reads active groups for user discovery and administrator
+	// candidates. Each caller applies its own binding and image-route checks
+	// before those groups can contribute returned model entries.
 	ListActive(context.Context) ([]GroupView, error)
 }
+
+// CatalogProvider supplies a provider scheduling state, platform, model
+// mappings, and protocol capabilities.
 type CatalogProvider interface {
+	// PlatformID returns the provider platform used to select creative image
+	// adapter rules.
 	PlatformID() string
+	// AllowsProtocol checks a creative operation protocol against provider
+	// capabilities and group fallback routes. Model resolution applies this check
+	// before adding that provider operation to the advertised route.
 	AllowsProtocol(protocol.ProtocolID, map[protocol.ProtocolID][]protocol.ProtocolID) bool
+	// IsSchedulable reports whether the provider current scheduling state permits
+	// creative route discovery.
 	IsSchedulable() bool
+	// GetModelMapping returns configured provider mapping names used for finite
+	// candidate generation. Actual admission still resolves each candidate and
+	// checks provider support, protocols, group restrictions, and image output.
 	GetModelMapping() map[string]string
+	// GetConfiguredRequestModels returns concrete provider candidate names from
+	// prepared execution rules. A candidate contributes discovery input, while
+	// model resolution separately verifies scheduling, support, protocol routing,
+	// and image capability.
 	GetConfiguredRequestModels() []string
+	// ResolveMappedModel applies one provider model mapping and reports whether
+	// it matched. Creative route construction retains nonblank mapped spelling
+	// and uses the requested name when that spelling is blank.
 	ResolveMappedModel(string) (string, bool)
+	// IsModelSupported reports provider admission for a group-mapped request
+	// name. A rejected provider contributes no operation or parameter
+	// observations to the resolved creative model route for that name.
 	IsModelSupported(string) bool
 }
+
+// ProviderReader reads eligible group/platform candidates for creative model
+// and image capability resolution.
 type ProviderReader interface {
+	// ListSchedulableByGroupIDAndPlatform returns candidates for one selected
+	// group and platform. A creative query reads each enabled platform list once
+	// and reuses it across concrete model resolution.
 	ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]CatalogProvider, error)
 }
+
+// UserRateReader supplies optional user-specific balance rates used by
+// creative task price snapshots.
 type UserRateReader interface {
+	// GetByUserAndGroup returns an optional balance multiplier for this user and
+	// group. ResolveCreativePricing retains the group default when a read fails
+	// or the returned override is absent.
 	GetByUserAndGroup(context.Context, int64, int64) (*float64, error)
 }
+
+// SettingReader supplies current creative enablement and exact administrator
+// model settings for public admission.
 type SettingReader interface {
+	// IsCreativeEnabled reports the runtime switch combined with process settings
+	// by Public.Enabled. False blocks new creation and makes user model discovery
+	// return an empty successful directory result.
 	IsCreativeEnabled(context.Context) bool
+	// GetCreativeModelSettings returns exact administrator group/model operations
+	// for public admission. Empty settings close user discovery and submission,
+	// while workers independently check their saved task against current group
+	// model policy.
 	GetCreativeModelSettings(context.Context) []CreativeModelSetting
 }
+
+// ModerationInput pairs request identity and scope with the temporary review
+// request body.
 type ModerationInput struct {
-	RequestID                                      string
-	UserID, BillingUserID                          int64
-	GroupID                                        *int64
+	RequestID string // local request ID value
+	// UserID is authenticated request owner identifier; BillingUserID is request
+	// billing owner identifier
+	UserID, BillingUserID int64
+	// GroupID points into the validated group view during review. Callers keep
+	// that identifier stable while a Check implementation consumes the input.
+	// target request group identifier
+	GroupID *int64
+	// GroupName is target group display name; Endpoint is creative request
+	// endpoint label; Platform is selected image route platform; Model is public
+	// request model name; Protocol is review request protocol label
 	GroupName, Endpoint, Platform, Model, Protocol string
-	Body                                           []byte
-	NoMediaRetention                               bool
+	// Body holds freshly encoded prompt and media data for Check. The review
+	// consumer treats these bytes as immutable while evaluating or retaining them.
+	// temporary JSON review request bytes
+	Body []byte
+	// review input retention exclusion flag
+	// NoMediaRetention requests review logging without media snapshots or body
+	// excerpts. ModerateCreativeRequest sets it true before delegating to the
+	// configured moderation implementation.
+	NoMediaRetention bool
 }
 type (
-	ModerationDecision struct{ Allowed bool }
-	Moderator          interface {
+	// ModerationDecision carries the review permission returned for one
+	// temporary creative request.
+	ModerationDecision struct {
+		Allowed bool // review permitted request flag
+	}
+	// Moderator evaluates a temporary creative prompt and media body before
+	// task creation.
+	Moderator interface {
+		// Check reviews a temporary creative request and returns an optional
+		// permission decision. Public requests NoMediaRetention, allows service
+		// errors, and blocks a successful nonnil denial before creating a task.
 		Check(context.Context, ModerationInput) (*ModerationDecision, error)
 	}
 )
 
+// PublicOptions supplies process feature gating, upload and prompt limits, and
+// the default image tier.
 type PublicOptions struct {
-	Enabled                           bool
-	MaxPromptChars                    int
+	Enabled        bool // process creative enable flag
+	MaxPromptChars int  // Unicode code points
+	// MaxAssetBytes is bytes; MaxTotalInputBytes is bytes
 	MaxAssetBytes, MaxTotalInputBytes int64
-	DefaultImageSize                  string
+	DefaultImageSize                  string // default requested image size tier
 }
+
+// Public resolves creative admission and prices, then provisions persistent
+// task metadata and transient inputs.
 type Public struct {
-	Attributes             *routing.ModelAttributeService
-	Now                    func() time.Time
-	Repo                   CreativeRunRepository
-	UserRepo               UserReader
-	GroupRepo              GroupReader
-	ProviderRepo           ProviderReader
-	UserGroupRateRepo      UserRateReader
-	Queue                  CreativeRunQueue
-	TransientStore         CreativeTransientStore
-	Results                *Results
-	Settings               SettingReader
-	Options                PublicOptions
-	UserNotFound           error
-	EnsureKey              func(context.Context, int64, int64) (int64, error)
-	GroupMapping           func(context.Context, int64, string) routing.GroupMappingResult
-	ImageUnitPrice         func(context.Context, *GroupView, string, string) (float64, bool)
+	// Repo, UserRepo, GroupRepo, ProviderRepo, Queue, TransientStore, Results,
+	// Settings, EnsureKey, and ImageUnitPrice are configured before serving. Keep
+	// these shared dependencies and optional callbacks stable while concurrent
+	// requests use them.
+	// shared attribute query service
+	Attributes *routing.ModelAttributeService
+	// Now supplies public query time for expiry and receipt checks. A nil value
+	// lets Queries use system time; Results owns its separate recovery clock.
+	Now func() time.Time // optional public query clock
+	// task metadata persistence repository
+	Repo      CreativeRunRepository
+	UserRepo  UserReader  // current user access reader
+	GroupRepo GroupReader // current creative group rules reader
+	// group platform candidate provider reader
+	ProviderRepo ProviderReader
+	// UserGroupRateRepo optionally overrides the balance multiplier for creation.
+	// Missing readers and failed reads retain the current group default rate.
+	UserGroupRateRepo UserRateReader
+	Queue             CreativeRunQueue // creative task admission queue
+	// temporary execution input storage
+	TransientStore CreativeTransientStore
+	Results        *Results // task funds and result service
+	// runtime creative admission settings reader
+	Settings SettingReader
+	Options  PublicOptions // process feature and input settings
+	// UserNotFound classifies every failed or absent UserRepo lookup in
+	// ListModels and ValidateCreateParams, including read failures that did not
+	// establish confirmed user absence.
+	UserNotFound error // user absence error classification
+	// EnsureKey supplies the hidden execution Key identifier before metadata
+	// creation. Configure this callback before CreateRun; its failures stop
+	// reservation and input provisioning.
+	EnsureKey func(context.Context, int64, int64) (int64, error)
+	// GroupMapping optionally supplies linked pricing model selection. A nil
+	// callback leaves the resolved upstream name as the quote identity.
+	GroupMapping func(context.Context, int64, string) routing.GroupMappingResult
+	// ImageUnitPrice returns a unit amount and independent quote availability.
+	// Configure it before discovery or creation so a valid zero quote remains
+	// distinct from missing pricing.
+	ImageUnitPrice func(context.Context, *GroupView, string, string) (float64, bool)
+	// SubscriptionMultiplier optionally supplies the effective reservation rate.
+	// A nil callback or false result keeps the selected balance rate as the
+	// estimate multiplier while both source rates remain saved.
 	SubscriptionMultiplier func(context.Context, int64, *GroupView, float64) (float64, bool)
-	Moderation             Moderator
-	RequestID              func(context.Context) string
-	Observe                func(string, ...any)
+	// Moderation optionally reviews validated temporary content before task creation.
+	// A nil service permits creation; service errors are observed and allowed.
+	Moderation Moderator
+	// RequestID optionally supplies the current request identity for moderation.
+	// A nil callback or blank result leaves the newly generated review ID in use.
+	RequestID func(context.Context) string
+	// Observe receives creative admission and provisioning diagnostics synchronously.
+	// A nil callback skips those diagnostics; configured observers support
+	// concurrent requests sharing this Public instance.
+	Observe func(string, ...any)
 }
 
-// CreativeModelCapabilities contains the model parameters exposed by Creative Studio.
+// CreativeModelCapabilities exposes parameter choices and counts resolved for
+// a creative image model route.
 type CreativeModelCapabilities struct {
-	AspectRatios       []string
-	Qualities          []string
-	OutputFormats      []string
-	OutputCompression  *CreativeNumericRange
-	BackgroundOptions  []string
-	ThinkingLevels     []string
-	MaxOutputCount     int
-	MaxReferenceImages int
+	AspectRatios  []string // supported image shape options
+	Qualities     []string // supported image quality options
+	OutputFormats []string // exposed output format options
+	// optional compression range metadata
+	// OutputCompression remains nil in CreativeCapabilitiesForModel. The
+	// multipart parser rejects client compression fields even though this
+	// capability representation retains a place for range metadata.
+	OutputCompression *CreativeNumericRange
+	BackgroundOptions []string // supported image background options
+	ThinkingLevels    []string // supported image reasoning options
+	MaxOutputCount    int      // maximum admitted output count
+	// MaxReferenceImages constrains submitted sources only when positive in
+	// ValidateCreateParams. A supplied zero limit bypasses that reference-count
+	// comparison rather than rejecting every source.
+	MaxReferenceImages int // maximum admitted source count
 }
 
+// creativeModelRoute combines a selected platform/model with common provider
+// and operation-specific capability attributes.
 type creativeModelRoute struct {
-	Attributes          modelcatalog.Attributes
+	// Attributes combines observations across eligible providers for the chosen
+	// platform. OperationAttributes keeps separate operation intersections, and
+	// submission uses the selected operation attributes when that entry is
+	// available.
+	// common model capability attributes
+	Attributes modelcatalog.Attributes
+	// common attributes per operation
 	OperationAttributes map[string]modelcatalog.Attributes
-	Platform, Model     string
-	Operations          []string
+	// Platform names the chosen platform; Model is its first resolved
+	// upstream image name.
+	Platform, Model string
+	Operations      []string // admitted operations by platform
 }
 
-// ValidatedCreativeParams contains normalized, validated creation parameters.
+// ValidatedCreativeParams retains normalized creation controls, source bytes,
+// and distinct public/upstream model identities.
 type ValidatedCreativeParams struct {
-	Platform      string
-	Group         *GroupView
-	Model         string
-	FinalModel    string
-	Operation     string
-	Prompt        string
-	PromptHash    string
-	ImageSize     string
-	AspectRatio   string
-	Quality       string
-	Background    string
-	ThinkingLevel string
-	OutputCount   int
-	Sources       []CreativeInputImage
-	Mask          *CreativeInputImage
-	Fingerprint   string
+	// Model, FinalModel, and Platform retain public identity, resolved upstream
+	// identity, and route selection separately. Sources and Mask retain caller
+	// bytes with normalized MIME labels and hashes; callers keep them stable
+	// until saved.
+	Platform string // selected image route platform
+	// Group retains the validated reader view. Pricing and creation read its
+	// identifier and rate afterward, so callers keep it stable until provisioning
+	// finishes.
+	Group *GroupView // validated current group view
+	Model string     // public request model name
+	// FinalModel is the first eligible upstream name in the chosen platform
+	// route used for creation capabilities and pricing. The worker resolves its
+	// actually selected provider model during preparation.
+	FinalModel    string               // resolved upstream image model
+	Operation     string               // normalized creative operation name
+	Prompt        string               // trimmed plaintext submitted prompt
+	PromptHash    string               // SHA-256 prompt digest
+	ImageSize     string               // normalized image size tier
+	AspectRatio   string               // normalized image shape option
+	Quality       string               // normalized image quality option
+	Background    string               // normalized image background option
+	ThinkingLevel string               // normalized image reasoning option
+	OutputCount   int                  // validated requested image count
+	Sources       []CreativeInputImage // normalized source image values
+	// Mask is present for validated inpaint input and carries PNG bytes whose
+	// dimensions match the first source. Other creation operations reject a
+	// supplied mask.
+	Mask        *CreativeInputImage // optional normalized mask image
+	Fingerprint string              // SHA-256 normalized request digest
 }
 
-// CreativeFingerprintPayload defines the fixed JSON field order used for request fingerprints.
+// CreativeFingerprintPayload fixes normalized request JSON field order and
+// carries ordered media content digests.
 type CreativeFingerprintPayload struct {
-	GroupID       int64    `json:"group_id"`
-	Model         string   `json:"model"`
-	Operation     string   `json:"operation"`
-	PromptSHA256  string   `json:"prompt_sha256"`
-	ImageSHA256   []string `json:"image_sha256"`
-	MaskSHA256    string   `json:"mask_sha256,omitempty"`
-	ImageSize     string   `json:"image_size"`
-	AspectRatio   string   `json:"aspect_ratio"`
-	Quality       string   `json:"quality,omitempty"`
-	Background    string   `json:"background,omitempty"`
-	ThinkingLevel string   `json:"thinking_level,omitempty"`
-	OutputCount   int      `json:"output_count"`
+	GroupID int64  `json:"group_id"` // target request group identifier
+	Model   string `json:"model"`    // public request model name
+	// normalized creative operation name
+	Operation string `json:"operation"`
+	// SHA-256 normalized prompt digest
+	PromptSHA256 string `json:"prompt_sha256"`
+	// ImageSHA256 retains source order in the JSON fingerprint payload. Nil
+	// encodes null and an allocated empty slice encodes an empty array; validation
+	// uses CreativeImageHashes to supply its canonical sequence shape.
+	// ordered source SHA-256 digests
+	ImageSHA256 []string `json:"image_sha256"`
+	// optional mask SHA-256 digest
+	MaskSHA256 string `json:"mask_sha256,omitempty"`
+	ImageSize  string `json:"image_size"` // normalized image size tier
+	// normalized image shape option
+	AspectRatio string `json:"aspect_ratio"`
+	// normalized image quality option
+	Quality string `json:"quality,omitempty"`
+	// normalized image background option
+	Background string `json:"background,omitempty"`
+	// normalized image reasoning option
+	ThinkingLevel string `json:"thinking_level,omitempty"`
+	OutputCount   int    `json:"output_count"` // validated requested image count
 }
 
-// CreativePricingSnapshot records prices and multipliers at task creation.
+// CreativePricingSnapshot records image base price, source multipliers, and
+// estimated amount at task creation.
 type CreativePricingSnapshot struct {
-	BaseUnitPrice              float64
-	SubscriptionRateMultiplier float64
-	BalanceRateMultiplier      float64
-	PlanGroupRateEnabled       bool
-	EstimatedCost              float64
+	// BaseUnitPrice, SubscriptionRateMultiplier, BalanceRateMultiplier, and
+	// EstimatedCost retain the quote selected at creation. An effective
+	// subscription quote can change the estimate while later funds commands
+	// retain both separate source rates.
+	BaseUnitPrice              float64 // USD per image
+	SubscriptionRateMultiplier float64 // saved subscription price multiplier
+	BalanceRateMultiplier      float64 // saved balance price multiplier
+	PlanGroupRateEnabled       bool    // plan group multiplier enabled flag
+	EstimatedCost              float64 // USD
 }
 
+// warn sends a creative request event and attributes to Observe synchronously.
+// A nil callback drops the diagnostic; supplied values pass through unchanged
+// for admission or provisioning observations.
 func (s *Public) warn(event string, values ...any) {
 	if s.Observe != nil {
 		s.Observe(event, values...)
 	}
 }
 
+// Enabled combines process and runtime switches with task and group repository
+// availability. Nil Public or absent Settings returns false; this gate does
+// not validate every dependency later used by creation.
 func (s *Public) Enabled(ctx context.Context) bool {
 	return s != nil && s.Repo != nil && s.GroupRepo != nil && s.Options.Enabled && s.Settings != nil && s.Settings.IsCreativeEnabled(ctx)
 }
 
+// MaxPromptChars returns a positive configured Unicode-code-point limit or
+// eight thousand. Nil Public and nonpositive configuration use the same
+// default for capability output and normalized prompt validation.
 func (s *Public) MaxPromptChars() int {
 	if s != nil && s.Options.MaxPromptChars > 0 {
 		return s.Options.MaxPromptChars
@@ -211,7 +438,9 @@ func (s *Public) MaxPromptChars() int {
 	return 8000
 }
 
-// MaxAssetBytes returns the per-file input limit shared by handlers and model validation.
+// MaxAssetBytes returns a positive configured per-file byte limit or
+// thirty-two MiB. Nil Public and nonpositive configuration use that default
+// for HTTP upload parsing and domain image validation.
 func (s *Public) MaxAssetBytes() int64 {
 	if s != nil && s.Options.MaxAssetBytes > 0 {
 		return s.Options.MaxAssetBytes
@@ -219,7 +448,9 @@ func (s *Public) MaxAssetBytes() int64 {
 	return 33554432
 }
 
-// MaxTotalInputBytes returns the total input byte limit for one task.
+// MaxTotalInputBytes returns a positive configured combined media byte limit
+// or sixty-four MiB. Nil Public and nonpositive configuration use that default
+// for HTTP parsing and creation input validation.
 func (s *Public) MaxTotalInputBytes() int64 {
 	if s != nil && s.Options.MaxTotalInputBytes > 0 {
 		return s.Options.MaxTotalInputBytes
@@ -227,6 +458,9 @@ func (s *Public) MaxTotalInputBytes() int64 {
 	return 67108864
 }
 
+// DefaultImageSize returns trimmed nonblank configured size or the one-K
+// default. The chosen route still validates this default before submission can
+// create or fund a task.
 func (s *Public) DefaultImageSize() string {
 	if s != nil && strings.TrimSpace(s.Options.DefaultImageSize) != "" {
 		return strings.TrimSpace(s.Options.DefaultImageSize)
@@ -234,18 +468,27 @@ func (s *Public) DefaultImageSize() string {
 	return "1K"
 }
 
+// mappedCatalogModel returns trimmed nonblank provider mapping or the supplied
+// model as fallback. A nil provider returns empty; the returned mapping
+// matched flag does not influence this fallback selection.
 func mappedCatalogModel(a CatalogProvider, m string) string {
 	if a == nil {
 		return ""
 	}
 	value, _ := a.ResolveMappedModel(m)
+	// A blank mapped value cannot identify an upstream request model. Use the
+	// concrete supplied name so subsequent group restriction and image capability
+	// checks still evaluate a model identity instead of empty text.
 	if strings.TrimSpace(value) == "" {
 		return m
 	}
 	return strings.TrimSpace(value)
 }
 
-// GetCapabilities returns input limits shared by the frontend and multipart parser.
+// GetCapabilities returns server prompt, media, and MIME limits for the
+// browser. It reads process-option defaults independently from feature
+// enablement, allowing authenticated limit reads without a browser workspace
+// scope.
 func (s *Public) GetCapabilities(ctx context.Context) *CreativeCapabilitiesResponse {
 	return &CreativeCapabilitiesResponse{
 		MaxPromptChars:     s.MaxPromptChars(),
@@ -256,13 +499,29 @@ func (s *Public) GetCapabilities(ctx context.Context) *CreativeCapabilitiesRespo
 	}
 }
 
-// ListModels returns the group and image model combinations available to the user.
+// ListModels returns configured priced image routes that the current user can
+// bind. Disabled creative and an empty administrator allowlist return an empty
+// successful directory.
+//
+// Each eligible group prepares providers once and directly resolves saved
+// concrete names. Configured operations intersect the resolved route
+// operations, while route capabilities determine sizes independently from
+// price overrides. A missing first-tier quote excludes a model. Display prices
+// use the group multiplier, whereas creation separately calculates its user
+// and subscription funding estimate.
 func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsResponse, error) {
 	if !s.Enabled(ctx) {
-		// An empty list lets the frontend display the disabled state.
+		// Disabled discovery uses an empty successful array for the
+		// browser picker.
+		// Task creation retains its separate gate, so the UI can show
+		// disabled model
+		// availability while submission receives the feature-disabled error.
 		return &CreativeModelsResponse{Data: make([]CreativeModelPublic, 0)}, nil
 	}
 	user, err := s.UserRepo.GetByID(ctx, userID)
+	// User access failures share the configured not-found result here, including
+	// store outages. Return that admission classification before reading groups
+	// rather than exposing the underlying user-store error to this caller.
 	if err != nil || user == nil {
 		return nil, s.UserNotFound
 	}
@@ -310,7 +569,12 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 			if !configured || len(operations) == 0 {
 				continue
 			}
-			// Resolve sizes from the selected route's model capabilities, independently of prices.
+			// Read route tiers before quote availability. A missing
+			// per-size override
+			// cannot remove a supported capability tier here,
+			// although the first-tier
+			// quote check can later exclude an unpriced model from
+			// this directory.
 			finalModel := models[model]
 			if finalModel == "" {
 				finalModel = model
@@ -348,8 +612,17 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 	return out, nil
 }
 
-// ListCreativeModelCandidates returns models administrators can add to the allowlist.
-// It applies group, provider, and platform rules without filtering by user permissions.
+// ListCreativeModelCandidates returns finite active image routes for
+// administrator configuration. It excludes client-restricted groups and groups
+// without image operations, while applying no administrator user-binding
+// filter.
+//
+// Candidates combine saved creative settings, group request names, and
+// prepared provider rules. Admission and image-capability checks select each
+// route and operation list, and names are sorted within the group. The
+// administrator can configure exclusive groups through this view while
+// ordinary user discovery still checks that user binding permission before
+// listing them.
 func (s *Public) ListCreativeModelCandidates(ctx context.Context) ([]CreativeModelCandidate, error) {
 	if s == nil || s.GroupRepo == nil {
 		return nil, errors.New("creative group repository is not configured")
@@ -397,6 +670,10 @@ func (s *Public) ListCreativeModelCandidates(ctx context.Context) ([]CreativeMod
 	return out, nil
 }
 
+// CreativeModelSettings returns the exact runtime model allowlist used for
+// public admission. Missing Public or Settings returns an empty list, and the
+// configured reader determines parsing defaults and returned collection
+// ownership.
 func (s *Public) CreativeModelSettings(ctx context.Context) []CreativeModelSetting {
 	if s == nil || s.Settings == nil {
 		return []CreativeModelSetting{}
@@ -404,16 +681,24 @@ func (s *Public) CreativeModelSettings(ctx context.Context) []CreativeModelSetti
 	return s.Settings.GetCreativeModelSettings(ctx)
 }
 
-// CreativePrice returns the per-image display price with the group's marketplace multiplier.
+// CreativePrice returns the quoted image unit amount multiplied by the group
+// display rate. Missing quotes return zero, while successful zero quotes
+// remain valid through the separate availability result used during creation.
 func (s *Public) CreativePrice(ctx context.Context, group *GroupView, model, imageSize string) float64 {
 	unit, ok := s.ImageUnitPrice(ctx, group, model, imageSize)
 	if !ok {
+		// Display uses zero for a missing quote; creation separately
+		// retains quote
+		// availability so an unavailable amount cannot be admitted as a
+		// free task.
 		return 0
 	}
 	return unit * group.RateMultiplier
 }
 
-// CreativeOperationsForPlatform returns the operations implemented for the platform.
+// CreativeOperationsForPlatform returns a new operation slice for a trimmed
+// supported platform. OpenAI includes inpaint, Gemini and Grok allow
+// generation/edit, and an unknown platform returns nil.
 func CreativeOperationsForPlatform(platform string) []string {
 	switch strings.TrimSpace(platform) {
 	case PlatformOpenAI:
@@ -425,9 +710,10 @@ func CreativeOperationsForPlatform(platform string) []string {
 	}
 }
 
-// CreativeDefaultImageSizesForPlatform returns size tiers to use when model capabilities are unknown.
-// OpenAI and Gemini default to 1K/2K/4K; Grok defaults to 1K/2K.
-// Callers narrow these tiers using known model capabilities.
+// CreativeDefaultImageSizesForPlatform returns fresh fallback tier slices for
+// a trimmed platform. OpenAI and Gemini use one-K/two-K/four-K, Grok uses
+// one-K/two-K, and unknown platforms return nil when capability defaults are
+// requested.
 func CreativeDefaultImageSizesForPlatform(platform string) []string {
 	switch strings.TrimSpace(platform) {
 	case PlatformOpenAI:
@@ -441,10 +727,21 @@ func CreativeDefaultImageSizesForPlatform(platform string) []string {
 	}
 }
 
-// CreativeCapabilitiesForModel converts shared media attributes into Creative Studio parameters.
+// CreativeCapabilitiesForModel returns media choices with one-output and
+// one-reference defaults. Only the first supplied attribute value participates;
+// its effort choices can populate ThinkingLevels even when Media is absent.
+//
+// Supplied attributes represent resolved route knowledge, so unknown media in
+// that value retains empty media choices and the count defaults. Catalogue
+// media is consulted only when attributes are omitted. Media choice slices
+// are copied and present count pointers replace defaults, keeping explicit
+// route observations separate from convenience lookups by platform and model.
 func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcatalog.Attributes) CreativeModelCapabilities {
 	result := CreativeModelCapabilities{AspectRatios: []string{}, Qualities: []string{}, OutputFormats: []string{}, BackgroundOptions: []string{}, ThinkingLevels: []string{}, MaxOutputCount: 1, MaxReferenceImages: 1}
 	var media *modelcatalog.MediaCapabilities
+	// A supplied attribute result controls this conversion even when its media
+	// is unknown. Catalogue media is consulted only when no attribute argument
+	// was supplied, keeping explicit route resolution distinct from helper defaults.
 	if len(attributes) > 0 {
 		media = attributes[0].Media
 		result.ThinkingLevels = attributes[0].Efforts()
@@ -467,17 +764,34 @@ func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcat
 	return result
 }
 
+// creativeRouteImageSizes returns a copied route size list or model defaults
+// when size knowledge is absent. An explicit empty list keeps zero available
+// tiers for discovery and submission.
+//
+// Missing media and nil ImageSizes carry unknown capability information, so
+// they reach the catalogue/platform lookup. A present empty list instead
+// declares no sizes and returns before that lookup. This distinction keeps
+// fallback defaults from widening a route whose resolved size choices were
+// explicitly emptied.
 func creativeRouteImageSizes(route creativeModelRoute) []string {
 	if route.Attributes.Media != nil && route.Attributes.Media.ImageSizes != nil {
 		return append([]string(nil), route.Attributes.Media.ImageSizes...)
 	}
+	// Only unknown route size metadata reaches model fallback. An explicit empty
+	// size list already returned above, so configured absence of choices is not
+	// widened by the catalogue defaults used here.
 	return CreativeImageSizesForModel(route.Platform, route.Model)
 }
 
+// CreativeNormalizedModelID trims, lowercases, and removes one models/ prefix
+// from supplied model spelling.
 func CreativeNormalizedModelID(model string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 }
 
+// CreativeGeminiMaxReferenceImages returns a known catalogue reference limit
+// or one when absent. It uses Gemini model identity and does not read current
+// group or selected-provider attribute overrides.
 func CreativeGeminiMaxReferenceImages(model string) int {
 	if media := modelcatalog.MediaForModel(PlatformGemini, model); media != nil && media.MaxReferenceImages != nil {
 		return *media.MaxReferenceImages
@@ -485,17 +799,23 @@ func CreativeGeminiMaxReferenceImages(model string) int {
 	return 1
 }
 
-// CreativeImageSizesForModel returns model size tiers, using platform defaults for unknown models.
-// Size availability is independent of configured prices.
+// CreativeImageSizesForModel copies catalogue media tiers or uses platform
+// defaults when media is unknown. Size availability follows model capabilities
+// independently from whether a matching price override is configured.
 func CreativeImageSizesForModel(platform, model string) []string {
 	if media := modelcatalog.MediaForModel(platform, model); media != nil {
 		return append([]string(nil), media.ImageSizes...)
 	}
+	// Unknown model media can still use platform tier defaults for capability
+	// display. Quote availability remains a separate discovery and submission
+	// decision, so these tiers do not supply a missing image price.
 	return CreativeDefaultImageSizesForPlatform(platform)
 }
 
-// CreativeFilterImageSizesForModel applies known model size limits and adds Gemini's supported 512 tier.
-// Unknown models keep the supplied tiers; known 1K-only models are restricted to 1K.
+// CreativeFilterImageSizesForModel narrows supplied tiers for the listed
+// recognized model families. Grok and older GPT Image retain one-K/two-K,
+// supported Gemini Flash prepends 512 when one-K exists, and one-K-only
+// families keep one-K. Other models receive a copied supplied list.
 func CreativeFilterImageSizesForModel(platform, model string, sizes []string) []string {
 	platform = strings.TrimSpace(platform)
 	if platform == PlatformGrok && upstream.IsGrokImageGenerationModel(model) {
@@ -526,7 +846,9 @@ func CreativeFilterImageSizesForModel(platform, model string, sizes []string) []
 	return filtered
 }
 
-// CreativeFilterImageSizes keeps allowed tiers in the supplied order.
+// CreativeFilterImageSizes keeps supplied tier spellings and order when
+// allowed tiers match. Membership trims and ignores case, while the returned
+// list retains the original supplied spelling of each surviving tier.
 func CreativeFilterImageSizes(sizes []string, allowed ...string) []string {
 	filtered := make([]string, 0, len(sizes))
 	for _, size := range sizes {
@@ -537,13 +859,15 @@ func CreativeFilterImageSizes(sizes []string, allowed ...string) []string {
 	return filtered
 }
 
-// IsCreativeGemini512Model reports whether the model belongs to the Gemini family supporting 512 output.
+// IsCreativeGemini512Model reports whether normalized spelling matches the
+// listed Gemini Flash image family for 512.
 func IsCreativeGemini512Model(model string) bool {
 	model = CreativeNormalizedModelID(model)
 	return strings.HasPrefix(model, "gemini-3.1-flash-image") && !strings.HasPrefix(model, "gemini-3.1-flash-lite-image")
 }
 
-// IsCreativeGemini1KOnlyModel reports whether the model belongs to a known 1K-only family.
+// IsCreativeGemini1KOnlyModel reports whether normalized spelling matches a
+// listed one-K-only Gemini image family.
 func IsCreativeGemini1KOnlyModel(model string) bool {
 	model = CreativeNormalizedModelID(model)
 	switch {
@@ -558,10 +882,14 @@ func IsCreativeGemini1KOnlyModel(model string) bool {
 	}
 }
 
+// IsCreativeGPTImage2Model reports whether trimmed lowercase spelling begins
+// with the gpt-image-2 prefix.
 func IsCreativeGPTImage2Model(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-2")
 }
 
+// ContainsCreativeImageSize reports whether trimmed size spelling matches the
+// target without case sensitivity.
 func ContainsCreativeImageSize(sizes []string, target string) bool {
 	for _, size := range sizes {
 		if strings.EqualFold(strings.TrimSpace(size), strings.TrimSpace(target)) {
@@ -571,6 +899,9 @@ func ContainsCreativeImageSize(sizes []string, target string) bool {
 	return false
 }
 
+// CreativeCanonicalOption returns the first option spelling matching trimmed
+// input without case sensitivity. Missing matches return empty and false so
+// validation can reject input or select a permitted default.
 func CreativeCanonicalOption(value string, options []string) (string, bool) {
 	value = strings.TrimSpace(value)
 	for _, option := range options {
@@ -581,12 +912,16 @@ func CreativeCanonicalOption(value string, options []string) (string, bool) {
 	return "", false
 }
 
+// CreativeContainsOption reports whether the supplied list contains a
+// canonical match for value.
 func CreativeContainsOption(options []string, value string) bool {
 	_, ok := CreativeCanonicalOption(value, options)
 	return ok
 }
 
-// CreativeDefaultOption selects the preferred option, then the first available option, or an empty string.
+// CreativeDefaultOption returns the canonical preferred option, then first
+// option, then empty. Chosen spelling comes from the supplied list so
+// validated controls match capabilities sent to the browser.
 func CreativeDefaultOption(options []string, preferred string) string {
 	if CreativeContainsOption(options, preferred) {
 		value, _ := CreativeCanonicalOption(preferred, options)
@@ -598,13 +933,18 @@ func CreativeDefaultOption(options []string, preferred string) string {
 	return ""
 }
 
-// CreativeModelsForGroup resolves image models through group/provider mappings and staged allowlists.
+// CreativeModelsForGroup converts current resolved image routes to
+// public-to-upstream model names. It evaluates finite candidates under
+// group/provider rules, while returning lookup errors with the converted map
+// to its caller.
 // @project-doc docs/domains/creative_studio.md#creative_model_policy
 func (s *Public) CreativeModelsForGroup(ctx context.Context, group *GroupView) (map[string]string, error) {
 	routes, err := s.creativeModelRoutes(ctx, group)
 	return creativeModelsFromRoutes(routes), err
 }
 
+// creativeModelsFromRoutes allocates request names mapped to the upstream
+// names carried by their image routes.
 func creativeModelsFromRoutes(routes map[string]creativeModelRoute) map[string]string {
 	models := make(map[string]string, len(routes))
 	for name, route := range routes {
@@ -613,7 +953,10 @@ func creativeModelsFromRoutes(routes map[string]creativeModelRoute) map[string]s
 	return models
 }
 
-// groupOperations returns candidate platform operations in CreativeOperationOrder.
+// groupOperations returns platform operation union in CreativeOperationOrder
+// using canonical membership checks. Input spelling can differ in case or
+// surrounding whitespace, while output uses the stable product operation
+// names.
 func groupOperations(group *GroupView) []string {
 	var operations []string
 	for _, operation := range CreativeOperationOrder {
@@ -627,7 +970,9 @@ func groupOperations(group *GroupView) []string {
 	return operations
 }
 
-// creativeModelRoutes resolves image models from saved settings and platform execution rules.
+// creativeModelRoutes prepares one group query and resolves its combined
+// finite candidates. An unavailable query returns an allocated empty map,
+// while provider preparation and model resolution failures remain errors.
 func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map[string]creativeModelRoute, error) {
 	query, err := s.prepareCreativeModels(ctx, group)
 	if err != nil || query == nil {
@@ -637,16 +982,27 @@ func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map
 	return query.resolveModels(ctx, query.candidates(configured))
 }
 
-// IsCreativeGeminiImageModel recognizes image model names used in explicit allowlists.
-// The nano-banana-* proxy aliases are accepted as Gemini image request models.
+// IsCreativeGeminiImageModel recognizes normalized Gemini names containing
+// image and names with the nano-banana- prefix. This fallback applies when
+// resolved modalities are unknown; known non-image output modalities can
+// reject the route.
 func IsCreativeGeminiImageModel(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 	return (strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")) ||
 		strings.HasPrefix(model, "nano-banana-")
 }
 
-// CreateRun validates and moderates a request, handles replay, then provisions funding, transient input,
-// and queue entry.
+// CreateRun validates and moderates current scope, model permissions, and
+// input before checking the trimmed idempotency key. Matching replay therefore
+// still requires current admission to succeed.
+//
+// New tasks resolve price and hidden Key before metadata creation publishes
+// provisioning recovery. Funds reservation, allowance marking, transient
+// saves, and queue admission then advance separate saved phases. Later
+// failures request release recovery for the persisted task rather than
+// synchronously reversing every earlier cross-store action. Persistent hashes
+// identify content while plaintext and media bytes enter temporary storage
+// before task enqueue.
 // @project-doc docs/domains/creative_studio.md#creative_task_lifecycle
 func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params CreateCreativeRunParamsPublic, idempotencyKey string) (*CreativeRunPublic, error) {
 	normalizedScope, err := NormalizeCreativeRunScope(scope)
@@ -724,17 +1080,23 @@ func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params C
 		return nil, err
 	}
 	telemetry.RecordRelatedRequest(ctx, telemetry.RequestRecord{RequestID: telemetry.StableRequestID(CreativeSettlementRequestID(run.RunID)), State: "running", Model: run.Model, StartedAt: run.CreatedAt, Aliases: []telemetry.RequestAlias{{Kind: "task", Value: run.RunID}, {Kind: "billing", Value: CreativeSettlementRequestID(run.RunID)}}})
+	// Task creation already published provisioning recovery in its transaction.
+	// Ensure the action before reserving funds so later failures retain a durable
+	// task identifier and recovery path across these separate store operations.
 	if err := s.Results.EnsureCreativeOutbox(ctx, run.RunID, CreativeRunOutboxProvision); err != nil {
 		return nil, err
 	}
-	// Creation failures schedule release and cleanup through the outbox.
+	// The task and provisioning action already exist before reservation. A later
+	// creation failure therefore requests a persisted release target and recovery
+	// action, because these funds, transient, and queue steps commit separately.
 	if err := s.Results.Funding.Reserve(ctx, run); err != nil {
 		s.FailRunAfterCreateError(ctx, run, "BILLING_HOLD_FAILED", err)
 		return nil, err
 	}
 	if marker, ok := s.Repo.(CreativeRunAllowanceMarker); ok {
 		if err := marker.SetCreativeRunAllowanceReserved(ctx, run.RunID, run.AllowanceReserved); err != nil {
-			// Reserve is idempotent; retain the provisioning outbox so recovery can persist the
+			// Reserve is idempotent; retain the provisioning outbox
+			// so recovery can persist the
 			// reservation marker.
 			return nil, err
 		}
@@ -757,6 +1119,9 @@ func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params C
 		s.FailRunAfterCreateError(ctx, run, "QUEUE_FAILED", err)
 		return nil, err
 	}
+	// Queue admission can already represent this persisted task through inflight
+	// bookkeeping. Accept that conflict before marking enqueued so provisioning
+	// recovery does not turn an existing queue attempt into a creation failure.
 	if err := s.Queue.Enqueue(ctx, run.RunID); err != nil && !errors.Is(err, ErrCreativeAlreadyQueued) {
 		s.FailRunAfterCreateError(ctx, run, "QUEUE_FAILED", err)
 		return nil, err
@@ -772,7 +1137,16 @@ func (s *Public) CreateRun(ctx context.Context, scope CreativeRunScope, params C
 	return out, nil
 }
 
-// FailRunAfterCreateError requests release_pending with failed as the target and schedules recovery.
+// FailRunAfterCreateError requests failed release recovery for a run and
+// nonnil cause. A nil run returns directly; transition failures are logged
+// while the caller retains the original creation error.
+//
+// The task creation transaction already recorded provisioning recovery before
+// these separate funding, transient, or queue failures occurred. This helper
+// first attempts a release_pending target, then ensures a release action on a
+// best-effort basis. Its ignored ensure error cannot undo earlier store work,
+// so a later reconciler still needs to inspect the persisted task and action
+// state.
 func (s *Public) FailRunAfterCreateError(ctx context.Context, run *CreativeRun, code string, cause error) {
 	if run == nil {
 		return
@@ -788,10 +1162,22 @@ func (s *Public) FailRunAfterCreateError(ctx context.Context, run *CreativeRun, 
 			"error", err,
 		)
 	}
+	// Recovery ensure is best effort after attempting the release target write.
+	// Its failure is discarded here; the original task creation provision action
+	// remains the durable evidence another reconciler can inspect.
 	_ = s.Results.EnsureCreativeOutbox(ctx, run.RunID, CreativeRunOutboxRelease)
 }
 
-// SaveRunTransient writes the payload and input bytes to temporary Redis storage.
+// SaveRunTransient writes execution JSON, ordered source bytes, and an
+// optional mask through separate temporary storage calls. Callers supply
+// nonnil run and validated inputs, keeping their retained bytes stable until
+// those synchronous writes finish.
+//
+// Payload metadata is saved before the media indexes it describes. A later
+// source or mask failure can leave earlier keys present, and the error stops
+// the sequence without rollback. Creation publishes transient_saved only after
+// every required write succeeds, so recovery uses that phase to distinguish
+// complete input provisioning from partial storage work.
 func (s *Public) SaveRunTransient(ctx context.Context, run *CreativeRun, validated *ValidatedCreativeParams) error {
 	if s.TransientStore == nil {
 		return errors.New("creative transient store is not configured")
@@ -813,6 +1199,10 @@ func (s *Public) SaveRunTransient(ctx context.Context, run *CreativeRun, validat
 		HasMask:            validated.Mask != nil,
 		RequestFingerprint: run.RequestFingerprint,
 	}
+	// Save JSON before its ordered source and mask keys. These are separate
+	// writes, so a partial failure leaves earlier values for creation recovery
+	// while the transient_saved phase is published only after this complete
+	// sequence.
 	if err := s.TransientStore.SavePayload(ctx, run.RunID, payload); err != nil {
 		return err
 	}
@@ -829,13 +1219,25 @@ func (s *Public) SaveRunTransient(ctx context.Context, run *CreativeRun, validat
 	return nil
 }
 
-// ValidateCreateParams checks access, model capabilities, and inputs, then returns normalized parameters
-// and a fingerprint.
+// ValidateCreateParams returns normalized controls, retained media, and
+// request digests after current user/group/model admission. Its chosen
+// operation capabilities control parameters before a task is created.
+//
+// Prompt limits count Unicode code points, raw media limits count bytes, and
+// Gemini also checks a conservative encoded-request estimate. Edit requires a
+// source; inpaint requires a PNG mask matching first-source dimensions; other
+// operations reject a mask. Size, shape, quality, background, thinking, and
+// count are resolved against capabilities. Ordered source digests and
+// normalized controls form identity while public model, upstream model, and
+// platform remain distinct route data.
 func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params *CreateCreativeRunParamsPublic) (*ValidatedCreativeParams, error) {
 	if params == nil {
 		return nil, ErrCreativeInvalidParams
 	}
 	user, err := s.UserRepo.GetByID(ctx, userID)
+	// Validation reports the configured user-not-found classification for any
+	// failed access read or absent user, preventing group and model admission
+	// from continuing without that required access value.
 	if err != nil || user == nil {
 		return nil, s.UserNotFound
 	}
@@ -995,7 +1397,10 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 		if mask != nil {
 			encodedBytes += base64.StdEncoding.EncodedLen(len(mask.Bytes))
 		}
-		// Estimate the full Gemini JSON request size, reserving extra bytes for field overhead.
+		// Estimate base64 expansion, prompt bytes, and fixed JSON overhead before
+		// Gemini inline execution. This conservative encoded total can exceed the
+		// raw media limit because source bytes are serialized inside
+		// request JSON.
 		if int64(encodedBytes)+int64(len(prompt))+4096 > MaxCreativeGeminiInlineBytes {
 			return nil, ErrCreativeInputTooLarge
 		}
@@ -1061,7 +1466,10 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 	}, nil
 }
 
-// NormalizeCreativeImageInput checks nonempty input, the byte limit, and the declared and detected MIME types.
+// NormalizeCreativeImageInput checks nonempty bytes, the supplied cap, and
+// short-signature agreement with MIME. Missing or unsupported headers are
+// sniffed and JPG becomes JPEG. Returned bytes remain shared, and this
+// signature check does not decode a complete image.
 func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (CreativeInputImage, error) {
 	if len(input.Bytes) == 0 {
 		return input, ErrCreativeInvalidMime
@@ -1074,25 +1482,37 @@ func NormalizeCreativeImageInput(input CreativeInputImage, maxBytes int64) (Crea
 	switch mime {
 	case "image/png", "image/jpeg", "image/jpg", "image/webp":
 	default:
-		// Sniff bytes when the declared MIME type is missing or unsupported.
+		// Missing or unsupported header spelling cannot identify a usable image
+		// label. Recognize known signatures first, then compare the chosen label
+		// with the observed bytes before provider request construction.
 		mime = SniffCreativeImageMime(input.Bytes)
 		if mime == "" {
 			return input, ErrCreativeInvalidMime
 		}
 	}
+	// JPEG upload headers can use the legacy image/jpg spelling. Canonicalize it
+	// before signature comparison so the returned label agrees with provider
+	// builders and the recognized image/jpeg bytes.
 	if mime == "image/jpg" {
 		mime = "image/jpeg"
 	}
-	// Check file signatures even for accepted MIME headers so mislabeled content is rejected.
+	// A recognized MIME header still needs a matching short signature. This
+	// prevents MIME-directed request encoding from choosing a label inconsistent
+	// with the supplied leading image bytes.
 	detectedMIME := SniffCreativeImageMime(input.Bytes)
 	if detectedMIME == "" || detectedMIME != mime {
 		return input, ErrCreativeInvalidMime
 	}
 	return CreativeInputImage{Bytes: input.Bytes, Mime: mime}, nil
 }
+
+// SniffCreativeImageMime delegates short PNG, JPEG, and WebP signature
+// recognition for supplied bytes.
 func SniffCreativeImageMime(data []byte) string { return upstream.SniffImageMIME(data) }
 
-// CreativeImageDimensions reads image dimensions, using x/image/webp for WebP.
+// CreativeImageDimensions reads dimensions with WebP config or registered
+// PNG/JPEG config decoders. Unsupported MIME returns an error, and malformed
+// headers retain decoder failures used by inpaint mask compatibility checks.
 func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	if mime == "image/webp" {
 		cfg, err := webp.DecodeConfig(bytes.NewReader(data))
@@ -1103,7 +1523,8 @@ func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	}
 	switch mime {
 	case "image/png", "image/jpeg":
-		// Blank imports register the JPEG and PNG decoders with image.DecodeConfig.
+		// Blank imports register the JPEG and PNG decoders with
+		// image.DecodeConfig.
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
 			return 0, 0, err
@@ -1114,15 +1535,31 @@ func CreativeImageDimensions(data []byte, mime string) (int, int, error) {
 	}
 }
 
-// BuildCreativeRequestFingerprint returns the SHA-256 hash of the payload's fixed-order JSON.
+// BuildCreativeRequestFingerprint returns SHA-256 of the payload JSON or
+// empty on encoding failure. Callers use normalized request values before
+// comparing this digest within a user and workspace idempotency scope.
+//
+// Struct field order fixes the encoded control sequence, and source digest
+// order remains part of request identity. Empty optional strings are omitted
+// by their JSON tags; nonempty values participate in the digest. Source slice
+// shape follows ImageSHA256 encoding, so validation supplies the canonical
+// payload instead of treating arbitrarily shaped inputs as equivalent.
 func BuildCreativeRequestFingerprint(payload CreativeFingerprintPayload) string {
 	body, err := json.Marshal(payload)
 	if err != nil {
+		// No encoded request is available on failure. Return the empty
+		// digest marker
+		// rather than hashing absent bytes as if they represented normalized
+		// submission identity.
 		return ""
 	}
 	return Sha256Hex(body)
 }
 
+// CreativeImageHashes returns SHA-256 source digests in the supplied image
+// order. Empty input produces an allocated empty slice, giving validated
+// fingerprint payloads a consistent JSON array when generation has no source
+// images.
 func CreativeImageHashes(sources []CreativeInputImage) []string {
 	hashes := make([]string, 0, len(sources))
 	for i := range sources {
@@ -1131,6 +1568,9 @@ func CreativeImageHashes(sources []CreativeInputImage) []string {
 	return hashes
 }
 
+// CreativeImageHash returns SHA-256 of image bytes or empty for a nil image
+// pointer. A present image is hashed even when its bytes are empty, keeping
+// absent mask input distinct in request fingerprint construction.
 func CreativeImageHash(image *CreativeInputImage) string {
 	if image == nil {
 		return ""
@@ -1138,17 +1578,30 @@ func CreativeImageHash(image *CreativeInputImage) string {
 	return Sha256Hex(image.Bytes)
 }
 
+// Sha256Hex returns lowercase hexadecimal SHA-256 for supplied bytes used in
+// creative request identity.
 func Sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-// ModerateCreativeRequest submits the prompt and images using the OpenAI Images moderation format.
-// NoMediaRetention prevents moderation from retaining media snapshots or body excerpts.
+// ModerateCreativeRequest reviews validated prompt and media using an OpenAI
+// Images JSON shape with NoMediaRetention requested. Callers supply nonnil
+// validated input when review is configured; absent review and service errors
+// permit creation, while a successful nonnil denial blocks it.
+//
+// Source images keep their order and a supplied mask follows them in the
+// temporary image list. MIME and base64 bytes share each data URL, so the
+// moderation adapter sees the same submitted media identities used by the
+// task. A configured nonblank request ID is reused; otherwise a fresh local ID
+// identifies this review before hidden Key creation and reservation.
 func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, validated *ValidatedCreativeParams) error {
 	if s.Moderation == nil {
 		return nil
 	}
+	// Adapt ordered references and the optional mask to one temporary review list.
+	// Each MIME label travels with its encoded bytes so moderation reads the
+	// submitted media even though task persistence retains only their digests.
 	images := make([]map[string]string, 0, len(validated.Sources)+1)
 	for i := range validated.Sources {
 		images = append(images, map[string]string{
@@ -1189,7 +1642,11 @@ func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, vali
 		NoMediaRetention: true,
 	})
 	if err != nil {
-		// Moderation service errors fail open; a successful denial below still blocks the request.
+		// Service failure is logged and permits creation here. A
+		// successful denied
+		// decision still blocks below, keeping review availability
+		// distinct from the
+		// content permission returned for this temporary prompt and image body.
 		s.warn("creative.moderation_check_failed",
 			"user_id", userID,
 			"error", err,
@@ -1202,8 +1659,16 @@ func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, vali
 	return nil
 }
 
-// ResolveCreativePricing calculates per-image pricing and subscription/balance multipliers for the funding
-// snapshot.
+// ResolveCreativePricing returns image base price, separate funding-source
+// rates, and estimated task amount. Missing unit quotes fail before
+// reservation, while an explicit zero quote remains valid.
+//
+// The nonnegative group rate supplies subscription and default balance rates.
+// A successful user override replaces balance rate, while read failure keeps
+// the group default. A subscription quote can change the effective estimate
+// multiplier while both source rates stay saved for later allocation.
+// BillingModel selects quote identity separately from admission, and count
+// scales the unit quote for the selected image size.
 func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, validated *ValidatedCreativeParams) (*CreativePricingSnapshot, error) {
 	group := validated.Group
 	groupDefault := group.RateMultiplier
@@ -1213,6 +1678,10 @@ func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, valid
 	subscriptionRate := groupDefault
 	balanceRate := groupDefault
 	if s.UserGroupRateRepo != nil {
+		// An override read failure keeps the group balance rate for this quote.
+		// The source-specific snapshot below still records subscription
+		// and balance
+		// rates separately from the effective amount estimated for reservation.
 		if userRate, err := s.UserGroupRateRepo.GetByUserAndGroup(ctx, userID, group.ID); err == nil && userRate != nil {
 			balanceRate = *userRate
 		}
@@ -1242,8 +1711,14 @@ func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, valid
 	}, nil
 }
 
-// BillingModel uses the shared pricing configuration's model selection when linked, otherwise the upstream
-// model.
+// BillingModel selects a linked pricing model or the final upstream identity
+// used for image quotes. Empty upstream uses requested input first.
+//
+// A linked configuration keeps requested, mapped, and upstream names separate
+// while BillingModelForPrice chooses its configured source. Missing mapping
+// callbacks, nil groups, and unlinked configurations return upstream directly.
+// This quote identity does not replace group/provider admission mapping, whose
+// route is resolved independently before the task saves funding values.
 func (s *Public) BillingModel(ctx context.Context, group *GroupView, requested, upstream string) string {
 	if upstream == "" {
 		upstream = requested
@@ -1262,6 +1737,8 @@ func (s *Public) BillingModel(ctx context.Context, group *GroupView, requested, 
 	return routing.BillingModelForPrice(mapping, requested, mapped, upstream)
 }
 
+// intersectCreativeOperations returns left-side names in order when right has
+// a canonical operation match.
 func intersectCreativeOperations(left, right []string) []string {
 	var result []string
 	for _, value := range left {

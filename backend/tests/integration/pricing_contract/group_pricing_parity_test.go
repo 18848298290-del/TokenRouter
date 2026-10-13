@@ -25,13 +25,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// A recording fixture can expose configured settings and cards for one
+// selected group while keeping a base resolver for other lookups. Matching
+// settings are cloned, and an unmatched card can still use that resolver's
+// configuration. The helper makes group selection and card fallback visible
+// while production billing calculates interval amounts, service-tier factors,
+// and user funding.
+//
+// Free Fast requires the marketplace and user allocation to use Standard
+// amounts even when the retained request cost uses Fast rates. The assertions
+// inspect those distinct amounts, cache-TTL inheritance, and quote results
+// using the same configured cards and selected billing instants.
+
+// configuredPrices supplies one group's settings and cards with
+// optional base-resolver lookup.
 type configuredPrices struct {
-	base     *billing.PriceResolver
-	groupID  int64
-	settings pricing.BillingSettings
-	cards    []routing.ModelPricingEntry
+	// base receives settings queries for other groups and unmatched card
+	// lookups. A nil base supplies default settings and leaves
+	// unmatched cards unavailable.
+	base *billing.PriceResolver // underlying price resolver
+	// groupID selects settings and cards as this fixture's inputs. Other group
+	// lookups, and models lacking a local effective card,
+	// continue through base.
+	groupID int64 // configured override group identifier
+	// settings is retained by value with shared optional price pointers. Clone
+	// detaches those pointers on each read, so callers keep the supplied
+	// amounts stable during lookups.
+	settings pricing.BillingSettings // configured group billing settings
+	// cards is retained by the fixture; callers leave its slice and nested
+	// values unchanged while lookups are running.
+	cards []routing.ModelPricingEntry // ordered shared model cards
 }
 
+// TestGroupPricingFreeFastWithIntervalsAndTurnTime records priority usage in a
+// configured interval and discounted UTC period. It checks Free Fast user
+// allocation, retained Fast total cost, public interval prices, and the
+// resolver's Fast factor.
 func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 	for _, free := range []bool{false, true} {
 		t.Run(fmt.Sprint(free), func(t *testing.T) {
@@ -75,12 +104,18 @@ func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 			if free {
 				wantBase = standardTotal
 			}
+			// Model and funding USD totals allow rounding in
+			// combined pricing factors.
 			require.InDelta(t, standardTotal*3, usageRepo.LastLog.TotalCost, 1e-12)
 			require.InDelta(t, wantBase*0.5, usageRepo.LastLog.ActualCost, 1e-12)
 			cmd := requireOpenAIRecordUsageBillingRepoStub(t, svc).LastCmd
+			// Model and funding USD totals allow rounding in
+			// combined pricing factors.
 			require.InDelta(t, wantBase, cmd.BaseAmountUSD, 1e-12)
 			require.InDelta(t, wantBase*0.5, cmd.BillableAmountUSD, 1e-12)
-			// Free Fast displays Standard prices while provider settlement retains Fast prices.
+			// Public quotes use the user's Free Fast view. Resolve the card
+			// again afterward to check that quoting leaves its
+			// Fast multiplier available.
 			market := newPricingMarketplaceFixture(nil, nil, svc.Dependencies.Prices, svc.Dependencies.Calculator, nil, nil, nil)
 			display := market.PublicModelPricing(context.Background(), group, "gpt-5.6-sol")
 			require.Len(t, display.ContextIntervals, 2)
@@ -88,6 +123,8 @@ func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 			if free {
 				ratio = 1
 			}
+			// Displayed USD-per-token rates use an absolute tolerance
+			// for multiplier rounding.
 			require.InDelta(t, display.ContextIntervals[1].InputPricePerToken*ratio, display.ContextIntervals[1].FastInputPricePerToken, 1e-12)
 			resolved := svc.Dependencies.Prices.Resolve(context.Background(), billing.PricingInput{Model: "gpt-5.6-sol", GroupID: &group.ID})
 			require.Equal(t, 3.0, *resolved.BasePricing.FastMultiplier)
@@ -95,7 +132,9 @@ func TestGroupPricingFreeFastWithIntervalsAndTurnTime(t *testing.T) {
 	}
 }
 
-// TestConfigPricingFreeFastDisplayRespectsModelSupport checks display prices for the model's supported service tiers.
+// TestConfigPricingFreeFastDisplayRespectsModelSupport quotes a custom model
+// with absent or explicitly zero Fast-mode metadata. It checks Standard
+// display pricing and whether Free Fast exposes a Fast price for each fixture.
 func TestConfigPricingFreeFastDisplayRespectsModelSupport(t *testing.T) {
 	bs := billingtestkit.ResolverCalculator()
 	settings := pricing.DefaultBillingSettings()
@@ -114,6 +153,10 @@ func TestConfigPricingFreeFastDisplayRespectsModelSupport(t *testing.T) {
 	}
 }
 
+// TestConfiguredIntervalsPreserveDefaultPrices supplies manual defaults with
+// partial interval overrides and split cache-write usage. It checks inherited
+// token buckets, zero output pricing, and PriceMultiplier/Fast/group-rate
+// scaling at selected contexts.
 func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, model := range []string{"claude-sonnet-4", "custom-priced"} {
@@ -137,8 +180,12 @@ func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 					rCalculator = billingtestkit.ResolverCalculator()
 					r = billingtestkit.ResolverWithCards(t, rCalculator, []routing.ModelPricingEntry{card})
 				}
+				// Interval selection uses input plus cache creation and cache
+				// reads. The expected dollar totals therefore account for the
+				// extra forty cached tokens in each row.
 				for _, tc := range []struct {
-					input    int
+					input int // uncached input token count
+					// unscaled expected bucket total USD
 					standard float64
 				}{{10, 0.19}, {110, 0.38}, {210, 1.86}} {
 					for _, tier := range []string{"default", "priority"} {
@@ -152,6 +199,8 @@ func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 						if tier == "priority" {
 							expected *= 1.5
 						}
+						// Model and funding USD totals allow rounding in
+						// combined pricing factors.
 						require.InDelta(t, expected, cost.TotalCost, 1e-10, "input=%d tier=%s", tc.input, tier)
 						require.InDelta(t, expected*0.7, cost.ActualCost, 1e-10)
 					}
@@ -161,7 +210,10 @@ func TestConfiguredIntervalsPreserveDefaultPrices(t *testing.T) {
 	}
 }
 
-// TestFreeFastIntervalOnlyDisplayMatchesStandard checks that Free Fast displays Standard interval prices for custom models.
+// TestFreeFastIntervalOnlyDisplayMatchesStandard quotes one or two custom
+// intervals with optional Free Fast. It checks displayed input/cache ratios
+// and confirms that a subsequent priority calculation retains the configured
+// Fast base amount.
 func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 	for _, source := range []string{"channel"} {
 		for _, tierCount := range []int{1, 2} {
@@ -195,23 +247,31 @@ func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 					}
 					if tierCount == 1 {
 						require.Empty(t, display.ContextIntervals)
+						// Displayed USD-per-token rates use an absolute
+						// tolerance for multiplier rounding.
 						require.InDelta(t, 0.001*group.RateMultiplier, display.InputPricePerToken, 1e-12)
 						require.InDelta(t, display.InputPricePerToken*ratio, display.FastInputPricePerToken, 1e-12)
 						require.InDelta(t, display.CacheReadPricePerToken*ratio, display.FastCacheReadPricePerToken, 1e-12)
 					} else {
 						require.Len(t, display.ContextIntervals, 2)
 						for i, interval := range display.ContextIntervals {
+							// Displayed USD-per-token rates use an absolute
+							// tolerance for multiplier rounding.
 							require.InDelta(t, float64(i+1)*0.001*group.RateMultiplier, interval.InputPricePerToken, 1e-12)
 							require.InDelta(t, interval.InputPricePerToken*ratio, interval.FastInputPricePerToken, 1e-12)
 							require.InDelta(t, interval.CacheReadPricePerToken*ratio, interval.FastCacheReadPricePerToken, 1e-12)
 						}
 					}
-					// Quoting display prices must leave the Fast settlement cost intact.
+					// Calculate after quoting so the public Free Fast view
+					// cannot conceal an accidental mutation of the
+					// card's priority-cost multiplier.
 					cost, err := rCalculator.CalculateCostUnified(billing.CostInput{
 						Ctx: context.Background(), Model: "custom-priced", GroupID: &group.ID,
 						Tokens: pricing.UsageTokens{InputTokens: 50}, RateMultiplier: group.RateMultiplier, ServiceTier: "priority", Resolver: r,
 					})
 					require.NoError(t, err)
+					// Model and funding USD totals allow rounding in
+					// combined pricing factors.
 					require.InDelta(t, 50*0.001*3, cost.TotalCost, 1e-12)
 				})
 			}
@@ -219,7 +279,9 @@ func TestFreeFastIntervalOnlyDisplayMatchesStandard(t *testing.T) {
 	}
 }
 
-// TestTimeOnlyPricingGroupPricingConfigParity checks a shared card that supplies only time-based multipliers.
+// TestTimeOnlyPricingGroupPricingConfigParity gives the shared card a daily
+// multiplier with no base price. It checks the inherited Claude fixture input
+// amount inside the configured UTC period.
 func TestTimeOnlyPricingGroupPricingConfigParity(t *testing.T) {
 	card := routing.ModelPricingEntry{
 		Models: []string{"claude-sonnet-4"}, BillingMode: routing.BillingModeToken,
@@ -243,10 +305,13 @@ func TestTimeOnlyPricingGroupPricingConfigParity(t *testing.T) {
 		costs = append(costs, cost.ActualCost)
 	}
 
+	// Model and funding USD totals allow rounding in combined pricing factors.
 	require.InDelta(t, 0.0006, costs[0], 1e-12)
 }
 
-// TestTierOnlyPricingPreservesImagePricesEqually checks that Fast multipliers retain image input and output prices.
+// TestTierOnlyPricingPreservesImagePricesEqually adds a Fast factor to
+// inherited text and image-token prices. It checks the combined user amount
+// for the supplied shared-card priority request.
 func TestTierOnlyPricingPreservesImagePricesEqually(t *testing.T) {
 	card := routing.ModelPricingEntry{Models: []string{"claude-sonnet-4"}, BillingMode: routing.BillingModeToken, FastMultiplier: testPtrFloat64(2)}
 	var costs []float64
@@ -269,9 +334,13 @@ func TestTierOnlyPricingPreservesImagePricesEqually(t *testing.T) {
 		costs = append(costs, cost.ActualCost)
 	}
 
+	// Model and funding USD totals allow rounding in combined pricing factors.
 	require.InDelta(t, 1.2, costs[0], 1e-12)
 }
 
+// TestQoderGroupPricingConfigBlankPricesParity supplies a shared card
+// overriding only the Claude model's input price. It checks that output-only
+// usage still receives the historical catalog output amount.
 func TestQoderGroupPricingConfigBlankPricesParity(t *testing.T) {
 	card := routing.ModelPricingEntry{Models: []string{"claude-opus-4-6"}, BillingMode: routing.BillingModeToken, InputPrice: testPtrFloat64(0.001)}
 	var costs []float64
@@ -291,10 +360,13 @@ func TestQoderGroupPricingConfigBlankPricesParity(t *testing.T) {
 		costs = append(costs, cost.ActualCost)
 	}
 
+	// Model and funding USD totals allow rounding in combined pricing factors.
 	require.InDelta(t, 0.0025, costs[0], 1e-12)
 }
 
-// TestModifierCardsPreserveBuiltinPricingPolicy checks catalog prices with the card's time-based multipliers.
+// TestModifierCardsPreserveBuiltinPricingPolicy resolves a historical DeepSeek
+// entry with card-provided Fast and time factors. It checks retained catalog
+// source and token totals inside and outside the configured UTC period.
 func TestModifierCardsPreserveBuiltinPricingPolicy(t *testing.T) {
 	model := "deepseek-v4-flash"
 	card := routing.ModelPricingEntry{
@@ -320,15 +392,20 @@ func TestModifierCardsPreserveBuiltinPricingPolicy(t *testing.T) {
 				expected := 100 * 2.2e-7 * 3
 
 				if hour >= 1 && hour < 4 {
-					expected *= 2 // Time multiplier from the configured card.
+					// Time multiplier from the configured card.
+					expected *= 2
 				}
+				// Model and funding USD totals allow rounding in
+				// combined pricing factors.
 				require.InDelta(t, expected, cost.TotalCost, 1e-12)
 			}
 		})
 	}
 }
 
-// TestQoderPricingMatchesOtherPlatforms compares tier, time-based, zero, and default image prices through shared billing and display entry points.
+// TestQoderPricingMatchesOtherPlatforms constructs Qoder and OpenAI recorder
+// paths for default, modified, and free cards. It compares their public quotes
+// and checks the Qoder cost for selected priced/free cases.
 func TestQoderPricingMatchesOtherPlatforms(t *testing.T) {
 	for _, model := range []string{"claude-opus-4-6", "gpt-image-1", "custom-image", "qmodel"} {
 		for _, kind := range []string{"default", "modifiers", "free"} {
@@ -372,6 +449,10 @@ func TestQoderPricingMatchesOtherPlatforms(t *testing.T) {
 	}
 }
 
+// requireOpenAIRecordUsageBillingRepoStub returns the recording fixture's
+// settlement-store test double. It fails the calling test when the bound Funds
+// dependency has a different implementation, so callers can inspect
+// its captured command.
 func requireOpenAIRecordUsageBillingRepoStub(t *testing.T, svc *testkit.Recording) *testkit.SettlementStore {
 	t.Helper()
 
@@ -380,31 +461,53 @@ func requireOpenAIRecordUsageBillingRepoStub(t *testing.T, svc *testkit.Recordin
 	return billingRepo
 }
 
-// configureBillingGroup supplies billing settings and shared price cards to the recording fixture.
+// configureBillingGroup binds group-specific settings and cards into a nonnil
+// recording fixture's price resolver. Callers provide a nonnil group, which is
+// returned unchanged. The card slice and optional settings amounts remain
+// shared, so callers keep them stable during lookups.
 func configureBillingGroup(svc *testkit.Recording, group *routing.Group, settings pricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Group {
 	source := configuredPrices{base: svc.Dependencies.Prices, groupID: group.ID, settings: settings, cards: cards}
 	svc.Dependencies.Prices = billing.NewPriceResolver(source, svc.Dependencies.Calculator, nil, nil)
 	return group
 }
 
+// GetEffectiveBillingSettings returns cloned settings for the configured group
+// and delegates other identifiers to the base resolver. A nil base is accepted
+// by BillingSettings and yields unified defaults for those other groups.
 func (s configuredPrices) GetEffectiveBillingSettings(ctx context.Context, id int64) pricing.BillingSettings {
 	if id == s.groupID {
 		return s.settings.Clone()
 	}
+	// Other group identifiers follow the base resolver's BillingSettings path.
+	// Its nil-safe defaults keep the matching group's fixture settings
+	// confined to that selected group.
 	return s.base.BillingSettings(ctx, &id)
 }
 
+// GetEffectiveConfigModelPricing selects an effective card for the configured
+// group before consulting the base resolver. A matching group alone does not
+// select a blank or unmatched card: MatchPriceCard applies effective-price and
+// model-pattern rules, and returns a clone of a selected card.
+//
+// If no local card matches, a nonnil base receives the same group identifier
+// and model name through normalized lookup. A nil base then returns nil,
+// allowing the caller's price resolver to continue its ordinary unavailable
+// or catalog handling.
 func (s configuredPrices) GetEffectiveConfigModelPricing(ctx context.Context, id int64, model string) *pricing.ModelPricingEntry {
 	if id == s.groupID {
 		if card := pricing.MatchPriceCard(s.cards, model); card != nil {
 			return card
 		}
 	}
+	// MatchPriceCard ignores unpriced local cards. Continue into the base
+	// resolver on a miss so such entries cannot suppress a
+	// matching configuration there.
 	if s.base != nil {
 		return s.base.LookupConfigPricingNormalized(ctx, id, model)
 	}
 	return nil
 }
 
-// testPtrString returns a pointer to v.
+// testPtrString returns an allocated pointer containing the
+// supplied string value.
 func testPtrString(v string) *string { return &v }

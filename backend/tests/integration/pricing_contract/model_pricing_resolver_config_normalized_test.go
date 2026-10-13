@@ -22,6 +22,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// A configured model card is matched against the complete requested identity
+// when recording token usage. The fixed million-token fixture distinguishes
+// exact variants from base names, dated suffixes, and unrelated cards by
+// inspecting the input-cost bucket saved in the usage log.
+
+// The configured and unrelated dollar amounts distinguish exact card selection
+// when the recording fixture prices one million input tokens for
+// a requested model.
 const (
 	// Expected USD cost for one million input tokens at the configured price.
 	configPricingExpectedPricingConfigCost = 0.4
@@ -29,8 +37,12 @@ const (
 	configPricingUnrelatedCost = 0.9
 )
 
-// tokenPricingForModels creates a token price card; inputPerMillion is USD per million tokens.
+// tokenPricingForModels creates a token card for the supplied model patterns.
+// inputPerMillion is a dollar amount per million tokens and is converted to a
+// per-token price alongside fixed output and cache fixture rates.
 func tokenPricingForModels(models []string, inputPerMillion float64) routing.ModelPricingEntry {
+	// Only the input argument uses a per-million unit; the fixed output and
+	// cache amounts below already use dollars per token.
 	return routing.ModelPricingEntry{
 		Models:          models,
 		BillingMode:     routing.BillingModeToken,
@@ -41,6 +53,10 @@ func tokenPricingForModels(models []string, inputPerMillion float64) routing.Mod
 	}
 }
 
+// newPricingConfigServiceWithPricings constructs one active pricing
+// configuration associated with groupID. The supplied cards are compiled
+// through the routing testkit, with OpenAI platform metadata available to
+// the configuration fixture.
 func newPricingConfigServiceWithPricings(groupID int64, pricings []routing.ModelPricingEntry) *routing.PricingConfigService {
 	ch := routingtestkit.Configuration{
 		ID:           1,
@@ -54,7 +70,9 @@ func newPricingConfigServiceWithPricings(groupID int64, pricings []routing.Model
 	return cs
 }
 
-// recordUsageWithConfigPricing records usage with the supplied cards and returns the log captured by the test store.
+// recordUsageWithConfigPricing records one million input tokens using the
+// supplied full requested model name and cards. It fails the test on recording
+// errors or a missing captured log, then returns the stored row.
 func recordUsageWithConfigPricing(t *testing.T, requestedModel string, pricings []routing.ModelPricingEntry) *usage.UsageLog {
 	t.Helper()
 	const groupID = int64(777)
@@ -98,15 +116,21 @@ func recordUsageWithConfigPricing(t *testing.T, requestedModel string, pricings 
 	return usageRepo.LastLog
 }
 
-// TestConfigPricing_ExactModelMatch checks that an exact card match supplies the input price.
+// TestConfigPricing_ExactModelMatch records a model whose complete name
+// appears on the configured card. It checks that one million input tokens
+// receive the expected configured dollar amount.
 func TestConfigPricing_ExactModelMatch(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
 	})
+	// The million-token USD charge allows a small
+	// absolute rounding difference.
 	require.InDelta(t, configPricingExpectedPricingConfigCost, log.InputCost, 1e-9)
 }
 
-// TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing checks that suffixed models cannot borrow the base model's card.
+// TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing records a
+// high-suffixed model while configuring its base name. It checks a zero
+// input-cost bucket for the complete unpriced variant.
 func TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
@@ -114,7 +138,9 @@ func TestConfigPricing_SuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	require.Zero(t, log.InputCost, "缺价不能借用基础型号或无关价卡")
 }
 
-// TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing checks that dated variants need their own price.
+// TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing records a
+// dated model variant while configuring the undated base name. It checks a
+// zero input-cost bucket for that unpriced complete identity.
 func TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-2026-08-01", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
@@ -122,17 +148,23 @@ func TestConfigPricing_DateSuffixedModelUsesNormalizedConfigPricing(t *testing.T
 	require.Zero(t, log.InputCost, "缺价不能借用基础型号或无关价卡")
 }
 
-// TestConfigPricing_ExactVariantWinsOverNormalizedBaseName checks that the full model name selects its own card.
+// TestConfigPricing_ExactVariantWinsOverNormalizedBaseName gives the full
+// high-suffixed variant and base model distinct configured prices. It checks
+// that recorded input cost uses the complete variant's amount.
 func TestConfigPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.6-luna-high"}, configPricingUnrelatedCost),
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, configPricingExpectedPricingConfigCost),
 	})
+	// The million-token USD charge allows a small
+	// absolute rounding difference.
 	require.InDelta(t, configPricingUnrelatedCost, log.InputCost, 1e-9,
 		"explicit per-variant channel pricing must win over the normalized base name")
 }
 
-// TestConfigPricing_UnrelatedPricingConfigModelNotMatched checks that an unrelated card cannot price an unknown model.
+// TestConfigPricing_UnrelatedPricingConfigModelNotMatched records an unknown
+// complete model while configuring a different model's card. It checks that
+// the saved input-cost bucket remains zero for the unresolved price.
 func TestConfigPricing_UnrelatedPricingConfigModelNotMatched(t *testing.T) {
 	log := recordUsageWithConfigPricing(t, "gpt-5.6-luna-high", []routing.ModelPricingEntry{
 		tokenPricingForModels([]string{"gpt-5.4"}, configPricingUnrelatedCost),

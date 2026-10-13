@@ -8,7 +8,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// CloneGroupConfig deep-copies group configuration and preserves nil versus empty collections.
+// Authentication and management snapshots copy the group's declared slices,
+// maps, and optional scalar pointers into separate storage. Nested feature
+// values follow GroupRoutingPolicy.Clone's supported map and slice shapes, so
+// other dynamic values can remain shared with the source.
+
+// CloneGroupConfig copies the group's declared collections and optional scalar
+// pointers into separate storage. Nil input returns nil, and nil versus empty
+// collection shapes remain unchanged. Nested features use
+// GroupRoutingPolicy.Clone's supported shapes; other dynamic feature values can
+// retain shared references.
 func CloneGroupConfig(g *GroupConfig) *GroupConfig {
 	if g == nil {
 		return nil
@@ -40,6 +49,9 @@ func CloneGroupConfig(g *GroupConfig) *GroupConfig {
 	return &out
 }
 
+// cloneGroupPointer allocates a copy of a supplied value and preserves nil. The
+// value copy is shallow when T contains references; current callers use scalar
+// group settings.
 func cloneGroupPointer[T any](value *T) *T {
 	if value == nil {
 		return nil
@@ -48,7 +60,9 @@ func cloneGroupPointer[T any](value *T) *T {
 	return &out
 }
 
-// CloneGroupAdvancedSchedulerOverrides returns an independent copy of advanced scheduling overrides.
+// CloneGroupAdvancedSchedulerOverrides delegates copying of every supplied
+// override pointer to the scheduler policy package. Nil fields retain
+// inheritance, and callers can modify populated result values independently.
 func CloneGroupAdvancedSchedulerOverrides(overrides GroupAdvancedSchedulerOverrides) GroupAdvancedSchedulerOverrides {
 	return policy.CloneGroupAdvancedSchedulerOverrides(overrides)
 }

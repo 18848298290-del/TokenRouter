@@ -14,18 +14,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Authentication scenarios combine identity rules with their PostgreSQL adapter
+// on SQLite, or with a nil Ent client for memory repositories. Settings and
+// optional repository capabilities are assembled from the supplied fixtures so
+// the same service constructors serve both storage shapes.
+
+// promotionAuthSettings names the promotion reader embedded alongside identity
+// settings in tests.
 type promotionAuthSettings = promotion.RuntimeSettings
 
-// authSettingsFixture combines authentication settings readers with a fixed test site name.
+// authSettingsFixture joins identity and promotion readers for authentication
+// test dependency assembly.
 type authSettingsFixture struct {
-	*identity.RuntimeSettings
-	*identity.GrantSettings
-	*promotionAuthSettings
-	oauth *identity.OAuthSettings
+	// RuntimeSettings, GrantSettings, promotionAuthSettings and oauth read
+	// the same supplied settings repository. newIdentityAuthForTest
+	// supplies all four together when a store is present, keeping provider
+	// policy and grant defaults aligned.
+	*identity.RuntimeSettings                         // auth setting reader
+	*identity.GrantSettings                           // grant rule reader
+	*promotionAuthSettings                            // promo rule reader
+	oauth                     *identity.OAuthSettings // OAuth rule reader
 }
 
+// GetSiteName supplies the fixed site label used by authentication challenge
+// fixtures.
 func (s authSettingsFixture) GetSiteName(context.Context) string { return "TokenRouter" }
 
+// GetDingTalkConnectOAuthConfig selects the DingTalk registration fields from
+// the configured nonnil OAuth reader. The reader error passes through with the
+// policy; newIdentityAuthForTest supplies that reader during settings assembly.
 func (s authSettingsFixture) GetDingTalkConnectOAuthConfig(ctx context.Context) (identity.DingTalkRegistrationPolicy, error) {
 	value, err := s.oauth.GetDingTalkConnectOAuthConfig(ctx)
 	return identity.DingTalkRegistrationPolicy{
@@ -34,8 +51,10 @@ func (s authSettingsFixture) GetDingTalkConnectOAuthConfig(ctx context.Context) 
 	}, err
 }
 
-// newIdentityAuthForTest constructs authentication services from the supplied database, settings, and
-// dependencies.
+// newIdentityAuthForTest binds authentication rules to the supplied account
+// repository and Ent client. A nil client selects adapter fixture paths; a
+// nonnil settings store requires options and uses its grant defaults. Supplied
+// repositories and caches remain shared with the caller.
 func newIdentityAuthForTest(
 	client *dbent.Client,
 	users identity.UserRepository,
@@ -62,6 +81,9 @@ func newIdentityAuthForTest(
 	if email != nil {
 		deps.Email = identity.NewEmailChallenges(email, nil)
 	}
+	// Optional account capabilities are discovered from the supplied
+	// repository; failed assertions leave them nil, so memory fixtures
+	// exercise the service paths available to that repository.
 	deps.DomainRegistration, _ = users.(identity.RegistrationEmailDomainRepository)
 	deps.NormalizedEmailConflict, _ = users.(identity.AuthNormalizedEmailBindingConflictChecker)
 	deps.EmailAliasGuard, _ = users.(identity.AuthEmailIdentityAliasGuardRepository)
@@ -69,10 +91,16 @@ func newIdentityAuthForTest(
 	deps.AliasOwner, _ = users.(identity.EmailAliasOwnerLookupRepository)
 	state := identitypostgres.NewAuthState(client, deps)
 	core := identity.NewAuthService(deps, &identitypostgres.AuthRepository{State: state})
+	// AuthState needs the completed service for later business checks.
+	// Assign Rules after constructing core so both participants share this
+	// assembled dependency object.
 	state.Rules = core
 	return core
 }
 
+// countProviderGrantRecords returns the SQLite grant count for one user,
+// provider and grant reason. Query, scan and row-close failures stop or fail
+// the test; callers compare the returned count with their scenario's expectation.
 func countProviderGrantRecords(
 	t *testing.T,
 	client *dbent.Client,
@@ -91,6 +119,8 @@ func countProviderGrantRecords(
 		grantReason,
 	)
 	require.NoError(t, err)
+	// Close rows even when a later assertion exits the test; treating close
+	// failure as an assertion keeps fixture query cleanup errors visible.
 	defer func() { require.NoError(t, rows.Close()) }()
 	require.True(t, rows.Next())
 	require.NoError(t, rows.Scan(&count))

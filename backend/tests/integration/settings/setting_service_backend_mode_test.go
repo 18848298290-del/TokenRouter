@@ -12,6 +12,14 @@ import (
 	settingskit "github.com/TokenFlux/TokenRouter/internal/settings/testkit"
 )
 
+// Saving backend mode publishes the newly prepared setting into the local
+// runtime reader after the repository batch succeeds. The map fixture starts
+// with a cached true value, captures false in the write batch, and checks the
+// subsequent local Enabled result.
+
+// TestUpdateSettings_InvalidatesBackendModeCache primes local backend mode as
+// enabled before saving a disabled snapshot. The captured repository batch
+// records false and the local runtime reader subsequently reports disabled.
 func TestUpdateSettings_InvalidatesBackendModeCache(t *testing.T) {
 	repo := &bmUpdateRepoStub{
 		getValueFn: func(ctx context.Context, key string) (string, error) {

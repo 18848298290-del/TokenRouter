@@ -15,13 +15,25 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// managedRecoveryInterleaveStore injects administrator changes before each recovery write to test PostgreSQL guards.
+// Managed refresh recovery clears health state in five independently applied
+// steps. A per-step callback changes the database or injects failure before the
+// selected write, allowing the test to inspect earlier committed steps and the
+// remaining state after recovery stops.
+
+// managedRecoveryInterleaveStore injects per-step changes and records applied
+// PostgreSQL recovery writes.
 type managedRecoveryInterleaveStore struct {
-	*providerpostgres.ProviderStore
+	*providerpostgres.ProviderStore // delegated PostgreSQL store
+	// before runs synchronously for each requested step before persistence;
+	// a returned error stops that step so earlier applied writes remain inspectable.
 	before  func(provider.ManagedRecoveryStep) error
-	applied []provider.ManagedRecoveryStep
+	applied []provider.ManagedRecoveryStep // steps reported as applied
 }
 
+// ApplyManagedRecoveryStep invokes before for each requested step, then
+// delegates to PostgreSQL storage. A callback error returns false immediately;
+// after delegation, a true applied result appends the step to the fixture's
+// ordered record. Configure before for every call; a nil callback panics.
 func (s *managedRecoveryInterleaveStore) ApplyManagedRecoveryStep(ctx context.Context, step provider.ManagedRecoveryStep, v provider.ManagedRecoveryVersion) (bool, error) {
 	if err := s.before(step); err != nil {
 		return false, err
@@ -33,12 +45,18 @@ func (s *managedRecoveryInterleaveStore) ApplyManagedRecoveryStep(ctx context.Co
 	return applied, err
 }
 
+// TestManagedRecoveryIndependentCommitsAndIdentity injects changes or failures
+// before each of five recovery steps. Applied-step counts locate the stop,
+// error/rate-limit reads check earlier committed state, and successful enqueues
+// leave one coalesced pending event.
 func TestManagedRecoveryIndependentCommitsAndIdentity(t *testing.T) {
 	for step := provider.ManagedRecoveryError; step <= provider.ManagedRecoveryTemporary; step++ {
 		for _, scenario := range []string{"unchanged", "credentials", "error", "owned_state", "write_failure", "outbox_failure", "cancel"} {
 			t.Run(fmt.Sprintf("step_%d/%s", step, scenario), func(t *testing.T) {
 				ctx := context.Background()
 				client := testEntClient(t)
+				// Use whole seconds so PostgreSQL round trips retain the same observed
+				// window instants for the recovery predicates and subsequent comparisons.
 				now := time.Now().UTC().Truncate(time.Second)
 				until := now.Add(time.Hour)
 				row, err := client.Provider.Create().SetName("test-ag-recovery").SetPlatform(provider.PlatformAntigravity).SetType(provider.ProviderTypeOAuth).SetStatus(provider.StatusError).SetErrorMessage("missing_project_id: original").SetCredentials(map[string]any{"access_token": "old", "refresh_token": "old"}).SetRateLimitedAt(now).SetRateLimitResetAt(until).SetOverloadUntil(until).SetTempUnschedulableUntil(until).SetTempUnschedulableReason("old reason").SetExtra(map[string]any{"antigravity_quota_scopes": map[string]any{"old": true}, "model_rate_limits": map[string]any{"old": true}, "unrelated": "keep"}).Save(ctx)
@@ -105,7 +123,8 @@ func TestManagedRecoveryIndependentCommitsAndIdentity(t *testing.T) {
 					expectedEvents = 5
 				}
 				require.Len(t, writer.applied, expectedEvents)
-				// The outbox coalesces pending events per provider, so five publications leave one pending row.
+				// ProviderChanged events share one dedup key while pending, so the
+				// count measures one row even when several recovery steps enqueue it.
 				if expectedEvents > 0 {
 					expectedEvents = 1
 				}
@@ -128,7 +147,8 @@ func TestManagedRecoveryIndependentCommitsAndIdentity(t *testing.T) {
 				} else if scenario == "error" {
 					require.Equal(t, "administrator error", current.ErrorMessage)
 				} else if scenario == "write_failure" || scenario == "cancel" {
-					// Earlier independently committed steps survive failure in a later step.
+					// The configured executor autocommits each earlier step; inspect
+					// error and rate-limit state to locate where the injected failure stopped recovery.
 					if step > provider.ManagedRecoveryError {
 						require.Equal(t, provider.StatusActive, current.Status)
 					} else {

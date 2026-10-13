@@ -12,15 +12,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Multidimensional reports can use rollups only when every requested filter and
+// grouping exists in their stored dimensions. Provider, request-ID, compaction,
+// and unsupported model dimensions select raw-query handling, while compatible
+// reports combine covered UTC buckets with normalized raw edges.
+//
+// The combined source supplies both actor and payer identities, enabling
+// owner-visible user scopes and billing-user rankings to answer different
+// questions. Query builders keep timestamp, date, dimension, timezone, and limit
+// parameters in one ordered list. Report readers return an eligibility flag
+// separately from errors so callers can distinguish unavailable aggregation from
+// a failed attempt, and ranking totals are computed before row limits to retain
+// the full eligible population.
+
+// usageAnalyticsQuery carries combined-source SQL, its predicates, and ordered
+// parameters.
 type usageAnalyticsQuery struct {
-	cte   string
-	where string
-	args  []any
+	// cte, where, and args describe one parameterized query. Consumers append their
+	// timezone, dimensions, or limit after args and derive positions from its
+	// length.
+	cte   string // combined source CTE text
+	where string // optional post-combination restriction
+	args  []any  // ordered bound source values
 }
 
-// buildUsageAnalyticsQuery combines daily buckets, hourly edges, and raw records in disjoint ranges.
+// buildUsageAnalyticsQuery constructs the combined source, restrictions, and
+// parameters for compatible analytics. Unsupported
+// provider/request-ID/compaction dimensions or a model filter outside the
+// requested dimension return false before execution; unusable coverage also
+// returns false.
+//
+// Complete UTC days can replace middle hourly buckets, while normalized raw
+// records supply uncovered edges. Owned-team selection keeps raw actor and team
+// scans disjoint and applies the same scope after combination. RequestType and
+// Stream become separate predicates when both are present. Time bounds precede
+// filters, and date-only arguments remain separate from timestamps so consumers
+// can append further parameters by the current list length.
 func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFilters, start, end time.Time, useDaily bool) (usageAnalyticsQuery, bool, error) {
-	// Provider, request ID, and compaction filters require dimensions absent from the aggregate tables.
+	// These dimensions have no rollup representation. Decline combined-source
+	// construction so the caller can apply the complete restriction to raw records.
 	if filters.ProviderID > 0 || strings.TrimSpace(filters.RequestID) != "" || filters.NativeCompactionV2 != nil {
 		return usageAnalyticsQuery{}, false, nil
 	}
@@ -38,7 +68,8 @@ func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFi
 		window.rawTailStart,
 	}
 	if useDaily {
-		// Separate timestamp and date parameters keep PostgreSQL from coercing hourly bounds to dates.
+		// Daily predicates cast their parameters to dates. Separate arguments retain
+		// timestamp typing for hourly bounds, preventing an earlier-hour scan.
 		args = append(args, window.dailySplit().args()...)
 	}
 	rawUsageSource := "usage_logs ul"
@@ -145,7 +176,16 @@ func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFi
 	}, true, nil
 }
 
-// getUsageStatsFromAnalytics summarizes the combined aggregate and raw source.
+// getUsageStatsFromAnalytics returns combined totals when filters provide a
+// valid bounded range and compatible dimensions. Missing bounds or unusable
+// coverage return false, while SQL errors discard the result for caller
+// recovery.
+//
+// The source sums request, token, user-charge, base-cost, and provider-cost
+// metrics separately. Duration uses the sum of observed durations divided by
+// their nonnull count, retaining the raw AVG(duration_ms) rule across
+// aggregates. TotalProviderCost is allocated even for zero sums, and TotalTokens
+// includes creation and read-cache tokens as well as input/output tokens.
 func (r *Store) getUsageStatsFromAnalytics(ctx context.Context, filters UsageLogFilters) (*UsageStats, bool, error) {
 	if filters.StartTime == nil || filters.EndTime == nil || !filters.EndTime.After(*filters.StartTime) {
 		return nil, false, nil
@@ -183,6 +223,10 @@ func (r *Store) getUsageStatsFromAnalytics(ctx context.Context, filters UsageLog
 	return stats, true, nil
 }
 
+// getUsageTrendFromAnalytics returns combined usage buckets in the resolved
+// reporting timezone. Unsupported dimensions or unavailable coverage return
+// false; granularity uses safeDateFormat, and the named timezone is appended
+// after the source's current bound arguments.
 func (r *Store) getUsageTrendFromAnalytics(ctx context.Context, start, end time.Time, granularity string, filters UsageLogFilters) ([]TrendDataPoint, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, filters, start, end, false)
 	if err != nil || !ok {
@@ -204,14 +248,21 @@ func (r *Store) getUsageTrendFromAnalytics(ctx context.Context, start, end time.
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results, err := scanTrendRows(rows)
 	return results, true, err
 }
 
+// getModelStatsFromAnalytics groups compatible combined rows by internal request
+// model. Upstream/mapping groupings return false, while eligible reports retain
+// separate base cost, user charge, and provider cost values and order by total
+// tokens.
 func (r *Store) getModelStatsFromAnalytics(ctx context.Context, start, end time.Time, filters UsageLogFilters) ([]ModelStat, bool, error) {
 	if usage.NormalizeModelSource(filters.ModelFilterSource) != usage.ModelSourceRequested {
-		// Aggregates store the request model; upstream and mapping filters require raw records.
+		// Upstream and mapping identities were not retained in these rollups, so
+		// grouping by them requires a complete raw query to keep models distinct.
 		return nil, false, nil
 	}
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, filters, start, end, true)
@@ -230,11 +281,17 @@ func (r *Store) getModelStatsFromAnalytics(ctx context.Context, start, end time.
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results, err := scanModelStatsRows(rows)
 	return results, true, err
 }
 
+// getGroupStatsFromAnalytics returns combined routed-group totals with current
+// display names. Unusable sources return false; zero group IDs remain the
+// missing-group bucket, and locale-aware user presentation chooses localized
+// names while costs retain separate meanings.
 func (r *Store) getGroupStatsFromAnalytics(ctx context.Context, start, end time.Time, filters UsageLogFilters) ([]usage.GroupStat, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, filters, start, end, true)
 	if err != nil || !ok {
@@ -255,6 +312,8 @@ func (r *Store) getGroupStatsFromAnalytics(ctx context.Context, start, end time.
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results := make([]usage.GroupStat, 0)
 	for rows.Next() {
@@ -270,6 +329,10 @@ func (r *Store) getGroupStatsFromAnalytics(ctx context.Context, start, end time.
 	return results, true, nil
 }
 
+// getInboundEndpointStatsFromAnalytics groups compatible source rows by trimmed
+// inbound endpoint. Null or blank endpoints use unknown; unavailable analytics
+// returns false, and totals include requests, all token buckets, base costs, and
+// user charges.
 func (r *Store) getInboundEndpointStatsFromAnalytics(ctx context.Context, start, end time.Time, filters UsageLogFilters) ([]EndpointStat, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, filters, start, end, true)
 	if err != nil || !ok {
@@ -285,6 +348,8 @@ func (r *Store) getInboundEndpointStatsFromAnalytics(ctx context.Context, start,
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results := make([]EndpointStat, 0)
 	for rows.Next() {
@@ -300,7 +365,15 @@ func (r *Store) getInboundEndpointStatsFromAnalytics(ctx context.Context, start,
 	return results, true, nil
 }
 
-// getAPIKeyUsageTrendFromAnalytics returns trends for the most active API keys from the combined source.
+// getAPIKeyUsageTrendFromAnalytics returns date buckets for keys with the
+// largest token totals in the range. Nonpositive limit uses twelve, and
+// unavailable source coverage returns false for raw-query selection.
+//
+// The top-key CTE selects identities before the date grouping, so one set of
+// keys is followed through the whole interval. Current key names are joined
+// after that selection; request counts come from total_requests and tokens
+// include cache creation/read. Timezone and limit parameters are appended after
+// the source arguments, keeping their positions correct for hourly-only queries.
 func (r *Store) getAPIKeyUsageTrendFromAnalytics(ctx context.Context, start, end time.Time, granularity string, limit int) ([]APIKeyUsageTrendPoint, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, false)
 	if err != nil || !ok {
@@ -334,6 +407,8 @@ func (r *Store) getAPIKeyUsageTrendFromAnalytics(ctx context.Context, start, end
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results := make([]APIKeyUsageTrendPoint, 0)
 	for rows.Next() {
@@ -349,7 +424,15 @@ func (r *Store) getAPIKeyUsageTrendFromAnalytics(ctx context.Context, start, end
 	return results, true, nil
 }
 
-// getUserUsageTrendFromAnalytics returns trends for the most active billing users from the combined source.
+// getUserUsageTrendFromAnalytics returns date buckets for the most active
+// billing users in the range. Nonpositive limit uses twelve; unavailable
+// coverage or incompatible source construction returns false.
+//
+// Token totals select payer identities before grouping dates, combining team
+// members whose billing_user_id is the owner. Current email and username come
+// from users at query time, while actor identity stays in the source for other
+// scopes. The appended named timezone determines display buckets, and
+// cost/actual_cost remain separate base and charged amounts.
 func (r *Store) getUserUsageTrendFromAnalytics(ctx context.Context, start, end time.Time, granularity string, limit int) ([]UserUsageTrendPoint, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, false)
 	if err != nil || !ok {
@@ -387,6 +470,8 @@ func (r *Store) getUserUsageTrendFromAnalytics(ctx context.Context, start, end t
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results := make([]UserUsageTrendPoint, 0)
 	for rows.Next() {
@@ -402,7 +487,15 @@ func (r *Store) getUserUsageTrendFromAnalytics(ctx context.Context, start, end t
 	return results, true, nil
 }
 
-// getUserSpendingRankingFromAnalytics ranks billing users by spending from the combined source.
+// getUserSpendingRankingFromAnalytics returns payer spending ranks and
+// full-range totals from a compatible combined source. It binds the supplied
+// limit directly, leaving positive-limit policy to its public caller.
+//
+// Source rows merge by billing_user_id before ordering by user charges, tokens,
+// and user ID. Window sums run before LIMIT, so limited ranking entries still
+// carry totals for every payer. Current email and username are joined for
+// display after selection, keeping identity changes independent of historical
+// analytics buckets.
 func (r *Store) getUserSpendingRankingFromAnalytics(ctx context.Context, start, end time.Time, limit int) (*UserSpendingRankingResponse, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, true)
 	if err != nil || !ok {
@@ -438,6 +531,8 @@ func (r *Store) getUserSpendingRankingFromAnalytics(ctx context.Context, start, 
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	result := &UserSpendingRankingResponse{Ranking: make([]UserSpendingRankingItem, 0)}
 	for rows.Next() {
@@ -454,7 +549,9 @@ func (r *Store) getUserSpendingRankingFromAnalytics(ctx context.Context, start, 
 	return result, true, nil
 }
 
-// usageRankingAnalyticsEligibility selects a positive-value predicate for the ranking metric.
+// usageRankingAnalyticsEligibility returns fixed positive eligibility SQL for
+// the public metric. Invalid labels use the normalized total-token metric, while
+// request and actual-cost metrics require their own summed value to be positive.
 func usageRankingAnalyticsEligibility(sortBy usage.UsageRankingSortBy) string {
 	switch usage.NormalizeUsageRankingSortBy(string(sortBy)) {
 	case usage.UsageRankingSortByRequests:
@@ -466,7 +563,15 @@ func usageRankingAnalyticsEligibility(sortBy usage.UsageRankingSortBy) string {
 	}
 }
 
-// getUsageRankingFromAnalytics builds public usage rankings from the combined source.
+// getUsageRankingFromAnalytics returns eligible public payer rankings with
+// complete population totals. Source availability is reported separately from
+// execution errors, and the caller supplies the public limit policy.
+//
+// Payer grouping precedes positive eligibility and the configured ordering.
+// Window totals cover all eligible rows before LIMIT, and ranked entries use the
+// same fixed tie-breaking SQL as the raw implementation. Current avatar and
+// identity rows supply display data; rankingDisplayName trims usernames and
+// masks emails when a username is absent.
 func (r *Store) getUsageRankingFromAnalytics(ctx context.Context, start, end time.Time, limit int, sortBy usage.UsageRankingSortBy) (*UsageRankingResponse, bool, error) {
 	query, ok, err := r.buildUsageAnalyticsQuery(ctx, UsageLogFilters{}, start, end, true)
 	if err != nil || !ok {
@@ -513,6 +618,8 @@ func (r *Store) getUsageRankingFromAnalytics(ctx context.Context, start, end tim
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	result := &UsageRankingResponse{Ranking: make([]UsageRankingItem, 0)}
 	for rows.Next() {
@@ -536,7 +643,16 @@ func (r *Store) getUsageRankingFromAnalytics(ctx context.Context, start, end tim
 	return result, true, nil
 }
 
-// getUserBreakdownStatsFromAnalytics returns user rankings for dimensions supported by aggregates.
+// getUserBreakdownStatsFromAnalytics ranks payer totals for dimensions
+// represented by analytics. Provider/compaction filters, non-requested model
+// filters, and non-inbound endpoint dimensions return false for raw-query
+// handling.
+//
+// An acting-user filter still restricts source rows before billing_user_id
+// grouping. The fixed sort allowlist selects a metric, with actual_cost for
+// unknown labels; positive limits append a bound row cap and nonpositive limits
+// leave results unlimited. Current email is joined for the grouped payer, while
+// provider cost stays separate from the user-charge ordering.
 func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, end time.Time, dim usage.UserBreakdownDimension, limit int) ([]usage.UserBreakdownItem, bool, error) {
 	modelSource := usage.NormalizeModelSource(dim.ModelType)
 	if dim.ProviderID > 0 || dim.NativeCompactionV2 != nil || (dim.Model != "" && modelSource != usage.ModelSourceRequested) {
@@ -559,7 +675,8 @@ func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, e
 		query.where = appendUsageAnalyticsCondition(query.where, fmt.Sprintf("inbound_endpoint = $%d", len(query.args)))
 	}
 
-	// Select the sort column from a fixed list.
+	// Sort labels choose fixed metric identifiers. Unrecognized input keeps the
+	// actual-charge ordering rather than becoming interpolated SQL column text.
 	orderBy := "actual_cost"
 	switch dim.SortBy {
 	case "total_tokens", "input_tokens", "output_tokens", "cache_tokens", "requests", "cost", "actual_cost":
@@ -588,6 +705,8 @@ func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, e
 	if err != nil {
 		return nil, false, err
 	}
+	// Release the acquired report rows after scanning or an early return. Close
+	// errors are ignored here; query, scan, and iteration errors reject the result.
 	defer func() { _ = rows.Close() }()
 	results := make([]usage.UserBreakdownItem, 0)
 	for rows.Next() {
@@ -607,7 +726,18 @@ func (r *Store) getUserBreakdownStatsFromAnalytics(ctx context.Context, start, e
 	return results, true, nil
 }
 
-// getAllGroupUsageSummaryFromAnalytics computes all-time, today, and yesterday group usage.
+// getAllGroupUsageSummaryFromAnalytics returns retained, today, and yesterday
+// user charges for existing groups. Missing retained-source bounds or any
+// unusable source returns false, and the caller supplies local midnight as
+// todayStart.
+//
+// Three combined queries preserve their own argument positions. The total query
+// first creates entries for existing groups, including soft-deleted rows and
+// zero-cost groups; bounded
+// today and calendar-subtracted yesterday sums then update matching entries.
+// Unmatched historical group IDs are omitted from this current-group list. A
+// failure at any stage discards partial results so the public caller can read
+// one complete raw summary.
 func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayStart time.Time) ([]usage.GroupUsageSummary, bool, error) {
 	var sourceOldest sql.NullTime
 	if err := scanSingleRow(ctx, r.sql, `
@@ -649,6 +779,8 @@ func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayS
 	for rows.Next() {
 		var row usage.GroupUsageSummary
 		if err := rows.Scan(&row.GroupID, &row.TotalCost); err != nil {
+			// This partial total result is unusable. Release its rows before returning
+			// the failure so the public caller can perform a complete raw recovery.
 			_ = rows.Close()
 			return nil, false, err
 		}
@@ -656,9 +788,13 @@ func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayS
 		results = append(results, row)
 	}
 	if err := rows.Err(); err != nil {
+		// Release the failed iteration before returning; partially populated group
+		// summaries remain local and cannot enter the caller's recovery response.
 		_ = rows.Close()
 		return nil, false, err
 	}
+	// Complete and close the total scan before period queries, allowing transaction
+	// executors to reuse their connection and rejecting a failed cleanup result.
 	if err := rows.Close(); err != nil {
 		return nil, false, err
 	}
@@ -672,6 +808,8 @@ func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayS
 		if queryErr != nil {
 			return queryErr
 		}
+		// Release each period result after merging or an early error. A period's
+		// failure discards the whole summary; Close errors are ignored by this helper.
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var groupID int64
@@ -698,6 +836,9 @@ func (r *Store) getAllGroupUsageSummaryFromAnalytics(ctx context.Context, todayS
 	return results, true, nil
 }
 
+// appendUsageAnalyticsCondition appends one trusted SQL predicate to an optional
+// WHERE clause. Empty where begins a WHERE clause; populated where receives AND,
+// with condition text supplied unchanged by the query builder.
 func appendUsageAnalyticsCondition(where, condition string) string {
 	if where == "" {
 		return "WHERE " + condition

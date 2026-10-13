@@ -8,7 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle checks rejection of cyclic group fallbacks.
+// Client-restricted group resolution depends on read order and policy-specific
+// stopping conditions. These fixtures isolate cyclic targets, unrestricted
+// groups, invalid fallback identifiers, and missing snapshots so callers can
+// retain the intended error precedence and client-detection count.
+
+// TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle links two
+// restricted groups back to each other. Resolution must return a cycle error
+// with no selected group or identifier after a repeated target is reached.
 func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)
@@ -37,8 +44,9 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	require.Contains(t, err.Error(), "fallback group cycle")
 }
 
-// TestClientGroupResolutionKeepsReadOrder checks group reads before client checks and short-circuiting for
-// unrestricted groups.
+// TestClientGroupResolutionKeepsReadOrder falls from a restricted group into an
+// unrestricted group. Recorded calls must show the first read, one client
+// check, and the next read with no second check.
 func TestClientGroupResolutionKeepsReadOrder(t *testing.T) {
 	first, next := int64(1), int64(2)
 	var sequence []string
@@ -60,7 +68,10 @@ func TestClientGroupResolutionKeepsReadOrder(t *testing.T) {
 	require.Equal(t, []string{"first", "client", "next"}, sequence)
 }
 
-// TestClientGroupResolutionKeepsFallbackIDPolicies checks error precedence for invalid fallback IDs.
+// TestClientGroupResolutionKeepsFallbackIDPolicies supplies a zero fallback
+// target under both policies. Rejecting it must return ErrClaudeCodeOnly before
+// another read, while permissive resolution exposes the reader's missing-group
+// error.
 func TestClientGroupResolutionKeepsFallbackIDPolicies(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		id, invalid := int64(1), int64(0)
@@ -83,7 +94,9 @@ func TestClientGroupResolutionKeepsFallbackIDPolicies(t *testing.T) {
 	}
 }
 
-// TestClientGroupResolutionKeepsMissingSnapshot checks retained IDs and call counts when a snapshot is missing.
+// TestClientGroupResolutionKeepsMissingSnapshot returns nil from the reader
+// with retention enabled. Resolution must preserve the supplied ID and skip the
+// client callback while returning no group and no error.
 func TestClientGroupResolutionKeepsMissingSnapshot(t *testing.T) {
 	id := int64(9)
 	group, resolved, err := ResolveClientGroup(context.Background(), &id, func(context.Context, int64) (*Group, error) {

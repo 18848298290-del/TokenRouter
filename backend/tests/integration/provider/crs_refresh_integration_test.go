@@ -13,8 +13,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestCRSRefreshDatabaseInterleaving checks that refresh compare-and-swap writes respect concurrent committed
-// administrator changes.
+// A CRS import refresh can hold an exchanged token while the imported provider
+// identity changes. Channel gates pause the exchange callback while the test
+// changes credentials, disables the provider, or cancels the operation.
+//
+// RefreshImported then finishes against the PostgreSQL store, making its
+// returned error and persisted credentials observable after the gate is
+// released. Every case expects a single exchange, including identity conflicts
+// that return current data instead of exchanging again. The outbox-failure case
+// exercises a database error during persistence and requires the original
+// refresh token to remain stored. The successful case also checks the retained
+// token-version value.
+
+// TestCRSRefreshDatabaseInterleaving blocks an imported token exchange while
+// credentials, status, or cancellation change. One exchange either commits the
+// expected token or leaves the competing state intact, and outbox failure rolls
+// back credential persistence.
 func TestCRSRefreshDatabaseInterleaving(t *testing.T) {
 	for _, mode := range []string{"success", "credentials", "disabled", "cancelled", "outbox_failure"} {
 		t.Run(mode, func(t *testing.T) {
@@ -31,6 +45,10 @@ func TestCRSRefreshDatabaseInterleaving(t *testing.T) {
 				store.SetEvents(failConfigurationOutbox{})
 			}
 			api := provider.NewOAuthRefreshAPI(store, nil, provider.RefreshOptions{})
+			// Signal exchange entry before the callback waits on release, allowing
+			// committed identity changes or cancellation to precede its returned token.
+			// The callback waits solely for release; a fatal failure before closing that
+			// channel can leave the exchange goroutine blocked despite context cancellation.
 			started, release := make(chan struct{}), make(chan struct{})
 			done := make(chan error, 1)
 			calls := 0

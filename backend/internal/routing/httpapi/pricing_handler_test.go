@@ -9,14 +9,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// float64Ptr allocates an optional amount for pricing mapper assertions.
 func float64Ptr(v float64) *float64 { return &v }
 
+// pricingConfigIntPtr allocates an optional upper endpoint for interval
+// assertions.
 func pricingConfigIntPtr(v int) *int { return &v }
 
+// TestPricingConfigToResponse_NilInput maps an absent stored configuration
+// through the response helper. It checks that the mapper returns nil so
+// absent records remain distinguishable from an empty configuration.
 func TestPricingConfigToResponse_NilInput(t *testing.T) {
 	require.Nil(t, pricingConfigToResponse(nil))
 }
 
+// TestPricingConfigToResponse_FullPricingConfig maps stored identity, group
+// associations, UTC timestamps, card amounts, tier factors, and a daily
+// schedule. It checks the selected response fields and confirms current Fast
+// input wins over the legacy factor.
 func TestPricingConfigToResponse_FullPricingConfig(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	ch := &routing.PricingConfig{
@@ -87,6 +97,9 @@ func TestPricingConfigToResponse_FullPricingConfig(t *testing.T) {
 	require.Equal(t, 2.0, p.TimePricing.Periods[0].Multiplier)
 }
 
+// TestPricingRequestToServiceTimePricing converts a card with a timezone,
+// weekday restriction, and second-resolution period. It checks the service
+// schedule retains the timezone, restriction, and supplied period multiplier.
 func TestPricingRequestToServiceTimePricing(t *testing.T) {
 	pricing := pricingRequestToService([]modelPricingRequest{{
 		Models: []string{"gpt-5"},
@@ -104,6 +117,9 @@ func TestPricingRequestToServiceTimePricing(t *testing.T) {
 	require.Equal(t, 1.25, pricing[0].TimePricing.Periods[0].Multiplier)
 }
 
+// TestPricingConfigToResponse_EmptyDefaults maps a configuration with unset
+// model source, absent group associations, and empty card mode. It checks
+// group_mapped/token defaults and a present empty group list.
 func TestPricingConfigToResponse_EmptyDefaults(t *testing.T) {
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	ch := &routing.PricingConfig{
@@ -131,6 +147,9 @@ func TestPricingConfigToResponse_EmptyDefaults(t *testing.T) {
 	require.Equal(t, "token", resp.ModelPricing[0].BillingMode)
 }
 
+// TestPricingConfigToResponse_NilModels maps a stored card with no model-name
+// slice. It checks the response has one card and a nonnil empty model list
+// for JSON array encoding.
 func TestPricingConfigToResponse_NilModels(t *testing.T) {
 	now := time.Now()
 	ch := &routing.PricingConfig{
@@ -151,6 +170,10 @@ func TestPricingConfigToResponse_NilModels(t *testing.T) {
 	require.Empty(t, resp.ModelPricing[0].Models)
 }
 
+// TestPricingConfigToResponse_WithIntervals maps a bounded priced interval
+// followed by an unbounded interval. It checks retained endpoints, row
+// identities, labels, amount and multiplier pointers, and supplied sort order
+// in the response.
 func TestPricingConfigToResponse_WithIntervals(t *testing.T) {
 	now := time.Now()
 	ch := &routing.PricingConfig{
@@ -220,6 +243,9 @@ func TestPricingConfigToResponse_WithIntervals(t *testing.T) {
 	require.Equal(t, 2, iv1.SortOrder)
 }
 
+// TestPricingConfigToResponse_MultipleEntries maps token, per-request, and
+// image cards together. It checks their model identities and modes remain in
+// source order, and verifies the image card's output amount.
 func TestPricingConfigToResponse_MultipleEntries(t *testing.T) {
 	now := time.Now()
 	ch := &routing.PricingConfig{
@@ -271,12 +297,15 @@ func TestPricingConfigToResponse_MultipleEntries(t *testing.T) {
 	require.Equal(t, float64Ptr(0.05), resp.ModelPricing[2].ImageOutputPrice)
 }
 
+// TestPricingRequestToService_Defaults converts a model card with an empty
+// billing mode. It checks one service entry is produced and the selected
+// default mode is token.
 func TestPricingRequestToService_Defaults(t *testing.T) {
 	tests := []struct {
-		name      string
-		req       modelPricingRequest
-		wantField string // which default field to check
-		wantValue string
+		name      string              // default scenario display name
+		req       modelPricingRequest // submitted model-card request value
+		wantField string              // selected expected default field
+		wantValue string              // expected default field value
 	}{
 		{
 			name: "空计费模式默认使用 token",
@@ -300,6 +329,10 @@ func TestPricingRequestToService_Defaults(t *testing.T) {
 	}
 }
 
+// TestPricingRequestToService_WithAllFields converts a per-request card
+// carrying model names and optional token, image, and unit amounts. It checks
+// the supplied names, mode, factor, and selected amount pointers reach the
+// service entry.
 func TestPricingRequestToService_WithAllFields(t *testing.T) {
 	reqs := []modelPricingRequest{
 		{
@@ -329,6 +362,9 @@ func TestPricingRequestToService_WithAllFields(t *testing.T) {
 	require.Equal(t, float64Ptr(0.5), r.PerRequestPrice)
 }
 
+// TestPricingRequestToService_WithFastModeMultiplier converts a token card
+// containing its legacy Fast factor. It checks that the supplied legacy
+// pointer remains present in the resulting service entry.
 func TestPricingRequestToService_WithFastModeMultiplier(t *testing.T) {
 	reqs := []modelPricingRequest{{
 		Models:             []string{"gpt-5.4"},
@@ -342,6 +378,9 @@ func TestPricingRequestToService_WithFastModeMultiplier(t *testing.T) {
 	require.Equal(t, float64Ptr(2), result[0].FastModeMultiplier)
 }
 
+// TestPricingRequestToService_WithTierMultipliers converts Fast/Flex factors
+// and an interval with per-bucket scaling. It checks the outer factors and
+// the interval's input and cache-read multiplier pointers survive conversion.
 func TestPricingRequestToService_WithTierMultipliers(t *testing.T) {
 	result := pricingRequestToService([]modelPricingRequest{{
 		Models:         []string{"claude-opus-4-8"},
@@ -364,6 +403,10 @@ func TestPricingRequestToService_WithTierMultipliers(t *testing.T) {
 	require.Equal(t, float64Ptr(1.4), result[0].Intervals[0].CacheReadMultiplier)
 }
 
+// TestPricingRequestToService_WithIntervals converts two per-request tiers
+// with bounded and unbounded context endpoints. It checks endpoints, labels,
+// selected token/unit amount pointers, and ordering fields reach the service
+// intervals.
 func TestPricingRequestToService_WithIntervals(t *testing.T) {
 	reqs := []modelPricingRequest{
 		{
@@ -413,18 +456,24 @@ func TestPricingRequestToService_WithIntervals(t *testing.T) {
 	require.Equal(t, 2, iv1.SortOrder)
 }
 
+// TestPricingRequestToService_EmptySlice converts an empty HTTP model-card
+// list to service input. It checks the resulting list is empty and nonnil for
+// callers that replace stored collections.
 func TestPricingRequestToService_EmptySlice(t *testing.T) {
 	result := pricingRequestToService([]modelPricingRequest{})
 	require.NotNil(t, result)
 	require.Empty(t, result)
 }
 
+// TestPricingRequestToService_NilPriceFields converts a token card whose
+// optional prices and factors were omitted. It checks the selected amount and
+// multiplier pointers remain nil, retaining missing-value information for
+// pricing consumers.
 func TestPricingRequestToService_NilPriceFields(t *testing.T) {
 	reqs := []modelPricingRequest{
 		{
 			Models:      []string{"m1"},
 			BillingMode: "token",
-			// Leave prices unset to check that conversion preserves missing values.
 		},
 	}
 

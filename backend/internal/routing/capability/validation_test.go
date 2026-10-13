@@ -8,6 +8,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// Protocol fallback snapshots distinguish an absent source from a source
+// configured with no conversion targets. The fixture mutates a cloned target
+// list and verifies its source stays unchanged, then checks preserved empty
+// entries and rejection of invalid policy shapes.
+
+// TestMixedGroupFallbackSnapshotOwnsLists changes a cloned conversion list
+// while retaining an explicit empty entry. The input must stay unchanged, and
+// validation must accept it while rejecting unknown sources and duplicate
+// targets.
 func TestMixedGroupFallbackSnapshotOwnsLists(t *testing.T) {
 	input := map[ProtocolID][]ProtocolID{ProtocolOpenAIChatCompletions: {ProtocolAnthropicMessages}, ProtocolOpenAIResponses: {}}
 	copy := protocol.CloneFallbacks(input)

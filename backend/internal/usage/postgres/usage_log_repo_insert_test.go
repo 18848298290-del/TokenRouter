@@ -19,20 +19,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage inserts share a positional schema across single-row, result-aware batch,
+// and best-effort SQL. Static shape checks inspect columns, placeholder
+// numbering, casts, and bound values, while SQL mocks exercise deadlock recovery
+// and verify that diagnostic fields reach their intended persistence positions.
+
+// Best-effort SQL patterns distinguish batch execution from its individual
+// recovery statement, allowing mock expectations to prove which recovery path
+// ran.
 const (
 	usageLogBestEffortBatchSQL  = `(?s)^\s*WITH input .*INSERT INTO usage_logs`
 	usageLogBestEffortSingleSQL = `(?s)^\s*INSERT INTO usage_logs`
 )
 
+// Insert-shape patterns extract static column/value lists and numbered
+// placeholders so schema additions can be checked against positional type
+// metadata.
 var (
 	usageLogStaticInsertShapeRe = regexp.MustCompile(`(?s)INSERT INTO usage_logs \((.*?)\) VALUES \((.*?)\)`)
 	usageLogPlaceholderRe       = regexp.MustCompile(`\$(\d+)`)
 )
 
+// TestFlushBestEffortBatch_RetriesDeadlockBeforeFallback injects two batch
+// deadlocks followed by success. It checks the third batch attempt completes the
+// acknowledgement without an individual fallback expectation.
 func TestFlushBestEffortBatch_RetriesDeadlockBeforeFallback(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
+		// Release the mock database after the flush assertion or an early test exit;
+		// this cleanup ignores Close errors and leaves SQL expectations to the test.
 		_ = db.Close()
 	}()
 
@@ -53,10 +69,15 @@ func TestFlushBestEffortBatch_RetriesDeadlockBeforeFallback(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestFlushBestEffortBatch_NonDeadlockUsesSingleFallbackImmediately injects a
+// non-deadlock batch failure. It checks one individual insert follows
+// immediately and the waiting request receives a successful acknowledgement.
 func TestFlushBestEffortBatch_NonDeadlockUsesSingleFallbackImmediately(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
+		// Release the mock database after the flush assertion or an early test exit;
+		// this cleanup ignores Close errors and leaves SQL expectations to the test.
 		_ = db.Close()
 	}()
 
@@ -71,10 +92,15 @@ func TestFlushBestEffortBatch_NonDeadlockUsesSingleFallbackImmediately(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestFlushBestEffortBatch_DeadlockRetryExhaustedUsesSingleFallback injects
+// failure on all three permitted deadlock attempts. It checks the subsequent
+// individual insert succeeds and the request acknowledgement is successful.
 func TestFlushBestEffortBatch_DeadlockRetryExhaustedUsesSingleFallback(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
+		// Release the mock database after the flush assertion or an early test exit;
+		// this cleanup ignores Close errors and leaves SQL expectations to the test.
 		_ = db.Close()
 	}()
 
@@ -91,8 +117,10 @@ func TestFlushBestEffortBatch_DeadlockRetryExhaustedUsesSingleFallback(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes checks both INSERT paths with handwritten placeholders.
-// It catches missing placeholders after column additions without requiring PostgreSQL.
+// TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes captures the two
+// single-row insert shapes with populated diagnostic input. It checks bound
+// arguments and matching column/placeholder counts against the shared type
+// table.
 func TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes(t *testing.T) {
 	upstreamRequestID := "20260902080329-oneapi"
 	log := &usage.UsageLog{
@@ -140,8 +168,9 @@ func TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes(t *testing.T) {
 	})
 }
 
-// TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring checks upstream_request_id before session_id
-// in the argument and type lists, including SQL NULL for missing values.
+// TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring prepares rows with and
+// without upstream identity. It checks the positional nullable argument, text
+// type metadata, and upstream column presence in the read shape.
 func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	upstreamRequestID := "req_upstream_123"
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
@@ -169,6 +198,9 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	require.Contains(t, usageLogSelectColumns, "upstream_request_id")
 }
 
+// TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields supplies an
+// explicit WebSocket type with false legacy flags. It checks normalized SQL
+// arguments, caller row flags, assigned ID, and absent service tier.
 func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -277,6 +309,9 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryCreate_PersistsServiceTier supplies a priority service
+// tier to a direct mocked write. It checks the bound tier appears in the full
+// argument order and insertion succeeds.
 func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -374,6 +409,9 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn builds one
+// best-effort payload with a requested display model. It checks model-column
+// ordering, argument count, and the retained request-ID parameter.
 func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *testing.T) {
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
 		UserID:         1,
@@ -394,6 +432,9 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Equal(t, prepared.args[5], args[5])
 }
 
+// TestUsageLogBatchInsertShape_ColumnsAndArguments builds two-row result-aware
+// and best-effort SQL. It checks column alignment, ordered arguments, synthetic
+// indexes, placeholder numbering, and each positional cast.
 func TestUsageLogBatchInsertShape_ColumnsAndArguments(t *testing.T) {
 	prepared := make([]usageLogInsertPrepared, 2)
 	keys := []string{"first", "second"}
@@ -419,10 +460,10 @@ func TestUsageLogBatchInsertShape_ColumnsAndArguments(t *testing.T) {
 	wantColumns := normalizeColumns(usageLogInsertColumns)
 
 	for _, tt := range []struct {
-		name       string
-		query      string
-		args       []any
-		inputIndex bool
+		name       string // insert shape case description
+		query      string // generated insert SQL text
+		args       []any  // captured ordered bound arguments
+		inputIndex bool   // synthetic input index presence
 	}{
 		{name: "batch", query: batchQuery, args: batchArgs, inputIndex: true},
 		{name: "best-effort", query: bestEffortQuery, args: bestEffortArgs},
@@ -461,6 +502,9 @@ func TestUsageLogBatchInsertShape_ColumnsAndArguments(t *testing.T) {
 	}
 }
 
+// TestExecUsageLogInsertNoResult_PersistsRequestedModel supplies a prepared
+// requested-model row to acknowledgement-only execution. It checks all prepared
+// arguments reach the mocked insert and execution succeeds.
 func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
 	db, mock := newSQLMock(t)
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
@@ -482,6 +526,9 @@ func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestPrepareUsageLogInsert_ArgCountMatchesTypes prepares a populated
+// request/model fixture for insertion. It checks the positional argument count
+// equals the shared insert type-table length.
 func TestPrepareUsageLogInsert_ArgCountMatchesTypes(t *testing.T) {
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
 		UserID:         1,
@@ -496,6 +543,9 @@ func TestPrepareUsageLogInsert_ArgCountMatchesTypes(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 }
 
+// TestPrepareUsageLogInsert_PersistsImageSizeMetadata supplies image class,
+// input/output size, source, and count breakdown. It checks each nullable
+// argument position and the encoded breakdown JSON.
 func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	imageSize := "4K"
 	inputSize := "1024x1024"
@@ -526,6 +576,9 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
 }
 
+// TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing builds a charged
+// result-aware payload for replay handling. It checks the SQL contains conflict
+// suppression and no DO UPDATE clause.
 func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 	log := &usage.UsageLog{
 		UserID:       1,
@@ -549,7 +602,9 @@ func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 	require.NotContains(t, strings.ToUpper(query), "DO UPDATE")
 }
 
-// TestPrepareUsageLogInsert_SessionIDArgWiring checks the session_id position in arguments and type metadata.
+// TestPrepareUsageLogInsert_SessionIDArgWiring prepares a populated session
+// correlation ID. It checks the nullable session argument and the following
+// timestamp, reasoning, and compaction type positions.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, usageLogInsertArgTypes, 69, "arg-type table must include billing key")
 
@@ -559,7 +614,8 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes),
 		"prepared args must match the arg-type table length")
 
-	// session_id precedes created_at; later fields follow created_at in the positional lists.
+	// Assert the trailing diagnostic positions from the schema table's end, so
+	// adding a later field exposes a shift in session/timestamp wiring.
 	sessionArg := prepared.args[len(prepared.args)-8]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
@@ -576,7 +632,9 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 		"native compaction arg type must be boolean")
 }
 
-// TestPrepareUsageLogInsert_SessionIDNullWhenAbsent checks SQL NULL for missing and empty IDs.
+// TestPrepareUsageLogInsert_SessionIDNullWhenAbsent prepares missing and
+// explicitly empty session IDs. It checks both values become invalid nullable
+// strings rather than populated empty persistence values.
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
 	sessionArg := prepared.args[len(prepared.args)-8]
@@ -590,7 +648,9 @@ func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 
-// TestUsageLogInsertQueries_IncludeSessionID checks the SELECT list and both batch INSERT shapes.
+// TestUsageLogInsertQueries_IncludeSessionID builds both batch shapes from a
+// session-bearing row. It checks read-shape ownership columns, session presence
+// in SQL, and each shape's expected argument count.
 func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	require.Contains(t, usageLogSelectColumns, "session_id",
 		"SELECT column list must include session_id")
@@ -607,7 +667,8 @@ func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	batchQuery, batchArgs := buildUsageLogBatchInsertQuery([]string{key},
 		map[string]usageLogInsertPrepared{key: prepared})
 	require.Contains(t, batchQuery, "session_id")
-	// The field appears in the INSERT list, the SELECT from input, and the CTE definition.
+	// Session identity participates in the CTE, insert columns, and select columns;
+	// omitting any representation can lose it on one persistence path.
 	require.GreaterOrEqual(t, strings.Count(batchQuery, "session_id"), 3)
 	require.Len(t, batchArgs, len(prepared.args)+1,
 		"batch args include the synthetic input_index before usage-log values")
@@ -617,7 +678,9 @@ func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 	require.Len(t, bestEffortArgs, len(prepared.args))
 }
 
-// TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring checks the field's positional argument.
+// TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring supplies the
+// client's requested max effort. It checks that the correct positional nullable
+// argument is valid and retains the supplied value.
 func TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring(t *testing.T) {
 	requested := "max"
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
@@ -630,6 +693,10 @@ func TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring(t *testing.T) {
 	require.Equal(t, requested, value.String)
 }
 
+// newUsageLogBestEffortRequestForTest constructs one prepared charged
+// acknowledgement fixture. It uses a fixed request identity and a buffered
+// result channel so direct flush tests can receive the worker's final SQL
+// result.
 func newUsageLogBestEffortRequestForTest() usageLogBestEffortRequest {
 	log := &usage.UsageLog{
 		UserID:        1,
@@ -651,22 +718,29 @@ func newUsageLogBestEffortRequestForTest() usageLogBestEffortRequest {
 	}
 }
 
-// newSQLCapturingMock records executed SQL in captured and accepts any query text.
-// WithArgs expectations still validate arguments.
+// newSQLCapturingMock returns a mock whose matcher appends submitted SQL to
+// captured. The matcher accepts any SQL text and leaves argument checks to
+// expectations; callers serialize access to the shared capture slice.
 func newSQLCapturingMock(t *testing.T, captured *[]string) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	matcher := sqlmock.QueryMatcherFunc(func(_, actualSQL string) error {
+		// Capture storage belongs to the calling test. Record submitted SQL before
+		// expectation argument checks, so shape inspection can include a statement
+		// whose arguments the mock later rejects.
 		*captured = append(*captured, actualSQL)
 		return nil
 	})
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
 	require.NoError(t, err)
+	// Register database cleanup before exposing the mock, so a later failed
+	// placeholder assertion does not retain the fixture's SQL resource.
 	t.Cleanup(func() { _ = db.Close() })
 	return db, mock
 }
 
-// requireStaticInsertMatchesArgTypes checks that column and placeholder counts match the type list,
-// with each placeholder from $1 through $N appearing exactly once.
+// requireStaticInsertMatchesArgTypes checks one static insert's columns and
+// unique contiguous placeholder positions. It fails the test on mismatched shape
+// or count and uses the shared type-table length as the expected schema size.
 func requireStaticInsertMatchesArgTypes(t *testing.T, query string) {
 	t.Helper()
 	m := usageLogStaticInsertShapeRe.FindStringSubmatch(query)
@@ -696,6 +770,9 @@ func requireStaticInsertMatchesArgTypes(t *testing.T, query string) {
 	}
 }
 
+// anySliceToDriverValues copies the outer argument sequence into driver.Value
+// storage. Elements retain their supplied values and referenced data, so callers
+// keep those values stable while sqlmock checks the resulting arguments.
 func anySliceToDriverValues(values []any) []driver.Value {
 	out := make([]driver.Value, 0, len(values))
 	for _, value := range values {
@@ -704,6 +781,9 @@ func anySliceToDriverValues(values []any) []driver.Value {
 	return out
 }
 
+// newSessionIDUsageLog returns a charged fixture carrying the supplied session
+// pointer. Nil is accepted for missing-session tests; the pointer is retained,
+// so the caller keeps its text stable during preparation.
 func newSessionIDUsageLog(sessionID *string) *usage.UsageLog {
 	return &usage.UsageLog{
 		UserID:       1,

@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// Ollama settings markup can express usage through text percentages, CSS
+// tracks, and several reset-time elements. The stored fixture and focused HTML
+// cases check these representations together with model attribution,
+// optional-field omission, sign-in rejection, and plan or balance source
+// precedence.
+
+// ollamaUsageFixture reads the stored settings-page markup and fails the test
+// if reading fails. The bytes are returned for parser and fetch fixtures that
+// share the same expected usage observations.
 func ollamaUsageFixture(t *testing.T) []byte {
 	t.Helper()
 	b, e := os.ReadFile("testdata/ollama_settings_usage.html")
@@ -17,6 +26,10 @@ func ollamaUsageFixture(t *testing.T) []byte {
 	return b
 }
 
+// TestParseOllamaCloudUsageHTMLFixture checks the stored page's plan, two
+// window percentages and reset times, wallet text, and sorted model counts. It
+// also checks sign-in rejection before usage recognition and rejection of
+// unrelated settings HTML.
 func TestParseOllamaCloudUsageHTMLFixture(t *testing.T) {
 	data, err := ParseOllamaCloudUsageHTML(ollamaUsageFixture(t))
 	require.NoError(t, err)
@@ -45,6 +58,10 @@ func TestParseOllamaCloudUsageHTMLFixture(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestParseOllamaCloudUsageHTMLMissingOptionalFieldsAndCSSWidthFallback
+// supplies a track with no text percentage and repeated model identity. It
+// checks summed CSS usage, omitted optional fields, comma-separated request
+// parsing, and retention of the first duplicate's request count.
 func TestParseOllamaCloudUsageHTMLMissingOptionalFieldsAndCSSWidthFallback(t *testing.T) {
 	data, err := ParseOllamaCloudUsageHTML([]byte(`
 		<section>
@@ -65,6 +82,9 @@ func TestParseOllamaCloudUsageHTMLMissingOptionalFieldsAndCSSWidthFallback(t *te
 	}}, data.Models)
 }
 
+// TestParseOllamaCloudUsageHTMLResetElementVariants places reset markup beside
+// the usage row in three element forms. It checks that the parser reaches the
+// sibling reset block and retains the same UTC instant.
 func TestParseOllamaCloudUsageHTMLResetElementVariants(t *testing.T) {
 	const want = "2026-07-23T03:00:00Z"
 	for name, element := range map[string]string{
@@ -84,6 +104,10 @@ func TestParseOllamaCloudUsageHTMLResetElementVariants(t *testing.T) {
 	}
 }
 
+// TestParseOllamaCloudUsageHTMLPlanAndBalanceFallbacks supplies competing plan
+// labels and a credits sentence, then a subscription-only fragment. It checks
+// Cloud usage precedence, compact balance text, and the alternate subscription
+// label.
 func TestParseOllamaCloudUsageHTMLPlanAndBalanceFallbacks(t *testing.T) {
 	data, err := ParseOllamaCloudUsageHTML([]byte(`
 		<section>

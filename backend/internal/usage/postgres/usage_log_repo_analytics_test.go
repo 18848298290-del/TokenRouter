@@ -13,7 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestResolveUsageAnalyticsWindowUsesCoveredMiddle checks that the unbackfilled head uses raw records.
+// Covered analytics queries must keep raw edges, hourly timestamps, and daily
+// date parameters distinct. Mocked state and SQL shapes check source selection,
+// current payer identity, owned-team parameter ordering, and named-zone binding;
+// these tests inspect generated queries and decoded rows rather than executing
+// PostgreSQL bucket calculations.
+
+// TestResolveUsageAnalyticsWindowUsesCoveredMiddle places coverage after the
+// requested start and a watermark before its end. It checks the raw-edge,
+// aggregate, and daily split instants.
 func TestResolveUsageAnalyticsWindowUsesCoveredMiddle(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -39,7 +47,9 @@ func TestResolveUsageAnalyticsWindowUsesCoveredMiddle(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryUsesHalfOpenRanges checks that raw head and tail ranges do not overlap.
+// TestBuildUsageAnalyticsQueryUsesHalfOpenRanges builds a daily-enabled window
+// with raw head and tail. It checks half-open SQL fragments, requested-model
+// normalization, and separate timestamp/date argument positions.
 func TestBuildUsageAnalyticsQueryUsesHalfOpenRanges(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -70,14 +80,17 @@ func TestBuildUsageAnalyticsQueryUsesHalfOpenRanges(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary excludes yesterday's hourly buckets before UTC midnight.
+// TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary models Beijing
+// midnight inside one UTC day. It checks an empty daily range and hourly split
+// points at the requested start.
 func TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
 		Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60},
 	})
 	repo := &Store{sql: db, preAggregation: settings}
-	// Beijing time 2026-08-06 00:00 to 03:30 is a partial window within one UTC day.
+	// Beijing time 2026-08-06 00:00 to 03:30 is a partial window within one UTC
+	// day.
 	start := time.Date(2026, 8, 5, 16, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 5, 19, 30, 0, 0, time.UTC)
 	watermark := time.Date(2026, 8, 5, 19, 25, 0, 0, time.UTC)
@@ -89,7 +102,8 @@ func TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary(t *testing.
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, query.args, 9)
-	// An empty daily range keeps the hourly split at today's start, not the preceding UTC midnight.
+	// Both hourly split points remain at the requested start when the date span is
+	// empty, preventing the query from pulling prior UTC-hour buckets.
 	require.Equal(t, start, query.args[5])
 	require.Equal(t, start, query.args[6])
 	require.Equal(t, "2026-08-05", query.args[7])
@@ -100,6 +114,9 @@ func TestBuildUsageAnalyticsQueryBeforeUTCMidnightKeepsTodayBoundary(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGetAllGroupUsageSummaryFromAnalyticsIncludesYesterday supplies distinct
+// retained, today, and yesterday group sums. It checks their merge into current
+// groups, including a zero retained-total group.
 func TestGetAllGroupUsageSummaryFromAnalyticsIncludesYesterday(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -141,6 +158,10 @@ func TestGetAllGroupUsageSummaryFromAnalyticsIncludesYesterday(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGetAllGroupUsageSummaryFallbackIncludesYesterday supplies unavailable
+// retained-source state around New York's spring date change. It checks
+// raw-query parameters use the preceding calendar midnight and decodes yesterday
+// charges.
 func TestGetAllGroupUsageSummaryFallbackIncludesYesterday(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -164,14 +185,20 @@ func TestGetAllGroupUsageSummaryFallbackIncludesYesterday(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageAnalyticsFallbackWarningIsRateLimited checks one warning per operation per minute.
+// TestUsageAnalyticsFallbackWarningIsRateLimited resets one operation's shared
+// warning timestamp. It checks eligibility initially and at one minute, with
+// rejection just before the next permitted claim.
 func TestUsageAnalyticsFallbackWarningIsRateLimited(t *testing.T) {
 	operation := "test_rate_limit_analytics_fallback"
 	started := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	// Isolate this operation from prior warning claims under the same shared lock
+	// used by production, so the fixed timeline begins with no retained timestamp.
 	usageAnalyticsFallbackLogState.Lock()
 	delete(usageAnalyticsFallbackLogState.lastByOperation, operation)
 	usageAnalyticsFallbackLogState.Unlock()
 	t.Cleanup(func() {
+		// Remove the test's warning claim under its owning mutex so later tests cannot
+		// inherit state from this fixed-time eligibility scenario.
 		usageAnalyticsFallbackLogState.Lock()
 		delete(usageAnalyticsFallbackLogState.lastByOperation, operation)
 		usageAnalyticsFallbackLogState.Unlock()
@@ -182,7 +209,9 @@ func TestUsageAnalyticsFallbackWarningIsRateLimited(t *testing.T) {
 	require.True(t, shouldLogUsageAnalyticsFallback(operation, started.Add(time.Minute)))
 }
 
-// TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs checks that hourly queries omit unused daily bounds.
+// TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs selects an
+// hourly-only covered window. It checks that five time arguments suffice and the
+// generated CTE contains no sixth parameter.
 func TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -202,7 +231,9 @@ func TestBuildUsageAnalyticsQueryWithoutDailyUsesContiguousArgs(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously checks contiguous parameters after the time bounds.
+// TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously combines
+// ownership with all represented selectors. It checks sequential parameter
+// positions for actor/team source branches and each post-combination filter.
 func TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -241,7 +272,9 @@ func TestBuildUsageAnalyticsQueryNumbersOwnedTeamFiltersContinuously(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource checks separate raw user and team scans.
+// TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource supplies a current
+// owned team in a daily-enabled query. It checks separate actor/team raw
+// branches and the matching combined-source predicate.
 func TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -269,7 +302,9 @@ func TestBuildUsageAnalyticsQueryUsesIndexableOwnedTeamRawSource(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters checks that missing aggregate dimensions require raw queries.
+// TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters requests provider,
+// request-ID, raw-model, and upstream-model selectors. It checks that the
+// builder declines aggregation with no error before needing a SQL executor.
 func TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters(t *testing.T) {
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
 		Usage: preaggregation.UsageOptions{Enabled: true, IntervalSeconds: 60},
@@ -279,8 +314,8 @@ func TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters(t *testing.T) {
 	end := start.Add(time.Hour)
 
 	tests := []struct {
-		name    string
-		filters UsageLogFilters
+		name    string          // unsupported dimension case description
+		filters UsageLogFilters // supplied aggregation eligibility selectors
 	}{
 		{name: "提供商维度", filters: UsageLogFilters{ProviderID: 1}},
 		{name: "请求编号", filters: UsageLogFilters{RequestID: "request-1"}},
@@ -296,7 +331,9 @@ func TestBuildUsageAnalyticsQueryRejectsUnsupportedFilters(t *testing.T) {
 	}
 }
 
-// TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping rejects dimensions absent from request-model aggregates.
+// TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping requests upstream and
+// mapping model dimensions on an unconfigured store. It checks aggregation
+// declines both groupings with no execution error.
 func TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping(t *testing.T) {
 	repo := &Store{}
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -311,7 +348,9 @@ func TestGetModelStatsFromAnalyticsRejectsUnsupportedGrouping(t *testing.T) {
 	}
 }
 
-// TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername checks that rankings join current user identity fields.
+// TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername supplies one
+// grouped payer row with current identity values. It checks decoded ranking
+// fields and total charges from the mocked joined query.
 func TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -339,7 +378,9 @@ func TestGetUserSpendingRankingFromAnalyticsReturnsCurrentUsername(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUsageRankingFromAnalyticsGroupsByBillingUser combines team members under their billing user.
+// TestGetUsageRankingFromAnalyticsGroupsByBillingUser supplies a combined
+// team-owner ranking row. It checks payer-grouping SQL and decodes the owner ID,
+// request count, and cache-inclusive token count.
 func TestGetUsageRankingFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -368,7 +409,9 @@ func TestGetUsageRankingFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser combines team usage under the paying user in top-user trends.
+// TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser supplies a current owner
+// identity with grouped team usage. It checks payer-based query fragments and
+// the decoded date/request/token/cost trend entry.
 func TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -394,7 +437,9 @@ func TestGetUserUsageTrendFromAnalyticsGroupsByBillingUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST passes a named timezone to PostgreSQL for DST-aware buckets.
+// TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST models a range across
+// New York's autumn clock change. It checks the named timezone is bound to SQL,
+// without executing timezone bucket calculations.
 func TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -422,7 +467,9 @@ func TestGetUsageTrendFromAnalyticsUsesNamedTimezoneForDST(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition places key IDs after the five time bounds.
+// TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition combines daily range
+// costs with an hourly-only today query. It checks the key array follows five
+// time bounds in the second query.
 func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -435,7 +482,8 @@ func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	todayStart := timezone.NewCalendar(time.Local).
 		Today().UTC()
 	coverage := todayStart.Add(-time.Hour).Truncate(time.Hour)
-	// A watermark just before now leaves usable aggregates across server timezones and near UTC midnight.
+	// Put the watermark immediately before now so the tested today span has usable
+	// covered hours near local/UTC midnight as well as a raw tail.
 	watermark := now.Add(-time.Nanosecond)
 	mock.ExpectQuery("(?s)SELECT live_watermark, coverage_start.*usage_analytics_aggregation_state").
 		WillReturnRows(sqlmock.NewRows([]string{"live_watermark", "coverage_start"}).AddRow(watermark, coverage))
@@ -456,7 +504,9 @@ func TestBatchAPIKeyUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition places user IDs after the five time bounds.
+// TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition combines user/platform
+// range sums with hourly-only today sums. It checks the user array follows five
+// time bounds and today SQL retains positive-cost filtering.
 func TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	db, mock := newSQLMock(t)
 	settings := preaggregation.NewPreAggregationSettingsService(nil, &preaggregation.Options{
@@ -469,7 +519,8 @@ func TestBatchUserUsageAnalyticsUsesDynamicTodayIDPosition(t *testing.T) {
 	todayStart := timezone.NewCalendar(time.Local).
 		Today().UTC()
 	coverage := todayStart.Add(-time.Hour).Truncate(time.Hour)
-	// A watermark just before now leaves usable aggregates across server timezones and near UTC midnight.
+	// Put the watermark immediately before now so the tested today span has usable
+	// covered hours near local/UTC midnight as well as a raw tail.
 	watermark := now.Add(-time.Nanosecond)
 	mock.ExpectQuery("(?s)SELECT live_watermark, coverage_start.*usage_analytics_aggregation_state").
 		WillReturnRows(sqlmock.NewRows([]string{"live_watermark", "coverage_start"}).AddRow(watermark, coverage))

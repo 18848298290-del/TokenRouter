@@ -12,8 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestPricingRoutesRejectPolicyFieldsAndRemoveOldEndpoints sends retired
+// policy fields to strict price-config binding. It checks each request fails
+// before service use and confirms removed channel and default-model-list
+// paths return 404.
 func TestPricingRoutesRejectPolicyFieldsAndRemoveOldEndpoints(t *testing.T) {
 	router := gin.New()
+	// Keep the service absent so accepting a retired field would reach an
+	// unusable dependency instead of returning the required binding error.
 	handler := NewPricingHandler(nil, &routing.PricingCatalog{})
 	RegisterPricingRoutes(router.Group("/api/v1/admin"), handler)
 	for _, field := range []string{"model_mapping", "restrict_models", "features_config", "features", "apply_pricing_to_provider_stats"} {

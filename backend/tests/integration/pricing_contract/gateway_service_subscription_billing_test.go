@@ -17,26 +17,53 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// contractSettlementInput contains settlement amounts, paying-user details, and rates.
+// Settlement commands carry user funding amounts separately from upstream
+// quota consumption. Local fixtures project payer, key, and provider inputs
+// into the production command builder, then inspect billable amounts,
+// allocation factors, group identity, and the Standard user base used
+// alongside Fast provider cost.
+
+// contractSettlementInput supplies records, amounts, and funding factors
+// for command-builder assertions.
 type contractSettlementInput struct {
-	Cost                            *pricing.CostBreakdown
-	User                            *identity.User
-	APIKey                          *apikey.APIKey
-	Provider                        *provider.ExecutionProvider
-	Subscription                    *billing.UserSubscription
-	RequestPayloadHash              string
-	ProviderRateMultiplier          float64
-	SubscriptionRateMultiplier      float64
-	SubscriptionRateMultiplierScale float64
-	BalanceRateMultiplier           float64
-	APIKeyService                   provider.QuotaUpdater
-	Platform                        string // Platform identifier supplied by the fixture.
-	// BillingBaseAmountUSD is the base amount for user fund allocation; nil uses Cost.TotalCost.
-	// Free Fast uses Standard user pricing while provider statistics retain the Fast base cost.
-	BillingBaseAmountUSD *float64
+	// Cost, User, APIKey, and Provider supply the builder's required
+	// settlement evidence. If any is nil after projection,
+	// completion.BuildCommand returns nil.
+	Cost     *pricing.CostBreakdown      // calculated model and user costs
+	User     *identity.User              // funding payer record
+	APIKey   *apikey.APIKey              // request key record
+	Provider *provider.ExecutionProvider // executing provider record
+	// Subscription carries preliminary subscription evidence through
+	// projection. BuildCommand does not read this field when
+	// constructing these commands.
+	Subscription *billing.UserSubscription
+	// RequestPayloadHash is forwarded to the builder, which trims its
+	// surrounding whitespace before normalization.
+	RequestPayloadHash string // billing fingerprint input
+	// ProviderRateMultiplier scales upstream quota cost.
+	// SubscriptionRateMultiplier and BalanceRateMultiplier accompany the user
+	// base amount, while SubscriptionRateMultiplierScale supplies the scale
+	// for a reloaded plan rate.
+	ProviderRateMultiplier          float64 // provider quota scaling factor
+	SubscriptionRateMultiplier      float64 // subscription allocation rate
+	SubscriptionRateMultiplierScale float64 // reloaded plan rate scale
+	BalanceRateMultiplier           float64 // excess balance allocation rate
+	// APIKeyService sets QuotaUpdates when its interface value is nonnil. This
+	// includes typed nil implementations because the wrapper tests the
+	// interface value and does not invoke its methods.
+	APIKeyService provider.QuotaUpdater // key quota update capability
+	Platform      string                // unused fixture platform label
+	// BillingBaseAmountUSD overrides Cost.TotalCost for user funding
+	// allocation, including an explicit zero amount; nil uses Cost.TotalCost.
+	// Provider quota still uses the row's provider-statistics
+	// amount or Cost.TotalCost.
+	BillingBaseAmountUSD *float64 // user allocation base USD
 }
 
-// TestBuildUsageBillingCommand_BillableAmountTracksActualCost checks that user charges use ActualCost.
+// TestBuildUsageBillingCommand_BillableAmountTracksActualCost varies the
+// calculated user amount while holding the model total fixed. It checks that
+// the constructed command carries ActualCost, including a free
+// charge, as BillableAmountUSD.
 func TestBuildUsageBillingCommand_BillableAmountTracksActualCost(t *testing.T) {
 	t.Parallel()
 
@@ -44,10 +71,13 @@ func TestBuildUsageBillingCommand_BillableAmountTracksActualCost(t *testing.T) {
 	subID := int64(42)
 
 	tests := []struct {
-		name         string
-		totalCost    float64
-		actualCost   float64
-		wantBillable float64
+		name string // subtest selection label
+		// totalCost holds the model amount while actualCost varies the user's
+		// charge. wantBillable checks that the command takes the user amount
+		// from actualCost, including explicit zero.
+		totalCost    float64 // model base amount USD
+		actualCost   float64 // calculated user amount USD
+		wantBillable float64 // expected user amount USD
 	}{
 		{
 			name:         "subscription with 2x multiplier consumes 2x quota",
@@ -97,18 +127,28 @@ func TestBuildUsageBillingCommand_BillableAmountTracksActualCost(t *testing.T) {
 	}
 }
 
+// TestBuildUsageBillingCommand_ProviderQuotaUsesProviderStatsCost supplies
+// absent, zero, or positive provider-statistics amounts with separate provider
+// rates. It checks upstream quota cost and the independent ActualCost user
+// amount in the command.
 func TestBuildUsageBillingCommand_ProviderQuotaUsesProviderStatsCost(t *testing.T) {
 	t.Parallel()
 
 	customCost := 2.0
 	zeroCost := 0.0
 	tests := []struct {
-		name                   string
-		providerStatsCost      *float64
-		totalCost              float64
-		actualCost             float64
-		providerRateMultiplier float64
-		wantProviderQuota      float64
+		name string // subtest selection label
+		// providerStatsCost selects the upstream quota base when nonnil,
+		// including zero; nil uses totalCost in these command-builder cases.
+		providerStatsCost *float64 // configured provider cost USD
+		// totalCost and actualCost represent independent model and user
+		// amounts. providerRateMultiplier acts on the quota base selected by
+		// providerStatsCost, and wantProviderQuota records that scaled
+		// outcome.
+		totalCost              float64 // model base amount USD
+		actualCost             float64 // calculated user amount USD
+		providerRateMultiplier float64 // provider quota scaling factor
+		wantProviderQuota      float64 // expected upstream quota amount USD
 	}{
 		{
 			name:                   "自定义提供商成本乘提供商倍率",
@@ -166,6 +206,9 @@ func TestBuildUsageBillingCommand_ProviderQuotaUsesProviderStatsCost(t *testing.
 	}
 }
 
+// TestBuildUsageBillingCommand_IncludesRequestGroupID supplies a key carrying
+// a positive request group identifier. It checks that the command retains a
+// nonnil pointer containing that identifier.
 func TestBuildUsageBillingCommand_IncludesRequestGroupID(t *testing.T) {
 	groupID := int64(42)
 	p := &contractSettlementInput{
@@ -191,15 +234,22 @@ func TestBuildUsageBillingCommand_IncludesRequestGroupID(t *testing.T) {
 	}
 }
 
+// TestBuildUsageBillingCommand_NonTokenModesKeepAllocationRates supplies
+// image, video, and per-request breakdowns with explicit funding factors. It
+// checks that subscription rate, plan scale, and balance rate are carried
+// into the command.
 func TestBuildUsageBillingCommand_NonTokenModesKeepAllocationRates(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		mode       routing.BillingMode
-		totalCost  float64
-		actualCost float64
-		wantRate   float64
+		name string              // subtest selection label
+		mode routing.BillingMode // resolved billing mode
+		// totalCost and actualCost set the breakdown's calculated amounts,
+		// while wantRate names the supplied subscription factor. Different
+		// effective ratios check that the command keeps that factor.
+		totalCost  float64 // model base amount USD
+		actualCost float64 // calculated user amount USD
+		wantRate   float64 // expected subscription allocation rate
 	}{
 		{name: "image rate", mode: routing.BillingModeImage, totalCost: 0.2, actualCost: 0.2, wantRate: 0.15},
 		{name: "video rate", mode: routing.BillingModeVideo, totalCost: 0.08, actualCost: 0.02, wantRate: 0.15},
@@ -241,6 +291,9 @@ func TestBuildUsageBillingCommand_NonTokenModesKeepAllocationRates(t *testing.T)
 	}
 }
 
+// TestBuildUsageBillingCommand_TokenModeKeepsAllocationRates supplies a token
+// breakdown whose effective user rate differs from the explicit factors. It
+// checks that the command keeps the subscription, scale, and balance values.
 func TestBuildUsageBillingCommand_TokenModeKeepsAllocationRates(t *testing.T) {
 	t.Parallel()
 
@@ -274,7 +327,10 @@ func TestBuildUsageBillingCommand_TokenModeKeepsAllocationRates(t *testing.T) {
 	}
 }
 
-// TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast checks Standard user allocation alongside Fast provider quota cost.
+// TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast supplies a
+// Standard funding base alongside Fast total and provider-statistics amounts.
+// It checks the user allocation base, billable amount, and separately
+// multiplied provider quota cost.
 func TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast(t *testing.T) {
 	standardBase := 0.4
 	fastTotal := 1.2
@@ -304,15 +360,24 @@ func TestBuildUsageBillingCommand_UsesOverrideBaseAmountForFreeFast(t *testing.T
 	if cmd.BillableAmountUSD != standardActual {
 		t.Fatalf("BillableAmountUSD = %v, want %v", cmd.BillableAmountUSD, standardActual)
 	}
+	// Dollar tolerance allows binary rounding in the
+	// independent quota product.
 	if diff := cmd.ProviderQuotaCost - fastTotal*providerRate; diff > 1e-12 || diff < -1e-12 {
 		t.Fatalf("ProviderQuotaCost = %v, want %v", cmd.ProviderQuotaCost, fastTotal*providerRate)
 	}
 }
 
+// buildContractBillingCommand clones usageLog and projects fixture inputs for
+// completion.BuildCommand. Missing cost, key, payer, or provider records
+// produce nil; requestID is the supplied financial operation key.
 func buildContractBillingCommand(requestID string, usageLog *usage.UsageLog, p *contractSettlementInput) *billing.UsageBillingCommand {
 	return completion.BuildCommand(requestID, querycache.Clone(usageLog), projectContractSettlement(p))
 }
 
+// projectContractSettlement converts fixture records into completion
+// settlement metadata and returns nil for nil input. Cost, Subscription, and
+// BillingBaseAmountUSD remain shared with the fixture; APIKeyService's
+// interface presence becomes the captured quota-update capability.
 func projectContractSettlement(p *contractSettlementInput) *completion.SettlementInput {
 	if p == nil {
 		return nil

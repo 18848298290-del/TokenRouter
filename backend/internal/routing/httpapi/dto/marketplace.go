@@ -10,127 +10,214 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// A quoted image size can be free or have no available price, and both cases
+// may carry a numeric zero before HTTP conversion. ImagePriceSizes retains
+// which sizes were quoted; the mapper emits a pointer for a known free size
+// and leaves an unavailable size absent from JSON.
+//
+// Marketplace groups also carry optional observations and route display
+// attributes supplied by routing. Conversion allocates the group, model,
+// interval, bucket, and period records used for JSON, while nested
+// attributes, protocol and modality slices, and optional scalar pointers can
+// retain source storage. Those retained values stay read-only while the
+// response is encoded.
+
+// ModelMarketplaceStats holds token and user totals for the public homepage.
 type ModelMarketplaceStats struct {
-	TodayTokens int64 `json:"today_tokens"`
-	TotalTokens int64 `json:"total_tokens"`
-	TotalUsers  int64 `json:"total_users"`
+	TodayTokens int64 `json:"today_tokens"` // today observed token count
+	TotalTokens int64 `json:"total_tokens"` // reported total token count
+	TotalUsers  int64 `json:"total_users"`  // public total user count
 }
 
+// ModelMarketplacePricing exposes a quote's billing mode, token amounts, and
+// optional modifiers.
 type ModelMarketplacePricing struct {
-	PricingMode                   string                            `json:"pricing_mode"`
-	PriceStatus                   string                            `json:"price_status"`
-	InputPricePerToken            float64                           `json:"input_price_per_token,omitempty"`
-	ImageInputPricePerToken       float64                           `json:"image_input_price_per_token,omitempty"`
-	OutputPricePerToken           float64                           `json:"output_price_per_token,omitempty"`
-	CacheWritePricePerToken       float64                           `json:"cache_write_price_per_token,omitempty"`
-	CacheWrite1hPricePerToken     float64                           `json:"cache_write_1h_price_per_token,omitempty"`
-	CacheReadPricePerToken        float64                           `json:"cache_read_price_per_token,omitempty"`
-	ImageOutputPricePerToken      float64                           `json:"image_output_price_per_token,omitempty"`
-	FastInputPricePerToken        float64                           `json:"fast_input_price_per_token,omitempty"`
-	FastImageInputPricePerToken   float64                           `json:"fast_image_input_price_per_token,omitempty"`
-	FastOutputPricePerToken       float64                           `json:"fast_output_price_per_token,omitempty"`
-	FastCacheWritePricePerToken   float64                           `json:"fast_cache_write_price_per_token,omitempty"`
-	FastCacheWrite1hPricePerToken float64                           `json:"fast_cache_write_1h_price_per_token,omitempty"`
-	FastCacheReadPricePerToken    float64                           `json:"fast_cache_read_price_per_token,omitempty"`
-	FastImageOutputPricePerToken  float64                           `json:"fast_image_output_price_per_token,omitempty"`
-	ContextIntervals              []ModelMarketplacePricingInterval `json:"context_intervals,omitempty"`
-	MaxReasoningEffortMultiplier  *float64                          `json:"max_reasoning_effort_multiplier,omitempty"`
-	TimePricing                   *ModelMarketplaceTimePricing      `json:"time_pricing,omitempty"`
-	ImagePrice1K                  *float64                          `json:"image_price_1k,omitempty"`
-	ImagePrice2K                  *float64                          `json:"image_price_2k,omitempty"`
-	ImagePrice4K                  *float64                          `json:"image_price_4k,omitempty"`
+	PricingMode string `json:"pricing_mode"` // quoted billing mode
+	// PriceStatus identifies whether a quote is priced; zero-valued token fields
+	// may be omitted from JSON even when the quote is free.
+	PriceStatus string `json:"price_status"` // priced or unpriced status
+	// InputPricePerToken, ImageInputPricePerToken, OutputPricePerToken,
+	// CacheWritePricePerToken, CacheWrite1hPricePerToken,
+	// CacheReadPricePerToken, and ImageOutputPricePerToken expose Standard
+	// amounts. FastInputPricePerToken, FastImageInputPricePerToken,
+	// FastOutputPricePerToken, FastCacheWritePricePerToken,
+	// FastCacheWrite1hPricePerToken, FastCacheReadPricePerToken, and
+	// FastImageOutputPricePerToken expose Fast amounts. Both sets use the
+	// resolved quote's rate multiplier, and JSON omits zero numeric fields.
+	InputPricePerToken            float64                           `json:"input_price_per_token,omitempty"`               // USD per text-input token
+	ImageInputPricePerToken       float64                           `json:"image_input_price_per_token,omitempty"`         // USD per image-input token
+	OutputPricePerToken           float64                           `json:"output_price_per_token,omitempty"`              // USD per text-output token
+	CacheWritePricePerToken       float64                           `json:"cache_write_price_per_token,omitempty"`         // USD per short-TTL cache-write token
+	CacheWrite1hPricePerToken     float64                           `json:"cache_write_1h_price_per_token,omitempty"`      // USD per hourly cache-write token
+	CacheReadPricePerToken        float64                           `json:"cache_read_price_per_token,omitempty"`          // USD per cache-read token
+	ImageOutputPricePerToken      float64                           `json:"image_output_price_per_token,omitempty"`        // USD per image-output token
+	FastInputPricePerToken        float64                           `json:"fast_input_price_per_token,omitempty"`          // Fast USD per text-input token
+	FastImageInputPricePerToken   float64                           `json:"fast_image_input_price_per_token,omitempty"`    // Fast USD per image-input token
+	FastOutputPricePerToken       float64                           `json:"fast_output_price_per_token,omitempty"`         // Fast USD per text-output token
+	FastCacheWritePricePerToken   float64                           `json:"fast_cache_write_price_per_token,omitempty"`    // Fast USD per short-TTL cache-write token
+	FastCacheWrite1hPricePerToken float64                           `json:"fast_cache_write_1h_price_per_token,omitempty"` // Fast USD per hourly cache-write token
+	FastCacheReadPricePerToken    float64                           `json:"fast_cache_read_price_per_token,omitempty"`     // Fast USD per cache-read token
+	FastImageOutputPricePerToken  float64                           `json:"fast_image_output_price_per_token,omitempty"`   // Fast USD per image-output token
+	ContextIntervals              []ModelMarketplacePricingInterval `json:"context_intervals,omitempty"`                   // quoted context-token price ranges
+	// MaxReasoningEffortMultiplier is an optional positive non-unit factor
+	// carried separately from the quoted token amounts for the marketplace's
+	// effort selector.
+	MaxReasoningEffortMultiplier *float64 `json:"max_reasoning_effort_multiplier,omitempty"` // optional max-effort token factor
+	// TimePricing carries configured card periods separately from token amounts
+	// so the marketplace can show the applicable time-dependent multiplier.
+	TimePricing *ModelMarketplaceTimePricing `json:"time_pricing,omitempty"` // optional daily token schedule
+	// ImagePrice1K, ImagePrice2K, and ImagePrice4K retain the quote's size
+	// availability. A nil pointer omits an unavailable size; a nonnil zero
+	// encodes a known free image.
+	ImagePrice1K *float64 `json:"image_price_1k,omitempty"` // USD per 1K output image
+	ImagePrice2K *float64 `json:"image_price_2k,omitempty"` // USD per 2K output image
+	ImagePrice4K *float64 `json:"image_price_4k,omitempty"` // USD per 4K output image
 }
 
-// ModelMarketplacePricingInterval contains marketplace prices for a context-length range.
+// ModelMarketplacePricingInterval exposes quoted token amounts within one
+// context-length range.
 type ModelMarketplacePricingInterval struct {
-	MinTokens                     int     `json:"min_tokens"`
-	MaxTokens                     *int    `json:"max_tokens,omitempty"`
-	InputPricePerToken            float64 `json:"input_price_per_token,omitempty"`
-	ImageInputPricePerToken       float64 `json:"image_input_price_per_token,omitempty"`
-	OutputPricePerToken           float64 `json:"output_price_per_token,omitempty"`
-	CacheWritePricePerToken       float64 `json:"cache_write_price_per_token,omitempty"`
-	CacheWrite1hPricePerToken     float64 `json:"cache_write_1h_price_per_token,omitempty"`
-	CacheReadPricePerToken        float64 `json:"cache_read_price_per_token,omitempty"`
-	ImageOutputPricePerToken      float64 `json:"image_output_price_per_token,omitempty"`
-	FastInputPricePerToken        float64 `json:"fast_input_price_per_token,omitempty"`
-	FastImageInputPricePerToken   float64 `json:"fast_image_input_price_per_token,omitempty"`
-	FastOutputPricePerToken       float64 `json:"fast_output_price_per_token,omitempty"`
-	FastCacheWritePricePerToken   float64 `json:"fast_cache_write_price_per_token,omitempty"`
-	FastCacheWrite1hPricePerToken float64 `json:"fast_cache_write_1h_price_per_token,omitempty"`
-	FastCacheReadPricePerToken    float64 `json:"fast_cache_read_price_per_token,omitempty"`
-	FastImageOutputPricePerToken  float64 `json:"fast_image_output_price_per_token,omitempty"`
+	// MinTokens and MaxTokens describe the quoted (MinTokens, MaxTokens] range.
+	// Token amounts apply to that context interval and already include the group
+	// quote's rate multiplier.
+	MinTokens int `json:"min_tokens"` // excluded lower context-token endpoint
+	// MaxTokens is nil for an unbounded range; conversion retains an existing
+	// endpoint pointer, which remains stable while encoding the response.
+	MaxTokens                     *int    `json:"max_tokens,omitempty"`                          // included upper context-token endpoint
+	InputPricePerToken            float64 `json:"input_price_per_token,omitempty"`               // USD per text-input token
+	ImageInputPricePerToken       float64 `json:"image_input_price_per_token,omitempty"`         // USD per image-input token
+	OutputPricePerToken           float64 `json:"output_price_per_token,omitempty"`              // USD per text-output token
+	CacheWritePricePerToken       float64 `json:"cache_write_price_per_token,omitempty"`         // USD per short-TTL cache-write token
+	CacheWrite1hPricePerToken     float64 `json:"cache_write_1h_price_per_token,omitempty"`      // USD per hourly cache-write token
+	CacheReadPricePerToken        float64 `json:"cache_read_price_per_token,omitempty"`          // USD per cache-read token
+	ImageOutputPricePerToken      float64 `json:"image_output_price_per_token,omitempty"`        // USD per image-output token
+	FastInputPricePerToken        float64 `json:"fast_input_price_per_token,omitempty"`          // Fast USD per text-input token
+	FastImageInputPricePerToken   float64 `json:"fast_image_input_price_per_token,omitempty"`    // Fast USD per image-input token
+	FastOutputPricePerToken       float64 `json:"fast_output_price_per_token,omitempty"`         // Fast USD per text-output token
+	FastCacheWritePricePerToken   float64 `json:"fast_cache_write_price_per_token,omitempty"`    // Fast USD per short-TTL cache-write token
+	FastCacheWrite1hPricePerToken float64 `json:"fast_cache_write_1h_price_per_token,omitempty"` // Fast USD per hourly cache-write token
+	FastCacheReadPricePerToken    float64 `json:"fast_cache_read_price_per_token,omitempty"`     // Fast USD per cache-read token
+	FastImageOutputPricePerToken  float64 `json:"fast_image_output_price_per_token,omitempty"`   // Fast USD per image-output token
 }
 
-// ModelMarketplaceTimePricing applies token-price multipliers by request time; outside its periods the multiplier is 1.
+// ModelMarketplaceTimePricing describes the daily token schedule attached to
+// a quote.
 type ModelMarketplaceTimePricing struct {
-	Timezone     string                              `json:"timezone"`
-	WeekdaysOnly bool                                `json:"weekdays_only"`
-	Periods      []ModelMarketplaceTimePricingPeriod `json:"periods"`
+	// Timezone, WeekdaysOnly, and Periods describe one daily schedule. The
+	// marketplace uses the named local clock and weekday restriction to select
+	// displayed factors; uncovered times use factor one.
+	Timezone     string                              `json:"timezone"`      // daily schedule timezone name
+	WeekdaysOnly bool                                `json:"weekdays_only"` // Monday-through-Friday schedule restriction
+	Periods      []ModelMarketplaceTimePricingPeriod `json:"periods"`       // daily token-price multiplier periods
 }
 
-// ModelMarketplaceTimePricingPeriod is a daily [start, end) interval. An end of 00:00 means 24:00 that day.
+// ModelMarketplaceTimePricingPeriod describes one daily clock range and its
+// token-price factor.
 type ModelMarketplaceTimePricingPeriod struct {
-	StartTime  string  `json:"start_time"`
-	EndTime    string  `json:"end_time"`
-	Multiplier float64 `json:"multiplier"`
+	// StartTime and EndTime define a daily [start, end) clock range at minute or
+	// second precision. EndTime spelled 00:00 or 00:00:00 closes the current
+	// day.
+	StartTime  string  `json:"start_time"` // inclusive local clock start
+	EndTime    string  `json:"end_time"`   // exclusive local clock end
+	Multiplier float64 `json:"multiplier"` // period token-price scaling factor
 }
 
+// ModelMarketplaceModel combines a requestable ID with display attributes and
+// a public quote.
 type ModelMarketplaceModel struct {
-	Attributes       *routing.EffectiveModelAttributes `json:"attributes,omitempty"`
-	ID               string                            `json:"id"`
-	DisplayName      string                            `json:"display_name"`
-	Pricing          ModelMarketplacePricing           `json:"pricing"`
-	InputModalities  []string                          `json:"input_modalities,omitempty"`
-	OutputModalities []string                          `json:"output_modalities,omitempty"`
-	Protocols        []protocol.ProtocolID             `json:"protocols,omitempty"`
-	NativeProtocols  []protocol.ProtocolID             `json:"native_protocols,omitempty"`
+	// Attributes contains route-aware display information when the attribute
+	// query succeeds; nil leaves capability details unknown while the model and
+	// quote remain available.
+	Attributes       *routing.EffectiveModelAttributes `json:"attributes,omitempty"`        // optional effective display attributes
+	ID               string                            `json:"id"`                          // client request model ID
+	DisplayName      string                            `json:"display_name"`                // resolved model display name
+	Pricing          ModelMarketplacePricing           `json:"pricing"`                     // public group model quote
+	InputModalities  []string                          `json:"input_modalities,omitempty"`  // legacy input modality labels
+	OutputModalities []string                          `json:"output_modalities,omitempty"` // legacy output modality labels
+	// Protocols and NativeProtocols come from the same requestable model
+	// resolution. For each client entry, NativeProtocols requires every provider
+	// contributing that entry to route it directly; Protocols also contains
+	// entries served through conversion.
+	Protocols       []protocol.ProtocolID `json:"protocols,omitempty"`        // requestable client protocol choices
+	NativeProtocols []protocol.ProtocolID `json:"native_protocols,omitempty"` // protocols native across routes
 }
 
+// ModelMarketplaceCapacity holds current aggregate provider capacity
+// observations for a public group.
 type ModelMarketplaceCapacity struct {
-	ConcurrencyUsed int `json:"concurrency_used"`
-	ConcurrencyMax  int `json:"concurrency_max"`
-	SessionsUsed    int `json:"sessions_used"`
-	SessionsMax     int `json:"sessions_max"`
-	RPMUsed         int `json:"rpm_used"`
-	RPMMax          int `json:"rpm_max"`
+	ConcurrencyUsed int `json:"concurrency_used"` // occupied provider concurrency slots
+	ConcurrencyMax  int `json:"concurrency_max"`  // aggregate provider concurrency capacity
+	SessionsUsed    int `json:"sessions_used"`    // occupied provider session slots
+	SessionsMax     int `json:"sessions_max"`     // aggregate provider session capacity
+	RPMUsed         int `json:"rpm_used"`         // observed requests per minute
+	RPMMax          int `json:"rpm_max"`          // aggregate provider RPM capacity
 }
 
+// ModelMarketplaceAvailabilityDay contains probe counts for one displayed
+// time bucket.
 type ModelMarketplaceAvailabilityDay struct {
-	Date             string   `json:"date"`
-	SuccessCount     int64    `json:"success_count"`
-	TotalCount       int64    `json:"total_count"`
-	AvailabilityRate *float64 `json:"availability_rate,omitempty"`
+	Date string `json:"date"` // local time-bucket label
+	// SuccessCount, TotalCount, and AvailabilityRate summarize final probe
+	// rounds within this bucket. AvailabilityRate is success divided by total,
+	// with nil indicating no recorded rounds.
+	SuccessCount     int64    `json:"success_count"`               // successful probe round count
+	TotalCount       int64    `json:"total_count"`                 // recorded probe round count
+	AvailabilityRate *float64 `json:"availability_rate,omitempty"` // successful round proportion
 }
 
+// ModelMarketplaceAvailability combines windowed probe totals, latest status,
+// and time buckets.
 type ModelMarketplaceAvailability struct {
-	WindowDays       int                               `json:"window_days"`
-	BucketMinutes    int                               `json:"bucket_minutes"`
-	SuccessCount     int64                             `json:"success_count"`
-	TotalCount       int64                             `json:"total_count"`
-	AvailabilityRate *float64                          `json:"availability_rate,omitempty"`
-	LastStatus       string                            `json:"last_status,omitempty"`
-	LastCheckedAt    *time.Time                        `json:"last_checked_at,omitempty"`
-	Days             []ModelMarketplaceAvailabilityDay `json:"days"`
+	WindowDays    int `json:"window_days"`    // configured observation window days
+	BucketMinutes int `json:"bucket_minutes"` // configured time-bucket size minutes
+	// SuccessCount, TotalCount, and AvailabilityRate summarize the observation
+	// window. AvailabilityRate is success divided by total, and nil indicates
+	// that the window contains no recorded rounds.
+	SuccessCount     int64    `json:"success_count"`               // successful window round count
+	TotalCount       int64    `json:"total_count"`                 // recorded window round count
+	AvailabilityRate *float64 `json:"availability_rate,omitempty"` // window successful round proportion
+	// LastStatus and LastCheckedAt describe the latest stored probe round even
+	// when it predates the observation window. LastCheckedAt is that round's
+	// finish time; absent history leaves these values unset.
+	LastStatus    string                            `json:"last_status,omitempty"`     // latest probe round status
+	LastCheckedAt *time.Time                        `json:"last_checked_at,omitempty"` // latest round completion time
+	Days          []ModelMarketplaceAvailabilityDay `json:"days"`                      // ordered local observation buckets
 }
 
+// ModelMarketplaceGroup contains localized product text, models, prices, and
+// optional observations.
 type ModelMarketplaceGroup struct {
-	SearchTerms []string          `json:"search_terms,omitempty"`
-	Resolution  locale.Resolution `json:"localization_resolution"`
-	ID          int64             `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
+	SearchTerms []string          `json:"search_terms,omitempty"`  // localized group search texts
+	Resolution  locale.Resolution `json:"localization_resolution"` // resolved group display language
+	ID          int64             `json:"id"`                      // stored public group identifier
+	Name        string            `json:"name"`                    // resolved group display name
+	Description string            `json:"description"`             // resolved group display description
 
-	DisplayBrand               string                        `json:"display_brand"`
-	SortOrder                  int                           `json:"sort_order"`
-	RateMultiplier             float64                       `json:"rate_multiplier"`
-	OfficialPriceRatio         *float64                      `json:"official_price_ratio,omitempty"`
-	OfficialPriceRMBEquivalent *float64                      `json:"official_price_rmb_equivalent,omitempty"`
-	Capacity                   *ModelMarketplaceCapacity     `json:"capacity,omitempty"`
-	Availability               *ModelMarketplaceAvailability `json:"availability,omitempty"`
-	ModelCount                 int                           `json:"model_count"`
-	Models                     []ModelMarketplaceModel       `json:"models"`
+	DisplayBrand   string  `json:"display_brand"`   // resolved group display brand
+	SortOrder      int     `json:"sort_order"`      // manual group display order
+	RateMultiplier float64 `json:"rate_multiplier"` // group user quote multiplier
+	// OfficialPriceRatio and OfficialPriceRMBEquivalent require valid unit-price
+	// and USD-exchange settings. They carry rate-scaled conversion values for
+	// price display; unavailable, nonpositive, or nonfinite conversion results
+	// remain absent.
+	OfficialPriceRatio         *float64 `json:"official_price_ratio,omitempty"`          // price-to-official conversion ratio
+	OfficialPriceRMBEquivalent *float64 `json:"official_price_rmb_equivalent,omitempty"` // rate-scaled RMB unit equivalent
+	// Capacity is present when the marketplace includes capacity and obtains a
+	// summary; disabled or unavailable capacity queries leave this member
+	// absent.
+	Capacity *ModelMarketplaceCapacity `json:"capacity,omitempty"` // optional current capacity summary
+	// Availability contains observed probe history when supplied by routing; a
+	// missing summary remains absent and does not invent an availability rate.
+	Availability *ModelMarketplaceAvailability `json:"availability,omitempty"` // optional historical probe summary
+	ModelCount   int                           `json:"model_count"`            // resolved public model count
+	Models       []ModelMarketplaceModel       `json:"models"`                 // requestable public model entries
 }
 
+// ModelMarketplaceGroupsFromRouting returns public group DTOs in the supplied
+// order, including an empty nonnil slice for empty input. It allocates group
+// and model records, while attribute pointers, model modality/protocol
+// slices, search texts, and optional scalar pointers can retain routing
+// storage; treat them as read-only during encoding.
 func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) []ModelMarketplaceGroup {
 	out := make([]ModelMarketplaceGroup, 0, len(groups))
 	for _, group := range groups {
@@ -169,7 +256,10 @@ func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) [
 	return out
 }
 
-// modelMarketplaceAvailabilityFromRouting converts probe availability to the public DTO.
+// modelMarketplaceAvailabilityFromRouting maps a probe summary or returns nil
+// when it is unavailable. Bucket records are allocated for the DTO, while
+// availability-rate and latest-check pointers retain the summary's values and
+// storage.
 func modelMarketplaceAvailabilityFromRouting(availability *routing.GroupAvailabilitySummary) *ModelMarketplaceAvailability {
 	if availability == nil {
 		return nil
@@ -195,7 +285,9 @@ func modelMarketplaceAvailabilityFromRouting(availability *routing.GroupAvailabi
 	}
 }
 
-// modelMarketplaceCapacityFromRouting converts group capacity to the public DTO.
+// modelMarketplaceCapacityFromRouting copies current capacity observations
+// into a new DTO. A nil summary remains nil so unavailable capacity can be
+// omitted, while a present summary retains zero observations.
 func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary) *ModelMarketplaceCapacity {
 	if capacity == nil {
 		return nil
@@ -210,7 +302,11 @@ func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary)
 	}
 }
 
-// modelMarketplacePricingFromRouting converts display prices to the HTTP DTO.
+// modelMarketplacePricingFromRouting maps an already resolved display quote
+// without recalculating its amounts. It allocates interval records and daily
+// schedule records, retains existing bound and modifier pointers, and derives
+// optional image prices from size-presence metadata so declared free sizes
+// remain encoded.
 func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) ModelMarketplacePricing {
 	intervals := make([]ModelMarketplacePricingInterval, 0, len(pricing.ContextIntervals))
 	for _, interval := range pricing.ContextIntervals {
@@ -260,7 +356,10 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 	}
 }
 
-// modelMarketplaceTimePricingFromRouting converts time-based pricing rules to the public DTO.
+// modelMarketplaceTimePricingFromRouting copies the daily schedule into new
+// DTO and period storage. A nil configuration remains nil; clock spellings,
+// weekday restriction, timezone, and supplied period order pass through for
+// display.
 func modelMarketplaceTimePricingFromRouting(config *pricing.TimePricingConfig) *ModelMarketplaceTimePricing {
 	if config == nil {
 		return nil
@@ -280,8 +379,16 @@ func modelMarketplaceTimePricingFromRouting(config *pricing.TimePricingConfig) *
 	}
 }
 
-// imagePriceValue preserves a declared zero price and omits undeclared sizes.
+// imagePriceValue returns a quoted image amount or nil when that size is
+// unavailable. A nonempty ImagePriceSizes list is authoritative, so a listed
+// size returns a pointer even when its amount is zero; an unlisted size stays
+// absent regardless of its numeric amount. Legacy records with no size list
+// expose nonzero amounts and omit zero amounts. The returned pointer stores
+// the passed amount, preserving the JSON distinction between a declared free
+// size and an unavailable size.
 func imagePriceValue(price pricing.ModelDisplayPricing, size string, value float64) *float64 {
+	// Quoted size metadata distinguishes free images from missing quotes; an
+	// explicit list takes precedence over legacy numeric amount inference.
 	if len(price.ImagePriceSizes) > 0 {
 		if !slices.Contains(price.ImagePriceSizes, size) {
 			return nil

@@ -4,8 +4,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterPricingRoutes registers pricing routes. The caller installs authentication, rate limits, and auditing on
-// admin.
+// Price administration separates catalog reads and refresh from shared
+// price-card writes. Group administration exposes product settings, current
+// observations, linked keys, and per-user billing overrides through one admin
+// router group, whose caller supplies authentication, rate limiting, and
+// auditing middleware.
+
+// RegisterPricingRoutes binds default catalog queries, manual refresh, and
+// shared price configuration CRUD. The caller installs administrator
+// authentication, rate limits, and auditing on admin before these routes
+// serve requests.
 func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
 	admin.GET("/pricing/defaults", endpoint.ListDefaultPricing)
 	admin.GET("/pricing/defaults/model", endpoint.GetModelDefaultPricing)
@@ -20,7 +28,10 @@ func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
 	}
 }
 
-// RegisterGroupRoutes registers group routes. The caller installs authentication, rate limits, and auditing on admin.
+// RegisterGroupRoutes binds group administration, duplication, summaries,
+// linked keys, and per-user rate or RPM changes. The caller installs
+// administrator authentication, rate limits, and auditing on admin before
+// these routes serve requests.
 func RegisterGroupRoutes(admin *gin.RouterGroup, endpoint *GroupHandler) {
 	groups := admin.Group("/groups")
 	{

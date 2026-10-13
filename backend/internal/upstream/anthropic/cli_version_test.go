@@ -2,11 +2,14 @@ package anthropic
 
 import "testing"
 
+// TestIsSupportedCLIVersion covers pinned, newer, older, shortened, suffixed,
+// and malformed version values. Complete releases at or above the pin pass,
+// including large numeric releases that this validator does not bound.
 func TestIsSupportedCLIVersion(t *testing.T) {
 	cases := []struct {
-		name    string
-		version string
-		want    bool
+		name    string // case display name
+		version string // candidate CLI version
+		want    bool   // expected comparison value
 	}{
 		{"内置基线本身", CLICurrentVersion, true},
 		{"高于基线的补丁位", "2.1.251", true},
@@ -33,11 +36,14 @@ func TestIsSupportedCLIVersion(t *testing.T) {
 	}
 }
 
+// TestResolveCLIVersion covers absent, padded, invalid, older, and valid
+// operational overrides. Valid text is trimmed and selected, while absent or
+// rejected values return the built-in pin.
 func TestResolveCLIVersion(t *testing.T) {
 	cases := []struct {
-		name string
-		raw  string
-		want string
+		name string // case display name
+		raw  string // raw parser input
+		want string // expected comparison value
 	}{
 		{"未配置时用内置基线", "", CLICurrentVersion},
 		{"只有空白等同未配置", "   ", CLICurrentVersion},
@@ -56,7 +62,10 @@ func TestResolveCLIVersion(t *testing.T) {
 	}
 }
 
-// TestDefaultHeadersUserAgentMatchesCLIVersion checks that headers and billing use the same version.
+// TestDefaultHeadersUserAgentMatchesCLIVersion reads the initialized default
+// User-Agent and effective CLI version. The Header contains that exact version
+// with the configured external CLI suffix, keeping template construction
+// consistent.
 func TestDefaultHeadersUserAgentMatchesCLIVersion(t *testing.T) {
 	want := "claude-cli/" + CLIVersion() + " (external, cli)"
 	if got := DefaultHeaders["User-Agent"]; got != want {
@@ -64,14 +73,18 @@ func TestDefaultHeadersUserAgentMatchesCLIVersion(t *testing.T) {
 	}
 }
 
-// TestCLIVersionDefaultsToBuiltinPin checks the default when no override is configured.
+// TestCLIVersionDefaultsToBuiltinPin checks initialization in a test process
+// expected to have no version override. The effective version equals the
+// built-in pin, so an injected environment override would fail this assertion.
 func TestCLIVersionDefaultsToBuiltinPin(t *testing.T) {
 	if got := CLIVersion(); got != CLICurrentVersion {
 		t.Fatalf("CLIVersion() = %q, want built-in pin %q (测试进程未设置 %s)", got, CLICurrentVersion, CLIVersionEnv)
 	}
 }
 
-// TestCLIVersionEnvironmentCompatibility checks precedence of deployment variables.
+// TestCLIVersionEnvironmentCompatibility sets legacy and current deployment
+// variables in sequence. The legacy value is used when the current variable is
+// empty, and a nonempty current value takes precedence.
 func TestCLIVersionEnvironmentCompatibility(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
 	t.Setenv("SUB2API_CLAUDE_CLI_VERSION", "2.2.0")

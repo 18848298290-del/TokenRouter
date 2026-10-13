@@ -4,12 +4,20 @@ import (
 	"testing"
 )
 
+// Trailing-star model patterns accept both populated and empty suffixes while
+// ordinary text requires exact equality. Mapping fixtures check overlapping
+// source selection and unmatched-name retention by calling MatchWildcard
+// directly, including exact strings that the matcher accepts.
+
+// TestMatchWildcard compares exact text, trailing-star prefixes, empty inputs,
+// and a universal star. Each supplied pattern must produce the expected
+// boolean, including acceptance of an empty suffix after its prefix.
 func TestMatchWildcard(t *testing.T) {
 	tests := []struct {
-		name     string
-		pattern  string
-		str      string
-		expected bool
+		name     string // subtest case display name
+		pattern  string // model pattern under test
+		str      string // candidate model string
+		expected bool   // expected pattern match result
 	}{
 		// Exact matches.
 		{"exact match", "claude-sonnet-4-5", "claude-sonnet-4-5", true},
@@ -41,15 +49,18 @@ func TestMatchWildcard(t *testing.T) {
 	}
 }
 
+// TestMatchWildcardMappingResult calls MatchWildcard with exact and overlapping
+// prefix entries. It must choose the longest matching source, retain unmatched
+// names, and return the expected match flag for each supplied map.
 func TestMatchWildcardMappingResult(t *testing.T) {
 	tests := []struct {
-		name           string
-		mapping        map[string]string
-		requestedModel string
-		expected       string
-		matched        bool
+		name           string            // mapping subtest display name
+		mapping        map[string]string // configured source target pairs
+		requestedModel string            // input model for mapping
+		expected       string            // expected selected model name
+		matched        bool              // expected mapping match flag
 	}{
-		// Exact matches take precedence over wildcards.
+		// This exact key wins over the shorter matching prefix in this map.
 		{
 			name: "exact match takes precedence",
 			mapping: map[string]string{

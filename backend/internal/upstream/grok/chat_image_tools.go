@@ -10,8 +10,30 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// StripRedundantGrokChatViewImageTool removes an automatic view_image tool when the
-// current user turn already contains an image, so Grok can answer from that image.
+// A final user Chat message containing an inline image can make an automatic
+// view_image declaration unnecessary for that turn. Historical images do not
+// establish that condition, and a named view_image selection still requires the
+// tool. Required tool choice also needs at least one declaration after
+// filtering.
+//
+// Removal therefore combines current message content with tool-choice intent and
+// the declarations that remain. Other tool definitions keep their order, while
+// JSON encoding can change their whitespace and escaping. When all tools disappear,
+// parallel_tool_calls and an automatic choice are removed with them. The
+// original message content is retained, allowing the native Chat path to use the
+// supplied inline image while caller-selected tool behavior remains
+// representable.
+
+// StripRedundantGrokChatViewImageTool removes automatic view_image declarations
+// for a final user turn with inline images. A named view_image selection or
+// required choice with no other remaining tool keeps the original request. Other
+// non-target requests return their supplied bytes.
+//
+// Filtering resolves function names from the nested Chat declaration or flat
+// name and retains other declarations in order. A populated remainder replaces
+// tools alone. An empty remainder also removes parallel_tool_calls and automatic
+// tool_choice so the resulting Chat request does not carry controls for a
+// removed tool set.
 func StripRedundantGrokChatViewImageTool(body []byte) ([]byte, error) {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -28,6 +50,8 @@ func StripRedundantGrokChatViewImageTool(body []byte) ([]byte, error) {
 	}
 
 	toolChoice := gjson.GetBytes(body, "tool_choice")
+	// A named view_image choice expresses caller intent for this turn; retain its
+	// declaration even when inline images are already present.
 	if toolChoice.IsObject() && strings.TrimSpace(toolChoice.Get("type").String()) == "function" {
 		choiceName := strings.TrimSpace(toolChoice.Get("function.name").String())
 		if choiceName == "" {
@@ -58,6 +82,8 @@ func StripRedundantGrokChatViewImageTool(body []byte) ([]byte, error) {
 	if !changed {
 		return body, nil
 	}
+	// Required tool choice needs an available declaration. Retain the original tool
+	// set when filtering would leave that choice impossible.
 	if len(filtered) == 0 && strings.TrimSpace(toolChoice.String()) == "required" {
 		return body, nil
 	}
@@ -70,6 +96,8 @@ func StripRedundantGrokChatViewImageTool(body []byte) ([]byte, error) {
 		return sjson.SetRawBytes(body, "tools", encoded)
 	}
 
+	// Removing the final declaration also invalidates parallel-tool controls and an
+	// automatic choice, so clear those Chat fields together.
 	out, err := sjson.DeleteBytes(body, "tools")
 	if err != nil {
 		return nil, err

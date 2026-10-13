@@ -8,61 +8,125 @@ import (
 	"time"
 )
 
-// DefaultCreativeWorkerCount is the default task worker pool size.
+// Creative workers share one runtime context but have separate stop channels
+// for pool resizing. Scaling down signals the newest active handles to drain
+// after their current task, while global shutdown cancels the shared context
+// and prevents restart. Draining handles remain tracked until their queue loop
+// exits, although the status active count excludes handles already signaled to
+// stop.
+//
+// The runtime mutex coordinates startup, desired count, handle publication,
+// and shutdown state. A wait group covers worker handles and recovery loops,
+// and done closes after all registered work exits. The first StopContext waits
+// with its caller deadline and publishes a cached result through stopDone;
+// later callers wait for that publication or their own context. A timed-out
+// first stop can therefore report unfinished work while the goroutines
+// continue unwinding.
+
+// DefaultCreativeWorkerCount supplies the target task pool size when startup
+// settings or stored desired counts do not provide a positive worker count.
 const DefaultCreativeWorkerCount = 128
 
 // CreativeWorkerStatus is the pool usage snapshot displayed by the administration API.
 type CreativeWorkerStatus struct {
-	Running     bool `json:"running"`
-	WorkerCount int  `json:"worker_count"`
-	BusyWorkers int  `json:"busy_workers"`
+	Running     bool `json:"running"`      // runtime started and unstopped flag
+	WorkerCount int  `json:"worker_count"` // workers not signaled to drain
+	BusyWorkers int  `json:"busy_workers"` // active queue Process calls
 }
 
+// creativeWorkerHandle identifies one queue loop and its independently
+// signaled drain lifetime.
 type creativeWorkerHandle struct {
-	id       uint64
-	stop     chan struct{}
-	stopping atomic.Bool
+	id uint64 // monotonically assigned worker identifier
+	// stop closes when this handle is selected to drain; stopping records that
+	// request before the close, keeping it out of active worker counts.
+	stop     chan struct{} // queue loop drain signal
+	stopping atomic.Bool   // worker drain requested flag
 }
 
-// CreativeWorkerRuntime owns task workers, queue recovery loops, and configured reconcilers.
+// CreativeWorkerRuntime owns task workers, queue recovery loops, and configured
+// reconcilers.
 type CreativeWorkerRuntime struct {
-	worker  RuntimeWorker
-	options RuntimeOptions
+	worker  RuntimeWorker  // shared queue processing worker
+	options RuntimeOptions // stable runtime startup callbacks
 
-	mu                 sync.Mutex
-	stopped            bool
-	stopDone           chan struct{}
-	stopErr            error
-	cancel             context.CancelFunc
-	ctx                context.Context
-	done               chan struct{}
-	wg                 *sync.WaitGroup
+	// mu protects stopped, stopDone, stopErr, cancel, ctx, done, and wg during
+	// lifecycle publication. The same mutex protects workers, nextWorkerID, and
+	// desiredWorkerCount while handles are started, drained, or removed.
+	mu      sync.Mutex // runtime lifecycle and pool mutex
+	stopped bool       // irreversible runtime stop marker
+	// stopDone and stopErr publish the first shutdown result. Writes hold mu;
+	// later StopContext readers wait for this channel close before reading the
+	// cached error outside the mutex.
+	stopDone chan struct{}      // first stop result publication signal
+	stopErr  error              // cached first shutdown result
+	cancel   context.CancelFunc // shared runtime context cancellation
+	ctx      context.Context    // shared worker and recovery context
+	// all registered goroutines finished signal
+	done chan struct{}
+	wg   *sync.WaitGroup // worker and recovery completion counter
+	// tracked running and draining handles
 	workers            map[uint64]*creativeWorkerHandle
-	nextWorkerID       uint64
-	desiredWorkerCount int
+	nextWorkerID       uint64 // latest assigned worker identifier
+	desiredWorkerCount int    // configured future active pool size
 }
 
-// RuntimeWorker supplies task execution, queue recovery, and busy-worker counts to the runtime.
+// RuntimeWorker supplies task execution, queue recovery, and busy-worker counts
+// to the runtime.
 type RuntimeWorker interface {
+	// RunUntilStopped processes queued work under ctx until cancellation or the
+	// supplied drain signal. A drain permits current work to finish and returns a
+	// reservation acquired after that signal to ready.
 	RunUntilStopped(context.Context, <-chan struct{})
+	// RunDelayedMover polls due delayed work until the runtime context is
+	// cancelled. The runtime owns goroutine completion and waits for this method
+	// before publishing its all-work-finished signal.
 	RunDelayedMover(context.Context)
+	// RunStaleActiveRecovery polls abandoned active work until the runtime
+	// context is cancelled. The runtime waits for this recovery loop along with
+	// worker and other reconciler goroutines during shutdown.
 	RunStaleActiveRecovery(context.Context)
+	// BusyCount returns the shared worker current count of queue-driven Process
+	// calls.
 	BusyCount() int
 }
 
-// RuntimeOptions supplies the enable flag, worker-count reader, and optional outbox/transient recovery loops.
+// RuntimeOptions supplies the enable flag, worker-count reader, and optional
+// outbox/transient recovery loops.
 type RuntimeOptions struct {
-	Enabled     bool
+	Enabled bool // queue runtime startup enable flag
+	// optional startup worker count reader
+	// WorkerCount is read during startup under a separate two-second context.
+	// Nonpositive results use the stored desired count before the runtime default.
+	// The callback observes cancellation itself to bound startup read time.
 	WorkerCount func(context.Context) int
-	Outbox      func(context.Context)
-	Transient   func(context.Context)
+	// Outbox runs recovery under the shared runtime context when configured.
+	// A nil callback completes its registered goroutine immediately; configured
+	// loops return after that context is cancelled.
+	Outbox func(context.Context) // optional outbox recovery loop
+	// Transient runs terminal byte cleanup under the shared runtime context.
+	// A nil callback completes immediately; configured loops return on cancellation
+	// so runtime shutdown can join their registered work.
+	Transient func(context.Context) // optional terminal byte cleanup loop
 }
 
+// NewCreativeWorkerRuntime retains a worker and stable startup options with
+// the default desired count. It starts no goroutines until Start, and callers
+// can set a positive desired count beforehand.
 func NewCreativeWorkerRuntime(worker RuntimeWorker, options RuntimeOptions) *CreativeWorkerRuntime {
 	return &CreativeWorkerRuntime{worker: worker, options: options, desiredWorkerCount: DefaultCreativeWorkerCount}
 }
 
-// Start starts the worker pool and recovery loops once; a stopped runtime cannot restart.
+// Start publishes the shared context, completion signals, and desired pool
+// before starting worker handles and recovery loops. Nil workers, disabled
+// options, prior startup, and an already stopped runtime return directly.
+//
+// Worker count is read before the lifecycle mutex is acquired, and the lock
+// then prevents duplicate startup or concurrent stop publication. Four
+// recovery goroutines are registered even when optional callbacks are absent,
+// while the handle reconciler adds the desired workers. A separate waiter
+// closes done only after the registered wait group reaches completion; a
+// stopped runtime cannot restart.
 func (r *CreativeWorkerRuntime) Start() {
 	if r == nil || r.worker == nil || !r.options.Enabled {
 		return
@@ -82,6 +146,9 @@ func (r *CreativeWorkerRuntime) Start() {
 	r.wg = &sync.WaitGroup{}
 	r.workers = make(map[uint64]*creativeWorkerHandle)
 	r.desiredWorkerCount = desired
+	// Register recovery loops before launching them so the done waiter cannot
+	// publish completion while startup is still adding the initial worker pool.
+	// Their shared context ends with global runtime shutdown.
 	r.wg.Add(4)
 	go func() {
 		defer r.wg.Done()
@@ -106,13 +173,19 @@ func (r *CreativeWorkerRuntime) Start() {
 	r.reconcileWorkersLocked()
 	wg := r.wg
 	done := r.done
+	// Capture this startup wait group and completion channel for the waiter.
+	// Close done after registered workers and recovery loops finish so shutdown
+	// waits on completed work rather than just cancellation publication.
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
 }
 
-// desiredWorkerCountValue prefers a positive configured count, then the stored desired count, then the default.
+// desiredWorkerCountValue reads an optional configured count under a
+// two-second context, then the stored desired count under mu. Only positive
+// results are used; otherwise DefaultCreativeWorkerCount supplies the startup
+// target.
 func (r *CreativeWorkerRuntime) desiredWorkerCountValue() int {
 	if r != nil && r.options.WorkerCount != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -134,7 +207,15 @@ func (r *CreativeWorkerRuntime) desiredWorkerCountValue() int {
 	return DefaultCreativeWorkerCount
 }
 
-// SetWorkerCount resizes the pool; scale-down drains selected workers after their current task.
+// SetWorkerCount changes the desired pool size and reconciles a live runtime
+// under mu. Nil receivers and nonpositive counts return directly, and stopped
+// runtimes retain their completed lifecycle state.
+//
+// Scale-up registers and starts handles immediately; scale-down closes
+// selected handle stop channels after setting their stopping markers. Those
+// loops drain current processing rather than cancelling the shared context. A
+// pre-start change updates the target for later startup, and a draining handle
+// is removed only when its queue loop finishes.
 func (r *CreativeWorkerRuntime) SetWorkerCount(count int) {
 	if r == nil || count <= 0 {
 		return
@@ -151,7 +232,9 @@ func (r *CreativeWorkerRuntime) SetWorkerCount(count int) {
 	r.mu.Unlock()
 }
 
-// WorkerCount returns the desired pool size, including workers not yet started.
+// WorkerCount returns the desired pool size under the lifecycle mutex,
+// including before startup. Nil runtimes return zero, and a nonpositive stored
+// target falls back to the default worker count.
 func (r *CreativeWorkerRuntime) WorkerCount() int {
 	if r == nil {
 		return 0
@@ -164,7 +247,9 @@ func (r *CreativeWorkerRuntime) WorkerCount() int {
 	return r.desiredWorkerCount
 }
 
-// Status returns pool usage, or a zero snapshot while the runtime is stopped.
+// Status reports live runtime state, non-draining handle count, and the shared
+// worker busy count. Stopped or unconfigured runtimes return zero status; busy
+// draining workers can remain counted until their Process call exits.
 func (r *CreativeWorkerRuntime) Status() CreativeWorkerStatus {
 	if r == nil || r.worker == nil {
 		return CreativeWorkerStatus{}
@@ -186,7 +271,15 @@ func (r *CreativeWorkerRuntime) Status() CreativeWorkerStatus {
 	}
 }
 
-// reconcileWorkersLocked adjusts active workers toward the desired count. The caller holds mu.
+// reconcileWorkersLocked adjusts the live handle set toward its positive
+// desired count while the caller holds mu. It returns when startup state is
+// unavailable or the shared context is cancelled.
+//
+// Scale-up registers each handle and wait-group contribution before launching
+// its loop. Scale-down visits identifiers newest first, marking a handle
+// stopping before closing its channel so subsequent counts exclude it. The
+// handles remain stored while draining, allowing runWorkerHandle to remove
+// each completed loop and reconcile any remaining gap under the same mutex.
 func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	if r == nil || r.cancel == nil || r.ctx == nil || r.ctx.Err() != nil || r.wg == nil {
 		return
@@ -207,7 +300,9 @@ func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	if activeCount <= desired {
 		return
 	}
-	// Drain the newest workers first so earlier workers remain available.
+	// Choose newest active handles first for drain. Mark each before closing its
+	// stop channel so another reconciliation counts that pending exit only once
+	// and leaves earlier handles available for new reservations.
 	toStop := activeCount - desired
 	for id := r.nextWorkerID; toStop > 0 && id > 0; id-- {
 		handle, ok := r.workers[id]
@@ -220,7 +315,9 @@ func (r *CreativeWorkerRuntime) reconcileWorkersLocked() {
 	}
 }
 
-// activeWorkerCountLocked counts workers not signaled to drain. The caller holds mu.
+// activeWorkerCountLocked counts tracked handles whose drain marker has not
+// been set. Callers hold mu while reading the map; drained but unfinished
+// loops are excluded from the returned active target count.
 func (r *CreativeWorkerRuntime) activeWorkerCountLocked() int {
 	active := 0
 	for _, handle := range r.workers {
@@ -231,6 +328,15 @@ func (r *CreativeWorkerRuntime) activeWorkerCountLocked() int {
 	return active
 }
 
+// runWorkerHandle runs one queue loop and removes its handle after that loop
+// returns. Its wait-group contribution ends only after removal and any live
+// pool reconciliation completes.
+//
+// Removal and reconciliation share mu so concurrent resizing sees a consistent
+// handle map. A live context can start replacement handles when desired
+// capacity is still unmet; cancellation prevents replacement during shutdown.
+// The worker receives the per-handle stop channel for draining and the shared
+// runtime context for global cancellation.
 func (r *CreativeWorkerRuntime) runWorkerHandle(ctx context.Context, handle *creativeWorkerHandle) {
 	defer r.wg.Done()
 	r.worker.RunUntilStopped(ctx, handle.stop)
@@ -242,10 +348,20 @@ func (r *CreativeWorkerRuntime) runWorkerHandle(ctx context.Context, handle *cre
 	r.mu.Unlock()
 }
 
-// Stop cancels the runtime and waits without a deadline; bounded shutdown uses StopContext.
+// Stop cancels runtime work and waits using a background context with no
+// deadline. It discards the StopContext result; callers requiring bounded
+// shutdown use StopContext with their own timeout.
 func (r *CreativeWorkerRuntime) Stop() { _ = r.StopContext(context.Background()) }
 
-// StopContext cancels the runtime and caches the first stop result; a timeout may leave work in flight.
+// StopContext permanently stops the runtime and waits for registered work
+// within the caller context. Nil receivers succeed, while the first caller
+// owns cancellation and first-stop result publication.
+//
+// The stopped marker prevents further startup and resizing before the shared
+// context is cancelled outside mu. A deadline can leave goroutines unwinding
+// and becomes the cached first stop error. stopDone closes after that result
+// is stored. Later callers wait for publication or their own cancellation, so
+// their deadline can return independently of the cached first result.
 func (r *CreativeWorkerRuntime) StopContext(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -261,6 +377,9 @@ func (r *CreativeWorkerRuntime) StopContext(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	// Publish irreversible stop state under mu before cancelling outside it.
+	// Concurrent callers then wait on stopDone rather than starting another
+	// cancellation-and-result publisher for the same runtime.
 	r.stopped = true
 	r.stopDone = make(chan struct{})
 	cancel := r.cancel
@@ -284,7 +403,9 @@ func (r *CreativeWorkerRuntime) StopContext(ctx context.Context) error {
 	return err
 }
 
-// Running reports whether the runtime has started and has not been stopped.
+// Running reports whether startup installed cancellation and the runtime has
+// not been stopped. Nil runtimes report false, and the lifecycle mutex
+// protects the read against concurrent start or stop.
 func (r *CreativeWorkerRuntime) Running() bool {
 	if r == nil {
 		return false

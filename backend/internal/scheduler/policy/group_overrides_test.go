@@ -7,10 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// groupAdvancedSchedulerOverrideTestPointer returns a new pointer to the
+// supplied value. Each call copies that value into separate pointer storage;
+// any nested references retain the copied value's ordinary Go ownership.
 func groupAdvancedSchedulerOverrideTestPointer[T any](value T) *T {
 	return &value
 }
 
+// groupAdvancedSchedulerOverrideTestWeights returns distinct factor values for
+// scheduler precedence assertions.
 func groupAdvancedSchedulerOverrideTestWeights() ScoreWeights {
 	return ScoreWeights{
 		Priority:      1,
@@ -25,6 +30,10 @@ func groupAdvancedSchedulerOverrideTestWeights() ScoreWeights {
 	}
 }
 
+// TestResolveAdvancedSchedulerEffectiveSettingsPrefersGroupOverrides merges
+// process, runtime, and sparse group scheduler values. It checks group-setting
+// precedence, explicit false and zero overrides, and runtime inheritance for
+// omitted weight factors.
 func TestResolveAdvancedSchedulerEffectiveSettingsPrefersGroupOverrides(t *testing.T) {
 	settings := ResolveEffective(
 		7,
@@ -82,6 +91,10 @@ func TestResolveAdvancedSchedulerEffectiveSettingsPrefersGroupOverrides(t *testi
 	require.InDelta(t, 0.25, settings.StickyEscape.ErrorRate, 0.000001)
 }
 
+// TestResolveAdvancedSchedulerEffectiveSettingsKeepsExplicitZeroWeights
+// supplies a group priority weight of zero over a positive global value. It
+// checks that zero remains effective and absent load and queue weights stay
+// zero.
 func TestResolveAdvancedSchedulerEffectiveSettingsKeepsExplicitZeroWeights(t *testing.T) {
 	settings := ResolveEffective(
 		7,
@@ -99,6 +112,9 @@ func TestResolveAdvancedSchedulerEffectiveSettingsKeepsExplicitZeroWeights(t *te
 	require.Zero(t, settings.Weights.Queue)
 }
 
+// TestResolveAdvancedSchedulerEffectiveSettingsRejectsOverflowingMergedWeightsAtRuntime
+// combines finite group weights whose base sum overflows. It requires recovery
+// to the global weight set and a finite, non-NaN complete sum.
 func TestResolveAdvancedSchedulerEffectiveSettingsRejectsOverflowingMergedWeightsAtRuntime(t *testing.T) {
 	globalWeights := ScoreWeights{
 		Priority: 1,
@@ -119,6 +135,9 @@ func TestResolveAdvancedSchedulerEffectiveSettingsRejectsOverflowingMergedWeight
 	require.False(t, math.IsInf(settings.Weights.TotalWeightSum(), 0))
 }
 
+// TestValidateAdvancedSchedulerEffectiveWeightsAllowsZeroBaseAndRejectsOverflow
+// compares a sticky-only weight set with an overflowing base set. It accepts
+// the zero-base policy and rejects the unusable combined values.
 func TestValidateAdvancedSchedulerEffectiveWeightsAllowsZeroBaseAndRejectsOverflow(t *testing.T) {
 	require.NoError(t, ValidateEffectiveWeights(ScoreWeights{
 		Previous:      5,
@@ -130,11 +149,15 @@ func TestValidateAdvancedSchedulerEffectiveWeightsAllowsZeroBaseAndRejectsOverfl
 	}))
 }
 
+// TestValidateGroupAdvancedSchedulerOverrides checks sparse false and zero
+// overrides alongside invalid sizes, coefficients, thresholds, and weights. It
+// requires each scenario's expected validation outcome, including a fully zero
+// base.
 func TestValidateGroupAdvancedSchedulerOverrides(t *testing.T) {
 	tests := []struct {
-		name      string
-		overrides GroupAdvancedSchedulerOverrides
-		wantError bool
+		name      string                          // override validation scenario name
+		overrides GroupAdvancedSchedulerOverrides // supplied sparse scheduler values
+		wantError bool                            // expected validation failure flag
 	}{
 		{
 			name: "sparse explicit zero is valid",
@@ -205,6 +228,10 @@ func TestValidateGroupAdvancedSchedulerOverrides(t *testing.T) {
 	}
 }
 
+// TestCloneGroupAdvancedSchedulerOverridesDeepCopiesPointers clones several
+// populated override pointers and changes two copied numeric values. It checks
+// distinct tested pointers and unchanged source Top-K and previous-response
+// weight values.
 func TestCloneGroupAdvancedSchedulerOverridesDeepCopiesPointers(t *testing.T) {
 	overrides := GroupAdvancedSchedulerOverrides{
 		StickyWeightedEnabled:       groupAdvancedSchedulerOverrideTestPointer(false),

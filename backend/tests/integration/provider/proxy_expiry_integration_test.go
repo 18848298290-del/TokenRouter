@@ -18,20 +18,41 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Expired proxy policy may clear a provider's proxy, move it to a healthy
+// backup, or retain the selected proxy. Transaction-owned PostgreSQL fixtures
+// check those choices, record the original proxy for fallback paths, and
+// inspect the affected-provider scheduling event.
+
+// ProxyExpirySuite checks proxy-expiry policy and provider references inside
+// PostgreSQL transactions.
 type ProxyExpirySuite struct {
-	suite.Suite
-	ctx  context.Context
-	tx   *dbent.Tx
-	repo *postgres.ProxyStore
+	suite.Suite // test assertions and runner
+	// ctx, tx, and repo share one transaction for the current suite test.
+	// Proxy and provider fixture writes use that transaction, whose rollback
+	// is registered by testEntTx at cleanup.
+	ctx  context.Context      // current expiry-test query context
+	tx   *dbent.Tx            // rollback-owned PostgreSQL fixture transaction
+	repo *postgres.ProxyStore // proxy expiry store under test
 }
 
+// SetupTest creates a rollback-owned Ent transaction for proxy-expiry
+// assertions. The proxy store and provider cleanup participant share that
+// executor, and testEntTx registers transaction cleanup after the case
+// completes.
 func (s *ProxyExpirySuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tx = testEntTx(s.T())
 	s.repo = newProxyStoreContract(s.tx.Client(), s.tx)
 }
+
+// TestProxyExpirySuite runs expiry policy cases against transaction-owned
+// PostgreSQL fixtures. The suite compares provider proxy references, recorded
+// fallback origins, proxy status, and scheduling events after each sweep.
 func TestProxyExpirySuite(t *testing.T) { suite.Run(t, new(ProxyExpirySuite)) }
 
+// mkProxy persists an active HTTP proxy with the requested expiry and fallback
+// policy, returning its database ID. The suite transaction owns cleanup, and
+// backupID may be nil when no backup is selected.
 func (s *ProxyExpirySuite) mkProxy(name, mode string, expiresAt *time.Time, backupID *int64) int64 {
 	p := &egress.Proxy{
 		Name: name, Protocol: "http", Host: "127.0.0.1", Port: 8080,
@@ -42,6 +63,9 @@ func (s *ProxyExpirySuite) mkProxy(name, mode string, expiresAt *time.Time, back
 	return p.ID
 }
 
+// mkProviderWithProxy inserts a provider linked to proxyID and returns its
+// database identity. It uses legacy fixture platform and type strings because
+// these cases inspect proxy references; the suite transaction owns removal.
 func (s *ProxyExpirySuite) mkProviderWithProxy(proxyID int64) int64 {
 	var id int64
 	err := postgresinfra.ScanSingleRow(s.ctx, s.tx, `
@@ -52,6 +76,9 @@ func (s *ProxyExpirySuite) mkProviderWithProxy(proxyID int64) int64 {
 	return id
 }
 
+// providerProxyID reads the provider's nullable proxy reference through the
+// suite transaction. A nil result represents direct connectivity; scan errors
+// fail the test before its caller inspects the reference.
 func (s *ProxyExpirySuite) providerProxyID(id int64) *int64 {
 	var pid *int64
 	err := postgresinfra.ScanSingleRow(s.ctx, s.tx, `SELECT proxy_id FROM providers WHERE id=$1`, []any{id}, &pid)
@@ -59,6 +86,9 @@ func (s *ProxyExpirySuite) providerProxyID(id int64) *int64 {
 	return pid
 }
 
+// TestSweep_DirectMode expires a proxy configured for direct fallback and
+// sweeps it. The proxy becomes expired, the provider's selected proxy is
+// cleared, and its fallback origin records the expired proxy ID.
 func (s *ProxyExpirySuite) TestSweep_DirectMode() {
 	past := time.Now().Add(-time.Hour)
 	pid := s.mkProxy("p-direct", egress.FallbackModeDirect, &past, nil)
@@ -68,6 +98,8 @@ func (s *ProxyExpirySuite) TestSweep_DirectMode() {
 	s.Require().NoError(err)
 	s.Require().GreaterOrEqual(changed, int64(1))
 
+	// This status check discards the lookup error; a nil record fails at the
+	// following dereference, while the suite transaction still owns fixture cleanup.
 	got, _ := s.repo.GetByID(s.ctx, pid)
 	s.Require().Equal(billing.StatusExpired, got.Status)
 	s.Require().Nil(s.providerProxyID(aid))
@@ -78,6 +110,10 @@ func (s *ProxyExpirySuite) TestSweep_DirectMode() {
 	s.Require().Equal(pid, *origin)
 }
 
+// TestSweep_EnqueuesChangedProviderIDsWithoutFullRebuild expires two
+// direct-fallback proxies with one linked provider each. Their IDs appear in
+// the ordered bulk-change payload, and the transaction contains no full-rebuild
+// event.
 func (s *ProxyExpirySuite) TestSweep_EnqueuesChangedProviderIDsWithoutFullRebuild() {
 	past := time.Now().Add(-time.Hour)
 	firstProxyID := s.mkProxy("p-bulk-first", egress.FallbackModeDirect, &past, nil)
@@ -99,7 +135,7 @@ func (s *ProxyExpirySuite) TestSweep_EnqueuesChangedProviderIDsWithoutFullRebuil
 	s.Require().NoError(err)
 
 	var payload struct {
-		ProviderIDs []int64 `json:"provider_ids"`
+		ProviderIDs []int64 `json:"provider_ids"` // ordered affected-provider ID list
 	}
 	s.Require().NoError(json.Unmarshal(payloadRaw, &payload))
 	s.Require().Equal([]int64{firstProviderID, secondProviderID}, payload.ProviderIDs)
@@ -113,6 +149,9 @@ func (s *ProxyExpirySuite) TestSweep_EnqueuesChangedProviderIDsWithoutFullRebuil
 	s.Require().Zero(fullRebuildCount)
 }
 
+// TestSweep_ProxyMode_Healthy gives an expired proxy an active backup whose
+// expiry lies in the future. Sweeping switches the linked provider to that
+// backup and records the expired proxy as fallback origin.
 func (s *ProxyExpirySuite) TestSweep_ProxyMode_Healthy() {
 	future := time.Now().Add(24 * time.Hour)
 	past := time.Now().Add(-time.Hour)
@@ -130,6 +169,9 @@ func (s *ProxyExpirySuite) TestSweep_ProxyMode_Healthy() {
 	s.Require().Equal(pid, *origin)
 }
 
+// TestSweep_NoneMode_KeepsProvider expires a proxy whose fallback policy leaves
+// its connection selected. The sweep marks the proxy expired, retains the
+// provider reference, and leaves its fallback origin unset.
 func (s *ProxyExpirySuite) TestSweep_NoneMode_KeepsProvider() {
 	past := time.Now().Add(-time.Hour)
 	pid := s.mkProxy("p-none", egress.FallbackModeNone, &past, nil)
@@ -137,6 +179,8 @@ func (s *ProxyExpirySuite) TestSweep_NoneMode_KeepsProvider() {
 
 	_, err := s.repo.SweepExpiredProxies(s.ctx, time.Now())
 	s.Require().NoError(err)
+	// This status check discards the lookup error; a nil record fails at the
+	// following dereference, while the suite transaction still owns fixture cleanup.
 	got, _ := s.repo.GetByID(s.ctx, pid)
 	s.Require().Equal(billing.StatusExpired, got.Status)
 	s.Require().Equal(pid, *s.providerProxyID(aid))

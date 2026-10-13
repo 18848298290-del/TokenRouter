@@ -16,24 +16,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// HTTP fixtures capture the owner and submission metadata passed to use cases
+// and count stream closure and download recording. The tests exercise malformed
+// JSON ordering, successful response delivery, and alias expansion across
+// multiple platform rows sharing a target model.
+
+// contractBatchUseCases captures submission inputs and counts download
+// recording for focused HTTP handler tests.
 type contractBatchUseCases struct {
-	UseCases
-	owner  batchimage.BatchImageOwner
-	input  batchimage.BatchImageSubmitRequest
-	key    string
-	marked atomic.Int64
+	// UseCases remains nil in these fixtures and satisfies unexercised method
+	// requirements through embedding. Tests invoke the overridden methods; calling
+	// a remaining embedded method would panic through that nil interface.
+	UseCases // unused methods delegated through embedding
+	// owner, input, and key retain the most recent Submit arguments for handler
+	// assertions. Submit assigns the values directly, so input's nested references
+	// remain shared with the passed request.
+	owner  batchimage.BatchImageOwner         // last submitted owner value
+	input  batchimage.BatchImageSubmitRequest // last submitted request value
+	key    string                             // last submitted idempotency key
+	marked atomic.Int64                       // observed download recording count
 }
 
+// contractDownload supplies an image body whose closure is observable in
+// HTTP handler tests.
 type contractDownload struct {
-	DownloadUseCases
-	closed atomic.Int64
+	// DownloadUseCases remains nil while its overridden OpenItemContent
+	// supplies the tested stream. Tests use that method; invoking the embedded
+	// StreamZip method would panic through the nil interface.
+	DownloadUseCases              // unused methods delegated through embedding
+	closed           atomic.Int64 // observed image body closures
 }
 
+// contractBody wraps fixture image bytes and counts Close calls for the
+// download response test.
 type contractBody struct {
-	io.Reader
-	closed *atomic.Int64
+	io.Reader // fixture image byte reader
+	// closed points to the owning contractDownload counter, so closing a
+	// returned body contributes to the same observation inspected after the HTTP
+	// request finishes.
+	closed *atomic.Int64 // shared body closure counter
 }
 
+// Submit captures the supplied owner, input, and idempotency key for assertions.
+// It returns an empty public batch successfully; the captured input retains
+// the reference fields of the handler's submitted value.
 func (s *contractBatchUseCases) Submit(_ context.Context, owner batchimage.BatchImageOwner, input batchimage.BatchImageSubmitRequest, key string) (*batchimage.BatchImagePublicBatch, error) {
 	s.owner = owner
 	s.input = input
@@ -41,18 +67,27 @@ func (s *contractBatchUseCases) Submit(_ context.Context, owner batchimage.Batch
 	return &batchimage.BatchImagePublicBatch{}, nil
 }
 
+// MarkDownloaded increments the fixture's observed successful-delivery count
+// and returns nil.
 func (s *contractBatchUseCases) MarkDownloaded(context.Context, batchimage.BatchImageOwner, string) error {
 	s.marked.Add(1)
 	return nil
 }
 
+// Close increments the shared stream-closure count and returns success.
 func (b contractBody) Close() error { b.closed.Add(1); return nil }
 
+// OpenItemContent returns fixed PNG metadata and a close-counting image stream.
+// The handler owns closing that stream after copying; each opened body uses
+// the same fixture counter for assertions.
 func (d *contractDownload) OpenItemContent(context.Context, batchimage.BatchImageOwner, string, string, int) (*batchimage.BatchImageContentStream, error) {
 	return &batchimage.BatchImageContentStream{Reader: contractBody{Reader: strings.NewReader("image-data"), closed: &d.closed}, ContentType: "image/png", Filename: "output.png"}, nil
 }
 
-// TestBatchHTTPSubmitProjectionAndParseOrder checks payer, session, and idempotency inputs at the HTTP boundary.
+// TestBatchHTTPSubmitProjectionAndParseOrder sends malformed JSON before a
+// valid authenticated submission. It checks parsing precedes owner lookup and
+// that successful submission receives payer, API key, session, and idempotency
+// values.
 func TestBatchHTTPSubmitProjectionAndParseOrder(t *testing.T) {
 	usecases := &contractBatchUseCases{}
 	var authCalls atomic.Int64
@@ -79,7 +114,9 @@ func TestBatchHTTPSubmitProjectionAndParseOrder(t *testing.T) {
 	require.Equal(t, "session-1", *usecases.input.SessionID)
 }
 
-// TestBatchHTTPDownloadClosesStream checks stream closure and download recording after the response.
+// TestBatchHTTPDownloadClosesStream reads one fixture image through the HTTP
+// handler. It checks the body and attachment metadata, then observes one stream
+// close and one successful-download recording call.
 func TestBatchHTTPDownloadClosesStream(t *testing.T) {
 	usecases := &contractBatchUseCases{}
 	download := &contractDownload{}
@@ -96,6 +133,9 @@ func TestBatchHTTPDownloadClosesStream(t *testing.T) {
 	require.Equal(t, int64(1), usecases.marked.Load())
 }
 
+// TestAppendBatchImageAPIKeyModelAliasesPreservesProvider maps an exact alias
+// to a model with two platform rows. Both alias rows retain their platforms,
+// and the wildcard source adds no advertised model entry.
 func TestAppendBatchImageAPIKeyModelAliasesPreservesProvider(t *testing.T) {
 	models := AppendBatchImageAPIKeyModelAliases([]batchimage.BatchImagePublicModel{
 		{ID: "gemini-image", Object: "image.batch.model", Platform: "gemini"},

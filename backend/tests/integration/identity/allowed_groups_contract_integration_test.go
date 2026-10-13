@@ -17,17 +17,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Removing an allowed-group grant affects every user row that names the target
+// group, while deleting a group retains a key's stored group ID. PostgreSQL
+// transaction cases inspect removed user grants, remaining unrelated grants,
+// hidden deleted groups, and a nil loaded group on the still-bound key.
+
+// uniqueTestValue returns prefix plus the test name with slashes and spaces
+// replaced by underscores.
 func uniqueTestValue(t *testing.T, prefix string) string {
 	t.Helper()
 	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
 	return fmt.Sprintf("%s-%s", prefix, safeName)
 }
 
+// TestUserRepository_RemoveGroupFromAllowedGroups_RemovesAllOccurrences grants
+// a target group to two users and another group to a third. Removal reports two
+// affected users and retains the first user's other grant.
 func TestUserRepository_RemoveGroupFromAllowedGroups_RemovesAllOccurrences(t *testing.T) {
 	ctx := context.Background()
 	_, client := identityDatabase(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
+	// Keep all seeded grants and deletion observations inside this transaction;
+	// cleanup rolls them back before the cloned database closes, discarding
+	// repeated-completion errors.
 	t.Cleanup(func() { _ = tx.Rollback() })
 	entClient := tx.Client()
 
@@ -88,11 +101,17 @@ func TestUserRepository_RemoveGroupFromAllowedGroups_RemovesAllOccurrences(t *te
 	require.NotContains(t, u2After.AllowedGroups, targetGroup.ID)
 }
 
+// TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID deletes a group used
+// by a key and user grant. Reads hide the group and remove its grant while the
+// key retains GroupID with a nil group.
 func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 	ctx := context.Background()
 	_, client := identityDatabase(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
+	// Keep all seeded grants and deletion observations inside this transaction;
+	// cleanup rolls them back before the cloned database closes, discarding
+	// repeated-completion errors.
 	t.Cleanup(func() { _ = tx.Rollback() })
 	entClient := tx.Client()
 
@@ -149,7 +168,9 @@ func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 	require.NotContains(t, uAfter.AllowedGroups, targetGroup.ID)
 	require.Contains(t, uAfter.AllowedGroups, otherGroup.ID)
 
-	// Keep group_id so authentication can reject keys bound to deleted groups.
+	// Retain the stored group ID while the loaded group disappears, leaving the
+	// deleted binding identifiable when authentication later evaluates this key's
+	// group availability.
 	keyAfter, err := apiKeyRepo.GetByID(ctx, key.ID)
 	require.NoError(t, err)
 	require.NotNil(t, keyAfter.GroupID)

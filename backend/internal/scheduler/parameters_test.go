@@ -11,9 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// parameterSourceStub supplies individual and batch reads for parameter tests.
-type parameterSourceStub struct{ values map[string]string }
+// parameterSourceStub provides scheduler text for parsing and precedence
+// tests. Both readers return nil errors, allowing these tests to isolate
+// inheritance and recovery from the supplied setting values.
+type parameterSourceStub struct {
+	// values borrows the configured setting map. Tests finish all map writes
+	// before parameter reads and keep this shared storage stable during them.
+	values map[string]string // configured setting text values
+}
 
+// TestParameters_DBOverridesConfig combines process defaults with selected
+// persistent scheduler overrides. It checks effective Top-K, weights,
+// independent feedback alphas, and escape settings while omitted factors
+// retain process values.
 func TestParameters_DBOverridesConfig(t *testing.T) {
 	defaults := DefaultParameters()
 	defaults.TopK = 11
@@ -59,6 +69,10 @@ func TestParameters_DBOverridesConfig(t *testing.T) {
 	require.InDelta(t, 0.25, effective.StickyEscape.ErrorRate, 0.000001)
 }
 
+// TestParameters_InvalidWeightSumsFallBackToConfig supplies invalid weight
+// text and finite overrides whose merged sums overflow. Each case requires the
+// configured coefficients; the overflow cases protect recovery of the complete
+// weight set. Invalid single text is omitted by settings parsing.
 func TestParameters_InvalidWeightSumsFallBackToConfig(t *testing.T) {
 	base := policy.ScoreWeights{
 		Priority: 1, Load: 2, Queue: 3, ErrorRate: 4, TTFT: 5, Reset: 6,
@@ -66,8 +80,8 @@ func TestParameters_InvalidWeightSumsFallBackToConfig(t *testing.T) {
 	}
 	maxFloat := strconv.FormatFloat(math.MaxFloat64, 'g', -1, 64)
 	tests := []struct {
-		name   string
-		values map[string]string
+		name   string            // weight recovery scenario name
+		values map[string]string // supplied persistent weight overrides
 	}{
 		{
 			name: "invalid single value",
@@ -103,6 +117,9 @@ func TestParameters_InvalidWeightSumsFallBackToConfig(t *testing.T) {
 	}
 }
 
+// GetMultiple returns a fresh map containing requested keys present in the
+// fixture. Missing entries stay absent and the method reports no read error,
+// letting parameter tests isolate parsing and inheritance behavior.
 func (s *parameterSourceStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, key := range keys {
@@ -113,6 +130,9 @@ func (s *parameterSourceStub) GetMultiple(_ context.Context, keys []string) (map
 	return out, nil
 }
 
+// GetValue returns configured text for one setting or empty text when absent.
+// It reports no source failure, so fixture recovery paths interpret the empty
+// result through their ordinary inheritance rules.
 func (s *parameterSourceStub) GetValue(_ context.Context, key string) (string, error) {
 	return s.values[key], nil
 }

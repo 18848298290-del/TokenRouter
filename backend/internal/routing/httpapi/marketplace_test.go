@@ -12,31 +12,43 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// marketplaceHTTPGroups supplies a public group with an active provider.
+// marketplaceHTTPGroups supplies one group with provider membership for
+// market browsing tests.
 type marketplaceHTTPGroups struct{}
 
-// marketplaceHTTPCapacity counts capacity queries triggered by HTTP parameters.
-type marketplaceHTTPCapacity struct{ calls int }
+// marketplaceHTTPCapacity records capacity reads initiated by marketplace
+// HTTP requests.
+type marketplaceHTTPCapacity struct {
+	calls int // observed capacity reader calls
+}
 
-// marketplaceHTTPModels supplies a requestable model for capacity-parameter tests.
+// marketplaceHTTPModels supplies a visible requestable model for capacity
+// parameter tests.
 type marketplaceHTTPModels struct{}
 
+// ListActive returns one fixture group with an active provider association.
 func (marketplaceHTTPGroups) ListActive(context.Context) ([]routing.Group, error) {
 	return []routing.Group{{ID: 1, ActiveProviderCount: 1}}, nil
 }
 
+// GetGroupCapacityByIDs counts a capacity read and returns the fixture
+// group's zero summary. The requested IDs are ignored so the test isolates
+// whether the HTTP capacity option initiates a read.
 func (s *marketplaceHTTPCapacity) GetGroupCapacityByIDs(context.Context, []int64) (map[int64]routing.GroupCapacitySummary, error) {
 	s.calls++
 	return map[int64]routing.GroupCapacitySummary{1: {}}, nil
 }
 
-// TestMarketplaceCapacityQuery checks the default, opt-out, and invalid capacity parameters.
+// TestMarketplaceCapacityQuery serves default, enabled, disabled, and
+// malformed capacity options. It checks response status, reader call count,
+// capacity JSON presence, and continued model visibility for successful
+// queries.
 func TestMarketplaceCapacityQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
-		query  string
-		status int
-		calls  int
+		query  string // URL capacity query suffix
+		status int    // expected HTTP response status
+		calls  int    // expected capacity reader calls
 	}{
 		{"", 200, 1},
 		{"?include_capacity=true", 200, 1},
@@ -64,10 +76,15 @@ func TestMarketplaceCapacityQuery(t *testing.T) {
 	}
 }
 
+// ResolveRequestableModels returns one fixture model for every group catalog
+// query.
 func (marketplaceHTTPModels) ResolveRequestableModels(context.Context, *int64, string) routing.RequestableModelsResult {
 	return routing.RequestableModelsResult{Models: []routing.RequestableModel{{ID: "model"}}}
 }
 
+// Prefetch declines prefetched provider data for the HTTP fixture. The false
+// result makes Marketplace resolve the visible group through its single-group
+// resolver, which returns the model used by these assertions.
 func (marketplaceHTTPModels) Prefetch(context.Context) ([]routing.CatalogueProvider, bool, error) {
 	return nil, false, nil
 }

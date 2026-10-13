@@ -8,16 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolveRebateRatePercent_PerUserOverride checks custom rate precedence,
-// global defaults for nil overrides, and clamping of out-of-range overrides.
+// Custom inviter percentages use a separate nil state so clearing an override
+// can return to global policy while an explicit zero disables that inviter's
+// reward. Focused tests exercise percentage validation, email masking
+// examples, and accepted normalized invitation-code text.
+
+// TestResolveRebateRatePercent_PerUserOverride compares a nil override with
+// custom, zero, excessive, and negative values.
 //
-// A nil settings reader makes globalRebateRatePercent return the default,
-// exercising the missing-reader path.
+// It protects custom-rate precedence and endpoint clamping while the missing
+// settings reader supplies the global default.
 func TestResolveRebateRatePercent_PerUserOverride(t *testing.T) {
 	t.Parallel()
 	svc := &AffiliateService{}
 
-	// A nil override uses the global default.
+	// Compare default, custom, zero, and clamped percentages with a 1e-9
+	// tolerance so these policy assertions accept tiny float representation
+	// differences. A nil override uses the global default.
 	require.InDelta(t, AffiliateRebateRateDefault,
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{}), 1e-9)
 
@@ -42,7 +49,11 @@ func TestResolveRebateRatePercent_PerUserOverride(t *testing.T) {
 		svc.resolveRebateRatePercent(context.Background(), &AffiliateSummary{AffRebateRatePercent: &tooLow}), 1e-9)
 }
 
-// TestIsEnabled_NilSettingServiceReturnsDefault checks that a missing settings reader disables affiliates.
+// TestIsEnabled_NilSettingServiceReturnsDefault constructs a service without
+// a settings reader.
+//
+// It checks that IsEnabled returns both false and the configured affiliate
+// default for that missing dependency.
 func TestIsEnabled_NilSettingServiceReturnsDefault(t *testing.T) {
 	t.Parallel()
 	svc := &AffiliateService{}
@@ -50,8 +61,10 @@ func TestIsEnabled_NilSettingServiceReturnsDefault(t *testing.T) {
 	require.Equal(t, AffiliateEnabledDefault, svc.IsEnabled(context.Background()))
 }
 
-// TestValidateExclusiveRate_BoundaryAndInvalid checks that nil clears the override,
-// finite in-range values pass, and NaN, infinity, and out-of-range values fail.
+// TestValidateExclusiveRate_BoundaryAndInvalid passes nil, finite boundary
+// and interior percentages, out-of-range numbers, NaN, and both infinities.
+//
+// It checks that only nil or accepted finite percentages pass validation.
 func TestValidateExclusiveRate_BoundaryAndInvalid(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, validateExclusiveRate(nil))
@@ -72,6 +85,10 @@ func TestValidateExclusiveRate_BoundaryAndInvalid(t *testing.T) {
 	require.Error(t, validateExclusiveRate(&negInf))
 }
 
+// TestMaskEmail supplies an ordinary email, a one-character local part with
+// an undotted domain, and empty text.
+//
+// It protects their exact masks and the empty-string result.
 func TestMaskEmail(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "a***@g***.com", maskEmail("alice@gmail.com"))
@@ -79,17 +96,21 @@ func TestMaskEmail(t *testing.T) {
 	require.Equal(t, "", maskEmail(""))
 }
 
+// TestIsValidAffiliateCodeFormat supplies generated-style and
+// administrator-style normalized codes alongside invalid byte lengths and
+// characters.
+//
+// It protects uppercase ASCII admission, permitted punctuation, and rejection
+// of lowercase or non-ASCII text.
 func TestIsValidAffiliateCodeFormat(t *testing.T) {
 	t.Parallel()
 
-	// The validator accepts both generated and custom codes:
-	// generated codes use 12 characters from A-Z excluding I/O and digits 2-9;
-	// custom codes include values such as "VIP2026" and "NEW_USER-1".
-	// The shared format is [A-Z0-9_-]{4,32}; callers uppercase input first.
+	// Generated codes use a smaller alphabet, while administrator codes may
+	// include I, O, 0, and 1 under the shared format rules.
 	cases := []struct {
-		name string
-		in   string
-		want bool
+		name string // test case description
+		in   string // supplied code text
+		want bool   // expected format admission
 	}{
 		{"valid canonical 12-char", "ABCDEFGHJKLM", true},
 		{"valid all digits 2-9", "234567892345", true},

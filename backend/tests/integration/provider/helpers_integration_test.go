@@ -19,17 +19,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// failConfigurationOutbox simulates a scheduler outbox write failure.
-type failConfigurationOutbox struct{ providerEventsFixture }
+// PostgreSQL fixtures write through the Ent client supplied by each test.
+// Creation helpers fill domain objects with saved identities and timestamps,
+// while transaction helpers register rollback cleanup and the failing outbox
+// adapter injects a database error on the transaction connection.
 
-// Write returns a database error that aborts the configuration transaction.
+// failConfigurationOutbox injects a database error through the configuration
+// transaction's event writer.
+type failConfigurationOutbox struct {
+	providerEventsFixture // other provider event operations
+}
+
+// Write executes an insert into a nonexistent table on the supplied executor.
+// Using the same transaction connection makes PostgreSQL abort the enclosing
+// configuration transaction so rollback assertions can observe its unchanged
+// row.
 func (failConfigurationOutbox) Write(ctx context.Context, exec postgresinfra.Executor, _ providerpostgres.ProviderEvent, _, _ *int64, _ any) error {
-	// Fail on the transaction connection so configuration changes roll back with the outbox write.
+	// Use the configuration transaction's executor for this missing-table insert
+	// so PostgreSQL aborts that transaction and the test can inspect rollback.
 	_, err := exec.ExecContext(ctx, "INSERT INTO test_missing_outbox_fixture DEFAULT VALUES")
 	return err
 }
 
-// mustCreateGroup applies fixture defaults, creates a group, and fills its database identity and timestamps.
+// mustCreateGroup creates a group with default protocols and active status when
+// those inputs are absent. It mutates the supplied group with saved identity
+// and timestamps; the test's transaction or cleanup owns the inserted row.
 func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *routing.Group {
 	t.Helper()
 	ctx := context.Background()
@@ -67,7 +81,9 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *routing.Group) *rout
 	return g
 }
 
-// mustBindProviderToGroup creates a provider/group membership.
+// mustBindProviderToGroup persists a membership between existing provider and
+// group IDs. It fails the test on a database error; cleanup belongs to the
+// transaction or test that created those records.
 func mustBindProviderToGroup(t *testing.T, client *dbent.Client, providerID, groupID int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -79,7 +95,10 @@ func mustBindProviderToGroup(t *testing.T, client *dbent.Client, providerID, gro
 	require.NoError(t, err, "create provider_group")
 }
 
-// mustCreateProxy applies fixture defaults, creates a proxy, and fills its database identity and timestamps.
+// mustCreateProxy creates a proxy with HTTP, loopback, port, and active
+// defaults for empty inputs. It updates the caller's object with saved identity
+// and timestamps. Cleanup belongs to the caller's transaction or an explicitly
+// registered teardown for committed rows.
 func mustCreateProxy(t *testing.T, client *dbent.Client, p *egress.Proxy) *egress.Proxy {
 	t.Helper()
 	ctx := context.Background()
@@ -125,7 +144,10 @@ func mustCreateProxy(t *testing.T, client *dbent.Client, p *egress.Proxy) *egres
 	return p
 }
 
-// mustCreateProvider applies fixture defaults, forces schedulability, and fills the saved identity and timestamps.
+// mustCreateProvider inserts a provider after applying platform, type, status,
+// concurrency, priority, and map defaults. It forces Schedulable true, so tests
+// needing a paused fixture update that field after creation; the supplied
+// object receives saved identity and timestamps.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -213,17 +235,22 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
-// testEntTx creates a transaction that rolls back during test cleanup.
-// Tests that commit to exercise races must delete their own rows.
+// testEntTx begins an Ent transaction and registers rollback at test cleanup.
+// Tests that commit this transaction to expose changes to other connections
+// take responsibility for deleting their committed fixture rows.
 func testEntTx(t *testing.T) *dbent.Tx {
 	t.Helper()
 	tx, err := integrationEntClient.Tx(context.Background())
 	require.NoError(t, err)
+	// Rollback cleanup is best effort because a test can complete the transaction
+	// itself; tests committing their fixture rows still register separate row removal.
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx
 }
 
-// testEntClient returns the Ent client shared by the test process.
+// testEntClient returns the migrated Ent client shared by integration tests. It
+// creates no transaction; callers isolate their writes or register cleanup for
+// any rows that they commit.
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	return integrationEntClient

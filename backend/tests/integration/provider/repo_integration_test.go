@@ -28,31 +28,65 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Provider persistence connects configuration and health changes with scheduler
+// events and immediately published snapshots. Rollback-owned PostgreSQL suite
+// cases compare stored records, group memberships, eligibility queries, and the
+// snapshot recorder used by each write path.
+//
+// Conditional Grok writes additionally exercise stale credential observations,
+// a forced outbox failure inside one SQL statement, and caller cancellation
+// immediately after that statement succeeds. The SQL wrappers inject those
+// conditions at the execution point, while a standalone committed-row test
+// checks rollback through a fresh read. Snapshot assertions inspect the context
+// received by publication; the fixture records its error state without modeling
+// a complete scheduler cache.
+
+// ProviderRepoSuite shares transaction-owned persistence fixtures across
+// provider repository assertion methods.
 type ProviderRepoSuite struct {
-	suite.Suite
-	ctx    context.Context
-	client *dbent.Client
-	repo   *providerpostgres.ProviderStore
-	sql    postgres.Executor
-	cache  scheduler.SnapshotPublicationCache
+	suite.Suite // test assertions and runner
+	// ctx, client, repo, and sql belong to the transaction created by SetupTest.
+	// testEntTx registers rollback so persisted fixture changes disappear after
+	// the current suite method finishes.
+	ctx    context.Context                    // current test query context
+	client *dbent.Client                      // transaction-bound Ent client
+	repo   *providerpostgres.ProviderStore    // provider store under test
+	sql    postgres.Executor                  // transaction-bound SQL executor
+	cache  scheduler.SnapshotPublicationCache // optional publication assertion cache
 }
 
+// schedulerCacheRecorder records publication calls and latest provider pointers
+// for synchronous assertions.
 type schedulerCacheRecorder struct {
-	setProviders []*providercore.Record
-	deleteIDs    []int64
-	providers    map[int64]*providercore.Record
-	setCtxErr    error
+	// setProviders and providers retain the published record pointers for
+	// synchronous assertions. They share those records, so tests inspect them
+	// after publication rather than modeling independent cache ownership. Fixture
+	// callers serialize access to the recorder because it has no synchronization.
+	setProviders []*providercore.Record         // records in publication order
+	deleteIDs    []int64                        // IDs in deletion order
+	providers    map[int64]*providercore.Record // latest fixture record per ID
+	setCtxErr    error                          // latest publication context error
 }
 
+// failAtomicSchedulerOutboxSQLExecutor injects a PostgreSQL constraint
+// violation into combined mutation/event statements.
 type failAtomicSchedulerOutboxSQLExecutor struct {
-	postgres.Executor
+	postgres.Executor // delegated fixture SQL executor
 }
 
+// cancelAfterAtomicMutationSQLExecutor cancels a caller after a combined
+// database mutation/event statement succeeds.
 type cancelAfterAtomicMutationSQLExecutor struct {
-	postgres.Executor
+	postgres.Executor // delegated fixture SQL executor
+	// cancel ends the caller context after a successful combined mutation/event
+	// statement; the fixture provides it before executing the selected SQL path.
 	cancel context.CancelFunc
 }
 
+// SetProvider unwraps and records the published provider and the publication
+// context's error. Successful nonnil records also update the fixture map;
+// pointers remain shared and callers inspect them after the synchronous
+// publisher completes.
 func (s *schedulerCacheRecorder) SetProvider(ctx context.Context, value scheduler.SnapshotProvider) error {
 	provider, err := codec.RecordValue(value)
 	if err != nil {
@@ -69,14 +103,24 @@ func (s *schedulerCacheRecorder) SetProvider(ctx context.Context, value schedule
 	return nil
 }
 
+// ExecContext delegates SQL after replacing the final argument of an atomic
+// mutation/event statement with nil. That argument is event_type in the
+// exercised statement, whose NOT NULL violation lets PostgreSQL prove that the
+// earlier mutation also fails.
 func (e *failAtomicSchedulerOutboxSQLExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	if strings.Contains(query, "WITH updated AS") && strings.Contains(query, "INSERT INTO scheduler_outbox") && len(args) > 0 {
 		args = append([]any(nil), args...)
-		args[len(args)-1] = nil // event_type is NOT NULL; the whole statement must roll back.
+		// Replace the event argument on a copied slice so the caller keeps its
+		// arguments while the combined statement fails its NOT NULL constraint.
+		args[len(args)-1] = nil
 	}
 	return e.Executor.ExecContext(ctx, query, args...)
 }
 
+// ExecContext executes SQL, then cancels after a successful combined
+// mutation/event statement. It returns the original result and error, allowing
+// the test to observe publication's context after the caller context has been
+// canceled.
 func (e *cancelAfterAtomicMutationSQLExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	result, err := e.Executor.ExecContext(ctx, query, args...)
 	if err == nil && strings.Contains(query, "WITH updated AS") && strings.Contains(query, "INSERT INTO scheduler_outbox") {
@@ -85,6 +129,9 @@ func (e *cancelAfterAtomicMutationSQLExecutor) ExecContext(ctx context.Context, 
 	return result, err
 }
 
+// DeleteProvider records the removal ID and deletes any fixture-map entry. It
+// succeeds for absent IDs; callers inspect the accumulated removals after the
+// synchronous publication operation.
 func (s *schedulerCacheRecorder) DeleteProvider(ctx context.Context, providerID int64) error {
 	s.deleteIDs = append(s.deleteIDs, providerID)
 	if s.providers != nil {
@@ -93,6 +140,9 @@ func (s *schedulerCacheRecorder) DeleteProvider(ctx context.Context, providerID 
 	return nil
 }
 
+// SetupTest binds the suite's Ent client and SQL executor to a fresh
+// rollback-owned transaction. It resets the cache to nil and creates the
+// provider store with the same transaction for each case.
 func (s *ProviderRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := testEntTx(s.T())
@@ -102,10 +152,17 @@ func (s *ProviderRepoSuite) SetupTest() {
 	s.repo = newProviderStoreContract(s.client, tx, nil)
 }
 
+// TestProviderRepoSuite runs provider persistence and scheduler-publication
+// cases with independent PostgreSQL transactions. The suite compares
+// configuration, health state, membership queries, event rows, and recorded
+// snapshot effects for each tested path.
 func TestProviderRepoSuite(t *testing.T) {
 	suite.Run(t, new(ProviderRepoSuite))
 }
 
+// TestCreate inserts an OAuth provider through the store and reads it back. The
+// returned database identity must be nonzero and the stored name must match the
+// input.
 func (s *ProviderRepoSuite) TestCreate() {
 	provider := &providercore.Record{
 		Name:        "test-create",
@@ -128,11 +185,16 @@ func (s *ProviderRepoSuite) TestCreate() {
 	s.Require().Equal("test-create", got.Name)
 }
 
+// TestGetByID_NotFound asks the store for an ID absent from the transaction
+// fixture. The read returns an error rather than a fabricated provider record.
 func (s *ProviderRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+// TestUpdate creates a provider, changes its name, and saves it through the
+// store. Reading the same provider ID must return the requested replacement
+// name.
 func (s *ProviderRepoSuite) TestUpdate() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "original"})
 
@@ -145,6 +207,9 @@ func (s *ProviderRepoSuite) TestUpdate() {
 	s.Require().Equal("updated", got.Name)
 }
 
+// TestUpdate_SyncSchedulerSnapshotOnDisabled saves a disabled status while a
+// snapshot recorder is attached. One recorded publication identifies the
+// updated provider and exposes the disabled status.
 func (s *ProviderRepoSuite) TestUpdate_SyncSchedulerSnapshotOnDisabled() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "sync-update", Status: billing.StatusActive, Schedulable: true})
 	cacheRecorder := &schedulerCacheRecorder{}
@@ -160,6 +225,9 @@ func (s *ProviderRepoSuite) TestUpdate_SyncSchedulerSnapshotOnDisabled() {
 	s.Require().Equal(billing.StatusDisabled, cacheRecorder.setProviders[0].Status)
 }
 
+// TestUpdate_SyncSchedulerSnapshotOnCredentialsChange changes the target in a
+// model-mapping credential. The single recorded snapshot uses the provider's ID
+// and contains the updated mapping target.
 func (s *ProviderRepoSuite) TestUpdate_SyncSchedulerSnapshotOnCredentialsChange() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "sync-credentials-update",
@@ -190,6 +258,9 @@ func (s *ProviderRepoSuite) TestUpdate_SyncSchedulerSnapshotOnCredentialsChange(
 	s.Require().Equal("gpt-5.2", mapping["gpt-5"])
 }
 
+// TestUpdateCredentials_SyncsSnapshotAndDurableOutbox replaces an access token
+// after isolating the transaction's outbox assertions. The recorder receives
+// the new token and one provider-change event exists in the database.
 func (s *ProviderRepoSuite) TestUpdateCredentials_SyncsSnapshotAndDurableOutbox() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "sync-refresh-credentials",
@@ -200,6 +271,8 @@ func (s *ProviderRepoSuite) TestUpdateCredentials_SyncsSnapshotAndDurableOutbox(
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err := s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -219,6 +292,9 @@ func (s *ProviderRepoSuite) TestUpdateCredentials_SyncsSnapshotAndDurableOutbox(
 	s.Require().Equal(1, outboxCount)
 }
 
+// TestDelete removes a provider previously inserted into the transaction
+// fixture. A subsequent lookup of its assigned ID returns an error through the
+// repository.
 func (s *ProviderRepoSuite) TestDelete() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "to-delete"})
 
@@ -229,6 +305,9 @@ func (s *ProviderRepoSuite) TestDelete() {
 	s.Require().Error(err, "expected error after delete")
 }
 
+// TestDelete_RemovesSchedulerProviderSnapshot seeds a fixture cache entry
+// before deleting its provider. The recorder receives that removal ID and its
+// provider map no longer contains the entry.
 func (s *ProviderRepoSuite) TestDelete_RemovesSchedulerProviderSnapshot() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "to-delete-cache"})
 	cacheRecorder := &schedulerCacheRecorder{
@@ -251,6 +330,9 @@ func (s *ProviderRepoSuite) TestDelete_RemovesSchedulerProviderSnapshot() {
 	s.Require().NotContains(cacheRecorder.providers, provider.ID)
 }
 
+// TestDelete_WithGroupBindings persists a provider/group membership before
+// deleting the provider. The transaction's membership query returns zero rows
+// for that provider after deletion.
 func (s *ProviderRepoSuite) TestDelete_WithGroupBindings() {
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-del"})
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-del"})
@@ -264,6 +346,9 @@ func (s *ProviderRepoSuite) TestDelete_WithGroupBindings() {
 	s.Require().Zero(count, "expected bindings to be removed")
 }
 
+// TestList inserts two providers before requesting a page that fits both
+// fixtures. The list contains two records and the reported total also equals
+// two.
 func (s *ProviderRepoSuite) TestList() {
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc1"})
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc2"})
@@ -274,6 +359,10 @@ func (s *ProviderRepoSuite) TestList() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListOAuthRefreshCandidatePage_GrokCursorAndExclusions mixes valid Grok
+// OAuth rows with incompatible, paused, blank-token, cooldown, and
+// other-platform fixtures. Two pages return the three expected IDs in order,
+// with no repeated ID.
 func (s *ProviderRepoSuite) TestListOAuthRefreshCandidatePage_GrokCursorAndExclusions() {
 	now := time.Now().UTC()
 	valid1 := mustCreateProvider(s.T(), s.client, &providercore.Record{
@@ -366,18 +455,24 @@ func (s *ProviderRepoSuite) TestListOAuthRefreshCandidatePage_GrokCursorAndExclu
 	s.Require().NotContains([]int64{first[0].ID, first[1].ID}, second[0].ID)
 }
 
+// TestListWithFilters creates separate fixtures for configuration, effective
+// runtime status, group, search, and privacy filters. Each case compares
+// returned rows with the page total and checks the corresponding expected
+// attributes.
 func (s *ProviderRepoSuite) TestListWithFilters() {
 	tests := []struct {
-		name        string
-		setup       func(client *dbent.Client)
-		platform    string
-		accType     string
-		status      string
-		search      string
-		groupID     int64
-		privacyMode string
-		wantCount   int
-		validate    func(providers []providercore.Record)
+		name        string                     // filter scenario label
+		setup       func(client *dbent.Client) // per-scenario fixture creation callback
+		platform    string                     // requested provider platform
+		accType     string                     // requested credential provider type
+		status      string                     // requested effective provider status
+		search      string                     // requested provider-name substring
+		groupID     int64                      // requested group-membership filter value
+		privacyMode string                     // requested privacy-mode filter value
+		wantCount   int                        // expected matching provider count
+		// validate runs after the shared row/count assertions when configured; nil
+		// leaves that scenario covered by its shared assertions alone.
+		validate func(providers []providercore.Record) // optional returned-record assertion callback
 	}{
 		{
 			name: "filter_by_platform",
@@ -567,7 +662,8 @@ func (s *ProviderRepoSuite) TestListWithFilters() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// Each case gets an isolated transaction so its fixtures cannot affect other filters.
+			// Each filter case gets its own rollback-owned transaction so its
+			// configured providers and runtime windows cannot affect the next case's results.
 			tx := testEntTx(s.T())
 			client := tx.Client()
 			repo := newProviderStoreContract(client, tx, nil)
@@ -578,7 +674,8 @@ func (s *ProviderRepoSuite) TestListWithFilters() {
 			providers, page, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode)
 			s.Require().NoError(err)
 			s.Require().Len(providers, tt.wantCount)
-			// All matches fit on one page, so the count and list queries must agree.
+			// All fixture matches fit within this requested page, so compare
+			// total with the list length to detect inconsistent filter predicates.
 			s.Require().NotNil(page)
 			s.Require().Equal(int64(tt.wantCount), page.Total, "total must match items on single page")
 			if tt.validate != nil {
@@ -588,6 +685,9 @@ func (s *ProviderRepoSuite) TestListWithFilters() {
 	}
 }
 
+// TestListByGroup binds two providers with different global priorities to one
+// group. Both are returned, and the lower numeric priority provider appears
+// first in the result.
 func (s *ProviderRepoSuite) TestListByGroup() {
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-list"})
 	acc1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "a1", Status: billing.StatusActive, Priority: 2})
@@ -602,6 +702,9 @@ func (s *ProviderRepoSuite) TestListByGroup() {
 	s.Require().Equal(acc2.ID, providers[0].ID, "expected acc2 first (provider priority=1)")
 }
 
+// TestListActive inserts active and disabled providers before querying active
+// records. The result contains exactly the named active fixture from the
+// transaction.
 func (s *ProviderRepoSuite) TestListActive() {
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "active1", Status: billing.StatusActive})
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "inactive1", Status: billing.StatusDisabled})
@@ -612,6 +715,9 @@ func (s *ProviderRepoSuite) TestListActive() {
 	s.Require().Equal("active1", providers[0].Name)
 }
 
+// TestListByPlatform creates providers on Anthropic and OpenAI before
+// requesting the Anthropic platform. Exactly one provider is returned and its
+// stored platform matches the request.
 func (s *ProviderRepoSuite) TestListByPlatform() {
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "p1", Platform: capability.PlatformAnthropic, Status: billing.StatusActive})
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "p2", Platform: capability.PlatformOpenAI, Status: billing.StatusActive})
@@ -622,6 +728,9 @@ func (s *ProviderRepoSuite) TestListByPlatform() {
 	s.Require().Equal(capability.PlatformAnthropic, providers[0].Platform)
 }
 
+// TestPreload_And_VirtualFields associates a provider with a proxy and group
+// before reading it individually and through listing. Both paths expose the
+// proxy and group identifiers populated from the fixture relationships.
 func (s *ProviderRepoSuite) TestPreload_And_VirtualFields() {
 	proxy := mustCreateProxy(s.T(), s.client, &egress.Proxy{Name: "p1"})
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g1"})
@@ -651,6 +760,9 @@ func (s *ProviderRepoSuite) TestPreload_And_VirtualFields() {
 	s.Require().Equal(group.ID, providers[0].GroupIDs[0])
 }
 
+// TestGroupBinding_And_BindGroups adds one membership, removes it, and replaces
+// the set with two groups. Reads after each operation report the expected
+// membership count and initial group ID.
 func (s *ProviderRepoSuite) TestGroupBinding_And_BindGroups() {
 	g1 := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g1"})
 	g2 := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g2"})
@@ -673,6 +785,9 @@ func (s *ProviderRepoSuite) TestGroupBinding_And_BindGroups() {
 	s.Require().Len(groups, 2, "expected 2 groups after bind")
 }
 
+// TestBindGroups_EmptyList creates an existing group membership before passing
+// an empty replacement set. The repository succeeds and the following group
+// read returns no memberships.
 func (s *ProviderRepoSuite) TestBindGroups_EmptyList() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-empty"})
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-empty"})
@@ -685,6 +800,9 @@ func (s *ProviderRepoSuite) TestBindGroups_EmptyList() {
 	s.Require().Empty(groups, "expected 0 groups after binding empty list")
 }
 
+// TestListSchedulable creates an ordinary provider and another with a future
+// overload deadline. The schedulable result contains the ordinary fixture ID
+// and excludes the overloaded provider.
 func (s *ProviderRepoSuite) TestListSchedulable() {
 	now := time.Now()
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-sched"})
@@ -703,6 +821,9 @@ func (s *ProviderRepoSuite) TestListSchedulable() {
 	s.Require().NotContains(ids, overloaded.ID)
 }
 
+// TestListSchedulableByGroupID_TimeBoundaries_And_StatusUpdates binds ordinary,
+// overloaded, and rate-limited providers to one group. Initially one is
+// eligible, and clearing the rate limit increases the candidate count to two.
 func (s *ProviderRepoSuite) TestListSchedulableByGroupID_TimeBoundaries_And_StatusUpdates() {
 	now := time.Now()
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-sched"})
@@ -731,6 +852,10 @@ func (s *ProviderRepoSuite) TestListSchedulableByGroupID_TimeBoundaries_And_Stat
 	s.Require().Len(sched2, 2, "expected 2 schedulable providers after ClearRateLimit")
 }
 
+// TestListSchedulableCapacityByGroupIDs requests repeated and invalid group IDs
+// with one shared provider and one overloaded provider. Returned capacity rows
+// are group-ordered, exclude overload, and carry the shared provider's
+// concurrency and RPM data.
 func (s *ProviderRepoSuite) TestListSchedulableCapacityByGroupIDs() {
 	now := time.Now()
 	group1 := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-capacity-1"})
@@ -766,6 +891,9 @@ func (s *ProviderRepoSuite) TestListSchedulableCapacityByGroupIDs() {
 	}
 }
 
+// TestListSchedulableByPlatform creates schedulable Anthropic and OpenAI
+// providers before requesting Anthropic candidates. The query returns exactly
+// one row whose platform matches the requested value.
 func (s *ProviderRepoSuite) TestListSchedulableByPlatform() {
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "a1", Platform: capability.PlatformAnthropic, Schedulable: true})
 	mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "a2", Platform: capability.PlatformOpenAI, Schedulable: true})
@@ -776,6 +904,9 @@ func (s *ProviderRepoSuite) TestListSchedulableByPlatform() {
 	s.Require().Equal(capability.PlatformAnthropic, providers[0].Platform)
 }
 
+// TestListSchedulableByGroupIDAndPlatform binds providers from two platforms to
+// one group. Requesting Anthropic candidates returns exactly the matching bound
+// fixture with its expected ID.
 func (s *ProviderRepoSuite) TestListSchedulableByGroupIDAndPlatform() {
 	group := mustCreateGroup(s.T(), s.client, &routing.Group{Name: "g-sp"})
 	a1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "a1", Platform: capability.PlatformAnthropic, Schedulable: true})
@@ -789,6 +920,9 @@ func (s *ProviderRepoSuite) TestListSchedulableByGroupIDAndPlatform() {
 	s.Require().Equal(a1.ID, providers[0].ID)
 }
 
+// TestSetSchedulable disables scheduling on an active provider while snapshot
+// recording is enabled. A read exposes false, and one recorded publication
+// identifies that provider.
 func (s *ProviderRepoSuite) TestSetSchedulable() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-sched", Schedulable: true})
 	cacheRecorder := &schedulerCacheRecorder{}
@@ -804,6 +938,9 @@ func (s *ProviderRepoSuite) TestSetSchedulable() {
 	s.Require().Equal(provider.ID, cacheRecorder.setProviders[0].ID)
 }
 
+// TestBulkUpdate_SyncSchedulerSnapshotOnDisabled applies disabled status to two
+// providers with a snapshot recorder attached. The affected-row count is two
+// and the recorded publications include both provider IDs.
 func (s *ProviderRepoSuite) TestBulkUpdate_SyncSchedulerSnapshotOnDisabled() {
 	provider1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "bulk-1", Status: billing.StatusActive, Schedulable: true})
 	provider2 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "bulk-2", Status: billing.StatusActive, Schedulable: true})
@@ -827,6 +964,9 @@ func (s *ProviderRepoSuite) TestBulkUpdate_SyncSchedulerSnapshotOnDisabled() {
 	s.Require().Contains(ids, provider2.ID)
 }
 
+// TestSetOverloaded writes a fixed overload deadline to an active provider.
+// Storage and its single recorded snapshot expose that deadline within the
+// asserted one-second tolerance.
 func (s *ProviderRepoSuite) TestSetOverloaded() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-over"})
 	until := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -839,6 +979,8 @@ func (s *ProviderRepoSuite) TestSetOverloaded() {
 	got, err := s.repo.GetByID(s.ctx, provider.ID)
 	s.Require().NoError(err)
 	s.Require().NotNil(got.OverloadUntil)
+	// Snapshot publication rereads storage, so both deadline comparisons allow
+	// the same one-second tolerance for their persisted timestamp representation.
 	s.Require().WithinDuration(until, *got.OverloadUntil, time.Second)
 	s.Require().Len(cacheRecorder.setProviders, 1)
 	s.Require().Equal(provider.ID, cacheRecorder.setProviders[0].ID)
@@ -846,6 +988,9 @@ func (s *ProviderRepoSuite) TestSetOverloaded() {
 	s.Require().WithinDuration(until, *cacheRecorder.setProviders[0].OverloadUntil, time.Second)
 }
 
+// TestSetRateLimited writes a fixed rate-limit reset deadline through the
+// repository. The read contains both rate-limited and reset timestamps, with
+// reset matching within one second.
 func (s *ProviderRepoSuite) TestSetRateLimited() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-rl"})
 	resetAt := time.Date(2025, 6, 15, 14, 0, 0, 0, time.UTC)
@@ -856,11 +1001,18 @@ func (s *ProviderRepoSuite) TestSetRateLimited() {
 	s.Require().NoError(err)
 	s.Require().NotNil(got.RateLimitedAt)
 	s.Require().NotNil(got.RateLimitResetAt)
+	// One-second tolerance checks the requested deadline after persistence; this
+	// case does not require storage to retain finer timestamp precision.
 	s.Require().WithinDuration(resetAt, *got.RateLimitResetAt, time.Second)
 }
 
+// TestSetRateLimitedIfLaterDoesNotShortenReset writes a later deadline followed
+// by an earlier proposal. Storage keeps the later reset, and the second of two
+// recorded publications retains that deadline.
 func (s *ProviderRepoSuite) TestSetRateLimitedIfLaterDoesNotShortenReset() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-rl-monotonic"})
+	// Distinct whole-second deadlines separate reset ordering from timestamp
+	// precision in the persisted and published window comparisons that follow.
 	later := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
 	earlier := time.Now().Add(5 * time.Minute).UTC().Truncate(time.Second)
 	cacheRecorder := &schedulerCacheRecorder{}
@@ -879,12 +1031,18 @@ func (s *ProviderRepoSuite) TestSetRateLimitedIfLaterDoesNotShortenReset() {
 	s.Require().WithinDuration(later, *cacheRecorder.setProviders[1].RateLimitResetAt, time.Second)
 }
 
+// TestClearRateLimitIfObservedProtectsRearmed429Generation clears one observed
+// Grok window, then installs a shorter new window. The stale clear is rejected,
+// and changing the provider to API key also rejects an otherwise matching
+// timestamp pair.
 func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Generation() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:     "acc-rl-conditional-clear",
 		Platform: capability.PlatformGrok,
 		Type:     capability.ProviderTypeOAuth,
 	})
+	// Different reset instants make the old timestamp pair identifiable after
+	// rearming, separating generation ownership from each deadline's ordering.
 	firstReset := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
 	rearmedReset := time.Now().Add(5 * time.Minute).UTC().Truncate(time.Second)
 
@@ -897,7 +1055,8 @@ func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Genera
 	s.Require().NoError(err)
 	s.Require().True(cleared)
 
-	// After clearing one rate-limit generation, a new generation may end sooner. A stale clear must leave it intact.
+	// Rearm the cleared provider with a shorter deadline, making the old
+	// timestamp pair stale even though its former reset was later than this one.
 	s.Require().NoError(s.repo.SetRateLimitedIfLater(s.ctx, provider.ID, rearmedReset))
 	cleared, err = s.repo.ClearRateLimitIfObserved(s.ctx, provider.ID, *staleGeneration.RateLimitedAt, *staleGeneration.RateLimitResetAt)
 	s.Require().NoError(err)
@@ -909,8 +1068,8 @@ func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Genera
 	s.Require().NotNil(got.RateLimitResetAt)
 	s.Require().WithinDuration(rearmedReset, *got.RateLimitResetAt, time.Second)
 
-	// An administrator may switch the provider to API key while an OAuth request is in flight.
-	// Matching timestamps alone must not let that request clear the API key provider's rate limit.
+	// Change provider type after observing the current window; its timestamps
+	// still match, so rejection here isolates the OAuth eligibility requirement.
 	_, err = s.client.Provider.UpdateOneID(provider.ID).
 		SetType(capability.ProviderTypeAPIKey).
 		Save(s.ctx)
@@ -927,6 +1086,9 @@ func (s *ProviderRepoSuite) TestClearRateLimitIfObservedProtectsRearmed429Genera
 	s.Require().WithinDuration(rearmedReset, *retyped.RateLimitResetAt, time.Second)
 }
 
+// TestClearRateLimit installs overload and rate-limit windows before clearing
+// provider rate limits. A subsequent read contains no rate-limited, reset, or
+// overload timestamp for that provider.
 func (s *ProviderRepoSuite) TestClearRateLimit() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-clear"})
 	until := time.Now().Add(1 * time.Hour)
@@ -942,6 +1104,10 @@ func (s *ProviderRepoSuite) TestClearRateLimit() {
 	s.Require().Nil(got.OverloadUntil)
 }
 
+// TestResetQuotaUsedAndClearRateLimitCooldownPreservesOtherRuntimeState resets
+// quota counters and the provider rate limit while other runtime blocks are
+// present. Overload, temporary suspension, and model limits remain, with a
+// pending event and one publication.
 func (s *ProviderRepoSuite) TestResetQuotaUsedAndClearRateLimitCooldownPreservesOtherRuntimeState() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name: "acc-reset-quota-cooldown",
@@ -970,8 +1136,12 @@ func (s *ProviderRepoSuite) TestResetQuotaUsedAndClearRateLimitCooldownPreserves
 	s.Require().Nil(got.RateLimitedAt)
 	s.Require().Nil(got.RateLimitResetAt)
 	s.Require().NotNil(got.OverloadUntil)
+	// Allow one second of timestamp difference when checking that quota reset
+	// retains the preexisting overload deadline as an independent runtime block.
 	s.Require().WithinDuration(until, *got.OverloadUntil, time.Second)
 	s.Require().NotNil(got.TempUnschedulableUntil)
+	// This comparison permits one second of timestamp difference while checking
+	// that the earlier suspension deadline survives the requested operation.
 	s.Require().WithinDuration(until, *got.TempUnschedulableUntil, time.Second)
 	s.Require().Equal("preserve-me", got.TempUnschedulableReason)
 	s.Require().Contains(got.Extra, "model_rate_limits")
@@ -990,10 +1160,15 @@ func (s *ProviderRepoSuite) TestResetQuotaUsedAndClearRateLimitCooldownPreserves
 	s.Require().Equal(provider.ID, cacheRecorder.setProviders[0].ID)
 }
 
+// TestTempUnschedulableFieldsLoadedByGetByIDAndGetByIDs stores a temporary
+// window and structured reason on one of two providers. Both read forms expose
+// them in requested order, and clearing updates storage and the recorded
+// snapshot.
 func (s *ProviderRepoSuite) TestTempUnschedulableFieldsLoadedByGetByIDAndGetByIDs() {
 	acc1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-temp-1"})
 	acc2 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-temp-2"})
 
+	// Whole-second fixture deadlines make the individual and batch reads comparable.
 	until := time.Now().Add(15 * time.Minute).UTC().Truncate(time.Second)
 	reason := `{"rule":"429","matched_keyword":"too many requests"}`
 	s.Require().NoError(s.repo.SetTempUnschedulable(s.ctx, acc1.ID, until, reason))
@@ -1030,15 +1205,22 @@ func (s *ProviderRepoSuite) TestTempUnschedulableFieldsLoadedByGetByIDAndGetByID
 	s.Require().Equal("", cacheRecorder.setProviders[0].TempUnschedulableReason)
 }
 
+// TestSetTempUnschedulableSkipsOutboxWhenWindowDoesNotExtend writes a
+// suspension then proposes an earlier deadline with another reason. The
+// deadline and first reason remain, while event and publication counts stay at
+// one.
 func (s *ProviderRepoSuite) TestSetTempUnschedulableSkipsOutboxWhenWindowDoesNotExtend() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-temp-noop"})
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
 
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err := s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
+	// Fix the initial window at whole-second precision before comparing extensions.
 	until := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
 	s.Require().NoError(s.repo.SetTempUnschedulable(s.ctx, provider.ID, until, "first"))
 
@@ -1059,9 +1241,14 @@ func (s *ProviderRepoSuite) TestSetTempUnschedulableSkipsOutboxWhenWindowDoesNot
 	s.Require().NoError(err)
 	s.Require().Equal("first", got.TempUnschedulableReason)
 	s.Require().NotNil(got.TempUnschedulableUntil)
+	// This comparison permits one second of timestamp difference while checking
+	// that the earlier suspension deadline survives the requested operation.
 	s.Require().WithinDuration(until, *got.TempUnschedulableUntil, time.Second)
 }
 
+// TestClearModelRateLimits_SyncsSchedulerSnapshot stores a per-model rate-limit
+// entry before invoking cleanup. The following database read and single
+// recorded snapshot both omit the model-rate-limit key.
 func (s *ProviderRepoSuite) TestClearModelRateLimits_SyncsSchedulerSnapshot() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name: "acc-clear-model-rate",
@@ -1087,6 +1274,9 @@ func (s *ProviderRepoSuite) TestClearModelRateLimits_SyncsSchedulerSnapshot() {
 	s.Require().NotContains(cacheRecorder.setProviders[0].Extra, "model_rate_limits")
 }
 
+// TestUpdateLastUsed creates a provider with no activity timestamp and invokes
+// activity persistence. Reading that provider afterward exposes a nonnil
+// LastUsedAt value from the repository.
 func (s *ProviderRepoSuite) TestUpdateLastUsed() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-used"})
 	s.Require().Nil(provider.LastUsedAt)
@@ -1098,11 +1288,16 @@ func (s *ProviderRepoSuite) TestUpdateLastUsed() {
 	s.Require().NotNil(got.LastUsedAt)
 }
 
+// TestSetError marks an active provider errored while snapshot recording is
+// enabled. Storage and the publication expose error status and disabled
+// scheduling, and one provider-change event exists.
 func (s *ProviderRepoSuite) TestSetError() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-err", Status: billing.StatusActive, Schedulable: true})
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err := s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1130,6 +1325,10 @@ func (s *ProviderRepoSuite) TestSetError() {
 	s.Require().Equal(1, outboxCount)
 }
 
+// TestSetGrokOAuthErrorIfCredentialsUnchanged_AppliesAndSyncsSchedulerState
+// reconciles an active Grok provider with matching credentials and no refresh
+// token. The write applies, unschedules storage, publishes the errored record,
+// and inserts one event.
 func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_AppliesAndSyncsSchedulerState() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-conditional-error-applied",
@@ -1144,6 +1343,8 @@ func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_AppliesA
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err = s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1176,6 +1377,10 @@ func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_AppliesA
 	s.Require().Equal(1, outboxCount)
 }
 
+// TestSetGrokOAuthErrorIfCredentialsUnchanged_SkipsConcurrentReauthorization
+// observes credentials before sequentially rotating them through the
+// repository. Applying the old reconciliation observation returns false,
+// retains fresh credentials, and adds no publication or event.
 func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_SkipsConcurrentReauthorization() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-conditional-error-reauthorized",
@@ -1196,6 +1401,8 @@ func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_SkipsCon
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err = s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1227,6 +1434,10 @@ func (s *ProviderRepoSuite) TestSetGrokOAuthErrorIfCredentialsUnchanged_SkipsCon
 	s.Require().Zero(outboxCount, "a lost compare-and-set race must not enqueue a stale provider change")
 }
 
+// TestUpdateGrokOAuthCredentialsIfUnchanged_AppliesAndPublishesSchedulerState
+// rotates a matching Grok credential observation. Storage and the recorded
+// publication expose the replacement refresh token, publication's context is
+// active, and one event exists.
 func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_AppliesAndPublishesSchedulerState() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-refresh-success-cas-applied",
@@ -1245,6 +1456,8 @@ func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_AppliesAnd
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err = s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1281,6 +1494,10 @@ func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_AppliesAnd
 	s.Require().Equal(1, outboxCount)
 }
 
+// TestUpdateGrokOAuthCredentialsIfUnchanged_SkipsConcurrentReauthorization
+// captures one credential version then sequentially stores administrator
+// credentials. The old rotation returns false, retains the administrator token,
+// and produces no recorded publication or event.
 func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_SkipsConcurrentReauthorization() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-refresh-success-cas-reauthorized",
@@ -1304,6 +1521,8 @@ func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_SkipsConcu
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err = s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1338,6 +1557,10 @@ func (s *ProviderRepoSuite) TestUpdateGrokOAuthCredentialsIfUnchanged_SkipsConcu
 	s.Require().Zero(outboxCount)
 }
 
+// TestGrokOAuthConditionalMutation_DetachesBoundedSnapshotSync injects
+// cancellation immediately after the combined Grok mutation/event statement
+// succeeds. The operation reports applied and one publication receives a
+// context with no cancellation error.
 func (s *ProviderRepoSuite) TestGrokOAuthConditionalMutation_DetachesBoundedSnapshotSync() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "grok-conditional-detached-sync",
@@ -1370,6 +1593,10 @@ func (s *ProviderRepoSuite) TestGrokOAuthConditionalMutation_DetachesBoundedSnap
 	s.Require().NoError(cacheRecorder.setCtxErr, "immediate scheduler propagation must use a bounded detached context")
 }
 
+// TestGrokOAuthConditionalMutationRollsBackWhenOutboxInsertFails injects a NOT
+// NULL violation into the combined Grok mutation/event statement. A fresh
+// committed-row read retains active scheduling and empty error state, with no
+// event row.
 func TestGrokOAuthConditionalMutationRollsBackWhenOutboxInsertFails(t *testing.T) {
 	client := testEntClient(t)
 	provider := mustCreateProvider(t, client, &providercore.Record{
@@ -1380,6 +1607,9 @@ func TestGrokOAuthConditionalMutationRollsBackWhenOutboxInsertFails(t *testing.T
 		Schedulable: true,
 		Credentials: map[string]any{"access_token": "observed"},
 	})
+	// Remove the event records as well as the committed provider fixture; outbox
+	// rows carry this provider ID independently of the row deleted afterward.
+	// Cleanup errors are discarded, so failed attempts can leave committed rows.
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM scheduler_outbox WHERE provider_id = $1", provider.ID)
 		_ = client.Provider.DeleteOneID(provider.ID).Exec(context.Background())
@@ -1409,6 +1639,9 @@ func TestGrokOAuthConditionalMutationRollsBackWhenOutboxInsertFails(t *testing.T
 	require.Zero(t, outboxCount)
 }
 
+// TestUpdateErrorStatusUnschedulesProvider saves an error-status record whose
+// input scheduling flag is true. Reading storage returns the error message and
+// false scheduling, applying the store's error-status rule.
 func (s *ProviderRepoSuite) TestUpdateErrorStatusUnschedulesProvider() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-update-err", Status: billing.StatusActive, Schedulable: true})
 	provider.Status = providercore.StatusError
@@ -1424,6 +1657,9 @@ func (s *ProviderRepoSuite) TestUpdateErrorStatusUnschedulesProvider() {
 	s.Require().False(got.Schedulable)
 }
 
+// TestClearError_SyncSchedulerSnapshotOnRecovery clears a provider's stored
+// error while snapshot recording is enabled. Storage returns active status and
+// empty error text, and its single publication is active.
 func (s *ProviderRepoSuite) TestClearError_SyncSchedulerSnapshotOnRecovery() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:         "acc-clear-err",
@@ -1445,6 +1681,9 @@ func (s *ProviderRepoSuite) TestClearError_SyncSchedulerSnapshotOnRecovery() {
 	s.Require().Equal(billing.StatusActive, cacheRecorder.setProviders[0].Status)
 }
 
+// TestUpdateSessionWindow supplies start, end, and active status for a
+// provider's session window. The subsequent record has both window timestamps
+// populated and the requested window status.
 func (s *ProviderRepoSuite) TestUpdateSessionWindow() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-win"})
 	start := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
@@ -1459,6 +1698,9 @@ func (s *ProviderRepoSuite) TestUpdateSessionWindow() {
 	s.Require().Equal("active", got.SessionWindowStatus)
 }
 
+// TestUpdateExtra_MergesFields starts with one custom Extra field and adds
+// another through the repository. The resulting record exposes both the
+// existing value and the new value.
 func (s *ProviderRepoSuite) TestUpdateExtra_MergesFields() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:  "acc-extra",
@@ -1472,11 +1714,17 @@ func (s *ProviderRepoSuite) TestUpdateExtra_MergesFields() {
 	s.Require().Equal("2", got.Extra["b"])
 }
 
+// TestUpdateExtra_EmptyUpdates passes an empty Extra patch for an existing
+// provider. The repository completes without returning an error; this case
+// makes no additional storage or event assertion.
 func (s *ProviderRepoSuite) TestUpdateExtra_EmptyUpdates() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-extra-empty"})
 	s.Require().NoError(s.repo.UpdateExtra(s.ctx, provider.ID, map[string]any{}))
 }
 
+// TestUpdateExtra_NilExtra starts with the creation fixture's empty Extra map
+// and adds one key. Reading the provider returns the supplied value under that
+// key.
 func (s *ProviderRepoSuite) TestUpdateExtra_NilExtra() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "acc-nil-extra", Extra: nil})
 	s.Require().NoError(s.repo.UpdateExtra(s.ctx, provider.ID, map[string]any{"key": "val"}))
@@ -1486,6 +1734,10 @@ func (s *ProviderRepoSuite) TestUpdateExtra_NilExtra() {
 	s.Require().Equal("val", got.Extra["key"])
 }
 
+// TestUpdateExtra_SchedulerNeutralSkipsOutboxAndSyncsFreshSnapshot seeds stale
+// disabled cache data before writing observational usage fields. Storage
+// retains those observations, event count stays zero, and publication replaces
+// the cache entry with current active data.
 func (s *ProviderRepoSuite) TestUpdateExtra_SchedulerNeutralSkipsOutboxAndSyncsFreshSnapshot() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:     "acc-extra-neutral",
@@ -1529,6 +1781,9 @@ func (s *ProviderRepoSuite) TestUpdateExtra_SchedulerNeutralSkipsOutboxAndSyncsF
 	s.Require().Equal("2026-03-11T10:00:00Z", cacheRecorder.providers[provider.ID].Extra["codex_usage_updated_at"])
 }
 
+// TestUpdateExtra_ExhaustedCodexSnapshotSyncsSchedulerCache writes a fully used
+// Codex window as observational Extra. The recorder receives active provider
+// data with the usage percentage, while the isolated outbox count stays zero.
 func (s *ProviderRepoSuite) TestUpdateExtra_ExhaustedCodexSnapshotSyncsSchedulerCache() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:     "acc-extra-codex-exhausted",
@@ -1539,6 +1794,8 @@ func (s *ProviderRepoSuite) TestUpdateExtra_ExhaustedCodexSnapshotSyncsScheduler
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.cache = cacheRecorder
 	s.repo.SetEvents(providerPublicationEvents(s.repo, cacheRecorder))
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err := s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1558,12 +1815,18 @@ func (s *ProviderRepoSuite) TestUpdateExtra_ExhaustedCodexSnapshotSyncsScheduler
 	s.Require().Equal(100.0, cacheRecorder.setProviders[0].Extra["codex_7d_used_percent"])
 }
 
+// TestUpdateExtra_SchedulerRelevantStillEnqueuesOutbox combines
+// mixed-scheduling configuration with an observational timestamp in one patch.
+// The transaction contains one scheduling event after the repository accepts
+// those fields.
 func (s *ProviderRepoSuite) TestUpdateExtra_SchedulerRelevantStillEnqueuesOutbox() {
 	provider := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:     "acc-extra-mixed",
 		Platform: capability.PlatformAntigravity,
 		Extra:    map[string]any{},
 	})
+	// Clear existing event rows inside the suite transaction so the next count
+	// belongs to this operation; fixture rollback restores the shared outbox afterward.
 	_, err := s.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
 	s.Require().NoError(err)
 
@@ -1578,6 +1841,9 @@ func (s *ProviderRepoSuite) TestUpdateExtra_SchedulerRelevantStillEnqueuesOutbox
 	s.Require().Equal(1, count)
 }
 
+// TestGetByCRSAccountID persists a regular provider with a CRS identifier in
+// Extra. Looking up that identifier returns a nonnil record with the expected
+// fixture name.
 func (s *ProviderRepoSuite) TestGetByCRSAccountID() {
 	crsID := "crs-12345"
 	mustCreateProvider(s.T(), s.client, &providercore.Record{
@@ -1591,20 +1857,27 @@ func (s *ProviderRepoSuite) TestGetByCRSAccountID() {
 	s.Require().Equal("acc-crs", got.Name)
 }
 
+// TestGetByCRSAccountID_NotFound requests a CRS identifier absent from the
+// fixture records. The repository returns a nil provider and no error for the
+// missing mapping.
 func (s *ProviderRepoSuite) TestGetByCRSAccountID_NotFound() {
 	got, err := s.repo.GetByCRSAccountID(s.ctx, "non-existent")
 	s.Require().NoError(err)
 	s.Require().Nil(got)
 }
 
+// TestGetByCRSAccountID_EmptyString supplies an empty CRS identifier to the
+// repository lookup. The read returns a nil provider and no error for that
+// input.
 func (s *ProviderRepoSuite) TestGetByCRSAccountID_EmptyString() {
 	got, err := s.repo.GetByCRSAccountID(s.ctx, "")
 	s.Require().NoError(err)
 	s.Require().Nil(got)
 }
 
-// TestGetByCRSAccountID_ExcludesSparkShadow checks that an accidental crs_account_id cannot expose a shadow to CRS updates.
-// Treating the shadow as a regular provider would overwrite its type, credentials, and proxy.
+// TestGetByCRSAccountID_ExcludesSparkShadow stores a CRS identifier on a Spark
+// shadow associated with a parent. Lookup returns nil, keeping that shadow
+// outside regular-provider CRS matching.
 func (s *ProviderRepoSuite) TestGetByCRSAccountID_ExcludesSparkShadow() {
 	crsID := "crs-shadow-only-99"
 	parent := mustCreateProvider(s.T(), s.client, &providercore.Record{
@@ -1622,8 +1895,9 @@ func (s *ProviderRepoSuite) TestGetByCRSAccountID_ExcludesSparkShadow() {
 	s.Require().Nil(got, "spark 影子即便带 crs_account_id 也不应被 CRS 命中")
 }
 
-// TestListCRSAccountIDs_ExcludesSparkShadow keeps shadow IDs out of the CRS synchronization map.
-// Including them would let CRS synchronization update shadows as regular providers.
+// TestListCRSAccountIDs_ExcludesSparkShadow assigns a CRS identifier to a
+// persisted Spark shadow. The returned identifier map omits that shadow's value
+// from the synchronization candidates.
 func (s *ProviderRepoSuite) TestListCRSAccountIDs_ExcludesSparkShadow() {
 	parent := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name: "crs-list-mother", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth,
@@ -1642,6 +1916,9 @@ func (s *ProviderRepoSuite) TestListCRSAccountIDs_ExcludesSparkShadow() {
 	s.Require().False(ok, "影子的 crs_account_id 不应进入 CRS 映射")
 }
 
+// TestBulkUpdate assigns the same new priority to two providers through one
+// bulk request. It reports at least one affected row, and both provider reads
+// expose priority ninety-nine.
 func (s *ProviderRepoSuite) TestBulkUpdate() {
 	a1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "bulk1", Priority: 1})
 	a2 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "bulk2", Priority: 1})
@@ -1653,12 +1930,17 @@ func (s *ProviderRepoSuite) TestBulkUpdate() {
 	s.Require().NoError(err)
 	s.Require().GreaterOrEqual(affected, int64(1), "expected at least one affected row")
 
+	// These comparisons discard lookup errors and dereference the returned
+	// records; a nil result fails at the corresponding priority check.
 	got1, _ := s.repo.GetByID(s.ctx, a1.ID)
 	got2, _ := s.repo.GetByID(s.ctx, a2.ID)
 	s.Require().Equal(99, got1.Priority)
 	s.Require().Equal(99, got2.Priority)
 }
 
+// TestBulkUpdate_MergeCredentials supplies one new credential key to a provider
+// holding another custom key. Reading the record exposes both the existing
+// value and the added value.
 func (s *ProviderRepoSuite) TestBulkUpdate_MergeCredentials() {
 	a1 := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:        "bulk-cred",
@@ -1670,11 +1952,16 @@ func (s *ProviderRepoSuite) TestBulkUpdate_MergeCredentials() {
 	})
 	s.Require().NoError(err)
 
+	// The value comparison needs a returned record; this case discards the
+	// lookup error and fails at the later dereference when that record is nil.
 	got, _ := s.repo.GetByID(s.ctx, a1.ID)
 	s.Require().Equal("value", got.Credentials["existing"])
 	s.Require().Equal("new_value", got.Credentials["new_key"])
 }
 
+// TestBulkUpdate_MergeExtra supplies one new Extra key to a provider holding
+// another custom key. Reading the record exposes the existing value alongside
+// the added value.
 func (s *ProviderRepoSuite) TestBulkUpdate_MergeExtra() {
 	a1 := mustCreateProvider(s.T(), s.client, &providercore.Record{
 		Name:  "bulk-extra",
@@ -1686,17 +1973,25 @@ func (s *ProviderRepoSuite) TestBulkUpdate_MergeExtra() {
 	})
 	s.Require().NoError(err)
 
+	// The value comparison needs a returned record; this case discards the
+	// lookup error and fails at the later dereference when that record is nil.
 	got, _ := s.repo.GetByID(s.ctx, a1.ID)
 	s.Require().Equal("val", got.Extra["existing"])
 	s.Require().Equal("new_val", got.Extra["new_key"])
 }
 
+// TestBulkUpdate_EmptyIDs submits an empty provider-ID list and an empty bulk
+// request. The repository returns zero affected rows and no error for that
+// input.
 func (s *ProviderRepoSuite) TestBulkUpdate_EmptyIDs() {
 	affected, err := s.repo.BulkUpdate(s.ctx, []int64{}, providercore.ProviderBulkUpdate{})
 	s.Require().NoError(err)
 	s.Require().Zero(affected)
 }
 
+// TestBulkUpdate_EmptyUpdates supplies an existing provider ID with an empty
+// bulk request. The repository returns zero affected rows and no error for that
+// input.
 func (s *ProviderRepoSuite) TestBulkUpdate_EmptyUpdates() {
 	a1 := mustCreateProvider(s.T(), s.client, &providercore.Record{Name: "bulk-empty"})
 
@@ -1705,6 +2000,8 @@ func (s *ProviderRepoSuite) TestBulkUpdate_EmptyUpdates() {
 	s.Require().Zero(affected)
 }
 
+// idsOfProviders returns provider database identifiers in the supplied record
+// order.
 func idsOfProviders(providers []providercore.Record) []int64 {
 	out := make([]int64, 0, len(providers))
 	for i := range providers {
@@ -1713,7 +2010,10 @@ func idsOfProviders(providers []providercore.Record) []int64 {
 	return out
 }
 
-// newProviderUsageContract wires usage storage to provider outbox writes and scheduler snapshot publication.
+// newProviderUsageContract constructs usage storage with provider-change
+// enqueueing and snapshot synchronization callbacks. The supplied executor
+// carries event writes alongside usage operations, and store supplies the
+// records read during immediate publication.
 func newProviderUsageContract(exec postgres.Executor, store *providerpostgres.ProviderStore, cache scheduler.SnapshotPublicationCache) *billingpostgres.ProviderUsageStore {
 	events := providerPublicationEvents(store, cache)
 	return billingpostgres.NewProviderUsageStore(exec, billingpostgres.ProviderUsageOptions{

@@ -6,11 +6,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// New-media qualification includes image generation/editing and video
+// generation/editing/extension, while existing video status uses a different
+// gate. The table checks those five new-work identities and the status identity
+// so callers can keep generation qualification separate from lookup behavior.
+
+// TestGrokMediaGenerationGateCoversImagesAndVideo compares five new-media
+// endpoint identities with an existing video-status endpoint.
+// IsGenerationRequest must accept generation, editing and extension while
+// returning false for the status fixture.
 func TestGrokMediaGenerationGateCoversImagesAndVideo(t *testing.T) {
 	tests := []struct {
-		name     string
-		endpoint GrokMediaEndpoint
-		want     bool
+		name     string            // scenario display label
+		endpoint GrokMediaEndpoint // media endpoint fixture
+		want     bool              // expected generation qualification
 	}{
 		{name: "image generation", endpoint: GrokMediaEndpointImagesGenerations, want: true},
 		{name: "image edit", endpoint: GrokMediaEndpointImagesEdits, want: true},

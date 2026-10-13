@@ -1,7 +1,5 @@
 package provider
 
-// These scenarios cover output normalization in ../execution_values.go and retry classification in ../execution_error.go.
-
 import (
 	"errors"
 	"testing"
@@ -11,7 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestNormalizeCreativeOutputs checks size limits, duplicate bytes, and the single-image result.
+// One-image delivery normalizes candidate byte content before the worker
+// consumes it. These scenarios compare retained bytes and indexes, reject an
+// oversized candidate, and independently check the listed HTTP status classes
+// and generic errors used for retry decisions. The scenarios cover
+// creative/execution_values.go normalization and creative/execution_error.go
+// retry classification.
+
+// TestNormalizeCreativeOutputs supplies duplicate bytes, distinct images,
+// oversized bytes, and an empty list. It checks the single retained image and
+// zero index, plus failure and retry classification for oversized output.
 func TestNormalizeCreativeOutputs(t *testing.T) {
 	// Equal SHA-256 hashes identify duplicate image bytes.
 	outputs, err := creative.NormalizeCreativeOutputs([]creative.CreativeOutput{
@@ -33,7 +40,8 @@ func TestNormalizeCreativeOutputs(t *testing.T) {
 	require.Len(t, outputs, 1)
 	require.Equal(t, 0, outputs[0].Index)
 
-	// An image larger than 32 MiB fails normalization.
+	// Allocate one byte beyond the execution image cap so this case checks
+	// rejection at the limit, independently of decoding or provider response syntax.
 	big := make([]byte, creative.CreativeMaxOutputBytes+1)
 	_, err = creative.NormalizeCreativeOutputs([]creative.CreativeOutput{{Index: 0, Bytes: big, Mime: "image/png"}})
 	require.Error(t, err)
@@ -44,7 +52,9 @@ func TestNormalizeCreativeOutputs(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreativeErrorRetryableMatrix checks HTTP status retry classification.
+// TestCreativeErrorRetryableMatrix constructs errors for the listed
+// connection, rate-limit, server, and client statuses. It checks their retry
+// booleans together with nil, generic, and explicitly nonretryable errors.
 func TestCreativeErrorRetryableMatrix(t *testing.T) {
 	retryable := []int{0, 429, 500, 502, 503}
 	for _, status := range retryable {

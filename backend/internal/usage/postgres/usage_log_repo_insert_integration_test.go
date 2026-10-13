@@ -19,10 +19,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestResponseModelBatchRoundTrip checks batch column and argument ordering against PostgreSQL.
+// Diagnostic identity must survive every usage persistence shape, including
+// nullable response-model evidence and session correlation text. PostgreSQL
+// round trips compare supplied fields with stored values, and financial-key
+// replay cases write old and unified request forms in both orders to check
+// duplicate recovery.
+//
+// The activity benchmarks alter a shared insert trigger and vary whether
+// sixty-four rows use one actor or distinct actors. Cleanup restores that
+// trigger and removes user-dependent fixtures after each variant. Parallel
+// invocations share an atomic request sequence so duplicate suppression cannot
+// replace the intended batch write work, while serial invocations use the same
+// production SQL shape for comparison.
+
+// TestResponseModelBatchRoundTrip inserts absent and present model declarations
+// with nullable mismatch flags through batch SQL. It checks diagnostic readback,
+// best-effort/direct paths, and successful repeat execution.
 func TestResponseModelBatchRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	// Batch writes commit to the shared database; fixture cleanup removes their records.
+	// Result-aware batch SQL uses the shared pool, so registered truncation owns
+	// removal of these committed fixtures rather than a surrounding rollback.
 	client := testEntClient(t)
 	suffix := uuid.NewString()
 	user := mustCreateUser(t, client, &identity.User{Email: suffix + "@response-model.test"})
@@ -53,7 +69,8 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		require.Equal(t, want[len(want)-3], nullString(log.UpstreamResponseModel))
 		require.Equal(t, want[len(want)-2], log.UpstreamModelMismatch)
 	}
-	// Both best-effort batches and single-row writes carry the two response-model fields.
+	// Execute the acknowledgement-only and direct shapes with populated response
+	// evidence, then compare their raw readback to the same supplied diagnostics.
 	for _, path := range []string{"best-effort", "fallback"} {
 		model, mismatch := "runtime-version", true
 		log := &usage.UsageLog{UserID: user.ID, APIKeyID: key.ID, ProviderID: upstream.ID, RequestID: suffix + path, Model: "sent", CreatedAt: time.Now(), UpstreamResponseModel: &model, UpstreamModelMismatch: &mismatch}
@@ -70,12 +87,15 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		require.Equal(t, log.UpstreamResponseModel, loaded.UpstreamResponseModel)
 		require.Equal(t, log.UpstreamModelMismatch, loaded.UpstreamModelMismatch)
 	}
-	// A replay uses the response-model declaration already stored.
+	// Reexecute the same prepared identities after readback. Conflict suppression
+	// must let the result-aware batch resolve these stored rows successfully.
 	_, _, _, err = repo.batchInsertUsageLogs(integrationDB, keys, prepared)
 	require.NoError(t, err)
 }
 
-// TestUsageLog_SessionIDPersistence checks session ID round trips and NULL for missing IDs.
+// TestUsageLog_SessionIDPersistence records one populated session ID and one
+// missing value through pool-backed Create. It checks assigned row identity,
+// session readback, and nil for the missing field.
 func TestUsageLog_SessionIDPersistence(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -119,29 +139,44 @@ func TestUsageLog_SessionIDPersistence(t *testing.T) {
 	_, err = repo.Create(ctx, withoutSession)
 	require.NoError(t, err)
 
-	// The session ID survives insertion and retrieval.
+	// Read the inserted row by database identity so the session assertion exercises
+	// both positional persistence and the raw nullable-column scanner.
 	got, err := repo.GetByID(ctx, withSession.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got.SessionID)
 	require.Equal(t, sessionID, *got.SessionID)
 
-	// An absent session ID reads back as nil (SQL NULL).
+	// The second row omits session evidence; nullable scanning must keep that
+	// absence distinct from the first row's populated correlation text.
 	gotNone, err := repo.GetByID(ctx, withoutSession.ID)
 	require.NoError(t, err)
 	require.Nil(t, gotNone.SessionID)
 }
 
-// BenchmarkUserActivityWrites measures activity-summary overhead with full migrations and production batch SQL.
+// BenchmarkUserActivityWrites measures production batch construction and SQL
+// execution with activity triggers enabled or disabled. It varies shared versus
+// distinct actors through the serial benchmark helper.
 func BenchmarkUserActivityWrites(b *testing.B) {
 	benchmarkUserActivityWrites(b, false)
 }
 
-// BenchmarkUserActivityConcurrentWrites compares concurrent writes to shared and distinct users.
+// BenchmarkUserActivityConcurrentWrites measures parallel production batch
+// writes under shared and distinct actor fixtures. It runs the same trigger
+// variants so contention and activity-maintenance costs can be compared.
 func BenchmarkUserActivityConcurrentWrites(b *testing.B) {
 	benchmarkUserActivityWrites(b, true)
 }
 
-// benchmarkUserActivityWrites restores triggers and cleans fixtures after each sub-benchmark.
+// benchmarkUserActivityWrites runs serial or parallel activity-trigger variants
+// with sixty-four-row batches. Each sub-benchmark changes the shared usage
+// trigger, and callers serialize this fixture database while those settings are
+// in use.
+//
+// A registered cleanup re-enables the insert trigger and removes dependent user
+// fixtures after every variant. Shared-user mode reuses one actor/key across
+// batch positions; spread mode creates separate identities. An atomic sequence
+// keeps each batch's request IDs unique during concurrent execution, preventing
+// replay suppression from replacing the activity-write work being measured.
 func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 	ctx := context.Background()
 	client := integrationEntClient
@@ -152,17 +187,27 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 				if enabled {
 					mode = "ENABLE"
 				}
+				// Change the shared insert trigger before timing this variant so each
+				// measured batch uses the selected activity-maintenance condition.
 				_, err := integrationDB.Exec("ALTER TABLE usage_logs " + mode + " TRIGGER usage_activity_insert")
 				require.NoError(b, err)
+				// Restore the shared trigger and remove user-dependent rows after each
+				// variant, including one whose measured SQL reports an error.
 				b.Cleanup(func() {
 					_, e := integrationDB.Exec("ALTER TABLE usage_logs ENABLE TRIGGER usage_activity_insert; TRUNCATE users CASCADE")
 					require.NoError(b, e)
 				})
 				p, err := client.Provider.Create().SetName("activity-bench").SetPlatform("openai").SetType("apikey").SetCredentials(map[string]any{}).Save(ctx)
 				require.NoError(b, err)
+				// Use the result-aware worker's sixty-four-record maximum for
+				// both fixture arrays and each timed batch, keeping
+				// actor-spread comparisons equally sized.
 				userIDs, keyIDs := make([]int64, 64), make([]int64, 64)
 				for i := range userIDs {
 					if i > 0 && !spread {
+						// Shared-user mode reuses one actor and key across all
+						// batch rows, making activity updates contend on the
+						// same summarized identity.
 						userIDs[i], keyIDs[i] = userIDs[0], keyIDs[0]
 						continue
 					}
@@ -175,6 +220,9 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 				repo := &Store{}
 				sequence := new(atomic.Int64)
 				write := func() {
+					// Parallel benchmark invocations share this sequence so
+					// every batch has distinct request IDs and performs writes
+					// rather than replay suppression.
 					current := sequence.Add(1)
 					keys := make([]string, 64)
 					prepared := make(map[string]usageLogInsertPrepared, 64)
@@ -190,6 +238,9 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 				}
 				if concurrent {
 					b.ResetTimer()
+					// Each parallel worker builds and writes its own batch
+					// while sharing the fixture identities, exposing contention
+					// in the selected actor spread.
 					b.RunParallel(func(pb *testing.PB) {
 						for pb.Next() {
 							write()
@@ -205,7 +256,9 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 	}
 }
 
-// TestUsageLogBillingKeyUpgradeReplay checks replays in both directions between legacy and unified-ID records.
+// TestUsageLogBillingKeyUpgradeReplay writes legacy financial IDs and unified
+// request IDs in both orders. It checks one inserted row, duplicate recovery to
+// the same ID, and financial-expression uniqueness.
 func TestUsageLogBillingKeyUpgradeReplay(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

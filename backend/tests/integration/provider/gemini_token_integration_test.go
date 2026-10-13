@@ -24,6 +24,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// Gemini Code Assist refresh can receive a response after the administrator
+// rotates OAuth credentials. A local token endpoint blocks the exchange while
+// PostgreSQL either keeps the observed identity or commits the replacement
+// token and its project metadata.
+//
+// The test uses production Gemini authorization, refresh rules, and the token
+// source with a Redis cache. Releasing the response must produce one exchange
+// and a token consistent across the caller, database, and cache. A follow-up
+// read checks cache reuse. The fixture retains a Code Assist project and tier
+// so credential conflicts are exercised on the intended OAuth path.
+
+// TestGeminiTokenRefreshUsesOriginalCAS holds a Code Assist token response
+// while an administrator may rotate credentials. The returned, persisted, and
+// cached tokens agree after one exchange, and the next read reuses that result.
 func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 	for _, adminChange := range []bool{false, true} {
 		t.Run(fmt.Sprintf("administrator=%v", adminChange), func(t *testing.T) {
@@ -36,10 +50,14 @@ func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 			repo := newProviderStoreContract(client, integrationDB, nil)
 			value, err := repo.GetByID(ctx, row.ID)
 			require.NoError(t, err)
+			// Gate the HTTP token response after exchange entry so the administrator
+			// update can commit before production refresh compares the returned credentials.
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var calls atomic.Int32
 			var resumeOnce sync.Once
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Drain input before the exchange gate; the read outcome is discarded
+				// because this fixture uses no body data to choose its token response.
 				_, _ = io.Copy(io.Discard, r.Body)
 				if calls.Add(1) == 1 {
 					close(entered)
@@ -50,8 +68,12 @@ func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				// Token-source completion and comparisons determine the asserted result;
+				// this fixture discards the writer's return values after attempting fixed JSON.
 				_, _ = io.WriteString(w, `{"access_token":"refreshed","refresh_token":"rotated","token_type":"Bearer","expires_in":3600,"scope":"https://www.googleapis.com/auth/cloud-platform"}`)
 			}))
+			// Register release after server.Close so deferred calls unblock the token
+			// handler first, allowing server shutdown even when a later assertion fails.
 			defer server.Close()
 			defer resumeOnce.Do(func() { close(resume) })
 			native := codeassist.NewOAuthClient(func() codeassist.OAuthConfig { return codeassist.OAuthConfig{} })
@@ -73,9 +95,10 @@ func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 					return refresh.RefreshIfNeeded(ctx, record, executor, window)
 				},
 			}}
+			// result carries one token-source completion through the buffered result channel.
 			type result struct {
-				token string
-				err   error
+				token string // returned access token
+				err   error  // returned token-source error
 			}
 			done := make(chan result, 1)
 			go func() {
@@ -107,7 +130,8 @@ func TestGeminiTokenRefreshUsesOriginalCAS(t *testing.T) {
 			cached, err := cache.GetAccessToken(ctx, provideradapter.GeminiTokenCacheKey(value))
 			require.NoError(t, err)
 			require.Equal(t, expected, cached)
-			// A second call reads the cached token without another exchange.
+			// Count exchanges across a second read of the persisted provider to
+			// verify that the completed refresh result satisfies the token-source cache path.
 			token, err := tokenSource.GetAccessToken(ctx, provider.CloneRecord(persisted))
 			require.NoError(t, err)
 			require.Equal(t, expected, token)

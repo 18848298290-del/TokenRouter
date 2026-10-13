@@ -12,10 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Model and group distributions keep base cost, user charges, and provider
+// expense separate while choosing fixed SQL expressions for
+// requested/upstream/mapping dimensions. Mocked trends and rankings check
+// selector precedence, current payer identity, and decoded monetary columns
+// without executing the database's aggregation calculations.
+
+// TestResolveModelDimensionExpression supplies supported, empty, and invalid
+// dimension labels. It checks the fixed requested/upstream/mapping SQL
+// expressions and requested selection for unsupported labels.
 func TestResolveModelDimensionExpression(t *testing.T) {
 	tests := []struct {
-		modelType string
-		want      string
+		modelType string // supplied model dimension label
+		want      string // expected fixed model expression
 	}{
 		{usage.ModelSourceRequested, "COALESCE(NULLIF(TRIM(model), ''), NULLIF(TRIM(requested_model), ''), '')"},
 		{usage.ModelSourceUpstream, "COALESCE(NULLIF(TRIM(upstream_model), ''), model)"},
@@ -32,6 +41,9 @@ func TestResolveModelDimensionExpression(t *testing.T) {
 	}
 }
 
+// TestProviderFilteredModelStatsKeepUserActualCost supplies unequal user charges
+// and provider/base costs under provider scope. It checks the expected SQL
+// expressions and distinct monetary fields in the decoded model row.
 func TestProviderFilteredModelStatsKeepUserActualCost(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -39,7 +51,8 @@ func TestProviderFilteredModelStatsKeepUserActualCost(t *testing.T) {
 	end := start.Add(7 * 24 * time.Hour)
 	providerID := int64(3667)
 
-	// Provider-filtered results return user charges and provider costs separately.
+	// Choose widely different charge and expense values so either provider-filtered
+	// column being substituted for the other fails the decoded-field assertions.
 	actualExpr := regexp.QuoteMeta("COALESCE(SUM(actual_cost), 0) as actual_cost")
 	providerExpr := regexp.QuoteMeta("COALESCE(SUM(COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1)), 0) as provider_cost")
 	mock.ExpectQuery("(?s)"+actualExpr+".*"+providerExpr+".*provider_id = \\$3").
@@ -54,12 +67,17 @@ func TestProviderFilteredModelStatsKeepUserActualCost(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+	// Compare all three monetary columns with an absolute float tolerance while
+	// keeping their widely separated fixture values distinguishable.
 	require.InDelta(t, 530.797, rows[0].ActualCost, 0.000001)
 	require.InDelta(t, 10.603, rows[0].ProviderCost, 0.000001)
 	require.InDelta(t, 10.603, rows[0].Cost, 0.000001)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback selects stream
+// usage in a payer breakdown. It checks legacy transport matching and
+// billing-user grouping SQL while decoding an empty result.
 func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -84,6 +102,9 @@ func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetUsageTrendWithFiltersRequestTypePriority supplies
+// stream type and a legacy stream selector. It checks raw trend SQL binds the
+// request category alone and returns an empty decoded trend.
 func TestUsageLogRepositoryGetUsageTrendWithFiltersRequestTypePriority(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -103,6 +124,9 @@ func TestUsageLogRepositoryGetUsageTrendWithFiltersRequestTypePriority(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetUsageTrendWithUsageFiltersRequestedModelSource
+// selects internal-model filtering through unified selectors. It checks the
+// compatibility expression and model argument on an empty mocked trend.
 func TestUsageLogRepositoryGetUsageTrendWithUsageFiltersRequestedModelSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -124,6 +148,9 @@ func TestUsageLogRepositoryGetUsageTrendWithUsageFiltersRequestedModelSource(t *
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetModelStatsWithFiltersRequestTypePriority supplies
+// WebSocket type with false stream selection. It checks model SQL uses
+// type/legacy compatibility alone and decodes an empty model result.
 func TestUsageLogRepositoryGetModelStatsWithFiltersRequestTypePriority(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -143,6 +170,9 @@ func TestUsageLogRepositoryGetModelStatsWithFiltersRequestTypePriority(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetUserModelStatsUsesInternalRequestedModel supplies
+// current owner membership with one model row. It checks disjoint actor/team raw
+// branches, internal-model grouping, and the decoded model name.
 func TestUsageLogRepositoryGetUserModelStatsUsesInternalRequestedModel(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -168,6 +198,9 @@ func TestUsageLogRepositoryGetUserModelStatsUsesInternalRequestedModel(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetModelStatsProviderCostColumn supplies two model rows
+// with separate monetary measures. It checks both decode correctly and provider
+// expense does not overwrite base cost or actual user charges.
 func TestUsageLogRepositoryGetModelStatsProviderCostColumn(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -197,6 +230,9 @@ func TestUsageLogRepositoryGetModelStatsProviderCostColumn(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetModelStatsWithUsageFiltersAppliesInternalModelFilter
+// selects one internal requested model through unified filters. It checks
+// matching SQL/arguments and decodes the model retained in the response.
 func TestUsageLogRepositoryGetModelStatsWithUsageFiltersAppliesInternalModelFilter(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -220,6 +256,9 @@ func TestUsageLogRepositoryGetModelStatsWithUsageFiltersAppliesInternalModelFilt
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetGroupStatsProviderCostColumn supplies group names and
+// distinct base, user, and provider amounts. It checks IDs, display names, and
+// monetary columns survive group-row decoding.
 func TestUsageLogRepositoryGetGroupStatsProviderCostColumn(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -249,6 +288,9 @@ func TestUsageLogRepositoryGetGroupStatsProviderCostColumn(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetGroupStatsWithUsageFiltersAppliesRequestedModelFilter
+// selects one internal model for group totals. It checks the ul-qualified model
+// expression, bound value, and decoded matching group ID.
 func TestUsageLogRepositoryGetGroupStatsWithUsageFiltersAppliesRequestedModelFilter(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -271,6 +313,9 @@ func TestUsageLogRepositoryGetGroupStatsWithUsageFiltersAppliesRequestedModelFil
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetUserSpendingRanking supplies limited payer rows with
+// population totals larger than their visible sum. It checks billing-user SQL,
+// row fields, and the separately decoded complete totals.
 func TestUsageLogRepositoryGetUserSpendingRanking(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -302,7 +347,9 @@ func TestUsageLogRepositoryGetUserSpendingRanking(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser groups raw team usage by the paying user.
+// TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser supplies one owner
+// trend row representing team activity. It checks historical payer recovery and
+// current identity joins, then decodes the payer's usage values.
 func TestUsageLogRepositoryGetUserUsageTrendGroupsByBillingUser(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}

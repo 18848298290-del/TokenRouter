@@ -12,13 +12,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestCredentialFieldPatchPreservesLockTimeState rotates credentials before the configuration lock and checks
-// that patches retain new tokens and untouched fields.
+// Credential patches select individual keys while the configuration writer
+// reads the latest locked record. The validation callback rotates token and
+// Base URL values before persistence, so each patch case checks that unrelated
+// credentials survive and that outbox failure rolls back the requested key.
+
+// TestCredentialFieldPatchPreservesLockTimeState rotates tokens and Base URL
+// during credential validation before applying one selected key. The patch
+// retains those newer values, and outbox failure leaves the requested key and
+// event count unchanged.
 func TestCredentialFieldPatchPreservesLockTimeState(t *testing.T) {
 	cases := []struct {
+		// name: credential-patch scenario label; field: selected credential key name.
 		name, field   string
-		value         any
-		outboxFailure bool
+		value         any  // requested credential value
+		outboxFailure bool // inject event-write failure
 	}{{"org", "org_uuid", "patched", false}, {"clear_org", "org_uuid", nil, false}, {"provider", "account_uuid", "patched", false}, {"warmup_on", "intercept_warmup_requests", true, false}, {"warmup_off", "intercept_warmup_requests", false, false}, {"rollback", "org_uuid", "patched", true}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,6 +44,8 @@ func TestCredentialFieldPatchPreservesLockTimeState(t *testing.T) {
 			rotated["access_token"] = "rotated"
 			rotated["refresh_token"] = "rotated-refresh"
 			rotated["base_url"] = "https://new.invalid"
+			// Rotate credentials inside validation before the configuration writer
+			// acquires its row lock, leaving the selected key patch to merge later.
 			validations := 0
 			options := provider.AdminOptions{Creation: provider.CreationOptions{Now: time.Now, LoadLocation: time.LoadLocation, NewSeed: func() string { return "00000000-0000-4000-8000-000000000001" }}, Credentials: provider.CreateCredentialHooks{Site: func(*provider.Record) (string, error) { return "", nil }, ValidateEdit: func(context.Context, *provider.Record, bool) error {
 				validations++

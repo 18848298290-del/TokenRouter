@@ -10,7 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDingTalkOAuthStart_Disabled checks that disabled login redirects without issuing authorization state.
+// Disabled DingTalk login returns an error through the frontend callback before
+// authorization state is issued. The default authentication fixture leaves
+// DingTalk disabled, and the start request checks its redirect path, error
+// fragment, and absent Set-Cookie headers.
+
+// TestDingTalkOAuthStart_Disabled calls the login start endpoint with DingTalk
+// disabled in the fixture. It receives the default frontend callback redirect
+// with dingtalk_not_enabled and no state cookies.
 func TestDingTalkOAuthStart_Disabled(t *testing.T) {
 	h, _ := newWeChatOAuthTestHandler(t, false)
 	recorder := httptest.NewRecorder()

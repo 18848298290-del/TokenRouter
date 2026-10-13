@@ -20,10 +20,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// User repository edits combine profile columns, allowed-group relationships,
+// email identities, and funding fields, with masks selecting what an
+// administrator changes. PostgreSQL suite cases inspect filters, loaded
+// subscriptions, balance and concurrency adjustments, mailbox alias rules, and
+// missing rows while reusing the suite's cleared user fixtures.
+//
+// Two redemption cases run overlapping negative adjustments and join both
+// outcomes before checking the stored nonnegative amount. The mailbox-guard
+// case runs competing Gmail aliases and checks one successful creation, one
+// email conflict, and one stored user. Buffered error channels let workers
+// finish before the suite counts results, separating these concurrency
+// observations from the sequential CRUD and filter cases.
+
+// TestUserRepoSuite runs PostgreSQL user persistence cases in the shared
+// user-repository fixture. Cases inspect profile masks, lookup and list
+// behavior, funding changes, mailbox guards, and joined concurrent adjustments.
 func TestUserRepoSuite(t *testing.T) {
 	suite.Run(t, new(UserRepoSuite))
 }
 
+// TestUpdateForkSpecificFields selects the user's key allowance and disabled
+// public groups in its update mask. Reloading records a key limit of seven and
+// the supplied disabled group relation.
 func (s *UserRepoSuite) TestUpdateForkSpecificFields() {
 	user := s.mustCreateUser(&identitycore.User{Email: "fork-update-fields@example.com", APIKeyLimit: 100})
 	group := s.mustCreateGroup("fork-update-public-group")
@@ -33,7 +52,9 @@ func (s *UserRepoSuite) TestUpdateForkSpecificFields() {
 	loaded.APIKeyLimit = 7
 	loaded.DisabledPublicGroups = []int64{group.ID}
 
-	// The field mask selects the key count limit and disabled public group relations separately.
+	// Select the key-count column and disabled-group relationship together so this
+	// edit checks persisted scalar policy alongside the separately stored group
+	// access configuration.
 	s.Require().NoError(s.repo.Update(s.ctx, loaded, identitycore.UserUpdateFields{
 		APIKeyLimit:          true,
 		DisabledPublicGroups: true,
@@ -45,6 +66,9 @@ func (s *UserRepoSuite) TestUpdateForkSpecificFields() {
 	s.Require().Equal([]int64{group.ID}, updated.DisabledPublicGroups)
 }
 
+// mustCreatePlan inserts a thirty-day plan for sale at the suite fixture price
+// and returns its billing view. Save errors fail the case before dependent
+// subscription creation begins.
 func (s *UserRepoSuite) mustCreatePlan(name string) *billing.SubscriptionPlan {
 	s.T().Helper()
 
@@ -63,6 +87,9 @@ func (s *UserRepoSuite) mustCreatePlan(name string) *billing.SubscriptionPlan {
 	return billingpostgres.PlanFromEntity(plan)
 }
 
+// mustCreateSubscription inserts an active grant with current fixture
+// assignment and default effective dates. A nonnil mutate callback edits its
+// builder before saving, and failures fail the current suite case.
 func (s *UserRepoSuite) mustCreateSubscription(userID, planID int64, mutate func(*dbent.UserSubscriptionCreate)) *dbent.UserSubscription {
 	s.T().Helper()
 
@@ -85,6 +112,9 @@ func (s *UserRepoSuite) mustCreateSubscription(userID, planID int64, mutate func
 	return sub
 }
 
+// TestCreate creates an active user with a supplied email through the suite
+// repository. Storage fills a nonzero ID, and a later ID lookup returns the
+// expected email.
 func (s *UserRepoSuite) TestCreate() {
 	user := s.mustCreateUser(&identitycore.User{
 		Email:        "create@test.com",
@@ -101,11 +131,17 @@ func (s *UserRepoSuite) TestCreate() {
 	s.Require().Equal("create@test.com", got.Email)
 }
 
+// TestGetByID_NotFound queries a numeric user ID absent from the current suite
+// fixture. The repository reports an error when no stored user matches that
+// input.
 func (s *UserRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+// TestGetByEmail creates a user with one supplied email before querying by that
+// same value. The returned identity has the persisted user's expected storage
+// ID.
 func (s *UserRepoSuite) TestGetByEmail() {
 	user := s.mustCreateUser(&identitycore.User{Email: "byemail@test.com"})
 
@@ -114,11 +150,17 @@ func (s *UserRepoSuite) TestGetByEmail() {
 	s.Require().Equal(user.ID, got.ID)
 }
 
+// TestGetByEmail_NotFound requests an email absent from the current suite
+// fixture. The repository returns an error when that supplied address has no
+// matching stored user.
 func (s *UserRepoSuite) TestGetByEmail_NotFound() {
 	_, err := s.repo.GetByEmail(s.ctx, "nonexistent@test.com")
 	s.Require().Error(err, "expected error for non-existent email")
 }
 
+// TestExistsByEmail_NormalizesSpacingAndCaseOnPostgres creates an address
+// containing leading and trailing spaces and mixed case. A differently spaced
+// uppercase lookup still reports the existing user.
 func (s *UserRepoSuite) TestExistsByEmail_NormalizesSpacingAndCaseOnPostgres() {
 	s.mustCreateUser(&identitycore.User{Email: " Legacy@Example.com "})
 
@@ -127,6 +169,8 @@ func (s *UserRepoSuite) TestExistsByEmail_NormalizesSpacingAndCaseOnPostgres() {
 	s.Require().True(exists)
 }
 
+// TestUpdate loads a user, changes its username, and selects that field in the
+// mask. The following ID read returns the persisted updated username.
 func (s *UserRepoSuite) TestUpdate() {
 	user := s.mustCreateUser(&identitycore.User{Email: "update@test.com", Username: "original"})
 
@@ -140,6 +184,9 @@ func (s *UserRepoSuite) TestUpdate() {
 	s.Require().Equal("updated", updated.Username)
 }
 
+// TestBatchUpdateLimitsUpdatesOnlyProvidedFields supplies concurrency while
+// leaving the RPM pointer nil. Exactly one user is affected, concurrency
+// changes to nine, and the earlier RPM value remains twenty.
 func (s *UserRepoSuite) TestBatchUpdateLimitsUpdatesOnlyProvidedFields() {
 	user := s.mustCreateUser(&identitycore.User{
 		Email:       "batch-limits-one-field@test.com",
@@ -158,6 +205,9 @@ func (s *UserRepoSuite) TestBatchUpdateLimitsUpdatesOnlyProvidedFields() {
 	s.Equal(20, updated.RPMLimit)
 }
 
+// TestBatchUpdateLimitsUpdatesBothFieldsToZero supplies nonnil zero pointers
+// for concurrency and RPM. The batch affects one row, and reloading shows both
+// stored limits cleared to zero.
 func (s *UserRepoSuite) TestBatchUpdateLimitsUpdatesBothFieldsToZero() {
 	user := s.mustCreateUser(&identitycore.User{
 		Email:       "batch-limits-zero@test.com",
@@ -176,6 +226,9 @@ func (s *UserRepoSuite) TestBatchUpdateLimitsUpdatesBothFieldsToZero() {
 	s.Zero(updated.RPMLimit)
 }
 
+// TestBatchUpdateLimitsIgnoresDeletedUsersAndReturnsAffectedRows targets active
+// and deleted users in one RPM update. The count is one, the active value
+// changes, and the retained deleted row keeps its prior limit.
 func (s *UserRepoSuite) TestBatchUpdateLimitsIgnoresDeletedUsersAndReturnsAffectedRows() {
 	active := s.mustCreateUser(&identitycore.User{Email: "batch-limits-active@test.com", RPMLimit: 10})
 	deleted := s.mustCreateUser(&identitycore.User{Email: "batch-limits-deleted@test.com", RPMLimit: 10})
@@ -194,6 +247,9 @@ func (s *UserRepoSuite) TestBatchUpdateLimitsIgnoresDeletedUsersAndReturnsAffect
 	s.Equal(10, updatedDeleted.RPMLimit)
 }
 
+// TestUpdateIgnoresNoRowsFromConflictingEmailIdentityUpsert loads a user whose
+// email identity already exists before a username-only edit. Update succeeds
+// and the following read returns its selected new username.
 func (s *UserRepoSuite) TestUpdateIgnoresNoRowsFromConflictingEmailIdentityUpsert() {
 	user := s.mustCreateUser(&identitycore.User{Email: "update-existing-identity@test.com", Username: "original"})
 
@@ -218,6 +274,8 @@ func (s *UserRepoSuite) TestUpdateIgnoresNoRowsFromConflictingEmailIdentityUpser
 	s.Require().Equal("updated", updated.Username)
 }
 
+// TestDelete removes a created user through the suite repository. A later ID
+// lookup returns an error for that user after the deletion call has succeeded.
 func (s *UserRepoSuite) TestDelete() {
 	user := s.mustCreateUser(&identitycore.User{Email: "delete@test.com"})
 
@@ -228,6 +286,9 @@ func (s *UserRepoSuite) TestDelete() {
 	s.Require().Error(err, "expected error after delete")
 }
 
+// TestDeleteRemovesAuthIdentitiesAndChannels attaches a provider identity and
+// channel to a created user before deletion. The user's identity count and that
+// identity's channel count both become zero.
 func (s *UserRepoSuite) TestDeleteRemovesAuthIdentitiesAndChannels() {
 	user := s.mustCreateUser(&identitycore.User{Email: "delete-oauth@test.com"})
 
@@ -261,6 +322,9 @@ func (s *UserRepoSuite) TestDeleteRemovesAuthIdentitiesAndChannels() {
 	s.Require().Zero(channelCount)
 }
 
+// TestList creates two users in the current suite fixture before requesting
+// ordinary pagination. The returned list contains both rows and reports total
+// count two.
 func (s *UserRepoSuite) TestList() {
 	s.mustCreateUser(&identitycore.User{Email: "list1@test.com"})
 	s.mustCreateUser(&identitycore.User{Email: "list2@test.com"})
@@ -271,6 +335,9 @@ func (s *UserRepoSuite) TestList() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListWithFilters_Status stores active and disabled users and requests
+// active status. The resulting list contains one row whose user status matches
+// the supplied filter.
 func (s *UserRepoSuite) TestListWithFilters_Status() {
 	s.mustCreateUser(&identitycore.User{Email: "active@test.com", Status: billing.StatusActive})
 	s.mustCreateUser(&identitycore.User{Email: "disabled@test.com", Status: billing.StatusDisabled})
@@ -281,6 +348,9 @@ func (s *UserRepoSuite) TestListWithFilters_Status() {
 	s.Require().Equal(billing.StatusActive, users[0].Status)
 }
 
+// TestListWithFilters_Role stores ordinary and administrator users then
+// requests administrator role. The resulting list contains one row whose role
+// matches the selected admin value.
 func (s *UserRepoSuite) TestListWithFilters_Role() {
 	s.mustCreateUser(&identitycore.User{Email: "user@test.com", Role: identitycore.RoleUser})
 	s.mustCreateUser(&identitycore.User{Email: "admin@test.com", Role: identitycore.RoleAdmin})
@@ -291,6 +361,9 @@ func (s *UserRepoSuite) TestListWithFilters_Role() {
 	s.Require().Equal(identitycore.RoleAdmin, users[0].Role)
 }
 
+// TestListWithFilters_Search stores Alice and Bob email fixtures and searches
+// for alice. The returned list has one row whose email contains that requested
+// fragment.
 func (s *UserRepoSuite) TestListWithFilters_Search() {
 	s.mustCreateUser(&identitycore.User{Email: "alice@test.com", Username: "Alice"})
 	s.mustCreateUser(&identitycore.User{Email: "bob@test.com", Username: "Bob"})
@@ -301,6 +374,9 @@ func (s *UserRepoSuite) TestListWithFilters_Search() {
 	s.Require().Contains(users[0].Email, "alice")
 }
 
+// TestListWithFilters_SearchByUsername supplies unrelated emails and distinct
+// usernames before searching john. The single returned row has the matching
+// JohnDoe username in the current fixture.
 func (s *UserRepoSuite) TestListWithFilters_SearchByUsername() {
 	s.mustCreateUser(&identitycore.User{Email: "u1@test.com", Username: "JohnDoe"})
 	s.mustCreateUser(&identitycore.User{Email: "u2@test.com", Username: "JaneSmith"})
@@ -311,6 +387,9 @@ func (s *UserRepoSuite) TestListWithFilters_SearchByUsername() {
 	s.Require().Equal("JohnDoe", users[0].Username)
 }
 
+// TestListWithFilters_LoadsActiveSubscriptions gives one user active and
+// expired subscription fixtures before searching their email. The returned user
+// includes one subscription whose loaded plan matches the active grant.
 func (s *UserRepoSuite) TestListWithFilters_LoadsActiveSubscriptions() {
 	user := s.mustCreateUser(&identitycore.User{Email: "sub@test.com", Status: billing.StatusActive})
 	planActive := s.mustCreatePlan("plan-sub-active")
@@ -333,6 +412,9 @@ func (s *UserRepoSuite) TestListWithFilters_LoadsActiveSubscriptions() {
 	s.Require().Equal(planActive.ID, users[0].Subscriptions[0].Plan.ID, "plan ID mismatch")
 }
 
+// TestListWithFilters_CombinedFilters supplies users with competing role,
+// status, and email values. Combining active administrator and b@ search
+// returns one target row and total one.
 func (s *UserRepoSuite) TestListWithFilters_CombinedFilters() {
 	s.mustCreateUser(&identitycore.User{
 		Email:    "a@example.com",
@@ -361,6 +443,9 @@ func (s *UserRepoSuite) TestListWithFilters_CombinedFilters() {
 	s.Require().Equal(target.ID, users[0].ID, "ListWithFilters result mismatch")
 }
 
+// TestUpdateBalance starts a stored user at balance ten and applies a positive
+// delta of 2.5. Reloading returns 12.5 within the case's numeric comparison
+// tolerance.
 func (s *UserRepoSuite) TestUpdateBalance() {
 	user := s.mustCreateUser(&identitycore.User{Email: "bal@test.com", Balance: 10})
 
@@ -369,9 +454,14 @@ func (s *UserRepoSuite) TestUpdateBalance() {
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
+	// A micro-dollar tolerance compares the persisted balance after its positive
+	// adjustment.
 	s.Require().InDelta(12.5, got.Balance, 1e-6)
 }
 
+// TestUpdateBalance_Negative starts a stored user at balance ten and applies a
+// negative delta of three. Reloading returns seven within the case's numeric
+// comparison tolerance.
 func (s *UserRepoSuite) TestUpdateBalance_Negative() {
 	user := s.mustCreateUser(&identitycore.User{Email: "balneg@test.com", Balance: 10})
 
@@ -380,12 +470,20 @@ func (s *UserRepoSuite) TestUpdateBalance_Negative() {
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
+	// Compare the saved balance after the negative delta within a micro-dollar
+	// difference.
 	s.Require().InDelta(7.0, got.Balance, 1e-6)
 }
 
+// TestApplyRedeemBalanceAdjustment_ConcurrentNeverNegative runs two
+// negative-seven redemption balance adjustments against ten available dollars.
+// Both calls succeed, and after joining them the stored balance is zero.
 func (s *UserRepoSuite) TestApplyRedeemBalanceAdjustment_ConcurrentNeverNegative() {
 	user := s.mustCreateUser(&identitycore.User{Email: "redeem-bal-concurrent@test.com", Balance: 10})
 
+	// Buffer both adjustment outcomes and join their writers before closing
+	// errors; the final read then observes both completed PostgreSQL updates on
+	// the same user.
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for range 2 {
@@ -401,14 +499,21 @@ func (s *UserRepoSuite) TestApplyRedeemBalanceAdjustment_ConcurrentNeverNegative
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
+	// A micro-dollar tolerance checks the stored lower bound after both
+	// adjustments finish.
 	s.Require().InDelta(0, got.Balance, 1e-6)
 }
 
+// TestDeductBalance requests a deduction of five from a ten-dollar balance. The
+// returned deducted amount and the reloaded remaining balance each equal five
+// within tolerance.
 func (s *UserRepoSuite) TestDeductBalance() {
 	user := s.mustCreateUser(&identitycore.User{Email: "deduct@test.com", Balance: 10})
 
 	deducted, err := s.repo.DeductBalance(s.ctx, user.ID, 5)
 	s.Require().NoError(err, "DeductBalance")
+	// Compare returned deduction and remaining wallet amounts within a
+	// micro-dollar difference.
 	s.Require().InDelta(5.0, deducted, 1e-6)
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
@@ -416,11 +521,16 @@ func (s *UserRepoSuite) TestDeductBalance() {
 	s.Require().InDelta(5.0, got.Balance, 1e-6)
 }
 
+// TestDeductBalance_InsufficientFunds requests a deduction exceeding a
+// five-dollar balance. The call succeeds with five deducted, and the stored
+// balance becomes zero within the numeric tolerance.
 func (s *UserRepoSuite) TestDeductBalance_InsufficientFunds() {
 	user := s.mustCreateUser(&identitycore.User{Email: "insuf@test.com", Balance: 5})
 
 	deducted, err := s.repo.DeductBalance(s.ctx, user.ID, 999)
 	s.Require().NoError(err, "DeductBalance should clamp to available balance")
+	// A micro-dollar tolerance checks the clamped deduction and the empty
+	// remaining wallet.
 	s.Require().InDelta(5.0, deducted, 1e-6)
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
@@ -428,11 +538,16 @@ func (s *UserRepoSuite) TestDeductBalance_InsufficientFunds() {
 	s.Require().InDelta(0.0, got.Balance, 1e-6, "Balance should clamp to zero")
 }
 
+// TestDeductBalance_ExactAmount deducts the complete ten-dollar balance from a
+// stored user. The reported deduction is ten and a later read shows zero
+// remaining balance.
 func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
 	user := s.mustCreateUser(&identitycore.User{Email: "exact@test.com", Balance: 10})
 
 	deducted, err := s.repo.DeductBalance(s.ctx, user.ID, 10)
 	s.Require().NoError(err, "DeductBalance exact amount")
+	// The numeric tolerance compares complete deduction with a zero remaining
+	// balance.
 	s.Require().InDelta(10.0, deducted, 1e-6)
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
@@ -440,11 +555,16 @@ func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
 	s.Require().InDelta(0.0, got.Balance, 1e-6)
 }
 
+// TestDeductBalance_LeavesLegacyNegativeBalanceUnchanged starts with a stored
+// negative-five balance and requests another deduction. The reported deducted
+// amount is zero and the preceding negative amount remains unchanged.
 func (s *UserRepoSuite) TestDeductBalance_LeavesLegacyNegativeBalanceUnchanged() {
 	user := s.mustCreateUser(&identitycore.User{Email: "legacy-negative@test.com", Balance: -5.0})
 
 	deducted, err := s.repo.DeductBalance(s.ctx, user.ID, 10.0)
 	s.Require().NoError(err, "DeductBalance should ignore already non-positive balance")
+	// Allow micro-dollar comparison differences while checking zero deduction and
+	// retained legacy debt.
 	s.Require().InDelta(0.0, deducted, 1e-6)
 
 	got, err := s.repo.GetByID(s.ctx, user.ID)
@@ -452,6 +572,9 @@ func (s *UserRepoSuite) TestDeductBalance_LeavesLegacyNegativeBalanceUnchanged()
 	s.Require().InDelta(-5.0, got.Balance, 1e-6, "Existing negative balance should remain unchanged")
 }
 
+// TestUpdateConcurrency applies a positive concurrency delta of three to a
+// stored value of five. The reloaded user reports eight after the update
+// succeeds.
 func (s *UserRepoSuite) TestUpdateConcurrency() {
 	user := s.mustCreateUser(&identitycore.User{Email: "conc@test.com", Concurrency: 5})
 
@@ -463,6 +586,9 @@ func (s *UserRepoSuite) TestUpdateConcurrency() {
 	s.Require().Equal(8, got.Concurrency)
 }
 
+// TestUpdateConcurrency_Negative applies a negative concurrency delta of two to
+// a stored value of five. The reloaded user reports three after the update
+// succeeds.
 func (s *UserRepoSuite) TestUpdateConcurrency_Negative() {
 	user := s.mustCreateUser(&identitycore.User{Email: "concneg@test.com", Concurrency: 5})
 
@@ -474,9 +600,16 @@ func (s *UserRepoSuite) TestUpdateConcurrency_Negative() {
 	s.Require().Equal(3, got.Concurrency)
 }
 
+// TestApplyRedeemConcurrencyAdjustment_ConcurrentNeverNegative runs two
+// negative-seven redemption concurrency adjustments against a stored value of
+// ten. Both succeed, and joining the workers precedes the final zero-value
+// assertion.
 func (s *UserRepoSuite) TestApplyRedeemConcurrencyAdjustment_ConcurrentNeverNegative() {
 	user := s.mustCreateUser(&identitycore.User{Email: "redeem-concurrency-concurrent@test.com", Concurrency: 10})
 
+	// Buffer both adjustment outcomes and join their writers before closing
+	// errors; the final read then observes both completed PostgreSQL updates on
+	// the same user.
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for range 2 {
@@ -495,6 +628,9 @@ func (s *UserRepoSuite) TestApplyRedeemConcurrencyAdjustment_ConcurrentNeverNega
 	s.Require().Equal(0, got.Concurrency)
 }
 
+// TestExistsByEmail creates one email fixture and checks both that address and
+// an absent address. Existence reports true for the stored value and false for
+// the other.
 func (s *UserRepoSuite) TestExistsByEmail() {
 	s.mustCreateUser(&identitycore.User{Email: "exists@test.com"})
 
@@ -507,6 +643,9 @@ func (s *UserRepoSuite) TestExistsByEmail() {
 	s.Require().False(notExists)
 }
 
+// TestExistsByNormalizedEmail supplies GoogleMail and QQ aliases with plus
+// suffixes before normalized lookups. The tested Gmail and QQ aliases match, QQ
+// dot removal does not, and an unrelated address remains absent.
 func (s *UserRepoSuite) TestExistsByNormalizedEmail() {
 	s.mustCreateUser(&identitycore.User{Email: " Y.o.u.r.N.a.m.e+promo@GoogleMail.com. "})
 	s.mustCreateUser(&identitycore.User{Email: "first.last+promo@qq.com"})
@@ -528,7 +667,9 @@ func (s *UserRepoSuite) TestExistsByNormalizedEmail() {
 	s.Require().False(notExists)
 }
 
-// TestCreateWithNormalizedEmailGuardSerializesProviderAliases checks that concurrent mailbox aliases allow one registration.
+// TestCreateWithNormalizedEmailGuardSerializesProviderAliases creates competing
+// Gmail and GoogleMail aliases in separate workers. One creation succeeds, one
+// reports EmailExists, and the final user count is one.
 func (s *UserRepoSuite) TestCreateWithNormalizedEmailGuardSerializesProviderAliases() {
 	candidates := []*identitycore.User{
 		{
@@ -547,6 +688,9 @@ func (s *UserRepoSuite) TestCreateWithNormalizedEmailGuardSerializesProviderAlia
 		},
 	}
 
+	// Give each distinct candidate its own object and buffer both creation
+	// results; workers contend on normalized mailbox ownership before the test
+	// joins and counts them.
 	errs := make(chan error, len(candidates))
 	var wg sync.WaitGroup
 	for _, candidate := range candidates {
@@ -580,6 +724,9 @@ func (s *UserRepoSuite) TestCreateWithNormalizedEmailGuardSerializesProviderAlia
 	s.Require().Equal(1, count)
 }
 
+// TestUpdateWithNormalizedEmailGuard_RejectsConflict changes another user's
+// address to an alias of an existing Gmail owner. Update returns EmailExists
+// and reloading retains the previous address.
 func (s *UserRepoSuite) TestUpdateWithNormalizedEmailGuard_RejectsConflict() {
 	s.mustCreateUser(&identitycore.User{Email: "your.name@gmail.com"})
 	other := s.mustCreateUser(&identitycore.User{Email: "second@example.com"})
@@ -596,6 +743,9 @@ func (s *UserRepoSuite) TestUpdateWithNormalizedEmailGuard_RejectsConflict() {
 	s.Require().Equal("second@example.com", reloaded.Email)
 }
 
+// TestUpdateWithNormalizedEmailGuard_AllowsSameUser changes a Gmail address to
+// its own normalized alias. The guarded update succeeds, and the following user
+// read returns the selected new email.
 func (s *UserRepoSuite) TestUpdateWithNormalizedEmailGuard_AllowsSameUser() {
 	user := s.mustCreateUser(&identitycore.User{Email: "your.name+seed@gmail.com"})
 
@@ -611,6 +761,9 @@ func (s *UserRepoSuite) TestUpdateWithNormalizedEmailGuard_AllowsSameUser() {
 	s.Require().Equal("yourname@gmail.com", reloaded.Email)
 }
 
+// TestRemoveGroupFromAllowedGroups targets one user's grant while another user
+// has only an unrelated group. Removal reports one affected row and retains the
+// first user's other grant.
 func (s *UserRepoSuite) TestRemoveGroupFromAllowedGroups() {
 	target := s.mustCreateGroup("target-42")
 	other := s.mustCreateGroup("other-7")
@@ -634,6 +787,9 @@ func (s *UserRepoSuite) TestRemoveGroupFromAllowedGroups() {
 	s.Require().Contains(got.AllowedGroups, other.ID)
 }
 
+// TestRemoveGroupFromAllowedGroups_NoMatch supplies a group ID absent from two
+// existing grants on a stored user. The repository succeeds and reports zero
+// affected rows for that removal.
 func (s *UserRepoSuite) TestRemoveGroupFromAllowedGroups_NoMatch() {
 	groupA := s.mustCreateGroup("nomatch-a")
 	groupB := s.mustCreateGroup("nomatch-b")
@@ -648,6 +804,9 @@ func (s *UserRepoSuite) TestRemoveGroupFromAllowedGroups_NoMatch() {
 	s.Require().Zero(affected, "expected no affected rows")
 }
 
+// TestGetFirstAdmin creates two active administrators sequentially in the suite
+// fixture. The repository returns the first administrator's ID when asked for
+// the first usable admin.
 func (s *UserRepoSuite) TestGetFirstAdmin() {
 	admin1 := s.mustCreateUser(&identitycore.User{
 		Email:  "admin1@example.com",
@@ -665,6 +824,9 @@ func (s *UserRepoSuite) TestGetFirstAdmin() {
 	s.Require().Equal(admin1.ID, got.ID, "GetFirstAdmin mismatch")
 }
 
+// TestGetFirstAdmin_NoAdmin supplies an active ordinary user and no
+// administrator fixture. The repository reports an error for the request to
+// obtain the first administrator.
 func (s *UserRepoSuite) TestGetFirstAdmin_NoAdmin() {
 	s.mustCreateUser(&identitycore.User{
 		Email:  "user@example.com",
@@ -676,6 +838,9 @@ func (s *UserRepoSuite) TestGetFirstAdmin_NoAdmin() {
 	s.Require().Error(err, "expected error when no admin exists")
 }
 
+// TestGetFirstAdmin_DisabledAdminIgnored creates a disabled administrator
+// before an active one. The returned first-administrator result identifies the
+// active fixture and excludes the earlier disabled account.
 func (s *UserRepoSuite) TestGetFirstAdmin_DisabledAdminIgnored() {
 	s.mustCreateUser(&identitycore.User{
 		Email:  "disabled@example.com",
@@ -693,6 +858,10 @@ func (s *UserRepoSuite) TestGetFirstAdmin_DisabledAdminIgnored() {
 	s.Require().Equal(activeAdmin.ID, got.ID, "should return only active admin")
 }
 
+// TestCRUD_And_Filters_And_AtomicUpdates combines user lookup, a masked
+// username edit, sequential wallet changes, concurrency adjustment, and
+// filtered listing. Reads reflect each asserted value and identify the active
+// administrator target.
 func (s *UserRepoSuite) TestCRUD_And_Filters_And_AtomicUpdates() {
 	user1 := s.mustCreateUser(&identitycore.User{
 		Email:    "a@example.com",
@@ -731,6 +900,8 @@ func (s *UserRepoSuite) TestCRUD_And_Filters_And_AtomicUpdates() {
 	s.Require().NoError(s.repo.UpdateBalance(s.ctx, user1.ID, 2.5), "UpdateBalance")
 	got3, err := s.repo.GetByID(s.ctx, user1.ID)
 	s.Require().NoError(err, "GetByID after UpdateBalance")
+	// Compare this sequence of returned and persisted wallet amounts within a
+	// micro-dollar difference.
 	s.Require().InDelta(12.5, got3.Balance, 1e-6)
 
 	deducted, err := s.repo.DeductBalance(s.ctx, user1.ID, 5)
@@ -760,18 +931,27 @@ func (s *UserRepoSuite) TestCRUD_And_Filters_And_AtomicUpdates() {
 	s.Require().Equal(user2.ID, users[0].ID, "ListWithFilters result mismatch")
 }
 
+// TestUpdateBalance_NotFound applies a positive balance delta to a numeric ID
+// absent from the fixture. The repository returns an error carrying
+// UserNotFound for that requested row.
 func (s *UserRepoSuite) TestUpdateBalance_NotFound() {
 	err := s.repo.UpdateBalance(s.ctx, 999999, 10.0)
 	s.Require().Error(err, "expected error for non-existent user")
 	s.Require().ErrorIs(err, identitycore.ErrUserNotFound)
 }
 
+// TestUpdateConcurrency_NotFound applies a concurrency delta to a numeric ID
+// absent from the fixture. The repository returns an error carrying
+// UserNotFound for that requested storage row.
 func (s *UserRepoSuite) TestUpdateConcurrency_NotFound() {
 	err := s.repo.UpdateConcurrency(s.ctx, 999999, 5)
 	s.Require().Error(err, "expected error for non-existent user")
 	s.Require().ErrorIs(err, identitycore.ErrUserNotFound)
 }
 
+// TestDeductBalance_NotFound requests a deduction for a numeric user ID absent
+// from the current fixture. The repository returns an error carrying the
+// UserNotFound identity for that row.
 func (s *UserRepoSuite) TestDeductBalance_NotFound() {
 	_, err := s.repo.DeductBalance(s.ctx, 999999, 5)
 	s.Require().Error(err, "expected error for non-existent user")

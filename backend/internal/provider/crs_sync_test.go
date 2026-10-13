@@ -9,12 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestBuildSelectedSet supplies absent, empty, populated, and duplicate
+// source-ID selections. It asserts nil and nonnil empty maps retain distinct
+// creation meaning and every unique supplied ID appears in the result.
 func TestBuildSelectedSet(t *testing.T) {
 	tests := []struct {
-		name     string
-		ids      []string
-		wantNil  bool
-		wantSize int
+		name     string   // table case display name
+		ids      []string // supplied source identity selection
+		wantNil  bool     // expect absent selection sentinel
+		wantSize int      // expected unique membership count
 	}{
 		{
 			name:    "nil input returns nil (backward compatible: create all)",
@@ -72,12 +75,20 @@ func TestBuildSelectedSet(t *testing.T) {
 	}
 }
 
+// TestShouldCreateProvider checks exact ID membership under absent, empty, and
+// populated creation selections. It asserts nil admits every ID, explicit empty
+// admits none, and unmatched IDs are rejected.
 func TestShouldCreateProvider(t *testing.T) {
 	tests := []struct {
-		name        string
-		crsID       string
+		name  string // table case display name
+		crsID string // queried source account identity
+		// selectedSet chooses absent, explicit empty, or populated
+		// membership
+		// fixtures; each case exercises a distinct creation choice
+		// returned by
+		// CRSShouldCreateProvider.
 		selectedSet map[string]struct{}
-		want        bool
+		want        bool // expected new creation eligibility
 	}{
 		{
 			name:        "nil set allows all (backward compatible)",
@@ -116,8 +127,10 @@ func TestShouldCreateProvider(t *testing.T) {
 	}
 }
 
-// TestGuardCRSShadowParentInvariant checks that every CRS source category
-// keeps a Spark parent on OpenAI OAuth so shadows can resolve shared credentials.
+// TestGuardCRSShadowParentInvariant adds a Spark shadow to an OpenAI OAuth
+// parent after checking unrestricted target conversion. It asserts incompatible
+// platform/type targets are rejected while OpenAI OAuth remains accepted; this
+// exercises the guard directly.
 func TestGuardCRSShadowParentInvariant(t *testing.T) {
 	ctx := context.Background()
 	repo := newCRSShadowStore()

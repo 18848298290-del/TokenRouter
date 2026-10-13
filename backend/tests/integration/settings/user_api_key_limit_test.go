@@ -16,19 +16,38 @@ import (
 	settingskit "github.com/TokenFlux/TokenRouter/internal/settings/testkit"
 )
 
+// The default user key allowance treats zero as unlimited and replaces missing
+// or invalid stored values with the identity default. Map-backed cases compare
+// runtime getter and composite parsing outcomes, captured update strings, and
+// BadRequest errors for values below zero or above the supported maximum.
+
+// settingRepoStub records locked setting reads and configurable failures for
+// default allowance cases.
 type settingRepoStub struct {
-	mu               sync.Mutex
-	values           map[string]string
+	// mu protects values, err, getValueCalls, and getMultipleCalls during
+	// supported reads. Test setup changes these fields before overlapping
+	// repository calls can start.
+	mu     sync.Mutex        // fixture setting observation lock
+	values map[string]string // configured setting string values
+	// err overrides both supported read methods after their attempt counter rises.
+	// Nil permits configured values to be read, while a failure returns no setting
+	// data.
 	err              error
-	getValueCalls    int
-	getMultipleCalls int
+	getValueCalls    int // observed single-value read attempts
+	getMultipleCalls int // observed batch-value read attempts
 }
 
+// TestSettingService_GetDefaultUserAPIKeyLimit supplies missing, malformed,
+// negative, oversized, zero, and positive stored values. The identity reader
+// uses defaults for invalid cases while retaining zero and the valid configured
+// allowance.
 func TestSettingService_GetDefaultUserAPIKeyLimit(t *testing.T) {
 	tests := []struct {
-		name   string
+		name string // allowance input case label
+		// value supplies stored text; nil omits the setting key so the getter
+		// exercises the missing-value path rather than a configured empty string.
 		value  *string
-		expect int
+		expect int // expected resolved key allowance
 	}{
 		{name: "设置缺失", expect: identity.DefaultUserAPIKeyLimit},
 		{name: "非法字符串", value: stringPointer("invalid"), expect: identity.DefaultUserAPIKeyLimit},
@@ -50,13 +69,16 @@ func TestSettingService_GetDefaultUserAPIKeyLimit(t *testing.T) {
 	}
 }
 
+// TestSettingService_ParseDefaultUserAPIKeyLimit applies the same missing and
+// invalid-value matrix to composite parsing. Its snapshot selects the default
+// allowance or retains the supplied zero and valid positive values.
 func TestSettingService_ParseDefaultUserAPIKeyLimit(t *testing.T) {
 	svc := settingskit.NewComposite(&settingGetAllRepoStub{}, &config.Config{})
 
 	tests := []struct {
-		name     string
-		settings map[string]string
-		expect   int
+		name     string            // composite allowance case label
+		settings map[string]string // stored input setting values
+		expect   int               // expected parsed key allowance
 	}{
 		{name: "设置缺失", settings: map[string]string{}, expect: identity.DefaultUserAPIKeyLimit},
 		{name: "非法设置", settings: map[string]string{identity.SettingKeyDefaultUserAPIKeyLimit: "bad"}, expect: identity.DefaultUserAPIKeyLimit},
@@ -74,6 +96,9 @@ func TestSettingService_ParseDefaultUserAPIKeyLimit(t *testing.T) {
 	}
 }
 
+// TestSettingService_UpdateDefaultUserAPIKeyLimit saves unlimited and valid
+// positive allowances through the capturing fixture. Invalid negative and
+// oversized inputs return the allowance error with HTTP BadRequest status.
 func TestSettingService_UpdateDefaultUserAPIKeyLimit(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := settingskit.NewComposite(repo, &config.Config{})
@@ -93,14 +118,21 @@ func TestSettingService_UpdateDefaultUserAPIKeyLimit(t *testing.T) {
 	require.Equal(t, 400, httpx.ErrorCode(err))
 }
 
+// stringPointer returns a pointer to a distinct copy of the supplied string
+// fixture input.
 func stringPointer(value string) *string {
 	return &value
 }
 
+// Get panics when a default-key-limit reader unexpectedly requests this
+// unsupported repository operation.
 func (s *settingRepoStub) Get(ctx context.Context, key string) (*settingscore.Setting, error) {
 	panic("unexpected Get call")
 }
 
+// GetValue counts its attempt under the mutex and returns configured failure
+// before reading stored values. A present key returns its string, a missing key
+// returns ErrSettingNotFound, and ctx is ignored.
 func (s *settingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,10 +146,15 @@ func (s *settingRepoStub) GetValue(ctx context.Context, key string) (string, err
 	return "", settingscore.ErrSettingNotFound
 }
 
+// Set panics when a default-key-limit reader unexpectedly requests this
+// unsupported repository operation.
 func (s *settingRepoStub) Set(ctx context.Context, key, value string) error {
 	panic("unexpected Set call")
 }
 
+// GetMultiple counts its attempt under the mutex before returning configured
+// failure or a new map of present requested values. Missing keys are omitted,
+// and the supplied context is ignored.
 func (s *settingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,14 +171,20 @@ func (s *settingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[s
 	return result, nil
 }
 
+// SetMultiple panics when a default-key-limit reader unexpectedly requests this
+// unsupported repository operation.
 func (s *settingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
 	panic("unexpected SetMultiple call")
 }
 
+// GetAll panics when a default-key-limit reader unexpectedly requests this
+// unsupported repository operation.
 func (s *settingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
 	panic("unexpected GetAll call")
 }
 
+// Delete panics when a default-key-limit reader unexpectedly requests this
+// unsupported repository operation.
 func (s *settingRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }

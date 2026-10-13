@@ -15,6 +15,15 @@ import (
 	paymenthttp "github.com/TokenFlux/TokenRouter/internal/payment/httpapi"
 )
 
+// Logout ends a browser's pending OAuth flow as well as clearing its provider
+// state cookies. A saved OIDC pending row and the supplied LinuxDo, OIDC,
+// WeChat, binding, and payment-state cookies let the case inspect database
+// consumption alongside cookie deletion and HttpOnly response attributes.
+
+// TestLogoutClearsOAuthStateCookiesAndConsumesPendingSession sends logout with
+// a matching pending-browser session and the listed provider cookies. The
+// response clears each cookie with HttpOnly and negative MaxAge, and the stored
+// pending row is consumed.
 func TestLogoutClearsOAuthStateCookiesAndConsumesPendingSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -27,6 +36,7 @@ func TestLogoutClearsOAuthStateCookiesAndConsumesPendingSession(t *testing.T) {
 		SetProviderSubject("logout-subject-123").
 		SetBrowserSessionKey("logout-browser-session-key").
 		SetResolvedEmail("logout@example.com").
+		// Seed a future expiry for the following authentication-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)

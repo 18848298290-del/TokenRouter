@@ -15,7 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// isolationKey includes mutable authentication snapshot fields and synthetic credentials and addresses.
+// Authentication snapshots can outlive both their source objects and objects
+// restored for individual requests. The mutation matrix serializes a snapshot
+// before and after editing selected pointer, slice, and map paths in either
+// object, while a JSON round trip checks composite-group Fast policies.
+
+// isolationKey returns a fresh key with nested pointers, slices, maps, and
+// authentication relationships for mutation cases.
 func isolationKey() *apikey.APIKey {
 	groupID, teamID, subscriptionID := int64(3), int64(4), int64(5)
 	threshold := 3.0
@@ -32,7 +38,9 @@ func isolationKey() *apikey.APIKey {
 	}
 }
 
-// TestAuthSnapshotIsolation checks that mutations to a source or restored key leave the cached snapshot unchanged.
+// TestAuthSnapshotIsolation mutates selected source-key and restored-request
+// fields after snapshot creation. The snapshot JSON remains byte-identical for
+// each pointer, slice, map, and nested relationship exercised.
 func TestAuthSnapshotIsolation(t *testing.T) {
 	changes := map[string]func(*apikey.APIKey){
 		"group_id":         func(k *apikey.APIKey) { *k.GroupID = 99 },
@@ -64,6 +72,8 @@ func TestAuthSnapshotIsolation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				// Compare the retained snapshot after a mutation on either side of its
+				// conversion, exposing shared storage in each selected mutable path.
 				if direction == "source" {
 					change(key)
 				} else {
@@ -81,7 +91,9 @@ func TestAuthSnapshotIsolation(t *testing.T) {
 	}
 }
 
-// TestCompositeSnapshotFastPolicy checks that composite group Fast policies survive snapshot serialization.
+// TestCompositeSnapshotFastPolicy serializes composite-group force_off and
+// force_ultrafast settings through JSON. Restoring the decoded authentication
+// snapshot returns the same Fast policy for each supplied value.
 func TestCompositeSnapshotFastPolicy(t *testing.T) {
 	for _, policy := range []string{"force_off", "force_ultrafast"} {
 		t.Run(policy, func(t *testing.T) {

@@ -14,6 +14,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Configuration updates and their scheduler event share an Ent transaction.
+// PostgreSQL assertions compare the pending write inside an outer transaction
+// with its state after rollback, and inject a failing outbox statement to check
+// that the configuration remains unchanged.
+
+// TestConfigurationTransactionAndOutbox writes a name change inside an outer
+// transaction or through a failing outbox adapter. Pending configuration and
+// event rows disappear on rollback, and outside reads retain the original name
+// and quota value.
 func TestConfigurationTransactionAndOutbox(t *testing.T) {
 	for _, mode := range []string{"outer_rollback", "outbox_failure"} {
 		t.Run(mode, func(t *testing.T) {
@@ -47,6 +56,8 @@ func TestConfigurationTransactionAndOutbox(t *testing.T) {
 				require.NoError(t, rows.Scan(&count))
 				require.NoError(t, rows.Close())
 				require.Equal(t, 1, count)
+				// The pending row and event were visible through tx.Client; rolling
+				// back now lets the separate client verify that both writes disappear.
 				require.NoError(t, tx.Rollback())
 			} else {
 				require.ErrorContains(t, err, "test_missing_outbox_fixture")

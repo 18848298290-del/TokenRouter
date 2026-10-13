@@ -11,9 +11,15 @@ import (
 	infra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// KeyLatestUsageLogIPsQuery builds a dialect-specific latest-IP query.
-// PostgreSQL uses one ordered index probe per key with an array parameter;
-// other dialects use individual placeholders and rank matching records.
+// A key's recent IP is the latest retained usage row with a nonempty ip_address,
+// ordered by creation time and row ID. PostgreSQL probes once for each requested
+// key through a lateral subquery; other dialects rank matching rows before
+// selecting one per key.
+
+// KeyLatestUsageLogIPsQuery builds a latest-nonempty-IP query and matching bound
+// arguments. PostgreSQL uses an array and per-key lateral probes; other dialects
+// use individual placeholders. Callers supply nonempty IDs for the latter form
+// to avoid an empty IN list.
 func KeyLatestUsageLogIPsQuery(apiKeyIDs []int64, dialectName string) (string, []any) {
 	if dialectName == dialect.Postgres {
 		return `
@@ -49,7 +55,10 @@ func KeyLatestUsageLogIPsQuery(apiKeyIDs []int64, dialectName string) (string, [
 		WHERE rn = 1`, strings.Join(placeholders, ", ")), args
 }
 
-// KeyLatestUsageLogIPs returns each API key's latest nonempty IP from usage_logs.
+// KeyLatestUsageLogIPs returns each requested key's latest retained nonempty IP.
+// Empty IDs or a nil executor return an allocated empty map; keys without a
+// matching row are omitted, and a close failure is returned when no earlier
+// error exists.
 func KeyLatestUsageLogIPs(ctx context.Context, db infra.Executor, dialectName string, apiKeyIDs []int64) (result map[int64]string, err error) {
 	if len(apiKeyIDs) == 0 || db == nil {
 		return map[int64]string{}, nil
@@ -60,6 +69,8 @@ func KeyLatestUsageLogIPs(ctx context.Context, db infra.Executor, dialectName st
 	if err != nil {
 		return nil, err
 	}
+	// Close rows after every query exit. Preserve earlier failures, while a cleanup
+	// failure can become the returned error after successful iteration.
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr

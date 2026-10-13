@@ -17,13 +17,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// Grok Responses requests can contain client-tool declarations, replayed history
+// and reasoning controls with shapes that differ from the selected upstream's
+// accepted input. Preparation keeps the complete upstream model identity, adapts
+// client tools with a mapping for response restoration, and applies capability
+// lookup before filtering unsupported fields or tools.
+//
+// The order matters: tools carried by additional_tools are promoted before
+// client-tool adaptation, Compact history becomes reasoning and summary input
+// before model-input cleanup, and tool choice is checked against the
+// declarations that survive. Recovery cleanup removes unusable encrypted state
+// while retaining plaintext context and tool-output linkage when needed.
+// Composer image conversion uses encounter order to pair description text with
+// source images, and decoded-map helpers expose their mutation rules so shared
+// request history is not reused accidentally.
+
+// ComposerImageBridgeVisionModel and ComposerImageBridgeMaxOutputTokens choose
+// the auxiliary vision target and bound each requested image description's
+// output.
 const (
 	ComposerImageBridgeVisionModel     = "grok-build-0.1"
 	ComposerImageBridgeMaxOutputTokens = 512
 
+	// GrokSafeFunctionParameters supplies permissive object parameters when a
+	// function's root union includes a branch without an explicit object type.
 	GrokSafeFunctionParameters = `{"type":"object","properties":{},"additionalProperties":true}`
 )
 
+// These sets govern recursive removal of unsupported request keys and the exact
+// tool types retained by Grok Responses filtering.
 var (
 	grokResponsesUnsupportedRecursiveFields = map[string]struct{}{
 		"external_web_access": {},
@@ -50,14 +72,27 @@ var (
 	}
 )
 
-// BodyCodec normalizes Grok request bodies and uses NewID for generated tool-call IDs.
+// BodyCodec normalizes Grok request forms with injected IDs and model
+// attributes.
 type BodyCodec struct {
-	NewID      func() string
-	Attributes func(string) modelcatalog.Attributes
+	// NewID is required when ConvertGrokResponseToOpenAICompact generates its
+	// compaction identifier; regular request normalization can use the codec
+	// without this callback.
+	NewID func() string // compaction ID generator
+	// Attributes receives the full upstream model identity. A nil callback returns
+	// unknown attributes, retaining nonblank client effort values during
+	// normalization.
+	Attributes func(string) modelcatalog.Attributes // model attribute lookup
 }
 
+// GrokEncryptedContentStripRetriedKey identifies the request context's
+// encrypted-state recovery marker.
 type GrokEncryptedContentStripRetriedKey struct{}
 
+// modelAttributes reads the injected attributes for the complete supplied model
+// identity. A missing Attributes callback returns zero attributes, which
+// reasoning normalization treats as unknown support and therefore retains
+// nonblank client effort text.
 func (m BodyCodec) modelAttributes(model string) modelcatalog.Attributes {
 	if m.Attributes != nil {
 		return m.Attributes(model)
@@ -65,14 +100,23 @@ func (m BodyCodec) modelAttributes(model string) modelcatalog.Attributes {
 	return modelcatalog.Attributes{}
 }
 
+// IsGrokInvalidEncryptedContentResponse recognizes encrypted-state rejection in
+// HTTP 400 or 422 bodies. It reads flat code first, then nested code, and
+// selects explicit encrypted or compaction failure codes before message checks.
+// Other known codes reject this recovery path.
+//
+// An invalid-argument code permits encrypted-content messages with decrypt or
+// unmodified evidence. Missing code additionally requires decrypt wording, so an
+// unrelated unmodified message cannot establish this failure. Selected flat,
+// nested or plaintext message candidates support deployed envelope differences
+// while keeping recovery tied to the request's encrypted state.
 func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
 		return false
 	}
 
-	// xAI errors can use flat or nested envelopes:
-	// Flat: {"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content."}
-	// Nested: {"error":{"message":"Could not decrypt the provided encrypted_content."}}
+	// Flat and nested envelopes place the same recovery evidence in different
+	// fields. Keep their selected code and message candidates available together.
 	code := strings.TrimSpace(gjson.GetBytes(body, "code").String())
 	errNode := gjson.GetBytes(body, "error")
 	if code == "" && errNode.IsObject() {
@@ -82,13 +126,16 @@ func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []
 	if strings.EqualFold(code, "invalid_encrypted_content") || strings.EqualFold(code, "invalid_compaction") || strings.EqualFold(code, "compaction_decode_error") {
 		return true
 	}
-	// A known unrelated error code must not trigger decryption recovery.
+	// A populated unrelated code selects another failure category, so encrypted
+	// message wording alone cannot override that code and start recovery.
 	if !strings.EqualFold(code, "invalid-argument") && code != "" {
 		return false
 	}
 	for _, candidate := range GrokStructuredErrorMessageCandidates(body) {
 		normalizedMessage := strings.ToLower(candidate)
-		// Nested OpenAI-style envelopes may omit top-level code; require decrypt text.
+		// A missing code needs decrypt wording in the selected message; unmodified
+		// text alone can describe a different request failure and cannot select
+		// recovery.
 		if code == "" && !strings.Contains(normalizedMessage, "decrypt") {
 			continue
 		}
@@ -100,6 +147,10 @@ func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []
 	return false
 }
 
+// IsGrokCompactionReplayDecodeError recognizes HTTP 400 messages combining
+// decode evidence with replay-context evidence. Empty bodies or other statuses
+// return false. Callers use this narrower history-decoding signal when explicit
+// encrypted-content rejection was not selected.
 func (m BodyCodec) IsGrokCompactionReplayDecodeError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest || len(body) == 0 {
 		return false
@@ -120,6 +171,16 @@ func (m BodyCodec) IsGrokCompactionReplayDecodeError(statusCode int, body []byte
 	return false
 }
 
+// SanitizeGrokCompactionReplayBody prepares a changed payload for
+// history-decoding recovery. Compact entries are converted before encrypted
+// state and empty reasoning are removed. It returns the supplied body with false
+// when the combined cleanup makes no change.
+//
+// A nonblank previous_response_id is dropped only when the decoded request has
+// no function-call output, keeping outputs linked to their upstream
+// continuation. That removal adds store=false only when store was absent.
+// Re-encoding uses Number-valued decoded input, and failures stop recovery
+// before a retry body is published.
 func (m BodyCodec) SanitizeGrokCompactionReplayBody(body []byte) ([]byte, bool, error) {
 	converted, err := m.ConvertOpenAICompactInputsForGrok(body)
 	if err != nil {
@@ -139,6 +200,9 @@ func (m BodyCodec) SanitizeGrokCompactionReplayBody(body []byte) ([]byte, bool, 
 	if m.DropEmptyGrokReplayReasoning(requestBody) {
 		changed = true
 	}
+	// Function outputs can depend on previous response linkage. Drop that
+	// identifier only for self-contained replay, adding store=false when storage
+	// was unspecified.
 	if previousID, _ := requestBody["previous_response_id"].(string); strings.TrimSpace(previousID) != "" && !protocolopenai.HasFunctionCallOutput(requestBody) {
 		delete(requestBody, "previous_response_id")
 		if _, exists := requestBody["store"]; !exists {
@@ -156,11 +220,17 @@ func (m BodyCodec) SanitizeGrokCompactionReplayBody(body []byte) ([]byte, bool, 
 	return retryBody, true, nil
 }
 
+// DropEmptyGrokReplayReasoning removes empty reasoning entries from a decoded
+// input array and reports a change. Filtering reuses its backing storage, so
+// callers own the mutable map and slice. Any encrypted key, nonempty summary or
+// nonnil content keeps an entry.
 func (m BodyCodec) DropEmptyGrokReplayReasoning(requestBody map[string]any) bool {
 	items, ok := requestBody["input"].([]any)
 	if !ok {
 		return false
 	}
+	// Reuse the decoded input's storage while removing empty reasoning; callers
+	// must isolate aliases before this recovery filter rewrites positions.
 	filtered := items[:0]
 	changed := false
 	for _, rawItem := range items {
@@ -184,8 +254,10 @@ func (m BodyCodec) DropEmptyGrokReplayReasoning(requestBody map[string]any) bool
 	return changed
 }
 
-// RequestHasGrokEncryptedReasoning reports whether a Responses body contains
-// reasoning.encrypted_content that can be removed before retrying.
+// RequestHasGrokEncryptedReasoning reports a nonnull, nonblank encrypted_content
+// value on reasoning input. Input may be an object or array. Compaction items
+// are outside this predicate, although the retry-body trimmer separately
+// recognizes their encrypted keys.
 func (m BodyCodec) RequestHasGrokEncryptedReasoning(body []byte) bool {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() {
@@ -207,15 +279,27 @@ func (m BodyCodec) RequestHasGrokEncryptedReasoning(body []byte) bool {
 	return false
 }
 
+// MarkGrokEncryptedContentStripRetried returns a child context carrying the
+// recovery-attempt marker. Callers propagate that context to later retry checks;
+// inherited cancellation and values remain provided by the parent context passed
+// to context.WithValue.
 func (m BodyCodec) MarkGrokEncryptedContentStripRetried(ctx context.Context) context.Context {
 	return context.WithValue(ctx, GrokEncryptedContentStripRetriedKey{}, true)
 }
 
+// GrokEncryptedContentStripRetried reads the bool recovery marker from ctx.
+// Missing or differently typed values return false, allowing caller policy to
+// distinguish an unmarked request from one that already attempted
+// encrypted-state stripping.
 func (m BodyCodec) GrokEncryptedContentStripRetried(ctx context.Context) bool {
 	v, _ := ctx.Value(GrokEncryptedContentStripRetriedKey{}).(bool)
 	return v
 }
 
+// TrimGrokInvalidEncryptedContentRetryBody removes encrypted reasoning or
+// compaction state from decoded input. A matching encrypted key is needed before
+// decoding; unchanged cleanup returns body with false. The shared trimmer can
+// discard encrypted compaction objects and retain remaining plaintext context.
 func (m BodyCodec) TrimGrokInvalidEncryptedContentRetryBody(body []byte) ([]byte, bool, error) {
 	input := gjson.GetBytes(body, "input")
 	items := input.Array()
@@ -252,10 +336,19 @@ func (m BodyCodec) TrimGrokInvalidEncryptedContentRetryBody(body []byte) ([]byte
 	return retryBody, true, nil
 }
 
+// PatchGrokResponsesBody applies the base model and compatibility patch sequence
+// to a complete JSON body. Callers needing client-tool restoration use
+// PatchGrokResponsesBodyWithClientTools, which also returns the mapping required
+// by the response reader.
 func (m BodyCodec) PatchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	return m.PatchGrokResponsesBodyBase(body, upstreamModel)
 }
 
+// PatchGrokResponsesBodyWithClientTools promotes carried tools, adapts client
+// protocol shapes, and applies base Grok patching. It rejects invalid or
+// trailing JSON documents and returns a mapping paired with the resulting body.
+// Callers retain that mapping through response restoration; failed preparation
+// returns no usable mapping.
 func (m BodyCodec) PatchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([]byte, protocolbridge.ResponsesClientToolMapping, error) {
 	if !json.Valid(body) {
 		return nil, protocolbridge.ResponsesClientToolMapping{}, fmt.Errorf("invalid json request body")
@@ -275,12 +368,18 @@ func (m BodyCodec) PatchGrokResponsesBodyWithClientTools(body []byte, upstreamMo
 	return patched, mapping, nil
 }
 
+// PatchGrokResponsesBodyBase validates one complete JSON document and applies
+// ordered model and compatibility normalization. Reasoning and model
+// capabilities precede unsupported-field removal, Compact conversion, carried
+// tools, model-input cleanup, redundant image tools, null cleanup and tool
+// filtering. Callers configure any required codec callbacks before those paths
+// execute.
 func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, error) {
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("invalid json request body")
 	}
-	// sjson can reuse the backing array. Copy bytes because billing and retry paths
-	// may still need the caller-owned request body.
+	// Start the mapped request from copied bytes so this preparation has its own
+	// request storage while callers retain body for billing and replay decisions.
 	out, err := sjson.SetBytes(append([]byte(nil), body...), "model", upstreamModel)
 	if err != nil {
 		return nil, err
@@ -293,6 +392,9 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 	if err != nil {
 		return nil, err
 	}
+	// These request metadata controls are omitted for Grok forwarding, while the
+	// selected model and later cache routing use their own effective request
+	// fields.
 	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier", "metadata"} {
 		if gjson.GetBytes(out, unsupportedField).Exists() {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
@@ -301,6 +403,9 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 			}
 		}
 	}
+	// Apply the 4.5 parameter exclusions after capability normalization so the
+	// selected deployment receives neither penalty spelling nor its unsupported
+	// stop control.
 	if strings.EqualFold(upstreamModel, "grok-4.5") {
 		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
 			if gjson.GetBytes(out, unsupportedField).Exists() {
@@ -311,6 +416,8 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 			}
 		}
 	}
+	// The recognized 4.20 family drops both logprob controls together; keeping one
+	// would still leave the unsupported request feature populated.
 	if m.GrokModelRejectsLogprobs(upstreamModel) {
 		for _, unsupportedField := range []string{"logprobs", "top_logprobs"} {
 			if gjson.GetBytes(out, unsupportedField).Exists() {
@@ -352,7 +459,8 @@ func (m BodyCodec) PatchGrokResponsesBodyBase(body []byte, upstreamModel string)
 	return out, nil
 }
 
-// GrokModelRejectsLogprobs recognizes the Grok 4.20 family that rejects logprobs.
+// GrokModelRejectsLogprobs recognizes the 4.20 prefix after the final model
+// qualifier.
 func (m BodyCodec) GrokModelRejectsLogprobs(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if slash := strings.LastIndex(model, "/"); slash >= 0 {
@@ -361,13 +469,18 @@ func (m BodyCodec) GrokModelRejectsLogprobs(model string) bool {
 	return strings.HasPrefix(model, "grok-4.20")
 }
 
-// SanitizeGrokResponsesModelCapabilities removes reasoning fields for models that reject them.
+// SanitizeGrokResponsesModelCapabilities removes all reasoning spellings for
+// recognized Composer aliases. Other models retain body bytes. Removal includes
+// the reasoning object itself, while JSON-edit errors return before later
+// request normalization proceeds.
 func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamModel string) ([]byte, error) {
 	if !m.GrokModelRejectsReasoningEffort(upstreamModel) {
 		return body, nil
 	}
 
 	out := body
+	// Composer aliases reject effort controls; remove the object and both flat
+	// spellings together so another spelling cannot reintroduce a discarded value.
 	for _, field := range []string{"reasoning", "reasoning_effort", "reasoningEffort"} {
 		if !gjson.GetBytes(out, field).Exists() {
 			continue
@@ -381,7 +494,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamM
 	return out, nil
 }
 
-// GrokModelRejectsReasoningEffort reports whether a Composer alias rejects reasoning parameters.
+// GrokModelRejectsReasoningEffort recognizes fixed Composer aliases after
+// an optional xai prefix.
 func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "xai/")
 	switch model {
@@ -392,6 +506,16 @@ func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
 	}
 }
 
+// NormalizeGrokResponsesReasoningEffort applies model attributes to nested and
+// flat effort controls. Missing fields remain absent, unsupported values are
+// removed, and retained values use NormalizeGrokReasoningEffortValue. The
+// complete upstream identity is passed to capability lookup.
+//
+// Camel-case reasoningEffort is removed and can populate reasoning_effort when
+// that field is absent after its own processing. Nested effort remains
+// independent of the flat spelling. An emptied reasoning object is removed, so
+// known models without an accepted effort do not retain an empty control object.
+// JSON-edit errors terminate the ordered normalization.
 func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
 	out := body
 	var err error
@@ -410,6 +534,8 @@ func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamMo
 			return nil, fmt.Errorf("normalize Grok reasoning field %s: %w", field, err)
 		}
 	}
+	// Remove the legacy spelling after processing flat effort; it can supply that
+	// flat field only when normalization left it absent.
 	if camel := gjson.GetBytes(out, "reasoningEffort"); camel.Exists() {
 		normalized, keep := m.NormalizeGrokReasoningEffortValue(camel.String(), upstreamModel)
 		out, err = sjson.DeleteBytes(out, "reasoningEffort")
@@ -432,7 +558,18 @@ func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamMo
 	return out, nil
 }
 
+// NormalizeGrokChatReasoningEffort chooses nonblank reasoning_effort before the
+// camel-case spelling and applies model capability normalization. A blank flat
+// value allows reasoningEffort to supply the selection; the legacy key is then
+// removed from the result.
+//
+// Source selection precedes validation, so an unsupported nonblank flat value
+// suppresses an otherwise usable legacy value. Known capabilities can remove
+// that selected effort, while unknown attributes retain its trimmed text. The
+// result carries one flat spelling and reports JSON-edit errors to the caller.
 func (m BodyCodec) NormalizeGrokChatReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
+	// Select the source before deleting the legacy key; unsupported nonblank flat
+	// text still outranks legacy text, so validation cannot revive displaced input.
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	if raw == "" {
 		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoningEffort").String())
@@ -456,9 +593,22 @@ func (m BodyCodec) NormalizeGrokChatReasoningEffort(body []byte, upstreamModel s
 	return out, err
 }
 
+// NormalizeGrokReasoningEffortValue returns the selected effort and whether the
+// caller should keep it. Unknown attributes with no disabled reasoning retain
+// trimmed nonblank client text. Known capability state normalizes aliases and
+// rejects unsupported selections.
+//
+// With known capabilities, minimal maps to low; max and ultra map to high.
+// Extra-high aliases select xhigh, then high when the resolver rejects xhigh;
+// high support is checked afterward. This separates absent capability knowledge
+// from an explicit empty or disabled option list, so unknown qualified identities
+// do not silently lose client controls.
 func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string, bool) {
 	value := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(raw)))
 	attributes := m.modelAttributes(model)
+	// Absent options with no reasoning disable retain the caller's spelling;
+	// applying known-model aliases here would change controls whose support is
+	// still unknown.
 	if attributes.ReasoningOptions == nil && (attributes.Reasoning == nil || *attributes.Reasoning) {
 		return strings.TrimSpace(raw), strings.TrimSpace(raw) != ""
 	}
@@ -467,6 +617,8 @@ func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string,
 	case "minimal":
 		value = "low"
 	case "xhigh", "extrahigh":
+		// Extra-high aliases first select xhigh, then fall to high when known
+		// attributes reject it; the resulting effort still needs support checking.
 		value = "xhigh"
 		if supported := attributes.EffortSupport(value); supported != nil && !*supported {
 			value = "high"
@@ -480,17 +632,27 @@ func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string,
 	return value, supported == nil || *supported
 }
 
-// GrokSupportsXHighReasoningEffort reports whether model attributes enable xhigh.
-
+// GrokSupportsXHighReasoningEffort reports confirmed xhigh support from the
+// injected model attributes. Missing knowledge returns false here, even though
+// NormalizeGrokReasoningEffortValue retains an explicitly supplied effort when
+// model capability knowledge is absent.
 func (m BodyCodec) GrokSupportsXHighReasoningEffort(model string) bool {
 	supported := m.modelAttributes(model).EffortSupport("xhigh")
 	return supported != nil && *supported
 }
 
+// GrokSupportsReasoningEffort reports whether model attributes list an effort
+// control. A missing option list returns false. This is option-presence
+// reporting; individual effort support and disabled reasoning are evaluated
+// through the attributes' EffortSupport method.
 func (m BodyCodec) GrokSupportsReasoningEffort(model string) bool {
 	return m.modelAttributes(model).HasReasoningOption("effort")
 }
 
+// SanitizeGrokResponsesUnsupportedFields recursively deletes the selected
+// unsupported keys from decoded JSON. Bodies without the marker return supplied
+// bytes, and unchanged decoded content also returns body. Modified content is
+// re-encoded with Number-valued numeric fields.
 func (m BodyCodec) SanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, error) {
 	if !bytes.Contains(body, []byte(`"external_web_access"`)) {
 		return body, nil
@@ -506,6 +668,10 @@ func (m BodyCodec) SanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, 
 	return wirejson.Marshal(payload)
 }
 
+// DeleteJSONFields removes named keys recursively from decoded maps and arrays
+// and reports whether anything changed. It edits caller-owned mutable values in
+// place; aliases of those maps or slices observe deletions in their shared
+// children.
 func (m BodyCodec) DeleteJSONFields(value any, fields map[string]struct{}) bool {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -535,9 +701,17 @@ func (m BodyCodec) DeleteJSONFields(value any, fields map[string]struct{}) bool 
 	}
 }
 
-// SanitizeGrokResponsesInput promotes tools from Codex/Responses Lite additional_tools
-// into the top-level list, retaining existing tool order before carrier order.
-// SanitizeGrokResponsesTools subsequently removes unsupported xAI tool types.
+// SanitizeGrokResponsesInput promotes declarations carried by additional_tools
+// input items. Only array input participates, and those carrier items are
+// removed after examination. Existing top-level tools retain their order and any
+// duplicates already present.
+//
+// New carrier declarations follow top-level declarations and skip identities
+// already seen by GrokResponsesToolDedupKey. Thus earlier definitions win while
+// unrelated input entries keep their order. Tools is rewritten only when
+// promotion added something, and input is still rewritten when carriers contain
+// no new declarations. Later client adaptation and filtering decide the accepted
+// vendor representation.
 func (m BodyCodec) SanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 	if !bytes.Contains(body, []byte(`"additional_tools"`)) {
 		return body, nil
@@ -568,6 +742,9 @@ func (m BodyCodec) SanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 		}
 	}
 
+	// Keep top-level definitions ahead of carried declarations, deduplicating
+	// additions by tool identity so replay carriers cannot replace earlier
+	// definitions.
 	promoted := false
 	for _, item := range rawItems {
 		if strings.TrimSpace(item.Get("type").String()) == "additional_tools" {
@@ -601,8 +778,16 @@ func (m BodyCodec) SanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 	return sjson.SetRawBytes(body, "tools", encodedTools)
 }
 
-// StripRedundantGrokViewImageTool removes automatic view_image when the current
-// user input already contains an image, so Grok can answer from the inline image.
+// StripRedundantGrokViewImageTool removes flat automatic view_image declarations
+// for a final user input containing images. A named view_image selection keeps
+// the supplied request. Required choice also keeps it when filtering would
+// remove every remaining tool.
+//
+// Other declarations retain order. A populated remainder replaces tools, while
+// an empty remainder removes tools and parallel_tool_calls. tool_choice is left
+// for the later SanitizeGrokResponsesTools step, which checks it against the
+// surviving declaration set; callers using this helper independently retain that
+// cleanup responsibility.
 func (m BodyCodec) StripRedundantGrokViewImageTool(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
@@ -646,6 +831,8 @@ func (m BodyCodec) StripRedundantGrokViewImageTool(body []byte) ([]byte, error) 
 	if !changed {
 		return body, nil
 	}
+	// Required choice needs a declaration after filtering; keep the original tool
+	// set when removing view_image would make that choice unusable.
 	if len(filtered) == 0 && strings.TrimSpace(toolChoice.String()) == "required" {
 		return body, nil
 	}
@@ -664,6 +851,16 @@ func (m BodyCodec) StripRedundantGrokViewImageTool(body []byte) ([]byte, error) 
 	return sjson.SetRawBytes(body, "tools", encoded)
 }
 
+// GrokResponsesToolDedupKey selects identity by type/name, then MCP server
+// label, then normalized JSON. Named tools therefore compare by their declared
+// identity even when their descriptions or schemas differ. A NUL separator
+// marks the type/name components in that key.
+//
+// Unnamed tools compare their normalized JSON representation. That helper
+// decodes numbers through float64, so large integer values or numeric spellings
+// can collapse to one key; this is a comparison seed rather than a lossless
+// representation. SanitizeGrokResponsesInput uses the selected key to suppress
+// later carried definitions while keeping the existing top-level list.
 func (m BodyCodec) GrokResponsesToolDedupKey(tool gjson.Result) string {
 	toolType := strings.TrimSpace(tool.Get("type").String())
 	if toolType != "" {
@@ -679,8 +876,11 @@ func (m BodyCodec) GrokResponsesToolDedupKey(tool gjson.Result) string {
 	return "json:" + protocolopenai.NormalizeCompatSeedJSON(json.RawMessage(tool.Raw))
 }
 
-// SanitizeGrokReasoningNullContent removes null input fields rejected by the xAI
-// untagged ModelInput decoder. Compaction items pass through unchanged.
+// SanitizeGrokReasoningNullContent removes null object fields from decoded
+// Responses input before re-encoding. Unsupported input shapes and decode
+// failures return supplied bytes. The input-item dispatcher skips compaction
+// objects and keeps array positions, including null elements, while mutable
+// object cleanup reports actual deletions.
 func (m BodyCodec) SanitizeGrokReasoningNullContent(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() || (!input.IsArray() && !input.IsObject()) {
@@ -689,6 +889,8 @@ func (m BodyCodec) SanitizeGrokReasoningNullContent(body []byte) ([]byte, error)
 	var decoded map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
+	// Null cleanup is best effort for this helper. A decode failure returns the
+	// supplied request bytes for the surrounding validator's decision.
 	if err := decoder.Decode(&decoded); err != nil {
 		return body, nil
 	}
@@ -704,6 +906,11 @@ func (m BodyCodec) SanitizeGrokReasoningNullContent(body []byte) ([]byte, error)
 	return wirejson.Marshal(decoded)
 }
 
+// StripExplicitNullsFromGrokInput mutates supported input maps and arrays while
+// skipping compaction input items. It removes null object fields through
+// StripExplicitNullsFromGrokObject; scalar and null array elements remain.
+// Callers own the decoded containers because map and slice aliases observe
+// changes.
 func (m BodyCodec) StripExplicitNullsFromGrokInput(value any) (any, bool) {
 	switch node := value.(type) {
 	case []any:
@@ -718,6 +925,8 @@ func (m BodyCodec) StripExplicitNullsFromGrokInput(value any) (any, bool) {
 				}
 				continue
 			}
+			// Compaction input items carry replay state whose fields need their own
+			// conversion; leave those objects intact at this input dispatcher.
 			if protocolopenai.IsCompactionItemType(m.GrokCompactStringValue(itemMap["type"])) {
 				continue
 			}
@@ -729,6 +938,8 @@ func (m BodyCodec) StripExplicitNullsFromGrokInput(value any) (any, bool) {
 		}
 		return node, changed
 	case map[string]any:
+		// The object-form input can itself be compaction state, so skip generic
+		// null-field deletion until Compact conversion owns its representation.
 		if protocolopenai.IsCompactionItemType(m.GrokCompactStringValue(node["type"])) {
 			return node, false
 		}
@@ -738,6 +949,10 @@ func (m BodyCodec) StripExplicitNullsFromGrokInput(value any) (any, bool) {
 	}
 }
 
+// StripExplicitNullsFromGrokObject deletes null fields from node and recursively
+// edits map or array children. Nil maps return unchanged. Callers own mutable
+// storage; compaction skipping is supplied by the input dispatcher and does not
+// apply to every direct nested-map recursion.
 func (m BodyCodec) StripExplicitNullsFromGrokObject(node map[string]any) (map[string]any, bool) {
 	if node == nil {
 		return node, false
@@ -767,6 +982,18 @@ func (m BodyCodec) StripExplicitNullsFromGrokObject(node map[string]any) (map[st
 	return node, changed
 }
 
+// SanitizeGrokResponsesTools retains supported vendor tool types and checks
+// controls against the result. Missing or non-array tools clears orphan controls
+// while retaining any supplied tools field. An already-empty array remains
+// present; a nonempty set filtered to empty is removed.
+//
+// Function schemas receive an object default when absent/null, or a permissive
+// object replacement for invalid root unions with strict disabled when true.
+// Raw tool_search is excluded from the retained type set; client-tool
+// adaptation lowers it to a function before this sanitizer. Deferred loading
+// flags consequently disappear from all retained declarations. Named function
+// choice is then checked against remaining declarations, so a removed tool
+// cannot remain selected in the forwarded request.
 func (m BodyCodec) SanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() {
@@ -783,6 +1010,8 @@ func (m BodyCodec) SanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 		toolType := strings.TrimSpace(tool.Get("type").String())
 		if _, ok := grokResponsesSupportedToolTypes[toolType]; ok {
 			raw := json.RawMessage(tool.Raw)
+			// Absent or null parameters need an object schema for function decoding;
+			// invalid union roots instead receive the permissive schema below.
 			if toolType == "function" && (!tool.Get("parameters").Exists() || tool.Get("parameters").Type == gjson.Null) {
 				var payload map[string]any
 				if err := wirejson.DecodeUseNumber(raw, &payload); err != nil {
@@ -812,6 +1041,9 @@ func (m BodyCodec) SanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 			filteredTools = append(filteredTools, raw)
 		}
 	}
+	// Deferred flags depend on a surviving tool_search type. Remove those flags
+	// after filtering so declarations cannot retain unsupported deferred-loading
+	// controls.
 	if !m.GrokRawToolsContainType(filteredTools, "tool_search") {
 		for index, raw := range filteredTools {
 			if !gjson.GetBytes(raw, "defer_loading").Exists() {
@@ -859,6 +1091,10 @@ func (m BodyCodec) SanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 	return body, nil
 }
 
+// GrokFunctionParametersHaveInvalidUnionRoot recognizes a nonempty anyOf or
+// oneOf with a branch not explicitly typed object. Other parameter shapes return
+// false. Reference-only or null branches therefore select schema simplification
+// in the tool sanitizer.
 func (m BodyCodec) GrokFunctionParametersHaveInvalidUnionRoot(parameters gjson.Result) bool {
 	if !parameters.Exists() || !parameters.IsObject() {
 		return false
@@ -881,6 +1117,7 @@ func (m BodyCodec) GrokFunctionParametersHaveInvalidUnionRoot(parameters gjson.R
 	return false
 }
 
+// GrokRawToolsContainType finds an exact type label in decoded raw tool entries.
 func (m BodyCodec) GrokRawToolsContainType(tools []json.RawMessage, want string) bool {
 	for _, tool := range tools {
 		if strings.TrimSpace(gjson.GetBytes(tool, "type").String()) == want {
@@ -890,6 +1127,10 @@ func (m BodyCodec) GrokRawToolsContainType(tools []json.RawMessage, want string)
 	return false
 }
 
+// DeleteGrokOrphanToolControls removes tool_choice and parallel_tool_calls from
+// supplied request bytes. Callers invoke it after determining that tools cannot
+// support those controls; missing fields leave the body unchanged and JSON-edit
+// failures propagate.
 func (m BodyCodec) DeleteGrokOrphanToolControls(body []byte) ([]byte, error) {
 	var err error
 	for _, field := range []string{"tool_choice", "parallel_tool_calls"} {
@@ -904,6 +1145,10 @@ func (m BodyCodec) DeleteGrokOrphanToolControls(body []byte) ([]byte, error) {
 	return body, nil
 }
 
+// ShouldDropGrokToolChoice checks object choices against supported types and
+// named function declarations. An empty tool list drops every choice. Scalar
+// choices and unnamed function choices remain when tools exist; supported
+// non-function types are kept without checking for a matching declaration.
 func (m BodyCodec) ShouldDropGrokToolChoice(toolChoice gjson.Result, tools []json.RawMessage) bool {
 	if len(tools) == 0 {
 		return true
@@ -928,12 +1173,17 @@ func (m BodyCodec) ShouldDropGrokToolChoice(toolChoice gjson.Result, tools []jso
 		}
 		for _, tool := range tools {
 			var item struct {
-				Type     string `json:"type"`
-				Name     string `json:"name"`
-				Function struct {
-					Name string `json:"name"`
+				// Type, Name and Function identify one candidate declaration for choice
+				// matching. Name supplies a flat function identity, while Function supplies
+				// its nested name when the flat value is blank.
+				Type     string   `json:"type"` // declared tool type
+				Name     string   `json:"name"` // function name text
+				Function struct { // nested function name container
+					Name string `json:"name"` // function name text
 				} `json:"function"`
 			}
+			// Unreadable declarations cannot establish a matching function choice. Skip
+			// that candidate and continue searching the remaining accepted tool list.
 			if err := json.Unmarshal(tool, &item); err != nil {
 				continue
 			}
@@ -950,6 +1200,8 @@ func (m BodyCodec) ShouldDropGrokToolChoice(toolChoice gjson.Result, tools []jso
 	return false
 }
 
+// ShouldBridgeGrokComposerImageInputs recognizes Composer Chat messages that may
+// contain image input.
 func (m BodyCodec) ShouldBridgeGrokComposerImageInputs(body []byte) bool {
 	if len(body) == 0 || !m.IsGrokComposerModel(gjson.GetBytes(body, "model").String()) {
 		return false
@@ -961,10 +1213,16 @@ func (m BodyCodec) ShouldBridgeGrokComposerImageInputs(body []byte) bool {
 	return protocolopenai.JSONValueMayContainImageInput(messages)
 }
 
+// IsGrokComposerModel uses the fixed Composer reasoning-rejection aliases
+// for image bridging.
 func (m BodyCodec) IsGrokComposerModel(model string) bool {
 	return m.GrokModelRejectsReasoningEffort(model)
 }
 
+// CollectGrokComposerImageURLs collects usable image_url parts in message and
+// content encounter order. It accepts decoded map/slice shapes and skips
+// unsupported or empty image values. The returned order pairs with one-based
+// auxiliary description positions.
 func (m BodyCodec) CollectGrokComposerImageURLs(reqBody map[string]any) []string {
 	messages, ok := reqBody["messages"].([]any)
 	if !ok {
@@ -990,6 +1248,9 @@ func (m BodyCodec) CollectGrokComposerImageURLs(reqBody map[string]any) []string
 	return imageURLs
 }
 
+// GrokComposerImageURLFromPart extracts a usable image_url string or nested url
+// from a decoded part. Other types return empty. Empty base64 data URIs are
+// rejected through normalization before the description bridge selects an image.
 func (m BodyCodec) GrokComposerImageURLFromPart(part any) string {
 	partMap, ok := part.(map[string]any)
 	if !ok {
@@ -1009,6 +1270,10 @@ func (m BodyCodec) GrokComposerImageURLFromPart(part any) string {
 	}
 }
 
+// NormalizeGrokComposerImageURL trims an image candidate and rejects blank or
+// empty-base64 data URIs. Other text passes through unchanged; the description
+// request carries the remaining candidate to the upstream. Callers needing
+// additional URL or content validation apply it before building that request.
 func (m BodyCodec) NormalizeGrokComposerImageURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || protocolopenai.IsEmptyBase64DataURI(trimmed) {
@@ -1017,6 +1282,11 @@ func (m BodyCodec) NormalizeGrokComposerImageURL(raw string) string {
 	return trimmed
 }
 
+// BuildGrokComposerImageDescriptionBody builds a non-streaming auxiliary vision
+// request identifying imageURL by index. It selects the fixed vision model and
+// output cap with storage disabled. Callers provide the collection's one-based
+// index. imageURL is forwarded as supplied, so any additional image-candidate
+// validation belongs before construction.
 func (m BodyCodec) BuildGrokComposerImageDescriptionBody(imageURL string, index int) ([]byte, error) {
 	prompt := fmt.Sprintf("Describe image %d in concise, factual text for a downstream coding/composer model. Include visible text, UI elements, diagrams, errors, and spatial relationships. Do not mention that you are an image analysis bridge.", index)
 	req := map[string]any{
@@ -1044,6 +1314,10 @@ func (m BodyCodec) BuildGrokComposerImageDescriptionBody(imageURL string, index 
 	return wirejson.Marshal(req)
 }
 
+// GrokResponsesOutputText joins nonblank recognized text content with two
+// newlines in output order. Nil responses and outputs with no usable text return
+// empty; content tags output_text, text and input_text participate regardless of
+// the enclosing output item's type.
 func (m BodyCodec) GrokResponsesOutputText(resp *protocolopenai.ResponsesResponse) string {
 	if resp == nil {
 		return ""
@@ -1061,7 +1335,16 @@ func (m BodyCodec) GrokResponsesOutputText(resp *protocolopenai.ResponsesRespons
 	return strings.Join(parts, "\n\n")
 }
 
-// RewriteGrokComposerImagesAsText replaces images in encounter order while retaining text parts.
+// RewriteGrokComposerImagesAsText replaces usable image parts with ordered
+// descriptions and mutates request messages. Callers pass descriptions in
+// CollectGrokComposerImageURLs order. Messages with no usable image remain
+// unchanged, while affected messages become joined text content.
+//
+// A single index advances across the conversation, pairing each usable image
+// with its one-based description label. Too few descriptions still removes later
+// images, so callers complete description collection before this step.
+// Recognized text parts are retained and trimmed; other part shapes are omitted
+// from affected messages. The boolean reports whether any message changed.
 func (m BodyCodec) RewriteGrokComposerImagesAsText(reqBody map[string]any, descriptions []string) bool {
 	messages, ok := reqBody["messages"].([]any)
 	if !ok {
@@ -1094,6 +1377,8 @@ func (m BodyCodec) RewriteGrokComposerImagesAsText(reqBody map[string]any, descr
 				textParts = append(textParts, text)
 			}
 		}
+		// Collapse only messages with a usable image into joined text; descriptions
+		// and recognized text keep encounter order across the rewritten conversation.
 		if messageChanged {
 			msgMap["content"] = strings.Join(textParts, "\n\n")
 			changed = true
@@ -1102,6 +1387,10 @@ func (m BodyCodec) RewriteGrokComposerImagesAsText(reqBody map[string]any, descr
 	return changed
 }
 
+// GrokComposerTextFromPart extracts trimmed text from decoded text or input_text
+// parts. Other part tags, non-map values and non-string text return empty,
+// allowing Composer rewriting to omit unsupported content from affected
+// messages.
 func (m BodyCodec) GrokComposerTextFromPart(part any) string {
 	partMap, ok := part.(map[string]any)
 	if !ok {

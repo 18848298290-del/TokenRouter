@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// TestShouldAutoPauseGrokProviderByQuota supplies exhausted requests, active
+// and expired Retry-After, and stale quota observations. It asserts the
+// resulting pause boolean for each case using independent parallel provider
+// fixtures.
 func TestShouldAutoPauseGrokProviderByQuota(t *testing.T) {
 	t.Parallel()
 
@@ -18,9 +22,9 @@ func TestShouldAutoPauseGrokProviderByQuota(t *testing.T) {
 	resetFuture := time.Now().Add(time.Minute).Unix()
 	retryAfter := 30
 	tests := []struct {
-		name     string
-		snapshot usageview.QuotaSnapshot
-		want     bool
+		name     string                  // table case display name
+		snapshot usageview.QuotaSnapshot // supplied quota observation fixture
+		want     bool                    // expected scheduling pause result
 	}{
 		{
 			name: "remaining requests exhausted",

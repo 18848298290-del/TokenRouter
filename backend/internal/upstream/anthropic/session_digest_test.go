@@ -6,7 +6,9 @@ import (
 	"testing"
 )
 
-// splitChain splits the digest chain into entries.
+// splitChain splits nonempty chain text at hyphens for fixture assertions.
+// Empty input returns nil, and a trailing separator produces no final empty
+// entry in the result.
 func splitChain(chain string) []string {
 	if chain == "" {
 		return nil
@@ -25,15 +27,17 @@ func splitChain(chain string) []string {
 	return parts
 }
 
-// mustParseAnthropicDigestRequest extracts raw system and messages fields without re-encoding them.
+// mustParseAnthropicDigestRequest decodes raw system and message fields from a
+// fixture. It marks the call as a helper and fails the test on malformed
+// request JSON before returning those bytes.
 func mustParseAnthropicDigestRequest(t *testing.T, body string) struct {
-	System   json.RawMessage
-	Messages json.RawMessage
+	System   json.RawMessage // raw system JSON
+	Messages json.RawMessage // raw history JSON
 } {
 	t.Helper()
 	var parsed struct {
-		System   json.RawMessage
-		Messages json.RawMessage
+		System   json.RawMessage // raw system JSON
+		Messages json.RawMessage // raw history JSON
 	}
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 		t.Fatalf("parse digest fixture: %v", err)
@@ -41,6 +45,9 @@ func mustParseAnthropicDigestRequest(t *testing.T, body string) struct {
 	return parsed
 }
 
+// TestBuildAnthropicDigestChain_NilRequest passes nil system and message input
+// to digest construction. The result is empty because no conversation content
+// contributes a role-prefixed hash entry.
 func TestBuildAnthropicDigestChain_NilRequest(t *testing.T) {
 	result := BuildAnthropicDigestChain(nil, nil)
 	if result != "" {
@@ -48,6 +55,9 @@ func TestBuildAnthropicDigestChain_NilRequest(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_EmptyMessages extracts a request with an empty
+// message array and no system. Digest construction returns an empty chain,
+// matching the absence of any content entries.
 func TestBuildAnthropicDigestChain_EmptyMessages(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"messages":[]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)
@@ -56,6 +66,9 @@ func TestBuildAnthropicDigestChain_EmptyMessages(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_SingleUserMessage extracts one scalar user
+// message before building its chain. The result has one entry beginning with u,
+// identifying the supplied message's role category.
 func TestBuildAnthropicDigestChain_SingleUserMessage(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"messages":[{"role":"user","content":"hello"}]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)
@@ -68,6 +81,9 @@ func TestBuildAnthropicDigestChain_SingleUserMessage(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_UserAndAssistant builds a chain from one user
+// and one assistant message. The two entries retain their order and carry u
+// then a prefixes for their roles.
 func TestBuildAnthropicDigestChain_UserAndAssistant(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi there"}]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)
@@ -83,6 +99,9 @@ func TestBuildAnthropicDigestChain_UserAndAssistant(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_WithSystemString builds a chain containing
+// scalar system text and one user message. Its two entries put the system hash
+// first and the user hash second.
 func TestBuildAnthropicDigestChain_WithSystemString(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"system":"You are a helpful assistant","messages":[{"role":"user","content":"hello"}]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)
@@ -98,6 +117,9 @@ func TestBuildAnthropicDigestChain_WithSystemString(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_WithSystemContentBlocks builds a chain with a
+// system text-block array and one user message. The result includes two
+// entries, with the system representation identified by its leading s prefix.
 func TestBuildAnthropicDigestChain_WithSystemContentBlocks(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"system":[{"type":"text","text":"You are a helpful assistant"}],"messages":[{"role":"user","content":"hello"}]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)
@@ -110,6 +132,10 @@ func TestBuildAnthropicDigestChain_WithSystemContentBlocks(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_ConversationPrefixRelationship builds
+// successively longer histories that retain earlier system and message content.
+// Each later textual chain starts with the earlier chain, verifying the
+// append-only fixture's prefix relationship.
 func TestBuildAnthropicDigestChain_ConversationPrefixRelationship(t *testing.T) {
 	// Appending a conversation turn must retain the previous digest chain as a prefix.
 	round1 := mustParseAnthropicDigestRequest(t, `{"system":"You are a helpful assistant","messages":[{"role":"user","content":"hello"}]}`)
@@ -136,6 +162,10 @@ func TestBuildAnthropicDigestChain_ConversationPrefixRelationship(t *testing.T) 
 	}
 }
 
+// TestBuildAnthropicDigestChain_DifferentSystemProducesDifferentChain changes
+// system text while retaining the same user content. The complete chains
+// differ, while their corresponding user entries remain equal across the two
+// requests.
 func TestBuildAnthropicDigestChain_DifferentSystemProducesDifferentChain(t *testing.T) {
 	parsed1 := mustParseAnthropicDigestRequest(t, `{"system":"System A","messages":[{"role":"user","content":"hello"}]}`)
 	parsed2 := mustParseAnthropicDigestRequest(t, `{"system":"System B","messages":[{"role":"user","content":"hello"}]}`)
@@ -154,6 +184,9 @@ func TestBuildAnthropicDigestChain_DifferentSystemProducesDifferentChain(t *test
 	}
 }
 
+// TestBuildAnthropicDigestChain_DifferentContentProducesDifferentChain changes
+// an assistant reply while retaining the earlier user text. The complete chains
+// and assistant entries differ, while the first user entry remains equal.
 func TestBuildAnthropicDigestChain_DifferentContentProducesDifferentChain(t *testing.T) {
 	parsed1 := mustParseAnthropicDigestRequest(t, `{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"ORIGINAL reply"},{"role":"user","content":"next"}]}`)
 	parsed2 := mustParseAnthropicDigestRequest(t, `{"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"TAMPERED reply"},{"role":"user","content":"next"}]}`)
@@ -175,6 +208,9 @@ func TestBuildAnthropicDigestChain_DifferentContentProducesDifferentChain(t *tes
 	}
 }
 
+// TestBuildAnthropicDigestChain_Deterministic builds twice from the same
+// extracted system and message bytes. Both returned chain strings are equal,
+// checking repeatability for identical conversation input.
 func TestBuildAnthropicDigestChain_Deterministic(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"system":"test system","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]}`)
 
@@ -186,6 +222,9 @@ func TestBuildAnthropicDigestChain_Deterministic(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_CanonicalJSON supplies equivalent object
+// content with different key ordering in system and message values. Both chains
+// are equal after canonical encoding has normalized those ordering differences.
 func TestBuildAnthropicDigestChain_CanonicalJSON(t *testing.T) {
 	parsed1 := mustParseAnthropicDigestRequest(t, `{"system":[{"type":"text","text":"system"}],"messages":[{"role":"user","content":{"type":"text","text":"hello"}}]}`)
 	parsed2 := mustParseAnthropicDigestRequest(t, `{"system":[{"text":"system","type":"text"}],"messages":[{"role":"user","content":{"text":"hello","type":"text"}}]}`)
@@ -198,12 +237,15 @@ func TestBuildAnthropicDigestChain_CanonicalJSON(t *testing.T) {
 	}
 }
 
+// TestGenerateAnthropicDigestSessionKey covers long, exact-length, short, and
+// empty key components. It checks retained eight-byte prefixes and
+// distinguishes two UUIDs whose retained prefixes already differ.
 func TestGenerateAnthropicDigestSessionKey(t *testing.T) {
 	tests := []struct {
-		name       string
-		prefixHash string
-		uuid       string
-		want       string
+		name       string // case display name
+		prefixHash string // supplied digest prefix
+		uuid       string // supplied session identifier
+		want       string // expected comparison value
 	}{
 		{
 			name:       "normal 16 char hash with uuid",
@@ -250,6 +292,9 @@ func TestGenerateAnthropicDigestSessionKey(t *testing.T) {
 	})
 }
 
+// TestAnthropicSessionTTL reads the exported duration helper for digest session
+// caching. Its seconds equal three hundred, pinning the configured five-minute
+// lifetime used by cache callers.
 func TestAnthropicSessionTTL(t *testing.T) {
 	ttl := AnthropicSessionTTL()
 	if ttl.Seconds() != 300 {
@@ -257,6 +302,9 @@ func TestAnthropicSessionTTL(t *testing.T) {
 	}
 }
 
+// TestBuildAnthropicDigestChain_ContentBlocks builds from a user message
+// containing text and image blocks. The returned chain has one user-prefixed
+// entry, treating the content array as one message contribution.
 func TestBuildAnthropicDigestChain_ContentBlocks(t *testing.T) {
 	parsed := mustParseAnthropicDigestRequest(t, `{"messages":[{"role":"user","content":[{"type":"text","text":"describe this image"},{"type":"image","source":{"type":"base64"}}]}]}`)
 	result := BuildAnthropicDigestChain(parsed.System, parsed.Messages)

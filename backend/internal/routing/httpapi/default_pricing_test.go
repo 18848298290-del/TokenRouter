@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestDefaultPricingManualUpdateIsSeparateFromQuery serves catalog reads and
+// explicit refreshes with counting callbacks. It checks that GET reads
+// without updating, POST updates without reading, and updater failure or
+// absence returns 502 or 503.
 func TestDefaultPricingManualUpdateIsSeparateFromQuery(t *testing.T) {
 	updates, reads := 0, 0
 	var updateErr error
@@ -50,6 +54,9 @@ func TestDefaultPricingManualUpdateIsSeparateFromQuery(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, unavailable.Code)
 }
 
+// TestDefaultPricingFiltersPaginationAndZero pages a filtered snapshot
+// containing a declared free price and another platform. It checks sorted
+// pagination, preserved zero JSON value, and case-insensitive model search.
 func TestDefaultPricingFiltersPaginationAndZero(t *testing.T) {
 	zero := 0.0
 	catalog := &routing.PricingCatalog{Snapshot: func() routing.DefaultPricingSnapshot {

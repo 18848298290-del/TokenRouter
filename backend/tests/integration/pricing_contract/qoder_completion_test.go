@@ -22,9 +22,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// A Qoder stream can deliver content and measured usage before an upstream
+// error ends the attempt. The request fixture feeds that partial result into
+// completion, checking release and recording counts while separately injecting
+// settlement and analysis-log failures into the downstream stores.
+
+// TestQoderNativeChainCompletionFailures emits content and usage before a
+// wrapped upstream error. It checks one completion and release, retained token
+// counts, and distinct recorder outcomes for settlement and
+// marked log-insertion failures.
 func TestQoderNativeChainCompletionFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name                 string
+		name string // subtest failure label
+		// billingFail and logFail select independent store errors after the
+		// stream has produced content and usage. Each row enables one failure
+		// for its corresponding recorder-outcome assertions.
+		//
+		// billingFail: injected settlement failure; logFail: injected
+		// usage insertion failure
 		billingFail, logFail bool
 	}{{name: "settlement-failure", billingFail: true}, {name: "record-failure", logFail: true}} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,10 +56,14 @@ func TestQoderNativeChainCompletionFailures(t *testing.T) {
 			completion := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &gatewaytestkit.UserStore{}, &gatewaytestkit.SubscriptionStore{})
 			rec := httptest.NewRecorder()
 			body := []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-			// Feed the provider and upstream outcome into completion to check usage recording after a stream failure.
+			// Feed the provider and upstream outcome into completion to check
+			// usage recording after a stream failure.
 			executor, input := platform.Runtime.PrepareQoderTarget(gatewayhttp.QoderRequestMetadata(nil), provider, body, protocol.ProtocolOpenAIChatCompletions, "auto")
 			completed, released, bound := 0, 0, 0
 			var completionErr error
+			// The completion callback receives the attempt's observed tokens
+			// after streamed output. Its captured error distinguishes
+			// settlement failure from a marked analysis-log insertion failure.
 			ports := gateway.RequestPorts{CanFailover: func(error) bool { return true }, Select: func(context.Context, map[int64]struct{}) (*gateway.Selection, error) {
 				return &gateway.Selection{Acquired: true, Release: func() { released++ }, Executor: executor, Input: input, Bind: func(context.Context, upstream.AttemptResult) { bound++ }, Complete: func(ctx context.Context, r upstream.AttemptResult) {
 					completed++
@@ -72,19 +91,31 @@ func TestQoderNativeChainCompletionFailures(t *testing.T) {
 	}
 }
 
+// qoderWrappedSSELineForTest serializes a payload into Qoder's nested body SSE
+// format. It fails the test on either JSON encoding error and returns one data
+// event with its terminating blank line.
 func qoderWrappedSSELineForTest(t *testing.T, inner map[string]any) string {
 	t.Helper()
 	body, err := json.Marshal(inner)
 	require.NoError(t, err)
+	// Qoder's wrapper body is a JSON string containing the encoded inner
+	// object. The second marshal supplies the escaping expected by
+	// the stream reader.
 	wrapper, err := json.Marshal(map[string]string{"body": string(body)})
 	require.NoError(t, err)
 	return "data: " + string(wrapper) + "\n\n"
 }
 
+// qoderWrappedErrorSSELineForTest builds a Qoder SSE wrapper carrying an error
+// status and nested payload. It fails the test on either JSON encoding error
+// and terminates the data event with a blank line.
 func qoderWrappedErrorSSELineForTest(t *testing.T, statusCode int, inner map[string]any) string {
 	t.Helper()
 	body, err := json.Marshal(inner)
 	require.NoError(t, err)
+	// Keep the encoded payload inside the wrapper's body string while
+	// statusCodeValue carries the upstream failure. The reader interprets
+	// those two fields separately.
 	wrapper, err := json.Marshal(map[string]any{
 		"body":            string(body),
 		"statusCodeValue": statusCode,

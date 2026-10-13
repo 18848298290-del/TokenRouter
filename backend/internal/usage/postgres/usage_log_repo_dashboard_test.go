@@ -13,7 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestRunDashboardQueriesSerializesNonPoolExecutor checks that single-connection executors are used sequentially.
+// Independent dashboard callbacks can use separate pool connections, while a
+// selected nonpool executor follows a serial sequence. Atomic overlap markers
+// check the serial path, and a two-start channel gate checks pool dispatch
+// before either callback is released.
+//
+// These callback fixtures model dispatch capability without executing SQL
+// through the dummy pool handle. A timeout closes the release gate and joins the
+// runner so a failed concurrency assertion can finish its workers. The
+// owned-team SQL fixture then checks a different relationship: key, retained
+// usage, and recent-rate queries use disjoint actor/team branches and return
+// consistent scoped counters.
+
+// TestRunDashboardQueriesSerializesNonPoolExecutor supplies callbacks that
+// record overlap on a store without a pool. It checks successful execution and
+// that no callback overlaps another.
 func TestRunDashboardQueriesSerializesNonPoolExecutor(t *testing.T) {
 	repo := &Store{}
 	var running atomic.Int32
@@ -22,6 +36,8 @@ func TestRunDashboardQueriesSerializesNonPoolExecutor(t *testing.T) {
 		if running.Add(1) != 1 {
 			overlapped.Store(true)
 		}
+		// Keep the running marker set briefly so an accidentally parallel nonpool
+		// dispatch can observe overlap before the preceding callback clears it.
 		time.Sleep(time.Millisecond)
 		running.Add(-1)
 		return nil
@@ -31,7 +47,9 @@ func TestRunDashboardQueriesSerializesNonPoolExecutor(t *testing.T) {
 	require.False(t, overlapped.Load())
 }
 
-// TestRunDashboardQueriesParallelizesPoolExecutor checks concurrent execution of independent pool queries.
+// TestRunDashboardQueriesParallelizesPoolExecutor blocks both callbacks behind
+// one release channel on a pool-backed store. It requires both callbacks to
+// start before release, then checks successful completion.
 func TestRunDashboardQueriesParallelizesPoolExecutor(t *testing.T) {
 	repo := &Store{db: new(sql.DB)}
 	started := make(chan struct{}, 2)
@@ -43,28 +61,40 @@ func TestRunDashboardQueriesParallelizesPoolExecutor(t *testing.T) {
 		return nil
 	}
 
+	// Start the runner separately while the test observes both blocked callbacks;
+	// release is closed only after both starts are seen or failure cleanup begins.
 	go func() {
 		done <- repo.runDashboardQueries(context.Background(), query, query)
 	}()
+	// Bound the start gate to one second; timeout releases both callbacks and joins
+	// the runner before the test reports failure.
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	for range 2 {
 		select {
 		case <-started:
 		case <-timer.C:
+			// Release blocked callbacks before waiting for the runner on
+			// timeout, so the failed overlap assertion cannot leave a worker
+			// goroutine behind.
 			close(release)
 			<-done
 			t.Fatal("连接池查询未并行启动")
 		}
 	}
+	// Both callbacks reached the gate. Release them and join the runner before
+	// asserting its result, making their completion part of the tested behavior.
 	close(release)
 	require.NoError(t, <-done)
 }
 
-// TestGetUserDashboardStatsUsesIndexableOwnedTeamScope checks team resolution followed by separate indexed scans.
+// TestGetUserDashboardStatsUsesIndexableOwnedTeamScope supplies an owner
+// membership and separate key, usage, and rate rows. It checks disjoint SQL
+// branches, decoded totals, and integer per-minute rates.
 func TestGetUserDashboardStatsUsesIndexableOwnedTeamScope(t *testing.T) {
 	db, mock := newSQLMock(t)
-	// Allow independent key, usage, and rate queries to execute in any order after team resolution.
+	// Query ordering after ownership resolution does not affect these fixture
+	// outputs; unordered expectations keep this check focused on selected scopes.
 	mock.MatchExpectationsInOrder(false)
 	repo := &Store{sql: db}
 

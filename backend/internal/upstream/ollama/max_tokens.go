@@ -7,21 +7,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// Ollama output caps are resolved from provider configuration using the model
+// catalog's shared numeric rules. Request clamping changes supplied numeric
+// output-limit fields when their integer interpretation exceeds a positive cap,
+// leaving missing fields available for the upstream's own default.
+
+// The cap aliases connect provider Extra lookup and request clamping to the
+// model catalog's shared output-limit configuration and execution default.
 const (
+	// MaxTokensCapExtraKey: provider cap setting key.
 	MaxTokensCapExtraKey = modelcatalog.OllamaOutputCapExtraKey
-	DefaultMaxTokensCap  = modelcatalog.OllamaDefaultOutputLimit
+	// DefaultMaxTokensCap: default output token count.
+	DefaultMaxTokensCap = modelcatalog.OllamaDefaultOutputLimit
 )
 
-// MaxTokensCap resolves a configured numeric cap. Missing or invalid values use the default.
-// It accepts float64, int64, int, and integer json.Number values.
-// Zero or negative caps disable clamping.
+// MaxTokensCap resolves provider output-cap configuration through modelcatalog.
+// Missing values, unsupported types, and unreadable integer json.Number values
+// select DefaultMaxTokensCap. Accepted nonpositive values disable clamping;
+// float64 values use Go's int64 conversion, truncating fractions toward zero
+// when representable and performing no range validation here.
 func MaxTokensCap(value any, present bool) int64 {
 	return modelcatalog.OllamaOutputCap(value, present)
 }
 
-// ClampMaxTokens reduces max_tokens and max_completion_tokens when above cap.
-// Nonpositive caps, invalid JSON, and update errors return the original body.
-// The boolean reports whether either field changed.
+// ClampMaxTokens lowers numeric max_tokens and max_completion_tokens fields
+// whose gjson integer interpretation exceeds cap, and reports whether either
+// field changed. Nonpositive caps, invalid JSON, and update errors return the
+// supplied body with false; missing, nonnumeric, and integer-within-cap values
+// remain as supplied. For example, max_tokens=10.9 remains unchanged at cap=10
+// because its integer interpretation is ten.
 func ClampMaxTokens(body []byte, cap int64) ([]byte, bool) {
 	if cap <= 0 || !gjson.ValidBytes(body) {
 		return body, false
@@ -33,8 +47,15 @@ func ClampMaxTokens(body []byte, cap int64) ([]byte, bool) {
 		if !result.Exists() || result.Type != gjson.Number || result.Int() <= cap {
 			continue
 		}
+		// Apply the cap to either supported output-limit spelling after
+		// the integer comparison, so both request representations share
+		// the same configured threshold.
 		updated, err := sjson.SetBytes(out, key, cap)
 		if err != nil {
+			// An update failure cannot supply a completed clamp
+			// result. Return the provided body and clear the
+			// changed flag so callers retain one consistent
+			// request.
 			return body, false
 		}
 		out = updated

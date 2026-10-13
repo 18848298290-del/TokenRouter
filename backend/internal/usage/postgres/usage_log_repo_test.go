@@ -12,11 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Compatibility predicates determine which historical usage rows participate
+// when newer transport and billing-mode columns are absent. SQL-mock and table
+// cases check generated text and parameters, while ranking fixtures keep payer
+// attribution and masked public identity visible in the decoded response.
+
+// TestAppendUsageLogBillingModeWhereCondition covers explicit and legacy image,
+// video, token, and per-request modes. It checks each compatibility predicate
+// and the single bound mode value.
 func TestAppendUsageLogBillingModeWhereCondition(t *testing.T) {
 	tests := []struct {
-		name          string
-		billingMode   string
-		wantCondition string
+		name          string // compatibility case description
+		billingMode   string // supplied billing mode label
+		wantCondition string // expected complete SQL predicate
 	}{
 		{
 			name:          "image includes explicit image and legacy image rows",
@@ -49,6 +57,9 @@ func TestAppendUsageLogBillingModeWhereCondition(t *testing.T) {
 	}
 }
 
+// TestAppendUsageLogBillingModeWhereConditionWithAlias requests image
+// compatibility with the ul alias. It checks that every referenced legacy/media
+// column is qualified and the mode parameter remains bound.
 func TestAppendUsageLogBillingModeWhereConditionWithAlias(t *testing.T) {
 	conditions, args := appendUsageLogBillingModeWhereConditionWithAlias(nil, nil, string(routing.BillingModeImage), "ul")
 
@@ -56,6 +67,9 @@ func TestAppendUsageLogBillingModeWhereConditionWithAlias(t *testing.T) {
 	require.Equal(t, []any{string(routing.BillingModeImage)}, args)
 }
 
+// TestAppendUsageLogBillingModeQueryFilter adds token compatibility after an
+// existing user predicate. It checks the next placeholder number and preserves
+// the preceding argument in order.
 func TestAppendUsageLogBillingModeQueryFilter(t *testing.T) {
 	query, args := appendUsageLogBillingModeQueryFilter("SELECT * FROM usage_logs WHERE user_id = $1", []any{int64(42)}, string(routing.BillingModeToken), "")
 
@@ -63,6 +77,9 @@ func TestAppendUsageLogBillingModeQueryFilter(t *testing.T) {
 	require.Equal(t, []any{int64(42), string(routing.BillingModeToken)}, args)
 }
 
+// TestUsageLogRepositoryGetUsageRankingMasksEmail supplies payer-ranking rows
+// with and without usernames. It checks current-name preference, masked-email
+// fallback, avatar values, decoded token fields, and population totals.
 func TestUsageLogRepositoryGetUsageRankingMasksEmail(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -106,12 +123,15 @@ func TestUsageLogRepositoryGetUsageRankingMasksEmail(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestBuildRequestTypeFilterConditionLegacyFallback covers transport types, a
+// special category, and an invalid code. It checks legacy flag predicates,
+// parameter position, and normalization to the unknown type.
 func TestBuildRequestTypeFilterConditionLegacyFallback(t *testing.T) {
 	tests := []struct {
-		name      string
-		request   int16
-		wantWhere string
-		wantArg   int16
+		name      string // transport compatibility case description
+		request   int16  // supplied request category code
+		wantWhere string // expected complete transport predicate
+		wantArg   int16  // expected normalized bound category
 	}{
 		{
 			name:      "sync_with_legacy_fallback",
@@ -154,11 +174,14 @@ func TestBuildRequestTypeFilterConditionLegacyFallback(t *testing.T) {
 	}
 }
 
+// TestSafeDateFormat supplies supported granularities and unknown or
+// injection-shaped text. It checks the fixed format mapping and daily default
+// for every unsupported input.
 func TestSafeDateFormat(t *testing.T) {
 	tests := []struct {
-		name        string
-		granularity string
-		expected    string
+		name        string // format selection case description
+		granularity string // supplied time bucket label
+		expected    string // expected fixed PostgreSQL format
 	}{
 		// Allowed granularities
 		{"hour", "hour", "YYYY-MM-DD HH24:00"},
@@ -186,13 +209,16 @@ func TestSafeDateFormat(t *testing.T) {
 	}
 }
 
+// TestUsageRankingQueryPartsFollowSelectedMetric selects each supported public
+// ranking metric. It checks the ordering text and expected positive eligibility
+// fragments for raw and analytics sources.
 func TestUsageRankingQueryPartsFollowSelectedMetric(t *testing.T) {
 	tests := []struct {
-		name                 string
-		sortBy               usage.UsageRankingSortBy
-		rawEligibility       string
-		analyticsEligibility string
-		orderBy              string
+		name                 string                   // selected ranking metric description
+		sortBy               usage.UsageRankingSortBy // configured public ordering metric
+		rawEligibility       string                   // required raw eligibility fragment
+		analyticsEligibility string                   // required analytics eligibility fragment
+		orderBy              string                   // expected complete ranking order
 	}{
 		{
 			name:                 "total tokens",

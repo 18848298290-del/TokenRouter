@@ -9,7 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestCreativeGrokOperationMatrix checks rejection of inpaint.
+// Grok generation uses one output even when saved run metadata requests more.
+// Edit request fixtures check the singular and plural reference
+// representations and their exact MIME/base64 data URLs, while unsupported
+// inpaint is rejected before transport dependencies are needed.
+
+// TestCreativeGrokOperationMatrix calls the unconfigured xAI adapter with
+// inpaint. The operation check returns an error marked nonretryable before the
+// adapter needs credential or transport callbacks.
 func TestCreativeGrokOperationMatrix(t *testing.T) {
 	executor := &Target{}
 	for _, operation := range []string{creative.CreativeOperationInpaint} {
@@ -21,7 +28,9 @@ func TestCreativeGrokOperationMatrix(t *testing.T) {
 	}
 }
 
-// TestBuildCreativeGrokRequest checks Grok generation request fields.
+// TestBuildCreativeGrokRequest supplies resolution, ratio, quality, and a
+// two-output run. The body still requests one base64 image, and an unsupported
+// ratio is omitted in the additional case.
 func TestBuildCreativeGrokRequest(t *testing.T) {
 	run := creative.CreativeRun{ImageSize: "2K", AspectRatio: "16:9", RequestedOutputCount: 2}
 	payload := creative.CreativeRunPayload{Prompt: "画猫", Quality: "low"}
@@ -42,7 +51,9 @@ func TestBuildCreativeGrokRequest(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestBuildCreativeGrokEditRequest checks single-image and multiple-image JSON fields.
+// TestBuildCreativeGrokEditRequest builds bodies with two references and then
+// one reference. It checks generation fields, exact encoded source URLs, and
+// the corresponding images or image field presence.
 func TestBuildCreativeGrokEditRequest(t *testing.T) {
 	run := creative.CreativeRun{ImageSize: "2K", AspectRatio: "16:9", RequestedOutputCount: 2}
 	payload := creative.CreativeRunPayload{

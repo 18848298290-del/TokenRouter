@@ -8,11 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Reasoning configuration distinguishes ranked ceilings from mapping choices,
+// including none and platform-specific values. These fixtures check canonical
+// labels, scope normalization, duplicate source-and-model rejection, and
+// over-limit action defaults while preserving the accepted Anthropic subset
+// separately from OpenAI.
+
+// TestNormalizeMaxReasoningEffort supplies empty, separator-bearing, max, none,
+// and unknown labels. Only ranked values must normalize, keeping max distinct
+// while empty, none, and invalid ceilings return empty.
 func TestNormalizeMaxReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name string
-		in   string
-		want string
+		name string // subtest case display name
+		in   string // raw group ceiling label
+		want string // expected normalized ceiling label
 	}{
 		{name: "empty", in: "", want: ""},
 		{name: "separator", in: "x-high", want: "xhigh"},
@@ -27,6 +36,10 @@ func TestNormalizeMaxReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestNormalizeReasoningEffortMappings supplies global and model-scoped rules
+// across declared platform sets. Normalization must preserve valid scope
+// distinctions, reject duplicate or invalid values, and accept the tested
+// Anthropic subset.
 func TestNormalizeReasoningEffortMappings(t *testing.T) {
 	t.Run("canonicalizes fixed OpenAI values", func(t *testing.T) {
 		got, err := NormalizeReasoningEffortMappings(capability.PlatformOpenAI, []ReasoningEffortMapping{
@@ -134,6 +147,10 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 	})
 }
 
+// TestNormalizeMaxReasoningEffortForPlatform checks accepted OpenAI and
+// Anthropic ceiling values with unsupported platform and none cases. Supported
+// labels must remain canonical, and invalid populated configurations must
+// return errors.
 func TestNormalizeMaxReasoningEffortForPlatform(t *testing.T) {
 	value, err := NormalizeMaxReasoningEffortForPlatform(capability.PlatformOpenAI, "max")
 	require.NoError(t, err)
@@ -151,6 +168,9 @@ func TestNormalizeMaxReasoningEffortForPlatform(t *testing.T) {
 	require.ErrorContains(t, err, "not supported")
 }
 
+// TestNormalizeMaxReasoningEffortOverLimit supplies blank, padded downgrade,
+// uppercase deny, and unknown action text. Blank and supported values must
+// normalize to their selected action while unknown input returns empty.
 func TestNormalizeMaxReasoningEffortOverLimit(t *testing.T) {
 	require.Equal(t, ReasoningEffortOverLimitDowngrade, NormalizeMaxReasoningEffortOverLimit(""))
 	require.Equal(t, ReasoningEffortOverLimitDowngrade, NormalizeMaxReasoningEffortOverLimit(" downgrade "))
@@ -158,6 +178,9 @@ func TestNormalizeMaxReasoningEffortOverLimit(t *testing.T) {
 	require.Empty(t, NormalizeMaxReasoningEffortOverLimit("block"))
 }
 
+// TestNormalizeMaxReasoningEffortOverLimitForPlatform checks default downgrade
+// and accepted Anthropic deny configuration. Both supported actions must
+// normalize, while the supplied unknown action returns its validation error.
 func TestNormalizeMaxReasoningEffortOverLimitForPlatform(t *testing.T) {
 	value, err := NormalizeMaxReasoningEffortOverLimitForPlatform(capability.PlatformOpenAI, "")
 	require.NoError(t, err)

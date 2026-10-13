@@ -10,6 +10,15 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// Configured operations can be narrower than platform support, and saved
+// entries can outlive their current routes. These fixtures compare the
+// resulting operation lists for known and unresolved models, including a group
+// that the test reader cannot find.
+
+// TestCreativeOperationsForModelIntersectsPlatformSupport configures
+// generation and editing but supplies generation support alone. The matching
+// group returns generation with configured true, while another group returns
+// no configured entry.
 func TestCreativeOperationsForModelIntersectsPlatformSupport(t *testing.T) {
 	index := creative.CreativeModelSettingsIndex([]creative.CreativeModelSetting{{
 		GroupID:    9,
@@ -25,7 +34,10 @@ func TestCreativeOperationsForModelIntersectsPlatformSupport(t *testing.T) {
 	require.Empty(t, operations)
 }
 
-// TestNormalizeCreativeModelSettingsForSaveByPlatform checks resolved capabilities and retains unresolved entries.
+// TestNormalizeCreativeModelSettingsForSaveByPlatform saves Gemini, OpenAI,
+// and unresolved entries through the fixture service. Known Gemini capability
+// removes inpaint, OpenAI retains it, and unresolved model or group entries
+// remain.
 func TestNormalizeCreativeModelSettingsForSaveByPlatform(t *testing.T) {
 	svc := newCreativeTestService()
 	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)

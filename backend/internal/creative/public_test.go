@@ -7,17 +7,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A selected concrete model can be validated without enumerating unrelated
+// configured candidates. Counting fixtures distinguish direct model checks
+// from inventory reads, and wildcard settings exercise both public listing and
+// submission rejection through the same model query path.
+
 // patternCreativeSettings supplies wildcard model names from saved settings.
 type patternCreativeSettings struct {
-	*targetQueryFixture
-	model string
+	*targetQueryFixture        // shared query counter fixture
+	model               string // configured wildcard model name
 }
 
+// GetCreativeModelSettings returns one generated allowlist entry using the
+// fixture model. The returned entry targets group one and permits generation
+// so wildcard rejection can be exercised by the caller.
 func (s patternCreativeSettings) GetCreativeModelSettings(context.Context) []CreativeModelSetting {
 	return []CreativeModelSetting{{GroupID: 1, Model: s.model, Operations: []string{CreativeOperationGenerate}}}
 }
 
-// TestCreativeRejectsPatternModels checks that listing and submission reject wildcard model names.
+// TestCreativeRejectsPatternModels configures names containing star or
+// question-mark wildcards. Listing stays empty, submission returns
+// CREATIVE_INVALID_MODEL, and the fixture records neither support checks nor
+// inventory reads.
 func TestCreativeRejectsPatternModels(t *testing.T) {
 	for _, model := range []string{"gpt-image-2*", "gpt-image-2?"} {
 		t.Run(model, func(t *testing.T) {
@@ -35,8 +46,9 @@ func TestCreativeRejectsPatternModels(t *testing.T) {
 	}
 }
 
-// TestCreativeTargetValidationDoesNotEnumerate checks that validating a selected model skips candidate
-// enumeration.
+// TestCreativeTargetValidationDoesNotEnumerate validates one configured GPT
+// Image model with counting providers. It checks the resolved model and one
+// provider read while candidate inventory reads remain zero.
 func TestCreativeTargetValidationDoesNotEnumerate(t *testing.T) {
 	fixture := &targetQueryFixture{}
 	service := newTargetQueryPublic(fixture)
@@ -48,7 +60,9 @@ func TestCreativeTargetValidationDoesNotEnumerate(t *testing.T) {
 	require.Equal(t, 1, fixture.providerReads)
 }
 
-// TestCreativePublicListChecksConfiguredSettings checks that listing validates the configured model directly.
+// TestCreativePublicListChecksConfiguredSettings lists one exact saved model
+// through a counting provider. The response contains that model, records its
+// support check, and leaves candidate inventory reads at zero.
 func TestCreativePublicListChecksConfiguredSettings(t *testing.T) {
 	fixture := &targetQueryFixture{}
 	result, err := newTargetQueryPublic(fixture).ListModels(context.Background(), 1)

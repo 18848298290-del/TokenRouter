@@ -13,7 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
-// TestParseCreativeCreateRunMultipartStopsAtTotalLimit checks cumulative upload limits during parsing.
+// Multipart limits are checked while file parts are consumed, before creative
+// submission begins. Handler scope tests separately exercise missing and
+// malformed workspace headers and confirm that an accepted UUID is normalized
+// while retaining the supplied user identifier.
+
+// TestParseCreativeCreateRunMultipartStopsAtTotalLimit uploads two file parts
+// whose combined bytes exceed the parser total limit. Parsing returns no
+// request and CREATIVE_INPUT_TOO_LARGE before domain submission occurs.
 func TestParseCreativeCreateRunMultipartStopsAtTotalLimit(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -26,6 +33,8 @@ func TestParseCreativeCreateRunMultipartStopsAtTotalLimit(t *testing.T) {
 	require.NoError(t, err)
 	_, err = part.Write([]byte("7890"))
 	require.NoError(t, err)
+	// Finish the multipart boundary so this case reaches the cumulative file-byte
+	// limit rather than failing because its synthetic HTTP form is incomplete.
 	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest(http.MethodPost, "/creative/runs", &body)
@@ -38,7 +47,9 @@ func TestParseCreativeCreateRunMultipartStopsAtTotalLimit(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrCreativeInputTooLarge)
 }
 
-// TestCreativeRunScopeFromRequest checks missing and invalid workspace headers and case normalization.
+// TestCreativeRunScopeFromRequest supplies absent, invalid, and uppercase
+// workspace headers to the scope helper. It checks the distinct errors and the
+// normalized UUID paired with user seven.
 func TestCreativeRunScopeFromRequest(t *testing.T) {
 	t.Run("缺失 header", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())

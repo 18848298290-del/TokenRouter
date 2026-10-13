@@ -36,6 +36,24 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// Team storage separates the paying owner from the acting member and records
+// membership history across admission, billing, transfer, and removal.
+// PostgreSQL cases inspect member capacity, owner deletion guards,
+// owner-disabled key flags, default member limits, and historical usage
+// alongside replayed settlement and a changed owner.
+//
+// The capacity case releases two invitation acceptances through one start
+// channel and joins both results before counting stored members. Billing
+// commands retain their payer ID when ownership changes, so the later
+// admitted-cost scenario checks the old payer balance independently of current
+// membership roles. User fixture creation writes allowed-group references after
+// the stored owner ID, and each standalone database fixture closes its SQL pool
+// and dedicated container at test cleanup.
+
+// TestTeamInvitationConcurrentAcceptanceEnforcesMemberLimit releases two
+// acceptances against one available member slot in PostgreSQL. One succeeds,
+// one reports the member-limit error, and the stored active member count is
+// one.
 func TestTeamInvitationConcurrentAcceptanceEnforcesMemberLimit(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -53,6 +71,9 @@ func TestTeamInvitationConcurrentAcceptanceEnforcesMemberLimit(t *testing.T) {
 	_, err = repo.CreateInvitation(ctx, teamCtx.Team.ID, owner.ID, second.Email, secondToken, time.Now().Add(time.Hour))
 	require.NoError(t, err)
 
+	// Hold both acceptances at one start gate and buffer their results so the
+	// member-capacity assertion reads completed PostgreSQL attempts after the
+	// workers have joined.
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -65,6 +86,9 @@ func TestTeamInvitationConcurrentAcceptanceEnforcesMemberLimit(t *testing.T) {
 	wg.Add(2)
 	go accept(firstToken, first)
 	go accept(secondToken, second)
+	// Release competing acceptances before waiting, then close results after all
+	// sends finish so counting observes one complete outcome per invitation
+	// without a producer race.
 	close(start)
 	wg.Wait()
 	close(results)
@@ -88,6 +112,10 @@ func TestTeamInvitationConcurrentAcceptanceEnforcesMemberLimit(t *testing.T) {
 	require.Equal(t, 1, memberCount)
 }
 
+// TestTeamInvitationMemberLimitZeroRejectsMembers creates a team with member
+// capacity zero and invites an ordinary user. Acceptance returns
+// TeamMemberLimitReached for that zero-capacity team despite its existing
+// owner.
 func TestTeamInvitationMemberLimitZeroRejectsMembers(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -104,6 +132,9 @@ func TestTeamInvitationMemberLimitZeroRejectsMembers(t *testing.T) {
 	require.ErrorIs(t, err, team.ErrTeamMemberLimitReached)
 }
 
+// TestTeamMembershipAndBillingAreIdempotent rejects joining a second team and
+// replays one admitted billing command. Member windows record one charge, and a
+// later ownership transfer still charges the saved preceding payer.
 func TestTeamMembershipAndBillingAreIdempotent(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -117,6 +148,8 @@ func TestTeamMembershipAndBillingAreIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	_, err = teamRepo.ResolveInvitation(ctx, token, member.ID, member.Email, "accepted", time.Now())
 	require.NoError(t, err)
+	// A two-month-old anchor makes all member calendar windows stale for this
+	// charge.
 	oldWindow := time.Now().AddDate(0, -2, 0)
 	_, err = integrationDB.ExecContext(ctx, `
 		UPDATE team_memberships SET daily_usage_usd = 9, weekly_usage_usd = 9, monthly_usage_usd = 9,
@@ -158,16 +191,23 @@ func TestTeamMembershipAndBillingAreIdempotent(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd
 		FROM team_memberships WHERE team_id = $1 AND user_id = $2 AND left_at IS NULL`, teamID, member.ID).Scan(&daily, &weekly, &monthly))
+	// Compare member costs and both payer balances within a micro-dollar
+	// difference.
 	require.InDelta(t, 1.25, daily, 0.000001)
 	require.InDelta(t, 1.25, weekly, 0.000001)
 	require.InDelta(t, 1.25, monthly, 0.000001)
 
-	// An ownership transfer after request admission must still charge the payer saved in the billing command.
+	// Transfer ownership before settling another command that retains its admitted
+	// payer ID, exposing an implementation that rewrites funding to the current
+	// team owner.
 	transferToken := uuid.NewString()
 	_, err = teamRepo.CreateOwnershipTransfer(ctx, teamID, owner.ID, member.ID, transferToken, time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	_, err = teamRepo.ResolveOwnershipTransfer(ctx, transferToken, member.ID, "accepted", time.Now())
 	require.NoError(t, err)
+	// Reuse the admitted payer and actor while choosing a new request and charge;
+	// clear the inherited fingerprint so this separate settlement describes its
+	// own changed cost.
 	secondCommand := *command
 	secondCommand.RequestID = uuid.NewString()
 	secondCommand.BillableAmountUSD = 0.75
@@ -189,6 +229,9 @@ func TestTeamMembershipAndBillingAreIdempotent(t *testing.T) {
 	require.Equal(t, team.TeamRoleOwner, newRole)
 }
 
+// TestActiveTeamOwnerCannotBeDeleted attempts owner deletion through UserStore
+// and direct PostgreSQL mutation. Both reject while the team remains active,
+// and direct soft deletion succeeds after team dissolution.
 func TestActiveTeamOwnerCannotBeDeleted(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -201,15 +244,24 @@ func TestActiveTeamOwnerCannotBeDeleted(t *testing.T) {
 	err = userRepo.Delete(ctx, owner.ID)
 	require.ErrorIs(t, err, team.ErrTeamOwnerTransferRequired)
 
+	// Bypass UserStore with a direct soft-delete mutation to check the database
+	// owner guard independently, then repeat that mutation after dissolution
+	// removes the active ownership.
 	_, err = integrationDB.ExecContext(ctx, `UPDATE users SET deleted_at = NOW() WHERE id = $1`, owner.ID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TEAM_OWNER_TRANSFER_REQUIRED")
 
 	require.NoError(t, repo.Dissolve(ctx, teamCtx.Team.ID, time.Now()))
+	// Retry the same raw mutation after dissolving the active team so the database
+	// guard can distinguish retained ownership from ownership that no longer
+	// blocks deletion.
 	_, err = integrationDB.ExecContext(ctx, `UPDATE users SET deleted_at = NOW() WHERE id = $1`, owner.ID)
 	require.NoError(t, err)
 }
 
+// TestSoftDeletedTeamMemberIsRemovedAndKeysDisabled directly marks an ordinary
+// member user deleted in PostgreSQL. Its membership receives a nonzero leave
+// time and the associated team key becomes disabled.
 func TestSoftDeletedTeamMemberIsRemovedAndKeysDisabled(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -242,6 +294,9 @@ func TestSoftDeletedTeamMemberIsRemovedAndKeysDisabled(t *testing.T) {
 	require.Equal(t, apikey.StatusAPIKeyDisabled, status)
 }
 
+// TestTeamOwnerKeyLockRequiresExplicitOwnerEnable disables a team key through
+// the owner operation and then directly sets active status. The independent
+// owner-disabled flag remains until the enable operation clears it.
 func TestTeamOwnerKeyLockRequiresExplicitOwnerEnable(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -271,7 +326,9 @@ func TestTeamOwnerKeyLockRequiresExplicitOwnerEnable(t *testing.T) {
 	require.Equal(t, apikey.StatusAPIKeyDisabled, status)
 	require.True(t, ownerDisabled)
 
-	// Updating status directly must leave the independent owner lock set.
+	// Set status directly before the owner-enable operation so the following read
+	// can detect whether status updates mistakenly clear the separate
+	// owner-disabled flag.
 	_, err = integrationDB.ExecContext(ctx, `UPDATE api_keys SET status = 'active' WHERE id = $1`, apiKey.ID)
 	require.NoError(t, err)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status, team_owner_disabled FROM api_keys WHERE id = $1`, apiKey.ID).Scan(&status, &ownerDisabled))
@@ -285,6 +342,10 @@ func TestTeamOwnerKeyLockRequiresExplicitOwnerEnable(t *testing.T) {
 	require.False(t, ownerDisabled)
 }
 
+// TestTeamInvitationCopiesCurrentDefaultMemberLimits sets defaults before
+// invitation acceptance and reads all three joined member limits. A later
+// defaults change leaves the exercised member's daily limit at its joined
+// value.
 func TestTeamInvitationCopiesCurrentDefaultMemberLimits(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -300,17 +361,25 @@ func TestTeamInvitationCopiesCurrentDefaultMemberLimits(t *testing.T) {
 	require.NoError(t, err)
 	memberCtx, err := repo.ResolveInvitation(ctx, token, member.ID, member.Email, "accepted", time.Now())
 	require.NoError(t, err)
+	// A micro-dollar tolerance compares the copied member limits and retained
+	// daily value.
 	require.InDelta(t, 1.5, memberCtx.Membership.DailyLimitUSD, 0.000001)
 	require.InDelta(t, 8, memberCtx.Membership.WeeklyLimitUSD, 0.000001)
 	require.InDelta(t, 30, memberCtx.Membership.MonthlyLimitUSD, 0.000001)
 
-	// Changing the defaults must leave existing members' limits at their joined values.
+	// Change defaults after this member joins, then reload its context so the
+	// daily-limit assertion checks the stored joined value rather than the new
+	// team default.
 	require.NoError(t, repo.SetDefaultMemberLimits(ctx, teamCtx.Team.ID, 2, 10, 40))
 	memberCtx, err = repo.GetContextByUserID(ctx, member.ID)
 	require.NoError(t, err)
+	// The same numeric tolerance checks the retained joined daily allowance.
 	require.InDelta(t, 1.5, memberCtx.Membership.DailyLimitUSD, 0.000001)
 }
 
+// TestTeamMemberUsageSeriesKeepsDepartedMemberHistory persists owner and member
+// usage before member removal. The history series retains both costs, totals
+// agree with summary, and the departed member is labeled left.
 func TestTeamMemberUsageSeriesKeepsDepartedMemberHistory(t *testing.T) {
 	integrationEntClient, integrationDB := teamDatabase(t)
 	ctx := context.Background()
@@ -331,9 +400,9 @@ func TestTeamMemberUsageSeriesKeepsDepartedMemberHistory(t *testing.T) {
 	provider := mustCreateProvider(t, integrationEntClient, &providercore.Record{Name: "team-usage-" + uuid.NewString(), Type: capability.ProviderTypeAPIKey})
 	createdAt := time.Now().UTC()
 	for _, item := range []struct {
-		userID   int64
-		apiKeyID int64
-		cost     float64
+		userID   int64   // acting user fixture ID
+		apiKeyID int64   // corresponding team key fixture ID
+		cost     float64 // USD usage cost
 	}{
 		{userID: owner.ID, apiKeyID: ownerKey.ID, cost: 1.2},
 		{userID: member.ID, apiKeyID: memberKey.ID, cost: 0.8},
@@ -368,23 +437,33 @@ func TestTeamMemberUsageSeriesKeepsDepartedMemberHistory(t *testing.T) {
 		seriesTotal += item.Summary.ActualCost
 		statuses[item.ActorUserID] = item.Status
 	}
+	// A micro-dollar tolerance compares summed member costs with the overall team
+	// summary.
 	require.InDelta(t, total.ActualCost, seriesTotal, 0.000001)
 	require.InDelta(t, 2, seriesTotal, 0.000001)
 	require.Equal(t, "active", statuses[owner.ID])
 	require.Equal(t, "left", statuses[member.ID])
 }
 
+// uniqueTeamTestEmail returns a team-prefixed email containing the supplied
+// fixture label and a fresh UUID.
 func uniqueTeamTestEmail(prefix string) string {
 	return fmt.Sprintf("team-%s-%s@example.com", prefix, uuid.NewString())
 }
 
-// teamDatabase creates a test database and Ent client; the database fixture closes the connection at cleanup.
+// teamDatabase returns Ent and SQL access to a dedicated migrated PostgreSQL
+// container. postgrescontainer.New owns pool and container cleanup; the Ent
+// wrapper borrows that pool and has no separate registered Close callback.
 func teamDatabase(t *testing.T) (*dbent.Client, *sql.DB) {
 	t.Helper()
 	db := postgrescontainer.New(t)
 	return dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db))), db
 }
 
+// mustCreateProvider saves selected provider fields and fills generated ID and
+// timestamps on a. Empty platform, type, and status select Anthropic, OAuth,
+// and active; zero concurrency and priority become three and fifty, false
+// schedulability becomes true, and nil maps become empty.
 func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Record) *providercore.Record {
 	t.Helper()
 	ctx := context.Background()
@@ -472,6 +551,15 @@ func mustCreateProvider(t *testing.T, client *dbent.Client, a *providercore.Reco
 	return a
 }
 
+// mustCreateUser saves selected user fields and fills generated ID and
+// timestamps on the supplied object. Empty email, password, role, and status
+// receive fixture values, and zero concurrency becomes five.
+//
+// Allowed-group rows are written after creation so each row can reference the
+// stored user ID. The supplied client determines their transaction scope, and
+// this helper uses a background context. A later grant failure fails the test
+// after earlier writes may have occurred, leaving their rollback or
+// committed-fixture cleanup to the caller.
 func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *identity.User {
 	t.Helper()
 	ctx := context.Background()
@@ -515,6 +603,9 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	u.CreatedAt = created.CreatedAt
 	u.UpdatedAt = created.UpdatedAt
 
+	// Insert group grants after the owner ID is stored so references have a valid
+	// user, leaving the caller's supplied client to determine rollback after a
+	// later failure.
 	if len(u.AllowedGroups) > 0 {
 		for _, groupID := range u.AllowedGroups {
 			_, err := client.UserAllowedGroup.Create().
@@ -528,6 +619,10 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *identity.User) *ident
 	return u
 }
 
+// mustCreateApiKey saves selected ownership, group, team, quota,
+// spending-window, expiry, and timestamp fields and fills generated identity on
+// k. Empty status, credential, and name receive defaults; the caller supplies
+// storage scope and cleanup.
 func mustCreateApiKey(t *testing.T, client *dbent.Client, k *apikey.APIKey) *apikey.APIKey {
 	t.Helper()
 	ctx := context.Background()

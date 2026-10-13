@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseMetadataUserID_LegacyFormat_WithoutAccountUUID parses a legacy
+// identity with an empty account component. Device and session remain in their
+// own fields, account stays empty, and the result records the legacy format.
 func TestParseMetadataUserID_LegacyFormat_WithoutAccountUUID(t *testing.T) {
 	raw := "user_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2_account__session_123e4567-e89b-12d3-a456-426614174000"
 	parsed := ParseMetadataUserID(raw)
@@ -16,6 +19,9 @@ func TestParseMetadataUserID_LegacyFormat_WithoutAccountUUID(t *testing.T) {
 	require.False(t, parsed.IsNewFormat)
 }
 
+// TestParseMetadataUserID_LegacyFormat_WithAccountUUID parses a legacy identity
+// carrying device, account, and session components. Each supplied value appears
+// in its matching field and the result records legacy encoding.
 func TestParseMetadataUserID_LegacyFormat_WithAccountUUID(t *testing.T) {
 	raw := "user_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2_account_550e8400-e29b-41d4-a716-446655440000_session_123e4567-e89b-12d3-a456-426614174000"
 	parsed := ParseMetadataUserID(raw)
@@ -26,6 +32,9 @@ func TestParseMetadataUserID_LegacyFormat_WithAccountUUID(t *testing.T) {
 	require.False(t, parsed.IsNewFormat)
 }
 
+// TestParseMetadataUserID_JSONFormat_WithoutAccountUUID parses JSON-formatted
+// identity with an empty account string. Device and session remain intact,
+// account stays empty, and IsNewFormat identifies the JSON representation.
 func TestParseMetadataUserID_JSONFormat_WithoutAccountUUID(t *testing.T) {
 	raw := `{"device_id":"d61f76d0aabbccdd00112233445566778899aabbccddeeff0011223344556677","account_uuid":"","session_id":"c72554f2-1234-5678-abcd-123456789abc"}`
 	parsed := ParseMetadataUserID(raw)
@@ -36,6 +45,9 @@ func TestParseMetadataUserID_JSONFormat_WithoutAccountUUID(t *testing.T) {
 	require.True(t, parsed.IsNewFormat)
 }
 
+// TestParseMetadataUserID_JSONFormat_WithAccountUUID parses a JSON-formatted
+// identity carrying all three components. The result retains their supplied
+// values and marks the representation as the newer JSON encoding.
 func TestParseMetadataUserID_JSONFormat_WithAccountUUID(t *testing.T) {
 	raw := `{"device_id":"d61f76d0aabbccdd00112233445566778899aabbccddeeff0011223344556677","account_uuid":"550e8400-e29b-41d4-a716-446655440000","session_id":"c72554f2-1234-5678-abcd-123456789abc"}`
 	parsed := ParseMetadataUserID(raw)
@@ -46,10 +58,13 @@ func TestParseMetadataUserID_JSONFormat_WithAccountUUID(t *testing.T) {
 	require.True(t, parsed.IsNewFormat)
 }
 
+// TestParseMetadataUserID_InvalidInputs supplies absent, malformed, incomplete,
+// and invalid legacy identity strings. Parsing returns nil for every listed
+// case, so callers do not receive an apparently usable incomplete identity.
 func TestParseMetadataUserID_InvalidInputs(t *testing.T) {
 	tests := []struct {
-		name string
-		raw  string
+		name string // case display name
+		raw  string // raw parser input
 	}{
 		{"empty string", ""},
 		{"whitespace only", "   "},
@@ -69,6 +84,10 @@ func TestParseMetadataUserID_InvalidInputs(t *testing.T) {
 	}
 }
 
+// TestParseMetadataUserID_HexCaseInsensitive parses a legacy device string
+// containing uppercase hexadecimal letters. The result is accepted and retains
+// that exact casing, keeping matching case tolerance separate from output
+// normalization.
 func TestParseMetadataUserID_HexCaseInsensitive(t *testing.T) {
 	// Legacy format should accept both upper and lower case hex
 	rawUpper := "user_A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2_account__session_123e4567-e89b-12d3-a456-426614174000"
@@ -77,21 +96,33 @@ func TestParseMetadataUserID_HexCaseInsensitive(t *testing.T) {
 	require.Equal(t, "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2", parsed.DeviceID)
 }
 
+// TestFormatMetadataUserID_LegacyVersion formats supplied components under a
+// CLI version below the threshold. The exact legacy delimiters and field order
+// remain visible in the resulting identity string.
 func TestFormatMetadataUserID_LegacyVersion(t *testing.T) {
 	result := FormatMetadataUserID("deadbeef"+"00112233445566778899aabbccddeeff0011223344556677", "acc-uuid", "sess-uuid", "2.1.77")
 	require.Equal(t, "user_deadbeef00112233445566778899aabbccddeeff0011223344556677_account_acc-uuid_session_sess-uuid", result)
 }
 
+// TestFormatMetadataUserID_NewVersion formats supplied components at the JSON
+// threshold version. The resulting text is the expected JSON object with
+// device, account, and session values in their corresponding fields.
 func TestFormatMetadataUserID_NewVersion(t *testing.T) {
 	result := FormatMetadataUserID("deadbeef"+"00112233445566778899aabbccddeeff0011223344556677", "acc-uuid", "sess-uuid", "2.1.78")
 	require.Equal(t, `{"device_id":"deadbeef00112233445566778899aabbccddeeff0011223344556677","account_uuid":"acc-uuid","session_id":"sess-uuid"}`, result)
 }
 
+// TestFormatMetadataUserID_EmptyVersion_Legacy formats a device and session
+// with an empty version and empty account. The result uses legacy encoding and
+// retains the account delimiter position.
 func TestFormatMetadataUserID_EmptyVersion_Legacy(t *testing.T) {
 	result := FormatMetadataUserID("deadbeef"+"00112233445566778899aabbccddeeff0011223344556677", "", "sess-uuid", "")
 	require.Equal(t, "user_deadbeef00112233445566778899aabbccddeeff0011223344556677_account__session_sess-uuid", result)
 }
 
+// TestFormatMetadataUserID_EmptyAccountUUID formats empty-account identity
+// under both legacy and threshold versions. The legacy form retains its empty
+// delimiter slot, while JSON carries an empty account string.
 func TestFormatMetadataUserID_EmptyAccountUUID(t *testing.T) {
 	// Legacy format with empty provider UUID → double underscore
 	result := FormatMetadataUserID("deadbeef"+"00112233445566778899aabbccddeeff0011223344556677", "", "sess-uuid", "2.1.22")
@@ -102,10 +133,13 @@ func TestFormatMetadataUserID_EmptyAccountUUID(t *testing.T) {
 	require.Contains(t, result, `"account_uuid":""`)
 }
 
+// TestIsNewMetadataFormatVersion compares empty, older, threshold, and newer
+// CLI versions with the format threshold. Older or absent values select legacy,
+// while the threshold and newer versions select JSON.
 func TestIsNewMetadataFormatVersion(t *testing.T) {
 	tests := []struct {
-		version string
-		want    bool
+		version string // candidate CLI version
+		want    bool   // expected comparison value
 	}{
 		{"", false},
 		{"2.1.77", false},
@@ -123,6 +157,9 @@ func TestIsNewMetadataFormatVersion(t *testing.T) {
 	}
 }
 
+// TestParseFormat_RoundTrip_Legacy formats valid legacy components and parses
+// the returned text. Device, account, and session survive in their respective
+// fields, and parsing reports the legacy format.
 func TestParseFormat_RoundTrip_Legacy(t *testing.T) {
 	deviceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	providerUUID := "550e8400-e29b-41d4-a716-446655440000"
@@ -137,6 +174,9 @@ func TestParseFormat_RoundTrip_Legacy(t *testing.T) {
 	require.False(t, parsed.IsNewFormat)
 }
 
+// TestParseFormat_RoundTrip_JSON formats components using the threshold version
+// and parses the result. All three values survive in their matching fields, and
+// parsing reports JSON encoding.
 func TestParseFormat_RoundTrip_JSON(t *testing.T) {
 	deviceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	providerUUID := "550e8400-e29b-41d4-a716-446655440000"
@@ -151,6 +191,9 @@ func TestParseFormat_RoundTrip_JSON(t *testing.T) {
 	require.True(t, parsed.IsNewFormat)
 }
 
+// TestParseFormat_RoundTrip_EmptyAccountUUID round-trips an empty account
+// through both supported identity representations. Device and session remain
+// intact and the empty account stays distinct from either required component.
 func TestParseFormat_RoundTrip_EmptyAccountUUID(t *testing.T) {
 	deviceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	sessionID := "123e4567-e89b-12d3-a456-426614174000"

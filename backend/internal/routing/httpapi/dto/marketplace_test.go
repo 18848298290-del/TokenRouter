@@ -9,7 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestImagePriceJSONPreservesFreeAndMissingSizes distinguishes free sizes from sizes with no price.
+// TestImagePriceJSONPreservesFreeAndMissingSizes serializes a quote with two
+// declared sizes and one absent size. It checks that zero-valued 1K remains
+// free in JSON, 2K keeps its amount, and 4K is omitted.
 func TestImagePriceJSONPreservesFreeAndMissingSizes(t *testing.T) {
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "image", PriceStatus: "priced", ImagePriceSizes: []string{"1K", "2K"}, ImagePrice1K: 0, ImagePrice2K: 0.1})
 	body, err := json.Marshal(row)
@@ -22,7 +24,10 @@ func TestImagePriceJSONPreservesFreeAndMissingSizes(t *testing.T) {
 	require.NotContains(t, fields, "image_price_4k")
 }
 
-// TestMarketplacePricingJSONIncludesTokenModifiers checks time-based pricing and Max reasoning multipliers.
+// TestMarketplacePricingJSONIncludesTokenModifiers serializes a token quote
+// with a Max multiplier and a weekday time schedule. It checks the complete
+// JSON object retains the factor, timezone, weekday restriction, and
+// end-of-day clock spelling.
 func TestMarketplacePricingJSONIncludesTokenModifiers(t *testing.T) {
 	maxMultiplier := 1.5
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{
@@ -51,7 +56,9 @@ func TestMarketplacePricingJSONIncludesTokenModifiers(t *testing.T) {
 	}`, string(body))
 }
 
-// TestMarketplacePricingJSONOmitsAbsentTokenModifiers checks that unset modifiers are omitted.
+// TestMarketplacePricingJSONOmitsAbsentTokenModifiers serializes a token
+// quote with neither optional modifier set. It checks that both Max effort
+// and time schedule members are absent from the JSON object.
 func TestMarketplacePricingJSONOmitsAbsentTokenModifiers(t *testing.T) {
 	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "token", PriceStatus: "priced", InputPricePerToken: 1e-6})
 	body, err := json.Marshal(row)

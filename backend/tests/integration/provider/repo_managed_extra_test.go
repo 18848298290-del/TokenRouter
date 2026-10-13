@@ -18,9 +18,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// deprecatedOpenAILongContextBillingExtraKey identifies the retired OpenAI long-context billing toggle.
+// Managed provider Extra values are selected from stored observations and
+// cleaned according to identity changes. SQL mocks check CN snapshot version
+// predicates, Ollama state carry-forward, retired-key removal, and transaction
+// rollback when an outbox operation returns an error.
+
+// deprecatedOpenAILongContextBillingExtraKey names the retired billing field used
+// to check removal from both submitted Extra and emitted repository SQL.
 const deprecatedOpenAILongContextBillingExtraKey = "openai_long_context_billing_enabled"
 
+// TestUpdateCNUsageMonitorSnapshotCASWritesSnapshotAndOutboxAtomically mocks
+// one affected row for a timestamp-qualified CN observation. The expected
+// statement contains the snapshot update and event insertion, then commits and
+// reports true.
 func TestUpdateCNUsageMonitorSnapshotCASWritesSnapshotAndOutboxAtomically(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -47,6 +57,10 @@ func TestUpdateCNUsageMonitorSnapshotCASWritesSnapshotAndOutboxAtomically(t *tes
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUpdateCNUsageMonitorSnapshotCASRejectsStaleUpdatedAt returns zero
+// affected rows from the timestamp-qualified snapshot statement. The repository
+// reports false with no error and requests rollback in the configured mock
+// sequence.
 func TestUpdateCNUsageMonitorSnapshotCASRejectsStaleUpdatedAt(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -73,13 +87,17 @@ func TestUpdateCNUsageMonitorSnapshotCASRejectsStaleUpdatedAt(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestLockAndMergeProviderManagedExtraProtectsOllamaFields supplies stored
+// managed values and group/proxy identity comparisons through a lock-query
+// mock. The merge chooses stored session and refresh values, conditionally
+// keeps the snapshot, and discards retired keys.
 func TestLockAndMergeProviderManagedExtraProtectsOllamaFields(t *testing.T) {
 	tests := []struct {
-		name                 string
-		groupIdentityMatches bool
-		proxyIdentityMatches bool
-		wantSession          bool
-		wantSnapshot         bool
+		name                 string // managed-state scenario label
+		groupIdentityMatches bool   // configured API-key group match
+		proxyIdentityMatches bool   // configured proxy identity match
+		wantSession          bool   // expected stored session retention
+		wantSnapshot         bool   // expected stored snapshot retention
 	}{
 		{name: "身份与代理未变时保留全部状态", groupIdentityMatches: true, proxyIdentityMatches: true, wantSession: true, wantSnapshot: true},
 		{name: "代理变化时保留会话并清理快照", groupIdentityMatches: true, proxyIdentityMatches: false, wantSession: true, wantSnapshot: false},
@@ -129,6 +147,9 @@ func TestLockAndMergeProviderManagedExtraProtectsOllamaFields(t *testing.T) {
 	}
 }
 
+// TestUpdateExtraDiscardsDeprecatedProviderExtraKeys submits forged retired
+// values alongside a custom field to Extra merging. Mock expectations require
+// retired-key removal in SQL and pass only the custom value as its payload.
 func TestUpdateExtraDiscardsDeprecatedProviderExtraKeys(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -157,6 +178,9 @@ func TestUpdateExtraDiscardsDeprecatedProviderExtraKeys(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestBulkUpdateDiscardsDeprecatedLongContextBillingExtra supplies malformed
+// retired billing configuration in a bulk patch. The repository removes that
+// input key and emits the expected cleanup SQL, event, and commit sequence.
 func TestBulkUpdateDiscardsDeprecatedLongContextBillingExtra(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -185,6 +209,9 @@ func TestBulkUpdateDiscardsDeprecatedLongContextBillingExtra(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUpdateExtraRollsBackWhenOutboxFails mocks a successful Extra update
+// followed by a failed event insert. The repository returns the event error and
+// rolls back according to the SQL expectations.
 func TestUpdateExtraRollsBackWhenOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -206,6 +233,9 @@ func TestUpdateExtraRollsBackWhenOutboxFails(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUpdateCredentialsRollsBackWhenOutboxFails mocks a credential replacement
+// and managed-key cleanup followed by an event error. The repository returns
+// the error and requests rollback after the failed scheduling write.
 func TestUpdateCredentialsRollsBackWhenOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -227,6 +257,9 @@ func TestUpdateCredentialsRollsBackWhenOutboxFails(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestBulkUpdateRollsBackWhenOutboxFails mocks a two-provider name update
+// followed by an event-insert error. The repository returns that error, reports
+// zero successful rows, and rolls back the transaction.
 func TestBulkUpdateRollsBackWhenOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

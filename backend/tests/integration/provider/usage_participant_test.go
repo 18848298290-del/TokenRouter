@@ -15,11 +15,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestProviderUsageParticipantKeepsOuterTransaction checks that usage and configuration writes share the caller's transaction.
-// It checks isolation, absence of new outbox events, and restoration of data after rollback.
+// Provider usage accounting can participate in a caller's Ent transaction
+// alongside configuration updates. PostgreSQL assertions inspect pending
+// counters and cooldown changes, verify that the outer transaction controls
+// visibility and outbox behavior, and read the committed row again after
+// rollback.
+
+// TestProviderUsageParticipantKeepsOuterTransaction increments and resets usage
+// inside the caller's Ent transaction alongside a rename. Pending changes
+// remain invisible outside, write no event, and rollback restores the committed
+// counters and cooldown.
 func TestProviderUsageParticipantKeepsOuterTransaction(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
+	// Daily and weekly quota starts use RFC3339 without fractional seconds;
+	// whole-second SQL timestamps keep those encoded starts at the same fixture instant.
 	now := time.Now().UTC().Truncate(time.Second)
 	until := now.Add(time.Hour)
 	row, err := client.Provider.Create().SetName(fmt.Sprintf("test-usage-%d", time.Now().UnixNano())).
@@ -34,6 +44,8 @@ func TestProviderUsageParticipantKeepsOuterTransaction(t *testing.T) {
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
+	// Bind usage to the existing Ent transaction so its counters and the
+	// later rename can be inspected together before the caller rolls them back.
 	participant := billingpostgres.ProviderUsageInTx(tx.Client())
 	crossed, err := participant.Increment(ctx, row.ID, 2)
 	require.NoError(t, err)
@@ -70,6 +82,8 @@ func TestProviderUsageParticipantKeepsOuterTransaction(t *testing.T) {
 	require.NoError(t, rows.Scan(&pending))
 	require.NoError(t, rows.Close())
 	require.Equal(t, before, pending)
+	// Complete the caller-owned rollback after checking pending counters and
+	// event count; the next read uses the separate committed-data client.
 	require.NoError(t, tx.Rollback())
 	restored, err := client.Provider.Get(ctx, row.ID)
 	require.NoError(t, err)

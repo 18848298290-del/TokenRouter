@@ -10,10 +10,25 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// Dateline punctuation is normalized within system text and complete
+// system-reminder segments in message text. Separate patterns recognize
+// all-hyphen or all-slash dates with selected apostrophes, keeping mixed
+// separators and other phrases outside the rewrite.
+//
+// Matched ranges are ordered before reconstruction so text between changed
+// sentences survives in place. JSON updates touch system strings, text system
+// blocks, and text message content at their existing paths; tool inputs, tool
+// results, and other block kinds stay outside that traversal. Observations
+// record punctuation from successful rewrites, while failed updates leave their
+// corresponding text and hit records unchanged for that request.
+
+// Dateline patterns capture supported sentence punctuation, while reminder
+// patterns delimit the message segments eligible for the same text
+// normalization.
 var (
-	// Separate patterns enforce matching date separators because RE2 has no
-	// backreferences. Restrict matching to the observed dateline phrase and
-	// apostrophe variants to avoid rewriting unrelated user text.
+	// Separate expressions accept consistent date delimiters and the selected
+	// apostrophe spellings. Requiring the complete dateline phrase keeps other
+	// date-bearing sentences outside normalization.
 	datelineRegexHyphen = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})-(\d{2})-(\d{2})\.`)
 	datelineRegexSlash  = regexp.MustCompile(`Today(['’ʼʹ])s date is (\d{4})/(\d{2})/(\d{2})\.`)
 
@@ -21,26 +36,31 @@ var (
 	systemReminderRegex = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
 )
 
-// DatelineHit records the original punctuation of a normalized dateline.
+// DatelineHit records punctuation that changed in a successfully normalized
+// sentence.
 type DatelineHit struct {
-	// ApostropheVariant is "ascii", "u2019", "u02bc", or "u02b9".
-	ApostropheVariant string
-	// DateSeparator is the original "-" or "/".
-	DateSeparator string
+	ApostropheVariant string // ascii or Unicode label
+	DateSeparator     string // original date delimiter
 }
 
+// datelineMatch holds matched byte ranges and date spelling for reconstruction.
 type datelineMatch struct {
-	start, end       int
-	apoRune          rune
-	sep              string
-	year, month, day string
+	// start and end delimit the matched sentence in bytes. apoRune and sep retain
+	// original punctuation, while year, month, and day hold the captured digits.
+	start, end       int    // matched byte interval
+	apoRune          rune   // original apostrophe rune
+	sep              string // original separator text
+	year, month, day string // captured date digits
 }
 
-// canonicalize uses an ASCII apostrophe and hyphenated date.
+// canonicalize formats date components with an ASCII apostrophe and hyphens.
 func canonicalize(year, month, day string) string {
 	return fmt.Sprintf("Today's date is %s-%s-%s.", year, month, day)
 }
 
+// apostropheVariant labels the three named Unicode apostrophes and returns
+// ascii for all other runes. collectMatches supplies runes accepted by the
+// dateline expressions, including the ASCII apostrophe.
 func apostropheVariant(r rune) string {
 	switch r {
 	case '’':
@@ -54,6 +74,10 @@ func apostropheVariant(r rune) string {
 	}
 }
 
+// collectMatches extracts date components and byte ranges using the supplied
+// expression and separator label. Capturing groups must contain apostrophe,
+// year, month, and day in that order; no matches returns nil for reconstruction
+// callers.
 func collectMatches(text string, re *regexp.Regexp, sep string) []datelineMatch {
 	locs := re.FindAllStringSubmatchIndex(text, -1)
 	if len(locs) == 0 {
@@ -79,8 +103,16 @@ func collectMatches(text string, re *regexp.Regexp, sep string) []datelineMatch 
 	return out
 }
 
-// NormalizeText canonicalizes matching datelines. If no text changes, it returns
-// the original string and a nil hit list.
+// NormalizeText rewrites recognized dateline sentences into ASCII-apostrophe,
+// hyphenated-date form and records changed punctuation. Sentences already in
+// that form do not produce hits, and no changes returns the supplied string and
+// nil.
+//
+// Matches from both separator patterns are sorted before rebuilding the text.
+// Unchanged ranges, including already canonical matches, stay between changed
+// spans because the copy cursor advances only after replacements. Date digits
+// are copied as matched without calendar validation, so normalization concerns
+// spelling rather than whether the date exists.
 func NormalizeText(text string) (string, []DatelineHit) {
 	if !strings.Contains(text, "date is ") {
 		return text, nil
@@ -90,6 +122,9 @@ func NormalizeText(text string) (string, []DatelineHit) {
 	if len(matches) == 0 {
 		return text, nil
 	}
+	// Merge both separator pattern results into source order before copying gaps,
+	// so replacement ranges retain the text located between different date
+	// spellings.
 	sort.Slice(matches, func(i, j int) bool { return matches[i].start < matches[j].start })
 
 	var b strings.Builder
@@ -98,10 +133,12 @@ func NormalizeText(text string) (string, []DatelineHit) {
 	hits := make([]DatelineHit, 0, len(matches))
 	changed := false
 	for _, m := range matches {
+		// A canonical sentence between changed matches stays behind prev until the
+		// next gap is copied. Advancing prev on that skip would discard the canonical
+		// sentence from the reconstructed text.
 		full := text[m.start:m.end]
 		canonical := canonicalize(m.year, m.month, m.day)
 		if canonical == full {
-			// Already canonical text does not count as a hit.
 			continue
 		}
 		_, _ = b.WriteString(text[prev:m.start])
@@ -120,8 +157,16 @@ func NormalizeText(text string) (string, []DatelineHit) {
 	return b.String(), hits
 }
 
-// normalizeSystemReminderScopedText canonicalizes datelines inside system-reminder
-// tags, preserving text outside the tags byte for byte.
+// normalizeSystemReminderScopedText applies dateline normalization within
+// complete system-reminder segments and returns their combined hits. Missing or
+// unmatched tags return the supplied string and nil; text before, between, and
+// after matched segments retains its bytes.
+//
+// Each matched segment is normalized independently, then appended beside the
+// untouched surrounding ranges. The outer changed flag reflects textual
+// changes, so a segment with canonical dates contributes no hits and does not
+// cause an otherwise unchanged message to be replaced. This scope keeps
+// ordinary message prose outside dateline rewriting.
 func normalizeSystemReminderScopedText(text string) (string, []DatelineHit) {
 	if !strings.Contains(text, "<system-reminder>") {
 		return text, nil
@@ -153,10 +198,16 @@ func normalizeSystemReminderScopedText(text string) (string, []DatelineHit) {
 	return b.String(), hits
 }
 
-// NormalizeDateline canonicalizes datelines in system text and message text
-// inside system-reminder tags. Tool inputs, tool results, and other block types
-// are excluded so user code and command output remain unchanged.
-// It does not mutate body. When no changes are needed, it returns body, nil, false.
+// NormalizeDateline rewrites system text and reminder-scoped message text,
+// returning successful hits and a changed flag. Empty or unchanged requests
+// return the supplied body, nil hits, and false; tool blocks and nontext
+// message blocks stay outside traversal.
+//
+// System strings and text system blocks use full-text normalization, while
+// message strings and text blocks use tagged segments. Every successful JSON
+// edit contributes its hits, and failed edits keep the affected value without
+// reporting its proposed hits. Edits accumulate by path, retaining surrounding
+// JSON fields and the input slice through the non-in-place sjson calls.
 func NormalizeDateline(body []byte) ([]byte, []DatelineHit, bool) {
 	if len(body) == 0 {
 		return body, nil, false
@@ -165,6 +216,9 @@ func NormalizeDateline(body []byte) ([]byte, []DatelineHit, bool) {
 	var hits []DatelineHit
 	changed := false
 
+	// System and message updates record hits only after the JSON write succeeds,
+	// so failed text edits cannot create normalization observations for unchanged
+	// request fields.
 	sys := gjson.GetBytes(out, "system")
 	if sys.Exists() {
 		switch {

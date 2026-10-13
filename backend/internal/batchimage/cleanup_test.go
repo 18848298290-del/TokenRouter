@@ -19,6 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Output deletion authorizes the owner and records remote cleanup before
+// completed resources become unavailable to public downloads. These fixtures exercise completed output
+// deletion, repeated deletion, state and owner rejection, provider absence
+// and scrubbed failure diagnostics; separate cases inspect terminal input
+// retention and expired output scans.
+
+// TestBatchImageCleanupService_DeleteOutputsForOwner exercises
+// owner-authorized deletion, repeated markers and rejected states through a
+// recorded provider. It checks public output_deleted responses, stored
+// timestamps and distinct sanitized transient or unsafe-path diagnostics.
 func TestBatchImageCleanupService_DeleteOutputsForOwner(t *testing.T) {
 	ctx := context.Background()
 
@@ -94,6 +104,10 @@ func TestBatchImageCleanupService_DeleteOutputsForOwner(t *testing.T) {
 	})
 }
 
+// TestBatchImageCleanupService_InputOutputAndWorker cleans terminal inputs
+// and outputs before running a bounded retention scan. It checks repeated
+// input cleanup, retained failed status and exclusion of unfinished or
+// future-expiry outputs.
 func TestBatchImageCleanupService_InputOutputAndWorker(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -147,6 +161,10 @@ func TestBatchImageCleanupService_InputOutputAndWorker(t *testing.T) {
 	})
 }
 
+// TestBatchImageDownloadAfterOutputDeletedReturnsGone marks a completed
+// fixture as output_deleted before item and ZIP requests. Both paths return
+// the deleted-output category and produce no usable download result for that
+// state.
 func TestBatchImageDownloadAfterOutputDeletedReturnsGone(t *testing.T) {
 	svc, repo, _ := newTestBatchImageDownloadService()
 	now := time.Now()
@@ -163,6 +181,10 @@ func TestBatchImageDownloadAfterOutputDeletedReturnsGone(t *testing.T) {
 	require.ErrorIs(t, err, batchimage.ErrBatchImageOutputDeleted)
 }
 
+// newTestBatchImageCleanupService constructs a completed cleanup job with a
+// recording Gemini backend and fixed retention options. The returned
+// repository and provider remain shared with the service so cases can inject
+// state and cleanup errors.
 func newTestBatchImageCleanupService() (*batchimage.Cleanup, *fakeBatchImageRepository, *publicBatchImageProvider) {
 	repo := newFakeBatchImageRepository()
 	repo.jobs["imgbatch_cleanup"] = cleanupTestJob("imgbatch_cleanup", batchimage.BatchImageJobStatusCompleted)
@@ -172,6 +194,10 @@ func newTestBatchImageCleanupService() (*batchimage.Cleanup, *fakeBatchImageRepo
 	return svc, repo, platform
 }
 
+// cleanupTestJob creates an old job with owner, provider references and
+// terminal-time snapshots for the supplied status. Tests mutate the returned
+// record directly before running cleanup or inspecting its saved deletion
+// markers.
 func cleanupTestJob(batchID, status string) *batchimage.BatchImageJob {
 	apiKeyID := int64(22)
 	providerID := int64(101)
@@ -196,6 +222,9 @@ func cleanupTestJob(batchID, status string) *batchimage.BatchImageJob {
 	}
 }
 
+// mustBatchImageJSON serializes a public fixture value and fails the calling
+// test if encoding fails. It returns the JSON text used by shared assertions
+// to screen provider references and credential field names.
 func mustBatchImageJSON(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)

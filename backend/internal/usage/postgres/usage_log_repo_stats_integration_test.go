@@ -19,17 +19,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// sqlCall records SQL and arguments for query-count and execution-plan checks.
+// Combined provider reports must agree with separate model and endpoint readers
+// on recorded cost sources and observed durations. PostgreSQL fixtures compare
+// overlapping windows, query counts, JIT restoration, and prefixed-model
+// merging; the capture wrapper records each query for shape inspection while the
+// surrounding test transaction owns cleanup.
+
+// sqlCall records one delegated query for count and execution-plan inspection.
 type sqlCall struct {
-	Query string `json:"query"`
-	Args  []any  `json:"-"`
+	Query string `json:"query"` // captured executed SQL text
+	// Args retains the caller's argument slice for later EXPLAIN execution; the
+	// test keeps referenced values stable while inspecting this captured query.
+	Args []any `json:"-"`
 }
 
+// countingSQL captures query calls while delegating SQL execution to its fixture
+// executor.
 type countingSQL struct {
-	sqlExecutor
-	calls []sqlCall
+	// sqlExecutor and calls share the fixture's serial access. QueryContext appends
+	// to calls without synchronization and retains arguments for later plan reads.
+	sqlExecutor           // wrapped fixture SQL executor
+	calls       []sqlCall // captured ordered query invocations
 }
 
+// TestUsageBatchQueryShape records multiple actors and compares four-ID versus
+// eight-ID report calls. It requires one query per raw batch/ranking read and
+// logs captured outer ranking plans.
 func TestUsageBatchQueryShape(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -68,6 +83,8 @@ func TestUsageBatchQueryShape(t *testing.T) {
 	results["user_ranking"] = len(counter.calls)
 	plans := []any{}
 	for _, call := range counter.calls {
+		// Explain the captured statement on the same transaction so its fixture rows
+		// and bound values remain available for query-shape inspection.
 		rows, e := tx.QueryContext(ctx, "EXPLAIN (FORMAT JSON) "+call.Query, call.Args...)
 		require.NoError(t, e)
 		for rows.Next() {
@@ -75,6 +92,9 @@ func TestUsageBatchQueryShape(t *testing.T) {
 			require.NoError(t, rows.Scan(&raw))
 			plans = append(plans, json.RawMessage(raw))
 		}
+		// Close each explained result before the next statement reuses the
+		// transaction; any cleanup error fails the query-shape fixture rather than
+		// entering its log.
 		require.NoError(t, rows.Close())
 	}
 	results["ranking_explain"] = plans
@@ -86,7 +106,10 @@ func TestUsageBatchQueryShape(t *testing.T) {
 	t.Logf("TEST_QUERY_SHAPE=%s", raw)
 }
 
-// TestProviderWindowPairMatchesSingles covers inclusive starts, empty windows, reversed starts, multipliers, and future records.
+// TestProviderWindowPairMatchesSingles supplies boundary, overlapping, empty,
+// reversed, and future provider windows. It checks every paired summary equals
+// separate reads, including recorded provider bases, multipliers, and cache
+// tokens.
 func (s *UsageLogRepoSuite) TestProviderWindowPairMatchesSingles() {
 	u := mustCreateUser(s.T(), s.client, &identity.User{Email: "window-pair@test.local"})
 	k := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: u.ID, Key: "window-pair"})
@@ -113,10 +136,18 @@ func (s *UsageLogRepoSuite) TestProviderWindowPairMatchesSingles() {
 	}
 }
 
-// TestProviderReportRestoresConnectionJIT checks connection settings after the report transaction in a one-connection pool.
+// TestProviderReportRestoresConnectionJIT limits the shared pool to one
+// connection and reads an empty provider report. It checks JIT before/after
+// matches and the returned request total is zero.
 func TestProviderReportRestoresConnectionJIT(t *testing.T) {
 	limit := integrationDB.Stats().MaxOpenConnections
+	// Force before/report/after reads through one pool connection so a leaked JIT
+	// setting cannot be hidden by acquiring a different connection for the
+	// assertion.
 	integrationDB.SetMaxOpenConns(1)
+	// Restore the shared pool limit after this scenario, including assertion
+	// failure, so later integration tests do not inherit its single-connection
+	// restriction.
 	t.Cleanup(func() { integrationDB.SetMaxOpenConns(limit) })
 	client := testEntClient(t)
 	ctx := context.Background()
@@ -131,7 +162,9 @@ func TestProviderReportRestoresConnectionJIT(t *testing.T) {
 	require.Equal(t, before, after)
 }
 
-// TestProviderReportCombinedResults compares separate aggregates for cost attribution, empty endpoints, and non-null durations.
+// TestProviderReportCombinedResults supplies unequal provider/base/user costs,
+// blank endpoints, and one null duration. It compares grouped models/endpoints
+// to separate readers and checks totals plus observed-duration averaging.
 func (s *UsageLogRepoSuite) TestProviderReportCombinedResults() {
 	u := mustCreateUser(s.T(), s.client, &identity.User{Email: "provider-report@test.local"})
 	k := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: u.ID, Key: "provider-report"})
@@ -163,6 +196,9 @@ func (s *UsageLogRepoSuite) TestProviderReportCombinedResults() {
 	s.Require().EqualValues(200, got.Summary.AvgDurationMs)
 }
 
+// TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints records three scoped
+// rows with separate cache and endpoint evidence. It checks summary token/charge
+// sums and populated inbound, upstream, and path detail lists.
 func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -189,8 +225,9 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 
 	start := now.Add(-1 * time.Hour)
 	end := now.Add(1 * time.Hour)
-	// Scope by the fixture user because other tests commit usage logs into this shared database.
-	// Otherwise their records, including zero-token failures, would affect TotalRequests.
+	// Scope by the fixture user because other tests commit usage logs into this
+	// shared database. Otherwise their records, including zero-token failures,
+	// would affect TotalRequests.
 	stats, err := repo.GetStatsWithFilters(ctx, usage.UsageLogFilters{UserID: user.ID, StartTime: &start, EndTime: &end})
 	require.NoError(t, err)
 	require.Equal(t, int64(3), stats.TotalRequests)
@@ -199,13 +236,16 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 	require.Equal(t, int64(27), stats.TotalCacheTokens)
 	require.Equal(t, int64(12), stats.TotalCacheCreationTokens)
 	require.Equal(t, int64(15), stats.TotalCacheReadTokens)
+	// Allow numeric-to-float conversion differences in the three-row charge sum.
 	require.InDelta(t, 1.2, stats.TotalActualCost, 1e-9)
 	require.NotEmpty(t, stats.Endpoints)
 	require.NotEmpty(t, stats.UpstreamEndpoints)
 	require.NotEmpty(t, stats.EndpointPaths)
 }
 
-// TestUsageLog_GetModelStats_MergesCompositePrefix checks that display prefixes do not split internal-model totals.
+// TestUsageLog_GetModelStats_MergesCompositePrefix records two display names
+// sharing one internal requested model. It checks one grouped result with both
+// requests and combined input/output token totals.
 func TestUsageLog_GetModelStats_MergesCompositePrefix(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -246,7 +286,14 @@ func TestUsageLog_GetModelStats_MergesCompositePrefix(t *testing.T) {
 	require.Equal(t, int64(30), stats[0].TotalTokens)
 }
 
+// QueryContext records the SQL text and supplied argument slice before
+// delegation. Calls and arguments remain shared with the test's capture storage;
+// callers serialize execution and keep captured values stable for later
+// inspection.
 func (s *countingSQL) QueryContext(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
+	// Keep the executed query and argument references available after delegation;
+	// the caller uses this serial fixture capture for counts and EXPLAIN
+	// statements.
 	s.calls = append(s.calls, sqlCall{q, a})
 	return s.sqlExecutor.QueryContext(ctx, q, a...)
 }

@@ -18,8 +18,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestAuthPubSubReconnect checks two cache instances, network reconnection, and shutdown order.
-// The two instances exercise authentication pub/sub; platform quotas remain process-local.
+// Two API Key services share Redis authentication snapshots while maintaining
+// their own in-process reads. The PostgreSQL fixture updates a key name,
+// removes its shared cached snapshot, and publishes invalidation so both
+// services eventually reload the stored name. A selected model-mapping mutation
+// checks that one returned request view does not alter later reads.
+//
+// The test observes two Redis subscribers before publishing, then kills those
+// subscriber connections in its isolated Redis container and waits for both to
+// reconnect. A second publication checks refreshed reads after reconnection.
+// Services are stopped before Redis is probed again, and subscriber count
+// reaches zero; a read through the stopped service returns the
+// authentication-stopped error.
+
+// TestAuthPubSubReconnect warms two authentication services sharing Redis,
+// mutates a returned mapping, and disconnects subscribers. Reads retain the
+// stored mapping, invalidations work after reconnection, and stopped
+// authentication is rejected.
 func TestAuthPubSubReconnect(t *testing.T) {
 	integrationDB, integrationEntClient := identityDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -34,12 +49,17 @@ func TestAuthPubSubReconnect(t *testing.T) {
 	options := &apikey.Options{APIKeyAuth: apikey.APIKeyAuthCacheConfig{L1Size: 1024, L1TTLSeconds: 60, L2TTLSeconds: 60, Singleflight: true}}
 	one := apikey.NewAPIKeyService(store, identitypostgres.NewUserStore(client, integrationDB), nil, nil, nil, cache, options)
 	two := apikey.NewAPIKeyService(store, identitypostgres.NewUserStore(client, integrationDB), nil, nil, nil, cache, options)
+	// Register both service stops after Redis fixture acquisition so their
+	// callbacks stop subscribers before testing closes Redis; explicit StopContext
+	// calls are also exercised.
 	t.Cleanup(one.Stop)
 	t.Cleanup(two.Stop)
 	one.Start()
 	two.Start()
 	subscribers := func() int64 {
 		v, e := rdb.PubSubNumSub(ctx, keyredis.AuthCacheInvalidateChannel).Result()
+		// Treat introspection errors as an unready observation so subscriber polling
+		// can retry until its bounded wait ends instead of accepting a failed count.
 		if e != nil {
 			return -1
 		}
@@ -58,6 +78,9 @@ func TestAuthPubSubReconnect(t *testing.T) {
 		require.Equal(t, "upstream", v.ModelMapping["client"])
 	}
 	cacheKey := one.KeyAuthCacheKey(key.Key)
+	// Persist each name before deleting the shared snapshot and broadcasting its
+	// cache key so both subscribers can reload the committed update during
+	// polling.
 	publish := func(name string) {
 		_, e := client.APIKey.UpdateOneID(key.ID).SetName(name).Save(ctx)
 		require.NoError(t, e)
@@ -74,12 +97,17 @@ func TestAuthPubSubReconnect(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 	}
 	publish("after-publish")
-	// Disconnect subscribers in this test's isolated Redis container to exercise network reconnection.
+	// Kill the two subscriber connections in this isolated Redis container so
+	// reconnection can be observed before sending the next invalidation to both
+	// services.
 	killed, e := rdb.ClientKillByFilter(ctx, "TYPE", "pubsub").Result()
 	require.NoError(t, e)
 	require.Equal(t, int64(2), killed)
 	require.Eventually(t, func() bool { return subscribers() == 2 }, 8*time.Second, 10*time.Millisecond)
 	publish("after-reconnect")
+	// Stop subscriber work while Redis remains available, then confirm the channel
+	// is empty and a direct Redis probe still succeeds before container cleanup
+	// runs.
 	stopCtx, stopCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer stopCancel()
 	require.NoError(t, one.StopContext(stopCtx))

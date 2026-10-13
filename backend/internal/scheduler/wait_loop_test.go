@@ -10,9 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNextBackoff_ExponentialGrowth feeds each generated interval into the
+// next jittered backoff call. It checks initial and maximum bounds throughout
+// the sequence, without asserting that individual intervals grow
+// monotonically.
 func TestNextBackoff_ExponentialGrowth(t *testing.T) {
-	// Jitter prevents exact interval assertions, so check the bounds throughout repeated backoff.
-	current := InitialBackoff // 100ms
+	// Jitter changes each exact interval. Chain returned values to exercise
+	// their use as later inputs while checking the configured polling bounds.
+	current := InitialBackoff
 
 	for i := range 10 {
 		next := NextBackoff(current)
@@ -26,8 +31,10 @@ func TestNextBackoff_ExponentialGrowth(t *testing.T) {
 	}
 }
 
+// TestNextBackoff_BoundedByMaxBackoff samples backoff from an input already
+// above the configured cap. Every result must remain at or below MaxBackoff
+// after the jitter calculation.
 func TestNextBackoff_BoundedByMaxBackoff(t *testing.T) {
-	// Inputs above the cap remain bounded after jitter.
 	for range 100 {
 		result := NextBackoff(10 * time.Second)
 		assert.LessOrEqual(t, int64(result), int64(MaxBackoff),
@@ -35,8 +42,10 @@ func TestNextBackoff_BoundedByMaxBackoff(t *testing.T) {
 	}
 }
 
+// TestNextBackoff_BoundedByInitialBackoff samples backoff from an input below
+// the configured initial interval. Every result must remain at or above
+// InitialBackoff after jitter is applied.
 func TestNextBackoff_BoundedByInitialBackoff(t *testing.T) {
-	// Inputs below the initial interval remain bounded after jitter.
 	for range 100 {
 		result := NextBackoff(1 * time.Millisecond)
 		assert.GreaterOrEqual(t, int64(result), int64(InitialBackoff),
@@ -44,8 +53,10 @@ func TestNextBackoff_BoundedByInitialBackoff(t *testing.T) {
 	}
 }
 
+// TestNextBackoff_HasJitter repeats the same half-second backoff input across
+// fifty calls. It requires more than one observed duration, checking that
+// fixed input still produces varied intervals.
 func TestNextBackoff_HasJitter(t *testing.T) {
-	// Repeated calls with identical input should produce distinct intervals.
 	results := make(map[time.Duration]bool)
 	current := 500 * time.Millisecond
 
@@ -58,6 +69,10 @@ func TestNextBackoff_HasJitter(t *testing.T) {
 		"NextBackoff 应产生随机抖动，但所有 50 次调用结果相同")
 }
 
+// TestNextBackoff_InitialValueGrows chains one hundred backoff calls from the
+// initial interval. It requires their average generated duration to exceed
+// InitialBackoff, checking aggregate growth while allowing jitter between
+// samples.
 func TestNextBackoff_InitialValueGrows(t *testing.T) {
 	current := InitialBackoff
 	var sum time.Duration
@@ -74,18 +89,24 @@ func TestNextBackoff_InitialValueGrows(t *testing.T) {
 		"平均退避时间应大于初始退避值")
 }
 
+// TestNextBackoff_ConvergesToMaxBackoff chains twenty jittered intervals from
+// InitialBackoff. Its final duration must reach at least the configured cap's
+// lower jitter band, protecting the sequence's eventual cap neighborhood.
 func TestNextBackoff_ConvergesToMaxBackoff(t *testing.T) {
 	current := InitialBackoff
 	for range 20 {
 		current = NextBackoff(current)
 	}
 
-	// After 20 iterations, the interval should reach the cap's jitter range.
+	// Use the lower edge of the cap's jitter band as the acceptance bound.
 	lowerBound := time.Duration(float64(MaxBackoff) * 0.8)
 	assert.GreaterOrEqual(t, int64(current), int64(lowerBound),
 		"经过多次退避后应收敛到 MaxBackoff 附近")
 }
 
+// BenchmarkNextBackoff chains generated backoff durations in a timed local
+// loop. It includes jitter calculation and the loop's bound reset check while
+// performing no real waits for the generated intervals.
 func BenchmarkNextBackoff(b *testing.B) {
 	current := InitialBackoff
 	for range b.N {
@@ -96,10 +117,16 @@ func BenchmarkNextBackoff(b *testing.B) {
 	}
 }
 
+// TestSlotWaitStopCancelsObserverLoop starts a denied provider-slot wait and
+// observes its Begin callback before shutdown. StopContext must join the loop
+// successfully and the waiter must return context.Canceled.
 func TestSlotWaitStopCancelsObserverLoop(t *testing.T) {
 	core := NewConcurrencyService(&runtimeSlotCache{})
 	waiting := make(chan struct{})
 	finished := make(chan error, 1)
+	// Begin signals that the wait loop has entered before shutdown cancels it.
+	// Returning the error through a buffered channel lets Stop join the worker
+	// independently of this receive.
 	go func() {
 		_, err := core.WaitForSlot(context.Background(), "provider", 1, 1, time.Hour, false, WaitObserver{Begin: func() error { close(waiting); return nil }})
 		finished <- err
@@ -111,6 +138,9 @@ func TestSlotWaitStopCancelsObserverLoop(t *testing.T) {
 	require.ErrorIs(t, <-finished, context.Canceled)
 }
 
+// TestSlotWaitObserverFailureDoesNotAcquire runs a denied slot wait whose
+// heartbeat returns a specific error. It checks that error identity reaches
+// the caller and that the service can subsequently stop successfully.
 func TestSlotWaitObserverFailureDoesNotAcquire(t *testing.T) {
 	core := NewConcurrencyService(&runtimeSlotCache{})
 	failed := errors.New("下游心跳写失败")

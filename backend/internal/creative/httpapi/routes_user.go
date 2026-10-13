@@ -2,7 +2,15 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
-// RegisterUserRoutes registers creative endpoints after app authentication, rate limiting, and audit middleware.
+// Creative tasks are exposed under the authenticated dashboard route group.
+// Creation also passes through the supplied heavy-request limiter, while model
+// reads, task queries, binary output delivery, and acknowledgment use their
+// individual handler scope checks.
+
+// RegisterUserRoutes mounts creative endpoints under a group with
+// caller-installed authentication and audit middleware. The supplied heavy
+// handler precedes CreateRun alone; callers configure the endpoint service
+// before registering these routes.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *CreativeHandler, heavy gin.HandlerFunc) {
 	creative := authenticated.Group("/creative")
 	{

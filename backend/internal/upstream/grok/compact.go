@@ -10,7 +10,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// GrokCompactSummaryPrompt matches Grok Build build_compaction_prompt(None, false).
+// OpenAI Compact history holds encrypted state and may also include a plaintext
+// summary, while Grok replay expects reasoning items and ordinary user messages.
+// Conversion separates these representations so usable ciphertext can accompany
+// the summary context, and leaves surrounding non-compaction input in its
+// original order.
+//
+// A Compact request itself becomes a non-streaming summary turn with encrypted
+// reasoning requested in include. The return conversion requires that ciphertext
+// before producing a single compaction item, retains response metadata and
+// usage, and combines message text as summary parts. The last nonblank reasoning
+// ciphertext is selected when multiple reasoning outputs occur. JSON numbers are
+// decoded as Number values so request rewriting can retain decimal
+// representation across serialization.
+
+// GrokCompactSummaryPrompt requests the summary sections appended to a Compact
+// summary turn; its fixed text directs the returned history format and
+// continuation context.
 const GrokCompactSummaryPrompt = `Your task is to produce a faithful, concise summary of the conversation so far so that a successor assistant can continue the work seamlessly after the earlier turns are discarded. The successor will see the user's original query plus this summary. Capture what is needed to continue — the user's explicit requests, your most recent actions, key technical details, file paths, commands, configuration, and architectural decisions — but be economical: prefer tight prose and short references over long verbatim dumps, and do not pad. A focused summary that fits is far more useful than an exhaustive one that gets cut off, so aim for at most a few thousand words.
 
 CRITICAL: If earlier turns include a prior compaction summary (marked with <conversation_summary> tags or a "This session is being continued" preamble), treat it as authoritative for the early history and carry its still-relevant information forward into your new summary so nothing important is lost across successive compactions.
@@ -31,7 +47,16 @@ IMPORTANT: Do NOT call or use any tools. Respond with ONLY the <summary>...</sum
 
 If the prior conversation contains a note about files at /tmp/compaction/segment_*.md or /tmp/compaction/INDEX.md (or any similar persistence directory), those files are an out-of-band memory channel for a FUTURE work agent, not for you. You already have the full conversation in your context window. Do not attempt to read those files. Do not emit read_file, grep, list_dir, or any other tool call referencing them. Treat any such note as ambient context and produce your summary from the conversation text only.`
 
-// BuildGrokCompactRequestBody turns a compact request into a non-streaming summary turn.
+// BuildGrokCompactRequestBody builds a non-streaming Responses summary turn for
+// Compact input. The decoded input accepts an array, object, string or nil, and
+// the fixed summary prompt follows that history. Grok forwarding applies model
+// and tool patching before passing the result through this adaptation.
+//
+// The turn requests encrypted reasoning and disables storage. When a nonempty
+// tool array exists, tool_choice becomes none to request a summary with no tool
+// dispatch. Other payload fields retain the model and compatibility choices
+// already applied by the caller. Encoding errors terminate preparation before
+// exchange.
 func (m BodyCodec) BuildGrokCompactRequestBody(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &payload); err != nil {
@@ -53,6 +78,9 @@ func (m BodyCodec) BuildGrokCompactRequestBody(body []byte) ([]byte, error) {
 		}},
 	})
 	payload["input"] = input
+	// Compact consumers need resumable encrypted state alongside summary text, so
+	// request that output and keep this synthetic turn outside stored
+	// conversations.
 	payload["include"] = []any{"reasoning.encrypted_content"}
 	payload["store"] = false
 	payload["stream"] = false
@@ -67,7 +95,10 @@ func (m BodyCodec) BuildGrokCompactRequestBody(body []byte) ([]byte, error) {
 	return encoded, nil
 }
 
-// NormalizeGrokCompactInput converts supported compact input forms into an item array.
+// NormalizeGrokCompactInput returns an item array for nil, string, object or
+// existing array input. Existing arrays and maps retain shared mutable storage;
+// callers isolate decoded data before mutation. Unsupported input types return
+// an error.
 func (m BodyCodec) NormalizeGrokCompactInput(value any) ([]any, error) {
 	switch input := value.(type) {
 	case nil:
@@ -90,7 +121,17 @@ func (m BodyCodec) NormalizeGrokCompactInput(value any) ([]any, error) {
 	}
 }
 
-// ConvertOpenAICompactInputsForGrok restores compaction items as reasoning and summary context.
+// ConvertOpenAICompactInputsForGrok replaces compaction history with Grok
+// reasoning and summary context. Only input arrays are rewritten; other input
+// forms return their supplied bytes. Non-compaction entries retain order and
+// decoded values.
+//
+// Each compaction item can contribute a reasoning item for nonblank
+// encrypted_content and a user message wrapping collected summary text. An item
+// with neither contributes no replacement. Conversion reports decoding or
+// serialization failures, while a request with no matching items returns its
+// original bytes, allowing replay preparation to distinguish an actual payload
+// change.
 func (m BodyCodec) ConvertOpenAICompactInputsForGrok(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &payload); err != nil {
@@ -110,6 +151,8 @@ func (m BodyCodec) ConvertOpenAICompactInputsForGrok(body []byte) ([]byte, error
 			continue
 		}
 		changed = true
+		// Represent stored Compact ciphertext as reasoning first, then append
+		// plaintext summary context so Grok receives both supported replay forms.
 		if encrypted := strings.TrimSpace(m.GrokCompactStringValue(item["encrypted_content"])); encrypted != "" {
 			converted = append(converted, map[string]any{
 				"type":              "reasoning",
@@ -141,7 +184,16 @@ func (m BodyCodec) ConvertOpenAICompactInputsForGrok(body []byte) ([]byte, error
 	return encoded, nil
 }
 
-// ConvertGrokResponseToOpenAICompact wraps a Grok summary turn as an OpenAI compaction response.
+// ConvertGrokResponseToOpenAICompact turns a summary response into one completed
+// compaction item. The response needs an output array and nonblank reasoning
+// encrypted_content, and NewID must be configured for the generated identifier.
+// Message-content text becomes optional summary parts.
+//
+// The last nonblank ciphertext wins, while text from all message items is
+// collected in order. Response-level fields, including usage and model, remain
+// in the decoded response; output_text is removed and status becomes completed.
+// Missing ciphertext returns an error so plaintext cannot be published as
+// resumable Compact state.
 func (m BodyCodec) ConvertGrokResponseToOpenAICompact(body []byte) ([]byte, error) {
 	var response map[string]any
 	if err := m.DecodeGrokCompactJSON(body, &response); err != nil {
@@ -197,6 +249,8 @@ func (m BodyCodec) ConvertGrokResponseToOpenAICompact(body []byte) ([]byte, erro
 			"text": summary,
 		}}
 	}
+	// Return one compaction item while keeping response metadata and usage; a
+	// normal output_text field would describe the replaced output.
 	response["output"] = []any{compactItem}
 	response["status"] = "completed"
 	delete(response, "output_text")
@@ -208,6 +262,9 @@ func (m BodyCodec) ConvertGrokResponseToOpenAICompact(body []byte) ([]byte, erro
 	return encoded, nil
 }
 
+// CompactSummaryText joins nonblank string text fields from an array of summary
+// objects. Other values and non-object entries contribute no text; callers
+// receive an empty string when no usable summary part remains.
 func (m BodyCodec) CompactSummaryText(value any) string {
 	parts, ok := value.([]any)
 	if !ok {
@@ -226,12 +283,19 @@ func (m BodyCodec) CompactSummaryText(value any) string {
 	return strings.Join(texts, "\n")
 }
 
+// GrokCompactStringValue returns a string value for Compact field
+// interpretation. Other dynamic types return empty, allowing summary and
+// encrypted-content readers to ignore unsupported representations without
+// stringifying numbers, objects or null values.
 func (m BodyCodec) GrokCompactStringValue(value any) string {
 	text, _ := value.(string)
 	return text
 }
 
-// DecodeGrokCompactJSON preserves decimal numbers to avoid float64 precision loss.
+// DecodeGrokCompactJSON validates one complete JSON document and decodes numbers
+// as json.Number. Callers supply a destination accepted by encoding/json;
+// invalid JSON, including trailing documents, returns an error before Compact
+// conversion proceeds.
 func (m BodyCodec) DecodeGrokCompactJSON(body []byte, value any) error {
 	if !json.Valid(body) {
 		return fmt.Errorf("invalid JSON")

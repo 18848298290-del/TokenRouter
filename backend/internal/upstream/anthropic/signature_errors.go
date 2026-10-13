@@ -2,7 +2,15 @@ package anthropic
 
 import "strings"
 
-// MatchSignaturePatterns reports any nonempty, case-insensitive substring match.
+// Thinking recovery is selected from upstream error text using configurable
+// substrings and built-in message patterns. Broad signature matches and several
+// malformed-history cases report eligibility to the exchange caller, which
+// separately controls whether a repair attempt can run.
+
+// MatchSignaturePatterns reports a case-insensitive substring match for any
+// nonblank configured pattern. Pattern whitespace is trimmed, empty patterns
+// are skipped, and arbitrary response bytes are interpreted as text for
+// matching.
 func MatchSignaturePatterns(respBody []byte, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
@@ -20,14 +28,19 @@ func MatchSignaturePatterns(respBody []byte, patterns []string) bool {
 	return false
 }
 
-// IsThinkingBlockSignatureError recognizes errors eligible for thinking-block
-// recovery and returns an optional diagnostic message.
+// IsThinkingBlockSignatureError classifies broad signature and
+// malformed-thinking history messages for exchange recovery. Blank or unmatched
+// text returns false and empty diagnostic; signature matches also return empty
+// diagnostic, while other recognized families provide a fixed message.
 func IsThinkingBlockSignatureError(message string) (bool, string) {
 	msg := strings.ToLower(strings.TrimSpace(message))
 	if msg == "" {
 		return false, ""
 	}
 
+	// These textual families admit the exchange's history repair path, including
+	// broad signature mentions and empty content; the exchange separately decides
+	// retry eligibility and attempt limits.
 	// Signature errors include invalid thinking signatures and nested signature paths.
 	if strings.Contains(msg, "signature") {
 		return true, ""
@@ -49,8 +62,8 @@ func IsThinkingBlockSignatureError(message string) (bool, string) {
 		return true, "[SignatureCheck] Detected empty content error"
 	}
 
-	// History from another model can contain a thinking block without its
-	// required thinking text.
+	// A missing-content message is another malformed-history signal admitted by
+	// this classifier, allowing the exchange to consider the same repair path.
 	if strings.Contains(msg, "thinking block must contain") {
 		return true, "[SignatureCheck] Detected thinking block missing content error"
 	}

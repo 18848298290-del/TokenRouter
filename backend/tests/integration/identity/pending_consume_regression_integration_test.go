@@ -19,25 +19,51 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
-// TestPendingTransactionConsumesOnce races two PostgreSQL transactions after both read an unconsumed session.
+// Two pending-session consumers can each read an unconsumed PostgreSQL row
+// before their conditional updates compete. An Ent mutation hook parks both
+// attempts after those reads and releases them together, allowing the test to
+// count one committed consumer and one consumed-session error.
+//
+// The hook announces each mutation arrival through a buffered channel and
+// observes cancellation while sending or waiting for release. A sync.Once makes
+// release safe from both normal progress and test cleanup. Each worker owns an
+// Ent transaction, commits after successful consumption, and rolls back on
+// exit; buffered results are joined before their channel closes. The separate
+// Ent wrapper isolates hooks while borrowing the cloned database pool.
+
+// TestPendingTransactionConsumesOnce parks two PostgreSQL consumers at the
+// pending-session mutation hook after their initial reads. Releasing both
+// attempts yields one successful commit and one PendingAuthSessionConsumed
+// result.
 func TestPendingTransactionConsumesOnce(t *testing.T) {
 	integrationDB, _ := identityDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	// Use a separate Ent wrapper to isolate hooks; the database fixture owns the underlying pool.
+	// Isolate these mutation hooks in a separate Ent wrapper while retaining the
+	// fixture-owned SQL pool, whose cloned-database cleanup closes the underlying
+	// connection lifetime.
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)))
 	session, err := client.PendingAuthSession.Create().SetSessionToken(uuid.NewString()).SetIntent("login").SetProviderType("oidc").SetProviderKey("test-test").SetProviderSubject(uuid.NewString()).SetBrowserSessionKey("test-browser").SetExpiresAt(time.Now().Add(time.Minute)).Save(ctx)
 	require.NoError(t, err)
+	// The later unblock cleanup opens release before this deletion, but the
+	// installed mutation hook still sends an arrival. Deletion needs available
+	// arrival-buffer capacity.
 	t.Cleanup(func() {
 		require.NoError(t, client.PendingAuthSession.DeleteOneID(session.ID).Exec(context.Background()))
 	})
+	// Buffer both post-read mutation signals so the test can wait for both
+	// consumers to reach their writes before releasing the shared update gate.
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
+	// Let normal progress and cleanup both release parked consumers safely; one
+	// close opens their shared gate, and repeated cleanup leaves that gate open.
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(unblock)
 	client.PendingAuthSession.Use(func(next dbent.Mutator) dbent.Mutator {
 		return dbent.MutateFunc(func(ctx context.Context, m dbent.Mutation) (dbent.Value, error) {
+			// Signal arrival before executing the conditional update so both consumers
+			// can finish their initial reads and still compete for one unconsumed row.
 			select {
 			case arrived <- struct{}{}:
 			case <-ctx.Done():
@@ -60,8 +86,14 @@ func TestPendingTransactionConsumesOnce(t *testing.T) {
 				results <- e
 				return
 			}
+			// Keep rollback registered until worker exit so failed consumption or commit
+			// cannot leave an open transaction; an already completed rollback error is
+			// discarded.
 			defer func() { _ = tx.Rollback() }()
 			e = identitypostgres.ConsumePendingOAuthBrowserSessionTx(dbent.NewTxContext(ctx, tx), tx, session)
+			// Commit successful consumption before sending its result so the competing
+			// transaction can observe the consumed state after its conditional write
+			// loses.
 			if e == nil {
 				e = tx.Commit()
 			}
@@ -75,6 +107,9 @@ func TestPendingTransactionConsumesOnce(t *testing.T) {
 			t.Fatal("两个事务未到达消费写入屏障", ctx.Err())
 		}
 	}
+	// Release updates after both mutation signals, then join each worker's send
+	// before closing results so outcome counting sees complete, committed
+	// transaction attempts.
 	unblock()
 	workers.Wait()
 	close(results)

@@ -6,10 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The fixture contains two details but must produce one five-hour window:
-//   - The first limits[].detail supplies five-hour usage.
-//   - usage supplies weekly usage.
-//   - Subsequent details must not create duplicate windows.
+// Two coding-limit details in one response must produce one five-hour
+// observation, followed by the weekly observation. The fixtures check the
+// selected percentages and reset strings, plus the zero-utilization result when
+// the selected limit is zero.
+
+// TestParseKimiUsageTiers supplies two detail entries and weekly usage with
+// different percentages. It checks that the first detail determines the
+// five-hour value and reset, while usage determines the weekly observation.
 func TestParseKimiUsageTiers(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{
@@ -22,18 +26,26 @@ func TestParseKimiUsageTiers(t *testing.T) {
 	tiers := ParseKimiUsageTiers(body)
 	require.Len(t, tiers, 2)
 	require.Equal(t, "5h", tiers[0].Window)
-	require.InDelta(t, 40.0, tiers[0].UsedPercent, 1e-9) // (1000-600)/1000*100
+	// Use a small absolute tolerance for floating-point percentage
+	// arithmetic.
+	require.InDelta(t, 40.0, tiers[0].UsedPercent, 1e-9)
 	require.Equal(t, "2026-08-14T15:00:00Z", tiers[0].ResetAt)
 	require.Equal(t, "7d", tiers[1].Window)
-	require.InDelta(t, 60.0, tiers[1].UsedPercent, 1e-9) // (10000-4000)/10000*100
+	// Compare the weekly percentage using the same floating-point
+	// tolerance.
+	require.InDelta(t, 60.0, tiers[1].UsedPercent, 1e-9)
 	require.Equal(t, "2026-08-18T00:00:00Z", tiers[1].ResetAt)
 }
 
-// A zero limit reports zero utilization without division by zero.
+// TestParseKimiUsageTiers_LimitZero supplies a zero limit and zero remaining
+// amount in one detail. It checks that the parser emits one window with zero
+// utilization.
 func TestParseKimiUsageTiers_LimitZero(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"limits":[{"detail":{"limit":0,"remaining":0,"resetTime":"2026-08-14T15:00:00Z"}}]}`)
 	tiers := ParseKimiUsageTiers(body)
 	require.Len(t, tiers, 1)
+	// Check zero utilization with the percentage assertion's absolute
+	// tolerance.
 	require.InDelta(t, 0.0, tiers[0].UsedPercent, 1e-9)
 }

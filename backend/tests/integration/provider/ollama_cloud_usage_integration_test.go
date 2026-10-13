@@ -16,6 +16,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Ollama Cloud providers with the same API key share browser-session and usage
+// state across the supported platform and Base URL forms. PostgreSQL fixtures
+// exercise group writes, identity changes, proxy changes, and automatic-refresh
+// eligibility using stored timestamps and activity.
+//
+// Most cases use rollback-owned transactions to keep their fixtures isolated.
+// The save/delete competition uses committed rows and two goroutines released
+// together, then compares the complete managed state on both group members
+// after both operations finish. Due-query cases distinguish parse failures from
+// recent successful fetches and test eligibility before the result limit, so
+// excess recent activity cannot hide a genuinely due group.
+
+// TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration mixes
+// missing, stale, idle, and ineligible snapshots on PostgreSQL. The limited
+// result orders the expected due providers and hydrates the selected proxy with
+// its connection fields.
 func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -52,7 +68,8 @@ func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testi
 		"last_attempt_at": fetched.UTC().Format(time.RFC3339Nano),
 		"next_refresh_at": fetched.Add(time.Hour).UTC().Format(time.RFC3339Nano),
 	}, &activity)
-	// A successful snapshot with no later activity is not due for refresh.
+	// Keep last-used absent on this successful snapshot; an elapsed next-refresh
+	// timestamp alone must not admit the idle group to the due result.
 	_ = createProvider("ollama-not-due-idle", "https://ollama.com", nil, map[string]any{
 		"status":          providercore.OllamaCloudUsageStatusOK,
 		"fetched_at":      now.Add(-time.Hour).UTC().Format(time.RFC3339Nano),
@@ -68,6 +85,8 @@ func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testi
 	require.Equal(t, missingSnapshot.ID, providers[0].ID)
 	require.Equal(t, due.ID, providers[1].ID)
 	require.NotNil(t, providers[1].LastUsedAt)
+	// The one-second tolerance identifies the hydrated activity instant while
+	// allowing subsecond differences in its database representation.
 	require.WithinDuration(t, activity.UTC(), providers[1].LastUsedAt.UTC(), time.Second)
 	require.NotContains(t, providerIDs(providers), uppercasePath.ID)
 	require.NotNil(t, providers[0].Proxy)
@@ -75,19 +94,12 @@ func TestListDueOllamaCloudUsageProvidersOrderingLimitAndProxyHydration(t *testi
 	require.Equal(t, proxy.URL(), providers[0].Proxy.URL())
 }
 
-// TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions exercises SQL parsing
-// with the fractional precision and timezone forms written to the database.
+// TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions stores seven-,
+// eight-, and nine-digit timestamps with UTC and offset forms. Recently fetched
+// groups stay absent while the deliberately stale group is returned, detecting
+// parse failures that would admit extra rows.
 //
-// Each snapshot was fetched about two minutes ago, with activity thirty seconds ago.
-// Debounce and the minimum fetch interval keep it from being due. A parse failure becomes NULL
-// and takes the fail-open branch, so these records must be absent to detect parser failures.
-//
-//   - Go UTC timestamps end in Z. PostgreSQL 14-16 require rewriting that suffix to +00:00
-//     before jsonpath .datetime(); otherwise these fixtures appear due.
-//     PostgreSQL 17 and later accept Z directly.
-//   - Seven to nine fractional digits exceed the parser's microsecond precision and need truncation.
-//
-// Run against an older supported PostgreSQL version to exercise that compatibility path:
+// The image override can repeat these cases against another PostgreSQL version:
 //
 //	TOKENROUTER_TEST_POSTGRES_IMAGE=postgres:15-alpine go test -tags integration ./tests/integration/provider/
 func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T) {
@@ -97,7 +109,8 @@ func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T
 	now := time.Date(2026, time.July, 22, 14, 0, 0, 0, time.UTC)
 	activity := now.Add(-30 * time.Second)
 
-	// These values are about two minutes old, with different fractional precision and timezone notation.
+	// Store equivalent recent instants with distinct precision and offset forms;
+	// parse failure would admit them despite the activity debounce and minimum fetch interval.
 	notDue := map[string]string{
 		"nano-z":         "2026-07-22T13:58:00.123456789Z",
 		"eight-positive": "2026-07-22T14:58:00.12345678+01:00",
@@ -120,7 +133,8 @@ func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T
 		})
 	}
 
-	// Include a truly due record so an empty result cannot make the test pass.
+	// Add a stale successful observation with newer activity so the query
+	// must return a due row even while excluding the recent timestamp variants.
 	staleFetched := now.Add(-2 * time.Hour)
 	due := mustCreateProvider(t, tx.Client(), &providercore.Record{
 		Name: "ollama-precision-due", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
@@ -146,6 +160,10 @@ func TestListDueOllamaCloudUsageProvidersParsesAllRFC3339Precisions(t *testing.T
 		"only the stale group may be due; extra rows mean a timestamp failed to parse and fell into the fail-open branch")
 }
 
+// TestListDueOllamaCloudUsageProvidersUsesGroupMaxLastUsedAndFailsOpen creates
+// a newer-activity sibling and a malformed timestamp group. PostgreSQL returns
+// the shared-key leader with the sibling's activity time and admits the
+// malformed group while excluding idle successful state.
 func TestListDueOllamaCloudUsageProvidersUsesGroupMaxLastUsedAndFailsOpen(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -211,12 +229,18 @@ func TestListDueOllamaCloudUsageProvidersUsesGroupMaxLastUsedAndFailsOpen(t *tes
 	for _, provider := range providers {
 		if provider.ID == leader.ID {
 			require.NotNil(t, provider.LastUsedAt)
+			// The selector supplies group MAX(last_used_at), so this tolerance checks
+			// the hydrated representative against the newer sibling's stored activity.
 			require.WithinDuration(t, newer.UTC(), provider.LastUsedAt.UTC(), time.Second,
 				"group MAX(last_used_at) must come from the sibling")
 		}
 	}
 }
 
+// TestLockAndMergeProviderManagedExtraCoalescesNullableOllamaGroupIdentity
+// loads an ordinary API-key provider lacking a Base URL. The locked merge
+// treats nullable Ollama eligibility as false, returns its custom Extra, and
+// adds no managed session field.
 func TestLockAndMergeProviderManagedExtraCoalescesNullableOllamaGroupIdentity(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -235,6 +259,11 @@ func TestLockAndMergeProviderManagedExtraCoalescesNullableOllamaGroupIdentity(t 
 	require.Equal(t, true, merged["custom"])
 }
 
+// TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants saves
+// shared session state across platform and URL variants. Further reads check
+// refresh-switch propagation, sibling snapshot status, identity rejection after
+// key rotation, session-key removal from the rotated sibling, and session
+// deletion from the remaining member.
 func TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -303,6 +332,10 @@ func TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants(t *te
 	require.NotContains(t, firstLoaded.Extra, providercore.OllamaCloudUsageSessionExtraKey)
 }
 
+// TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState releases two
+// goroutines to save and delete one committed API-key group's session. Both
+// calls succeed, and the final managed state matches on both members as either
+// deletion or complete replacement.
 func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -323,12 +356,16 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	}
 	first := create(capability.PlatformOpenAI)
 	second := create(capability.PlatformAnthropic)
+	// Committed-row cleanup is best effort and discards its SQL error; a failed
+	// cleanup statement can leave these fixtures in the shared test database.
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM providers WHERE id IN ($1, $2)", first.ID, second.ID)
 	})
 	anchor, err := repo.GetByID(ctx, first.ID)
 	require.NoError(t, err)
 
+	// Release both committed-state writers from one gate, then wait for both
+	// results before comparing managed values; either complete write may finish last.
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -376,6 +413,8 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	}
 }
 
+// providerIDs returns provider database identifiers in the supplied record
+// order.
 func providerIDs(providers []providercore.Record) []int64 {
 	ids := make([]int64, len(providers))
 	for index := range providers {
@@ -384,6 +423,10 @@ func providerIDs(providers []providercore.Record) []int64 {
 	return ids
 }
 
+// TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSafe
+// changes Base URLs through replacement and bulk-merge paths. An equivalent
+// supported URL keeps the snapshot, while uppercase path V1 makes the provider
+// ineligible and clears all managed fields.
 func TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSafe(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -435,6 +478,10 @@ func TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSaf
 	require.NotContains(t, bulkIneligible.Extra, providercore.OllamaCloudUsageSnapshotExtraKey)
 }
 
+// TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS reads a
+// provider before sequentially changing its proxy host. The snapshot disappears
+// while session state remains, and writing the old observation returns an
+// identity-conflict error.
 func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -479,8 +526,10 @@ func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *te
 	require.ErrorIs(t, err, providercore.ErrOllamaCloudUsageIdentityChanged)
 }
 
-// TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra checks retired-field cleanup, unchanged Ollama
-// identity, and token-rotation invalidation.
+// TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra replaces
+// credentials on legacy and Ollama fixtures. Reads check retired-key removal,
+// unchanged session and switch values with snapshot presence for identical
+// credentials, and removal of all three managed keys after API-key rotation.
 func TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -535,9 +584,10 @@ func TestUpdateCredentialsPreservesOllamaAndDiscardsDeprecatedExtra(t *testing.T
 	require.NotContains(t, ollamaLoaded.Extra, providercore.OllamaCloudUsageSnapshotExtraKey)
 }
 
-// TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService checks that SQL applies debounce,
-// maximum wait, and failure backoff before LIMIT, matching OllamaCloudUsageIsAutoRefreshDue.
-// More than twenty active but not-yet-due groups must not starve a group past its maximum wait.
+// TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService creates more
+// not-yet-due groups than the result limit alongside due and failed groups. SQL
+// filters before limiting, admits expired-backoff and malformed-reset cases,
+// and excludes recent activity still waiting.
 func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -588,32 +638,38 @@ func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 		})
 	}
 
-	// Twenty-one recently active groups exceed the twenty-row limit.
-	// They must be filtered before LIMIT so due groups can still refresh.
+	// Populate more recently active groups than the result limit before creating
+	// due groups; a limit applied before eligibility would hide the later fixtures.
 	notDueIDs := make(map[int64]struct{}, 21)
 	for i := range 21 {
-		// Fetched ten minutes ago and used ten seconds ago: due_at is now+50s, so it is not due.
+		// Ten-second-old activity leaves fifty seconds of debounce remaining,
+		// keeping these rows ineligible even though their successful fetch is older.
 		acc := createOK(fmt.Sprintf("ollama-not-due-debounce-%02d", i), now.Add(-10*time.Minute), now.Add(-10*time.Second))
 		notDueIDs[acc.ID] = struct{}{}
 	}
 
-	// Maximum wait makes this group due despite activity ten seconds ago.
-	// due_at = min(now-10s+1m, now-2h+1h) = now-1h.
+	// Maximum wait has already elapsed for the two-hour-old fetch, making this
+	// group due while its ten-second-old activity still lies inside debounce.
 	maxWaitDue := createOK("ollama-due-maxwait", now.Add(-2*time.Hour), now.Add(-10*time.Second))
 
-	// Activity two minutes ago is past the one-minute debounce.
+	// Two-minute-old activity passes debounce while its thirty-minute-old fetch
+	// remains inside maximum wait, isolating the activity-based eligibility path.
 	debounceDue := createOK("ollama-due-debounce", now.Add(-30*time.Minute), now.Add(-2*time.Minute))
 
-	// Recent activity remains within the debounce period.
+	// This twenty-second-old activity still waits for debounce, with maximum wait
+	// also unexpired so neither successful-refresh due condition admits the group.
 	_ = createOK("ollama-not-due-fresh", now.Add(-30*time.Minute), now.Add(-20*time.Second))
 
-	// New activity after a failure still respects next_refresh_at backoff.
+	// Keep the failed group's next attempt in the future despite later activity,
+	// so its exclusion isolates the retry schedule from successful-fetch timing.
 	_ = createFailed("ollama-fail-backoff", now.Add(-30*time.Minute), now.Add(-2*time.Minute), now.Add(10*time.Minute), "")
 
-	// New activity after backoff expires makes this group due.
+	// Put retry time in the past with activity after the failed attempt;
+	// both conditions qualify this failure fixture for automatic-refresh selection.
 	failDue := createFailed("ollama-fail-due", now.Add(-30*time.Minute), now.Add(-2*time.Minute), now.Add(-time.Minute), "")
 
-	// Invalid next_refresh_at fails open to activity-based eligibility without aborting the query.
+	// Supply malformed retry time with qualifying later activity so PostgreSQL's
+	// parse-to-NULL path admits this group instead of aborting the complete query.
 	failInvalidNext := createFailed("ollama-fail-invalid-next", now.Add(-30*time.Minute), now.Add(-2*time.Minute), time.Time{}, "not-a-timestamp")
 
 	providers, err := repo.ListDueOllamaCloudUsageProviders(ctx, now, debounce, maxWait, 20)
@@ -626,15 +682,16 @@ func TestListDueOllamaCloudUsageProvidersSQLDueRulesMatchService(t *testing.T) {
 	require.Contains(t, ids, failInvalidNext.ID, "invalid next_refresh_at must fail open to activity due")
 	require.LessOrEqual(t, len(providers), 20)
 
-	// These fixtures follow OllamaCloudUsageIsAutoRefreshDue:
-	// not-yet-due groups stay out even when their count exceeds the result limit.
+	// Compare every returned ID with the oversized not-yet-due fixture set,
+	// detecting debounce candidates incorrectly admitted before the query's final result limit.
 	for _, id := range ids {
 		_, isNotDue := notDueIDs[id]
 		require.False(t, isNotDue, "not-yet-due debounce group %d must not be returned by SQL LIMIT layer", id)
 	}
 	require.NotContains(t, ids, int64(0))
 
-	// Exclude both recently successful groups and failed groups still in backoff.
+	// Inspect fixture names as well as IDs to catch recent successful activity
+	// and failed groups whose retry time still lies ahead of this query.
 	for _, provider := range providers {
 		require.NotContains(t, provider.Name, "not-due")
 		require.NotEqual(t, "ollama-fail-backoff", provider.Name)

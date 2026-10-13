@@ -12,10 +12,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// A user's download counter rejects a second request when the configured
+// capacity is one. The test observes expiry after acquisition and deletion after
+// release, then checks that the freed capacity admits another request.
+
+// TestBatchImageDownloadLimiter_AcquireDenyReleaseAndTTL exercises a one-slot
+// user counter. Acquisition sets expiry, a second request is denied, repeated
+// release leaves the counter absent, and a later acquisition succeeds.
 func TestBatchImageDownloadLimiter_AcquireDenyReleaseAndTTL(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// Close the client after the test completes while RunT manages the Redis
+	// fixture lifetime. Cleanup errors are discarded because assertions exercise
+	// counter behavior rather than client shutdown.
 	t.Cleanup(func() { _ = rdb.Close() })
 	limiter := &batchImageDownloadLimiter{
 		rdb:          rdb,

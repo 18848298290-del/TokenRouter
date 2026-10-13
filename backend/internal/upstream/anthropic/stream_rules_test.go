@@ -11,7 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// TestCacheTTLAdaptersPreserveWireShape checks numeric rewrites and retention of unrelated fields.
+// Cache compatibility needs canonical counters to win over aliases and TTL
+// rewrites to retain unrelated JSON fields. The fixtures exercise zero and
+// missing cache counts, nested versus top-level event usage, and the adapter's
+// distinction between bucket movement and default detail initialization.
+
+// TestCacheTTLAdaptersPreserveWireShape exercises aggregate default filling,
+// numeric nested reclassification, and no-op string retention. It checks false
+// can accompany default initialization, while changed buckets retain aggregate
+// and unknown JSON fields.
 func TestCacheTTLAdaptersPreserveWireShape(t *testing.T) {
 	value := protocol.TokenUsage{CacheCreationInputTokens: 9}
 	require.False(t, ApplyCacheTTLOverride(&value, "5m"))
@@ -29,10 +37,16 @@ func TestCacheTTLAdaptersPreserveWireShape(t *testing.T) {
 	require.False(t, RewriteCacheCreationJSON(map[string]any{}, "1h"))
 }
 
+// TestReconcileCachedTokens_NilUsage supplies no mutable usage map to the
+// reconciliation helper. It checks the missing-input case reports false rather
+// than attempting to insert a canonical cache counter.
 func TestReconcileCachedTokens_NilUsage(t *testing.T) {
 	assert.False(t, ReconcileCachedTokens(nil))
 }
 
+// TestReconcileCachedTokens_AlreadyHasCacheRead supplies positive canonical and
+// alias values together. It checks the canonical count wins and the helper
+// reports no reconciliation for that map.
 func TestReconcileCachedTokens_AlreadyHasCacheRead(t *testing.T) {
 	// A positive standard counter takes precedence.
 	usage := map[string]any{
@@ -43,6 +57,9 @@ func TestReconcileCachedTokens_AlreadyHasCacheRead(t *testing.T) {
 	assert.Equal(t, float64(100), usage["cache_read_input_tokens"])
 }
 
+// TestReconcileCachedTokens_KimiStyle supplies a positive compatible alias
+// beside a zero canonical count. It checks reconciliation reports a change and
+// copies that alias into the canonical field.
 func TestReconcileCachedTokens_KimiStyle(t *testing.T) {
 	// Kimi supplies a positive cached_tokens value and a zero standard counter.
 	usage := map[string]any{
@@ -55,8 +72,11 @@ func TestReconcileCachedTokens_KimiStyle(t *testing.T) {
 	assert.Equal(t, float64(23), usage["cache_read_input_tokens"])
 }
 
+// TestReconcileCachedTokens_NoCachedTokens supplies canonical zero with no
+// compatible alias. It checks the map's zero remains and the helper reports no
+// cache-read reconciliation for that fixture.
 func TestReconcileCachedTokens_NoCachedTokens(t *testing.T) {
-	// A native Claude response omits cached_tokens.
+	// The native-shaped fixture supplies no cached_tokens alias.
 	usage := map[string]any{
 		"input_tokens":                float64(100),
 		"cache_read_input_tokens":     float64(0),
@@ -66,6 +86,9 @@ func TestReconcileCachedTokens_NoCachedTokens(t *testing.T) {
 	assert.Equal(t, float64(0), usage["cache_read_input_tokens"])
 }
 
+// TestReconcileCachedTokens_CachedTokensZero supplies zero in both cache-read
+// representations. It checks no reconciliation is reported and the canonical
+// zero remains available in the supplied usage map.
 func TestReconcileCachedTokens_CachedTokensZero(t *testing.T) {
 	// Zero cached_tokens leaves the response unchanged.
 	usage := map[string]any{
@@ -76,6 +99,9 @@ func TestReconcileCachedTokens_CachedTokensZero(t *testing.T) {
 	assert.Equal(t, float64(0), usage["cache_read_input_tokens"])
 }
 
+// TestReconcileCachedTokens_MissingCacheReadField supplies a positive alias
+// without a canonical cache-read key. It checks the helper inserts that count
+// and reports the resulting map change.
 func TestReconcileCachedTokens_MissingCacheReadField(t *testing.T) {
 	// A positive cached_tokens value also fills a missing standard counter.
 	usage := map[string]any{
@@ -85,8 +111,11 @@ func TestReconcileCachedTokens_MissingCacheReadField(t *testing.T) {
 	assert.Equal(t, float64(42), usage["cache_read_input_tokens"])
 }
 
+// TestStreamingReconcile_MessageStart decodes a compatible initial event with
+// usage nested beneath message. It checks reconciliation fills the canonical
+// field in that map and in the serialized event.
 func TestStreamingReconcile_MessageStart(t *testing.T) {
-	// Kimi message_start carries usage inside message.
+	// The compatible initial fixture nests its usage inside message.
 	eventJSON := `{
 		"type": "message_start",
 		"message": {
@@ -109,7 +138,9 @@ func TestStreamingReconcile_MessageStart(t *testing.T) {
 	eventType, _ := event["type"].(string)
 	require.Equal(t, "message_start", eventType)
 
-	// Apply the same reconciliation used by the stream processor.
+	// The initial event nests usage inside message. Apply reconciliation at
+	// that location before serialization so both the retained map and emitted
+	// JSON can expose the selected canonical cache count.
 	if msg, ok := event["message"].(map[string]any); ok {
 		if u, ok := msg["usage"].(map[string]any); ok {
 			ReconcileCachedTokens(u)
@@ -122,12 +153,14 @@ func TestStreamingReconcile_MessageStart(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(23), usage["cache_read_input_tokens"])
 
-	// The serialized event carries the normalized count.
 	data, err := json.Marshal(event)
 	require.NoError(t, err)
 	assert.Equal(t, int64(23), gjson.GetBytes(data, "message.usage.cache_read_input_tokens").Int())
 }
 
+// TestStreamingReconcile_MessageStart_NativeClaude decodes nested usage with an
+// existing positive canonical count. It applies the helper and checks the
+// reported native cache-read value remains thirty.
 func TestStreamingReconcile_MessageStart_NativeClaude(t *testing.T) {
 	// A native Claude event requires no reconciliation.
 	eventJSON := `{
@@ -144,6 +177,9 @@ func TestStreamingReconcile_MessageStart_NativeClaude(t *testing.T) {
 	var event map[string]any
 	require.NoError(t, json.Unmarshal([]byte(eventJSON), &event))
 
+	// The canonical count was decoded from the initial event's nested usage.
+	// Invoke the helper to check that alias reconciliation leaves it selected
+	// in that map.
 	if msg, ok := event["message"].(map[string]any); ok {
 		if u, ok := msg["usage"].(map[string]any); ok {
 			ReconcileCachedTokens(u)
@@ -157,8 +193,11 @@ func TestStreamingReconcile_MessageStart_NativeClaude(t *testing.T) {
 	assert.Equal(t, float64(30), usage["cache_read_input_tokens"])
 }
 
+// TestStreamingReconcile_MessageDelta decodes a compatible delta whose usage
+// appears at the event's top level. It checks the alias is copied into that
+// usage map's canonical cache-read field.
 func TestStreamingReconcile_MessageDelta(t *testing.T) {
-	// Kimi message_delta carries usage at the top level.
+	// The compatible delta fixture supplies usage at the top level.
 	eventJSON := `{
 		"type": "message_delta",
 		"usage": {
@@ -174,13 +213,18 @@ func TestStreamingReconcile_MessageDelta(t *testing.T) {
 	eventType, _ := event["type"].(string)
 	require.Equal(t, "message_delta", eventType)
 
-	// Apply the same reconciliation used by the stream processor.
 	usage, ok := event["usage"].(map[string]any)
 	require.True(t, ok)
+	// This delta carries usage at the event's top level. Reconcile that
+	// selected map directly so the compatibility alias feeds the canonical
+	// count in the asserted event location.
 	ReconcileCachedTokens(usage)
 	assert.Equal(t, float64(15), usage["cache_read_input_tokens"])
 }
 
+// TestStreamingReconcile_MessageDelta_NativeClaude decodes a delta containing
+// output usage and no cache alias. It checks reconciliation leaves the
+// cache-read key absent in the native-shaped fixture.
 func TestStreamingReconcile_MessageDelta_NativeClaude(t *testing.T) {
 	// The native Claude fixture omits cached_tokens.
 	eventJSON := `{

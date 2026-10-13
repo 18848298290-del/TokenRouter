@@ -8,47 +8,90 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ModelChain records client, key-redirected, group-mapped, and provider-mapped models, with one mapping per stage.
-// Execution normalizes vendor names and restores response models; usage records consume this chain.
+// A request's final group and client protocol remain fixed while provider
+// attempts can choose different upstream protocols and model mappings. Group
+// policy collections are copied when the plan is built, keeping later
+// administrative edits from changing that request's retained conversion
+// choices.
+//
+// The model chain retains client, key, group, and provider identities
+// separately so restriction and billing consumers can select their configured
+// stage. Candidate resolution adds the chosen provider and protocol but leaves
+// provider mapping for the attempt's current snapshot. Each attempt receives
+// the scalar chain by value, keeping its provider mapping in that candidate
+// copy. Gateway admission authorizes the group and client entry before using
+// the plan.
+
+// ModelChain retains the request's model identities and the configured
+// restriction and billing stages.
 type ModelChain struct {
+	// ClientModel, RequestedModel, GroupMappedModel, and ProviderMappedModel
+	// retain successive routing identities. Each stage has its own restriction,
+	// response, or billing consumer; resolving an attempt fills the provider
+	// stage.
+	//
+	// ClientModel: original client model. RequestedModel: key-redirected request
+	// model. GroupMappedModel: group policy model. ProviderMappedModel:
+	// provider-mapped upstream model.
 	ClientModel, RequestedModel, GroupMappedModel, ProviderMappedModel string
-	APIKeyRedirected, GroupMapped                                      bool
-	RestrictionModelSource                                             string
-	RestrictModels                                                     bool
-	PricingConfigID                                                    int64
-	BillingModelSource                                                 string
+	// APIKeyRedirected and GroupMapped record whether their respective stages
+	// rewrote the client identity. They are retained independently so response
+	// consumers can recognize either rewrite in the captured model chain.
+	//
+	// APIKeyRedirected: key model rewritten. GroupMapped: group model rewritten.
+	APIKeyRedirected, GroupMapped bool
+
+	RestrictionModelSource string // selected whitelist identity stage
+	RestrictModels         bool   // retained group model restriction
+	PricingConfigID        int64  // associated pricing config ID
+	BillingModelSource     string // selected billing identity stage
 }
 
-// PlanInput contains the admitted group, requested model, and client protocol.
+// PlanInput supplies the admitted group, completed group mapping, and client
+// entry for a request plan.
 type PlanInput struct {
+	// GroupID overrides Group.ID when supplied. Plan copies the pointed value, so
+	// changing the input pointer after construction leaves the captured identifier
+	// unchanged.
 	GroupID        *int64
-	RequestedModel string
-	GroupMapping   GroupMappingResult
+	RequestedModel string             // model after key redirection
+	GroupMapping   GroupMappingResult // completed group mapping metadata
+	// Group supplies scheduler and protocol settings for Plan. The caller
+	// authorizes this group first; Plan copies its protocol collections for
+	// retained request use.
 	Group          *Group
-	ClientProtocol capability.ProtocolID
+	ClientProtocol capability.ProtocolID // admitted client entry protocol
 }
 
-// RoutePlan snapshots group and protocol policy; candidate resolution supplies provider-specific results.
-// The protocol fallback map is copied when the plan is built.
+// RoutePlan retains group policy and model metadata for provider-attempt
+// resolution.
 type RoutePlan struct {
-	models         ModelChain
-	groupID        int64
-	schedulerType  GroupSchedulerType
-	clientProtocol capability.ProtocolID
-	allowed        []capability.ProtocolID
-	fallbacks      map[capability.ProtocolID][]capability.ProtocolID
+	models         ModelChain            // retained request identity stages
+	groupID        int64                 // captured final group identifier
+	schedulerType  GroupSchedulerType    // captured group scheduler selection
+	clientProtocol capability.ProtocolID // current plan client source
+	// allowed and fallbacks retain copied group protocol policy. Plan copies the
+	// admission selection and each conversion list; plan copies with a different
+	// client protocol share these collections as read-only values.
+	allowed []capability.ProtocolID // copied client admission selection
+	// fallbacks is copied, including each target list, when Plan captures group
+	// policy. Missing and present empty entries retain their distinct automatic
+	// and native-only choices.
+	fallbacks map[capability.ProtocolID][]capability.ProtocolID
 }
 
-// CandidatePlan contains the route resolved for one provider attempt.
+// CandidatePlan records the provider and protocol selected for one request
+// attempt.
 type CandidatePlan struct {
-	Models           ModelChain
-	ProviderID       int64
-	GroupID          int64
-	ClientProtocol   capability.ProtocolID
-	UpstreamProtocol capability.ProtocolID
+	Models           ModelChain            // attempt-specific model identity stages
+	ProviderID       int64                 // selected provider row identifier
+	GroupID          int64                 // authorized final group identifier
+	ClientProtocol   capability.ProtocolID // resolved client entry identity
+	UpstreamProtocol capability.ProtocolID // selected provider execution protocol
 }
 
-// Mapping returns group mapping, whitelist-stage, and billing metadata from the plan.
+// Mapping returns the retained group mapping, restriction settings, and billing
+// metadata.
 func (p RoutePlan) Mapping() GroupMappingResult {
 	return GroupMappingResult{
 		MappedModel:            p.models.GroupMappedModel,
@@ -62,16 +105,21 @@ func (p RoutePlan) Mapping() GroupMappingResult {
 	}
 }
 
+// Models returns the plan's retained scalar model-chain value by copy.
 func (p RoutePlan) Models() ModelChain { return p.models }
 
-// ResolveModel returns a copy with the provider-mapped model resolved from the supplied snapshot.
+// ResolveModel returns a candidate copy with requested resolved through the
+// supplied provider snapshot. The match flag describes that one mapping step;
+// callers supply the appropriate group-mapped input for the attempt.
 func (p CandidatePlan) ResolveModel(snapshot provider.ProviderSnapshot, requested string) (CandidatePlan, bool) {
 	mapped, matched := snapshot.ModelPolicy.Resolve(requested)
 	p.Models.ProviderMappedModel = mapped
 	return p, matched
 }
 
-// Plan snapshots group policy after the caller has admitted the request.
+// Plan captures the caller's admitted group and completed model mapping for
+// later attempts. It copies admitted protocol lists and fallback targets, and a
+// supplied GroupID overrides the ID from Group.
 func Plan(input PlanInput) RoutePlan {
 	plan := RoutePlan{
 		clientProtocol: input.ClientProtocol,
@@ -99,8 +147,10 @@ func Plan(input PlanInput) RoutePlan {
 	return plan
 }
 
-// ResolveCandidate prefers native support, then a single conversion. Call it again after refreshing or rechecking
-// a provider.
+// ResolveCandidate resolves the provider's enabled protocols against the
+// retained client source and conversion policy. It returns false for an
+// unusable route; callers repeat resolution for refreshed provider snapshots
+// and enforce entry admission separately.
 func (p RoutePlan) ResolveCandidate(candidate provider.ProviderSnapshot) (CandidatePlan, bool) {
 	target, ok := capability.ResolveRoute(candidate.Protocols(), p.clientProtocol, p.fallbacks)
 	if !ok {
@@ -109,14 +159,21 @@ func (p RoutePlan) ResolveCandidate(candidate provider.ProviderSnapshot) (Candid
 	return CandidatePlan{Models: p.models, ProviderID: candidate.ID, GroupID: p.groupID, ClientProtocol: p.clientProtocol, UpstreamProtocol: target}, true
 }
 
-// GroupID returns the plan's final group ID.
+// GroupID returns the captured final group identifier for this request.
 func (p RoutePlan) GroupID() int64 { return p.groupID }
 
+// SchedulerType returns the group selection strategy captured when planning
+// began.
 func (p RoutePlan) SchedulerType() GroupSchedulerType { return p.schedulerType }
 
+// AllowedProtocols returns a copy of the captured client admission selection.
+// Callers may modify the returned slice independently; a missing group produces
+// nil because no selection was captured.
 func (p RoutePlan) AllowedProtocols() []capability.ProtocolID { return slices.Clone(p.allowed) }
 
-// WithClientProtocol returns a copy using the execution layer's selected client protocol.
+// WithClientProtocol returns a plan copy with the supplied client protocol.
+// Retained group policy collections remain shared between copies as read-only
+// plan data, and candidate routing uses the replacement source.
 func (p RoutePlan) WithClientProtocol(source capability.ProtocolID) RoutePlan {
 	p.clientProtocol = source
 	return p

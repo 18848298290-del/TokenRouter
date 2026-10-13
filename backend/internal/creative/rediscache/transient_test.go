@@ -12,19 +12,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
+// Miniredis fixtures inspect payload/media round trips, expiry, and queue
+// ownership through the Redis adapter. Virtual TTL advancement removes
+// temporary data, while direct aging of one active score permits a replacement
+// reservation whose new token fences the former acknowledgment.
+
+// newCreativeTestRedis starts a test-owned miniredis server and client for
+// adapter fixtures. RunT owns server cleanup, while the helper registers
+// client close after the test finishes.
 func newCreativeTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// The test server lifetime is registered by RunT. Close this borrowed-client
+	// fixture after adapter assertions, discarding cleanup errors so they do not
+	// replace the scenario result.
 	t.Cleanup(func() { _ = client.Close() })
 	return server, client
 }
 
+// newCreativeTestTransientStore returns the Redis transient adapter configured
+// for a sixty-second lifetime. The supplied client is borrowed from its
+// fixture and remains owned by that fixture cleanup.
 func newCreativeTestTransientStore(client *redis.Client) creative.CreativeTransientStore {
 	return NewCreativeTransientStore(client, &TransientOptions{TransientTTLSeconds: 60})
 }
 
-// TestCreativeTransientStoreRoundTrip covers payload, media, and deletion operations.
+// TestCreativeTransientStoreRoundTrip stores prompt metadata, two inputs,
+// mask, and output, then reads the expected values. Repeated output deletion
+// succeeds and task cleanup makes the listed remaining resources unreadable.
 func TestCreativeTransientStoreRoundTrip(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -79,7 +95,9 @@ func TestCreativeTransientStoreRoundTrip(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreativeTransientStoreExpiry checks that payloads and outputs become unreadable after expiry.
+// TestCreativeTransientStoreExpiry stores payload and output under the
+// sixty-second fixture lifetime. Fast-forwarding miniredis beyond that
+// lifetime makes both reads match the legacy transient-failed sentinel.
 func TestCreativeTransientStoreExpiry(t *testing.T) {
 	server, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -89,7 +107,8 @@ func TestCreativeTransientStoreExpiry(t *testing.T) {
 	require.NoError(t, store.SavePayload(ctx, runID, &creative.CreativeRunPayload{RunID: runID, Prompt: "x"}))
 	require.NoError(t, store.SaveOutput(ctx, runID, 0, []byte("out"), time.Minute))
 
-	// Advance beyond the configured 60-second TTL.
+	// Advance the simulated Redis expiry clock beyond its configured lifetime so
+	// this test observes missing keys without waiting for wall-clock expiration.
 	server.FastForward(61 * time.Second)
 
 	_, err := store.LoadPayload(ctx, runID)
@@ -98,7 +117,9 @@ func TestCreativeTransientStoreExpiry(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrCreativeTransientFailed)
 }
 
-// TestCreativeTransientStoreInputsMissing checks failure when one requested source image is absent.
+// TestCreativeTransientStoreInputsMissing saves only source index zero while
+// asking for two inputs. The complete load returns an error rather than a
+// successfully truncated source list.
 func TestCreativeTransientStoreInputsMissing(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	store := newCreativeTestTransientStore(client)
@@ -110,7 +131,9 @@ func TestCreativeTransientStoreInputsMissing(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreativeQueueEnqueueReserveAck covers queue reservation, duplicate rejection, and acknowledgment.
+// TestCreativeQueueEnqueueReserveAck enqueues and reserves one run, then
+// acknowledges its token. It checks duplicate admission, empty second reserve,
+// invalid IDs, and no delayed work after acknowledgment.
 func TestCreativeQueueEnqueueReserveAck(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -147,7 +170,9 @@ func TestCreativeQueueEnqueueReserveAck(t *testing.T) {
 	require.Equal(t, 0, moved)
 }
 
-// TestCreativeQueueRecoverStaleActive checks that fresh tasks stay active and a zero threshold is rejected.
+// TestCreativeQueueRecoverStaleActive reserves one run with a fresh active
+// timestamp. The listed positive threshold recovers zero entries, and a zero
+// stale duration returns the invalid-payload error.
 func TestCreativeQueueRecoverStaleActive(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -177,7 +202,9 @@ func TestCreativeQueueRecoverStaleActive(t *testing.T) {
 	require.ErrorIs(t, err, creative.ErrInvalidCreativeQueuePayload)
 }
 
-// TestCreativeQueueLeaseFencingOldWorkerCannotAck checks that recovery invalidates the old worker's token.
+// TestCreativeQueueLeaseFencingOldWorkerCannotAck ages one active score and
+// recovers its task for a second reservation. The lease changes, the old token
+// cannot acknowledge, and the new token succeeds.
 func TestCreativeQueueLeaseFencingOldWorkerCannotAck(t *testing.T) {
 	_, client := newCreativeTestRedis(t)
 	queue := NewCreativeQueue(client, &QueueOptions{
@@ -189,7 +216,8 @@ func TestCreativeQueueLeaseFencingOldWorkerCannotAck(t *testing.T) {
 	require.NoError(t, queue.Enqueue(ctx, runID))
 	first, err := queue.Reserve(ctx, time.Second)
 	require.NoError(t, err)
-	// Age worker A's heartbeat so recovery moves the task and clears its lease token atomically.
+	// Age worker A's heartbeat so recovery moves the task and clears its
+	// lease token atomically.
 	require.NoError(t, client.ZAdd(ctx, "creative:queue:active", redis.Z{Score: float64(time.Now().Add(-time.Hour).UnixMilli()), Member: runID}).Err())
 	moved, err := queue.RecoverStaleActive(ctx, time.Minute, 10)
 	require.NoError(t, err)

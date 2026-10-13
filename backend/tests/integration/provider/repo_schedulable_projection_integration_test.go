@@ -13,6 +13,15 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// The schedulable load query needs the same candidate IDs and order as the full
+// provider query. PostgreSQL fixtures compare both results across disabled,
+// expired, overloaded, rate-limited, and temporarily blocked states, and check
+// load-factor and concurrency defaults.
+
+// TestListSchedulableProviderLoadsMatchesListSchedulable creates PostgreSQL
+// providers spanning configuration, health-window, and expiry conditions.
+// Lightweight and full queries return the same IDs and order, with matching
+// effective load values and the expected default of one.
 func TestListSchedulableProviderLoadsMatchesListSchedulable(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)

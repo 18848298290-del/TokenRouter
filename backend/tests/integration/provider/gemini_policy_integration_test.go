@@ -14,8 +14,15 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot checks settings precedence, TTL, and malformed-JSON
-// recovery using a dedicated database key.
+// Gemini quota settings override a static policy after the cached policy
+// expires. A dedicated database setting and injected clock exercise that
+// timing, while mutation of a returned policy checks isolation and malformed
+// settings exercise the static-policy recovery path.
+
+// TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot controls time around a
+// dedicated quota setting. Reads check cached and expired ProRPD values,
+// isolation of a ProRPD override on the returned policy, and static quota
+// recovery for malformed JSON.
 func TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	repo := settings.New(settingspostgres.NewSettingRepository(testEntClient(t)))
@@ -29,6 +36,8 @@ func TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot(t *testing.T) {
 	require.NoError(t, repo.Set(ctx, key, `{"quota_rules":{"aistudio_free":{"gemini_pro":{"rpd":25}}}}`))
 	cached, _ := core.Policy(ctx).QuotaForTier("aistudio_free")
 	require.Equal(t, int64(10), cached.ProRPD)
+	// Advance the injected clock past the policy cache interval so this read
+	// reloads the current setting and exercises its next parsed or recovery value.
 	now = now.Add(time.Minute)
 	policy := core.Policy(ctx)
 	fresh, _ := policy.QuotaForTier("aistudio_free")
@@ -38,6 +47,8 @@ func TestGeminiQuotaPolicyLoadsSettingsAndKeepsSnapshot(t *testing.T) {
 	still, _ := core.Policy(ctx).QuotaForTier("aistudio_free")
 	require.Equal(t, int64(25), still.ProRPD)
 	require.NoError(t, repo.Set(ctx, key, "not-json"))
+	// Advance the injected clock past the policy cache interval so this read
+	// reloads the current setting and exercises its next parsed or recovery value.
 	now = now.Add(time.Minute)
 	fallback, _ := core.Policy(ctx).QuotaForTier("aistudio_free")
 	require.Equal(t, int64(10), fallback.ProRPD)

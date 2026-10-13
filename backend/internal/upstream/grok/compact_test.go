@@ -8,6 +8,15 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Compact adaptation needs a non-streaming summary request and resumable
+// encrypted state in its response. These examples inspect the synthetic prompt's
+// selected sections, retained history and response metadata, then reject a
+// plaintext-only result that cannot become the required compaction item.
+
+// TestBuildGrokCompactRequestBodyUsesResponsesCompactionTurn supplies history
+// and a function tool on a streaming request. It asserts
+// non-streaming/no-storage settings, encrypted include, tool-choice suppression,
+// retained history and selected fixed summary-prompt sections.
 func TestBuildGrokCompactRequestBodyUsesResponsesCompactionTurn(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"shell"}],"stream":true}`)
 
@@ -25,6 +34,10 @@ func TestBuildGrokCompactRequestBodyUsesResponsesCompactionTurn(t *testing.T) {
 	require.NotContains(t, prompt, "<summary_request>")
 }
 
+// TestConvertGrokResponseToOpenAICompact combines reasoning ciphertext, message
+// summary and token usage in one response. Conversion must retain response ID
+// and usage while returning one compaction item containing that ciphertext and
+// summary.
 func TestConvertGrokResponseToOpenAICompact(t *testing.T) {
 	body := []byte(`{
 		"id":"resp_grok_1",
@@ -48,6 +61,10 @@ func TestConvertGrokResponseToOpenAICompact(t *testing.T) {
 	require.Equal(t, int64(14), gjson.GetBytes(converted, "usage.total_tokens").Int())
 }
 
+// TestConvertGrokResponseToOpenAICompactRequiresEncryptedContent supplies a
+// response containing summary text without reasoning ciphertext. Conversion must
+// report the missing encrypted-content requirement instead of producing a
+// compaction item from that plaintext-only response.
 func TestConvertGrokResponseToOpenAICompactRequiresEncryptedContent(t *testing.T) {
 	_, err := (BodyCodec{NewID: uuid.NewString}).ConvertGrokResponseToOpenAICompact([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"summary"}]}]}`))
 	require.ErrorContains(t, err, "reasoning.encrypted_content")

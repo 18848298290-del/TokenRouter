@@ -9,6 +9,15 @@ import (
 	billingtestkit "github.com/TokenFlux/TokenRouter/internal/billing/testkit"
 )
 
+// Explicit priority token prices and a configured Fast multiplier are separate
+// ways to price accelerated requests. The fixtures check precedence using
+// local catalog amounts and keep full model names from supplying commercial
+// rules that their catalog entries did not declare.
+
+// TestOpenAIFastBillingUsesExplicitCatalogRates supplies three local models
+// whose priority prices are twice their standard prices. It checks
+// fast/priority alias equivalence and standard amounts for empty
+// or default tiers.
 func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 	t.Parallel()
 
@@ -40,6 +49,9 @@ func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 		},
 	}
 	billing := billingtestkit.Calculator(newCatalogFixture(catalogFixture{pricingData: catalog}), nil)
+	// One million tokens in each populated bucket turns the dollar-per-token
+	// fixture rates into readily distinguishable dollar totals for Standard
+	// and accelerated requests.
 	tokens := billingpricing.UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000}
 
 	standard := func(model string) *billingpricing.CostBreakdown {
@@ -54,8 +66,8 @@ func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 	}
 
 	tests := []struct {
-		model string
-		ratio float64
+		model string  // full catalog model name
+		ratio float64 // expected accelerated cost factor
 	}{
 		{model: "gpt-5.4", ratio: 2.0},
 		{model: "gpt-5.5", ratio: 2.0},
@@ -65,12 +77,16 @@ func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 		t.Run(tt.model+"/fast", func(t *testing.T) {
 			base := standard(tt.model)
 			fastCost := fast(tt.model, "fast")
+			// The USD bucket and total comparisons allow
+			// token-rate multiplication rounding.
 			require.InDelta(t, base.TotalCost*tt.ratio, fastCost.TotalCost, 1e-9,
 				"fast total must be %.1fx standard", tt.ratio)
 		})
 		t.Run(tt.model+"/priority_alias", func(t *testing.T) {
 			fastCost := fast(tt.model, "fast")
 			priorityCost := fast(tt.model, "priority")
+			// The USD bucket and total comparisons allow
+			// token-rate multiplication rounding.
 			require.InDelta(t, fastCost.TotalCost, priorityCost.TotalCost, 1e-12,
 				"client alias fast must bill identically to priority")
 			require.InDelta(t, standard(tt.model).TotalCost*tt.ratio, priorityCost.TotalCost, 1e-9)
@@ -79,12 +95,16 @@ func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 			base := standard(tt.model)
 			noTier, err := billing.CalculateCostWithServiceTier(tt.model, tokens, 1, "")
 			require.NoError(t, err)
+			// The USD bucket and total comparisons allow
+			// token-rate multiplication rounding.
 			require.InDelta(t, base.TotalCost, noTier.TotalCost, 1e-12)
 		})
 		t.Run(tt.model+"/default_equals_standard", func(t *testing.T) {
 			base := standard(tt.model)
 			defaultCost, err := billing.CalculateCostWithServiceTier(tt.model, tokens, 1, "default")
 			require.NoError(t, err)
+			// The USD bucket and total comparisons allow
+			// token-rate multiplication rounding.
 			require.InDelta(t, base.TotalCost, defaultCost.TotalCost, 1e-12)
 			require.InDelta(t, base.InputCost, defaultCost.InputCost, 1e-12)
 			require.InDelta(t, base.OutputCost, defaultCost.OutputCost, 1e-12)
@@ -93,6 +113,9 @@ func TestOpenAIFastBillingUsesExplicitCatalogRates(t *testing.T) {
 	}
 }
 
+// TestOpenAIFastBilling_FastMultiplierOverridesCatalogRates adds a 1.7 factor
+// to a price record with explicit twofold priority rates. It checks that the
+// factor wins, then removing it restores the explicit rates.
 func TestOpenAIFastBilling_FastMultiplierOverridesCatalogRates(t *testing.T) {
 	svc := billingtestkit.Calculator(nil, map[string]*billingpricing.ModelPricing{})
 	t.Parallel()
@@ -106,6 +129,8 @@ func TestOpenAIFastBilling_FastMultiplierOverridesCatalogRates(t *testing.T) {
 		CacheReadPricePerTokenPriority: 1e-6,
 	}
 	pricing := catalog
+	// These catalog rates use an absolute USD-per-token tolerance
+	// for floating-point rounding.
 	require.InDelta(t, 10e-6, pricing.InputPricePerTokenPriority, 1e-12)
 	require.InDelta(t, 60e-6, pricing.OutputPricePerTokenPriority, 1e-12)
 
@@ -117,17 +142,27 @@ func TestOpenAIFastBilling_FastMultiplierOverridesCatalogRates(t *testing.T) {
 	fast := svc.ComputeTokenBreakdown(pricing, tokens, 1, "fast", false)
 	priority := svc.ComputeTokenBreakdown(pricing, tokens, 1, "priority", false)
 
+	// The USD bucket and total comparisons allow
+	// token-rate multiplication rounding.
 	require.InDelta(t, standard.TotalCost*1.7, fast.TotalCost, 1e-9)
 	require.InDelta(t, fast.TotalCost, priority.TotalCost, 1e-12)
 
+	// The price record is copied by value. Clearing FastMultiplier on the copy
+	// leaves the source pointer intact, so the next calculation checks
+	// explicit priority pricing.
 	withoutOverride := *pricing
 	withoutOverride.FastMultiplier = nil
 	enforced := svc.ComputeTokenBreakdown(&withoutOverride, tokens, 1, "fast", false)
+	// The USD bucket and total comparisons allow
+	// token-rate multiplication rounding.
 	require.InDelta(t, standard.TotalCost*2, enforced.TotalCost, 1e-9,
 		"without FastMultiplier use the explicit catalog prices")
 }
 
-// TestModelNameDoesNotCreateCommercialRules checks that names alone add no tier or cache multipliers.
+// TestModelNameDoesNotCreateCommercialRules resolves four named catalog
+// entries containing ordinary input and output prices. It checks absent
+// commercial multipliers, absent cache-write pricing, and unchanged input cost
+// for priority and flex tiers.
 func TestModelNameDoesNotCreateCommercialRules(t *testing.T) {
 	for _, model := range []string{"gpt-5.5", "gpt-5.6-sol", "claude-fable-5-1", "deepseek-v4-pro"} {
 		raw := &billingpricing.CatalogModelPricing{InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6}
@@ -139,6 +174,8 @@ func TestModelNameDoesNotCreateCommercialRules(t *testing.T) {
 		require.Zero(t, price.CacheCreationPricePerToken)
 		for _, tier := range []string{"priority", "flex"} {
 			cost := billingpricing.ComputeTokenBreakdown(price, billingpricing.UsageTokens{InputTokens: 100}, 1, tier, false)
+			// The USD bucket and total comparisons allow
+			// token-rate multiplication rounding.
 			require.InDelta(t, 100e-6, cost.TotalCost, 1e-12)
 		}
 	}

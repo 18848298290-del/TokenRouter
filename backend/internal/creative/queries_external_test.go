@@ -11,6 +11,14 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// Public output fixtures distinguish metadata expiry from missing transient
+// bytes and from an available image. Owned task lookups run before output
+// access, while history returns indexed MIME metadata used by the browser to
+// associate each task with its local image.
+
+// TestCreativeOwnershipEnforced supplies a task owned by user ninety-nine
+// while user seven queries details, content, and acknowledgment. All three
+// return not found, and the owner still reads its task ID.
 func TestCreativeOwnershipEnforced(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -35,6 +43,9 @@ func TestCreativeOwnershipEnforced(t *testing.T) {
 	require.Equal(t, runID, got.ID)
 }
 
+// TestCreativeGetOutputContentExpiresToResultLost seeds succeeded metadata
+// with a past transient deadline. Content returns the expiry error and the
+// fake task changes to result_lost before any successful delivery.
 func TestCreativeGetOutputContentExpiresToResultLost(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -64,6 +75,9 @@ func TestCreativeGetOutputContentExpiresToResultLost(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusResultLost, repo.runs[runID].Status)
 }
 
+// TestCreativeGetOutputContentMissingTransientToResultLost seeds unexpired
+// succeeded metadata with no stored bytes. It checks the result-lost error and
+// task downgrade despite that still-future metadata timestamp.
 func TestCreativeGetOutputContentMissingTransientToResultLost(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -92,6 +106,9 @@ func TestCreativeGetOutputContentMissingTransientToResultLost(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusResultLost, repo.runs[runID].Status)
 }
 
+// TestCreativeGetOutputContentSuccess supplies readable bytes for an owned
+// succeeded output. It checks returned content and PNG MIME and requires the
+// fake task status to stay succeeded.
 func TestCreativeGetOutputContentSuccess(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -108,8 +125,9 @@ func TestCreativeGetOutputContentSuccess(t *testing.T) {
 	require.Equal(t, creative.CreativeRunStatusSucceeded, testassert.MustType[*creativeFakeRunRepo](svc.Repo).runs[runID].Status)
 }
 
-// TestCreativeListRunsIncludesOutputs checks the metadata used to match history entries to local media.
-// Missing-media placeholders also depend on this output metadata.
+// TestCreativeListRunsIncludesOutputs seeds one owned succeeded task and lists
+// its history. The response contains one output with index zero and the saved
+// PNG MIME label.
 func TestCreativeListRunsIncludesOutputs(t *testing.T) {
 	svc := newCreativeTestService()
 	ctx := context.Background()
@@ -124,7 +142,9 @@ func TestCreativeListRunsIncludesOutputs(t *testing.T) {
 	require.Equal(t, "image/png", got.Data[0].Outputs[0].MimeType)
 }
 
-// seedOwnedRun creates an owned task in the requested state with one succeeded output.
+// seedOwnedRun inserts a scoped fake task in the requested state plus one
+// succeeded output with a future deadline. It writes shared fixture maps
+// directly and supplies metadata without storing image bytes.
 func seedOwnedRun(t *testing.T, svc *creative.Public, runID string, userID int64, status string) {
 	t.Helper()
 	repo := testassert.MustType[*creativeFakeRunRepo](svc.Repo)
@@ -153,4 +173,6 @@ func seedOwnedRun(t *testing.T, svc *creative.Public, runID string, userID int64
 	}
 }
 
+// creativeInt64ValuePtr allocates the supplied integer value for optional
+// output metadata in fixtures.
 func creativeInt64ValuePtr(v int64) *int64 { return &v }

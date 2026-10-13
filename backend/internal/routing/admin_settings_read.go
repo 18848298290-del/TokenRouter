@@ -4,18 +4,27 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// AdminReadSettings contains model fallback and marketplace availability display settings.
+// Administrative settings responses parse the same routing keys written by the
+// settings participant. Missing model strings use platform defaults, the
+// fallback flag requires the literal true value, and observation windows are
+// normalized before display.
+
+// AdminReadSettings contains resolved model fallback and marketplace
+// observation values.
 type AdminReadSettings struct {
-	EnableModelFallback                  bool
-	FallbackModelAnthropic               string
-	FallbackModelAntigravity             string
-	FallbackModelGemini                  string
-	FallbackModelOpenAI                  string
-	MarketplaceAvailabilityBucketMinutes int
-	MarketplaceAvailabilityWindowDays    int
+	EnableModelFallback                  bool   // resolved model fallback flag
+	FallbackModelAnthropic               string // resolved Anthropic fallback model
+	FallbackModelAntigravity             string // resolved Antigravity fallback model
+	FallbackModelGemini                  string // resolved Gemini fallback model
+	FallbackModelOpenAI                  string // resolved OpenAI fallback model
+	MarketplaceAvailabilityBucketMinutes int    // availability bucket width in minutes
+	MarketplaceAvailabilityWindowDays    int    // availability window in days
 }
 
-// ReadAdminSettings parses stored model fallback and marketplace availability values.
+// ReadAdminSettings builds administrative routing values from the stored string
+// map. Missing or empty model values use platform defaults; the enable flag
+// requires the literal true string, and invalid window values follow
+// marketplace normalization. Saved model strings retain their whitespace.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 

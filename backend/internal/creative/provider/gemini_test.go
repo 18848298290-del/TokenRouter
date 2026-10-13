@@ -13,7 +13,14 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// TestParseCreativeGeminiImageOutputs parses inlineData from a Gemini generateContent response.
+// Gemini image fixtures encode multiple inline image parts and observe the
+// final retained bytes. Request checks inspect native nesting and explicit
+// thinking controls, while empty candidate content is passed through the
+// shared parser error mapper used by creative execution.
+
+// TestParseCreativeGeminiImageOutputs supplies text and two image parts using
+// alternate MIME spellings. The last image is retained, while an empty
+// candidate array returns a retryable creative error.
 func TestParseCreativeGeminiImageOutputs(t *testing.T) {
 	img := base64.StdEncoding.EncodeToString([]byte("gemini-image-bytes"))
 	body := []byte(fmt.Sprintf(`{
@@ -38,7 +45,9 @@ func TestParseCreativeGeminiImageOutputs(t *testing.T) {
 	require.True(t, upstreamErr.Retryable)
 }
 
-// TestBuildCreativeGeminiRequest checks edit text, reference images, and generation settings.
+// TestBuildCreativeGeminiRequest supplies an edit prompt, source image, size,
+// ratio, and thinking level. It checks generated parts and serialized control
+// nesting, including the false includeThoughts value.
 func TestBuildCreativeGeminiRequest(t *testing.T) {
 	run := creative.CreativeRun{Operation: creative.CreativeOperationEdit, ImageSize: "2K", AspectRatio: "16:9"}
 	payload := creative.CreativeRunPayload{
@@ -66,7 +75,9 @@ func TestBuildCreativeGeminiRequest(t *testing.T) {
 	require.JSONEq(t, `{"contents":[{"parts":[{"text":"重绘"},{"inlineData":{"mimeType":"image/jpeg","data":"c3Jj"}}]}],"generationConfig":{"responseModalities":["TEXT","IMAGE"],"imageConfig":{"imageSize":"2K","aspectRatio":"16:9"},"thinkingConfig":{"thinkingLevel":"high","includeThoughts":false}}}`, string(body))
 }
 
-// TestParseCreativeGeminiImageOutputsUsesFinalImagePart checks selection of the last image part.
+// TestParseCreativeGeminiImageOutputsUsesFinalImagePart supplies two inline
+// images named thought and final in the fixture. It checks that ordered
+// selection returns the last image as the sole output.
 func TestParseCreativeGeminiImageOutputsUsesFinalImagePart(t *testing.T) {
 	thought := base64.StdEncoding.EncodeToString([]byte("thought-image"))
 	final := base64.StdEncoding.EncodeToString([]byte("final-image"))
@@ -78,7 +89,9 @@ func TestParseCreativeGeminiImageOutputsUsesFinalImagePart(t *testing.T) {
 	require.Equal(t, []byte("final-image"), outputs[0].Bytes)
 }
 
-// parseCreativeGeminiImageOutputs converts upstream Gemini parser errors to creative errors.
+// parseCreativeGeminiImageOutputs delegates native image parsing with the
+// creative HTTP error mapper. The shared parser selects the last decodable
+// inline image, and missing image parts become creative status-class errors.
 func parseCreativeGeminiImageOutputs(body []byte) ([]creative.CreativeOutput, error) {
 	return gemininative.ParseImageOutputs(body, func(status int, message string) error { return creative.CreativeHTTPStatusError(status, message) })
 }

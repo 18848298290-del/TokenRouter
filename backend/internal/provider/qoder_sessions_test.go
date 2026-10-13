@@ -10,15 +10,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// qoderSessionTestProvider returns a fresh PAT-backed Qoder COSY record for
+// lifecycle fixtures.
 func qoderSessionTestProvider() *Record {
 	return &Record{ID: 17, Platform: PlatformQoder, Type: ProviderTypeCosy, Credentials: map[string]any{"pat": "fixture"}}
 }
 
+// TestQoderSessionsCallerCancelKeepsSharedBuild cancels the first waiter while
+// its builder remains blocked on a fixture channel. It checks another caller
+// receives the same value after release and the shared callback ran once.
 func TestQoderSessionsCallerCancelKeepsSharedBuild(t *testing.T) {
 	var sessions QoderSessions[*int]
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	value := 42
+	// entered observes the first callback and proceed releases its result;
+	// the
+	// shared context branch remains available for runtime stop
+	// independently of
+	// a waiter cancelling.
 	build := func(ctx context.Context, _ *Record) (*int, time.Time, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
@@ -32,6 +42,10 @@ func TestQoderSessionsCallerCancelKeepsSharedBuild(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	// Observe the shared build's entry before cancelling this waiter;
+	// releasing
+	// proceed afterward checks that another caller can receive the same
+	// completed value.
 	go func() { _, err := sessions.GetSession(ctx, qoderSessionTestProvider(), build); done <- err }()
 	<-entered
 	cancel()
@@ -44,10 +58,18 @@ func TestQoderSessionsCallerCancelKeepsSharedBuild(t *testing.T) {
 	require.NoError(t, sessions.StopContext(context.Background()))
 }
 
+// TestQoderSessionsStopCancelsAndRejectsNewWork starts a builder that returns
+// only after shutdown cancellation. It asserts Stop waits for callback
+// completion, reports an allowed cancellation/stopped result to the waiter, and
+// rejects subsequent builds.
 func TestQoderSessionsStopCancelsAndRejectsNewWork(t *testing.T) {
 	var sessions QoderSessions[*int]
 	entered, finished := make(chan struct{}), make(chan struct{})
 	caller := make(chan error, 1)
+	// Signal callback entry and completion around its cancellation wait, so
+	// a
+	// successful Stop is checked against actual builder return rather than
+	// caller notification.
 	go func() {
 		_, err := sessions.GetSession(context.Background(), qoderSessionTestProvider(), func(ctx context.Context, _ *Record) (*int, time.Time, error) {
 			close(entered)
@@ -74,10 +96,18 @@ func TestQoderSessionsStopCancelsAndRejectsNewWork(t *testing.T) {
 	require.NoError(t, sessions.StopContext(context.Background()))
 }
 
+// TestQoderSessionsStopReportsUnfinishedAndRejectsLateCache keeps a builder
+// blocked while ignoring its context until after Stop times out. It asserts the
+// waiter sees shutdown, late completion leaves cache empty, and repeated Stop
+// retains the first error.
 func TestQoderSessionsStopReportsUnfinishedAndRejectsLateCache(t *testing.T) {
 	var sessions QoderSessions[*int]
 	entered, proceed, completed := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	caller := make(chan error, 1)
+	// Hold a cancellation-insensitive callback behind proceed while Stop
+	// times
+	// out; only release it after the waiter has observed shutdown, exposing
+	// late-cache rejection.
 	go func() {
 		_, err := sessions.GetSession(context.Background(), qoderSessionTestProvider(), func(context.Context, *Record) (*int, time.Time, error) {
 			close(entered)
@@ -97,7 +127,9 @@ func TestQoderSessionsStopReportsUnfinishedAndRejectsLateCache(t *testing.T) {
 	require.ErrorIs(t, <-caller, ErrQoderSessionsStopped)
 	close(proceed)
 	<-completed
-	// Wait for the shared build to unregister before checking that its late result was discarded.
+	// completed observes the builder callback return, while activity also
+	// covers context/generation validation and unregistering; wait for that
+	// later completion before inspecting the discarded cache result.
 	require.Eventually(t, func() bool {
 		sessions.activity.mu.Lock()
 		defer sessions.activity.mu.Unlock()
@@ -109,10 +141,18 @@ func TestQoderSessionsStopReportsUnfinishedAndRejectsLateCache(t *testing.T) {
 	require.Equal(t, stopErr, sessions.StopContext(context.Background()))
 }
 
+// TestQoderAuthorizationStopWaitsAndRejectsCompletion blocks a claimed
+// authorization callback until cancellation arrives. It checks repeated startup
+// does not prevent Stop from draining completion, later polls are rejected, and
+// repeated Stop succeeds after that drain.
 func TestQoderAuthorizationStopWaitsAndRejectsCompletion(t *testing.T) {
 	entered := make(chan struct{})
 	auth := &QoderAuthorization[int]{Store: NewQoderAuthorizationStore[int]()}
 	auth.Store.Set("fixture", &QoderAuthorizationSession[int]{State: "state", Flow: 1, CreatedAt: time.Now()})
+	// Signal an accepted completion before waiting for shutdown, so the
+	// stop
+	// assertion observes a callback that has actually entered its claimed
+	// flow.
 	auth.Complete = func(ctx context.Context, _ int) (*QoderTokenInfo, bool, error) {
 		close(entered)
 		<-ctx.Done()
@@ -121,6 +161,10 @@ func TestQoderAuthorizationStopWaitsAndRejectsCompletion(t *testing.T) {
 	auth.Start()
 	auth.Start()
 	done := make(chan error, 1)
+	// Begin completion in a separate caller and wait for callback entry
+	// before
+	// stopping; this establishes in-flight authorization work that shutdown
+	// must cancel and drain.
 	go func() { _, err := auth.Poll(context.Background(), "fixture", "state", nil); done <- err }()
 	<-entered
 	require.NoError(t, auth.StopContext(context.Background()))

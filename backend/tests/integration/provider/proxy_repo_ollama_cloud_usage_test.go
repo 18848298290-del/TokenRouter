@@ -21,26 +21,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// proxyProviderIDsPayloadMatcher checks provider IDs and their order in an outbox payload.
+// Changing a proxy's connection identity invalidates Ollama usage snapshots on
+// affected providers and writes a scheduling event. SQL mocks check the shared
+// transaction, rollback on event failure, unchanged-identity handling, and
+// chunked provider-ID payloads.
+
+// proxyProviderIDsPayloadMatcher compares ordered provider IDs in JSON
+// scheduler event arguments.
 type proxyProviderIDsPayloadMatcher struct {
-	want []int64
+	// want is retained until sqlmock evaluates the payload. Shared input arrays
+	// can also change these expected IDs when enqueueing normalizes them in place.
+	want []int64 // expected ordered provider IDs
 }
 
-// Match decodes a byte-slice payload and compares its provider IDs with the expected list.
+// Match accepts byte-slice JSON with a provider-ID slice deeply equal to want.
+// Slice order and nil versus empty must match; other value types or decoding
+// errors reject the SQL mock argument.
 func (m proxyProviderIDsPayloadMatcher) Match(value driver.Value) bool {
 	raw, ok := value.([]byte)
 	if !ok {
 		return false
 	}
 	var payload struct {
-		ProviderIDs []int64 `json:"provider_ids"`
+		ProviderIDs []int64 `json:"provider_ids"` // ordered affected-provider ID list
 	}
+	// Treat decoding failure as an argument mismatch so sqlmock reports the
+	// payload with its expectation instead of accepting a partially decoded ID list.
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return false
 	}
 	return reflect.DeepEqual(m.want, payload.ProviderIDs)
 }
 
+// TestProxyUpdateInvalidatesOllamaSnapshotAndEnqueuesOutboxAtomically mocks a
+// proxy host change, affected snapshot IDs, and a scheduling payload. The
+// expected sequence holds proxy mutation, invalidation, and outbox write in one
+// transaction before commit.
 func TestProxyUpdateInvalidatesOllamaSnapshotAndEnqueuesOutboxAtomically(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -78,6 +94,9 @@ func TestProxyUpdateInvalidatesOllamaSnapshotAndEnqueuesOutboxAtomically(t *test
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestProxyUpdateRollsBackWhenOllamaOutboxFails injects an event-insert error
+// after mocked proxy and snapshot changes. The repository returns that error
+// and calls rollback according to the configured SQL sequence.
 func TestProxyUpdateRollsBackWhenOllamaOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -111,6 +130,10 @@ func TestProxyUpdateRollsBackWhenOllamaOutboxFails(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestProxyUpdateSkipsOllamaInvalidationForNonIdentityChange renames a proxy
+// while its connection identity remains equal to the locked row. The mock
+// sequence commits after reloading and permits no snapshot-invalidation or
+// event query.
 func TestProxyUpdateSkipsOllamaInvalidationForNonIdentityChange(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -139,6 +162,10 @@ func TestProxyUpdateSkipsOllamaInvalidationForNonIdentityChange(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// expectProxyUpdateReload registers an Ent proxy reload with the supplied host
+// and authentication fields. The returned row uses fixed HTTP connection values
+// and current timestamps so identity comparisons can proceed after the mocked
+// update.
 func expectProxyUpdateReload(mock sqlmock.Sqlmock, id int64, host, username, password string) {
 	now := time.Now()
 	mock.ExpectQuery(`(?s)SELECT .* FROM "proxies" WHERE "id" = \$1`).
@@ -152,10 +179,15 @@ func expectProxyUpdateReload(mock sqlmock.Sqlmock, id int64, host, username, pas
 		))
 }
 
+// TestEnqueueProxyProviderChangesChunksLargePayloads supplies 1001 ascending
+// provider IDs to enqueueing. SQL expectations require three payloads of 500,
+// 500, and one ID, containing those fixture IDs in ascending order.
 func TestEnqueueProxyProviderChangesChunksLargePayloads(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
+	// Use 1001 ascending IDs so two full 500-ID payloads leave one final ID;
+	// assertions compare the retained slices after enqueueing normalizes input in place.
 	providerIDs := make([]int64, 1001)
 	for i := range providerIDs {
 		providerIDs[i] = int64(i + 1)

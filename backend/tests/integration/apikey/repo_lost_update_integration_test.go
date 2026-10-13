@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// TestRotateCredentialPreservesConcurrentChanges checks in-place rotation, revocation, and invalidation outbox writes.
+// Credential rotation and configuration edits can consume a snapshot older than
+// billing counters or administrator changes. These PostgreSQL suite cases apply
+// newer writes before the stale edit, then check retained fields, selected
+// resets, old-credential rejection, and durable invalidation records.
+
+// TestRotateCredentialPreservesConcurrentChanges loads a snapshot before
+// sequential usage and administrator edits. Rotation retains their persisted
+// values, rejects the old credential, writes both invalidations, and conflicts
+// on reuse.
 func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 	user := s.mustCreateUser("apikey-rotation@example.com")
 	group := s.mustCreateGroup("rotation-group")
@@ -35,6 +43,9 @@ func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 	_, err = s.client.ExecContext(s.ctx, "DELETE FROM auth_cache_invalidation_outbox")
 	s.Require().NoError(err)
 
+	// The stored record has advanced since stale was loaded. Compare the complete
+	// reloaded view after allowing only its credential and update timestamp to
+	// differ.
 	oldCredential := stale.Key
 	stale.Key = "sk-after-rotation"
 	s.Require().NoError(s.repo.RotateCredential(s.ctx, stale, oldCredential))
@@ -51,6 +62,9 @@ func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 	s.Require().NoError(err)
 	s.Require().Equal(key.ID, authKey.ID)
 
+	// Inspect and close each invalidation query before checking the other
+	// credential; both reads share this case transaction and need its result
+	// stream available.
 	for _, credential := range []string{oldCredential, got.Key} {
 		rows, err := s.client.QueryContext(s.ctx, "SELECT COUNT(*) FROM auth_cache_invalidation_outbox WHERE cache_key = $1", apikey.AuthCacheKey(credential))
 		s.Require().NoError(err)
@@ -62,11 +76,15 @@ func (s *APIKeyRepoSuite) TestRotateCredentialPreservesConcurrentChanges() {
 		s.Require().Positive(count, "新旧凭据都必须有持久失效事件")
 	}
 
-	// A second rotation using the stale credential must conflict.
+	// Reuse the credential consumed by the successful rotation to check that a
+	// competing stale request cannot replace the newly stored secret.
 	stale.Key = "sk-losing-rotation"
 	s.Require().ErrorIs(s.repo.RotateCredential(s.ctx, stale, oldCredential), apikey.ErrAPIKeyRotationConflict)
 }
 
+// TestRotateCredentialRejectsDeletedAndManagedKeys attempts rotation with the
+// wrong owner, a managed key, and a deleted key. Each attempt conflicts and the
+// stored credential remains unchanged.
 func (s *APIKeyRepoSuite) TestRotateCredentialRejectsDeletedAndManagedKeys() {
 	user := s.mustCreateUser("apikey-rotation-protected@example.com")
 	key := &apikey.APIKey{UserID: user.ID, Key: "sk-rotation-protected", Name: "protected", Status: billing.StatusActive}
@@ -85,10 +103,9 @@ func (s *APIKeyRepoSuite) TestRotateCredentialRejectsDeletedAndManagedKeys() {
 	s.Require().Equal(oldCredential, got.Key)
 }
 
-// IncrementQuotaUsed and IncrementRateLimitUsage atomically add billing usage.
-// A whole-row edit from a stale snapshot would overwrite those increments.
-// These tests keep usage counters outside the edit mask.
-
+// TestUpdate_DoesNotRevertConcurrentQuotaUsage captures a key before a
+// sequential quota increment. A name-only edit from that stale snapshot retains
+// the recorded usage while applying the new name.
 func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentQuotaUsage() {
 	user := s.mustCreateUser("apikey-lost-update-quota@example.com")
 	key := &apikey.APIKey{
@@ -106,6 +123,7 @@ func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentQuotaUsage() {
 
 	newUsed, err := s.repo.IncrementQuotaUsed(s.ctx, key.ID, 30)
 	s.Require().NoError(err, "IncrementQuotaUsed")
+	// A small tolerance compares the expected persisted quota usage.
 	s.Require().InDelta(30, newUsed, 1e-9)
 
 	stale.Name = "after"
@@ -117,9 +135,13 @@ func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentQuotaUsage() {
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID after update")
 	s.Require().Equal("after", got.Name, "declared column must still be written")
+	// Use the same numeric tolerance after the stale configuration update.
 	s.Require().InDelta(30, got.QuotaUsed, 1e-9, "quota_used must not be reverted by a stale key edit")
 }
 
+// TestUpdate_DoesNotRevertConcurrentRateLimitUsage captures a key before a
+// sequential spending-window increment. A name-only edit retains the updated
+// five-hour, daily, and weekly usage values.
 func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentRateLimitUsage() {
 	user := s.mustCreateUser("apikey-lost-update-ratelimit@example.com")
 	key := &apikey.APIKey{
@@ -145,12 +167,15 @@ func (s *APIKeyRepoSuite) TestUpdate_DoesNotRevertConcurrentRateLimitUsage() {
 
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID after update")
+	// A small tolerance compares all three persisted spending counters.
 	s.Require().InDelta(42, got.Usage5h, 1e-9, "usage_5h must not be reverted by a stale key edit")
 	s.Require().InDelta(42, got.Usage1d, 1e-9, "usage_1d must not be reverted by a stale key edit")
 	s.Require().InDelta(42, got.Usage7d, 1e-9, "usage_7d must not be reverted by a stale key edit")
 }
 
-// TestUpdate_StillResetsUsageWhenDeclared checks usage resets selected by the update mask.
+// TestUpdate_StillResetsUsageWhenDeclared first records quota and spending
+// usage, then selects both reset fields. Reloading shows zero counters and a
+// cleared five-hour window start.
 func (s *APIKeyRepoSuite) TestUpdate_StillResetsUsageWhenDeclared() {
 	user := s.mustCreateUser("apikey-reset-usage@example.com")
 	key := &apikey.APIKey{

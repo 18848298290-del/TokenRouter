@@ -12,8 +12,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestUsageObservationDatabaseIdentity exercises PostgreSQL identity comparisons for usage writes.
-// Clearing a rate limit also requires the observed rate-limit and overload state to match.
+// Usage observations compare the queried credential identity before Extra or
+// health writes. Sequential PostgreSQL changes distinguish credential and proxy
+// conflicts from renames, while rate-limit clearing also checks the observed
+// window and overload state and notification failures leave health updates
+// applied.
+
+// TestUsageObservationDatabaseIdentity observes Qoder credentials before
+// sequential changes and applies Extra, rate-limit, or clearing writes.
+// Identity conflicts reject all actions, while clearing additionally requires
+// the observed window and overload state and permits harmless renames.
 func TestUsageObservationDatabaseIdentity(t *testing.T) {
 	for _, action := range []string{"extra", "limit", "clear"} {
 		t.Run(action, func(t *testing.T) {
@@ -21,6 +29,7 @@ func TestUsageObservationDatabaseIdentity(t *testing.T) {
 				t.Run(change, func(t *testing.T) {
 					ctx := context.Background()
 					client := testEntClient(t)
+					// Use stable rate-limit instants for the observed-window SQL comparisons.
 					now := time.Now().UTC().Truncate(time.Millisecond)
 					until := now.Add(time.Hour)
 					row, err := client.Provider.Create().SetName("test-observation").SetPlatform(provider.PlatformQoder).SetType(provider.ProviderTypeCosy).SetStatus(provider.StatusActive).SetCredentials(map[string]any{"security_oauth_token": "observed"}).SetRateLimitedAt(now).SetRateLimitResetAt(until).Save(ctx)
@@ -95,6 +104,7 @@ func TestUsageObservationDatabaseIdentity(t *testing.T) {
 							require.Equal(t, before.RateLimitResetAt, after.RateLimitResetAt)
 							require.Equal(t, eventsBefore, eventsAfter, "观测型 Extra 仍不新增 outbox")
 						case "limit":
+							// Compare the extended persisted deadline at this fixture's millisecond tolerance.
 							require.WithinDuration(t, until.Add(2*time.Hour), *after.RateLimitResetAt, time.Millisecond)
 						case "clear":
 							require.Nil(t, after.RateLimitResetAt)

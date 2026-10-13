@@ -1,7 +1,5 @@
 package batchimage_test
 
-// This scenario covers submission, processing, settlement, download, and cleanup across the batchimage package.
-
 import (
 	"archive/zip"
 	"bytes"
@@ -21,16 +19,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// A batch with one image result and one provider failure crosses submission,
+// polling, indexing, capture, public listing and download before output
+// deletion. The smoke scenario shares in-memory state across those services
+// and inspects recorded funding actions and public resource filtering at each
+// stage.
+
+// The compile-time assertion keeps the smoke backend compatible with the
+// provider operations used by this lifecycle scenario.
 var _ batchimageprovider.BatchImageProvider = (*batchImageSmokeProvider)(nil)
 
+// batchImageSmokeProvider supplies ordered upstream observations and records
+// submission and cleanup calls.
 type batchImageSmokeProvider struct {
-	name           string
-	states         []batchimage.BatchProviderInternalState
-	submits        []batchimage.BatchImageInput
-	result         string
-	cleanupTargets []batchimage.CleanupTarget
+	name           string                                  // registered smoke backend name
+	states         []batchimage.BatchProviderInternalState // remaining provider observation sequence
+	submits        []batchimage.BatchImageInput            // observed expanded submission inputs
+	result         string                                  // provider result JSONL text
+	cleanupTargets []batchimage.CleanupTarget              // observed resource deletion targets
 }
 
+// TestBatchImageMVPFlow submits a two-item batch, observes running and
+// successful provider states, then settles its indexed outcomes. It checks
+// downloads and archive contents before repeated output deletion prevents
+// both download paths.
 func TestBatchImageMVPFlow(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeBatchImageRepository()
@@ -185,10 +197,15 @@ func TestBatchImageMVPFlow(t *testing.T) {
 	require.Empty(t, afterDelete.Bytes())
 }
 
+// batchImageSmokeResultJSONL returns one image and one safety failure for the
+// smoke task.
 func batchImageSmokeResultJSONL() string {
 	return `{"key":"cover_001","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"c21va2UtcG5n"}}]}}]}}` + "\n" + `{"key":"cover_002","status":{"code":3,"message":"blocked by safety policy"}}` + "\n"
 }
 
+// mustMarshalBatchImageSmokeJSON encodes a public smoke value and fails its
+// calling test when serialization fails. The returned text is screened for
+// internal provider references by shared public-response assertions.
 func mustMarshalBatchImageSmokeJSON(t *testing.T, value any) string {
 	t.Helper()
 	body, err := json.Marshal(value)
@@ -196,6 +213,8 @@ func mustMarshalBatchImageSmokeJSON(t *testing.T, value any) string {
 	return string(body)
 }
 
+// batchImageSmokeZipNames lists archive entry names in their stored ZIP
+// order.
 func batchImageSmokeZipNames(reader *zip.Reader) []string {
 	names := make([]string, 0, len(reader.File))
 	for _, file := range reader.File {
@@ -204,12 +223,18 @@ func batchImageSmokeZipNames(reader *zip.Reader) []string {
 	return names
 }
 
+// Name returns the registered backend label used by the smoke scenario.
 func (p *batchImageSmokeProvider) Name() string { return p.name }
 
+// SupportsProvider accepts a present schedulable provider for the smoke
+// backend.
 func (p *batchImageSmokeProvider) SupportsProvider(provider *providercore.Record) bool {
 	return provider != nil && provider.IsSchedulable()
 }
 
+// Submit records the expanded smoke input and returns fixed internal job and
+// file references. The caller saves those references before polling, indexing
+// and cleanup can inspect the shared smoke task.
 func (p *batchImageSmokeProvider) Submit(_ context.Context, _ *batchimage.BatchImageJob, _ *providercore.Record, input batchimage.BatchImageInput) (*batchimage.BatchProviderJob, error) {
 	p.submits = append(p.submits, input)
 	return &batchimage.BatchProviderJob{
@@ -219,6 +244,9 @@ func (p *batchImageSmokeProvider) Submit(_ context.Context, _ *batchimage.BatchI
 	}, nil
 }
 
+// Get consumes the next configured observation or reports success after the
+// sequence is empty. Its raw state is uppercase and its output reference
+// remains fixed for later indexing and download.
 func (p *batchImageSmokeProvider) Get(context.Context, *batchimage.BatchImageJob, *providercore.Record) (*batchimage.BatchProviderStatus, error) {
 	state := batchimage.BatchProviderStateSucceeded
 	if len(p.states) > 0 {
@@ -233,14 +261,20 @@ func (p *batchImageSmokeProvider) Get(context.Context, *batchimage.BatchImageJob
 	}, nil
 }
 
+// Cancel accepts upstream cancellation requests made against the smoke task
+// fixture.
 func (p *batchImageSmokeProvider) Cancel(context.Context, *batchimage.BatchImageJob, *providercore.Record) error {
 	return nil
 }
 
+// OpenResult returns a closable reader over the retained smoke JSONL and its
+// content type. Indexing and download consumers own closing their reader,
+// while the fixture retains its source string.
 func (p *batchImageSmokeProvider) OpenResult(context.Context, *batchimage.BatchImageJob, *providercore.Record) (io.ReadCloser, string, error) {
 	return io.NopCloser(strings.NewReader(p.result)), "application/jsonl", nil
 }
 
+// Cleanup records the resource target requested by the smoke cleanup service.
 func (p *batchImageSmokeProvider) Cleanup(_ context.Context, _ *batchimage.BatchImageJob, _ *providercore.Record, target batchimage.CleanupTarget) error {
 	p.cleanupTargets = append(p.cleanupTargets, target)
 	return nil

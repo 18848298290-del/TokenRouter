@@ -12,8 +12,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestTierObservationUsesCurrentIdentityAndFieldPatch checks that tier and Drive storage updates preserve admin fields
-// and reject credentials changed during observation or before the configuration lock.
+// Google One tier observations update selected credential and Drive storage
+// fields while administrator changes may occur during observation or
+// validation. Sequential PostgreSQL callbacks check identity rejection, field
+// merging, cancellation, and rollback when the configuration outbox write
+// fails.
+
+// TestTierObservationUsesCurrentIdentityAndFieldPatch changes administrator
+// fields during a Google One observation or its validation hook. Successful
+// persistence merges tier and Drive values; identity changes, cancellation, and
+// event failure retain the existing tier.
 func TestTierObservationUsesCurrentIdentityAndFieldPatch(t *testing.T) {
 	for _, scenario := range []string{"success", "changed_during_observation", "changed_before_lock", "outbox_failure", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -39,6 +47,8 @@ func TestTierObservationUsesCurrentIdentityAndFieldPatch(t *testing.T) {
 			admin := provider.NewAdmin(store, options)
 			observed, err := admin.GetProvider(ctx, row.ID)
 			require.NoError(t, err)
+			// The injected observation first commits an administrator Extra edit;
+			// later persistence must merge the Drive fields with that stored setting.
 			tier := provider.NewTierManagement(admin, provider.TierManagementOptions{Observe: func(context.Context, *provider.Record) (provider.GoogleOneTierObservation, error) {
 				require.NoError(t, client.Provider.UpdateOneID(row.ID).SetExtra(map[string]any{"admin_setting": "new"}).Exec(ctx))
 				if scenario == "changed_during_observation" {

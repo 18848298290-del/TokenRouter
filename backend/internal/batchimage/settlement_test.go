@@ -18,16 +18,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-type resultUsageRepository struct {
-	usage.UsageLogRepository
+// Settlement can resume after capture or refund succeeds but a later job
+// transition fails. These in-memory funding and repository fixtures exercise
+// stable action identities, submitted pricing, outcome validation, bounded
+// retries and usage snapshots, including mixed subscription and wallet
+// allocations and preserved output expiry.
 
-	inserted   bool
-	err        error
-	calls      int
-	lastLog    *usage.UsageLog
-	lastCtxErr error
+// resultUsageRepository records attempted usage writes and supplies the
+// configured repository response.
+type resultUsageRepository struct {
+	usage.UsageLogRepository // unused usage repository methods
+
+	inserted   bool            // configured new usage result
+	err        error           // injected usage write failure
+	calls      int             // usage insertion invocation count
+	lastLog    *usage.UsageLog // last submitted usage pointer
+	lastCtxErr error           // last observed context error
 }
 
+// TestBatchImageSettlementOutputExpiration completes tasks with configured
+// output retention and an existing expiry. It checks the newly scheduled
+// deadline while preserving an expiry already stored before the settlement
+// visit.
 func TestBatchImageSettlementOutputExpiration(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_expire")
@@ -50,6 +62,10 @@ func TestBatchImageSettlementOutputExpiration(t *testing.T) {
 	require.Equal(t, existing, *repo.jobs[second.BatchID].OutputExpiresAt)
 }
 
+// TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly
+// settles mixed successful and failed item counts with retained model and
+// session snapshots. It checks the captured charge, completed metadata and
+// usage mapping while recorded commands omit input content.
 func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_settle")
@@ -93,6 +109,10 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	require.NotContains(t, fmt.Sprintf("%+v", billing.captures[0]), "prompt")
 }
 
+// TestBatchImageSettlementService_RecordsSubscriptionFirstBilling captures a
+// task with recorded subscription and wallet reservations. It checks charged
+// source amounts, the usage allocation count and the subscription identity
+// chosen for mixed-funding reporting.
 func TestBatchImageSettlementService_RecordsSubscriptionFirstBilling(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_subscription_settle")
@@ -129,6 +149,10 @@ func TestBatchImageSettlementService_RecordsSubscriptionFirstBilling(t *testing.
 	require.Len(t, usageLogs.lastLog.BillingAllocations, 2)
 }
 
+// TestBuildBatchImageHoldCommandKeepsTeamBillingSnapshot builds a command
+// whose submitting actor differs from its team payer. The command retains
+// payer, actor and team identities so funding and member usage can address
+// separate users.
 func TestBuildBatchImageHoldCommandKeepsTeamBillingSnapshot(t *testing.T) {
 	job := testSettlingBatchImageJob("imgbatch_team_snapshot")
 	teamID := int64(77)
@@ -144,6 +168,10 @@ func TestBuildBatchImageHoldCommandKeepsTeamBillingSnapshot(t *testing.T) {
 	require.Equal(t, teamID, *cmd.TeamID)
 }
 
+// TestBatchImageBalanceHoldKeepsAPIKeyBillingSnapshot reserves, captures and
+// releases a version-three job in preferred-subscription mode. Each recorded
+// command keeps the submitted funding mode and selected subscription identity
+// across those operations.
 func TestBatchImageBalanceHoldKeepsAPIKeyBillingSnapshot(t *testing.T) {
 	job := testSettlingBatchImageJob("imgbatch_api_key_billing_snapshot")
 	preferredSubscriptionID := int64(89)
@@ -169,6 +197,10 @@ func TestBatchImageBalanceHoldKeepsAPIKeyBillingSnapshot(t *testing.T) {
 	}
 }
 
+// TestBatchImageSettlementService_ZeroSuccessCanComplete settles a task whose
+// indexed items all failed. It checks completed state and one zero-cost
+// capture command, protecting reservation reconciliation even when no
+// successful item is billable.
 func TestBatchImageSettlementService_ZeroSuccessCanComplete(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_zero")
@@ -187,6 +219,10 @@ func TestBatchImageSettlementService_ZeroSuccessCanComplete(t *testing.T) {
 	require.Equal(t, 0.0, billing.captures[0].ActualAmount)
 }
 
+// TestBatchImageSettlementService_CompletedJobReturnsAlreadySettledWithoutBilling
+// starts with a completed record carrying a saved actual cost. Settlement
+// reports AlreadySettled and that cost while the funding fixture records no
+// capture attempt.
 func TestBatchImageSettlementService_CompletedJobReturnsAlreadySettledWithoutBilling(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_done")
@@ -204,6 +240,10 @@ func TestBatchImageSettlementService_CompletedJobReturnsAlreadySettledWithoutBil
 	require.Empty(t, billing.captures)
 }
 
+// TestBatchImageSettlementService_IdempotentAfterBillingCrash marks the
+// capture identity as already applied while the job still waits for
+// settlement. The visit replays capture and completes the record with its
+// expected charge.
 func TestBatchImageSettlementService_IdempotentAfterBillingCrash(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_crash")
@@ -218,12 +258,16 @@ func TestBatchImageSettlementService_IdempotentAfterBillingCrash(t *testing.T) {
 	require.Len(t, billing.captures, 1)
 }
 
+// TestBatchImageSettlementService_ValidationErrors injects invalid stages,
+// counts, missing identities, missing prices and conflicting manifests. The
+// expected categories return before capture, and the task remains outside
+// completed state.
 func TestBatchImageSettlementService_ValidationErrors(t *testing.T) {
 	tests := []struct {
-		name    string
-		mutate  func(*batchimage.BatchImageJob)
-		pricing batchimage.ImagePricer
-		want    error
+		name    string                          // scenario display name
+		mutate  func(*batchimage.BatchImageJob) // scenario setup mutation
+		pricing batchimage.ImagePricer          // injected image pricer
+		want    error                           // expected observable result
 	}{
 		{name: "invalid_status", mutate: func(j *batchimage.BatchImageJob) { j.Status = batchimage.BatchImageJobStatusRunning }, want: batchimage.ErrBatchImageSettlementInvalidStatus},
 		{name: "negative_success_count", mutate: func(j *batchimage.BatchImageJob) { j.SuccessCount = -1 }, want: batchimage.ErrBatchImageSettlementInvalidCounts},
@@ -258,6 +302,10 @@ func TestBatchImageSettlementService_ValidationErrors(t *testing.T) {
 	}
 }
 
+// TestBatchImageSettlementService_CostExceedingHoldDoesNotCharge prices
+// successful items above a legacy job's reservation. It checks the over-hold
+// error, retained settling state and saved diagnostic before any funding
+// capture can occur.
 func TestBatchImageSettlementService_CostExceedingHoldDoesNotCharge(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_cost_over_hold")
@@ -278,6 +326,9 @@ func TestBatchImageSettlementService_CostExceedingHoldDoesNotCharge(t *testing.T
 	require.Equal(t, "SETTLEMENT_COST_EXCEEDS_HOLD", batchimage.BatchImageDerefString(repo.jobs[job.BatchID].LastErrorCode))
 }
 
+// TestBatchImageSettlementService_UsesSubmittedPricingSnapshot supplies a higher
+// live quote beside a stored version-one price snapshot. The charge
+// and capture use the submitted unit price and held total from that record.
 func TestBatchImageSettlementService_UsesSubmittedPricingSnapshot(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_snapshot")
@@ -307,6 +358,10 @@ func TestBatchImageSettlementService_UsesSubmittedPricingSnapshot(t *testing.T) 
 	require.InDelta(t, 0.55, billing.captures[0].HoldAmount, 1e-12)
 }
 
+// TestBatchImageSettlementService_BillingFailureLeavesSettlingAndRecordsError
+// injects a capture timeout into a settling task. The service retains
+// settling state, records its funding diagnostic and returns the
+// billing-failed category for another queue visit.
 func TestBatchImageSettlementService_BillingFailureLeavesSettlingAndRecordsError(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_billing_fail")
@@ -322,6 +377,10 @@ func TestBatchImageSettlementService_BillingFailureLeavesSettlingAndRecordsError
 	require.NotNil(t, billing.captures[0])
 }
 
+// TestBatchImagePipelineProcessor_SettlesQueuedSettlingJob passes a settling
+// record through the combined processor. It checks one capture, completed
+// state and a terminal queue result, protecting the handoff from indexing to
+// funding.
 func TestBatchImagePipelineProcessor_SettlesQueuedSettlingJob(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_pipeline")
@@ -340,6 +399,10 @@ func TestBatchImagePipelineProcessor_SettlesQueuedSettlingJob(t *testing.T) {
 	require.Len(t, billing.captures, 1)
 }
 
+// TestBatchImagePipelineProcessor_RequeuesTransientSettlementFailure returns
+// a temporary capture error through the combined processor. The task stays
+// settling, and the processor returns the default settlement revisit delay
+// with a nonterminal result.
 func TestBatchImagePipelineProcessor_RequeuesTransientSettlementFailure(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_pipeline_retry")
@@ -357,6 +420,10 @@ func TestBatchImagePipelineProcessor_RequeuesTransientSettlementFailure(t *testi
 	require.Equal(t, batchimage.BatchImageJobStatusSettling, repo.jobs[job.BatchID].Status)
 }
 
+// TestBatchImagePipelineProcessor_FailsAndReleasesAfterSettlementRetryLimit
+// injects the final permitted capture failure before retry exhaustion. The
+// task becomes failed, its reservation is released and the combined processor
+// returns a terminal queue result.
 func TestBatchImagePipelineProcessor_FailsAndReleasesAfterSettlementRetryLimit(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_pipeline_retry_exhausted")
@@ -379,6 +446,10 @@ func TestBatchImagePipelineProcessor_FailsAndReleasesAfterSettlementRetryLimit(t
 	require.Equal(t, batchimage.BatchImageReleaseRequestID(job.BatchID), billing.releases[0].RequestID)
 }
 
+// TestBatchImageSettlementRetryExhaustedReleaseIsIdempotentAfterTransitionFailure
+// fails the status transition after the exhausted task's refund. A later
+// visit retries the same release identity, records only one applied funding
+// action and then fails the task.
 func TestBatchImageSettlementRetryExhaustedReleaseIsIdempotentAfterTransitionFailure(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_retry_exhausted_transition_fail")
@@ -404,6 +475,10 @@ func TestBatchImageSettlementRetryExhaustedReleaseIsIdempotentAfterTransitionFai
 	require.Len(t, billing.seen, 1)
 }
 
+// TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases repeats
+// an over-hold validation failure until the limit. It checks no capture, one
+// refund and the original RequestHash shared by terminal release paths after
+// failure.
 func TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_over_hold_exhausted")
@@ -419,15 +494,17 @@ func TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases(t *testi
 	billing := &fakeBatchImageBillingRepo{}
 	svc := newBatchSettlementFixture(repo, billing, nil, &fakeBatchImagePricingResolver{unitPrice: 0.50}, nil,
 
-		// The first N-1 failures return an error for the worker to retry.
 		nil)
 
+	// Earlier failures keep this task settling so the same held reservation is
+	// available when the persisted retry count eventually reaches its limit.
 	for range batchimage.BatchImageSettlementMaxRetries - 1 {
 		_, err := svc.Settle(context.Background(), job.BatchID)
 		require.ErrorIs(t, err, batchimage.ErrBatchImageSettlementCostExceedsHold)
 		require.Equal(t, batchimage.BatchImageJobStatusSettling, repo.jobs[job.BatchID].Status)
 	}
-	// Reaching the retry limit releases the reservation and fails the job.
+	// This visit crosses the persisted retry limit; refund must precede terminal
+	// failure so exhausting the budget cannot strand the task reservation.
 	_, err := svc.Settle(context.Background(), job.BatchID)
 	require.ErrorIs(t, err, batchimage.ErrBatchImageSettlementBillingFailed)
 	require.Equal(t, batchimage.BatchImageJobStatusFailed, repo.jobs[job.BatchID].Status)
@@ -439,6 +516,10 @@ func TestBatchImageSettlementService_CostExceedsHoldExhaustsAndReleases(t *testi
 	require.Equal(t, requestHash, billing.releases[0].RequestPayloadHash)
 }
 
+// TestBatchImageSettlementService_InvalidCountsExhaustsAndReleases repeats
+// inconsistent indexed counts until settlement exhaustion. The final visit
+// fails the task and releases funds using the original request fingerprint
+// while capture remains unused.
 func TestBatchImageSettlementService_InvalidCountsExhaustsAndReleases(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_bad_counts_exhausted")
@@ -463,16 +544,24 @@ func TestBatchImageSettlementService_InvalidCountsExhaustsAndReleases(t *testing
 	require.Equal(t, requestHash, billing.releases[0].RequestPayloadHash)
 }
 
+// TestReleaseBatchImageBalanceHold_TreatsFingerprintConflictAsReleased
+// injects the historical release fingerprint-conflict category from funding.
+// The wrapper records a release attempt and returns successfully, protecting
+// the compatibility handling for that existing action identity.
 func TestReleaseBatchImageBalanceHold_TreatsFingerprintConflictAsReleased(t *testing.T) {
 	job := testSettlingBatchImageJob("imgbatch_release_conflict")
-	// A historical release used manifestHash. Releasing with RequestHash conflicts
-	// with the same request ID, but succeeds idempotently because funds were returned.
+	// Inject the conflict category directly. This fixture records the attempted
+	// release but does not simulate a prior committed funding transaction.
 	billing := &fakeBatchImageBillingRepo{releaseErr: billingcore.ErrUsageBillingRequestConflict}
 	err := (batchimage.Funding{Store: billing}).Release(context.Background(), job, "request-hash")
 	require.NoError(t, err)
 	require.Len(t, billing.releases, 1)
 }
 
+// TestBatchImageSettlementManifestHash changes job timestamps and then
+// successful counts before recomputing the manifest. It checks timestamp
+// independence and count sensitivity, and confirms the returned digest
+// remains distinct from sample input content.
 func TestBatchImageSettlementManifestHash(t *testing.T) {
 	job := testSettlingBatchImageJob("imgbatch_hash")
 	first := batchimage.BuildBatchImageSettlementManifestHash(job)
@@ -488,6 +577,10 @@ func TestBatchImageSettlementManifestHash(t *testing.T) {
 	require.NotContains(t, batchimage.BuildBatchImageSettlementManifestHash(job), promptOrBase64)
 }
 
+// TestBatchImageSettlementBillingRequestIDs settles one task twice and
+// another task once. It checks two distinct batch-derived capture identities
+// and two deduplication entries, protecting completed replay and separation
+// between jobs.
 func TestBatchImageSettlementBillingRequestIDs(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	first := testSettlingBatchImageJob("imgbatch_unique_1")
@@ -511,6 +604,9 @@ func TestBatchImageSettlementBillingRequestIDs(t *testing.T) {
 	require.Len(t, billing.seen, 2)
 }
 
+// testSettlingBatchImageJob builds a legacy settling task with fixed owner,
+// provider references, item counts and a funded estimate. Tests mutate its
+// snapshots directly to exercise validation, pricing or recovery outcomes.
 func testSettlingBatchImageJob(batchID string) *batchimage.BatchImageJob {
 	apiKeyID := int64(321)
 	providerID := int64(654)
@@ -537,6 +633,10 @@ func testSettlingBatchImageJob(batchID string) *batchimage.BatchImageJob {
 	}
 }
 
+// Create records the usage pointer, invocation count and current context
+// error before returning configured insertion and error values. The fixture
+// retains the supplied record for assertions after the recorder callback
+// runs.
 func (s *resultUsageRepository) Create(ctx context.Context, log *usage.UsageLog) (bool, error) {
 	s.calls++
 	s.lastLog = log

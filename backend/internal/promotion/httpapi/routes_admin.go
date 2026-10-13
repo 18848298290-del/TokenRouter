@@ -4,8 +4,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterAffiliateRoutes adds admin affiliate routes to a group with app-installed authentication, rate
-// limits, and audit middleware.
+// Affiliate administration exposes relationship, rebate, and transfer records
+// together with per-user code and rate edits. Promo administration manages
+// registration grant codes and their receipts; both route groups inherit
+// security middleware installed by the application.
+
+// RegisterAffiliateRoutes mounts affiliate administration and audit-record
+// endpoints under admin's affiliates group.
+//
+// Callers supply initialized handlers and install the application's
+// administrator authentication, rate limits, and audit middleware on the
+// parent group.
 func RegisterAffiliateRoutes(admin *gin.RouterGroup, endpoint *AffiliateHandler) {
 	affiliates := admin.Group("/affiliates")
 	{
@@ -21,8 +30,11 @@ func RegisterAffiliateRoutes(admin *gin.RouterGroup, endpoint *AffiliateHandler)
 	}
 }
 
-// RegisterPromoCodeRoutes adds admin promo routes to a group with app-installed authentication, rate
-// limits, and audit middleware.
+// RegisterPromoCodeRoutes mounts registration Promo code CRUD and usage-list
+// endpoints under admin's promo-codes group.
+//
+// Callers supply initialized handlers and the application's administrator
+// authentication, rate limits, and audit middleware.
 func RegisterPromoCodeRoutes(admin *gin.RouterGroup, endpoint *PromoHandler) {
 	promoCodes := admin.Group("/promo-codes")
 	{

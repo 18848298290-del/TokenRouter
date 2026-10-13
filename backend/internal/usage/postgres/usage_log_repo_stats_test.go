@@ -13,7 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// TestProviderReportOwnsJITTransaction checks transaction-local JIT settings and cleanup on errors.
+// Summary and endpoint SQL must retain user-charge meanings even when a provider
+// filter narrows records. Mocked reports check transaction-local JIT recovery,
+// endpoint-source dispatch, model and transport predicates, and platform cost
+// accumulation while keeping provider expense separate from actual_cost.
+
+// TestProviderReportOwnsJITTransaction injects successful and failed report
+// queries on a pool-backed store. It checks local JIT setup followed by commit
+// on success or rollback on failure.
 func TestProviderReportOwnsJITTransaction(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		db, mock := newSQLMock(t)
@@ -38,7 +45,9 @@ func TestProviderReportOwnsJITTransaction(t *testing.T) {
 	}
 }
 
-// TestStatsEndpointSourceQueries checks that unselected endpoint dimensions issue no query.
+// TestStatsEndpointSourceQueries selects all or one endpoint dimension for a raw
+// summary. It checks only selected detail queries execute and only their
+// corresponding response lists are populated.
 func TestStatsEndpointSourceQueries(t *testing.T) {
 	for _, source := range []string{"", "inbound", "upstream", "path"} {
 		db, mock := newSQLMock(t)
@@ -75,10 +84,13 @@ func TestStatsEndpointSourceQueries(t *testing.T) {
 	}
 }
 
+// TestResolveEndpointColumn supplies inbound, upstream, path, empty, and unknown
+// labels. It checks fixed SQL expressions and inbound selection for unsupported
+// labels, keeping caller text out of identifiers.
 func TestResolveEndpointColumn(t *testing.T) {
 	tests := []struct {
-		endpointType string
-		want         string
+		endpointType string // supplied endpoint grouping label
+		want         string // expected fixed SQL expression
 	}{
 		{"inbound", "ul.inbound_endpoint"},
 		{"upstream", "ul.upstream_endpoint"},
@@ -95,6 +107,9 @@ func TestResolveEndpointColumn(t *testing.T) {
 	}
 }
 
+// TestProviderFilteredEndpointStatsKeepUserActualCost supplies unequal base cost
+// and user charges under provider scope. It checks inbound, upstream, and path
+// queries retain actual_cost and decode distinct monetary values.
 func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -103,7 +118,8 @@ func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	providerID := int64(3667)
 	actualExpr := regexp.QuoteMeta("COALESCE(SUM(actual_cost), 0) as actual_cost")
 
-	// Inbound, upstream, and full-path aggregates use user charges.
+	// Supply a user charge far above base cost for each endpoint shape, making a
+	// provider-cost substitution fail the same decoded-value assertions.
 	for _, endpoint := range []string{"/v1/chat/completions", "/api/v1/coding/chat", "/v1/chat/completions -> /api/v1/coding/chat"} {
 		mock.ExpectQuery("(?s)SELECT.*"+actualExpr+".*provider_id = \\$3").
 			WithArgs(start, end, providerID).
@@ -118,6 +134,8 @@ func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	paths, err := repo.getEndpointPathStatsWithFilters(context.Background(), start, end, 0, 0, providerID, 0, 0, "", "", nil, nil, nil, "", false, false, nil)
 	require.NoError(t, err)
 
+	// Apply one absolute tolerance to monetary readback in all three endpoint
+	// shapes, allowing decimal-to-float conversion differences.
 	for _, rows := range [][]EndpointStat{inbound, upstream, paths} {
 		require.Len(t, rows, 1)
 		require.InDelta(t, 530.797, rows[0].ActualCost, 0.000001)
@@ -126,6 +144,9 @@ func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestGeminiUsageTotalsBatchUsesProviderCost supplies mocked Flash/Pro expense
+// and request totals. It checks both SQL cost expressions use recorded provider
+// bases/multipliers and decodes the separate model-category results.
 func TestGeminiUsageTotalsBatchUsesProviderCost(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -134,7 +155,9 @@ func TestGeminiUsageTotalsBatchUsesProviderCost(t *testing.T) {
 	providerID := int64(3667)
 	providerCostExpr := regexp.QuoteMeta("COALESCE(provider_stats_cost, total_cost) * COALESCE(provider_rate_multiplier, 1)")
 
-	// Batch and single-provider model aggregates use provider costs.
+	// The mocked batch contains separate Flash/Pro expense expressions; matching
+	// both recorded-base formulas makes accidental actual-charge substitution
+	// observable.
 	mock.ExpectQuery("(?s)"+providerCostExpr+".*"+providerCostExpr+".*FROM usage_logs").
 		WithArgs(sqlmock.AnyArg(), start, end).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -146,11 +169,15 @@ func TestGeminiUsageTotalsBatchUsesProviderCost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3), totals[providerID].FlashRequests)
 	require.Equal(t, int64(2), totals[providerID].ProRequests)
+	// Compare both decoded expense values with the same absolute float tolerance.
 	require.InDelta(t, 2, totals[providerID].FlashCost, 0.000001)
 	require.InDelta(t, 10, totals[providerID].ProCost, 0.000001)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetStatsWithFiltersRequestedModelSource selects internal
+// requested-model filtering. It checks summary and endpoint queries carry the
+// same model value and the mocked request total reaches the response.
 func TestUsageLogRepositoryGetStatsWithFiltersRequestedModelSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -190,6 +217,9 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestedModelSource(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetStatsWithFiltersRequestTypePriority supplies
+// conflicting sync and stream selectors. It checks all raw queries use sync
+// compatibility and decodes token buckets plus allocated provider cost.
 func TestUsageLogRepositoryGetStatsWithFiltersRequestTypePriority(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -236,6 +266,9 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestTypePriority(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestUsageLogRepositoryGetBatchUserUsageStatsSplitsByEffectivePlatform supplies
+// several platforms and a null label for one actor. It checks sums include every
+// row while named breakdowns omit the null platform.
 func TestUsageLogRepositoryGetBatchUserUsageStatsSplitsByEffectivePlatform(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
@@ -257,6 +290,8 @@ func TestUsageLogRepositoryGetBatchUserUsageStatsSplitsByEffectivePlatform(t *te
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	require.Len(t, stats, 2)
+	// Allow float accumulation differences while checking range and today charges
+	// for both actors and the accompanying platform entries.
 	require.InDelta(t, 6.5, stats[1].TotalActualCost, 0.000001)
 	require.InDelta(t, 2.25, stats[1].TodayActualCost, 0.000001)
 	require.Equal(t, []PlatformUsage{
@@ -271,11 +306,16 @@ func TestUsageLogRepositoryGetBatchUserUsageStatsSplitsByEffectivePlatform(t *te
 	}, stats[2].ByPlatform)
 }
 
+// TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsProviderCost requests an
+// unrestricted summary with no provider selector. It checks provider expense
+// remains allocated alongside distinct cache-creation/read totals in the decoded
+// result.
 func TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsProviderCost(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &Store{sql: db}
 
-	// TotalProviderCost is also returned when ProviderID is unset.
+	// Global selected rows still carry provider expense. Leave ProviderID unset so
+	// the test catches response omission tied incorrectly to provider-only scope.
 	filters := usage.UsageLogFilters{}
 
 	mock.ExpectQuery("FROM usage_logs").

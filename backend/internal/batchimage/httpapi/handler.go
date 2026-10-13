@@ -20,43 +20,124 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Batch image requests identify the job owner from the authenticated API key
+// and carry a separate billing-user choice into the use cases. JSON parsing
+// precedes owner lookup on submission, while model discovery expands available
+// composite groups and prefixes each returned model with its group binding.
+// Exact aliases retain every target model's platform entry.
+//
+// Downloads keep admitted request activity alive through response writing.
+// Item responses close their returned content stream and record completion
+// after a successful copy. ZIP responses may fail after output has begun, when
+// an error response would compete with archive bytes. Download-recording errors are
+// logged after delivery, leaving response completion separate from metadata
+// persistence.
+
+// BatchImageHandler translates authenticated gateway requests into batch image
+// use cases and streamed download responses.
 type BatchImageHandler struct {
-	enter    func() (func(), error)
-	service  UseCases
-	download DownloadUseCases
-	cleanup  CleanupUseCases
-	access   AccessPorts
+	// enter is optional and configured by BindActivity before requests begin.
+	// When present, every route releases its successful admission after response
+	// handling, including stream consumption and closure.
+	enter func() (func(), error) // request activity admission callback
+	// service, download, and cleanup are retained dependencies for the same
+	// public job identity. Configure them before serving and keep their backing
+	// stores and provider bindings available while handlers run.
+	service  UseCases         // batch job management use cases
+	download DownloadUseCases // streamed content download use cases
+	cleanup  CleanupUseCases  // owned output cleanup use cases
+	access   AccessPorts      // authenticated request value callbacks
 }
 
-// AccessPorts reads the authenticated request snapshot supplied by gateway middleware.
+// AccessPorts reads authenticated key, billing subscription, and session
+// values supplied by gateway middleware.
 type AccessPorts struct {
-	Key                   func(*gin.Context) (*apikey.APIKey, bool)
-	PreferredSubscription func(*gin.Context) (*billing.UserSubscription, bool)
-	SessionID             func(*gin.Context) string
+	// Key is called by owner and again during model discovery.
+	// It must be callable and return a stable authenticated key view for this
+	// request's user, key, group, and billing selections.
+	Key func(*gin.Context) (*apikey.APIKey, bool) // authenticated API key lookup
+	// PreferredSubscription is required when a composite key uses subscription
+	// billing. Its false or nil result makes Models return an empty list before
+	// querying any binding.
+	PreferredSubscription func(*gin.Context) (*billing.UserSubscription, bool) // selected billing subscription lookup
+	// SessionID is called by Submit after owner lookup succeeds.
+	// A nonempty returned value replaces the request's session field before the
+	// use case receives its input.
+	SessionID func(*gin.Context) string // request client session identifier
 }
 
+// UseCases supplies owner-scoped job creation, discovery, and management to
+// the HTTP handlers.
 type UseCases interface {
+	// Submit creates or reuses a batch for the supplied owner and idempotency key.
+	// The implementation validates the input and carries the selected billing
+	// mode into the job's funding snapshot.
 	Submit(context.Context, batchimage.BatchImageOwner, batchimage.BatchImageSubmitRequest, string) (*batchimage.BatchImagePublicBatch, error)
+	// Get returns the public job belonging to the supplied user and API key.
+	// Missing, hidden, or differently owned records return an error that the
+	// handler serializes as a batch failure.
 	Get(context.Context, batchimage.BatchImageOwner, string) (*batchimage.BatchImagePublicBatch, error)
+	// List returns the owner's public jobs using the supplied filters and cursor.
+	// The implementation normalizes query values and pagination limits. The handler
+	// forwards Atoi's value after discarding its error: syntax failures yield zero,
+	// while range failures yield a saturated int.
 	List(context.Context, batchimage.BatchImageOwner, batchimage.BatchImageJobsQuery) (*batchimage.BatchImagePublicListResponse, error)
+	// ListModels returns batch-capable model entries for the owner's selected group.
+	// The implementation applies group, provider, and pricing eligibility and returns
+	// a nonnil response on success for handler alias expansion.
 	ListModels(context.Context, batchimage.BatchImageOwner) (*batchimage.BatchImagePublicModelsResponse, error)
+	// ListItems returns public indexed items after checking the job's user and
+	// API key ownership. The implementation interprets status and cursor values
+	// and applies its item pagination limits.
 	ListItems(context.Context, batchimage.BatchImageOwner, string, batchimage.BatchImageItemsQuery) (*batchimage.BatchImagePublicItemsResponse, error)
+	// Cancel requests cancellation of the owner's job and returns its public state.
+	// Cancellation and funding effects follow the use case's lifecycle rules;
+	// errors are returned to the handler for serialization.
 	Cancel(context.Context, batchimage.BatchImageOwner, string) (*batchimage.BatchImagePublicBatch, error)
+	// MarkDownloaded records successful delivery for the owner's visible job.
+	// Handlers call it after response writing succeeds, and a persistence error
+	// is logged because the content response has already been delivered.
 	MarkDownloaded(context.Context, batchimage.BatchImageOwner, string) error
+	// DeleteRecord hides an owner's record when the job's lifecycle permits deletion.
+	// The public use case checks processor completion, and persistence applies its
+	// terminal-state guard while retaining metadata for billing and cleanup.
 	DeleteRecord(context.Context, batchimage.BatchImageOwner, string) error
 }
+
+// DownloadUseCases supplies owner-checked content streams and ZIP output for
+// HTTP response writers.
 type DownloadUseCases interface {
+	// OpenItemContent opens one selected image from an owner's completed job.
+	// It returns content metadata with a stream that the handler closes after
+	// copying; invalid image indexes and unavailable output return errors.
 	OpenItemContent(context.Context, batchimage.BatchImageOwner, string, string, int) (*batchimage.BatchImageContentStream, error)
+	// StreamZip writes the owner's result archive to the supplied writer and
+	// returns progress with any error. Once archive output begins, implementations
+	// return a nonnil result so the handler can distinguish streaming failure
+	// from failure before output.
 	StreamZip(context.Context, batchimage.BatchImageOwner, string, batchimage.BatchImageZipOptions, io.Writer) (*batchimage.BatchImageZipResult, error)
 }
+
+// CleanupUseCases supplies owner-checked output deletion for completed batch
+// image jobs.
 type CleanupUseCases interface {
+	// DeleteOutputsForOwner removes the owner's completed output and returns its
+	// public deletion state. Already deleted output can return the existing state;
+	// unfinished jobs return the use case's deletion-not-ready error.
 	DeleteOutputsForOwner(context.Context, batchimage.BatchImageOwner, string) (*batchimage.BatchImagePublicBatch, error)
 }
 
+// NewBatchImageHandler retains the use cases and request-access callbacks.
+// Callers provide the dependencies used by their registered routes, including
+// Key and submission's SessionID, and bind activity before serving requests.
 func NewBatchImageHandler(service UseCases, download DownloadUseCases, cleanup CleanupUseCases, access AccessPorts) *BatchImageHandler {
 	return &BatchImageHandler{service: service, download: download, cleanup: cleanup, access: access}
 }
 
+// Submit parses a strict JSON request before reading its authenticated owner.
+// It carries a nonempty request session ID and the Idempotency-Key header into
+// submission, writes the public result, and releases any admitted activity
+// when response handling returns.
 func (h *BatchImageHandler) Submit(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -88,6 +169,9 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// Get returns a public job for the authenticated user and API key.
+// It passes the path ID to the owner-scoped use case and serializes lookup
+// or admission errors before writing a successful JSON response.
 func (h *BatchImageHandler) Get(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -111,6 +195,10 @@ func (h *BatchImageHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// List passes owner-scoped job filters and pagination to the listing use case.
+// Limit syntax errors produce zero, while range errors produce a saturated int
+// for downstream normalization. Status, downloaded, time, and cursor values
+// retain their supplied spellings.
 func (h *BatchImageHandler) List(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -126,6 +214,9 @@ func (h *BatchImageHandler) List(c *gin.Context) {
 		BatchImageError(c, apperror.New(apperror.CategoryUnauthorized, "API_KEY_REQUIRED", "API key is required"))
 		return
 	}
+	// Discard parse errors because the listing use case owns pagination bounds.
+	// Syntax failures supply zero and range failures supply a saturated int; those
+	// values then receive the same bounds check as other requested limits.
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	got, err := h.service.List(c.Request.Context(), owner, batchimage.BatchImageJobsQuery{
 		Status:     c.Query("status"),
@@ -143,6 +234,15 @@ func (h *BatchImageHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// Models returns batch model entries available to the authenticated key.
+// Ordinary keys use their selected group; composite keys enumerate bindings
+// available to their user and selected subscription before querying each group.
+//
+// A missing required subscription produces an empty list. Eligible composite
+// groups also need batch-image permission; each group's aliases are expanded
+// before its prefix is added, keeping model and platform entries tied to the
+// binding the client later requests. Any group lookup error aborts the combined
+// response.
 func (h *BatchImageHandler) Models(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -162,6 +262,9 @@ func (h *BatchImageHandler) Models(c *gin.Context) {
 	if apiKey != nil && apiKey.IsComposite {
 		preferredSubscription, ready := h.preferred(c, apiKey)
 		if !ready {
+			// Subscription billing needs its selected subscription to decide group
+			// availability. Missing middleware data yields an empty model list before any
+			// group is queried, preventing unscoped enumeration.
 			c.JSON(http.StatusOK, &batchimage.BatchImagePublicModelsResponse{Object: "list", Data: make([]batchimage.BatchImagePublicModel, 0)})
 			return
 		}
@@ -179,6 +282,8 @@ func (h *BatchImageHandler) Models(c *gin.Context) {
 				return
 			}
 			for _, model := range AppendBatchImageAPIKeyModelAliases(models.Data, apiKey.ModelMapping) {
+				// Attach the binding prefix after alias expansion so each advertised alias
+				// selects the same composite group as its target when a client submits it.
 				model.ID = binding.Prefix + "/" + model.ID
 				out.Data = append(out.Data, model)
 			}
@@ -197,7 +302,16 @@ func (h *BatchImageHandler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
-// AppendBatchImageAPIKeyModelAliases adds aliases using each target model provider as a template.
+// AppendBatchImageAPIKeyModelAliases returns model rows followed by eligible
+// exact aliases, retaining every platform row for each target ID. It copies
+// the input slice's values and leaves the supplied mapping unchanged. Supply
+// trimmed model IDs and normalized mapping targets so availability checks and
+// template lookup address the same spelling.
+//
+// Alias availability is computed from the original model IDs, so appended
+// aliases cannot admit another mapping hop. Templates are indexed by each
+// supplied ID and selected by the mapping's target spelling; every matching
+// template gets the alias ID, preserving multiple platforms for one model.
 func AppendBatchImageAPIKeyModelAliases(models []batchimage.BatchImagePublicModel, mapping map[string]string) []batchimage.BatchImagePublicModel {
 	modelIDs := make([]string, 0, len(models))
 	templates := make(map[string][]batchimage.BatchImagePublicModel)
@@ -205,6 +319,9 @@ func AppendBatchImageAPIKeyModelAliases(models []batchimage.BatchImagePublicMode
 		modelIDs = append(modelIDs, model.ID)
 		templates[model.ID] = append(templates[model.ID], model)
 	}
+	// Keep templates grouped by their original model ID before adding aliases.
+	// One alias then receives every platform row for that target, preventing
+	// duplicate-ID models from losing provider metadata.
 	result := append([]batchimage.BatchImagePublicModel(nil), models...)
 	for _, alias := range apikey.AvailableAPIKeyModelAliases(modelIDs, mapping) {
 		for _, template := range templates[mapping[alias]] {
@@ -215,6 +332,10 @@ func AppendBatchImageAPIKeyModelAliases(models []batchimage.BatchImagePublicMode
 	return result
 }
 
+// Items returns the authenticated owner's item page for the path batch ID.
+// It passes status and cursor through to the use case. Limit syntax errors
+// supply zero and range errors supply a saturated int; the use case then applies
+// its pagination bounds.
 func (h *BatchImageHandler) Items(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -230,6 +351,9 @@ func (h *BatchImageHandler) Items(c *gin.Context) {
 		BatchImageError(c, apperror.New(apperror.CategoryUnauthorized, "API_KEY_REQUIRED", "API key is required"))
 		return
 	}
+	// Discard parse errors because the owner-scoped item use case applies its own
+	// pagination bounds. A syntax failure supplies zero, while an overflow supplies
+	// the int limit for its sign; status and cursor validation stay with that lookup.
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	got, err := h.service.ListItems(c.Request.Context(), owner, c.Param("id"), batchimage.BatchImageItemsQuery{
 		Status: c.Query("status"),
@@ -243,6 +367,9 @@ func (h *BatchImageHandler) Items(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// Cancel asks the use case to cancel the authenticated owner's path job.
+// It serializes the resulting public state or lifecycle error, and any activity
+// admission remains held until that response handling returns.
 func (h *BatchImageHandler) Cancel(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -266,6 +393,14 @@ func (h *BatchImageHandler) Cancel(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// ItemContent streams one image from the authenticated owner's path item.
+// An absent image_index selects zero; malformed numeric input returns the index
+// error. The returned stream is closed when response handling ends.
+//
+// Content headers are set before copying, and download metadata is recorded
+// only after the copy succeeds. Bytes written before a copy error remain in the
+// response, and handling returns without appending a JSON error. The content
+// reader still closes during unwinding, releasing its attached download permit.
 func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -295,6 +430,9 @@ func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 		BatchImageError(c, err)
 		return
 	}
+	// Close the returned stream when copying finishes or fails so the download
+	// use case can release its attached permit. Close errors are discarded after
+	// response handling has chosen its delivery result.
 	defer func() { _ = stream.Reader.Close() }()
 
 	c.Header("Content-Type", stream.ContentType)
@@ -305,15 +443,22 @@ func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 		c.Header("Content-Length", strconv.FormatInt(*stream.ContentLength, 10))
 	}
 	c.Status(http.StatusOK)
+	// Copy errors can follow committed headers or image bytes. Stop delivery
+	// handling at that point and skip download recording, since successful image
+	// completion has not been observed.
 	if _, err := io.Copy(c.Writer, stream.Reader); err != nil {
 		return
 	}
 	h.markDownloadedBestEffort(c, owner)
 }
 
-// markDownloadedBestEffort records download completion after writing the response body.
-// The response is already committed, so failures are logged.
+// markDownloadedBestEffort records delivery after the response body succeeds.
+// It uses the request context, so cancellation can still fail persistence;
+// such failures are logged with the batch ID after response delivery.
 func (h *BatchImageHandler) markDownloadedBestEffort(c *gin.Context, owner batchimage.BatchImageOwner) {
+	// The body has already reached the response writer. Log metadata failures
+	// with the batch ID because a second response cannot repair that completed
+	// delivery or its download marker.
 	if err := h.service.MarkDownloaded(c.Request.Context(), owner, c.Param("id")); err != nil {
 		logging.L().Warn("batch_image.mark_downloaded_failed",
 			zap.String("batch_id", c.Param("id")),
@@ -322,6 +467,14 @@ func (h *BatchImageHandler) markDownloadedBestEffort(c *gin.Context, owner batch
 	}
 }
 
+// Download streams a ZIP archive for the authenticated owner's path batch.
+// It passes the requested item limit and includes a manifest while setting
+// private archive headers before invoking the download use case.
+//
+// Errors before output, or errors with a nil result, are serialized as batch
+// errors. When a nonnil result accompanies an already written response, handling
+// returns with the partial archive; successful completion records download
+// metadata after the archive writer has finished.
 func (h *BatchImageHandler) Download(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -337,6 +490,9 @@ func (h *BatchImageHandler) Download(c *gin.Context) {
 		BatchImageError(c, apperror.New(apperror.CategoryUnauthorized, "API_KEY_REQUIRED", "API key is required"))
 		return
 	}
+	// Forward Atoi's value even on an error: syntax supplies zero and overflow
+	// supplies a saturated int. StreamZip applies its configured cap or default
+	// before opening provider output for archive writing.
 	maxItems, _ := strconv.Atoi(c.Query("max_items"))
 
 	c.Header("Content-Type", "application/zip")
@@ -349,6 +505,9 @@ func (h *BatchImageHandler) Download(c *gin.Context) {
 		IncludeManifest: true,
 	}, c.Writer)
 	if err != nil {
+		// A progress result plus written bytes identifies an archive already in
+		// flight. Return its streaming error without appending JSON to those ZIP bytes;
+		// earlier failures can still use the batch error response.
 		if result == nil || !c.Writer.Written() {
 			BatchImageError(c, err)
 		}
@@ -357,6 +516,9 @@ func (h *BatchImageHandler) Download(c *gin.Context) {
 	h.markDownloadedBestEffort(c, owner)
 }
 
+// DeleteRecord hides an owner's job once the use case permits record deletion.
+// A successful use case returns HTTP 204; ownership, lifecycle, persistence,
+// and activity-admission failures use the batch error response.
 func (h *BatchImageHandler) DeleteRecord(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -379,6 +541,9 @@ func (h *BatchImageHandler) DeleteRecord(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// DeleteOutputs removes output for the authenticated owner's path job.
+// The cleanup use case checks its lifecycle and returns the public deletion
+// state; cleanup or admission failures use the batch error response.
 func (h *BatchImageHandler) DeleteOutputs(c *gin.Context) {
 	if h.enter != nil {
 		done, err := h.enter()
@@ -402,6 +567,10 @@ func (h *BatchImageHandler) DeleteOutputs(c *gin.Context) {
 	c.JSON(http.StatusOK, got)
 }
 
+// owner returns user, key, group, and billing selections from the authenticated
+// key. Missing or nonpositive user/key identities fail lookup; a positive loaded
+// User.ID overrides UserID for the payer, while optional identity pointers
+// remain borrowed from that key.
 func (h *BatchImageHandler) owner(c *gin.Context) (batchimage.BatchImageOwner, bool) {
 	apiKey, ok := h.access.Key(c)
 	if !ok || apiKey == nil || apiKey.ID <= 0 || apiKey.UserID <= 0 {
@@ -422,6 +591,10 @@ func (h *BatchImageHandler) owner(c *gin.Context) (batchimage.BatchImageOwner, b
 	}, true
 }
 
+// BatchImageError writes the nested batch error shape with an HTTP status.
+// Nil or unclassified internal errors receive fixed internal text, and missing
+// jobs receive fixed not-found text; other classified errors retain their
+// application reason and message.
 func BatchImageError(c *gin.Context, err error) {
 	status := infraerrors.ErrorCode(err)
 	code := apperror.Reason(err)
@@ -431,6 +604,9 @@ func BatchImageError(c *gin.Context, err error) {
 		code = "INTERNAL_ERROR"
 		message = "internal error"
 	}
+	// An unclassified internal failure has no stable client reason. Replace its
+	// status and text together so arbitrary diagnostic content does not become the
+	// public batch error message.
 	if status == 0 || (status == http.StatusInternalServerError && strings.TrimSpace(code) == "") {
 		status = http.StatusInternalServerError
 		code = "INTERNAL_ERROR"
@@ -450,6 +626,9 @@ func BatchImageError(c *gin.Context, err error) {
 	})
 }
 
+// preferred returns subscription readiness for composite model discovery.
+// Modes other than subscription need no selected value; subscription mode requires
+// a present nonnil context subscription before bindings can be enumerated.
 func (h *BatchImageHandler) preferred(c *gin.Context, k *apikey.APIKey) (*billing.UserSubscription, bool) {
 	if apikey.APIKeyEffectiveBillingMode(k) != apikey.APIKeyBillingModeSubscription {
 		return nil, true
@@ -461,5 +640,8 @@ func (h *BatchImageHandler) preferred(c *gin.Context, k *apikey.APIKey) (*billin
 	return value, true
 }
 
-// BindActivity installs the shutdown admission check before serving requests; activity includes streamed output.
+// BindActivity installs request admission and completion callbacks before the
+// handler serves requests. A successful enter returns a callable completion
+// function; the handler defers it through response writing, including streamed
+// output, and treats enter errors as stopped-task failures.
 func (h *BatchImageHandler) BindActivity(enter func() (func(), error)) { h.enter = enter }

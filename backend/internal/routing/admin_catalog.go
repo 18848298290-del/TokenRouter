@@ -4,41 +4,88 @@ import (
 	"sort"
 )
 
+// Administrative model lists start from IDs supplied by a provider's configured
+// candidate callback. The catalog sorts that slice, filters candidates, and
+// deduplicates accepted IDs before metadata lookup, so display records reflect
+// provider choices even when the metadata catalog contains unrelated models.
+
+// Administrative catalog variants select the metadata shape consumed by
+// provider-test and model-picker HTTP responses.
 const (
-	CatalogClaude      AdminCatalogKind = "claude"
-	CatalogOpenAI      AdminCatalogKind = "openai"
-	CatalogGemini      AdminCatalogKind = "gemini"
-	CatalogGoogleOne   AdminCatalogKind = "google_one"
-	CatalogAntigravity AdminCatalogKind = "antigravity"
-	CatalogQoder       AdminCatalogKind = "qoder"
-	CatalogGrok        AdminCatalogKind = "grok"
+	CatalogClaude      AdminCatalogKind = "claude"      // Claude model response
+	CatalogOpenAI      AdminCatalogKind = "openai"      // OpenAI model response
+	CatalogGemini      AdminCatalogKind = "gemini"      // Gemini model response
+	CatalogGoogleOne   AdminCatalogKind = "google_one"  // Google One metadata
+	CatalogAntigravity AdminCatalogKind = "antigravity" // Antigravity model response
+	CatalogQoder       AdminCatalogKind = "qoder"       // Qoder model response
+	CatalogGrok        AdminCatalogKind = "grok"        // Grok model response
 )
 
-// AdminCatalogKind identifies the administrative catalog variant.
+// AdminCatalogKind identifies the response shape for an administrative model
+// catalog.
 type AdminCatalogKind string
 
-// AdminCatalogModel contains metadata for the platform-specific HTTP catalog response.
+// AdminCatalogModel contains display metadata serialized by platform-specific
+// administrative model endpoints.
 type AdminCatalogModel struct {
+	// ID is the configured model key; Object is the response object label; Type is
+	// the response record kind; OwnedBy is the owner name; DisplayName is the
+	// model label; CreatedAt is the textual creation timestamp.
 	ID, Object, Type, OwnedBy, DisplayName, CreatedAt string
-	Created                                           int64
+	Created                                           int64 // epoch creation timestamp
 }
+
+// AdminCatalogInput selects the catalog shape and optional candidate
+// eligibility filter.
 type AdminCatalogInput struct {
-	Platform, Site                string
+	// Platform and Site carry the provider identity supplied by callers. Available
+	// uses Platform to choose the response shape, while Site remains unused by
+	// that selection.
+	// Platform identifies the provider platform; Site retains the provider site.
+	Platform, Site string
+	// OAuth and GoogleOne jointly select the Google One catalog for Gemini.
+	// Passthrough remains a supplied transport flag that Available does not
+	// consult when choosing the response shape.
+	// OAuth authentication flag; GoogleOne requests that variant; Passthrough
+	// retains the caller's transport mode.
 	OAuth, GoogleOne, Passthrough bool
-	Accept                        func(string) bool
+	// Accept filters configured candidates before metadata lookup. A nil callback
+	// accepts every distinct configured ID that reaches the catalog loop.
+	Accept func(string) bool // optional model eligibility check
 }
+
+// AdminCatalogResult pairs the selected catalog shape with accepted model
+// metadata.
 type AdminCatalogResult struct {
-	Kind   AdminCatalogKind
-	Models []AdminCatalogModel
+	Kind   AdminCatalogKind    // selected response shape
+	Models []AdminCatalogModel // accepted model metadata
 }
+
+// AdminCatalogOptions supplies optional metadata lookup for accepted configured
+// model IDs.
 type AdminCatalogOptions struct {
-	Lookup func(AdminCatalogKind, string) AdminCatalogModel
+	// Lookup replaces the complete default metadata record for each accepted ID.
+	// Available returns that record as supplied, including its ID and zero fields.
+	// A nil callback uses platform-shaped defaults and the configured display name.
+	Lookup func(AdminCatalogKind, string) AdminCatalogModel // optional display metadata lookup
 }
 
-// AdminCatalog validates configured provider model IDs and looks up their display metadata.
-type AdminCatalog struct{ options AdminCatalogOptions }
+// AdminCatalog filters configured model IDs and assembles their administrative
+// metadata.
+type AdminCatalog struct {
+	options AdminCatalogOptions // retained metadata lookup options
+}
 
+// NewAdminCatalog retains the optional metadata lookup for administrative
+// catalog queries.
 func NewAdminCatalog(options AdminCatalogOptions) *AdminCatalog { return &AdminCatalog{options} }
+
+// Available returns accepted records in sorted configured-ID order using the
+// selected platform's response shape. The required configured callback supplies
+// a slice that is sorted in place; an optional Accept callback filters IDs
+// before Lookup supplies their complete metadata records. Unknown platforms use
+// the Claude shape, and Gemini selects Google One only when both GoogleOne and
+// OAuth are true.
 func (s *AdminCatalog) Available(input AdminCatalogInput, configured func() []string) (AdminCatalogResult, error) {
 	kind := CatalogClaude
 	switch input.Platform {
@@ -60,6 +107,8 @@ func (s *AdminCatalog) Available(input AdminCatalogInput, configured func() []st
 	sort.Strings(requested)
 	models := make([]AdminCatalogModel, 0, len(requested))
 	seen := make(map[string]bool)
+	// Accepted IDs enter seen after filtering, so repeated rejected entries can
+	// reach Accept again while each accepted ID receives one metadata lookup.
 	for _, id := range requested {
 		if seen[id] || (input.Accept != nil && !input.Accept(id)) {
 			continue

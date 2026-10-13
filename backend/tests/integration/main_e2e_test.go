@@ -9,7 +9,15 @@ import (
 	"testing"
 )
 
-// TestMain prints the E2E configuration and runs the tests.
+// E2E startup reports the target address, endpoint prefix and whether each
+// gateway credential is present after trimming. A nonempty prefix selects the
+// displayed Antigravity label; individual tests still decide which credentials
+// and prefix values they require before making requests.
+
+// TestMain prints deployment settings and credential presence before running
+// the selected E2E tests. The startup banner helps identify the requested
+// target; service reachability and protocol acceptance are checked by the tests
+// themselves.
 func TestMain(m *testing.M) {
 	mode := "混合模式"
 	if endpointPrefix != "" {

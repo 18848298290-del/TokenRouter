@@ -14,21 +14,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-type attributeHTTPStore struct{ saved *routing.ModelAttributeConfig }
+// attributeHTTPStore keeps one submitted profile for model-attribute HTTP
+// fixture reads.
+type attributeHTTPStore struct {
+	// saved retains the exact submitted profile pointer; fixture reads share
+	// that pointer after Save records it.
+	saved *routing.ModelAttributeConfig // retained submitted profile pointer
+}
 
+// List returns an empty nonnil profile list for the HTTP fixture.
 func (r *attributeHTTPStore) List(context.Context) ([]routing.ModelAttributeConfig, error) {
 	return []routing.ModelAttributeConfig{}, nil
 }
 
+// Get returns the last submitted profile for any fixture ID. It shares the
+// stored pointer and may return nil before Save, allowing HTTP assertions to
+// inspect the submitted value.
 func (r *attributeHTTPStore) Get(context.Context, int64) (*routing.ModelAttributeConfig, error) {
 	return r.saved, nil
 }
 
+// ForGroup returns the retained profile for every fixture group lookup. It
+// ignores the requested group ID and shares the same pointer stored by Save,
+// including nil before any save.
 func (r *attributeHTTPStore) ForGroup(context.Context, int64) (*routing.ModelAttributeConfig, error) {
 	return r.saved, nil
 }
 
-// ForGroups supplies batch attribute reads for admin HTTP tests.
+// ForGroups maps each requested group ID to the fixture's retained profile
+// pointer. Each result shares that pointer, and empty input produces an empty
+// nonnil map for batch display queries.
 func (r *attributeHTTPStore) ForGroups(_ context.Context, ids []int64) (map[int64]*routing.ModelAttributeConfig, error) {
 	result := make(map[int64]*routing.ModelAttributeConfig, len(ids))
 	for _, id := range ids {
@@ -37,12 +52,22 @@ func (r *attributeHTTPStore) ForGroups(_ context.Context, ids []int64) (map[int6
 	return result, nil
 }
 
+// Save retains the submitted profile pointer for later fixture reads. It does
+// not assign a database ID or copy nested values, so HTTP assertions observe
+// the service's submitted configuration directly.
 func (r *attributeHTTPStore) Save(_ context.Context, c *routing.ModelAttributeConfig) error {
 	r.saved = c
 	return nil
 }
+
+// Delete acknowledges fixture removal while retaining the submitted profile
+// for inspection.
 func (r *attributeHTTPStore) Delete(context.Context, int64) error { return nil }
 
+// TestModelAttributeHTTPReadWriteAndAuthorization registers attribute routes
+// behind fixture administrator middleware. It checks authorization, catalog
+// read/update separation, reset create IDs, retained false attributes, and
+// rejection of a malformed update route ID.
 func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &attributeHTTPStore{}
@@ -85,6 +110,10 @@ func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 	require.Equal(t, 400, call("PUT", "/admin/model-attributes/configs/no", "{}", true).Code)
 }
 
+// TestModelAttributeDefaultsUsePagedIndex queries true and false reasoning
+// entries through an injected index. It checks total=2, the indexed version,
+// and no bare b model in the page, and fails if Defaults requests a snapshot
+// copy.
 func TestModelAttributeDefaultsUsePagedIndex(t *testing.T) {
 	catalog, err := modelcatalog.Parse([]byte(`{"providers":{"test":{"models":{"a":{"reasoning":true},"b":{"reasoning":false}}}}}`))
 	require.NoError(t, err)

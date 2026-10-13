@@ -11,18 +11,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// TeamReportSource contains a team-filtered report source with bound parameters; callers authorize the team scope.
+// Team usage reports select recorded actor and key ownership within the caller's
+// time range. Member reports combine current memberships with actors found in
+// daily usage, so a departed member can remain visible and a current member can
+// receive an empty summary.
+//
+// The scoped SQL source carries its own parameters and can represent raw rows or
+// compatible aggregates. GROUPING SETS obtains totals and local-date rows in one
+// scan, while member histories reuse the daily scan to identify historical
+// actors. Calendar supplies the date-grouping timezone. These helpers require
+// their caller to authorize the team and validate pagination and selectors
+// before executing SQL.
+
+// TeamReportSource carries a scoped SQL CTE and its bound argument list. Callers
+// authorize the represented team and keep the CTE's positional columns
+// compatible with the summary or member-series consumer.
 type TeamReportSource struct {
-	CTE  string
-	Args []any
+	// CTE and Args form one SQL source: placeholders in CTE refer to Args in order.
+	// Consumers copy the argument slice before appending their own timezone and
+	// team parameters.
+	CTE  string // scoped source SQL
+	Args []any  // ordered source parameters
 }
 
-// TeamExecutor uses the SQL connection supplied by the team caller.
+// TeamExecutor runs team reads on the caller's SQL connection or transaction.
 type TeamExecutor interface {
-	infra.Executor
+	infra.Executor // statement and rows executor
+	// QueryRowContext returns a single-row scanner on the caller's chosen
+	// connection. The caller supplies context and bound parameters; Scan reports
+	// query and conversion errors.
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// ListUsageLogs counts and lists team usage in the supplied half-open range. The
+// caller authorizes teamID and supplies validated limit/offset values; rows use
+// descending creation time and ID, with current user email and key name for
+// presentation.
 func ListUsageLogs(ctx context.Context, db TeamExecutor, teamID int64, query team.TeamUsageQuery) ([]team.TeamUsageLogItem, int64, error) {
 	where, args := TeamUsageWhere(teamID, query)
 	var total int64
@@ -43,7 +67,8 @@ func ListUsageLogs(ctx context.Context, db TeamExecutor, teamID int64, query tea
 	if err != nil {
 		return nil, 0, err
 	}
-	// Close the result set on every exit; iteration errors are checked through rows.Err below.
+	// Release listing rows after normal scanning or an early error. Close failures
+	// are ignored here, while scan and iteration failures discard the partial list.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamUsageLogItem, 0, query.Limit)
 	for rows.Next() {
@@ -59,7 +84,9 @@ func ListUsageLogs(ctx context.Context, db TeamExecutor, teamID int64, query tea
 	return items, total, nil
 }
 
-// RawTeamReportSource supplies a raw-record source when rollups are unavailable or disabled.
+// RawTeamReportSource constructs a raw scoped CTE and its time/team parameters.
+// Each retained usage row contributes one request, and positive actor or key
+// selectors narrow the source under the caller's authorized team.
 func RawTeamReportSource(teamID int64, query team.TeamUsageQuery) TeamReportSource {
 	where, args := TeamUsageWhere(teamID, query)
 	return TeamReportSource{CTE: `WITH scoped AS NOT MATERIALIZED (
@@ -67,12 +94,23 @@ func RawTeamReportSource(teamID int64, query team.TeamUsageQuery) TeamReportSour
  FROM usage_logs ul WHERE ` + where + `)`, Args: args}
 }
 
-// ListMemberUsageSeries combines current membership with historical raw usage for member reports.
+// ListMemberUsageSeries returns current and historical member usage from raw
+// records. The caller authorizes the team and passes its reporting Calendar;
+// query's positive actor selector also limits current memberships.
 func ListMemberUsageSeries(ctx context.Context, db TeamExecutor, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) ([]team.TeamMemberUsageSeries, error) {
 	return MemberUsageSeriesFromSource(ctx, db, RawTeamReportSource(teamID, query), teamID, query, calendar)
 }
 
-// MemberUsageSeriesFromSource derives historical members from daily totals to avoid another raw scan.
+// MemberUsageSeriesFromSource returns daily usage grouped by actor from a
+// compatible scoped source. Source parameters are copied before appending
+// Calendar's timezone and teamID, and the caller owns authorization and source
+// construction.
+//
+// The materialized daily rows supply both historical actors and their totals. A
+// union adds current members, including members with no usage; the actor
+// selector narrows that membership branch. Status is determined from current
+// membership, so historical usage survives departure while sums count only dates
+// returned by the source.
 func MemberUsageSeriesFromSource(ctx context.Context, db infra.Executor, source TeamReportSource, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) ([]team.TeamMemberUsageSeries, error) {
 	args := append(append([]any{}, source.Args...), calendar.Location().String(), teamID)
 	tzPos, teamPos := len(args)-1, len(args)
@@ -99,6 +137,8 @@ func MemberUsageSeriesFromSource(ctx context.Context, db infra.Executor, source 
 	if err != nil {
 		return nil, err
 	}
+	// Release report rows after the scan or an early error. Close failures are
+	// ignored, while scan and iteration failures abort the report.
 	defer func() { _ = rows.Close() }()
 	items := make([]team.TeamMemberUsageSeries, 0)
 	indexByUser := make(map[int64]int)
@@ -128,12 +168,22 @@ func MemberUsageSeriesFromSource(ctx context.Context, db infra.Executor, source 
 	return items, rows.Err()
 }
 
-// GetUsageSummary computes totals and daily rows using database numeric sums.
+// GetUsageSummary returns team totals and daily user charges from raw records.
+// The caller supplies an authorized team, half-open time range, and Calendar;
+// the raw source applies positive actor and key selectors.
 func GetUsageSummary(ctx context.Context, db TeamExecutor, teamID int64, query team.TeamUsageQuery, calendar timezone.Calendar) (*team.TeamUsageSummary, error) {
 	return UsageSummaryFromSource(ctx, db, RawTeamReportSource(teamID, query), calendar)
 }
 
-// UsageSummaryFromSource uses GROUPING SETS to produce totals and daily rows in one scan.
+// UsageSummaryFromSource reads compatible scoped rows into overall and daily
+// totals. It copies the argument slice before adding Calendar's named timezone,
+// leaving the source's parameter list available for reuse.
+//
+// GROUPING SETS emits one summary row with a null date and populated local-date
+// rows from the same scan. The null-date row supplies all token and request
+// totals, while daily entries carry charges and request counts. This distinction
+// keeps the overall sum separate from per-date display values, including an
+// empty source's zero summary.
 func UsageSummaryFromSource(ctx context.Context, db infra.Executor, source TeamReportSource, calendar timezone.Calendar) (*team.TeamUsageSummary, error) {
 	args := append(append([]any{}, source.Args...), calendar.Location().String())
 	rows, err := db.QueryContext(ctx, source.CTE+fmt.Sprintf(`
@@ -143,6 +193,8 @@ func UsageSummaryFromSource(ctx context.Context, db infra.Executor, source TeamR
 	if err != nil {
 		return nil, err
 	}
+	// Release report rows after the scan or an early error. Close failures are
+	// ignored, while scan and iteration failures abort the report.
 	defer func() { _ = rows.Close() }()
 	result := &team.TeamUsageSummary{Daily: make([]team.TeamUsageDaily, 0)}
 	for rows.Next() {
@@ -164,6 +216,9 @@ func UsageSummaryFromSource(ctx context.Context, db infra.Executor, source TeamR
 	return result, rows.Err()
 }
 
+// TeamUsageWhere returns a team predicate and parameters for [From, To).
+// Positive actor and key selectors append restrictions; teamID and timestamps
+// are bound as supplied, so the caller performs validation and authorization.
 func TeamUsageWhere(teamID int64, query team.TeamUsageQuery) (string, []any) {
 	conditions := []string{"ul.team_id = $1", "ul.created_at >= $2", "ul.created_at < $3"}
 	args := []any{teamID, query.From, query.To}

@@ -15,6 +15,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// A copied provider may be active while its scheduling switch is paused.
+// PostgreSQL checks provider creation together with group membership and its
+// scheduler event, then supplies a nonexistent group to verify that the failed
+// copy leaves no provider, membership, or event rows.
+
+// TestCreateWithProviderGroupsPersistsPausedCopyAtomically creates an active
+// provider whose scheduling switch is false together with a group binding. A
+// nonexistent group then forces a failed creation, leaving no provider,
+// membership, or scheduler event.
 func TestCreateWithProviderGroupsPersistsPausedCopyAtomically(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -36,6 +45,10 @@ func TestCreateWithProviderGroupsPersistsPausedCopyAtomically(t *testing.T) {
 		Extra:       map[string]any{},
 	}
 	require.NoError(t, repo.CreateWithProviderGroups(ctx, success, []provider.GroupMembership{{GroupID: group.ID}}))
+	// These rows commit outside testEntTx; remove event and membership rows
+	// before their provider and group so cleanup follows the fixture dependencies.
+	// Errors are discarded for each deletion, allowing the remaining cleanup
+	// attempts to run even when an earlier statement fails.
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM scheduler_outbox WHERE provider_id = $1", success.ID)
 		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM provider_groups WHERE provider_id = $1", success.ID)
@@ -62,6 +75,8 @@ func TestCreateWithProviderGroupsPersistsPausedCopyAtomically(t *testing.T) {
 		Credentials: map[string]any{"api_key": "secret"},
 		Extra:       map[string]any{},
 	}
+	// An absent group forces membership persistence to fail after provider
+	// creation begins, making the following row counts observe transactional rollback.
 	err = repo.CreateWithProviderGroups(ctx, failure, []provider.GroupMembership{{GroupID: int64(^uint64(0) >> 1)}})
 	require.Error(t, err)
 

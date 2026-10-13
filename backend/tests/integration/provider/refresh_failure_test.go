@@ -12,8 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestRefreshFailureVersionCAS checks that a rename leaves a refresh failure eligible to apply,
-// while changes to credentials, status, scheduling, platform, type, or proxy reject it.
+// Refresh failures apply health changes to the credential identity used by the
+// failed exchange. Sequential PostgreSQL replacements exercise rejected
+// observations, longer existing cooldowns, notification failure after health
+// writes, and transactional clearing of Antigravity refresh-request fields.
+
+// TestRefreshFailureVersionCAS observes an OAuth identity before sequential
+// configuration changes and applies permanent or cooldown failure. Renames
+// remain eligible, while changed credentials, status, scheduling, platform,
+// type, or proxy leave health and event counts unchanged.
 func TestRefreshFailureVersionCAS(t *testing.T) {
 	for _, kind := range []provider.RefreshFailureKind{provider.RefreshFailurePermanent, provider.RefreshFailureCooldown} {
 		for _, change := range []string{"none", "name", "credentials", "platform", "type", "status", "schedulable", "proxy"} {
@@ -59,6 +66,7 @@ func TestRefreshFailureVersionCAS(t *testing.T) {
 					return n
 				}
 				before := count()
+				// Match database precision for the exact applied-cooldown equality check.
 				failure := provider.RefreshFailure{Kind: kind, Message: "fixture rejected", Until: time.Now().Add(10 * time.Minute).Truncate(time.Microsecond)}
 				matched, err := store.ApplyOAuthRefreshFailure(ctx, version, failure)
 				require.NoError(t, err)
@@ -92,11 +100,14 @@ func TestRefreshFailureVersionCAS(t *testing.T) {
 	}
 }
 
-// TestRefreshFailureLongerCooldownAndOutboxFailure checks that a shorter cooldown leaves the row unchanged
-// and an outbox failure does not roll back a permanent refresh failure.
+// TestRefreshFailureLongerCooldownAndOutboxFailure applies a shorter cooldown
+// to a provider with a longer existing window. The stored deadline, reason, and
+// timestamp remain, then permanent failure still applies when the notification
+// statement fails.
 func TestRefreshFailureLongerCooldownAndOutboxFailure(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
+	// Establish the existing deadline at the precision read back from PostgreSQL.
 	until := time.Now().Add(time.Hour).Truncate(time.Microsecond)
 	// Include nanoseconds in the input, then compare against the value persisted at microsecond precision.
 	updatedAt := until.Add(-time.Hour).Add(123 * time.Nanosecond)
@@ -128,8 +139,10 @@ func TestRefreshFailureLongerCooldownAndOutboxFailure(t *testing.T) {
 	require.False(t, current.Schedulable)
 }
 
-// TestAntigravityRefreshRequestClearCAS checks credential identity before clearing refresh flags
-// and verifies that an outbox failure rolls back the Extra update.
+// TestAntigravityRefreshRequestClearCAS observes credentials before clearing
+// Antigravity force-refresh fields, then optionally reauthorizes or fails the
+// outbox write. Successful clearing keeps quota data, while conflicts and event
+// failure retain the requested refresh flag.
 func TestAntigravityRefreshRequestClearCAS(t *testing.T) {
 	for _, mode := range []string{"success", "reauthorized", "outbox_failure"} {
 		t.Run(mode, func(t *testing.T) {

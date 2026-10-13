@@ -19,10 +19,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// API Key reads combine credential rows with owner and routing relationships,
+// while masked edits select which persisted fields can change. Suite cases use
+// rollback transactions to inspect creation, group replacement, soft deletion,
+// search, usage state, and credential tombstones. Constraint failures run at
+// the end of the cases that deliberately abort their PostgreSQL transaction.
+//
+// The standalone usage-increment case instead obtains a dedicated migrated
+// database with committed rows. Ten workers each add one increment through the
+// shared repository, store errors in separate indexed slots, and join before
+// the final read. This distinguishes its concurrent accumulation evidence from
+// the suite cases that reproduce stale snapshots with sequential calls.
+
+// TestAPIKeyRepoSuite runs the PostgreSQL key repository suite with per-case
+// rollback fixtures. Its cases inspect stored key values, loaded relationships,
+// filtering, and selected update behavior.
 func TestAPIKeyRepoSuite(t *testing.T) {
 	suite.Run(t, new(APIKeyRepoSuite))
 }
 
+// TestCreate inserts an active key through the repository in the suite
+// transaction. Creation fills its ID, and a subsequent ID lookup returns the
+// supplied credential.
 func (s *APIKeyRepoSuite) TestCreate() {
 	user := s.mustCreateUser("create@test.com")
 
@@ -42,6 +60,9 @@ func (s *APIKeyRepoSuite) TestCreate() {
 	s.Require().Equal("sk-create-test", got.Key)
 }
 
+// TestUpdateForkSpecificFields creates a key and selects Fast mode and
+// unavailable-group fallback in its update mask. Reloading returns force_off
+// and a disabled fallback flag.
 func (s *APIKeyRepoSuite) TestUpdateForkSpecificFields() {
 	user := s.mustCreateUser("fork-update-fields@test.com")
 	key := &apikey.APIKey{
@@ -57,7 +78,8 @@ func (s *APIKeyRepoSuite) TestUpdateForkSpecificFields() {
 	loaded.FastModePolicy = apikey.APIKeyFastModePolicyForceOff
 	loaded.FallbackWhenGroupUnavailable = false
 
-	// The update mask selects each policy field independently.
+	// Select both policy fields so their supplied values are persisted together;
+	// omitted fields on the loaded object remain outside this configuration edit.
 	s.Require().NoError(s.repo.Update(s.ctx, loaded, apikey.APIKeyUpdateFields{
 		FastModePolicy:               true,
 		FallbackWhenGroupUnavailable: true,
@@ -69,6 +91,10 @@ func (s *APIKeyRepoSuite) TestUpdateForkSpecificFields() {
 	s.Require().False(updated.FallbackWhenGroupUnavailable)
 }
 
+// TestCompositeKeyCRUDAndGroupQueries creates, replaces, queries, and clears
+// composite mappings within one key. Loaded mapping order, group counts,
+// removed entries, and duplicate-group rejection follow the stored
+// configuration.
 func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	user := s.mustCreateUser("composite-key@test.com")
 	openAIGroup := s.mustCreateGroup("g-composite-openai")
@@ -82,7 +108,9 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 		},
 	}
 
-	// Creating a composite key must load both mappings in the requested order.
+	// Store the composite configuration before checking its loaded order and group
+	// queries, since those reads depend on persisted mapping rows tied to this
+	// key.
 	s.Require().NoError(s.repo.Create(s.ctx, key))
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err)
@@ -102,7 +130,8 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	s.Require().Len(listed, 1)
 	s.Require().Equal(key.ID, listed[0].ID)
 
-	// Replacing the mapping list must remove entries omitted from the request.
+	// Replace the complete mapping list with one entry so the later read can
+	// detect a stale relationship left behind by partial binding replacement.
 	got.CompositeGroups = []apikey.APIKeyCompositeGroup{
 		{GroupID: claudeGroup.ID, Prefix: "Anthropic", NormalizedPrefix: "anthropic", SortOrder: 0},
 	}
@@ -119,7 +148,9 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	s.Require().NoError(err)
 	s.Require().Empty(cleared.CompositeGroups)
 
-	// Run the uniqueness violation last because PostgreSQL aborts the transaction on error.
+	// Perform the deliberate duplicate insert after the successful mapping
+	// assertions. PostgreSQL aborts this case transaction on a constraint
+	// violation until rollback.
 	_, err = s.client.APIKeyCompositeGroup.Create().
 		SetAPIKeyID(key.ID).
 		SetGroupID(openAIGroup.ID).
@@ -136,6 +167,9 @@ func (s *APIKeyRepoSuite) TestCompositeKeyCRUDAndGroupQueries() {
 	s.Require().Error(err)
 }
 
+// TestCompositeKeyNormalizedPrefixUniqueConstraint persists one composite
+// prefix then inserts that normalized prefix for another group. PostgreSQL
+// rejects the duplicate within the same key configuration.
 func (s *APIKeyRepoSuite) TestCompositeKeyNormalizedPrefixUniqueConstraint() {
 	user := s.mustCreateUser("composite-prefix-unique@test.com")
 	firstGroup := s.mustCreateGroup("g-composite-prefix-first")
@@ -148,7 +182,9 @@ func (s *APIKeyRepoSuite) TestCompositeKeyNormalizedPrefixUniqueConstraint() {
 		},
 	}
 
-	// The unique constraint rejects a normalized prefix reused for another group.
+	// Create the first mapping before the deliberate duplicate insertion.
+	// PostgreSQL aborts this transaction when the key-level normalized-prefix
+	// constraint rejects it.
 	s.Require().NoError(s.repo.Create(s.ctx, key))
 	_, err := s.client.APIKeyCompositeGroup.Create().
 		SetAPIKeyID(key.ID).
@@ -159,11 +195,15 @@ func (s *APIKeyRepoSuite) TestCompositeKeyNormalizedPrefixUniqueConstraint() {
 	s.Require().Error(err)
 }
 
+// TestGetByID_NotFound queries a numeric key ID that the suite fixture has not
+// created. The repository returns an error for the missing row.
 func (s *APIKeyRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+// TestGetByKey stores a key linked to one user and routing group. Credential
+// lookup returns its ID with the matching user and group relationships loaded.
 func (s *APIKeyRepoSuite) TestGetByKey() {
 	user := s.mustCreateUser("getbykey@test.com")
 	group := s.mustCreateGroup("g-key")
@@ -186,11 +226,17 @@ func (s *APIKeyRepoSuite) TestGetByKey() {
 	s.Require().Equal(group.ID, got.Group.ID)
 }
 
+// TestGetByKey_NotFound requests a credential absent from the current
+// transaction fixture. The repository returns an error when that credential has
+// no matching stored row.
 func (s *APIKeyRepoSuite) TestGetByKey_NotFound() {
 	_, err := s.repo.GetByKey(s.ctx, "non-existent-key")
 	s.Require().Error(err, "expected error for non-existent key")
 }
 
+// TestGetByKeyForAuth_PreservesSelectedGroupFields sets protocol, mapped-model,
+// advanced-scheduler, and Fast controls on a group. Authentication lookup
+// returns those asserted fields on the key group view.
 func (s *APIKeyRepoSuite) TestGetByKeyForAuth_PreservesSelectedGroupFields() {
 	user := s.mustCreateUser("getbykey-auth-dispatch@test.com")
 	// Authentication loads the selected group's routing policies.
@@ -236,6 +282,9 @@ func (s *APIKeyRepoSuite) TestGetByKeyForAuth_PreservesSelectedGroupFields() {
 	s.Require().True(got.Group.ForceOpenAIFast)
 }
 
+// TestUpdate selects name and status on an existing key edit. Reloading
+// reflects those changes and retains the previously stored credential and owner
+// ID.
 func (s *APIKeyRepoSuite) TestUpdate() {
 	user := s.mustCreateUser("update@test.com")
 	key := &apikey.APIKey{
@@ -259,6 +308,8 @@ func (s *APIKeyRepoSuite) TestUpdate() {
 	s.Require().Equal(billing.StatusDisabled, got.Status)
 }
 
+// TestUpdate_ClearGroupID sets a loaded key group to nil and selects GroupID in
+// the mask. Reloading confirms that the ordinary group assignment is cleared.
 func (s *APIKeyRepoSuite) TestUpdate_ClearGroupID() {
 	user := s.mustCreateUser("cleargroup@test.com")
 	group := s.mustCreateGroup("g-clear")
@@ -280,6 +331,8 @@ func (s *APIKeyRepoSuite) TestUpdate_ClearGroupID() {
 	s.Require().Nil(got.GroupID, "expected GroupID to be cleared")
 }
 
+// TestDelete removes an existing key through the repository within the suite
+// transaction. A later ID lookup returns an error for the deleted record.
 func (s *APIKeyRepoSuite) TestDelete() {
 	user := s.mustCreateUser("delete@test.com")
 	key := &apikey.APIKey{
@@ -297,6 +350,9 @@ func (s *APIKeyRepoSuite) TestDelete() {
 	s.Require().Error(err, "expected error after delete")
 }
 
+// TestCreate_AfterSoftDelete_AllowsSameKey deletes a stored credential and
+// creates another object with that credential. The replacement succeeds with a
+// nonzero ID distinct from the deleted row.
 func (s *APIKeyRepoSuite) TestCreate_AfterSoftDelete_AllowsSameKey() {
 	user := s.mustCreateUser("recreate-after-soft-delete@test.com")
 	const reusedKey = "sk-reuse-after-soft-delete"
@@ -322,6 +378,8 @@ func (s *APIKeyRepoSuite) TestCreate_AfterSoftDelete_AllowsSameKey() {
 	s.Require().NotEqual(first.ID, second.ID, "recreated key should be a new row")
 }
 
+// TestListByUserID creates two keys for one owner in the suite transaction. The
+// user listing returns both rows and a total count of two.
 func (s *APIKeyRepoSuite) TestListByUserID() {
 	user := s.mustCreateUser("listbyuser@test.com")
 	s.mustCreateApiKey(user.ID, "sk-list-1", "Key 1", nil)
@@ -333,6 +391,9 @@ func (s *APIKeyRepoSuite) TestListByUserID() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
+// TestListByUserID_Pagination creates five keys and requests a page containing
+// two rows. The result has two keys while metadata retains total five and three
+// pages.
 func (s *APIKeyRepoSuite) TestListByUserID_Pagination() {
 	user := s.mustCreateUser("paging@test.com")
 	for i := range 5 {
@@ -346,6 +407,8 @@ func (s *APIKeyRepoSuite) TestListByUserID_Pagination() {
 	s.Require().Equal(3, page.Pages)
 }
 
+// TestCountByUserID inserts two keys for the same owner in the suite
+// transaction. Counting by that user returns two after both insertions succeed.
 func (s *APIKeyRepoSuite) TestCountByUserID() {
 	user := s.mustCreateUser("count@test.com")
 	s.mustCreateApiKey(user.ID, "sk-count-1", "K1", nil)
@@ -356,13 +419,17 @@ func (s *APIKeyRepoSuite) TestCountByUserID() {
 	s.Require().Equal(int64(2), count)
 }
 
+// TestListByGroupID creates two assigned keys and one unassigned key for the
+// same user. The group listing returns two rows, total two, and a loaded user.
 func (s *APIKeyRepoSuite) TestListByGroupID() {
 	user := s.mustCreateUser("listbygroup@test.com")
 	group := s.mustCreateGroup("g-list")
 
 	s.mustCreateApiKey(user.ID, "sk-grp-1", "K1", &group.ID)
 	s.mustCreateApiKey(user.ID, "sk-grp-2", "K2", &group.ID)
-	s.mustCreateApiKey(user.ID, "sk-grp-3", "K3", nil) // Excluded from the group query.
+	// Keep this comparison key unassigned so the group query can exclude it while
+	// returning the two credentials whose bindings match the target group.
+	s.mustCreateApiKey(user.ID, "sk-grp-3", "K3", nil)
 
 	keys, page, err := s.repo.ListByGroupID(s.ctx, group.ID, pagination.PaginationParams{Page: 1, PageSize: 10})
 	s.Require().NoError(err, "ListByGroupID")
@@ -371,6 +438,8 @@ func (s *APIKeyRepoSuite) TestListByGroupID() {
 	s.Require().NotNil(keys[0].User)
 }
 
+// TestCountByGroupID creates one key assigned to a routing group in the suite
+// transaction. Counting by that group returns one for the stored assignment.
 func (s *APIKeyRepoSuite) TestCountByGroupID() {
 	user := s.mustCreateUser("countgroup@test.com")
 	group := s.mustCreateGroup("g-count")
@@ -381,6 +450,9 @@ func (s *APIKeyRepoSuite) TestCountByGroupID() {
 	s.Require().Equal(int64(1), count)
 }
 
+// TestExistsByKey stores one credential and checks both that value and an
+// absent value. Existence returns true for the stored key and false for the
+// other.
 func (s *APIKeyRepoSuite) TestExistsByKey() {
 	user := s.mustCreateUser("exists@test.com")
 	s.mustCreateApiKey(user.ID, "sk-exists", "K", nil)
@@ -394,6 +466,9 @@ func (s *APIKeyRepoSuite) TestExistsByKey() {
 	s.Require().False(notExists)
 }
 
+// TestSearchAPIKeys stores Production and Development names for one owner.
+// Searching the prod fragment returns a single row whose name contains
+// Production in the suite fixture.
 func (s *APIKeyRepoSuite) TestSearchAPIKeys() {
 	user := s.mustCreateUser("search@test.com")
 	s.mustCreateApiKey(user.ID, "sk-search-1", "Production Key", nil)
@@ -405,6 +480,9 @@ func (s *APIKeyRepoSuite) TestSearchAPIKeys() {
 	s.Require().Contains(found[0].Name, "Production")
 }
 
+// TestSearchAPIKeys_NoKeyword stores two keys and supplies an empty search
+// keyword. The repository returns both keys for the selected owner within the
+// result limit.
 func (s *APIKeyRepoSuite) TestSearchAPIKeys_NoKeyword() {
 	user := s.mustCreateUser("searchnokw@test.com")
 	s.mustCreateApiKey(user.ID, "sk-nk-1", "K1", nil)
@@ -415,6 +493,8 @@ func (s *APIKeyRepoSuite) TestSearchAPIKeys_NoKeyword() {
 	s.Require().Len(found, 2)
 }
 
+// TestSearchAPIKeys_NoUserID stores a matching key and passes zero as the owner
+// filter. The search still returns the matching row in the current transaction.
 func (s *APIKeyRepoSuite) TestSearchAPIKeys_NoUserID() {
 	user := s.mustCreateUser("searchnouid@test.com")
 	s.mustCreateApiKey(user.ID, "sk-nu-1", "TestKey", nil)
@@ -424,13 +504,18 @@ func (s *APIKeyRepoSuite) TestSearchAPIKeys_NoUserID() {
 	s.Require().Len(found, 1)
 }
 
+// TestClearGroupIDByGroupID creates two assigned keys and one unassigned row.
+// Bulk clearing reports two affected rows, clears both assignments, and leaves
+// the group count zero.
 func (s *APIKeyRepoSuite) TestClearGroupIDByGroupID() {
 	user := s.mustCreateUser("cleargrp@test.com")
 	group := s.mustCreateGroup("g-clear-bulk")
 
 	k1 := s.mustCreateApiKey(user.ID, "sk-clr-1", "K1", &group.ID)
 	k2 := s.mustCreateApiKey(user.ID, "sk-clr-2", "K2", &group.ID)
-	s.mustCreateApiKey(user.ID, "sk-clr-3", "K3", nil) // Already unassigned; excluded from the affected count.
+	// Keep an unassigned comparison key so the affected count measures the two
+	// bound credentials whose group assignments the bulk clear actually removes.
+	s.mustCreateApiKey(user.ID, "sk-clr-3", "K3", nil)
 
 	affected, err := s.repo.ClearGroupIDByGroupID(s.ctx, group.ID)
 	s.Require().NoError(err, "ClearGroupIDByGroupID")
@@ -445,6 +530,9 @@ func (s *APIKeyRepoSuite) TestClearGroupIDByGroupID() {
 	s.Require().Zero(count)
 }
 
+// TestCRUD_Search_ClearGroupID follows credential lookup, a masked edit, user
+// listing, search, and group clearing. Assertions check retained identity,
+// edited values, matching counts, and the cleared assignment.
 func (s *APIKeyRepoSuite) TestCRUD_Search_ClearGroupID() {
 	user := s.mustCreateUser("k@example.com")
 	group := s.mustCreateGroup("g-k")
@@ -507,6 +595,9 @@ func (s *APIKeyRepoSuite) TestCRUD_Search_ClearGroupID() {
 	s.Require().Equal(int64(0), countAfter, "expected 0 keys in group after clear")
 }
 
+// TestIncrementQuotaUsed_Basic records successive usage increments on a newly
+// created key. Returned cumulative values are 1.5 after the first write and 4
+// after the second.
 func (s *APIKeyRepoSuite) TestIncrementQuotaUsed_Basic() {
 	user := s.mustCreateUser("incr-basic@test.com")
 	key := s.mustCreateApiKey(user.ID, "sk-incr-basic", "Incr", nil)
@@ -520,11 +611,17 @@ func (s *APIKeyRepoSuite) TestIncrementQuotaUsed_Basic() {
 	s.Require().Equal(4.0, newQuota, "第二次递增后应为 4.0")
 }
 
+// TestIncrementQuotaUsed_NotFound adds quota usage to an ID absent from the
+// suite fixture. The repository returns APIKeyNotFound for that attempted
+// increment operation.
 func (s *APIKeyRepoSuite) TestIncrementQuotaUsed_NotFound() {
 	_, err := s.repo.IncrementQuotaUsed(s.ctx, 999999, 1.0)
 	s.Require().ErrorIs(err, apikey.ErrAPIKeyNotFound, "不存在的 key 应返回 ErrAPIKeyNotFound")
 }
 
+// TestIncrementQuotaUsed_DeletedKey soft deletes a key before attempting a
+// usage increment. The repository returns APIKeyNotFound even though the
+// deleted storage row previously existed.
 func (s *APIKeyRepoSuite) TestIncrementQuotaUsed_DeletedKey() {
 	user := s.mustCreateUser("incr-deleted@test.com")
 	key := s.mustCreateApiKey(user.ID, "sk-incr-del", "Deleted", nil)
@@ -535,6 +632,9 @@ func (s *APIKeyRepoSuite) TestIncrementQuotaUsed_DeletedKey() {
 	s.Require().ErrorIs(err, apikey.ErrAPIKeyNotFound, "已删除的 key 应返回 ErrAPIKeyNotFound")
 }
 
+// TestIncrementQuotaUsedAndGetState starts with usage below a quota and adds an
+// amount exceeding it. Returned and reloaded states record 3.5 usage with
+// quota_exhausted status.
 func (s *APIKeyRepoSuite) TestIncrementQuotaUsedAndGetState() {
 	user := s.mustCreateUser("quota-state@test.com")
 	key := s.mustCreateApiKey(user.ID, "sk-quota-state", "QuotaState", nil)
@@ -556,8 +656,9 @@ func (s *APIKeyRepoSuite) TestIncrementQuotaUsedAndGetState() {
 	s.Require().Equal(apikey.StatusAPIKeyQuotaExhausted, got.Status)
 }
 
-// TestIncrementQuotaUsed_Concurrent checks that concurrent PostgreSQL increments accumulate.
-// It uses an isolated database with committed writes shared by the goroutines.
+// TestIncrementQuotaUsed_Concurrent performs ten PostgreSQL usage increments
+// through committed rows shared by its workers. Every write succeeds and the
+// final usage equals their summed increments.
 func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 	integrationDB, client := keyDatabase(t)
 	repo := newKeyStoreFixture(client, integrationDB)
@@ -578,13 +679,20 @@ func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 		Status: billing.StatusActive,
 	}
 	require.NoError(t, repo.Create(ctx, k), "create api key")
+	// Remove the dependent key before its owner once test workers have joined;
+	// fixture cleanup discards deletion errors before the database itself is
+	// closed.
 	t.Cleanup(func() {
 		_ = client.APIKey.DeleteOneID(k.ID).Exec(ctx)
 		_ = client.User.DeleteOneID(u.ID).Exec(ctx)
 	})
 
+	// Ten writers provide a bounded concurrent accumulation case.
 	const goroutines = 10
+	// Each writer contributes one identical quota usage unit.
 	const increment = 1.0
+	// Each worker owns one error slot. Join all workers before reading those slots
+	// or final usage so neither assertion can observe an unfinished increment.
 	var wg sync.WaitGroup
 	errs := make([]error, goroutines)
 
@@ -607,6 +715,9 @@ func TestIncrementQuotaUsed_Concurrent(t *testing.T) {
 		"并发递增后总和应为 %v，实际为 %v", float64(goroutines)*increment, got.QuotaUsed)
 }
 
+// TestDeleteWithAudit_TombstonesWithoutRetainingCredential deletes an existing
+// key, then inspects its raw row and audit count. ID lookup fails, the
+// credential is tombstoned, and deleted-key audits remain empty.
 func (s *APIKeyRepoSuite) TestDeleteWithAudit_TombstonesWithoutRetainingCredential() {
 	user := s.mustCreateUser("delwithaudit@test.com")
 	key := &apikey.APIKey{
@@ -628,6 +739,9 @@ func (s *APIKeyRepoSuite) TestDeleteWithAudit_TombstonesWithoutRetainingCredenti
 	s.Require().NoError(err)
 	s.Require().True(rows.Next())
 	s.Require().NoError(rows.Scan(&tombstone, &deletedAt))
+	// Close the inspected raw-key rows before the next query uses this single
+	// transaction connection, avoiding an outstanding result on the shared
+	// executor.
 	s.Require().NoError(rows.Close())
 	s.Require().NotEqual("sk-del-audit-1", tombstone)
 	s.Require().Contains(tombstone, "__deleted__")
@@ -638,10 +752,15 @@ func (s *APIKeyRepoSuite) TestDeleteWithAudit_TombstonesWithoutRetainingCredenti
 	s.Require().NoError(err)
 	s.Require().True(auditRows.Next())
 	s.Require().NoError(auditRows.Scan(&auditCount))
+	// Finish the audit query before case rollback closes the transaction; the
+	// explicit close result is asserted so a cleanup failure is visible here.
 	s.Require().NoError(auditRows.Close())
 	s.Require().Zero(auditCount, "deleted credentials must not be retained")
 }
 
+// TestDeleteWithAudit_RepeatIsIdempotent calls the deletion operation twice for
+// the same created key. Both calls succeed after the first has already deleted
+// the stored row.
 func (s *APIKeyRepoSuite) TestDeleteWithAudit_RepeatIsIdempotent() {
 	user := s.mustCreateUser("delwithaudit-idem@test.com")
 	key := &apikey.APIKey{UserID: user.ID, Key: "sk-del-audit-2", Name: "K", Status: billing.StatusActive}
@@ -651,6 +770,9 @@ func (s *APIKeyRepoSuite) TestDeleteWithAudit_RepeatIsIdempotent() {
 	s.Require().NoError(s.repo.DeleteWithAudit(s.ctx, key.ID))
 }
 
+// TestDeleteWithAudit_NotFound calls the deletion operation for an ID absent
+// from the suite fixture. It returns APIKeyNotFound for the requested missing
+// storage record.
 func (s *APIKeyRepoSuite) TestDeleteWithAudit_NotFound() {
 	err := s.repo.DeleteWithAudit(s.ctx, 999999)
 	s.Require().ErrorIs(err, apikey.ErrAPIKeyNotFound)

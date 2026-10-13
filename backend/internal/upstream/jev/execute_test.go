@@ -17,12 +17,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// A Jev response can need client alias restoration while retaining the vendor's
+// actual version and usage observations. The fixtures compare buffered bodies
+// and failing sink writes, and check that HTTP failures expose policy data
+// before any answer bytes reach the sink.
+
+// outputProbe records emitted bytes and can report a downstream write failure.
 type outputProbe struct {
-	body []byte
-	fail bool
+	body []byte // accumulated emitted answer bytes
+	fail bool   // simulate payload write failure
 }
 
-// Restoring a client model alias must retain the actual upstream version and unrelated response bytes.
+// TestExecuteResponseModelOverride supplies one vendor version with optional
+// client aliases. It checks the selected and declared upstream identities, the
+// top-level response model, and retention of an unrelated version string.
 func TestExecuteResponseModelOverride(t *testing.T) {
 	response := `{"model":"jev-1.13.0","answers":{"available":{"type":"noul","noul":0.9}},"usage":{"input_tokens":10,"output_tokens":0},"extra":"jev-1.13.0"}`
 	for _, responseModel := range []string{"", "jev-latest", "TS/jev-latest"} {
@@ -46,7 +54,9 @@ func TestExecuteResponseModelOverride(t *testing.T) {
 	}
 }
 
-// Accept relative seconds and future HTTP dates; reject non-finite and nonpositive delays.
+// TestRetryAfterResetTime compares equivalent numeric seconds and a future HTTP
+// date against a fixed clock. It also checks rejection of invalid, nonpositive,
+// nonfinite, oversized, and past values.
 func TestRetryAfterResetTime(t *testing.T) {
 	now := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
 	for _, value := range []string{"17", now.Add(17 * time.Second).Format(http.TimeFormat)} {
@@ -59,8 +69,15 @@ func TestRetryAfterResetTime(t *testing.T) {
 	}
 }
 
+// Begin accepts response metadata so the probe can exercise payload emission.
 func (s *outputProbe) Begin(upstream.OutputHead) error { return nil }
+
+// Emit appends the event bytes and optionally returns a client-disconnect
+// error. The accumulated bytes remain available even when the simulated write
+// fails, allowing assertions about already-prepared answer content.
 func (s *outputProbe) Emit(e upstream.OutputEvent) error {
+	// Copy event bytes before returning from Emit so the probe retains them
+	// for assertions after the executor's synchronous sink call.
 	s.body = append(s.body, e.Data...)
 	if s.fail {
 		return errors.New("client disconnected")
@@ -68,7 +85,10 @@ func (s *outputProbe) Emit(e upstream.OutputEvent) error {
 	return nil
 }
 
-// A failed downstream write must retain usage already returned by the upstream.
+// TestExecuteKeepsUsageAfterClientWriteFailure sends a real local HTTP request
+// with configured headers and exercises successful and failing emits. It checks
+// retained usage and declared upstream model alongside client alias restoration
+// and unrelated answer data.
 func TestExecuteKeepsUsageAfterClientWriteFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/systemone", r.URL.Path)
@@ -80,6 +100,8 @@ func TestExecuteKeepsUsageAfterClientWriteFailure(t *testing.T) {
 		w.Header().Set("X-Request-Id", "upstream-test")
 		_, _ = io.WriteString(w, `{"model":"jev-1.13.0","answers":{"available":{"type":"noul","noul":0.9}},"usage":{"input_tokens":100,"output_tokens":20},"extra":"kept"}`)
 	}))
+	// Close the local fixture after both sink cases finish so its listener
+	// and connections are released even when an assertion fails.
 	defer server.Close()
 	for _, fail := range []bool{false, true} {
 		sink := &outputProbe{fail: fail}
@@ -95,6 +117,10 @@ func TestExecuteKeepsUsageAfterClientWriteFailure(t *testing.T) {
 	}
 }
 
+// TestExecuteInvalidUsageStillServesAnswers supplies valid answer JSON with no
+// usage field. It checks successful sink delivery and Served=true while
+// HasUsage remains false, keeping answer completion separate from accounting
+// availability.
 func TestExecuteInvalidUsageStillServesAnswers(t *testing.T) {
 	sink := &outputProbe{}
 	target := &Target{Model: "jev-latest", URL: "https://example.com/v1/systemone", Do: func(*http.Request) (*http.Response, error) {
@@ -107,6 +133,9 @@ func TestExecuteInvalidUsageStillServesAnswers(t *testing.T) {
 	require.NotEmpty(t, sink.body)
 }
 
+// TestExecuteHTTPFailureAndResponseLimit supplies five unsuccessful HTTP
+// statuses with a Retry-After header. It checks buffered HTTPError metadata,
+// empty sink output, and endpoint construction for root and versioned bases.
 func TestExecuteHTTPFailureAndResponseLimit(t *testing.T) {
 	for _, status := range []int{401, 422, 429, 529, 503} {
 		target := &Target{URL: "https://example.com/v1/systemone", Do: func(*http.Request) (*http.Response, error) {

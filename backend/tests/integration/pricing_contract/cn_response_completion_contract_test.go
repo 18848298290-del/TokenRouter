@@ -17,6 +17,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// A Claude-like client name on a CN provider needs an effective configured
+// price before it can become a billing candidate. The recorder fixtures
+// distinguish filtered aliases, administrator-priced aliases, and an empty
+// candidate list that reports unavailable pricing.
+
+// TestFilterCNProviderBillingModelCandidates passes Claude-like and CN model
+// names through Kimi candidate filtering. It checks retained order, an empty
+// all-Claude result, and the unchanged Claude candidate on an OpenAI provider.
 func TestFilterCNProviderBillingModelCandidates(t *testing.T) {
 	svc := completion.NewRecorder(completion.Dependencies{}, completion.RecorderOptions{DefaultMultiplier: 1})
 
@@ -38,6 +46,10 @@ func TestFilterCNProviderBillingModelCandidates(t *testing.T) {
 	))
 }
 
+// TestFilterCNProviderBillingModelCandidatesKeepsExplicitConfigPricing gives a
+// Kimi route a manual Claude-name token card. It checks that an effective
+// input and output price keeps that candidate available to
+// the completion recorder.
 func TestFilterCNProviderBillingModelCandidatesKeepsExplicitConfigPricing(t *testing.T) {
 	inputPrice := 0.000001
 	outputPrice := 0.000002
@@ -58,6 +70,10 @@ func TestFilterCNProviderBillingModelCandidatesKeepsExplicitConfigPricing(t *tes
 	))
 }
 
+// TestCalculateOpenAIRecordUsageCostEmptyCandidatesIsPricingUnavailable offers
+// token usage with no billing model candidates. It checks that calculation
+// returns an error recognized by the
+// recorder's unavailable-pricing classifier.
 func TestCalculateOpenAIRecordUsageCostEmptyCandidatesIsPricingUnavailable(t *testing.T) {
 	svc := completion.NewRecorder(completion.Dependencies{}, completion.RecorderOptions{DefaultMultiplier: 1})
 

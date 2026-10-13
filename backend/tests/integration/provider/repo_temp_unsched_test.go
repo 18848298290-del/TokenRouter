@@ -19,6 +19,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Conditional provider mutations include identity and eligibility predicates
+// alongside scheduling event writes. Recorded SQL and mock rows check those
+// clauses, zero-row outcomes, cancellation after a successful statement, and
+// OAuth refresh candidate filtering without executing the statements on
+// PostgreSQL.
+
+// TestProviderRepository_SetTempUnschedulable_NoRowsAffectedDoesNotWriteOutbox
+// supplies a zero-row result through the SQL recorder. The repository completes
+// successfully after one provider update and emits no scheduling statement.
 func TestProviderRepository_SetTempUnschedulable_NoRowsAffectedDoesNotWriteOutbox(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -31,6 +40,9 @@ func TestProviderRepository_SetTempUnschedulable_NoRowsAffectedDoesNotWriteOutbo
 	require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
 }
 
+// TestProviderRepository_ResetQuotaUsedAndClearRateLimitCooldown_NoRowsAffectedReturnsNotFoundWithoutOutbox
+// supplies a zero-row quota-reset result through the recorder. The usage store
+// returns provider-not-found after one update and emits no outbox statement.
 func TestProviderRepository_ResetQuotaUsedAndClearRateLimitCooldown_NoRowsAffectedReturnsNotFoundWithoutOutbox(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := billingpostgres.NewProviderUsageStore(exec, billingpostgres.ProviderUsageOptions{})
@@ -43,6 +55,10 @@ func TestProviderRepository_ResetQuotaUsedAndClearRateLimitCooldown_NoRowsAffect
 	require.NotContains(t, strings.Join(exec.execQueries, "\n"), "scheduler_outbox")
 }
 
+// TestProviderRepository_GrokCredentialConditionalMutationsAreEligibleAndAtomicallyPropagated
+// records permanent and transient Grok SQL using zero affected rows. Each
+// statement includes scheduling eligibility, exact credentials, nullable proxy
+// matching, and its conditional event insertion.
 func TestProviderRepository_GrokCredentialConditionalMutationsAreEligibleAndAtomicallyPropagated(t *testing.T) {
 	proxyID := int64(77)
 	snapshot := provider.CredentialMutationSnapshot{
@@ -103,10 +119,15 @@ func TestProviderRepository_GrokCredentialConditionalMutationsAreEligibleAndAtom
 	})
 }
 
+// TestProviderRepository_GrokCredentialCommitCarriesOutboxAcrossCallerCancellation
+// cancels the context inside the recorder's success callback before ExecContext
+// returns its configured result. Each path reports applied and includes the
+// event insert in the same recorded statement.
 func TestProviderRepository_GrokCredentialCommitCarriesOutboxAcrossCallerCancellation(t *testing.T) {
 	snapshot := provider.CredentialMutationSnapshot{CredentialsJSON: `{"access_token":"access","refresh_token":"refresh"}`}
 	tests := []struct {
-		name   string
+		name string // mutation scenario label
+		// mutate invokes the selected conditional Grok database mutation.
 		mutate func(context.Context, *providerpostgres.ProviderStore) (bool, error)
 	}{
 		{
@@ -126,6 +147,9 @@ func TestProviderRepository_GrokCredentialCommitCarriesOutboxAcrossCallerCancell
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
+			// Cancel within the successful recorder callback before ExecContext returns;
+			// this places caller cancellation before the mutation consumes the configured
+			// result, while its SQL text still contains the combined event write.
 			exec := &recordingSQLExecutor{result: rowsAffectedResult(1), afterExec: cancel}
 			repo := newProviderStoreContract(nil, exec, nil)
 
@@ -140,6 +164,10 @@ func TestProviderRepository_GrokCredentialCommitCarriesOutboxAcrossCallerCancell
 	}
 }
 
+// TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_RequiresActiveExactCredentialMatch
+// records missing-refresh-token reconciliation with zero affected rows. Its
+// single statement compares active OAuth identity and complete credentials,
+// while limiting reconciliation to absent or blank refresh tokens.
 func TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_RequiresActiveExactCredentialMatch(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -168,6 +196,10 @@ func TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_RequiresActi
 	require.Contains(t, exec.execArgs[0][6], `"_token_version":7`)
 }
 
+// TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_AppliedWritesOutbox
+// records a reconciliation statement with one affected row. The repository
+// reports applied, and the SQL inserts the provider event from that statement's
+// updated rows.
 func TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_AppliedWritesOutbox(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -188,6 +220,10 @@ func TestProviderRepository_SetGrokOAuthErrorIfCredentialsUnchanged_AppliedWrite
 	require.Contains(t, normalized, "SELECT $8, updated.id, NULL, NULL FROM updated")
 }
 
+// TestProviderRepository_SetGrokOAuthRefreshErrorIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy
+// records an error for attempted refresh credentials and a selected proxy. The
+// statement matches both observations and permits the supplied nonempty refresh
+// token.
 func TestProviderRepository_SetGrokOAuthRefreshErrorIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -214,6 +250,10 @@ func TestProviderRepository_SetGrokOAuthRefreshErrorIfCredentialsUnchanged_UsesA
 	require.Len(t, exec.execArgs[0], 9)
 }
 
+// TestProviderRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy
+// records a transient refresh failure with zero affected rows. SQL compares the
+// attempted credentials and proxy, qualifies extension of the temporary window,
+// and includes a conditional scheduling event.
 func TestProviderRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -240,6 +280,10 @@ func TestProviderRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnc
 	require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
 }
 
+// TestProviderRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemptStateAndAtomicOutbox
+// records an applied Grok credential rotation. One SQL statement matches the
+// attempted credentials and nullable proxy, stores replacement credentials, and
+// includes its scheduling event.
 func TestProviderRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemptStateAndAtomicOutbox(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
 	repo := newProviderStoreContract(nil, exec, nil)
@@ -266,6 +310,10 @@ func TestProviderRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttem
 	require.Equal(t, &proxyID, exec.execArgs[0][5])
 }
 
+// TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter captures the
+// background-refresh query with registry platforms, cursor, and limit. Expected
+// SQL admits OAuth, setup-token, and Qoder cases, excludes qualifying retry
+// cooldowns, and handles nullable health state.
 func TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -296,7 +344,8 @@ func TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T
 	require.Contains(t, normalized, "schedulable = TRUE",
 		"永久不可调度提供商不能继续进入 OAuth 刷新候选")
 	require.Contains(t, normalized, "status = 'active'")
-	// IncludeSetupToken admits setup-token providers alongside OAuth providers for background refresh.
+	// Setup-token eligibility shares the background page with OAuth, while Qoder
+	// COSY has its own predicate; the query must carry both requested forms.
 	require.Contains(t, normalized, "type IN ('oauth', 'setup-token')")
 	require.Contains(t, normalized, "platform = 'qoder' AND type = 'cosy'")
 	require.Contains(t, normalized, "platform = ANY($1)")
@@ -317,7 +366,10 @@ func TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T
 	require.Len(t, capturedArgs, 3)
 	require.Equal(t, int64(100), capturedArgs[1])
 	require.Equal(t, 200, capturedArgs[2])
-	valuer, ok := capturedArgs[0].(interface{ Value() (driver.Value, error) })
+	valuer, ok := capturedArgs[0].(interface {
+		// Value encodes the configured platform list as a SQL argument.
+		Value() (driver.Value, error)
+	})
 	require.True(t, ok)
 	platforms, err := valuer.Value()
 	require.NoError(t, err)
@@ -325,6 +377,10 @@ func TestProviderRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestProviderRepository_ListOAuthRefreshCandidatePage_ReconciliationExcludesAPIKeys
+// captures a Grok reconciliation query with default options. The SQL selects
+// OAuth rows in ID order and permits structurally missing refresh tokens for
+// reconciliation.
 func TestProviderRepository_ListOAuthRefreshCandidatePage_ReconciliationExcludesAPIKeys(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

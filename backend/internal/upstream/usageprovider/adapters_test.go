@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// mustJSONMarshal encodes test data or fails the current test.
+// Wallet remainders, key allowances, and unlimited subscriptions need distinct
+// normalized representations even when their source fields look similar. The
+// fixtures check accepted modes, amount consistency, missing-value errors,
+// display-unit conversion, and omission of unlimited counters from serialized
+// results.
+
+// mustJSONMarshal encodes a test value and fails the test when encoding fails.
+// It marks itself as a helper so serialization assertions report the calling
+// fixture rather than the wrapper.
 func mustJSONMarshal(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)
@@ -18,6 +26,10 @@ func mustJSONMarshal(t *testing.T, value any) []byte {
 	return encoded
 }
 
+// TestParseSub2APIUsageModes exercises wallet, key-quota, and unlimited
+// subscription responses. It checks their selected modes, rolling-limit
+// presence, sentinel omission from JSON, and rejection of inconsistent quota
+// arithmetic.
 func TestParseSub2APIUsageModes(t *testing.T) {
 	balance, err := ParseSub2APIUsage([]byte(`{"isValid":true,"mode":"unrestricted","unit":"USD","planName":"payg","remaining":12.5,"balance":12.5}`))
 	require.NoError(t, err)
@@ -39,6 +51,10 @@ func TestParseSub2APIUsageModes(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestParseSub2APIUsageNormalizesNegativeWalletAndRejectsMalformedWindowStart
+// supplies a negative wallet and an offset expiry, then invalid or missing
+// window starts. It checks retained debt, UTC expiry, and both metadata
+// validation failures.
 func TestParseSub2APIUsageNormalizesNegativeWalletAndRejectsMalformedWindowStart(t *testing.T) {
 	balance, err := ParseSub2APIUsage([]byte(`{"isValid":true,"mode":"unrestricted","unit":"USD","planName":"wallet","remaining":-2.5,"balance":-2.5,"expires_at":"2030-01-01T00:00:00+08:00"}`))
 	require.NoError(t, err)
@@ -51,6 +67,9 @@ func TestParseSub2APIUsageNormalizesNegativeWalletAndRejectsMalformedWindowStart
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageInvalidResponse)
 }
 
+// TestParseSub2APIUsageDistinguishesMissingValidityFromRejectedKey compares an
+// absent isValid marker with an explicit false marker. It checks that malformed
+// usage and a rejected key receive distinct shared error categories.
 func TestParseSub2APIUsageDistinguishesMissingValidityFromRejectedKey(t *testing.T) {
 	_, err := ParseSub2APIUsage([]byte(`{"mode":"unrestricted"}`))
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageInvalidResponse)
@@ -59,6 +78,10 @@ func TestParseSub2APIUsageDistinguishesMissingValidityFromRejectedKey(t *testing
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageAuthFailed)
 }
 
+// TestParseZivvUsageNormalizesWalletAndKeyQuota supplies wallet money and
+// finite key allowance, then a zero key limit. It checks separate wallet and
+// key totals, subscription display, and unlimited representation without a
+// zero-limit field.
 func TestParseZivvUsageNormalizesWalletAndKeyQuota(t *testing.T) {
 	usage, err := ParseZivvUsage([]byte(`{"balance":900.490184,"currency":"USD","is_available":true,"key_limit":1000,"key_used":206.4,"plan_name":"cc b","total_used":22460.664473}`))
 	require.NoError(t, err)
@@ -66,6 +89,8 @@ func TestParseZivvUsageNormalizesWalletAndKeyQuota(t *testing.T) {
 	require.Equal(t, "balance", usage.Mode)
 	require.Equal(t, 900.490184, *usage.Balance.Remaining)
 	require.Equal(t, 22460.664473, *usage.Balance.Used)
+	// Allow floating-point roundoff when adding wallet remainder and
+	// cumulative usage.
 	require.InDelta(t, 23361.154657, *usage.Balance.Total, 0.000001)
 	require.Len(t, usage.Limits, 1)
 	require.Equal(t, "key_quota", usage.Limits[0].Name)
@@ -81,6 +106,10 @@ func TestParseZivvUsageNormalizesWalletAndKeyQuota(t *testing.T) {
 	require.NotContains(t, string(mustJSONMarshal(t, unlimited)), `"limit":0`)
 }
 
+// TestParseZivvUsageRejectsUnavailableOrMalformedResponses supplies an
+// unavailable key, unsupported currency, and missing cumulative usage. It
+// checks authentication failure for the first case and invalid-response errors
+// for the malformed shapes.
 func TestParseZivvUsageRejectsUnavailableOrMalformedResponses(t *testing.T) {
 	_, err := ParseZivvUsage([]byte(`{"balance":1,"currency":"USD","is_available":false,"key_limit":0,"key_used":0,"total_used":0}`))
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageAuthFailed)
@@ -90,6 +119,10 @@ func TestParseZivvUsageRejectsUnavailableOrMalformedResponses(t *testing.T) {
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageInvalidResponse)
 }
 
+// TestParseNewAPITokenUsageConvertsQuotaUnits converts finite raw quota to USD,
+// then supplies finite negative counters for an unlimited key. It checks
+// separate key limits, expiry, omitted unlimited amounts, rejected-key
+// classification, and inconsistent-counter rejection.
 func TestParseNewAPITokenUsageConvertsQuotaUnits(t *testing.T) {
 	response, err := ParseNewAPITokenUsage([]byte(`{"code":true,"message":"ok","data":{"object":"token_usage","name":"Default Token","total_granted":632500000,"total_used":360000,"total_available":632140000,"unlimited_quota":false,"expires_at":1893456000}}`))
 	require.NoError(t, err)
@@ -102,8 +135,9 @@ func TestParseNewAPITokenUsageConvertsQuotaUnits(t *testing.T) {
 	require.Equal(t, "Default Token", usage.Subscription.PlanName)
 	require.Equal(t, time.Unix(1893456000, 0).UTC(), *usage.ExpiresAt)
 
-	// Upstream integer overflow can make unlimited token counters negative.
-	// Normalization omits those counters for unlimited subscriptions.
+	// Supply finite negative counters to exercise unlimited representation.
+	// The normalized JSON omits those values while retaining the
+	// subscription's unlimited flag.
 	unlimitedResponse, err := ParseNewAPITokenUsage([]byte(`{"code":true,"data":{"object":"token_usage","name":"Unlimited","total_granted":-16015,"total_used":1995297521,"total_available":-1995313536,"unlimited_quota":true,"expires_at":0}}`))
 	require.NoError(t, err)
 	unlimited, err := NormalizeNewAPITokenUsage(unlimitedResponse, settings)
@@ -121,6 +155,10 @@ func TestParseNewAPITokenUsageConvertsQuotaUnits(t *testing.T) {
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageInvalidResponse)
 }
 
+// TestParseNewAPIWalletBalanceSupportsDisplayAndQuotaUnits compares labeled and
+// unlabeled display balances with a user-self raw-quota response. It checks
+// equal normalized remainders, absent lifetime-derived wallet totals, and
+// rejection of an HTML response.
 func TestParseNewAPIWalletBalanceSupportsDisplayAndQuotaUnits(t *testing.T) {
 	display, err := ParseNewAPIWalletBalance([]byte(`{"balance_infos":[{"currency":"USD","total_balance":"1264.28"}]}`), NewAPIUsageDisplaySettings{Unit: "USD", QuotaPerUnit: 500000})
 	require.NoError(t, err)
@@ -140,6 +178,9 @@ func TestParseNewAPIWalletBalanceSupportsDisplayAndQuotaUnits(t *testing.T) {
 	require.ErrorIs(t, err, usageview.ErrUpstreamUsageInvalidResponse)
 }
 
+// TestNormalizeNewAPIQuotaUsesConfiguredCNYExchangeRate supplies one USD's raw
+// quota with a configured CNY exchange factor. It checks that the converted
+// amount uses that factor.
 func TestNormalizeNewAPIQuotaUsesConfiguredCNYExchangeRate(t *testing.T) {
 	settings := NewAPIUsageDisplaySettings{Unit: "CNY", QuotaPerUnit: 500000, USDExchangeRate: 7.3}
 	require.Equal(t, 7.3, NormalizeNewAPIQuota(500000, settings))

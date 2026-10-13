@@ -34,16 +34,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/provider"
 )
 
+// OIDC subjects are scoped by issuer, while verified email and local signup
+// settings decide whether callback can issue tokens immediately or needs
+// browser completion. SQLite cases inspect the chosen account, stored pending
+// data, compatibility-email choices and identity ownership conflicts. Direct
+// fast-path calls supply verified inputs themselves; callback cases obtain
+// claims from local HTTP fixtures.
+//
+// The signed provider fixture ties token discovery and validation to one RSA
+// key, matching kid, listener URL and subject-derived nonce. It finishes
+// signing before returning its configuration, so token, userinfo and JWKS
+// requests observe consistent fixture data. Positive callback cases exercise
+// that local issuer; the tests do not enumerate every invalid signature or
+// claim combination.
+
+// oidcProviderFixture supplies matching profile and ID-token claims for a local
+// issuer.
 type oidcProviderFixture struct {
-	Subject           string
-	PreferredUsername string
-	DisplayName       string
-	AvatarURL         string
-	Email             string
-	EmailVerified     bool
+	Subject           string // issuer-scoped subject claim
+	PreferredUsername string // userinfo username suggestion
+	DisplayName       string // userinfo display-name suggestion
+	AvatarURL         string // userinfo picture URL
+	Email             string // userinfo email claim
+	EmailVerified     bool   // supplied email verification flag
 }
 
+// buildRSAJWK converts the supplied RSA public key into an RS256 signing JWK
+// with kid. The modulus and exponent use unsigned big-endian bytes encoded as
+// raw URL-base64; pub and its modulus are required.
 func buildRSAJWK(kid string, pub *rsa.PublicKey) provider.OidcJWK {
+	// JWK integer fields use unsigned byte sequences; raw URL-base64 carries those
+	// bytes without padding for the local provider's key-discovery response.
 	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes())
 	return provider.OidcJWK{
@@ -56,6 +77,10 @@ func buildRSAJWK(kid string, pub *rsa.PublicKey) provider.OidcJWK {
 	}
 }
 
+// TestOIDCOAuthBindStartRedirectsAndSetsBindCookies starts current-user binding
+// with PKCE and ID-token validation enabled. It checks the issuer authorize
+// target, nonce and verifier cookies, browser state, bind intent and signed
+// user identity.
 func TestOIDCOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 	handler := newOIDCOAuthTestHandler(t, false, config.OIDCConnectConfig{
 		Enabled:              true,
@@ -109,6 +134,9 @@ func TestOIDCOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 	require.Equal(t, int64(84), userID)
 }
 
+// TestOIDCOAuthStartOmitsPKCEAndNonceWhenDisabled disables both optional OIDC
+// mechanisms before start. Its authorize redirect and cookies omit the PKCE
+// challenge/verifier and nonce while still returning HTTP 302.
 func TestOIDCOAuthStartOmitsPKCEAndNonceWhenDisabled(t *testing.T) {
 	handler := newOIDCOAuthTestHandler(t, false, config.OIDCConnectConfig{
 		Enabled:              true,
@@ -141,8 +169,15 @@ func TestOIDCOAuthStartOmitsPKCEAndNonceWhenDisabled(t *testing.T) {
 	require.Nil(t, findCookie(recorder.Result().Cookies(), identityhttp.OidcOAuthNonceCookie))
 }
 
+// TestOIDCOAuthCallbackAllowsOptionalPKCEAndIDTokenValidation uses local
+// endpoints returning an access token and userinfo without an ID token. With
+// validation and PKCE disabled, exchange omits code_verifier and callback
+// creates a pending-session cookie.
 func TestOIDCOAuthCallbackAllowsOptionalPKCEAndIDTokenValidation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The optional-validation fixture returns fixed token and profile JSON. Write
+		// errors are discarded here while callback assertions inspect the exchange
+		// result.
 		switch r.URL.Path {
 		case "/token":
 			require.NoError(t, r.ParseForm())
@@ -174,6 +209,9 @@ func TestOIDCOAuthCallbackAllowsOptionalPKCEAndIDTokenValidation(t *testing.T) {
 		ValidateIDToken:      false,
 		RequireEmailVerified: false,
 	})
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -192,6 +230,10 @@ func TestOIDCOAuthCallbackAllowsOptionalPKCEAndIDTokenValidation(t *testing.T) {
 	require.NotNil(t, findCookie(recorder.Result().Cookies(), identityhttp.OauthPendingSessionCookieName))
 }
 
+// TestOIDCOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUser
+// returns signed claims for a subject already bound under the local issuer.
+// Pending login targets that identity's user, retains the issuer and display
+// suggestion, and stores completion without token fields.
 func TestOIDCOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUser(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-subject-login",
@@ -204,6 +246,9 @@ func TestOIDCOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUser(t *t
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, false, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -263,6 +308,9 @@ func TestOIDCOAuthCallbackCreatesLoginPendingSessionForExistingIdentityUser(t *t
 	require.Nil(t, completion["error"])
 }
 
+// TestOIDCOAuthCallbackRejectsDisabledExistingIdentityUser matches local signed
+// claims to a disabled identity owner. Callback redirects with USER_NOT_ACTIVE,
+// sets no pending-session cookie, and leaves the pending table empty.
 func TestOIDCOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-disabled-subject",
@@ -272,6 +320,9 @@ func TestOIDCOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, false, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -313,6 +364,10 @@ func TestOIDCOAuthCallbackRejectsDisabledExistingIdentityUser(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestOIDCOAuthCallbackCreatesBindPendingSessionForCompatEmailUser returns a
+// verified email matching an existing account without that subject. Callback
+// records a compatibility-email choice targeting the account and requested
+// redirect, with no access token in stored completion.
 func TestOIDCOAuthCallbackCreatesBindPendingSessionForCompatEmailUser(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-subject-compat",
@@ -325,6 +380,9 @@ func TestOIDCOAuthCallbackCreatesBindPendingSessionForCompatEmailUser(t *testing
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, false, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -378,6 +436,10 @@ func TestOIDCOAuthCallbackCreatesBindPendingSessionForCompatEmailUser(t *testing
 	require.False(t, hasAccessToken)
 }
 
+// TestOIDCOAuthCallbackAllowsCompatEmailBindWhenUpstreamEmailIsUnverified
+// supplies an unverified matching email while verified email is required.
+// Callback returns email_not_verified, sets no pending-session cookie, and
+// leaves the pending table empty.
 func TestOIDCOAuthCallbackAllowsCompatEmailBindWhenUpstreamEmailIsUnverified(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-subject-unverified-compat",
@@ -391,6 +453,9 @@ func TestOIDCOAuthCallbackAllowsCompatEmailBindWhenUpstreamEmailIsUnverified(t *
 	cfg.RequireEmailVerified = true
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, false, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -425,6 +490,10 @@ func TestOIDCOAuthCallbackAllowsCompatEmailBindWhenUpstreamEmailIsUnverified(t *
 	require.Zero(t, count)
 }
 
+// TestOIDCOAuthCallbackCreatesChoicePendingSessionWhenSignupRequiresInvite
+// returns a new signed subject while invitations are required. Pending
+// completion remains a third_party_signup choice with the local redirect and no
+// target user.
 func TestOIDCOAuthCallbackCreatesChoicePendingSessionWhenSignupRequiresInvite(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-subject-invite",
@@ -437,6 +506,9 @@ func TestOIDCOAuthCallbackCreatesChoicePendingSessionWhenSignupRequiresInvite(t 
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, true, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -473,6 +545,10 @@ func TestOIDCOAuthCallbackCreatesChoicePendingSessionWhenSignupRequiresInvite(t 
 	require.Equal(t, "third_party_signup", completion["choice_reason"])
 }
 
+// TestOIDCOAuthCallbackCreatesBindPendingSessionForCurrentUser combines signed
+// provider claims with the current-user bind cookie. Pending state retains that
+// user, issuer, connection-page redirect and suggested display name while the
+// user count stays one.
 func TestOIDCOAuthCallbackCreatesBindPendingSessionForCurrentUser(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-subject-bind",
@@ -485,6 +561,9 @@ func TestOIDCOAuthCallbackCreatesBindPendingSessionForCurrentUser(t *testing.T) 
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClient(t, false, cfg)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -537,6 +616,10 @@ func TestOIDCOAuthCallbackCreatesBindPendingSessionForCurrentUser(t *testing.T) 
 	require.Equal(t, 1, userCount)
 }
 
+// TestCompleteOIDCOAuthRegistrationAppliesPendingAdoptionDecision combines a
+// saved avatar choice and submitted display-name choice for seeded
+// registration. It checks adopted identity metadata, decision linkage, created
+// username, login token and consumed pending state.
 func TestCompleteOIDCOAuthRegistrationAppliesPendingAdoptionDecision(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -555,6 +638,7 @@ func TestCompleteOIDCOAuthRegistrationAppliesPendingAdoptionDecision(t *testing.
 			"suggested_display_name": "OIDC Display",
 			"suggested_avatar_url":   "https://cdn.example/oidc.png",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -614,6 +698,10 @@ func TestCompleteOIDCOAuthRegistrationAppliesPendingAdoptionDecision(t *testing.
 	require.NotNil(t, consumed.ConsumedAt)
 }
 
+// TestCompleteOIDCOAuthRegistrationRejectsAdoptExistingUserSession sends
+// registration completion for a session requiring existing-account adoption.
+// The response is HTTP 400, and the pending row stays unconsumed for its
+// required account flow.
 func TestCompleteOIDCOAuthRegistrationRejectsAdoptExistingUserSession(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -644,6 +732,7 @@ func TestCompleteOIDCOAuthRegistrationRejectsAdoptExistingUserSession(t *testing
 				"step": "bind_login_required",
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -666,6 +755,9 @@ func TestCompleteOIDCOAuthRegistrationRejectsAdoptExistingUserSession(t *testing
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestCompleteOIDCOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequired
+// submits a seeded forced-email choice. The handler returns pending_session and
+// the choice step, creates no user, and leaves the row unconsumed.
 func TestCompleteOIDCOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequired(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -691,6 +783,7 @@ func TestCompleteOIDCOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequir
 				"force_email_on_signup": true,
 			},
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -722,6 +815,10 @@ func TestCompleteOIDCOAuthRegistrationReturnsPendingSessionWhenChoiceStillRequir
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestCompleteOIDCOAuthRegistrationBindsIdentityWithoutAdoptionFlags completes
+// a seeded subject without profile decisions. It returns both tokens, creates
+// the supplied username, binds the issuer-scoped subject, and links false
+// adoption flags to the identity.
 func TestCompleteOIDCOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -740,6 +837,7 @@ func TestCompleteOIDCOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *testi
 			"suggested_display_name": "OIDC Legacy",
 			"suggested_avatar_url":   "https://cdn.example/oidc-legacy.png",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -786,6 +884,10 @@ func TestCompleteOIDCOAuthRegistrationBindsIdentityWithoutAdoptionFlags(t *testi
 	require.False(t, decision.AdoptAvatar)
 }
 
+// TestCompleteOIDCOAuthRegistrationRejectsIdentityOwnershipConflictBeforeUserCreation
+// seeds the issuer-scoped subject on another owner. Completion reports HTTP
+// conflict and its ownership reason, creates no synthetic-email account, and
+// leaves pending state unconsumed.
 func TestCompleteOIDCOAuthRegistrationRejectsIdentityOwnershipConflictBeforeUserCreation(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
 	ctx := context.Background()
@@ -819,6 +921,7 @@ func TestCompleteOIDCOAuthRegistrationRejectsIdentityOwnershipConflictBeforeUser
 			"username": "oidc_user",
 			"issuer":   "https://issuer.example.com",
 		}).
+		// Seed a future expiry for the following completion-state request.
 		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
 		Save(ctx)
 	require.NoError(t, err)
@@ -849,8 +952,15 @@ func TestCompleteOIDCOAuthRegistrationRejectsIdentityOwnershipConflictBeforeUser
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+// TestTryOIDCVerifiedEmailFastPathCreatesUserAndIdentity directly supplies an
+// already verified email to the fast path. It checks account and identity
+// creation, verified-email metadata, a Bearer token redirect, and an empty
+// pending table.
 func TestTryOIDCVerifiedEmailFastPathCreatesUserAndIdentity(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
@@ -904,6 +1014,10 @@ func TestTryOIDCVerifiedEmailFastPathCreatesUserAndIdentity(t *testing.T) {
 	require.Zero(t, pendingCount)
 }
 
+// TestOIDCOAuthCallbackVerifiedEmailFastPathIssuesTokenWithoutPendingSession
+// returns locally signed verified-email claims with runtime settings enabled.
+// Callback creates the real-email account and identity, redirects with both
+// tokens, clears pending cookies, and leaves no pending row.
 func TestOIDCOAuthCallbackVerifiedEmailFastPathIssuesTokenWithoutPendingSession(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-fast-callback-subject",
@@ -916,6 +1030,9 @@ func TestOIDCOAuthCallbackVerifiedEmailFastPathIssuesTokenWithoutPendingSession(
 	defer cleanup()
 
 	handler, client := newOIDCOauthHTTPFixtureAndClientWithSettings(t, false, cfg, nil)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -965,6 +1082,10 @@ func TestOIDCOAuthCallbackVerifiedEmailFastPathIssuesTokenWithoutPendingSession(
 	require.Zero(t, pendingCount)
 }
 
+// TestOIDCOAuthCallbackVerifiedEmailFastPathBackendModeBlocksBeforeUserCreation
+// supplies a new verified profile while backend mode is enabled. Callback
+// reports BACKEND_MODE_ADMIN_ONLY, clears pending cookies, and leaves user,
+// identity and pending counts at zero.
 func TestOIDCOAuthCallbackVerifiedEmailFastPathBackendModeBlocksBeforeUserCreation(t *testing.T) {
 	cfg, cleanup := newOIDCTestProvider(t, oidcProviderFixture{
 		Subject:           "oidc-fast-backend-mode-subject",
@@ -978,6 +1099,9 @@ func TestOIDCOAuthCallbackVerifiedEmailFastPathBackendModeBlocksBeforeUserCreati
 	handler, client := newOIDCOauthHTTPFixtureAndClientWithSettings(t, false, cfg, map[string]string{
 		gateway.SettingKeyBackendModeEnabled: "true",
 	})
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -1012,8 +1136,15 @@ func TestOIDCOAuthCallbackVerifiedEmailFastPathBackendModeBlocksBeforeUserCreati
 	require.Zero(t, pendingCount)
 }
 
+// TestTryOIDCVerifiedEmailFastPathSkippedWhenInvitationCodeRequired directly
+// submits verified-email inputs while invitations are required. The helper
+// reports an uncompleted fast path, returns no HTTP redirect, and creates no
+// matching user.
 func TestTryOIDCVerifiedEmailFastPathSkippedWhenInvitationCodeRequired(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandler(t, true)
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -1042,12 +1173,19 @@ func TestTryOIDCVerifiedEmailFastPathSkippedWhenInvitationCodeRequired(t *testin
 	require.Zero(t, userCount)
 }
 
+// TestTryOIDCVerifiedEmailFastPathSkippedWhenForceEmailEnabled directly submits
+// verified-email inputs while forced email completion is enabled. The helper
+// reports an uncompleted fast path and leaves the supplied-email account
+// absent.
 func TestTryOIDCVerifiedEmailFastPathSkippedWhenForceEmailEnabled(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
 		settingValues: map[string]string{
 			identitycore.SettingKeyForceEmailOnThirdPartySignup: "true",
 		},
 	})
+	// This later registration closes the client before fixture task-stop
+	// callbacks. Close errors are discarded after the case has inspected its
+	// handler results.
 	t.Cleanup(func() { _ = client.Close() })
 
 	recorder := httptest.NewRecorder()
@@ -1075,12 +1213,19 @@ func TestTryOIDCVerifiedEmailFastPathSkippedWhenForceEmailEnabled(t *testing.T) 
 	require.Zero(t, userCount)
 }
 
+// newOIDCOAuthTestHandler returns the OIDC handler built with oauthCfg from a
+// shared SQLite fixture. Static handler configuration is selected by clearing
+// settingSvc; the underlying pool cleanup is registered on t.
 func newOIDCOAuthTestHandler(t *testing.T, invitationEnabled bool, oauthCfg config.OIDCConnectConfig) *authHTTPFixture {
 	t.Helper()
 	handler, _ := newOIDCOauthHTTPFixtureAndClient(t, invitationEnabled, oauthCfg)
 	return handler
 }
 
+// newOIDCOauthHTTPFixtureAndClient builds pending-flow dependencies, replaces
+// handler config with oauthCfg and the test JWT values, and rebuilds handlers.
+// The authentication service retains its construction dependencies; callers
+// receive the shared SQLite client for assertions.
 func newOIDCOauthHTTPFixtureAndClient(t *testing.T, invitationEnabled bool, oauthCfg config.OIDCConnectConfig) (*authHTTPFixture, *dbent.Client) {
 	t.Helper()
 	handler, client := newOAuthPendingFlowTestHandler(t, invitationEnabled)
@@ -1098,6 +1243,10 @@ func newOIDCOauthHTTPFixtureAndClient(t *testing.T, invitationEnabled bool, oaut
 	return handler, client
 }
 
+// newOIDCOauthHTTPFixtureAndClientWithSettings translates oauthCfg into enabled
+// runtime OIDC settings and merges caller overrides afterward. Its settings fix
+// clock skew at 120 seconds independently of oauthCfg.ClockSkewSeconds, then
+// rebuild handlers around the returned SQLite dependencies.
 func newOIDCOauthHTTPFixtureAndClientWithSettings(
 	t *testing.T,
 	invitationEnabled bool,
@@ -1107,22 +1256,23 @@ func newOIDCOauthHTTPFixtureAndClientWithSettings(
 	t.Helper()
 
 	values := map[string]string{
-		identitycore.SettingKeyOIDCConnectEnabled:              "true",
-		identitycore.SettingKeyOIDCConnectProviderName:         strings.TrimSpace(identitycore.OAuthFirstNonEmpty(oauthCfg.ProviderName, "OIDC")),
-		identitycore.SettingKeyOIDCConnectClientID:             oauthCfg.ClientID,
-		identitycore.SettingKeyOIDCConnectClientSecret:         oauthCfg.ClientSecret,
-		identitycore.SettingKeyOIDCConnectIssuerURL:            oauthCfg.IssuerURL,
-		identitycore.SettingKeyOIDCConnectAuthorizeURL:         oauthCfg.AuthorizeURL,
-		identitycore.SettingKeyOIDCConnectTokenURL:             oauthCfg.TokenURL,
-		identitycore.SettingKeyOIDCConnectUserInfoURL:          oauthCfg.UserInfoURL,
-		identitycore.SettingKeyOIDCConnectJWKSURL:              oauthCfg.JWKSURL,
-		identitycore.SettingKeyOIDCConnectScopes:               oauthCfg.Scopes,
-		identitycore.SettingKeyOIDCConnectRedirectURL:          oauthCfg.RedirectURL,
-		identitycore.SettingKeyOIDCConnectFrontendRedirectURL:  oauthCfg.FrontendRedirectURL,
-		identitycore.SettingKeyOIDCConnectTokenAuthMethod:      oauthCfg.TokenAuthMethod,
-		identitycore.SettingKeyOIDCConnectUsePKCE:              boolSettingValue(oauthCfg.UsePKCE),
-		identitycore.SettingKeyOIDCConnectValidateIDToken:      boolSettingValue(oauthCfg.ValidateIDToken),
-		identitycore.SettingKeyOIDCConnectAllowedSigningAlgs:   oauthCfg.AllowedSigningAlgs,
+		identitycore.SettingKeyOIDCConnectEnabled:             "true",
+		identitycore.SettingKeyOIDCConnectProviderName:        strings.TrimSpace(identitycore.OAuthFirstNonEmpty(oauthCfg.ProviderName, "OIDC")),
+		identitycore.SettingKeyOIDCConnectClientID:            oauthCfg.ClientID,
+		identitycore.SettingKeyOIDCConnectClientSecret:        oauthCfg.ClientSecret,
+		identitycore.SettingKeyOIDCConnectIssuerURL:           oauthCfg.IssuerURL,
+		identitycore.SettingKeyOIDCConnectAuthorizeURL:        oauthCfg.AuthorizeURL,
+		identitycore.SettingKeyOIDCConnectTokenURL:            oauthCfg.TokenURL,
+		identitycore.SettingKeyOIDCConnectUserInfoURL:         oauthCfg.UserInfoURL,
+		identitycore.SettingKeyOIDCConnectJWKSURL:             oauthCfg.JWKSURL,
+		identitycore.SettingKeyOIDCConnectScopes:              oauthCfg.Scopes,
+		identitycore.SettingKeyOIDCConnectRedirectURL:         oauthCfg.RedirectURL,
+		identitycore.SettingKeyOIDCConnectFrontendRedirectURL: oauthCfg.FrontendRedirectURL,
+		identitycore.SettingKeyOIDCConnectTokenAuthMethod:     oauthCfg.TokenAuthMethod,
+		identitycore.SettingKeyOIDCConnectUsePKCE:             boolSettingValue(oauthCfg.UsePKCE),
+		identitycore.SettingKeyOIDCConnectValidateIDToken:     boolSettingValue(oauthCfg.ValidateIDToken),
+		identitycore.SettingKeyOIDCConnectAllowedSigningAlgs:  oauthCfg.AllowedSigningAlgs,
+		// Keep the runtime skew allowance fixed unless the caller overrides this key.
 		identitycore.SettingKeyOIDCConnectClockSkewSeconds:     "120",
 		identitycore.SettingKeyOIDCConnectRequireEmailVerified: boolSettingValue(oauthCfg.RequireEmailVerified),
 	}
@@ -1140,9 +1290,21 @@ func newOIDCOauthHTTPFixtureAndClientWithSettings(
 	return handler, client
 }
 
+// newOIDCTestProvider starts local token, userinfo and JWKS endpoints backed by
+// one generated RSA key and matching profile claims. It returns provider
+// configuration and server.Close, which callers invoke after their requests
+// finish. Configuration enables RS256 validation, PKCE and a subject-derived
+// nonce.
+//
+// The server's URL becomes the issuer only after the listener starts. The
+// helper then signs an ID token for that issuer and oidc-client audience,
+// stores it in the token response, and returns the endpoint configuration.
+// Callers send requests after return so token and key discovery describe the
+// same completed fixture.
 func newOIDCTestProvider(t *testing.T, fixture oidcProviderFixture) (config.OIDCConnectConfig, func()) {
 	t.Helper()
 
+	// Generate a 2048-bit signing key for local RS256 validation.
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -1177,8 +1339,12 @@ func newOIDCTestProvider(t *testing.T, fixture oidcProviderFixture) (config.OIDC
 		}
 	}))
 
+	// Bind the issuer to the actual listener, then finish IDToken before returning
+	// configuration. Callers begin HTTP exchange after the signed response is
+	// ready.
 	issuer = server.URL
 	now := time.Now()
+	// Backdate validity by thirty seconds and allow five minutes for requests.
 	claims := provider.OidcIDTokenClaims{
 		Email:             fixture.Email,
 		EmailVerified:     boolPtr(fixture.EmailVerified),
