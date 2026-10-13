@@ -13,6 +13,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestExtractBedrockChunkData supplies valid, empty, absent, and invalid
+// base64 bytes fields. It checks valid Claude event bytes are returned and the
+// rejected source shapes yield nil.
 func TestExtractBedrockChunkData(t *testing.T) {
 	t.Run("valid base64 payload", func(t *testing.T) {
 		original := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`
@@ -40,6 +43,9 @@ func TestExtractBedrockChunkData(t *testing.T) {
 	})
 }
 
+// TestTransformBedrockInvocationMetrics supplies metrics with absent or
+// existing usage and an ordinary event without metrics. It checks count
+// conversion, vendor-field removal, and existing usage precedence.
 func TestTransformBedrockInvocationMetrics(t *testing.T) {
 	t.Run("converts metrics to usage", func(t *testing.T) {
 		input := `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"amazon-bedrock-invocationMetrics":{"inputTokenCount":150,"outputTokenCount":42}}`
@@ -68,8 +74,13 @@ func TestTransformBedrockInvocationMetrics(t *testing.T) {
 	})
 }
 
+// TestExtractEventStreamHeaderValue builds string headers in single and
+// multiple-header buffers. It checks selected values, missing-name and
+// empty-buffer results while preserving scan order through preceding headers.
 func TestExtractEventStreamHeaderValue(t *testing.T) {
-	// Build a string-valued EventStream header.
+	// Encode fixture headers with their byte lengths and string type tag so
+	// assertions exercise the production typed header scanner rather than an
+	// unframed text parser.
 	buildStringHeader := func(name, value string) []byte {
 		var buf bytes.Buffer
 		// one-byte name length
@@ -110,10 +121,16 @@ func TestExtractEventStreamHeaderValue(t *testing.T) {
 	})
 }
 
+// TestBedrockEventStreamDecoder constructs IEEE-protected chunk/setup frames
+// and corrupted checksum fixtures. It checks chunk selection, setup skipping,
+// empty-input EOF, and rejection of prelude, message, and Castagnoli checksum
+// variants.
 func TestBedrockEventStreamDecoder(t *testing.T) {
 	crc32IeeeTab := crc32.MakeTable(crc32.IEEE)
 
-	// EventStream frames use CRC32/IEEE for both checksums.
+	// Build both checksums with IEEE framing so the decoder can distinguish
+	// header/payload corruption and reject a complete frame using a different CRC
+	// polynomial.
 	buildFrame := func(eventType string, payload []byte) []byte {
 		var headersBuf bytes.Buffer
 		_ = headersBuf.WriteByte(byte(len(":event-type")))

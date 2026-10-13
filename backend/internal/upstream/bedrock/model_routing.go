@@ -7,12 +7,31 @@ import (
 	"strings"
 )
 
-const (
-	BedrockRoutingInvalidModel      BedrockRoutingFailure = "invalid_model"
-	BedrockRoutingUnsupportedRegion BedrockRoutingFailure = "unsupported_region"
-	BedrockRoutingUnverifiedRegion  BedrockRoutingFailure = "unverified_region"
+// Bedrock source regions identify both the HTTP endpoint and signing region,
+// while inference-profile prefixes identify where model execution can route.
+// The static per-model rules record exact profile IDs and source-region
+// membership, so geography is selected from those entries instead of inferred
+// from an AWS region prefix.
+//
+// Default Anthropic aliases resolve through the same source-region rules as
+// configured vendor IDs. An explicit bare ID can retain verified single-region
+// execution; otherwise geographic or forced-global profiles are selected for
+// that model. Unknown explicit vendor IDs and ARNs pass to upstream
+// validation. Missing recorded evidence remains distinct from recorded lack of
+// support, allowing administrator diagnostics to explain the failed route
+// without exposing those details through the error label.
 
-	// Reuse these source-region lists only for models whose verified region sets match.
+const (
+	// BedrockRoutingFailure values distinguish invalid model identity, recorded
+	// unsupported routing, and combinations lacking sufficient source-region
+	// evidence for a selected profile.
+	BedrockRoutingInvalidModel      BedrockRoutingFailure = "invalid_model"      // unresolved model identity
+	BedrockRoutingUnsupportedRegion BedrockRoutingFailure = "unsupported_region" // recorded unsupported source routing
+	BedrockRoutingUnverifiedRegion  BedrockRoutingFailure = "unverified_region"  // unverified source routing evidence
+
+	// Source-region string groups supply shared membership lists for the static
+	// model entries. Reuse a list when those entries record the same exact source
+	// set.
 	BedrockUSSources         = "us-east-1 us-east-2 us-west-1 us-west-2 ca-central-1 ca-west-1"
 	BedrockEUSources         = "eu-central-1 eu-central-2 eu-north-1 eu-south-1 eu-south-2 eu-west-1 eu-west-2 eu-west-3"
 	BedrockJPSources         = "ap-northeast-1 ap-northeast-3"
@@ -198,50 +217,72 @@ var (
 	}
 )
 
-// BedrockModelRoute pairs the inference ID with the endpoint and signing source region.
+// BedrockModelRoute pairs the selected inference ID with its source endpoint
+// region.
 type BedrockModelRoute struct {
-	ModelID      string
-	SourceRegion string
+	ModelID      string // selected vendor inference identifier
+	SourceRegion string // endpoint and signing source region
 }
 
+// BedrockRoutingFailure identifies the reason static Bedrock model routing
+// cannot select a target.
 type BedrockRoutingFailure string
 
-// BedrockModelRoutingError exposes a failure category through Error; diagnostics carry configuration details.
+// BedrockModelRoutingError retains administrator route details beside its
+// public failure category.
 type BedrockModelRoutingError struct {
-	Reason          BedrockRoutingFailure
-	ModelID         string
-	SourceRegion    string
-	ForceGlobal     bool
-	GlobalAvailable bool
+	Reason       BedrockRoutingFailure // static route failure category
+	ModelID      string                // model identity under resolution
+	SourceRegion string                // source region under resolution
+	ForceGlobal  bool                  // requested global inference selection
+	// GlobalAvailable records the selected source region membership in the global
+	// profile. Administrator diagnostics offer a global-selection hint only when
+	// global inference was not already requested.
+	GlobalAvailable bool // recorded global source eligibility
 }
 
-// BedrockInferenceProfile records the source regions verified for one exact inference ID.
+// BedrockInferenceProfile pairs an exact inference identifier with its
+// recorded source regions.
 type BedrockInferenceProfile struct {
-	Id            string
-	SourceRegions []string
+	// Id and SourceRegions jointly determine Supports. An empty Id makes the
+	// profile unavailable; otherwise exact source membership selects the recorded
+	// inference identity.
+	Id            string   // exact vendor inference identifier
+	SourceRegions []string // recorded eligible source regions
 }
 
+// BedrockModelRegionRule contains model-specific source evidence and its
+// available inference choices.
 type BedrockModelRegionRule struct {
-	SourceURL            string
-	GeoProfiles          []BedrockInferenceProfile
-	GlobalProfile        BedrockInferenceProfile
-	InRegionSources      []string
-	DocumentedRegions    []string
-	UnverifiedGeoRegions []string
+	SourceURL string // model rule evidence location
+	// GeoProfiles and GlobalProfile provide exact selectable IDs and source sets.
+	// InRegionSources permits explicit bare IDs; DocumentedRegions and
+	// UnverifiedGeoRegions distinguish unsupported choices from missing evidence.
+	GeoProfiles          []BedrockInferenceProfile // ordered geographic profile choices
+	GlobalProfile        BedrockInferenceProfile   // recorded global inference profile
+	InRegionSources      []string                  // explicit bare-model source regions
+	DocumentedRegions    []string                  // recorded model source-region coverage
+	UnverifiedGeoRegions []string                  // documented regions lacking geographic IDs
 }
 
-// RouteInput supplies the source region, inference mode, and configured model.
+// RouteInput supplies the already mapped model, source region, and inference
+// mode.
 type RouteInput struct {
-	Region      string
-	ForceGlobal bool
-	Model       string
+	Region      string // configured signing source region
+	ForceGlobal bool   // forced global profile selection
+	Model       string // already mapped provider model
 }
 
+// Error returns the Bedrock routing category as a label for caller-facing
+// failure handling.
 func (e *BedrockModelRoutingError) Error() string {
 	return "bedrock model routing failed: " + string(e.Reason)
 }
 
-// BedrockRoutingDiagnostic formats provider details for administrator diagnostics and internal logs.
+// BedrockRoutingDiagnostic formats model, source region, and inference mode
+// for administrator diagnostics. Callers provide a nonnil error; other error
+// types use their own text, while eligible geographic failures can include a
+// global-mode hint.
 func BedrockRoutingDiagnostic(err error) string {
 	var failure *BedrockModelRoutingError
 	if !errors.As(err, &failure) {
@@ -266,7 +307,18 @@ func BedrockRoutingDiagnostic(err error) string {
 	return message
 }
 
-// ResolveBedrockModelRoute selects known inference IDs from verified source-region rules.
+// ResolveBedrockModelRoute selects an inference ID using provider.Model after
+// caller model mapping and the resolved source region. requestedModel supplies
+// diagnostic identity for an absent provider; a nonnil provider uses its
+// configured Model value.
+//
+// Default aliases enter the same model-specific rule lookup as vendor IDs.
+// Explicit bare IDs retain a recorded single-region route when permitted,
+// while forced-global mode selects only its eligible global profile and
+// ordinary mode searches geographic profiles in order. Unknown explicit vendor
+// IDs and ARNs pass through. Failure classification separates invalid
+// identity, absent evidence, and recorded unsupported routing; SourceRegion
+// remains available even when selection fails.
 // @project-doc docs/interfaces/anthropic_upstream.md#bedrock_region_routing
 func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (BedrockModelRoute, error) {
 	route := BedrockModelRoute{SourceRegion: BedrockRuntimeRegion(provider)}
@@ -285,7 +337,8 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 	}
 	if !knownModel {
 		if !isDefaultAlias && IsLikelyBedrockModelID(modelID) {
-			// Preserve explicit unknown vendor IDs and ARNs for upstream validation.
+			// Keep an explicit vendor ID or ARN for upstream validation when the static
+			// model table has no entry; default aliases still require a recorded route.
 			route.ModelID = modelID
 			return route, nil
 		}
@@ -296,7 +349,8 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 		return route, failure
 	}
 	failure.GlobalAvailable = rule.GlobalProfile.Supports(route.SourceRegion)
-	// Explicit base IDs retain verified single-region routing; default aliases use inference profiles.
+	// Permit a recorded single-region source only for an explicit bare model ID;
+	// a default alias still selects an inference profile for the same base model.
 	if !failure.ForceGlobal && !isDefaultAlias && modelID == baseID && slices.Contains(rule.InRegionSources, route.SourceRegion) {
 		route.ModelID = modelID
 		return route, nil
@@ -314,7 +368,9 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 			}
 		}
 	}
-	// Missing evidence is unverified, distinct from documented lack of support.
+	// Use the evidence sets to distinguish a missing exact profile mapping from a
+	// recorded unsupported choice, so administrator diagnostics do not equate
+	// unknown routing with vendor rejection.
 	failure.Reason = BedrockRoutingUnverifiedRegion
 	if slices.Contains(rule.DocumentedRegions, route.SourceRegion) &&
 		(failure.ForceGlobal || !slices.Contains(rule.UnverifiedGeoRegions, route.SourceRegion)) {
@@ -326,7 +382,9 @@ func ResolveBedrockModelRoute(provider *RouteInput, requestedModel string) (Bedr
 	return route, failure
 }
 
-// BedrockBaseModelID strips a recognized inference prefix, retaining date and version suffixes.
+// BedrockBaseModelID removes the first recognized case-sensitive inference
+// prefix and keeps date/version suffixes. Unmatched model text passes through
+// as supplied; callers trim and resolve aliases before invoking this helper.
 func BedrockBaseModelID(modelID string) string {
 	for _, prefix := range BedrockCrossRegionPrefixes {
 		if after, ok := strings.CutPrefix(modelID, prefix); ok {
@@ -336,11 +394,16 @@ func BedrockBaseModelID(modelID string) string {
 	return modelID
 }
 
+// Supports reports whether a nonempty profile ID records region in
+// SourceRegions. Comparison is exact and case-sensitive; an empty ID is
+// unavailable even when its source slice contains that region.
 func (p BedrockInferenceProfile) Supports(region string) bool {
 	return p.Id != "" && slices.Contains(p.SourceRegions, region)
 }
 
-// BedrockProfile splits the source-region list when constructing the static rules.
+// BedrockProfile constructs a static profile from the supplied exact ID and
+// whitespace-separated source regions. Source strings become a fresh slice,
+// while the ID spelling remains as supplied.
 func BedrockProfile(id, sourceRegions string) BedrockInferenceProfile {
 	return BedrockInferenceProfile{Id: id, SourceRegions: strings.Fields(sourceRegions)}
 }

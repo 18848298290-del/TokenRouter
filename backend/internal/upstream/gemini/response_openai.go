@@ -19,13 +19,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// OpenAI-compatible Gemini responses pass through the shared Anthropic and
+// Responses converters before reaching Chat or Responses clients. The selected
+// response model is restored for client output, and usage travels separately
+// so a qualifying collected observation can remain the same caller-supplied
+// pointer.
+//
+// Streaming creates per-request conversion and tool-restoration states.
+// Responses events restore tool names and client forms before synchronous
+// output; Chat chunks follow their separate finalization and optional usage
+// rules. Marshal or restoration failures suppress that event, while a write
+// error stops conversion with the observed usage snapshot. First-token timing
+// follows the first successfully decoded nonempty Gemini payload and is
+// separate from semantic-output accounting in the executor.
+
 const (
-	OpenAICompatChatCompletions OpenAICompatProtocol = iota
-	OpenAICompatResponses
+	// OpenAI-compatible protocol values select the output representation, error
+	// mapper, tool restoration, and stream finalization used by response
+	// adapters.
+	OpenAICompatChatCompletions OpenAICompatProtocol = iota // Chat Completions output
+	OpenAICompatResponses                                   // Responses protocol output
 )
 
+// OpenAICompatProtocol identifies Chat Completions or Responses conversion for
+// a Gemini result.
 type OpenAICompatProtocol int
 
+// HandleChatCompletionsNonStreamingResponseFromGemini reads and optionally
+// unwraps Gemini JSON before writing a Chat response. It observes raw data,
+// forwards selected headers, and returns converted usage; the executor closes
+// the source body and tracks output errors.
 func (s *ResponseAdapter) HandleChatCompletionsNonStreamingResponseFromGemini(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -63,6 +86,10 @@ func (s *ResponseAdapter) HandleChatCompletionsNonStreamingResponseFromGemini(
 	return usage, nil
 }
 
+// GeminiResponseToChatCompletions delegates buffered conversion through the
+// Responses bridge with generated IDs and caller model identity. A positive
+// input, output, or cache override returns the supplied usage pointer
+// directly; other usage is copied from bridge extraction.
 func GeminiResponseToChatCompletions(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ChatCompletionsResponse, *upstream.TokenUsage, error) {
 	var override *bridge.NativeGeminiUsage
 	if usageOverride != nil {
@@ -78,7 +105,10 @@ func GeminiResponseToChatCompletions(geminiResp map[string]any, originalModel st
 	return result, LegacyNativeGeminiUsage(usage), nil
 }
 
-// GeminiResponseToResponses converts Gemini output through Anthropic into OpenAI Responses.
+// GeminiResponseToResponses converts buffered Gemini output through Anthropic
+// to Responses with caller model identity. Positive text/cache override counts
+// select the supplied usage pointer directly; image-only or all-zero overrides
+// leave bridge extraction in control.
 func GeminiResponseToResponses(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ResponsesResponse, *upstream.TokenUsage, error) {
 	var override *bridge.NativeGeminiUsage
 	if usageOverride != nil {
@@ -94,6 +124,10 @@ func GeminiResponseToResponses(geminiResp map[string]any, originalModel string, 
 	return result, LegacyNativeGeminiUsage(usage), nil
 }
 
+// HandleResponsesNonStreamingResponseFromGemini reads and optionally unwraps a
+// Gemini response, observes raw data, and writes restored Responses JSON.
+// Read, decode, conversion, or tool-restoration errors return to the caller,
+// which owns source-body closing.
 func (s *ResponseAdapter) HandleResponsesNonStreamingResponseFromGemini(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -126,6 +160,10 @@ func (s *ResponseAdapter) HandleResponsesNonStreamingResponseFromGemini(
 	return usage, nil
 }
 
+// WriteGeminiResponsesResponse serializes Responses JSON, reverses upstream
+// tool names, and restores client tool forms before output. A nil resp skips
+// header copying; serialization or restoration errors return before Data
+// writes the completed response.
 func (s *ResponseAdapter) WriteGeminiResponsesResponse(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -150,6 +188,18 @@ func (s *ResponseAdapter) WriteGeminiResponsesResponse(
 	return nil
 }
 
+// HandleOpenAICompatStreamingResponseFromGemini converts Gemini data lines
+// through per-stream Anthropic, Responses, and optional Chat states. The
+// caller supplies a flusher-capable output context, closes the source body,
+// and inspects output errors for disconnect status.
+//
+// Responses events restore tool identity before writing; Chat output owns its
+// optional usage chunk and DONE marker. Serialization or tool-restoration
+// failures skip the affected event. A write failure returns the current
+// usage/timing snapshot with nil error, while a non-EOF read failure returns
+// an error. First-token timing observes the first successfully decoded
+// nonempty payload; executor semantic timing remains an independent
+// observation.
 func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -179,12 +229,18 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 	ccState := bridge.NewResponsesEventToChatState(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read})
 	ccState.Model = originalModel
 	ccState.IncludeUsage = includeUsage
+	// Use one client tool restorer for this stream because events can split tool
+	// identity and arguments; restoration state must follow their order before
+	// Responses emission.
 	clientToolRestorer := bridge.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
 	state := bridge.NewNativeGeminiCompatStream(bridge.NativeGeminiRuntime{RandomHex: upstream.RandomHex, MessageID: upstream.GenerateAnthropicMsgID})
 	var firstTokenMs *int
 	firstChunk := true
 
+	// Chunk serialization errors suppress output, while writer errors signal
+	// disconnect to the outer loop so it can return its accumulated usage
+	// snapshot.
 	writeChatChunk := func(chunk protocolopenai.ChatCompletionsChunk) bool {
 		payload, err := json.Marshal(chunk)
 		if err != nil {
@@ -197,6 +253,9 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 		}
 		return false
 	}
+	// Restore each Responses event after reversing upstream names; failed
+	// serialization or restoration skips the event, and successful restored
+	// payloads determine their own emitted event labels.
 	writeResponsesEvent := func(event protocolopenai.ResponsesStreamEvent) bool {
 		payload, err := json.Marshal(event)
 		if err != nil {
@@ -204,6 +263,8 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 		}
 		payload = s.Options.ReverseTools(payload)
 		payloads, _, err := clientToolRestorer.RestoreEvent(payload)
+		// A restoration error suppresses this event while keeping the same restorer
+		// for later events; any state already changed by that failed call remains.
 		if err != nil {
 			return false
 		}
@@ -266,6 +327,8 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 						}
 					}
 
+					// Decode before advancing protocol state; malformed JSON is skipped so
+					// partially populated fields cannot enter downstream conversion for this line.
 					var geminiResp map[string]any
 					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
 						s.observeRaw(rawBytes)
@@ -295,6 +358,9 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 		}
 	}
 
+	// Finish the Gemini bridge before downstream finalization so final
+	// input/cache counts enter the Responses state before its terminal usage and
+	// completion events are generated.
 	for event := range state.Finish() {
 		if event.Type == "message_delta" {
 			usage := state.Usage()

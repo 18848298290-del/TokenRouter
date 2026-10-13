@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBatchClientLocalTLSAndStreamCancellation exercises upload and batch
+// resource actions through a local TLS server. It checks API-key propagation,
+// multipart content, job identity, file MIME selection, and cancellation
+// releasing an unfinished download.
 func TestBatchClientLocalTLSAndStreamCancellation(t *testing.T) {
 	streamStarted := make(chan struct{})
 	streamStopped := make(chan struct{})
@@ -42,7 +46,8 @@ func TestBatchClientLocalTLSAndStreamCancellation(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"downloadUri":"https://%s/bytes","mimeType":"application/jsonl"}`, r.Host)
 		case r.URL.Path == "/bytes":
 			w.Header().Set("Content-Type", "application/jsonl")
-			// Advertise one unsent byte so cancellation is distinguishable from a complete download.
+			// Advertise one more byte than the flushed prefix so cancellation ends an
+			// unfinished download and cannot be mistaken for normal complete-body EOF.
 			w.Header().Set("Content-Length", fmt.Sprint(len("first-line\n")+1))
 			_, _ = io.WriteString(w, "first-line\n")
 			_ = http.NewResponseController(w).Flush()

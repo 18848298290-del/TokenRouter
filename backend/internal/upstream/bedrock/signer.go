@@ -11,14 +11,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
-// BedrockSigner signs requests for the Bedrock service using AWS SigV4.
+// AWS SigV4 signs the same payload bytes and request headers that Bedrock
+// receives. The signer keeps caller-supplied credentials and source region,
+// while the AWS SDK mutates the prepared request in place using a SHA-256
+// payload digest and current signing time.
+
+// BedrockSigner supplies retained AWS credentials and source region to the
+// SigV4 library.
 type BedrockSigner struct {
-	credentials aws.Credentials
-	Region      string
-	signer      *v4.Signer
+	credentials aws.Credentials // retained AWS signing credentials
+	// Region is read during every signature and must match the request endpoint
+	// source region. Callers finish configuration before using the signer
+	// concurrently.
+	Region string     // current signing source region
+	signer *v4.Signer // initialized SDK signing implementation
 }
 
-// NewBedrockSigner configures credentials and the AWS signing region.
+// NewBedrockSigner retains the supplied credential strings and region and
+// creates an SDK signer. Callers validate those credentials and resolve region
+// defaults before construction; this constructor keeps the supplied region
+// spelling.
 func NewBedrockSigner(accessKeyID, secretAccessKey, sessionToken, region string) *BedrockSigner {
 	return &BedrockSigner{
 		credentials: aws.Credentials{
@@ -31,15 +43,16 @@ func NewBedrockSigner(accessKeyID, secretAccessKey, sessionToken, region string)
 	}
 }
 
-// SignRequest signs req using the hash of body and the current time.
-// Callers must pass the bytes that will be sent as the request body.
-// BuildRequest sets Content-Type and Accept before signing.
-// Signed headers and payload must remain consistent when the request is sent.
+// SignRequest mutates req with the Bedrock SigV4 signature using body bytes
+// and current time. Callers supply an initialized signer, finish headers
+// before signing, and send the same body and signed-header values afterward.
 func (s *BedrockSigner) SignRequest(ctx context.Context, req *http.Request, body []byte) error {
 	payloadHash := SHA256Hash(body)
 	return s.signer.SignHTTP(ctx, s.credentials, req, payloadHash, "bedrock", s.Region, time.Now())
 }
 
+// SHA256Hash returns the lowercase hexadecimal SHA-256 digest of the supplied
+// bytes.
 func SHA256Hash(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])

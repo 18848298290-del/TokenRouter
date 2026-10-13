@@ -2,6 +2,9 @@ package codeassist
 
 import "testing"
 
+// TestExtractActivationURL supplies a disabled-service envelope with
+// activation metadata and a help link. It checks the returned URL identifies
+// the project-specific API activation page in that response.
 func TestExtractActivationURL(t *testing.T) {
 	// The disabled API response supplies the activation URL in both metadata and help links.
 	errorBody := `{
@@ -48,11 +51,15 @@ func TestExtractActivationURL(t *testing.T) {
 	}
 }
 
+// TestIsServiceDisabledError compares disabled-service, other permission,
+// not-found, and invalid-JSON responses. It checks that the classifier accepts
+// the required status and reason combination and rejects the other fixture
+// cases.
 func TestIsServiceDisabledError(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		expected bool
+		name     string // case identity label
+		body     string // Google error JSON fixture
+		expected bool   // expected disabled-service classification
 	}{
 		{
 			name: "SERVICE_DISABLED error",

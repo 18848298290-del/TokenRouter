@@ -19,6 +19,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// TestServiceAccountSignedExchange receives a locally signed assertion and
+// checks its issuer, audience, key ID, scope, and one-hour claims. The
+// returned access token carries the expected fifty-five-minute cache lifetime.
 func TestServiceAccountSignedExchange(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -52,7 +55,10 @@ func TestServiceAccountSignedExchange(t *testing.T) {
 	require.Equal(t, 55*time.Minute, ttl)
 }
 
-// Service-account token clients contribute HTTP timing to the request collector.
+// TestVertexServiceAccountHTTPClientRecordsDependency sends a request with a
+// timing collector through the service-account HTTP client. Closing its
+// successful response leaves an HTTP dependency duration in the formatted
+// timing header.
 func TestVertexServiceAccountHTTPClientRecordsDependency(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

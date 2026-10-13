@@ -6,7 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBedrockModelRegionRules_DefaultCatalogAndSourceConsistency checks catalog coverage and source evidence.
+// TestBedrockModelRegionRules_DefaultCatalogAndSourceConsistency checks every
+// default alias against the static model table. It checks nonempty source-link
+// metadata, base-ID agreement, source-set membership, and unique geographic
+// routing within each recorded model.
 func TestBedrockModelRegionRules_DefaultCatalogAndSourceConsistency(t *testing.T) {
 	t.Parallel()
 	for _, modelID := range DefaultBedrockModelMapping {
@@ -36,6 +39,10 @@ func TestBedrockModelRegionRules_DefaultCatalogAndSourceConsistency(t *testing.T
 	}
 }
 
+// TestDefaultBedrockModelMapping_ContainsNewClaudeModels compares selected
+// public aliases with their expected vendor IDs. It checks exact version/date
+// suffixes and suffix-free entries so alias changes cannot silently invent a
+// different resource identity.
 func TestDefaultBedrockModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	t.Parallel()
 

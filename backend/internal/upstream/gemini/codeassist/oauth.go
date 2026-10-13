@@ -12,46 +12,78 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// Gemini authorization can use a configured Google OAuth client or the
+// built-in Gemini CLI identity. Credential-pair presence and OAuth type
+// determine which scopes are sent, and a partially configured client is
+// rejected before constructing consent URLs or token requests.
+//
+// Configured scopes are normalized from comma or whitespace separation. The
+// built-in client filters Generative Language and Drive prefixes for AI Studio
+// and Google One; if filtering removes every scope, Code Assist defaults
+// supply a usable configured scope set. Custom clients retain those scopes,
+// and AI Studio rewrites the exact legacy Generative Language scope to the
+// retriever spelling after selection.
+
 const (
+	// AIStudioBaseURL and GeminiCliBaseURL select the REST and internal account
+	// endpoints used by request builders and Code Assist clients.
 	AIStudioBaseURL  = "https://generativelanguage.googleapis.com"
 	GeminiCliBaseURL = "https://cloudcode-pa.googleapis.com"
 
+	// AuthorizeURL and TokenURL identify the Google consent and token-exchange
+	// endpoints used by the authorization URL and OAuth client.
 	AuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	TokenURL     = "https://oauth2.googleapis.com/token"
 
-	// AIStudioOAuthRedirectURI is the default callback URL users copy after authorization.
-	// Register it with the Google OAuth client unless its client type permits localhost callbacks.
+	// AIStudioOAuthRedirectURI supplies the default loopback callback for the AI
+	// Studio authorization form. The selected OAuth client determines which
+	// callback is registered.
 	AIStudioOAuthRedirectURI = "http://localhost:1455/auth/callback"
 
-	// DefaultCodeAssistScopes grants Code Assist API and user profile access.
+	// DefaultCodeAssistScopes requests cloud-platform and profile scopes when
+	// scope input is absent or built-in filtering leaves no scopes for the
+	// selected OAuth variant.
 	DefaultCodeAssistScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
 
-	// DefaultAIStudioScopes grants Google accounts access to the Gemini API.
+	// DefaultAIStudioScopes supplies cloud-platform and retriever scope text for
+	// a custom AI Studio client when callers omit their configured scopes.
 	// See https://ai.google.dev/gemini-api/docs/oauth.
 	DefaultAIStudioScopes = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever"
 
-	// GeminiCLIRedirectURI is the Gemini CLI Code Assist callback URL.
+	// GeminiCLIRedirectURI names the Code Assist callback selected for the
+	// built-in Gemini CLI authorization flow that returns a copyable code.
 	GeminiCLIRedirectURI = "https://codeassist.google.com/authcode"
 
-	// GeminiCLIOAuthClientID identifies the public Gemini CLI OAuth client.
-	// Google restricts the scopes available to this built-in client.
-	GeminiCLIOAuthClientID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-	// GeminiCLIOAuthClientSecret is the public Gemini CLI OAuth client secret.
+	// GeminiCLIOAuthClientID and GeminiCLIOAuthClientSecret select the built-in
+	// CLI identity. EffectiveOAuthConfig applies its scope-filter policy by
+	// comparing this client ID.
+	GeminiCLIOAuthClientID     = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 	GeminiCLIOAuthClientSecret = "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"
 
-	// GeminiCLIOAuthClientSecretEnv supplies a secret when the built-in secret is empty.
+	// GeminiCLIOAuthClientSecretEnv identifies the secret source consulted when
+	// the built-in constant is empty. The current nonempty constant takes
+	// precedence over this environment value.
 	GeminiCLIOAuthClientSecretEnv = "GEMINI_CLI_OAUTH_CLIENT_SECRET"
 
-	// GeminiCLIUserAgent identifies Gemini CLI requests to internal endpoints.
+	// GeminiCLIUserAgent supplies the fixed client identity sent with Code Assist
+	// and Resource Manager requests and wrapped internal generation requests.
 	GeminiCLIUserAgent = "GeminiCLI/0.1.5 (Windows; AMD64)"
 )
 
+// OAuthConfig carries the client credential pair and requested authorization
+// scope text.
 type OAuthConfig = google.OAuthConfig
 
+// GenerateRandomBytes returns n bytes through the shared OAuth random helper.
+// Zero returns an empty slice and negative n panics during allocation; the
+// backend crypto/rand runtime fills the buffer or terminates on entropy
+// failure.
 func GenerateRandomBytes(n int) ([]byte, error) {
 	return oauthpkce.RandomBytes(n)
 }
 
+// GenerateState returns unpadded base64url state derived from thirty-two
+// random bytes.
 func GenerateState() (string, error) {
 	bytes, err := GenerateRandomBytes(32)
 	if err != nil {
@@ -60,6 +92,8 @@ func GenerateState() (string, error) {
 	return base64URLEncode(bytes), nil
 }
 
+// GenerateSessionID returns thirty-two lowercase hexadecimal characters from
+// sixteen random bytes.
 func GenerateSessionID() (string, error) {
 	bytes, err := GenerateRandomBytes(16)
 	if err != nil {
@@ -68,25 +102,35 @@ func GenerateSessionID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// GenerateCodeVerifier returns an RFC 7636 compatible code verifier (43+ chars).
+// GenerateCodeVerifier returns the shared forty-three-character unpadded
+// base64url PKCE verifier.
 func GenerateCodeVerifier() (string, error) {
 	return oauthpkce.Verifier()
 }
 
+// GenerateCodeChallenge returns the unpadded base64url SHA-256 digest of
+// verifier text.
 func GenerateCodeChallenge(verifier string) string {
 	return oauthpkce.Challenge(verifier)
 }
 
+// base64URLEncode returns bytes encoded with the unpadded URL-safe base64
+// alphabet.
 func base64URLEncode(data []byte) string {
 	return oauthpkce.Base64URL(data)
 }
 
-// EffectiveOAuthConfig resolves credentials and normalizes scopes for the OAuth type.
-// When scopes are omitted, empty or unknown types use Code Assist defaults.
+// EffectiveOAuthConfig resolves a trimmed credential pair and normalized
+// scopes for oauthType. An empty pair selects the built-in CLI identity, a
+// partial pair returns an input error, and the environment secret is
+// considered only when the built-in secret is empty.
 //
-// Leaving both credentials empty selects the built-in Gemini CLI client; supplying only one returns an error.
-//
-// The built-in client filters restricted scopes for ai_studio and google_one.
+// Absent scopes select variant defaults, with Code Assist scopes used for an
+// AI Studio built-in client. Existing scopes for that client are filtered by
+// prefix for AI Studio and Google One, and an empty filtered set returns to
+// Code Assist defaults. Custom clients keep those scope values; AI Studio then
+// rewrites the exact legacy Generative Language token to its retriever
+// spelling.
 func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error) {
 	effective := OAuthConfig{
 		ClientID:     strings.TrimSpace(cfg.ClientID),
@@ -94,13 +138,16 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 		Scopes:       strings.TrimSpace(cfg.Scopes),
 	}
 
-	// Normalize scopes: allow comma-separated input but send space-delimited scopes to Google.
+	// Normalize commas and whitespace before scope selection so both
+	// configuration input forms produce the same space-separated tokens for
+	// filtering and consent requests.
 	if effective.Scopes != "" {
 		effective.Scopes = strings.Join(strings.Fields(strings.ReplaceAll(effective.Scopes, ",", " ")), " ")
 	}
 
-	// Use the built-in credentials when both configured values are empty.
-	// The environment secret is consulted only when the built-in constant is empty.
+	// Choose the built-in identity only for an absent credential pair; a
+	// partially configured pair is rejected so configured and built-in
+	// credentials cannot be mixed.
 	if effective.ClientID == "" && effective.ClientSecret == "" {
 		secret := strings.TrimSpace(GeminiCLIOAuthClientSecret)
 		if secret == "" {
@@ -122,20 +169,23 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 	if effective.Scopes == "" {
 		switch oauthType {
 		case "ai_studio":
-			// Built-in client can't request some AI Studio scopes (notably generative-language).
+			// Select Code Assist scopes for the built-in AI Studio identity because
+			// this client ID is the target of the local restricted-scope filter.
 			if isBuiltinClient {
 				effective.Scopes = DefaultCodeAssistScopes
 			} else {
 				effective.Scopes = DefaultAIStudioScopes
 			}
 		case "google_one":
-			// Google One defaults to the scopes supported by the Gemini CLI client.
+			// Google One selects the local Code Assist scope defaults.
 			effective.Scopes = DefaultCodeAssistScopes
 		default:
 			effective.Scopes = DefaultCodeAssistScopes
 		}
 	} else if (oauthType == "ai_studio" || oauthType == "google_one") && isBuiltinClient {
-		// If user overrides scopes while still using the built-in client, strip restricted scopes.
+		// Apply the built-in client scope policy before deciding whether any
+		// configured scopes remain; an entirely filtered list must receive the same
+		// defaults as absent scope input.
 		parts := strings.Fields(effective.Scopes)
 		filtered := make([]string, 0, len(parts))
 		for _, s := range parts {
@@ -151,7 +201,9 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 		}
 	}
 
-	// Backward compatibility: normalize older AI Studio scope to the currently documented one.
+	// Rewrite the exact legacy AI Studio scope after client filtering so retained
+	// custom-client requests use the retriever token while other scope spellings
+	// stay intact.
 	if oauthType == "ai_studio" && effective.Scopes != "" {
 		parts := strings.Fields(effective.Scopes)
 		for i := range parts {
@@ -165,11 +217,17 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 	return effective, nil
 }
 
+// hasRestrictedScope reports whether a scope begins with either built-in
+// filtering prefix.
 func hasRestrictedScope(scope string) bool {
 	return strings.HasPrefix(scope, "https://www.googleapis.com/auth/generative-language") ||
 		strings.HasPrefix(scope, "https://www.googleapis.com/auth/drive")
 }
 
+// BuildAuthorizationURL returns the Google consent URL with resolved
+// credentials/scopes and S256 PKCE parameters. redirectURI is trimmed and
+// required; optional projectID is trimmed, while callers supply state and
+// challenge values for their authorization session.
 func BuildAuthorizationURL(cfg OAuthConfig, state, codeChallenge, redirectURI, projectID, oauthType string) (string, error) {
 	effectiveCfg, err := EffectiveOAuthConfig(cfg, oauthType)
 	if err != nil {

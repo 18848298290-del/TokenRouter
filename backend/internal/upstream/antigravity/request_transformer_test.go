@@ -10,14 +10,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// TestBuildParts_ThinkingBlockWithoutSignature checks model-specific handling of unsigned thinking.
+// Antigravity conversion follows mapped-model signature policy while retaining
+// client model selection and custom instructions. Fixtures exercise thinking
+// downgrade and dynamic budgets, grouped function/search declarations, moved
+// system turns, and catalogue-driven omission of generation fields and empty
+// tool configuration.
+
+// TestBuildParts_ThinkingBlockWithoutSignature converts unsigned, signed, and
+// dummy-enabled thinking fixtures through the shared parts builder. Selected
+// parts must retain supplied/dummy signatures or ordinary text according to
+// policy. The returned downgrade flag is discarded by this test.
 func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 	tests := []struct {
-		name              string
-		content           string
-		allowDummyThought bool
-		expectedParts     int
-		description       string
+		name              string // human-readable table case name
+		content           string // encoded input content block array
+		allowDummyThought bool   // selected dummy thought signature policy
+		expectedParts     int    // expected converted part count
+		description       string // case-specific assertion diagnostic text
 	}{
 		{
 			name: "Claude model - downgrade thinking to text without signature",
@@ -99,6 +108,10 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 	}
 }
 
+// TestBuildParts_ToolUseSignatureHandling compares tool-use conversion under
+// dummy-enabled and strict policies. Supplied signatures survive both
+// policies, while unsigned dummy-enabled input receives the shared
+// placeholder.
 func TestBuildParts_ToolUseSignatureHandling(t *testing.T) {
 	content := `[
 		{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}, "signature": "sig_tool_abc"}
@@ -144,19 +157,24 @@ func TestBuildParts_ToolUseSignatureHandling(t *testing.T) {
 		if len(parts) != 1 || parts[0].FunctionCall == nil {
 			t.Fatalf("expected 1 functionCall part, got %+v", parts)
 		}
-		// Claude requires the valid tool signature to survive conversion through Google.
+		// The strict conversion policy retains this supplied fixture signature on
+		// the returned part; this assertion does not establish vendor validation.
 		if parts[0].ThoughtSignature != "sig_tool_abc" {
 			t.Fatalf("expected preserved tool signature %q, got %q", "sig_tool_abc", parts[0].ThoughtSignature)
 		}
 	})
 }
 
+// TestBuildTools_CustomTypeTools compares standard and nested custom tool
+// declarations with invalid inputs. Valid functions must be grouped into
+// declarations, while unsupported or incomplete fixtures are skipped as
+// asserted.
 func TestBuildTools_CustomTypeTools(t *testing.T) {
 	tests := []struct {
-		name        string
-		tools       []ClaudeTool
-		expectedLen int
-		description string
+		name        string       // human-readable table case name
+		tools       []ClaudeTool // input tool declaration sequence
+		expectedLen int          // expected converted declaration count
+		description string       // case-specific assertion diagnostic text
 	}{
 		{
 			name: "Standard tool format",
@@ -262,6 +280,10 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 	}
 }
 
+// TestBuildTools_PreservesWebSearchAlongsideFunctions converts function tools
+// and a search declaration together. The result must retain separate function
+// and search entries, including the configured enhanced image-search result
+// limit.
 func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 	tools := []ClaudeTool{
 		{
@@ -285,13 +307,16 @@ func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 	require.Equal(t, 5, result[1].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
 }
 
+// TestBuildGenerationConfig_ThinkingDynamicBudget compares enabled, adaptive,
+// and disabled thinking across selected models. The output must use explicit,
+// dynamic, or catalogue adaptive budget values according to each fixture.
 func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
 	tests := []struct {
-		name        string
-		model       string
-		thinking    *ThinkingConfig
-		wantBudget  int
-		wantPresent bool
+		name        string          // human-readable table case name
+		model       string          // input catalogue model identity
+		thinking    *ThinkingConfig // input thinking mode and budget
+		wantBudget  int             // expected selected token budget
+		wantPresent bool            // expected thinking configuration presence
 	}{
 		{
 			name:        "enabled without budget defaults to dynamic (-1)",
@@ -375,10 +400,14 @@ func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
 	}
 }
 
+// TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock
+// provides billing text in string and text-block system forms. Conversion must
+// retain the selected billing instruction among output system parts for both
+// representations.
 func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t *testing.T) {
 	tests := []struct {
-		name   string
-		system json.RawMessage
+		name   string          // human-readable table case name
+		system json.RawMessage // encoded top-level system input
 	}{
 		{
 			name:   "system array",
@@ -423,6 +452,10 @@ func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t 
 	}
 }
 
+// TestTransformClaudeToGeminiWithOptions_MessageRoles converts ordinary
+// conversation turns and embedded system messages. Assistant roles become
+// model roles, system parts move to instructions, and their ordering follows
+// top-level system text.
 func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 	transform := func(t *testing.T, claudeReq *ClaudeRequest) V1InternalRequest {
 		t.Helper()
@@ -532,6 +565,10 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 	})
 }
 
+// TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
+// converts search and function tools in a wrapped request. Output must retain
+// both categories and enable server-side invocation handling for their
+// combination.
 func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 	claudeReq := &ClaudeRequest{
 		Model: "claude-3-5-sonnet-latest",
@@ -568,6 +605,10 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 	require.True(t, *req.Request.ToolConfig.IncludeServerSideToolInvocations)
 }
 
+// TestTransformClaudeToGeminiWithOptions_ToolInvocationFlagOnlyForMixedTools
+// compares search-only, function-only, and mixed request tools. The invocation
+// flag must be enabled for the mixed fixture and absent for either category
+// alone.
 func TestTransformClaudeToGeminiWithOptions_ToolInvocationFlagOnlyForMixedTools(t *testing.T) {
 	functionTool := ClaudeTool{
 		Name:        "get_weather",
@@ -606,6 +647,10 @@ func TestTransformClaudeToGeminiWithOptions_ToolInvocationFlagOnlyForMixedTools(
 	require.True(t, *mixed.Request.ToolConfig.IncludeServerSideToolInvocations)
 }
 
+// TestTransformClaudeToGeminiWithOptions_GeminiReasoningSkipsInvalidArguments
+// converts a registered reasoning model without tools. Catalogue rules must
+// omit unsupported temperature, top-p, top-k, stop sequences, and the empty
+// tool configuration.
 func TestTransformClaudeToGeminiWithOptions_GeminiReasoningSkipsInvalidArguments(t *testing.T) {
 	temperature := 0.7
 	topP := 0.9
@@ -638,6 +683,10 @@ func TestTransformClaudeToGeminiWithOptions_GeminiReasoningSkipsInvalidArguments
 	require.Equal(t, 4096, req.Request.GenerationConfig.MaxOutputTokens)
 }
 
+// TestTransformClaudeToGeminiWithOptions_GeminiReasoningKeepsToolConfigWithTools
+// converts a reasoning model with function tools. Tool presence must retain
+// the VALIDATED calling configuration even when that model omits an empty
+// configuration.
 func TestTransformClaudeToGeminiWithOptions_GeminiReasoningKeepsToolConfigWithTools(t *testing.T) {
 	claudeReq := &ClaudeRequest{
 		Model: "claude-3-5-sonnet-latest",
@@ -665,7 +714,9 @@ func TestTransformClaudeToGeminiWithOptions_GeminiReasoningKeepsToolConfigWithTo
 	require.Len(t, req.Request.Tools, 1)
 }
 
-// TestWebSearchPreservesSelectedModel checks that enabling search retains the selected model.
+// TestWebSearchPreservesSelectedModel converts a web-search request with an
+// explicitly mapped model. The wrapped model must equal each selected fixture
+// identity; requestType is not asserted by this test.
 func TestWebSearchPreservesSelectedModel(t *testing.T) {
 	for _, model := range []string{"claude-sonnet-4-5", "gemini-3.6-flash"} {
 		request := &ClaudeRequest{
@@ -681,7 +732,9 @@ func TestWebSearchPreservesSelectedModel(t *testing.T) {
 	}
 }
 
-// TestIdentityPatchOmitsModelDeclaration checks the shared identity text without model-specific claims.
+// TestIdentityPatchOmitsModelDeclaration converts a Claude request with the
+// default identity patch. Its serialized body must contain the Antigravity
+// marker and omit both model-declaration phrases asserted by the fixture.
 func TestIdentityPatchOmitsModelDeclaration(t *testing.T) {
 	var request ClaudeRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"model":"claude-sonnet-4-6","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`), &request))
@@ -692,7 +745,9 @@ func TestIdentityPatchOmitsModelDeclaration(t *testing.T) {
 	require.NotContains(t, string(body), "ModelId is")
 }
 
-// TestReasoningRequestRules checks exact model IDs requiring an empty tool-config omission.
+// TestReasoningRequestRules compares known reasoning catalogue identities and
+// unrelated names. The empty-tool rule must match the configured models and
+// remain false for the unknown fixture.
 func TestReasoningRequestRules(t *testing.T) {
 	for _, id := range []string{"gemini-2.5-flash-thinking", "gemini-3-pro-high", "gemini-3.1-pro-high", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
 		if !IsGeminiReasoningModel(id) {

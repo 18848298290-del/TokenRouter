@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Credit retry selection distinguishes explicit free-quota exhaustion from
+// complete structured model limits. Exhaustion fixtures cover excluded
+// transport/status failures and accepted message fragments, while injection
+// fixtures require the credit array to replace any prior value.
+
+// TestClassifyAntigravity429 compares explicit quota wording, a complete
+// structured model limit, and an unknown body. Each fixture must select the
+// corresponding local 429 category.
 func TestClassifyAntigravity429(t *testing.T) {
 	t.Run("明确配额耗尽", func(t *testing.T) {
 		body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"QUOTA_EXHAUSTED"}}`)
@@ -33,6 +41,10 @@ func TestClassifyAntigravity429(t *testing.T) {
 	})
 }
 
+// TestShouldMarkCreditsExhausted exercises transport/status exclusions and
+// accepted exhaustion wording after enabled-credit failures. Its incomplete
+// structured fixture has no model metadata and no exhaustion keyword, so it
+// must remain unmarked.
 func TestShouldMarkCreditsExhausted(t *testing.T) {
 	t.Run("reqErr 不为 nil 时不标记", func(t *testing.T) {
 		resp := &http.Response{StatusCode: http.StatusForbidden}
@@ -65,6 +77,9 @@ func TestShouldMarkCreditsExhausted(t *testing.T) {
 		require.True(t, ShouldMarkCreditsExhausted(resp, body, nil))
 	})
 
+	// This RPC fixture omits model metadata, so parsing is incomplete; absence of
+	// exhaustion wording also keeps marking false without proving
+	// structured-limit precedence.
 	t.Run("结构化限流不标记", func(t *testing.T) {
 		resp := &http.Response{StatusCode: http.StatusTooManyRequests}
 		body := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.5s"}]}}`)
@@ -92,6 +107,9 @@ func TestShouldMarkCreditsExhausted(t *testing.T) {
 	})
 }
 
+// TestInjectEnabledCreditTypes checks enabled-credit injection, malformed
+// input, and prior credit arrays. Valid object input must contain
+// GOOGLE_ONE_AI and replace the supplied old array value.
 func TestInjectEnabledCreditTypes(t *testing.T) {
 	t.Run("正常 JSON 注入成功", func(t *testing.T) {
 		body := []byte(`{"model":"claude-sonnet-4-5","request":{}}`)

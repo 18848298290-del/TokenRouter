@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestVertexBatchAndGCSLocalTransport drives upload, job submission, polling,
+// cancellation, paginated listing, combined reads, and prefix deletion through
+// local TLS. It checks bearer propagation, JSONL separation, closed-reader
+// rejection, and deletion of every listed suffix.
 func TestVertexBatchAndGCSLocalTransport(t *testing.T) {
 	var pages, removed atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,12 +87,17 @@ func TestVertexBatchAndGCSLocalTransport(t *testing.T) {
 	require.EqualValues(t, 4, pages.Load())
 }
 
+// TestVertexGCSStreamCancellation cancels an object download after receiving
+// its first bytes. It checks the reader returns context.Canceled, the server
+// observes cancellation, and the body can be closed afterward.
 func TestVertexGCSStreamCancellation(t *testing.T) {
 	exited := make(chan struct{})
 	finishResponse := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "first\n")
 		_ = http.NewResponseController(w).Flush()
+		// Keep the response open after flushing the first bytes so cancellation must
+		// end an active download rather than following a completed object.
 		<-r.Context().Done()
 		close(exited)
 		// Wait for the read assertion so the client observes cancellation.

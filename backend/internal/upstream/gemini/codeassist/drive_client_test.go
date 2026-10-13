@@ -2,6 +2,9 @@ package codeassist
 
 import "testing"
 
+// TestDriveStorageInfo constructs a quota observation with one-hundred GiB
+// capacity and fifty GiB usage. It checks the fields retain their byte counts;
+// this fixture exercises representation rather than an API exchange.
 func TestDriveStorageInfo(t *testing.T) {
 	info := &DriveStorageInfo{
 		Limit: 100 * 1024 * 1024 * 1024, // 100 GiB

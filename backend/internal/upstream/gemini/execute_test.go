@@ -19,18 +19,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// executeSink records synchronous test output and can block or fail its first
+// payload.
 type executeSink struct {
-	body   bytes.Buffer
-	events []upstream.OutputEvent
-	first  chan struct{}
-	resume chan struct{}
-	once   atomic.Bool
-	fail   bool
+	// body and events are written by synchronous Emit calls. Tests inspect both
+	// after Execute returns or the done channel joins its goroutine.
+	body   bytes.Buffer           // captured successful output bytes
+	events []upstream.OutputEvent // copied successful sink events
+	// first, resume, and once coordinate the first data emission with the
+	// assertion goroutine. The test closes resume after confirming Execute is
+	// blocked by synchronous sink backpressure.
+	first  chan struct{} // first payload arrival notification
+	resume chan struct{} // first payload continuation gate
+	once   atomic.Bool   // first arrival notification guard
+	fail   bool          // forced payload failure flag
 }
 
+// Begin accepts response metadata while leaving this fixture focused on
+// payload output.
 func (s *executeSink) Begin(upstream.OutputHead) error { return nil }
 
+// Emit optionally blocks the first nonempty payload, then records copied event
+// data and body bytes. fail returns the fixture disconnect error after the
+// gate; tests join Execute before reading accumulated output.
+//
+// The atomic guard emits one arrival notification even if the adapter produces
+// several frames. Waiting happens inside synchronous sink delivery so the test
+// can prove Execute has not completed before output is released. Retained data
+// is cloned because converters can reuse buffers after a successful write.
 func (s *executeSink) Emit(event upstream.OutputEvent) error {
+	// Signal the first payload before waiting on its release gate so the
+	// assertion can observe an active synchronous write and verify Execute
+	// remains blocked.
 	if len(event.Data) > 0 && s.first != nil && s.once.CompareAndSwap(false, true) {
 		close(s.first)
 		<-s.resume
@@ -44,6 +64,10 @@ func (s *executeSink) Emit(event upstream.OutputEvent) error {
 	return nil
 }
 
+// localTarget builds a one-attempt local target with conversion callbacks and
+// response-close counting. mode selects the client adapter; the stream
+// parameter is retained in the fixture signature and does not alter this
+// target construction.
 func localTarget(server *httptest.Server, mode ResponseMode, stream bool, closes *atomic.Int32) *Target {
 	return &Target{ProviderID: 41, Model: "gemini-fixture", Mode: mode, Exchange: ExchangeOptions{MaxRetries: 1, RequestIDHeader: "x-request-id", Build: func(ctx context.Context) (*http.Request, string, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(`{"contents":[]}`))
@@ -61,6 +85,9 @@ func localTarget(server *httptest.Server, mode ResponseMode, stream bool, closes
 	}, ObserveImages: func([]byte) {}, ReverseTools: func(b []byte) []byte { return b }, ClaudeError: func(_ int, _ string, m string) error { return errors.New(m) }, ChatError: func(_ int, _ string, m string) error { return errors.New(m) }, GoogleError: func(_ int, m string) error { return errors.New(m) }, CompatError: func(_ OpenAICompatProtocol, _ int, _ string, m string) error { return errors.New(m) }}}
 }
 
+// nativeInput builds the client protocol and stream flag matching the target
+// test mode. It selects Responses separately within OpenAI mode and supplies
+// the fixed response model and generation body.
 func nativeInput(target *Target, stream bool) upstream.AttemptInput {
 	id := protocol.ProtocolAnthropicMessages
 	if target.Mode == NativeResponse {
@@ -75,6 +102,10 @@ func nativeInput(target *Target, stream bool) upstream.AttemptInput {
 	return upstream.AttemptInput{Target: target, Protocol: id, Stream: stream, ResponseModel: "gemini-fixture", Body: []byte(`{"contents":[]}`)}
 }
 
+// TestExecuteGeminiNonStreamObservedZero returns visible content with explicit
+// zero usage across all four client representations. It checks usage presence,
+// semantic output, observed model, request ID, lifecycle/body release, and
+// retained native payload bytes.
 func TestExecuteGeminiNonStreamObservedZero(t *testing.T) {
 	for _, kind := range []string{"messages", "native", "chat", "responses"} {
 		t.Run(kind, func(t *testing.T) {
@@ -118,6 +149,10 @@ func TestExecuteGeminiNonStreamObservedZero(t *testing.T) {
 	}
 }
 
+// TestExecuteGeminiStreamingProgressAndPartial blocks the first sink emission
+// while a complete or truncated upstream stream is available. It checks
+// synchronous backpressure, progressive output, retained observed usage/model
+// on read failure, and final response closing.
 func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 	for _, variant := range []int{0, 1, 2, 3} {
 		mode := ResponseMode(variant)
@@ -148,6 +183,8 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 				done := make(chan struct{})
 				var result upstream.AttemptResult
 				var runErr error
+				// Run Execute separately while the sink blocks its first payload; result
+				// and error are read after done closes to join the worker.
 				go func() {
 					result, runErr = (Executor{}).Execute(context.Background(), nativeInput(target, true), sink)
 					close(done)
@@ -196,6 +233,10 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 	}
 }
 
+// TestExecuteGeminiCountFallbackIsNotUsage exhausts a retryable native request
+// with a configured token estimate. It checks the estimate is emitted
+// separately while server-usage presence, semantic output, and billed counters
+// remain unset.
 func TestExecuteGeminiCountFallbackIsNotUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer server.Close()
@@ -216,6 +257,9 @@ func TestExecuteGeminiCountFallbackIsNotUsage(t *testing.T) {
 	require.EqualValues(t, 1, closes.Load())
 }
 
+// TestExecuteGeminiCancelledRequestDoesNotReachServer starts with a cancelled
+// context and one allowed attempt. It checks no server request occurs,
+// cancellation is reported, and the registered lifecycle entry is released.
 func TestExecuteGeminiCancelledRequestDoesNotReachServer(t *testing.T) {
 	var calls, closes, releases atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))

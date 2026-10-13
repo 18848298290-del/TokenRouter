@@ -1,4 +1,8 @@
-// Package gemini adapts Gemini authentication, protocol exchanges, image generation, and batch APIs.
+// Package gemini exchanges Gemini generation, image, and batch payloads for
+// native and compatible client protocols. Provider callers supply credential
+// snapshots, endpoint policy, and request transport; executors own final body
+// closing and return independent usage, semantic-output, model, and timing
+// observations.
 //
 // Reading entry points:
 //   - execute.go: Executes the selected protocol and collects output observations.

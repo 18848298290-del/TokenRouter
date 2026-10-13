@@ -7,11 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGeminiResponseToChatCompletionsPreservesInlineData converts image-only
+// and mixed text/image parts to Chat output. It checks data-URL image text,
+// preceding text order, one choice, and the final stop reason.
 func TestGeminiResponseToChatCompletionsPreservesInlineData(t *testing.T) {
 	tests := []struct {
-		name  string
-		parts []any
-		want  string
+		name  string // case identity label
+		parts []any  // ordered source response parts
+		want  string // expected converted Chat text
 	}{
 		{
 			name: "image only",
@@ -59,10 +62,14 @@ func TestGeminiResponseToChatCompletionsPreservesInlineData(t *testing.T) {
 	}
 }
 
+// TestGeminiResponseToChatCompletionsOmitsInvalidInlineData supplies
+// unsupported MIME, malformed MIME, and invalid base64 between visible text
+// parts. It checks invalid image data is omitted while the surrounding text
+// remains together.
 func TestGeminiResponseToChatCompletionsOmitsInvalidInlineData(t *testing.T) {
 	tests := []struct {
-		name       string
-		inlineData map[string]any
+		name       string         // case identity label
+		inlineData map[string]any // invalid inline image fixture
 	}{
 		{
 			name:       "unsupported MIME type",
@@ -102,6 +109,9 @@ func TestGeminiResponseToChatCompletionsOmitsInvalidInlineData(t *testing.T) {
 	}
 }
 
+// TestGeminiResponseToChatCompletionsRetainsTextAndToolBehavior combines
+// visible text with one function call. It checks text output, tool-call finish
+// reason, function identity, and serialized arguments in the Chat result.
 func TestGeminiResponseToChatCompletionsRetainsTextAndToolBehavior(t *testing.T) {
 	geminiResp := map[string]any{
 		"candidates": []any{map[string]any{

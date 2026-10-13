@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildGeminiAIStudioModelActionURL builds both generation actions and
+// token counting with a common API base. It checks exact resource paths,
+// trimming of model/base text, and the streaming SSE query.
 func TestBuildGeminiAIStudioModelActionURL(t *testing.T) {
 	const base = "https://generativelanguage.googleapis.com"
 
@@ -22,8 +25,10 @@ func TestBuildGeminiAIStudioModelActionURL(t *testing.T) {
 	require.Equal(t, base+"/v1beta/models/gemini-2.5-pro:countTokens", got)
 }
 
-// TestBuildGeminiAIStudioModelActionURLRejectsNonConformingModel checks client-controlled path segments.
-// Native URLs and compatibility request bodies can both supply model names.
+// TestBuildGeminiAIStudioModelActionURLRejectsNonConformingModel supplies
+// navigation, encoding, delimiter, whitespace, and unsupported model
+// spellings. It checks rejection by both helpers and also rejects an
+// unsupported action or empty base URL.
 func TestBuildGeminiAIStudioModelActionURLRejectsNonConformingModel(t *testing.T) {
 	const base = "https://generativelanguage.googleapis.com"
 

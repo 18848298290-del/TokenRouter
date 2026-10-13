@@ -13,31 +13,85 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// Gemini API-key, OAuth, and service-account requests carry the same
+// generation data through different endpoints. An OAuth token snapshot
+// includes the project returned with that token, so Code Assist wrapping uses
+// one credential observation instead of separately reading a project while
+// token state may change.
+//
+// Native plans retain their selected action and upstream stream flag.
+// Compatibility plans derive generation actions from client streaming, with
+// OAuth allowed to use a different upstream stream. Project-bearing OAuth uses
+// the internal wrapper unless ForceAIStudio is set; service accounts use the
+// caller Vertex URL, and the remaining plans use a validated AI Studio base.
+// REST normalization applies to unwrapped compatibility payloads.
+
 const (
-	APIKeyCredential         CredentialMode = "apikey"
-	OAuthCredential          CredentialMode = "oauth"
-	ServiceAccountCredential CredentialMode = "service_account"
+	// Credential mode values select the credential source, upstream endpoint
+	// family, payload wrapping, and authentication header used by BuildRequest.
+	APIKeyCredential         CredentialMode = "apikey"          // API-key authentication
+	OAuthCredential          CredentialMode = "oauth"           // OAuth bearer authentication
+	ServiceAccountCredential CredentialMode = "service_account" // service-account bearer authentication
 )
 
-// CredentialMode selects API key, OAuth, or service account authentication.
+// CredentialMode selects the credential source and corresponding Gemini
+// upstream request family.
 type CredentialMode string
 
 type (
+	// TokenSnapshot pairs AccessToken with ProjectID from one acquisition.
+	// AccessToken carries bearer credential text, and ProjectID identifies its
+	// Code Assist project; request construction uses them from that same
+	// snapshot.
 	TokenSnapshot struct{ AccessToken, ProjectID string }
-	RequestPlan   struct {
-		Mode                                                CredentialMode
-		Model, Action                                       string
+	// RequestPlan selects credentials, endpoint, payload dialect, and stream
+	// behavior for one request.
+	RequestPlan struct {
+		Mode CredentialMode // selected upstream credential family
+		// Model identifies the upstream model; Action selects its API operation.
+		Model, Action string
+		// Native retains Action and UpstreamStream directly. Compatibility uses
+		// ClientStream, with OAuth instead using UpstreamStream; ForceAIStudio
+		// bypasses project-based OAuth wrapping while preserving that credential
+		// mode.
+		// Native retains action input; ForceAIStudio selects REST; ClientStream
+		// describes client output; UpstreamStream describes upstream output.
 		Native, ForceAIStudio, ClientStream, UpstreamStream bool
-		APIKey                                              func() string
-		Token                                               func(context.Context) (TokenSnapshot, error)
-		BaseURL                                             func() string
-		ValidateURL                                         func(string) (string, error)
-		VertexURL                                           func(string, bool) (string, error)
+		// APIKey is required for APIKeyCredential and returns the header value.
+		// Blank trimmed text fails configuration, while the supplied nonblank
+		// spelling is retained.
+		// API-key credential acquisition callback
+		APIKey func() string
+		// Token supplies OAuth or service-account credentials as one snapshot; a
+		// missing callback or acquisition error returns before endpoint construction
+		// and request creation.
+		// coupled token/project acquisition callback
+		Token func(context.Context) (TokenSnapshot, error)
+		// BaseURL and ValidateURL are required for the REST path. ValidateURL also
+		// checks the fixed Code Assist base before constructing a project-bearing
+		// OAuth request.
+		BaseURL func() string // configured AI Studio base
+		// upstream base policy validation
+		ValidateURL func(string) (string, error)
+		// VertexURL is required in service-account mode and receives the selected
+		// action and stream flag. Its caller implementation owns project and
+		// location endpoint policy.
+		// service-account model endpoint builder
+		VertexURL func(string, bool) (string, error)
 	}
 )
 
-// BuildRequest authenticates and builds a request, using the project returned with the token.
-// Compatibility payloads outside the Code Assist wrapper receive REST normalization.
+// BuildRequest returns the authenticated generation request and request-ID
+// header name for plan. Callers supply callbacks for the selected credential
+// and endpoint path, and leave borrowed body bytes unchanged until the request
+// has been sent.
+//
+// OAuth acquisition couples the token and project before choosing an internal
+// wrapper or REST route. Compatibility streaming controls the generation
+// action, with the OAuth upstream stream choice taking precedence. Internal
+// wrapping reencodes decoded JSON, while unwrapped compatibility requests
+// delegate REST normalization. Credential, base-validation, payload-decode, or
+// URL-construction errors return before network exchange.
 func BuildRequest(ctx context.Context, body []byte, plan RequestPlan) (*http.Request, string, error) {
 	action, stream := plan.Action, plan.UpstreamStream
 	if !plan.Native {
@@ -84,10 +138,15 @@ func BuildRequest(ctx context.Context, body []byte, plan RequestPlan) (*http.Req
 		if stream {
 			target += "?alt=sse"
 		}
+		// Wrap the generation body together with the acquired project and selected
+		// model so the internal endpoint receives one routing envelope tied to that
+		// token snapshot.
 		var inner any
 		if err := json.Unmarshal(body, &inner); err != nil {
 			return nil, "", fmt.Errorf("failed to parse gemini request: %w", err)
 		}
+		// The envelope contains only decoded JSON values and string metadata, so
+		// encoding cannot encounter unsupported values or a reference cycle.
 		wire, _ = json.Marshal(map[string]any{"model": plan.Model, "project": strings.TrimSpace(token.ProjectID), "request": inner})
 		wrapped = true
 	} else {
@@ -100,6 +159,9 @@ func BuildRequest(ctx context.Context, body []byte, plan RequestPlan) (*http.Req
 	if err != nil {
 		return nil, "", err
 	}
+	// Normalize the compatibility dialect only for REST payloads; the internal
+	// Code Assist wrapper carries its separately prepared request representation
+	// and routing fields.
 	if !plan.Native && !wrapped {
 		wire = bridge.NativeNormalizeGeminiRequestForAIStudio(wire)
 	}

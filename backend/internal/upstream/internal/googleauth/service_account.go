@@ -19,12 +19,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// Google service accounts exchange an RSA-signed JWT assertion for an access
+// token. The exchange reports a shortened cache lifetime to provider
+// orchestration, while its HTTP client records dependency timing and uses the
+// proxy selected by that caller.
+
 const (
+	// CloudPlatformScope selects the assertion permission, and
+	// ServiceAccountCacheSkew reserves time before provider caches expire tokens.
 	CloudPlatformScope      = "https://www.googleapis.com/auth/cloud-platform"
 	ServiceAccountCacheSkew = 5 * time.Minute
 )
 
-// NewServiceAccountHTTPClient builds an instrumented token-exchange client with an optional proxy.
+// NewServiceAccountHTTPClient builds a timed token-exchange client with a
+// fifteen-second request timeout. A blank proxy uses the default transport; a
+// supplied proxy configures a cloned HTTP transport and returns configuration
+// errors.
 func NewServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
@@ -39,6 +49,8 @@ func NewServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	if !ok {
 		return nil, fmt.Errorf("unexpected default transport type %T", http.DefaultTransport)
 	}
+	// Clone before replacing proxy behavior so this exchange cannot rewrite the
+	// process-wide default transport used by unrelated HTTP clients.
 	transport := defaultTransport.Clone()
 	transport.Proxy = nil
 	if err := proxy.ConfigureTransportProxy(transport, parsedProxy); err != nil {
@@ -47,8 +59,14 @@ func NewServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	return timing.InstrumentClient(&http.Client{Timeout: 15 * time.Second, Transport: transport}), nil
 }
 
-// ExchangeServiceAccountToken signs an assertion and returns a token and cache TTL.
-// A missing lifetime defaults to one hour; lifetimes above the cache skew are shortened by that skew.
+// ExchangeServiceAccountToken signs a one-hour RS256 assertion from a nonnil
+// key and exchanges it at key.TokenURI. The key requires a PEM-encoded PKCS1
+// or PKCS8 RSA private key; endpoint validation and cache coordination belong
+// to callers.
+//
+// A nonblank access_token on a successful HTTP status is returned as received.
+// Nonpositive expires_in uses one hour, and lifetimes exceeding five minutes
+// reserve that cache skew; short lifetimes retain their full duration.
 func ExchangeServiceAccountToken(ctx context.Context, key *google.ServiceAccountKey, proxyURL string) (string, time.Duration, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
@@ -91,10 +109,14 @@ func ExchangeServiceAccountToken(ctx context.Context, key *google.ServiceAccount
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Retain at most one MiB for token and error decoding. Read and JSON errors
+	// are discarded, so status and decoded token presence determine this result.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var parsed google.ServiceAccountTokenResponse
 	_ = json.Unmarshal(body, &parsed)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Prefer the structured description, then the error label, then the bounded
+		// body text so an unrecognized failure still supplies diagnostic content.
 		msg := strings.TrimSpace(parsed.ErrorDesc)
 		if msg == "" {
 			msg = strings.TrimSpace(parsed.Error)
@@ -107,10 +129,15 @@ func ExchangeServiceAccountToken(ctx context.Context, key *google.ServiceAccount
 	if strings.TrimSpace(parsed.AccessToken) == "" {
 		return "", 0, errors.New("service account token response missing access_token")
 	}
+	// Convert the server lifetime to a cache duration. Missing or nonpositive
+	// lifetimes select one hour before reserving the provider cache refresh
+	// margin.
 	ttl := time.Duration(parsed.ExpiresIn) * time.Second
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
+	// Short tokens keep their positive lifetime; subtracting the refresh margin
+	// from them would produce a nonpositive cache duration.
 	if ttl > ServiceAccountCacheSkew {
 		ttl -= ServiceAccountCacheSkew
 	}

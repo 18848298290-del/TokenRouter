@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Structured Google RPC retries require matching status/reason observations
+// and model metadata, with delay syntax parsed independently from HTTP
+// error-code shape. Fixtures pin short/long/capacity decisions using the
+// native boolean and normalize resource names, while exact internal-500
+// matching remains separate.
+
+// TestIsAntigravityInternalServerError compares the complete internal-500
+// fixture with mismatched statuses, messages, codes, and body shapes. Only the
+// asserted complete combination must select the provider penalty classifier.
 func TestIsAntigravityInternalServerError(t *testing.T) {
 	t.Run("匹配完整的 INTERNAL 500 body", func(t *testing.T) {
 		body := []byte(`{"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}`)
@@ -51,14 +60,17 @@ func TestIsAntigravityInternalServerError(t *testing.T) {
 	})
 }
 
+// TestParseAntigravitySmartRetryInfo compares complete RPC limits with missing
+// reason/status/model and invalid bodies. Parsed fixtures must retain selected
+// delays, normalized model identity, and capacity observations as asserted.
 func TestParseAntigravitySmartRetryInfo(t *testing.T) {
 	tests := []struct {
-		name                             string
-		body                             string
-		expectedDelay                    time.Duration
-		expectedModel                    string
-		expectedNil                      bool
-		expectedIsModelCapacityExhausted bool
+		name                             string        // human-readable table case name
+		body                             string        // encoded supplier error fixture
+		expectedDelay                    time.Duration // expected parsed retry duration
+		expectedModel                    string        // expected normalized model identity
+		expectedNil                      bool          // expected absent parsing result
+		expectedIsModelCapacityExhausted bool          // expected accumulated capacity observation
 	}{
 		{
 			name: "valid complete response with RATE_LIMIT_EXCEEDED",
@@ -241,6 +253,10 @@ func TestParseAntigravitySmartRetryInfo(t *testing.T) {
 	}
 }
 
+// TestShouldTriggerAntigravitySmartRetry selects policy using the native
+// boolean despite historical provider labels in fixture names. Short, long,
+// missing-delay, and capacity bodies must choose their configured retry or
+// model-limit observations.
 func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 	oauthProvider := true
 	setupTokenProvider := true
@@ -248,14 +264,14 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 	apiKeyProvider := false
 
 	tests := []struct {
-		name                             string
-		provider                         bool
-		body                             string
-		expectedShouldRetry              bool
-		expectedShouldRateLimit          bool
-		expectedIsModelCapacityExhausted bool
-		minWait                          time.Duration
-		modelName                        string
+		name                             string        // human-readable table case name
+		provider                         bool          // input native-retry eligibility flag
+		body                             string        // encoded supplier error fixture
+		expectedShouldRetry              bool          // expected same-provider retry selection
+		expectedShouldRateLimit          bool          // expected model-limit selection result
+		expectedIsModelCapacityExhausted bool          // expected accumulated capacity observation
+		minWait                          time.Duration // minimum expected selected wait
+		modelName                        string        // expected selected model identity
 	}{
 		{
 			name:     "OAuth provider with short delay (< 7s) - smart retry",
@@ -443,11 +459,15 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 	}
 }
 
+// TestNormalizeAntigravityModelName compares plain, prefixed,
+// publisher-resource, and mixed-case names. Each fixture must return its
+// expected lowercase model identity after supported resource-prefix removal
+// and trimming.
 func TestNormalizeAntigravityModelName(t *testing.T) {
 	tests := []struct {
-		name     string
-		model    string
-		expected string
+		name     string // human-readable table case name
+		model    string // input supplied model spelling
+		expected string // expected normalized model spelling
 	}{
 		{
 			name:     "plain model name",

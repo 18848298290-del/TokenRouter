@@ -13,6 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGenerateImagesLocalWireAndLastOutput returns two inline image spellings
+// from a local TLS generation endpoint. It checks controls,
+// post-authentication header override, selection of the last image, zero
+// indexing, and response/lifecycle release.
 func TestGenerateImagesLocalWireAndLastOutput(t *testing.T) {
 	first, last := []byte("\x89PNG\r\n\x1a\nfirst"), []byte("\x89PNG\r\n\x1a\nlast")
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

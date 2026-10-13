@@ -1,7 +1,5 @@
 package antigravity
 
-// These scenarios check that request conversion and Gemini signature cleanup use the same dummy signature.
-
 import (
 	"encoding/json"
 	"testing"
@@ -12,6 +10,16 @@ import (
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// signature_cleaner.go in protocol/gemini replaces nested thought signatures
+// with the dummy value exposed by antigravity/request_transformer.go. These
+// fixtures check contents and cached parts alongside the unrelated signature
+// field and invalid source bytes; they call the cleaner directly rather than
+// executing the request transformer.
+
+// TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures
+// supplies thought signatures in text, function-call, and cached-content
+// parts. Cleanup must remove the supplied values, emit the shared dummy
+// signature, and retain the unrelated signature field.
 func TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures(t *testing.T) {
 	input := []byte(`{
 		"contents": [
@@ -45,6 +53,9 @@ func TestCleanGeminiNativeThoughtSignatures_ReplacesNestedThoughtSignatures(t *t
 	require.Contains(t, string(cleaned), `"signature":"keep_me"`)
 }
 
+// TestCleanGeminiNativeThoughtSignatures_InvalidJSONReturnsOriginal supplies
+// malformed Gemini content to signature cleanup. The helper must return the
+// exact source bytes, allowing the caller to handle invalid JSON separately.
 func TestCleanGeminiNativeThoughtSignatures_InvalidJSONReturnsOriginal(t *testing.T) {
 	input := []byte(`{"contents":[invalid-json]}`)
 

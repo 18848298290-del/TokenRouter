@@ -7,7 +7,15 @@ import (
 	"net/http"
 )
 
-// BuildRequest creates an Invoke request and signs it with SigV4.
+// Bedrock Invoke URLs choose streaming through their action path and carry the
+// routed model in that URL. Body preparation occurs upstream of these
+// builders, while bearer authentication or SigV4 is applied after JSON content
+// and accept headers are set.
+
+// BuildRequest creates a regional Invoke request and signs its prepared body
+// with the supplied initialized signer. Callers pass the resolved model/region
+// and leave borrowed body bytes and signed headers consistent until the
+// transport sends the request.
 func BuildRequest(
 	ctx context.Context,
 	body []byte,
@@ -33,7 +41,10 @@ func BuildRequest(
 	return req, nil
 }
 
-// BuildRequestAPIKey creates an Invoke request authenticated with a bearer token.
+// BuildRequestAPIKey creates the regional Invoke request with bearer
+// authentication and prepared body bytes. Callers validate the API key and
+// routed model, align stream framing, and retain body bytes unchanged until
+// the request is sent.
 func BuildRequestAPIKey(
 	ctx context.Context,
 	body []byte,

@@ -16,18 +16,43 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// Bedrock Invoke bodies differ from direct Anthropic messages in version
+// placement, beta encoding, and URL-carried model/stream selection.
+// Preparation resolves and filters beta tokens before removing fields whose
+// enabling beta is absent, then adapts output schemas, tool extensions, and
+// cache controls.
+//
+// Claude Code compatibility adds thinking and tool-ID normalization after the
+// general preparation. Model rules come from the first supplied override or
+// the catalogue, while some Fable-specific handling still checks the catalogue
+// predicate. Byte-level JSON edits keep unrelated source text when those
+// operations succeed; several cleanup helpers discard modification errors and
+// therefore do not provide an atomic transformation guarantee. Tool IDs use
+// one lossy alphabet replacement across calls and results, leaving collision
+// avoidance to callers.
+
 const (
+	// DefaultBedrockRegion supplies the absent source region for runtime routing
+	// and Invoke URL construction, while credentials use the resolved signing
+	// region.
 	DefaultBedrockRegion = "us-east-1"
 
-	// FeatureKeyBedrockCCCompat names the Bedrock Claude Code compatibility group setting.
+	// FeatureKeyBedrockCCCompat selects the group setting that enables the extra
+	// Claude Code request adaptations before a prepared Invoke body is built.
 	FeatureKeyBedrockCCCompat = "bedrock_cc_compat"
 
+	// BedrockContextManagementBetaToken gates context edits;
+	// DefaultThinkingBudgetTokens and DefaultCCMaxTokens supply missing budget
+	// and output values for their separate compatibility paths.
 	BedrockContextManagementBetaToken = "context-management-2025-06-27"
 	DefaultThinkingBudgetTokens       = 10000
 	DefaultCCMaxTokens                = 81920
 )
 
 var (
+	// BedrockCrossRegionPrefixes identifies known inference-profile prefixes for
+	// base-ID lookup and vendor-ID recognition; date and version suffixes remain
+	// on the resulting identity.
 	BedrockCrossRegionPrefixes = []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."}
 
 	// BedrockSupportedBetaTokens lists beta tokens allowed in Invoke requests.
@@ -45,15 +70,22 @@ var (
 		"tool-examples-2025-10-29":    true,
 	}
 
-	// BedrockBetaTokenTransforms maps Anthropic beta tokens to Bedrock equivalents.
+	// BedrockBetaTokenTransforms selects local Invoke beta replacements before
+	// allowlist membership and deduplication, keeping advanced tool use aligned
+	// with the tool-search spelling.
 	BedrockBetaTokenTransforms = map[string]string{
 		"advanced-tool-use-2025-11-20": "tool-search-tool-2025-10-19",
 	}
 
-	// BedrockToolUseIDRe matches characters outside the allowed tool-use ID alphabet.
+	// BedrockToolUseIDRe finds characters replaced in call and result
+	// identifiers; the shared alphabet keeps the same rewritten spelling for
+	// matching source IDs.
 	BedrockToolUseIDRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 )
 
+// BedrockRuntimeRegion returns the trimmed provider source region or
+// DefaultBedrockRegion when absent. A nil provider uses the same default,
+// keeping runtime endpoint selection consistent with an omitted region.
 func BedrockRuntimeRegion(provider *RouteInput) string {
 	if provider == nil {
 		return DefaultBedrockRegion
@@ -64,10 +96,15 @@ func BedrockRuntimeRegion(provider *RouteInput) string {
 	return DefaultBedrockRegion
 }
 
+// ShouldForceBedrockGlobal reports the provider global-inference flag for
+// route selection. A nil provider returns false, allowing callers to inspect
+// optional routing input before a later resolver reports its absence.
 func ShouldForceBedrockGlobal(provider *RouteInput) bool {
 	return provider != nil && provider.ForceGlobal
 }
 
+// IsRegionalBedrockModelID reports whether a supplied model starts with a
+// known inference prefix.
 func IsRegionalBedrockModelID(modelID string) bool {
 	for _, prefix := range BedrockCrossRegionPrefixes {
 		if strings.HasPrefix(modelID, prefix) {
@@ -77,6 +114,10 @@ func IsRegionalBedrockModelID(modelID string) bool {
 	return false
 }
 
+// IsLikelyBedrockModelID recognizes trimmed, case-folded vendor prefixes,
+// ARNs, or regional inference prefixes. It is a shape classifier for
+// passthrough selection; the upstream service validates actual resource
+// existence and permissions.
 func IsLikelyBedrockModelID(modelID string) bool {
 	lower := strings.ToLower(strings.TrimSpace(modelID))
 	if lower == "" {
@@ -104,21 +145,26 @@ func IsLikelyBedrockModelID(modelID string) bool {
 	return IsRegionalBedrockModelID(lower)
 }
 
-// ResolveBedrockModelID returns the routed model ID and whether resolution succeeded.
+// ResolveBedrockModelID returns the selected inference ID and a success flag
+// from route resolution. Failure returns the route partial value with false;
+// callers requiring diagnostics use ResolveBedrockModelRoute directly.
 func ResolveBedrockModelID(provider *RouteInput, requestedModel string) (string, bool) {
 	route, err := ResolveBedrockModelRoute(provider, requestedModel)
 	return route.ModelID, err == nil
 }
 
-// BuildBedrockURL builds the regional InvokeModel endpoint.
-// Streaming requests use invoke-with-response-stream.
-// The model ID is path-escaped, with colons encoded separately.
+// BuildBedrockURL returns the regional Invoke action for modelID and stream.
+// An exactly empty region selects DefaultBedrockRegion, model text is
+// path-escaped with colons encoded separately, and callers supply a valid
+// source region.
 func BuildBedrockURL(region, modelID string, stream bool) string {
 	if region == "" {
 		region = DefaultBedrockRegion
 	}
 	encodedModelID := url.PathEscape(modelID)
-	// PathEscape leaves colons unchanged; encode them for the Bedrock model path.
+	// Encode the colon separately because Go path escaping retains it, while this
+	// Invoke builder uses encoded version separators inside the model resource
+	// segment.
 	encodedModelID = strings.ReplaceAll(encodedModelID, ":", "%3A")
 	if stream {
 		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke-with-response-stream", region, encodedModelID)
@@ -126,31 +172,44 @@ func BuildBedrockURL(region, modelID string, stream bool) string {
 	return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke", region, encodedModelID)
 }
 
-// PrepareBedrockRequestBody resolves beta tokens and prepares an Invoke request body.
-// It sets the protocol version, removes unsupported fields, inlines output schemas,
-// and cleans tool definitions and cache controls.
-// Thinking and tool-use ID normalization require the ccCompat option in
+// PrepareBedrockRequestBody resolves header/body beta requirements and
+// delegates ordinary Invoke adaptation. It leaves the additional thinking and
+// tool-ID compatibility steps disabled; callers requesting them use
 // PrepareBedrockRequestBodyWithTokens.
 func PrepareBedrockRequestBody(body []byte, modelID string, betaHeader string) ([]byte, error) {
 	betaTokens := ResolveBedrockBetaTokens(betaHeader, body, modelID)
 	return PrepareBedrockRequestBodyWithTokens(body, modelID, betaTokens, false)
 }
 
-// PrepareBedrockRequestBodyWithTokens prepares an Invoke body with precomputed beta tokens.
-// ccCompat also normalizes thinking settings and tool-use IDs.
+// PrepareBedrockRequestBodyWithTokens adapts an Anthropic body to Invoke using
+// precomputed beta tokens and optional model-rule overrides. Callers provide
+// valid request JSON and use the returned bytes; explicit version, model,
+// stream, and output-config edit failures return errors.
+//
+// Beta filtering precedes dependent-field cleanup, then body version and beta
+// values are placed before model/stream removal and schema/tool/cache
+// adaptation. ccCompat additionally normalizes thinking and tool IDs. Cleanup
+// helpers can discard edit errors, so a successful result does not certify
+// every optional cleanup succeeded. The first supplied model rule controls
+// catalogue-driven helpers, and callers retain responsibility for matching
+// those rules with the selected model.
 func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens []string, ccCompat bool, rules ...modelcatalog.ExecutionRules) ([]byte, error) {
 	var err error
 
 	betaTokens = FilterBedrockBetaTokens(betaTokens)
 	body = SanitizeBedrockFieldsForBetaTokens(body, betaTokens)
 
-	// Bedrock carries the protocol version in the body.
+	// Place the Invoke version in the body because this request dialect carries
+	// protocol selection with JSON rather than the direct Anthropic version
+	// header.
 	body, err = sjson.SetBytes(body, "anthropic_version", "bedrock-2023-05-31")
 	if err != nil {
 		return nil, fmt.Errorf("inject anthropic_version: %w", err)
 	}
 
-	// Bedrock receives the filtered beta tokens in the request body.
+	// Write the final beta list after dependent-field cleanup so the body
+	// advertises the same feature set used to decide which optional request
+	// fields survive.
 	if len(betaTokens) > 0 {
 		body, err = sjson.SetBytes(body, "anthropic_beta", betaTokens)
 		if err != nil {
@@ -158,27 +217,36 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 		}
 		logger.LegacyPrintf("service.gateway", "[Bedrock] Injected beta tokens: %v (model=%s ccCompat=%v)", betaTokens, modelID, ccCompat)
 	} else {
+		// An empty accepted list removes the beta field so the body cannot continue
+		// advertising rejected features; a deletion error is discarded here.
 		body, _ = sjson.DeleteBytes(body, "anthropic_beta")
 	}
 
-	// Drop direct-API metadata that is not part of this Invoke payload.
+	// Drop direct-request provider and metadata objects during Invoke adaptation;
+	// these cleanup edits discard errors and leave later required-field handling
+	// to report its own failures.
 	body, _ = sjson.DeleteBytes(body, "provider")
 	body, _ = sjson.DeleteBytes(body, "metadata")
 
-	// The model is selected by the URL.
+	// Remove body model identity after route selection because the Invoke URL
+	// carries the selected vendor resource, keeping body and endpoint model
+	// selection from competing.
 	body, err = sjson.DeleteBytes(body, "model")
 	if err != nil {
 		return nil, fmt.Errorf("remove model field: %w", err)
 	}
 
-	// The endpoint selects streaming; the body has no stream flag.
+	// Remove the direct stream flag because the Invoke action path selects
+	// response framing; callers align the chosen action with their output
+	// adapter.
 	body, err = sjson.DeleteBytes(body, "stream")
 	if err != nil {
 		return nil, fmt.Errorf("remove stream field: %w", err)
 	}
 
-	// Supply the requested schema as user text because Invoke omits output_format.
-	// See litellm _convert_output_format_to_inline_schema for the corresponding adaptation.
+	// Adapt structured-output schema to user text before dropping output_config,
+	// retaining an available schema prompt when the last user content accepts
+	// text insertion.
 	body = ConvertOutputFormatToInlineSchema(body)
 
 	body, err = sjson.DeleteBytes(body, "output_config")
@@ -186,8 +254,9 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 		return nil, fmt.Errorf("remove output_config field: %w", err)
 	}
 
-	// Remove the Claude Code custom tool extension before sending to Bedrock.
-	// For example, custom: {defer_loading: true} is outside the Invoke tool schema.
+	// Remove custom tool extension data from the Invoke definitions, including
+	// defer_loading, while retaining ordinary tool names and schemas for the
+	// selected model.
 	body = RemoveCustomFieldFromTools(body)
 
 	body = SanitizeBedrockCacheControl(body, modelID, rules...)
@@ -200,22 +269,36 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 	return body, nil
 }
 
-// ResolveBedrockBetaTokens merges header and body-derived tokens, then filters them for Bedrock.
+// ResolveBedrockBetaTokens combines parsed header tokens with body-feature
+// injection and filters the resulting list. The first supplied execution rule
+// overrides catalogue capability for feature detection; the returned list uses
+// the Invoke allowlist and translations.
 func ResolveBedrockBetaTokens(betaHeader string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	betaTokens := ParseAnthropicBetaHeader(betaHeader)
 	betaTokens = AutoInjectBedrockBetaTokens(betaTokens, body, modelID, rules...)
 	return FilterBedrockBetaTokens(betaTokens)
 }
 
-// ConvertOutputFormatToInlineSchema removes object-valued output_format and appends its schema
-// as text to the last user message when that message has string or array content.
-// Missing schemas or suitable user messages leave the field removed without adding text.
+// ConvertOutputFormatToInlineSchema removes an object-valued output_format and
+// appends its schema to the last user message. Missing schema or suitable
+// content returns the body after that removal; failed byte edits are
+// discarded.
+//
+// Array content receives another text block, while string content becomes its
+// original text followed by schema text. Earlier user messages are bypassed
+// once the last user is selected, even when that content cannot receive the
+// schema. Schema bytes are revalidated through RawMessage marshaling before
+// insertion, and malformed schema leaves the already removed format without
+// additional text.
 func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	outputFormat := gjson.GetBytes(body, "output_format")
 	if !outputFormat.Exists() || !outputFormat.IsObject() {
 		return body
 	}
 
+	// Remove the direct format object before finding an insertion target; later
+	// missing schema or user content leaves this cleanup applied without schema
+	// text.
 	body, _ = sjson.DeleteBytes(body, "output_format")
 
 	schema := outputFormat.Get("schema")
@@ -239,6 +322,8 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 		return body
 	}
 
+	// Revalidate extracted raw JSON before adding it as user text; serialization
+	// failure returns the already cleaned body and omits the schema prompt.
 	schemaJSON, err := json.Marshal(json.RawMessage(schema.Raw))
 	if err != nil {
 		return body
@@ -248,11 +333,14 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	basePath := fmt.Sprintf("messages.%d.content", lastUserIdx)
 
 	if content.IsArray() {
+		// Append schema text after the selected user parts so their existing content
+		// stays ahead of the output instruction in that message.
 		idx := len(content.Array())
 		body, _ = sjson.SetBytes(body, fmt.Sprintf("%s.%d.type", basePath, idx), "text")
 		body, _ = sjson.SetBytes(body, fmt.Sprintf("%s.%d.text", basePath, idx), string(schemaJSON))
 	} else if content.Type == gjson.String {
-		// Preserve string content as the first text block when adding the schema.
+		// Convert string content to two text blocks so the original user text
+		// remains first and the requested schema follows it in the same message.
 		originalText := content.String()
 		body, _ = sjson.SetBytes(body, basePath, []map[string]string{
 			{"type": "text", "text": originalText},
@@ -263,31 +351,40 @@ func ConvertOutputFormatToInlineSchema(body []byte) []byte {
 	return body
 }
 
-// RemoveCustomFieldFromTools removes the custom extension from each tool definition.
+// RemoveCustomFieldFromTools deletes the custom extension from each
+// tools-array entry. Missing or nonarray tools returns the supplied body;
+// deletion errors continue with the byte result returned by sjson rather than
+// rolling back earlier work.
 func RemoveCustomFieldFromTools(body []byte) []byte {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() || !tools.IsArray() {
 		return body
 	}
 	var err error
+	// Remove the direct custom extension while leaving each tool definition in
+	// place, so ordinary names and schemas still reach later Invoke preparation.
 	for i := range tools.Array() {
 		body, err = sjson.DeleteBytes(body, fmt.Sprintf("tools.%d.custom", i))
 		if err != nil {
-			// Continue processing other tools when a deletion fails.
+			// Continue through later tools after a failed deletion using the returned
+			// byte result; this cleanup helper cannot restore earlier source bytes on
+			// that path.
 			continue
 		}
 	}
 	return body
 }
 
-// IsBedrockClaude45OrNewer reports whether the catalog declares cache TTL support.
+// IsBedrockClaude45OrNewer reports whether the resolved catalogue rules
+// contain cache TTL entries.
 func IsBedrockClaude45OrNewer(modelID string) bool {
 	return len(modelcatalog.BedrockExecutionRules(modelID).CacheTTL) > 0
 }
 
-// SanitizeBedrockCacheControl removes unsupported cache fields from system and message blocks.
-// It removes scope and retains TTL only when the model rules declare TTL support.
-// Supported TTL values are "5m" and "1h".
+// SanitizeBedrockCacheControl removes scope and disallowed TTL fields from
+// object cache controls in system and message blocks. The first rule override
+// or catalogue determines whether 5m/1h can remain; cleanup edit errors are
+// discarded.
 func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	isClaude45 := len(bedrockExecutionRules(modelID, rules).CacheTTL) > 0
 
@@ -332,13 +429,18 @@ func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcata
 	return body
 }
 
-// DeleteCacheControlUnsupportedFields removes scope and unsupported TTL values at basePath.
+// DeleteCacheControlUnsupportedFields removes scope at basePath and retains
+// TTL only for the enabled capability and exact 5m/1h values. It uses cc for
+// source-field presence, returns edited bytes, and discards deletion errors.
 func DeleteCacheControlUnsupportedFields(body []byte, basePath string, cc gjson.Result, isClaude45 bool) []byte {
+	// Strip scope from selected cache objects while keeping their remaining
+	// fields; this independent cleanup also applies when a supported TTL survives.
 	if cc.Get("scope").Exists() {
 		body, _ = sjson.DeleteBytes(body, basePath+".scope")
 	}
 
-	// The capability flag permits only the recognized TTL values.
+	// Use capability and exact TTL spelling together because catalogue support
+	// alone does not validate an arbitrary duration text sent in cache_control.
 	ttl := cc.Get("ttl")
 	if ttl.Exists() {
 		shouldRemove := true
@@ -356,14 +458,20 @@ func DeleteCacheControlUnsupportedFields(body []byte, basePath string, cc gjson.
 	return body
 }
 
+// ParseAnthropicBetaHeader delegates comma-list and JSON-array parsing to the
+// shared Anthropic parser.
 func ParseAnthropicBetaHeader(header string) []string { return claude.ParseAnthropicBetaHeader(header) }
 
-// AutoInjectBedrockBetaTokens adds beta tokens required by tool features in the body.
-// The corresponding litellm helpers are get_anthropic_beta_list and
-// _get_tool_search_beta_header_for_bedrock.
+// AutoInjectBedrockBetaTokens adds missing feature-required beta values to
+// tokens before caller filtering. It can reuse the supplied slice storage,
+// retains existing duplicates, and uses the first execution-rule override when
+// present.
 //
-// Some clients enable a body feature without sending its beta header.
-// The caller filters and translates the resulting tokens before sending.
+// Computer tools select the configured computer-use token. Programmatic
+// callers or examples add advanced-tool-use, while eligible pure tool search
+// selects its Invoke token directly. Detection recognizes both top-level and
+// nested function feature fields; thinking alone adds no beta. The caller
+// subsequently translates, allowlists, and deduplicates the combined values.
 func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	seen := make(map[string]bool, len(tokens))
 	for _, t := range tokens {
@@ -377,9 +485,9 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, r
 		}
 	}
 
-	// Thinking alone does not add the unlisted interleaved-thinking beta.
-
-	// Computer tools select the computer-use beta.
+	// Infer beta requirements from tool features rather than thinking alone;
+	// computer, programmatic, example, and search paths feed the caller final
+	// translation and allowlist step.
 	tools := gjson.GetBytes(body, "tools")
 	if tools.Exists() && tools.IsArray() {
 		toolSearchUsed := false
@@ -407,7 +515,9 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, r
 		}
 		rule := bedrockExecutionRules(modelID, rules)
 		if toolSearchUsed && rule.ToolSearch != nil && *rule.ToolSearch {
-			// Tool search on an eligible model can use the Bedrock token directly.
+			// For an eligible pure search tool, use the Invoke token directly; mixed
+			// programmatic/example features keep their advanced token until the shared
+			// translation step.
 			if !programmaticToolCallingUsed && !inputExamplesUsed {
 				inject("tool-search-tool-2025-10-19")
 			} else {
@@ -419,10 +529,14 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, r
 	return tokens
 }
 
+// IsBedrockToolSearchType recognizes the exact regex and BM25 tool-search type
+// spellings.
 func IsBedrockToolSearchType(toolType string) bool {
 	return toolType == "tool_search_tool_regex_20251119" || toolType == "tool_search_tool_bm25_20251119"
 }
 
+// HasCodeExecutionAllowedCallers reports the code-execution caller marker in
+// top-level or nested function arrays.
 func HasCodeExecutionAllowedCallers(tool gjson.Result) bool {
 	allowedCallers := tool.Get("allowed_callers")
 	if ContainsStringInJSONArray(allowedCallers, "code_execution_20250825") {
@@ -431,6 +545,8 @@ func HasCodeExecutionAllowedCallers(tool gjson.Result) bool {
 	return ContainsStringInJSONArray(tool.Get("function.allowed_callers"), "code_execution_20250825")
 }
 
+// HasInputExamples recognizes a nonempty input_examples array at either
+// supported tool location.
 func HasInputExamples(tool gjson.Result) bool {
 	if arr := tool.Get("input_examples"); arr.Exists() && arr.IsArray() && len(arr.Array()) > 0 {
 		return true
@@ -439,6 +555,9 @@ func HasInputExamples(tool gjson.Result) bool {
 	return arr.Exists() && arr.IsArray() && len(arr.Array()) > 0
 }
 
+// ContainsStringInJSONArray compares converted item text with target in a JSON
+// array. Absent or nonarray results return false, and gjson item String
+// conversion governs nonstring values.
 func ContainsStringInJSONArray(result gjson.Result, target string) bool {
 	if !result.Exists() || !result.IsArray() {
 		return false
@@ -451,14 +570,22 @@ func ContainsStringInJSONArray(result gjson.Result, target string) bool {
 	return false
 }
 
-// BedrockModelSupportsToolSearch reports the catalog's tool-search capability.
+// BedrockModelSupportsToolSearch reports a present true catalogue tool-search
+// capability for modelID.
 func BedrockModelSupportsToolSearch(modelID string) bool {
 	rules := modelcatalog.BedrockExecutionRules(modelID)
 	return rules.ToolSearch != nil && *rules.ToolSearch
 }
 
-// FilterBedrockBetaTokens translates and deduplicates tokens in the Invoke allowlist.
-// It also adds tool-examples when tool-search-tool is selected.
+// FilterBedrockBetaTokens translates, allowlists, and deduplicates tokens in
+// encounter order. A selected tool-search token appends tool-examples if
+// absent; an empty accepted set returns nil, and caller input is read without
+// rewriting its elements.
+//
+// Translation happens before membership and deduplication, so advanced-tool-use
+// and its direct search spelling select one accepted identity. The companion
+// examples token is then added only when missing, giving both input forms the
+// same final pair without moving earlier accepted tokens.
 func FilterBedrockBetaTokens(tokens []string) []string {
 	seen := make(map[string]bool, len(tokens))
 	var result []string
@@ -473,7 +600,9 @@ func FilterBedrockBetaTokens(tokens []string) []string {
 		}
 	}
 
-	// The tool-search token also enables tool examples.
+	// Append the local companion tool-examples beta when tool search is selected,
+	// so both direct and translated search tokens receive the same final feature
+	// set.
 	if seen["tool-search-tool-2025-10-19"] && !seen["tool-examples-2025-10-29"] {
 		result = append(result, "tool-examples-2025-10-29")
 	}
@@ -481,8 +610,14 @@ func FilterBedrockBetaTokens(tokens []string) []string {
 	return result
 }
 
-// SanitizeBedrockFieldsForBetaTokens removes fields whose required beta tokens are absent.
+// SanitizeBedrockFieldsForBetaTokens removes context-management and fallback
+// fields when their required tokens are absent. Callers supply the final
+// filtered list; byte deletion errors are discarded, so this helper returns
+// the resulting cleanup bytes.
 func SanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte {
+	// Remove beta-dependent body fields against the same final token list used
+	// for Invoke encoding, so filtered capabilities cannot leave their associated
+	// direct-API options active.
 	if !ContainsBedrockBetaToken(betaTokens, BedrockContextManagementBetaToken) && gjson.GetBytes(body, "context_management").Exists() {
 		body, _ = sjson.DeleteBytes(body, "context_management")
 	}
@@ -496,12 +631,14 @@ func SanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte
 	return body
 }
 
-// ContainsBedrockBetaToken reports whether the token list contains target.
+// ContainsBedrockBetaToken reports exact target membership in the supplied
+// beta token slice.
 func ContainsBedrockBetaToken(tokens []string, target string) bool {
 	return slices.Contains(tokens, target)
 }
 
-// ContainsAnyBedrockBetaToken reports whether any target token is present.
+// ContainsAnyBedrockBetaToken reports whether any supplied target occurs in
+// the beta slice.
 func ContainsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	for _, target := range targets {
 		if ContainsBedrockBetaToken(tokens, target) {
@@ -511,18 +648,29 @@ func ContainsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	return false
 }
 
-// IsBedrockOpus47OrNewer checks for an Opus model with catalog-declared adaptive thinking.
+// IsBedrockOpus47OrNewer combines catalogue adaptive-thinking mode with an
+// Opus substring in modelID.
 func IsBedrockOpus47OrNewer(modelID string) bool {
 	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "opus")
 }
 
+// IsBedrockFable5 combines catalogue adaptive-thinking mode with a Fable
+// substring in modelID.
 func IsBedrockFable5(modelID string) bool {
 	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "fable")
 }
 
-// SanitizeBedrockThinking normalizes thinking according to the resolved model mode.
-// Converting enabled to adaptive removes the budget; adaptive Fable requests also drop it.
-// Budget-based enabled thinking receives a default when budget_tokens is missing.
+// SanitizeBedrockThinking adjusts existing object-valued thinking for the
+// selected model rules and returns the edited bytes. Missing or empty type
+// preserves the body, and cleanup modification errors are discarded.
+//
+// Adaptive modes convert enabled to adaptive and remove its explicit budget.
+// Already adaptive Fable input also loses budget through the
+// catalogue-specific predicate; other already adaptive input keeps it.
+// Remaining enabled modes receive the default budget only when its field is
+// absent, so an explicit zero remains present. The first supplied rule
+// overrides the main thinking-mode lookup, while the Fable predicate still
+// uses catalogue resolution.
 func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	thinking := gjson.GetBytes(body, "thinking")
 	if !thinking.Exists() || !thinking.IsObject() {
@@ -536,6 +684,9 @@ func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.
 
 	mode := bedrockExecutionRules(modelID, rules).ThinkingMode
 	if mode == "adaptive" || mode == "adaptive_between_tools" {
+		// Convert enabled input to the resolved adaptive dialect before dropping its
+		// budget, so callers can supply one thinking shape to models with different
+		// catalogue rules.
 		if thinkingType == "enabled" {
 			body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
 		}
@@ -552,13 +703,18 @@ func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.
 	return body
 }
 
-// SanitizeBedrockToolUseIDs replaces unsupported characters in tool-use and tool-result IDs.
-// The accepted alphabet is ASCII letters, digits, underscores, and hyphens.
+// SanitizeBedrockToolUseIDs applies the same allowed alphabet to top-level
+// message tool_use.id and tool_result.tool_use_id values. String or absent
+// content is skipped; distinct source IDs can collide after replacement, and
+// callers keep identity compatibility in mind.
 func SanitizeBedrockToolUseIDs(body []byte) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return body
 	}
+	// Use identical character replacement for calls and results within message
+	// content so a matching source tool ID still has the same rewritten spelling
+	// on both sides.
 	for mi, msg := range messages.Array() {
 		content := msg.Get("content")
 		if !content.Exists() || !content.IsArray() {
@@ -576,22 +732,31 @@ func SanitizeBedrockToolUseIDs(body []byte) []byte {
 	return body
 }
 
+// SanitizeIDField replaces characters outside the shared tool-use alphabet
+// with underscores at path. Empty or unchanged IDs retain body bytes, and
+// byte-setting errors are discarded; replacement is lossy and does not prevent
+// collisions.
 func SanitizeIDField(body []byte, id, path string) []byte {
 	if id == "" {
 		return body
 	}
 	sanitized := BedrockToolUseIDRe.ReplaceAllString(id, "_")
 	if sanitized != id {
+		// Store the same lossy spelling selected for calls and results; setting
+		// errors retain the returned byte result instead of restoring earlier edits.
 		body, _ = sjson.SetBytes(body, path, sanitized)
 	}
 	return body
 }
 
-// SanitizeBedrockCCFields removes unsupported Claude Code fields and fills required defaults.
-// It removes service_tier, interface_geo, context_management, fallbacks, and
-// fallback_credit_token regardless of the beta list.
-// Missing max_tokens and anthropic_version receive Bedrock defaults.
+// SanitizeBedrockCCFields removes the listed unsupported Claude Code fields
+// and supplies absent max_tokens/version defaults. Presence checks retain
+// explicit values including null or zero, and byte edit errors are discarded
+// while later cleanup continues.
 func SanitizeBedrockCCFields(body []byte) []byte {
+	// Apply this explicit Claude Code cleanup independently of beta admission
+	// because its listed direct-API fields are removed before the ordinary Invoke
+	// preparation and missing defaults are supplied.
 	if gjson.GetBytes(body, "service_tier").Exists() {
 		body, _ = sjson.DeleteBytes(body, "service_tier")
 	}
@@ -616,8 +781,16 @@ func SanitizeBedrockCCFields(body []byte) []byte {
 	return body
 }
 
-// SanitizeBedrockCCBetaTokens normalizes an existing anthropic_beta field for Invoke.
-// Unsupported tokens are removed to avoid upstream validation errors.
+// SanitizeBedrockCCBetaTokens normalizes an existing anthropic_beta field and
+// adds inferred body-feature tokens before filtering. An absent field returns
+// the supplied body without injection; a present nonarray field starts from an
+// empty token list.
+//
+// String array entries are collected for diagnostics before feature injection
+// can reuse their storage. Filtering translates and deduplicates accepted
+// values, then an empty result removes the body field and a nonempty result
+// replaces it. Those byte-edit errors are discarded, and the first supplied
+// execution rule controls feature capability lookup.
 func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	betaField := gjson.GetBytes(body, "anthropic_beta")
 	if !betaField.Exists() {
@@ -634,11 +807,15 @@ func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcata
 	}
 
 	originalTokens := append([]string(nil), tokens...) // retained for diagnostics
-	// Body features can require beta tokens even when the existing token list is empty.
+	// Inspect features after retaining original tokens for diagnostics; an
+	// existing empty beta field still allows required body-feature tokens to
+	// reach the final allowlist step.
 
 	tokens = AutoInjectBedrockBetaTokens(tokens, body, modelID, rules...)
 	tokens = FilterBedrockBetaTokens(tokens)
 
+	// Publish the accepted feature set after injection and filtering; an empty
+	// list removes the field, while edit errors leave the returned byte result.
 	if len(tokens) == 0 {
 		body, _ = sjson.DeleteBytes(body, "anthropic_beta")
 		logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Removed all beta tokens: original=%v", originalTokens)
@@ -654,6 +831,10 @@ func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcata
 	return body
 }
 
+// bedrockExecutionRules returns the first supplied rule override, even when
+// zero-valued. An absent override resolves catalogue rules for model; later
+// slice entries are ignored so callers choose one authoritative rule
+// observation.
 func bedrockExecutionRules(model string, rules []modelcatalog.ExecutionRules) modelcatalog.ExecutionRules {
 	if len(rules) > 0 {
 		return rules[0]

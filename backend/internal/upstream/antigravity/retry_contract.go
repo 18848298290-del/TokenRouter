@@ -7,64 +7,93 @@ import (
 	"time"
 )
 
+// Rate-limit recovery separates normal transport retries, short structured
+// waits, shared model-capacity retries, and bounded single-provider waits. The
+// constants fix attempt and wait budgets, while exhausted capacity stores a
+// per-model deadline checked before later retry sequences.
+//
+// Capacity records share a mutex but do not reserve an active retry sequence;
+// concurrent sequences already admitted can each retry. Provider-switch errors
+// retain provider/model identity and the sticky-session observation so the
+// owning gateway can choose another provider and account for lost affinity.
+// Actual dispatch and deadline updates belong to RetryAdapter, with these
+// values defining its local policy.
+
 const (
-	AntigravityMaxRetries               = 3
-	AntigravityRetryBaseDelay           = 1 * time.Second
-	AntigravityRetryMaxDelay            = 16 * time.Second
-	AntigravityRateLimitThreshold       = 7 * time.Second
+	// Normal retries count at most three dispatch attempts; exponential base
+	// delays are capped before jitter is applied by SleepAntigravityBackoffWithContext.
+	AntigravityMaxRetries     = 3                // total normal dispatch attempt budget
+	AntigravityRetryBaseDelay = 1 * time.Second  // initial normal retry delay
+	AntigravityRetryMaxDelay  = 16 * time.Second // normal delay cap before jitter
+	// Structured model delays at or above the threshold select cooldown/switch
+	// handling, while shorter delays use one bounded smart retry.
+	AntigravityRateLimitThreshold       = 7 * time.Second  // long model-delay selection threshold
 	AntigravitySmartRetryMinWait        = 1 * time.Second  // minimum smart-retry wait
 	AntigravitySmartRetryMaxAttempts    = 1                // one retry limits repeated throttling and wait time
 	AntigravityDefaultRateLimitDuration = 30 * time.Second // used when retryDelay is absent or invalid
 
-	// MODEL_CAPACITY_EXHAUSTED uses a separate retry budget.
-	// Shared model capacity is retried on the same provider.
-	// Retry at one-second intervals, up to 60 times.
-	AntigravityModelCapacityRetryMaxAttempts = 60
-	AntigravityModelCapacityRetryWait        = 1 * time.Second
+	// MODEL_CAPACITY_EXHAUSTED uses sixty same-provider retry attempts at a fixed
+	// one-second wait, independently of the ordinary structured-delay threshold.
+	AntigravityModelCapacityRetryMaxAttempts = 60              // same-provider capacity retry count
+	AntigravityModelCapacityRetryWait        = 1 * time.Second // fixed capacity retry delay
 
-	// Google RPC status and detail identifiers.
-	GoogleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
-	GoogleRPCStatusUnavailable            = "UNAVAILABLE"
-	GoogleRPCTypeRetryInfo                = "type.googleapis.com/google.rpc.RetryInfo"
-	GoogleRPCTypeErrorInfo                = "type.googleapis.com/google.rpc.ErrorInfo"
+	// Google RPC status, detail types, and reasons select structured retry
+	// observations only when status/reason combinations and model metadata match.
+	// RPC status for rate-limit observations.
+	GoogleRPCStatusResourceExhausted = "RESOURCE_EXHAUSTED"
+	GoogleRPCStatusUnavailable       = "UNAVAILABLE" // RPC status for capacity observations
+	// RPC retry-delay detail identifier.
+	GoogleRPCTypeRetryInfo = "type.googleapis.com/google.rpc.RetryInfo"
+	// RPC model-reason detail identifier.
+	GoogleRPCTypeErrorInfo = "type.googleapis.com/google.rpc.ErrorInfo"
+	// shared model-capacity reason marker.
 	GoogleRPCReasonModelCapacityExhausted = "MODEL_CAPACITY_EXHAUSTED"
-	GoogleRPCReasonRateLimitExceeded      = "RATE_LIMIT_EXCEEDED"
+	GoogleRPCReasonRateLimitExceeded      = "RATE_LIMIT_EXCEEDED" // per-model rate-limit reason marker
 
 	// AntigravitySingleProviderSmartRetryMaxAttempts bounds retries after a long-delay 503.
 	// HandleSmartRetry normally marks long model delays for provider switching.
 	// Single-provider mode waits in place to avoid an additional local cooldown wait.
 	AntigravitySingleProviderSmartRetryMaxAttempts = 3
 
-	// AntigravitySingleProviderSmartRetryMaxWait caps each in-place retry delay.
+	// AntigravitySingleProviderSmartRetryMaxWait caps each requested in-place
+	// wait; transport time is additional to this delay budget.
 	AntigravitySingleProviderSmartRetryMaxWait = 15 * time.Second
 
 	// AntigravitySingleProviderSmartRetryTotalMaxWait caps accumulated retry waits.
 	// Exhausting this budget returns the failure response.
 	AntigravitySingleProviderSmartRetryTotalMaxWait = 30 * time.Second
 
-	// AntigravityModelCapacityCooldown suppresses retries after capacity retries are exhausted.
+	// AntigravityModelCapacityCooldown supplies the deadline lifetime stored
+	// after capacity attempts exhaust; preexisting active sequences remain
+	// independent.
 	AntigravityModelCapacityCooldown = 10 * time.Second
 )
 
-// Track per-model cooldowns after capacity retries fail.
+// modelCapacityExhaustedMu protects modelCapacityExhaustedUntil deadline reads
+// and updates; expiry is checked during capacity admission without removing
+// entries. Callers use the lock for every access to the shared deadline map.
 var (
-	modelCapacityExhaustedMu    sync.RWMutex
-	modelCapacityExhaustedUntil = make(map[string]time.Time) // modelName -> cooldown until
+	modelCapacityExhaustedMu    sync.RWMutex                 // capacity deadline synchronization
+	modelCapacityExhaustedUntil = make(map[string]time.Time) // normalized model recovery deadline
 )
 
-// AntigravityProviderSwitchError requests another provider after model rate limiting.
+// AntigravityProviderSwitchError carries provider/model identity for gateway
+// retry selection after local rate-limit handling.
 type AntigravityProviderSwitchError struct {
-	OriginalProviderID int64
-	RateLimitedModel   string
-	IsStickySession    bool // allows callers to account for lost session cache affinity
+	OriginalProviderID int64  // provider that requested a switch
+	RateLimitedModel   string // model selected for limit handling
+	IsStickySession    bool   // observed sticky-session affinity flag
 }
 
+// Error formats the limited provider and model into the switch message.
 func (e *AntigravityProviderSwitchError) Error() string {
 	return fmt.Sprintf("provider %d model %s rate limited, need switch",
 		e.OriginalProviderID, e.RateLimitedModel)
 }
 
-// IsAntigravityProviderSwitchError unwraps a provider-switch signal.
+// IsAntigravityProviderSwitchError unwraps a typed switch signal from err
+// using errors.AsType. An unmatched or nil error returns false; a typed nil
+// match can return true with a nil pointer.
 func IsAntigravityProviderSwitchError(err error) (*AntigravityProviderSwitchError, bool) {
 	if switchErr, ok := errors.AsType[*AntigravityProviderSwitchError](err); ok {
 		return switchErr, true

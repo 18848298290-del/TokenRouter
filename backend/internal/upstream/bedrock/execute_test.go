@@ -19,17 +19,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// executionSink retains copied successful output events and their emitted
+// bytes.
 type executionSink struct {
-	body   bytes.Buffer
-	events []upstream.OutputEvent
+	body   bytes.Buffer           // captured emitted response bytes
+	events []upstream.OutputEvent // copied successful sink events
 }
 
+// executionBody wraps a response body and counts fixture close invocations.
 type executionBody struct {
-	io.ReadCloser
-	closed *atomic.Int32
+	io.ReadCloser // wrapped upstream response body
+	// closed is the nonnil shared atomic counter supplied by the test. It counts
+	// each wrapper Close call before the wrapped response body is closed.
+	closed *atomic.Int32 // shared close invocation counter
 }
 
+// Begin accepts response metadata while the fixture records payload output
+// separately.
 func (s *executionSink) Begin(upstream.OutputHead) error { return nil }
+
+// Emit clones event bytes before retaining the event and appending its data to
+// the fixture buffer. Callers read these accumulated values after synchronous
+// execution completes so converter buffer reuse cannot alter assertions.
 func (s *executionSink) Emit(event upstream.OutputEvent) error {
 	event.Data = bytes.Clone(event.Data)
 	s.events = append(s.events, event)
@@ -37,8 +48,18 @@ func (s *executionSink) Emit(event upstream.OutputEvent) error {
 	return nil
 }
 
+// Close increments the nonnil shared counter before closing the wrapped
+// response body. Every invocation is counted, including repeated closes, and
+// the wrapped close error returns to the fixture caller.
 func (b *executionBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }
+
+// executionFrame encodes an EventStream event using string headers and IEEE
+// CRCs around the supplied payload. Fixture names and lengths fit their wire
+// widths; buffer and binary writes use fixed supported values.
 func executionFrame(eventType string, payload []byte) []byte {
+	// Supported fixed-width numbers and byte/string buffers make encoding errors
+	// unavailable through these fixture writes; callers keep lengths within wire
+	// widths.
 	var headersBuf bytes.Buffer
 	_ = headersBuf.WriteByte(byte(len(":event-type")))
 	_, _ = headersBuf.WriteString(":event-type")
@@ -53,29 +74,37 @@ func executionFrame(eventType string, payload []byte) []byte {
 
 	headers := headersBuf.Bytes()
 	headersLen := uint32(len(headers))
-	// total = 12 (prelude) + headers + payload + 4 (message_crc)
+	// Include the prelude and trailing checksum in the wire total so the decoder
+	// reads one complete fixture frame before verifying its message CRC.
 	totalLen := uint32(12 + len(headers) + len(payload) + 4)
 
-	// Prelude: total_length(4) + headers_length(4)
+	// Encode the two big-endian prelude lengths before calculating their IEEE
+	// checksum so the decoder can verify that prelude before reading the
+	// remaining frame.
 	var preludeBuf bytes.Buffer
 	_ = binary.Write(&preludeBuf, binary.BigEndian, totalLen)
 	_ = binary.Write(&preludeBuf, binary.BigEndian, headersLen)
 	preludeBytes := preludeBuf.Bytes()
 	preludeCRC := crc32.Checksum(preludeBytes, crc32.IEEETable)
 
-	// Build frame: prelude + prelude_crc + headers + payload
+	// Assemble the protected prelude and payload before computing the message
+	// checksum because that checksum covers every preceding byte, including the
+	// prelude CRC.
 	var frame bytes.Buffer
 	_, _ = frame.Write(preludeBytes)
 	_ = binary.Write(&frame, binary.BigEndian, preludeCRC)
 	_, _ = frame.Write(headers)
 	_, _ = frame.Write(payload)
 
-	// Message CRC covers everything before itself
 	messageCRC := crc32.Checksum(frame.Bytes(), crc32.IEEETable)
 	_ = binary.Write(&frame, binary.BigEndian, messageCRC)
 	return frame.Bytes()
 }
 
+// TestExecuteBedrockWireAndRelease returns buffered JSON and binary
+// EventStream through a local bearer-authenticated endpoint. It checks
+// model/usage observations, semantic output, request identity, metric removal,
+// and one response close plus lifecycle release.
 func TestExecuteBedrockWireAndRelease(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{true: "stream", false: "nonstream"}[stream], func(t *testing.T) {
@@ -95,7 +124,9 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 			}))
 			defer server.Close()
 			target := &Target{ProviderID: 7, ReadBody: io.ReadAll, Enter: func() (func(), error) { return func() { released.Add(1) }, nil }, Request: RequestOptions{ModelID: "anthropic.fixture", Region: "us-east-1", APIKeyMode: true, APIKey: "fixture-key", Stream: stream, Do: func(r *http.Request) (*http.Response, error) {
-				// Redirect to the local server while retaining the constructed path, body, and auth headers.
+				// Replace the target host with the local fixture while keeping the built
+				// path, body, and authentication headers so this test observes actual
+				// Bedrock request preparation.
 				local, _ := http.NewRequestWithContext(r.Context(), r.Method, server.URL+r.URL.RequestURI(), r.Body)
 				local.Header = r.Header.Clone()
 				res, err := server.Client().Do(local)

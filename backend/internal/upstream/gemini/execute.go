@@ -13,40 +13,96 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// A Gemini attempt can return explicit zero usage, semantic output, and an
+// observed upstream model as independent facts. Client response identity
+// remains the requested response model, while the selected target model
+// identifies the provider request and the payload observer records what the
+// server reports.
+//
+// The executor binds response observers to one synchronous attempt and closes
+// its final response before lifecycle release. Usage callbacks replace
+// counters while presence and served flags accumulate across payloads;
+// inline-image observation uses the maximum count from one payload. A native
+// count fallback emits an estimate on its own path and leaves upstream usage
+// and semantic-output observations unset.
+
 const (
-	MessagesResponse ResponseMode = iota
-	NativeResponse
-	OpenAIResponse
+	// Response mode values select the exchange and response adapter used for
+	// Messages, native Gemini, or OpenAI-compatible client output.
+	MessagesResponse ResponseMode = iota // Anthropic Messages conversion
+	NativeResponse                       // Gemini native output
+	OpenAIResponse                       // OpenAI-compatible output
 )
 
+// ResponseMode selects one Gemini exchange and its matching client response
+// adapter.
 type ResponseMode uint8
 
+// Target supplies one provider attempt and its Gemini response conversion
+// callbacks.
 type Target struct {
-	ProviderID                          int64
-	Model                               string
-	Mode                                ResponseMode
-	Exchange                            ExchangeOptions
-	Response                            ResponseOptions
-	StartedAt                           time.Time
+	ProviderID int64           // selected provider audit identifier
+	Model      string          // selected upstream model identifier
+	Mode       ResponseMode    // response exchange and adapter selection
+	Exchange   ExchangeOptions // provider-local exchange callback settings
+	Response   ResponseOptions // response read and output settings
+	// StartedAt selects the duration and first-output origin. A zero value starts
+	// timing after successful attempt registration rather than using request
+	// arrival.
+	StartedAt time.Time // caller request timing origin
+	// UpstreamStream describes server framing; OAuth selects unwrapping;
+	// IncludeUsage selects Chat usage chunks.
 	UpstreamStream, OAuth, IncludeUsage bool
-	OpenAIProtocol                      OpenAICompatProtocol
-	ClientTools                         bridge.ResponsesClientToolMapping
-	Enter                               func() (func(), error)
-	// BeforeResponse handles HTTP and provider errors; stop ends response processing.
+	OpenAIProtocol                      OpenAICompatProtocol // OpenAI client response protocol
+	// ClientTools shares its maps with response restoration. Callers keep those
+	// maps unchanged until this synchronous attempt finishes converting its output.
+	ClientTools bridge.ResponsesClientToolMapping
+	// Enter optionally registers this attempt and returns a nonnil release
+	// callback. Release runs after the response body closes or a later phase
+	// fails.
+	// optional attempt lifecycle registration
+	Enter func() (func(), error)
+	// BeforeResponse optionally consumes policy or provider errors before
+	// conversion. Returning stop or an error ends adapter handling while the
+	// executor still closes the response body.
 	BeforeResponse func(context.Context, *http.Response, string) (stop bool, err error)
 }
 
+// Executor performs one Gemini provider exchange and observes synchronous
+// protocol output.
 type Executor struct{}
 
+// TargetID returns the provider identifier used by execution observers and
+// diagnostics. A nil target returns zero, so callers can format an absent
+// target without dereferencing its provider metadata.
 func (t *Target) TargetID() int64 {
 	if t == nil {
 		return 0
 	}
 	return t.ProviderID
 }
-func (t *Target) String() string   { return fmt.Sprintf("gemini target provider=%d", t.TargetID()) }
+
+// String formats a provider label from TargetID for diagnostic output. A nil
+// target uses provider zero; authentication, project, and callback data remain
+// outside this formatted label.
+func (t *Target) String() string { return fmt.Sprintf("gemini target provider=%d", t.TargetID()) }
+
+// GoString delegates to the same provider label used by String for Go-syntax
+// diagnostics. A nil target uses provider zero, while the label contains the
+// audit identifier alone.
 func (t *Target) GoString() string { return t.String() }
 
+// Execute exchanges one configured Gemini target and returns its observed
+// attempt result. The sink receives synchronous protocol output, the final
+// response is closed here, and an optional lifecycle entry remains held
+// through that closing.
+//
+// Response mode chooses both exchange and output adaptation. Raw observations
+// accumulate usage presence, semantic output, model identity, and the largest
+// per-payload image count, while later usage values replace earlier counters.
+// An estimated token result emits a native count response and remains separate
+// from billed usage. Deferred timing and cancellation annotate failures after
+// the attempt timing origin has been selected.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	target, ok := input.Target.(*Target)
@@ -94,7 +150,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	}
 	if exchange.EstimatedTokens != nil {
 		result.EstimatedTokenCount = exchange.EstimatedTokens
-		// A failed countTokens request can return an estimate, separate from billable usage.
+		// Emit the count estimate on its dedicated response path so fallback tokens
+		// never become observed server usage or semantic generation output in the
+		// attempt result.
 		output := upstream.NewOutputContext(sink)
 		output.JSON(http.StatusOK, map[string]any{"totalTokens": *exchange.EstimatedTokens})
 		result.Stream = false
@@ -127,6 +185,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
 	priorRaw, priorState := response.ObserveRaw, response.ObserveState
+	// Chain the caller observation before attempt accounting. Record presence
+	// independently of numerical counts so explicit zero usage and later semantic
+	// output remain distinguishable.
 	response.ObserveRaw = func(payload []byte) {
 		if priorRaw != nil {
 			priorRaw(payload)
@@ -148,6 +209,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 			result.ObservedImages = images
 		}
 	}
+	// Keep adapter state snapshots alongside raw observations because conversion
+	// paths can report final merged usage or their legacy first-token timing
+	// after payload processing.
 	response.ObserveState = func(usage *upstream.TokenUsage, first *int) {
 		if priorState != nil {
 			priorState(usage, first)

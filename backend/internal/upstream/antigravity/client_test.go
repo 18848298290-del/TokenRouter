@@ -15,18 +15,43 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// Account client fixtures cover Google OAuth exchanges, v1internal
+// project/model queries, and shared tier/credit decoding. Some early fixtures
+// construct HTTP requests directly, while RealCall tests invoke Client methods
+// through a prefix-rewriting transport; these protect different layers of
+// behavior.
+//
+// Endpoint and secret overrides restore shared package state after each
+// serialized test. The redirect transport changes the supplied request URL in
+// place and borrows its prefix map, so fixture owners keep those values stable
+// through dispatch. Cancelled-context tests begin with cancellation already
+// selected by the caller, and model-query fixtures exercise positive limits,
+// oversize rejection, typed/raw decoding, and configured endpoint recovery.
+
+// defaultFetchAvailableModelsBodyLimit supplies an eight-MiB bounded response
+// allowance for model-query fixtures that exercise the actual Client method.
 const defaultFetchAvailableModelsBodyLimit int64 = 8 << 20
 
-// timeoutError supplies a timeout through the net.Error interface.
+// timeoutError supplies fixed timeout and temporary signals for network-error
+// classification fixtures.
 type timeoutError struct{}
 
-// redirectRoundTripper rewrites matching URL prefixes to a test server.
+// redirectRoundTripper rewrites the supplied request URL in place before
+// delegating test transport dispatch.
 type redirectRoundTripper struct {
-	// original URL prefix to test server URL
+	// redirects borrows source-prefix to fixture-destination mappings; callers
+	// keep the map stable during dispatch because matching reads its live
+	// entries.
 	redirects map[string]string
+	// transport receives the same request after optional URL replacement; nil
+	// selects http.DefaultTransport, and fixture owners configure it before
+	// concurrent use.
 	transport http.RoundTripper
 }
 
+// TestNewAPIRequestWithURL_普通请求 builds a nonstreaming v1internal request with
+// supplied credentials and bytes. Method, route and credential/content headers
+// must match the fixture, while the URL omits the SSE query.
 func TestNewAPIRequestWithURL_普通请求(t *testing.T) {
 	ctx := context.Background()
 	baseURL := "https://example.com"
@@ -60,6 +85,9 @@ func TestNewAPIRequestWithURL_普通请求(t *testing.T) {
 	}
 }
 
+// TestNewAPIRequestWithURL_流式请求 builds the exact streamGenerateContent action.
+// The request URL must retain its v1internal route and include alt=sse so the
+// transport requests stream framing.
 func TestNewAPIRequestWithURL_流式请求(t *testing.T) {
 	ctx := context.Background()
 	baseURL := "https://example.com"
@@ -78,6 +106,9 @@ func TestNewAPIRequestWithURL_流式请求(t *testing.T) {
 	}
 }
 
+// TestNewAPIRequestWithURL_空Body constructs a request with empty source bytes.
+// Successful construction must contain a nonnil Body value, reflecting the
+// no-body reader selected by standard HTTP creation.
 func TestNewAPIRequestWithURL_空Body(t *testing.T) {
 	ctx := context.Background()
 	req, err := NewAPIRequestWithURL(ctx, "https://example.com", "test", "tok", nil)
@@ -89,6 +120,9 @@ func TestNewAPIRequestWithURL_空Body(t *testing.T) {
 	}
 }
 
+// TestNewAPIRequest_使用默认URL builds an API request through the package-default
+// wrapper. Its URL must use the configured BaseURL together with the supplied
+// action route and ordinary request construction.
 func TestNewAPIRequest_使用默认URL(t *testing.T) {
 	ctx := context.Background()
 	req, err := NewAPIRequest(ctx, "generateContent", "tok", []byte(`{}`))
@@ -102,6 +136,9 @@ func TestNewAPIRequest_使用默认URL(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_字符串格式 decodes a supplier tier string through the
+// shared wire alias. The tier ID must match the input, while the asserted Name
+// field remains empty in the decoded fixture.
 func TestTierInfo_UnmarshalJSON_字符串格式(t *testing.T) {
 	data := []byte(`"free-tier"`)
 	var tier TierInfo
@@ -116,6 +153,9 @@ func TestTierInfo_UnmarshalJSON_字符串格式(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_对象格式 decodes a supplier tier object containing
+// its descriptive fields. Shared wire decoding must retain the fixture
+// identity and object metadata used by account consumers.
 func TestTierInfo_UnmarshalJSON_对象格式(t *testing.T) {
 	data := []byte(`{"id":"g1-pro-tier","name":"Pro","description":"Pro plan"}`)
 	var tier TierInfo
@@ -133,6 +173,9 @@ func TestTierInfo_UnmarshalJSON_对象格式(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_null decodes a null tier into its zero-valued
+// fixture. Decoding must succeed and leave the tier identity empty for absent
+// supplier tier information.
 func TestTierInfo_UnmarshalJSON_null(t *testing.T) {
 	data := []byte(`null`)
 	var tier TierInfo
@@ -144,6 +187,9 @@ func TestTierInfo_UnmarshalJSON_null(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_空数据 passes empty source bytes to the tier decoder
+// directly. The fixture must accept the absence and leave tier identity empty
+// instead of requiring an object form.
 func TestTierInfo_UnmarshalJSON_空数据(t *testing.T) {
 	data := []byte(``)
 	var tier TierInfo
@@ -155,6 +201,9 @@ func TestTierInfo_UnmarshalJSON_空数据(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_空格包裹null decodes whitespace around a null tier
+// value. Trimming must let the shared decoder accept absence and retain the
+// fixture empty identity.
 func TestTierInfo_UnmarshalJSON_空格包裹null(t *testing.T) {
 	data := []byte(`  null  `)
 	var tier TierInfo
@@ -166,6 +215,9 @@ func TestTierInfo_UnmarshalJSON_空格包裹null(t *testing.T) {
 	}
 }
 
+// TestTierInfo_UnmarshalJSON_通过JSON嵌套结构 decodes string and object tier forms
+// within one account response. The nested shared aliases must recover the
+// asserted current and paid tier identities.
 func TestTierInfo_UnmarshalJSON_通过JSON嵌套结构(t *testing.T) {
 	// Tier fields accept both string and object forms in the same response.
 	jsonData := `{"currentTier":"free-tier","paidTier":{"id":"g1-ultra-tier","name":"Ultra"}}`
@@ -181,6 +233,9 @@ func TestTierInfo_UnmarshalJSON_通过JSON嵌套结构(t *testing.T) {
 	}
 }
 
+// TestGetTier_PaidTier优先 supplies both paid and current tiers in account
+// observations. A nonempty paid identity must win, selecting the paid tier for
+// the consumer result.
 func TestGetTier_PaidTier优先(t *testing.T) {
 	resp := &LoadCodeAssistResponse{
 		CurrentTier: &TierInfo{ID: "free-tier"},
@@ -191,6 +246,9 @@ func TestGetTier_PaidTier优先(t *testing.T) {
 	}
 }
 
+// TestGetTier_回退到CurrentTier supplies current tier data without a usable paid
+// tier. Account selection must return the current fixture identity for
+// consumers that ask for the active tier.
 func TestGetTier_回退到CurrentTier(t *testing.T) {
 	resp := &LoadCodeAssistResponse{
 		CurrentTier: &TierInfo{ID: "free-tier"},
@@ -200,6 +258,9 @@ func TestGetTier_回退到CurrentTier(t *testing.T) {
 	}
 }
 
+// TestGetTier_PaidTier为空ID supplies an empty paid identity beside a current
+// tier. Selection must use the current identity because an empty paid
+// observation does not qualify for precedence.
 func TestGetTier_PaidTier为空ID(t *testing.T) {
 	resp := &LoadCodeAssistResponse{
 		CurrentTier: &TierInfo{ID: "free-tier"},
@@ -210,6 +271,9 @@ func TestGetTier_PaidTier为空ID(t *testing.T) {
 	}
 }
 
+// TestGetAvailableCredits supplies one paid-tier credit observation with
+// string amount and minimum values. The returned slice must contain one entry
+// whose numeric getters produce twenty-five and five.
 func TestGetAvailableCredits(t *testing.T) {
 	resp := &LoadCodeAssistResponse{
 		PaidTier: &PaidTierInfo{
@@ -236,6 +300,9 @@ func TestGetAvailableCredits(t *testing.T) {
 	}
 }
 
+// TestGetTier_两者都为nil supplies no current or paid tier in account
+// observations. The consumer must return its empty tier result rather than
+// dereferencing an absent supplier tier.
 func TestGetTier_两者都为nil(t *testing.T) {
 	resp := &LoadCodeAssistResponse{}
 	if got := resp.GetTier(); got != "" {
@@ -243,10 +310,13 @@ func TestGetTier_两者都为nil(t *testing.T) {
 	}
 }
 
+// TestTierIDToPlanType compares known, case-varied, blank, and unknown tier
+// identities. Known/blank fixtures yield configured plan labels, while the
+// unknown fixture retains its supplied identity spelling.
 func TestTierIDToPlanType(t *testing.T) {
 	tests := []struct {
-		tierID string
-		want   string
+		tierID string // input supplier tier identity
+		want   string // expected selected plan label
 	}{
 		{"free-tier", "Free"},
 		{"g1-pro-tier", "Pro"},
@@ -264,6 +334,9 @@ func TestTierIDToPlanType(t *testing.T) {
 	}
 }
 
+// mustNewClient constructs a client for a test and marks construction failures
+// fatal. It uses t.Helper for attribution, returning the configured client so
+// callers can inspect proxy and timeout settings.
 func mustNewClient(t *testing.T, proxyURL string) *Client {
 	t.Helper()
 	client, err := NewClient(proxyURL)
@@ -273,6 +346,9 @@ func mustNewClient(t *testing.T, proxyURL string) *Client {
 	return client
 }
 
+// TestNewClient_无代理 constructs a client with no explicit proxy. The fixture
+// must retain the configured ten-second timeout and nil transport that
+// delegates standard default HTTP transport behavior.
 func TestNewClient_无代理(t *testing.T) {
 	client, err := NewClient("")
 	if err != nil {
@@ -293,6 +369,9 @@ func TestNewClient_无代理(t *testing.T) {
 	}
 }
 
+// TestNewClient_有代理 constructs a client with an explicit proxy URL. Its
+// result must contain a nonnil client and transport. This fixture checks their
+// presence without inspecting proxy behavior or dial/TLS settings.
 func TestNewClient_有代理(t *testing.T) {
 	client, err := NewClient("http://proxy.example.com:8080")
 	if err != nil {
@@ -306,6 +385,9 @@ func TestNewClient_有代理(t *testing.T) {
 	}
 }
 
+// TestNewClient_空格代理 constructs a client with whitespace-only proxy input.
+// Normalization must treat the value as absent and retain the fixture default
+// client configuration.
 func TestNewClient_空格代理(t *testing.T) {
 	client, err := NewClient("   ")
 	if err != nil {
@@ -319,6 +401,9 @@ func TestNewClient_空格代理(t *testing.T) {
 	}
 }
 
+// TestNewClient_无效代理URL supplies a malformed proxy URL during client
+// construction. Construction must fail rather than returning a configured
+// client that silently ignores the invalid proxy.
 func TestNewClient_无效代理URL(t *testing.T) {
 	_, err := NewClient("://invalid")
 	if err == nil {
@@ -329,12 +414,18 @@ func TestNewClient_无效代理URL(t *testing.T) {
 	}
 }
 
+// TestIsConnectionError_nil classifies a nil error through the account
+// connection helper. The helper must return false so absence of failure cannot
+// itself trigger endpoint recovery.
 func TestIsConnectionError_nil(t *testing.T) {
 	if IsConnectionError(nil) {
 		t.Error("nil 错误不应判定为连接错误")
 	}
 }
 
+// TestIsConnectionError_超时错误 wraps a fixture timeout inside a network
+// operation error. Account classification must recognize the timeout through
+// the enclosing error rather than requiring the leaf error directly.
 func TestIsConnectionError_超时错误(t *testing.T) {
 	// Classify the timeout through its enclosing network operation error.
 	err := &net.OpError{
@@ -347,10 +438,19 @@ func TestIsConnectionError_超时错误(t *testing.T) {
 	}
 }
 
-func (e *timeoutError) Error() string   { return "timeout" }
-func (e *timeoutError) Timeout() bool   { return true }
+// Error returns the fixed timeout text used by network classification
+// fixtures.
+func (e *timeoutError) Error() string { return "timeout" }
+
+// Timeout reports true so the fixture satisfies the network timeout predicate.
+func (e *timeoutError) Timeout() bool { return true }
+
+// Temporary reports true as the fixture legacy net.Error temporary indicator.
 func (e *timeoutError) Temporary() bool { return true }
 
+// TestIsConnectionError_netOpError supplies a network operation failure to
+// account classification. The helper must recognize that error shape so
+// configured endpoint recovery can consider a next destination.
 func TestIsConnectionError_netOpError(t *testing.T) {
 	err := &net.OpError{
 		Op:  "dial",
@@ -362,6 +462,9 @@ func TestIsConnectionError_netOpError(t *testing.T) {
 	}
 }
 
+// TestIsConnectionError_urlError supplies a URL error to the account
+// connection helper. Its broader classification must accept the fixture shape
+// used by HTTP client failure wrapping.
 func TestIsConnectionError_urlError(t *testing.T) {
 	err := &url.Error{
 		Op:  "Get",
@@ -373,6 +476,9 @@ func TestIsConnectionError_urlError(t *testing.T) {
 	}
 }
 
+// TestIsConnectionError_普通错误 supplies an unrelated ordinary error to
+// connection classification. The helper must return false because this fixture
+// carries neither timeout nor recognized network/URL error shape.
 func TestIsConnectionError_普通错误(t *testing.T) {
 	err := fmt.Errorf("some random error")
 	if IsConnectionError(err) {
@@ -380,6 +486,9 @@ func TestIsConnectionError_普通错误(t *testing.T) {
 	}
 }
 
+// TestIsConnectionError_包装的netOpError wraps a network operation error in
+// another error value. Account classification must follow the error chain and
+// retain its connection-recovery result.
 func TestIsConnectionError_包装的netOpError(t *testing.T) {
 	inner := &net.OpError{
 		Op:  "dial",
@@ -392,6 +501,9 @@ func TestIsConnectionError_包装的netOpError(t *testing.T) {
 	}
 }
 
+// TestShouldFallbackToNextURL_连接错误 passes a recognized connection failure to
+// account endpoint classification. The result must permit another endpoint
+// when the owning operation has a subsequent configured destination.
 func TestShouldFallbackToNextURL_连接错误(t *testing.T) {
 	err := &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("refused")}
 	if !shouldFallbackToNextURL(err, 0) {
@@ -399,11 +511,14 @@ func TestShouldFallbackToNextURL_连接错误(t *testing.T) {
 	}
 }
 
+// TestShouldFallbackToNextURL_状态码 compares transient, missing-endpoint,
+// success, and nonrecoverable status fixtures. The helper must match the
+// configured account-endpoint recovery policy for each numeric HTTP status.
 func TestShouldFallbackToNextURL_状态码(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		want       bool
+		name       string // human-readable HTTP status case name
+		statusCode int    // input supplier HTTP status
+		want       bool   // expected account endpoint recovery result
 	}{
 		{"429 Too Many Requests", http.StatusTooManyRequests, true},
 		{"408 Request Timeout", http.StatusRequestTimeout, true},
@@ -428,12 +543,18 @@ func TestShouldFallbackToNextURL_状态码(t *testing.T) {
 	}
 }
 
+// TestShouldFallbackToNextURL_无错误且200 supplies no transport error and a
+// successful HTTP status. Classification must remain false so a usable account
+// response stays on its selected endpoint.
 func TestShouldFallbackToNextURL_无错误且200(t *testing.T) {
 	if shouldFallbackToNextURL(nil, http.StatusOK) {
 		t.Error("无错误且 200 不应触发 URL 降级")
 	}
 }
 
+// TestClient_ExchangeCode_成功 sends a manually constructed authorization-code
+// HTTP fixture to a local server. Its form fields and decoded token response
+// are checked separately from Client.ExchangeCode RealCall coverage.
 func TestClient_ExchangeCode_成功(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -521,6 +642,9 @@ func TestClient_ExchangeCode_成功(t *testing.T) {
 	}
 }
 
+// TestClient_ExchangeCode_无ClientSecret empties the cached OAuth secret before
+// invoking code exchange. The client must reject missing credentials before
+// dispatch, and cleanup restores shared secret state.
 func TestClient_ExchangeCode_无ClientSecret(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
@@ -536,6 +660,9 @@ func TestClient_ExchangeCode_无ClientSecret(t *testing.T) {
 	}
 }
 
+// TestClient_ExchangeCode_服务器返回错误 sends a manually constructed token request
+// to an error fixture. The observed HTTP status must match the supplied
+// response without claiming Client.ExchangeCode invocation.
 func TestClient_ExchangeCode_服务器返回错误(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -547,7 +674,9 @@ func TestClient_ExchangeCode_服务器返回错误(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Exercise the error response fixture directly.
+	// Construct the token request directly to check this failure fixture;
+	// dedicated RealCall cases invoke client error handling through the redirect
+	// transport.
 	resp, err := server.Client().Get(server.URL)
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)
@@ -559,6 +688,10 @@ func TestClient_ExchangeCode_服务器返回错误(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_MockServer sends a manually constructed
+// refresh-token form to a local server. Its request fields and decoded token
+// observations are checked independently from Client.RefreshToken RealCall
+// coverage.
 func TestClient_RefreshToken_MockServer(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -620,6 +753,9 @@ func TestClient_RefreshToken_MockServer(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_无ClientSecret empties the cached secret before
+// invoking refresh-token exchange. The client must reject missing credentials
+// before dispatch, and test cleanup restores shared startup state.
 func TestClient_RefreshToken_无ClientSecret(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
@@ -632,6 +768,9 @@ func TestClient_RefreshToken_无ClientSecret(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_成功 constructs a user-info HTTP request directly with
+// fixture authentication. The local response must decode account observations,
+// separately from tests invoking Client.GetUserInfo itself.
 func TestClient_GetUserInfo_成功(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -654,7 +793,9 @@ func TestClient_GetUserInfo_成功(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Exercise the user-info response fixture with a manually constructed request.
+	// Construct the authenticated request directly for this user-info fixture;
+	// separate RealCall tests invoke the method through its configured client
+	// transport.
 	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	if err != nil {
@@ -684,6 +825,9 @@ func TestClient_GetUserInfo_成功(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_服务器返回错误 constructs a user-info request directly
+// against an error fixture. Its observed HTTP failure checks the response
+// setup rather than invoking Client.GetUserInfo error handling.
 func TestClient_GetUserInfo_服务器返回错误(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -702,6 +846,9 @@ func TestClient_GetUserInfo_服务器返回错误(t *testing.T) {
 	}
 }
 
+// TestTokenResponse_JSON序列化 decodes the fixture OAuth token JSON through the
+// shared alias. Access, refresh and expiry fields must equal the three supplier
+// values asserted by this fixture.
 func TestTokenResponse_JSON序列化(t *testing.T) {
 	jsonData := `{"access_token":"at","expires_in":3600,"token_type":"Bearer","scope":"openid","refresh_token":"rt"}`
 	var resp TokenResponse
@@ -719,6 +866,9 @@ func TestTokenResponse_JSON序列化(t *testing.T) {
 	}
 }
 
+// TestUserInfo_JSON序列化 decodes the fixture Google user JSON through the shared
+// alias. The resulting account identity and profile observations must match
+// the supplied response fields.
 func TestUserInfo_JSON序列化(t *testing.T) {
 	jsonData := `{"email":"a@b.com","name":"Alice"}`
 	var info UserInfo
@@ -733,6 +883,9 @@ func TestUserInfo_JSON序列化(t *testing.T) {
 	}
 }
 
+// TestLoadCodeAssistResponse_完整JSON decodes a complete account/project
+// response fixture. Shared wire data must retain the asserted project, tier,
+// and account metadata needed by account discovery consumers.
 func TestLoadCodeAssistResponse_完整JSON(t *testing.T) {
 	jsonData := `{
 		"cloudaicompanionProject": "proj-123",
@@ -758,6 +911,16 @@ func TestLoadCodeAssistResponse_完整JSON(t *testing.T) {
 	}
 }
 
+// RoundTrip rewrites a nonnil request URL using the first matching prefix
+// encountered in redirects, then delegates dispatch. The request URL is
+// modified in place, while other request state remains on the supplied
+// request.
+//
+// Map iteration gives overlapping prefixes no deterministic priority, and
+// parsed replacement errors return before dispatch. A nil transport selects
+// http.DefaultTransport; the transport receives the same request pointer.
+// Callers provide exclusive request ownership and keep the borrowed prefix map
+// stable while dispatch is running.
 func (rt *redirectRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	originalURL := req.URL.String()
 	for prefix, target := range rt.redirects {
@@ -767,6 +930,9 @@ func (rt *redirectRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 			if err != nil {
 				return nil, err
 			}
+			// Change the supplied request in place after the first iterated prefix
+			// match, retaining headers/body/context while callers provide stable
+			// mapping and exclusive request ownership.
 			req.URL = parsed
 			break
 		}
@@ -777,7 +943,10 @@ func (rt *redirectRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return rt.transport.RoundTrip(req)
 }
 
-// newTestClientWithRedirect routes matching URL prefixes to a test server.
+// newTestClientWithRedirect constructs a ten-second client borrowing redirects
+// for its test transport. Matching requests are rewritten in place and sent
+// through the default transport; callers keep mappings stable until fixture
+// requests finish.
 func newTestClientWithRedirect(redirects map[string]string) *Client {
 	return &Client{
 		httpClient: &http.Client{
@@ -789,6 +958,9 @@ func newTestClientWithRedirect(redirects map[string]string) *Client {
 	}
 }
 
+// TestClient_ExchangeCode_Success_RealCall invokes Client.ExchangeCode through
+// a redirecting transport. The local server checks authorization-code and PKCE
+// form inputs, and the client must return decoded token observations.
 func TestClient_ExchangeCode_Success_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -860,6 +1032,9 @@ func TestClient_ExchangeCode_Success_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_ExchangeCode_ServerError_RealCall invokes code exchange against a
+// redirected token failure. The returned error must expose the asserted
+// upstream failure information after the client consumes the response.
 func TestClient_ExchangeCode_ServerError_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -887,6 +1062,9 @@ func TestClient_ExchangeCode_ServerError_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_ExchangeCode_InvalidJSON_RealCall returns malformed token JSON to
+// Client.ExchangeCode through the fixture transport. The client must reject
+// decoding rather than treating the successful status alone as a valid result.
 func TestClient_ExchangeCode_InvalidJSON_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -912,13 +1090,20 @@ func TestClient_ExchangeCode_InvalidJSON_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_ExchangeCode_ContextCanceled_RealCall cancels context before
+// invoking code exchange through the fixture client. The operation must return
+// failure for that context, without asserting cancellation occurred after
+// server dispatch.
 func TestClient_ExchangeCode_ContextCanceled_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
 	t.Cleanup(func() { defaultClientSecret = old })
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second) // Keep the response pending while cancellation is checked.
+		// Delay a request if it unexpectedly reaches this handler; caller
+		// cancellation happens before invocation, so the assertion checks the
+		// returned error rather than cancellation of an observed active response.
+		time.Sleep(5 * time.Second)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -936,6 +1121,9 @@ func TestClient_ExchangeCode_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_Success_RealCall invokes Client.RefreshToken through
+// a redirecting transport. The server checks refresh-form authentication and
+// inputs, while returned token fields must match the supplier fixture.
 func TestClient_RefreshToken_Success_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -987,6 +1175,10 @@ func TestClient_RefreshToken_Success_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_ServerError_RealCall returns a token-endpoint
+// failure during Client.RefreshToken. The client must expose the asserted
+// upstream error information after consuming its response rather than decoding
+// successful credentials.
 func TestClient_RefreshToken_ServerError_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -1011,6 +1203,9 @@ func TestClient_RefreshToken_ServerError_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_InvalidJSON_RealCall returns malformed JSON with the
+// refresh fixture successful status. Client.RefreshToken must fail decoding so
+// status alone cannot supply usable token observations.
 func TestClient_RefreshToken_InvalidJSON_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -1036,6 +1231,10 @@ func TestClient_RefreshToken_InvalidJSON_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_RefreshToken_ContextCanceled_RealCall cancels context before
+// invoking refresh through the fixture client. The operation must fail for
+// that context without requiring the delayed server handler to receive a
+// request.
 func TestClient_RefreshToken_ContextCanceled_RealCall(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "test-secret"
@@ -1060,6 +1259,9 @@ func TestClient_RefreshToken_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_Success_RealCall invokes Client.GetUserInfo against a
+// redirected local endpoint. Authentication and returned account identity must
+// match the fixture through the actual client request path.
 func TestClient_GetUserInfo_Success_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1107,6 +1309,10 @@ func TestClient_GetUserInfo_Success_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_Unauthorized_RealCall returns an unauthorized
+// response to the actual user-info client method. The result must fail with
+// the asserted upstream status information rather than returning decoded
+// account identity.
 func TestClient_GetUserInfo_Unauthorized_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -1130,6 +1336,9 @@ func TestClient_GetUserInfo_Unauthorized_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_InvalidJSON_RealCall returns malformed user-info JSON
+// with a successful fixture status. Client.GetUserInfo must reject decoding
+// instead of treating the HTTP status as sufficient account data.
 func TestClient_GetUserInfo_InvalidJSON_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1151,6 +1360,9 @@ func TestClient_GetUserInfo_InvalidJSON_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_GetUserInfo_ContextCanceled_RealCall cancels the supplied context
+// before invoking user-info lookup. The client must return failure without
+// this fixture establishing cancellation after the server begins processing.
 func TestClient_GetUserInfo_ContextCanceled_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second)
@@ -1171,9 +1383,20 @@ func TestClient_GetUserInfo_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
-// withMockBaseURLs replaces the endpoints until test cleanup.
+// withMockBaseURLs replaces package endpoint values until t cleanup restores
+// both globals. The supplied slice is borrowed, and a nonempty list also sets
+// BaseURL to its first entry.
+//
+// An empty list leaves the previous BaseURL while replacing BaseURLs.
+// Restoration captures both previous values before assignment, so later tests
+// observe the earlier configuration after cleanup. These globals are not
+// locked together; fixtures using this helper run serially and keep the
+// supplied slice stable through all requests that consult it.
 func withMockBaseURLs(t *testing.T, urls []string) {
 	t.Helper()
+	// Capture both prior globals before replacement and restore them together
+	// during cleanup, so subsequent serialized fixtures receive the earlier
+	// account and default-route configuration.
 	origBaseURLs := BaseURLs
 	origBaseURL := BaseURL
 	BaseURLs = urls
@@ -1186,6 +1409,10 @@ func withMockBaseURLs(t *testing.T, urls []string) {
 	})
 }
 
+// TestClient_LoadCodeAssist_Success_RealCall invokes account discovery against
+// a configured local endpoint. The request must include IDE/authentication
+// metadata, and typed plus raw results must retain the asserted account
+// observations.
 func TestClient_LoadCodeAssist_Success_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1256,6 +1483,9 @@ func TestClient_LoadCodeAssist_Success_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_LoadCodeAssist_HTTPError_RealCall returns an account-discovery
+// HTTP failure through the actual client method. The operation must fail with
+// the asserted response status rather than returning usable project data.
 func TestClient_LoadCodeAssist_HTTPError_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -1278,6 +1508,10 @@ func TestClient_LoadCodeAssist_HTTPError_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_LoadCodeAssist_InvalidJSON_RealCall returns malformed discovery
+// JSON with successful status at one configured endpoint. The returned failure
+// must identify response parsing; this fixture does not observe endpoint
+// advancement.
 func TestClient_LoadCodeAssist_InvalidJSON_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1298,8 +1532,13 @@ func TestClient_LoadCodeAssist_InvalidJSON_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_LoadCodeAssist_URLFallback_RealCall returns a server failure at
+// the first configured discovery endpoint. The second endpoint must be called
+// and supply usable account data through the actual client method.
 func TestClient_LoadCodeAssist_URLFallback_RealCall(t *testing.T) {
-	// A server error on the first endpoint allows the second endpoint to succeed.
+	// Return an eligible server failure from the first discovery endpoint so
+	// configured-order recovery reaches the second fixture and its usable account
+	// data.
 	callCount := 0
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -1334,6 +1573,9 @@ func TestClient_LoadCodeAssist_URLFallback_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_LoadCodeAssist_AllURLsFail_RealCall configures two discovery
+// endpoints with eligible failure statuses. The actual method must return an
+// error for those fixtures rather than usable account observations.
 func TestClient_LoadCodeAssist_AllURLsFail_RealCall(t *testing.T) {
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -1356,6 +1598,9 @@ func TestClient_LoadCodeAssist_AllURLsFail_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_LoadCodeAssist_ContextCanceled_RealCall cancels context before
+// account discovery against a local fixture. The actual method must fail for
+// cancellation without the test proving a request reached the server first.
 func TestClient_LoadCodeAssist_ContextCanceled_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second)
@@ -1375,6 +1620,9 @@ func TestClient_LoadCodeAssist_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_Success_RealCall queries fixture model and
+// quota data with a positive body limit. The actual client must retain
+// asserted typed/raw model observations and request metadata.
 func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1469,6 +1717,9 @@ func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_RejectsNonPositiveBodyLimit passes zero
+// to model discovery with the ordinary constructed client. The returned
+// error must name the positive-limit requirement asserted by this fixture.
 func TestClient_FetchAvailableModels_RejectsNonPositiveBodyLimit(t *testing.T) {
 	client := mustNewClient(t, "")
 	_, _, err := client.FetchAvailableModels(context.Background(), "token", "proj", 0)
@@ -1477,6 +1728,10 @@ func TestClient_FetchAvailableModels_RejectsNonPositiveBodyLimit(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_UsesConfiguredBodyLimit returns a body
+// beyond the supplied model-query allowance. The client must report oversize
+// failure after bounded capture instead of decoding a truncated successful
+// response.
 func TestClient_FetchAvailableModels_UsesConfiguredBodyLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1497,6 +1752,10 @@ func TestClient_FetchAvailableModels_UsesConfiguredBodyLimit(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_HTTPError_RealCall returns a model-query
+// HTTP failure through the actual client method. The operation must fail with
+// asserted response information rather than returning model/quota
+// observations.
 func TestClient_FetchAvailableModels_HTTPError_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -1516,6 +1775,9 @@ func TestClient_FetchAvailableModels_HTTPError_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_InvalidJSON_RealCall returns malformed model
+// JSON with successful status inside the supplied bound. The client must fail
+// decoding rather than accepting that status as usable model data.
 func TestClient_FetchAvailableModels_InvalidJSON_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1536,9 +1798,14 @@ func TestClient_FetchAvailableModels_InvalidJSON_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_URLFallback_RealCall returns rate limiting
+// at the first configured model endpoint. The next endpoint must supply the
+// successful model fixture through account-model fallback handling.
 func TestClient_FetchAvailableModels_URLFallback_RealCall(t *testing.T) {
 	callCount := 0
-	// A rate-limited endpoint allows the second endpoint to succeed.
+	// Return rate limiting from the first model endpoint so configured-order
+	// recovery reaches the second fixture after capturing and closing the failed
+	// body.
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -1569,6 +1836,9 @@ func TestClient_FetchAvailableModels_URLFallback_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_AllURLsFail_RealCall configures two model
+// endpoints with eligible failure statuses. The actual bounded query must
+// return an error for those fixtures rather than usable model data.
 func TestClient_FetchAvailableModels_AllURLsFail_RealCall(t *testing.T) {
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -1591,6 +1861,9 @@ func TestClient_FetchAvailableModels_AllURLsFail_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_ContextCanceled_RealCall cancels context
+// before the bounded model query begins. The actual client must fail without
+// this fixture establishing cancellation after a dispatched server response.
 func TestClient_FetchAvailableModels_ContextCanceled_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second)
@@ -1610,6 +1883,10 @@ func TestClient_FetchAvailableModels_ContextCanceled_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_EmptyModels_RealCall returns a valid
+// account-model response containing an empty model map. The actual client must
+// accept a nonnil empty Models map and return nonnil raw decoded storage.
+// Their presence and size are asserted by this fixture.
 func TestClient_FetchAvailableModels_EmptyModels_RealCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1638,6 +1915,9 @@ func TestClient_FetchAvailableModels_EmptyModels_RealCall(t *testing.T) {
 
 // Both account and model queries retry another endpoint after HTTP 408.
 
+// TestClient_LoadCodeAssist_408Fallback_RealCall returns HTTP 408 from the
+// first discovery endpoint. The actual client must advance to the second
+// configured destination and recover the successful account fixture.
 func TestClient_LoadCodeAssist_408Fallback_RealCall(t *testing.T) {
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestTimeout)
@@ -1664,6 +1944,9 @@ func TestClient_LoadCodeAssist_408Fallback_RealCall(t *testing.T) {
 	}
 }
 
+// TestClient_FetchAvailableModels_404Fallback_RealCall returns HTTP 404 from
+// the first model-query endpoint. The actual bounded query must advance to the
+// second configured destination and recover its model fixture.
 func TestClient_FetchAvailableModels_404Fallback_RealCall(t *testing.T) {
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -1690,13 +1973,17 @@ func TestClient_FetchAvailableModels_404Fallback_RealCall(t *testing.T) {
 	}
 }
 
+// TestExtractProjectIDFromOnboardResponse compares absent, string, object,
+// whitespace, and invalid project representations. Extraction must retain the
+// trimmed valid project fixtures and return empty for unsupported supplier
+// shapes.
 func TestExtractProjectIDFromOnboardResponse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		resp map[string]any
-		want string
+		name string         // human-readable project representation case
+		resp map[string]any // input supplier onboarding observations
+		want string         // expected extracted project identity
 	}{
 		{
 			name: "nil response",

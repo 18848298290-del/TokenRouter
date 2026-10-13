@@ -7,13 +7,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Provider-switch errors retain provider/model identity through ordinary
+// wrapping for retry selection. Table fixtures distinguish nil and generic
+// errors from direct and wrapped signals, while message formatting checks that
+// the selected identities remain observable.
+
+// TestIsAntigravityProviderSwitchError compares nil, generic, direct, and
+// wrapped errors. Matching fixture signals must retain their provider and
+// model fields, while unrelated cases produce no match.
 func TestIsAntigravityProviderSwitchError(t *testing.T) {
 	tests := []struct {
-		name          string
-		err           error
-		expectedOK    bool
-		expectedID    int64
-		expectedModel string
+		name          string // human-readable table case name
+		err           error  // input error or wrapped signal
+		expectedOK    bool   // expected typed-match selection result
+		expectedID    int64  // expected matched provider identifier
+		expectedModel string // expected matched model identity
 	}{
 		{
 			name:       "nil error",
@@ -64,6 +72,9 @@ func TestIsAntigravityProviderSwitchError(t *testing.T) {
 	}
 }
 
+// TestAntigravityProviderSwitchError_Error formats a limited provider with
+// sticky-session context. The resulting message must contain the fixture
+// provider identifier and model name used for switching.
 func TestAntigravityProviderSwitchError_Error(t *testing.T) {
 	err := &AntigravityProviderSwitchError{
 		OriginalProviderID: 789,

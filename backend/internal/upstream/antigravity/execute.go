@@ -18,38 +18,81 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Antigravity execution keeps upstream observation active while adapting one
+// exchange into Claude, Gemini, Chat, or Responses output. Raw usage fields
+// accumulate across partial payloads, so a later observation containing only
+// output tokens does not erase earlier input tokens.
+//
+// The executor holds optional lifecycle registration through final body
+// closing and selects output behavior independently from the accepted client
+// protocol. Successful adapter usage can replace raw accumulation, while a
+// read failure retains accumulated usage already seen. Semantic output,
+// first-content timing, and retry commitment remain separate observations: any
+// nonempty emitted bytes can close the retry window, including keepalive
+// output that carries no model content.
+
+// Response modes choose the platform adapter representation independently from
+// the client protocol admitted by Executor.
 const (
-	ModeClaudeResponse ResponseMode = iota
-	ModeGeminiResponse
-	ModeChatResponse
-	ModeResponsesResponse
+	ModeClaudeResponse    ResponseMode = iota // Messages response conversion mode
+	ModeGeminiResponse                        // Gemini response forwarding mode
+	ModeChatResponse                          // Chat Completions compatibility mode
+	ModeResponsesResponse                     // Responses API compatibility mode
 )
 
+// ResponseMode selects the client response representation used by an
+// Antigravity execution target.
 type ResponseMode uint8
 
-// Target supplies the model, output mode, exchange, and response callbacks for one attempt.
+// Target supplies provider identity, exchange ownership, output selection, and
+// response policy for one attempt.
 type Target struct {
-	OutputError    func(error)
-	ProviderID     int64
-	Model          string
-	Mode           ResponseMode
-	StartedAt      time.Time
-	IncludeUsage   bool
-	ClientTools    bridge.ResponsesClientToolMapping
-	Exchange       func(context.Context) (*http.Response, error)
+	// OutputError optionally observes an adapter failure after response handling;
+	// target validation, lifecycle, exchange, and pre-response failures return
+	// earlier.
+	OutputError func(error)
+	ProviderID  int64        // selected execution provider identifier
+	Model       string       // selected upstream model identity
+	Mode        ResponseMode // selected response adapter representation
+	// StartedAt supplies the elapsed-time origin; zero selects the current time
+	// after optional lifecycle admission and before upstream exchange.
+	StartedAt time.Time
+	// IncludeUsage selects Chat stream usage output; other response modes use
+	// their own adapter usage behavior for collected observations.
+	IncludeUsage bool
+	// ClientTools supplies Responses return-name mappings shared with conversion;
+	// callers keep the mapping stable through this attempt output.
+	ClientTools bridge.ResponsesClientToolMapping
+	// Exchange returns the final upstream response using ctx; successful results
+	// require a nonnil body that Executor reads and closes. The callback cleans
+	// up any response returned together with an error.
+	Exchange func(context.Context) (*http.Response, error)
+	// BeforeResponse optionally inspects the owned response before adaptation;
+	// stop or error returns immediately and deferred body/lifecycle cleanup still
+	// runs.
 	BeforeResponse func(context.Context, *http.Response) (bool, error)
-	Response       ResponseOptions
-	Enter          func() (func(), error)
+	// Response supplies adapter callbacks and limits copied for the attempt;
+	// ObserveRaw is chained with executor model and usage observation.
+	Response ResponseOptions
+	// Enter optionally registers lifecycle ownership and returns a nonnil release
+	// callback on success, held until the final response body closes.
+	Enter func() (func(), error)
 }
 
+// Executor performs one configured Antigravity exchange and synchronously
+// adapts its response output.
 type Executor struct{}
 
-// observedSink marks semantic and terminal output on each emitted segment.
+// observedSink supplements output-event meaning and retry commitment before
+// delegating to the underlying sink.
 type observedSink struct {
-	upstream.OutputSink
-	nonStream bool
+	upstream.OutputSink      // borrowed synchronous output event destination
+	nonStream           bool // buffered JSON observation selection
 }
 
+// TargetID returns the selected provider identifier, using zero for a nil
+// target. That nil-safe result also supports String and GoString when
+// diagnostic formatting encounters an absent target.
 func (t *Target) TargetID() int64 {
 	if t == nil {
 		return 0
@@ -57,9 +100,27 @@ func (t *Target) TargetID() int64 {
 	return t.ProviderID
 }
 
-func (t *Target) String() string   { return fmt.Sprintf("antigravity target provider=%d", t.TargetID()) }
+// String formats the provider identifier using TargetID and its nil-safe
+// behavior.
+func (t *Target) String() string { return fmt.Sprintf("antigravity target provider=%d", t.TargetID()) }
+
+// GoString returns the same provider-identifying diagnostic spelling as
+// String.
 func (t *Target) GoString() string { return t.String() }
 
+// Execute performs one supported client attempt using a configured Target and
+// synchronous sink. A successful exchange transfers response-body cleanup to
+// the executor; optional Enter supplies a release callback held through body
+// closing, and BeforeResponse can stop adaptation.
+//
+// Raw model and usage observation is chained ahead of adapter output. Present
+// nonnull usage fields replace their earlier values while missing fields
+// retain prior observations. Final adapter usage replaces that accumulation on
+// success or when no raw usage was seen; read failures retain previously
+// accumulated usage. Adapter semantic/timing/disconnect observations join the
+// attempt result, and failure cancellation classification uses ctx. Invalid
+// target/protocol and lifecycle-admission failures return before duration
+// tracking starts.
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	target, ok := input.Target.(*Target)
@@ -110,7 +171,8 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
 	priorRaw := options.ObserveRaw
-	// Merge fields seen in this attempt so partial usage updates retain earlier observations.
+	// Accumulate only present nonnull Gemini usage fields across raw payloads so
+	// sparse later updates can retain earlier token observations during read failure.
 	observedUsage := make(map[string]json.RawMessage)
 	options.ObserveRaw = func(raw []byte) {
 		if priorRaw != nil {
@@ -131,7 +193,10 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 					observedUsage[field] = json.RawMessage(value.Raw)
 				}
 			}
-			// Convert the accumulated Gemini token fields to normalized usage.
+			// Project accumulated fields together because raw chunks may expose only
+			// part of usage; later null or missing fields do not erase prior data. A
+			// discarded encoding error leaves counters unchanged, while usage presence
+			// still accumulates from the raw observation.
 			payload, _ := json.Marshal(map[string]any{"usageMetadata": observedUsage})
 			if usage := bridge.NativeUsageProjection(bridge.NativeExtractGeminiUsage(payload)); usage != nil {
 				result.Usage = *usage
@@ -179,6 +244,8 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		return result, errors.New("unsupported antigravity response mode")
 	}
 	if stream != nil {
+		// Prefer final adapter usage after success, but retain accumulated raw
+		// fields on read failure when any usage was observed before that failure.
 		if stream.Usage != nil && (err == nil || !result.HasUsage) {
 			result.Usage = *stream.Usage
 		}
@@ -191,6 +258,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	return result, err
 }
 
+// InitialOutput delegates an optional underlying output-head snapshot. Sinks
+// without that extension return a zero head; delegated header storage follows
+// the underlying sink ownership and copying rules.
 func (s *observedSink) InitialOutput() upstream.OutputHead {
 	if source, ok := s.OutputSink.(interface{ InitialOutput() upstream.OutputHead }); ok {
 		return source.InitialOutput()
@@ -198,6 +268,16 @@ func (s *observedSink) InitialOutput() upstream.OutputHead {
 	return upstream.OutputHead{}
 }
 
+// Emit supplements event meaning before passing the event to its underlying
+// synchronous sink. Buffered nonempty data is checked for client JSON content
+// and valid-JSON termination; streamed line checks combine compatible,
+// Messages, and Gemini observations.
+//
+// Existing semantic and terminal flags remain set as observations accumulate
+// across lines. Any nonempty data marks CommitForRetry even when it carries
+// only keepalive or framing text, so retry closure is independent from model
+// content and first-content timing. The underlying sink decides whether
+// writing succeeds, and its error returns unchanged.
 func (s *observedSink) Emit(event upstream.OutputEvent) error {
 	if s.nonStream && len(event.Data) > 0 {
 		event.Semantic = event.Semantic || bridge.CompatJSONHasContent(event.Data) || anthropicwire.ObserveMessage(string(event.Data)).Semantic || geminiwire.ObservePayload(event.Data).Semantic
@@ -215,7 +295,9 @@ func (s *observedSink) Emit(event upstream.OutputEvent) error {
 		event.Semantic = event.Semantic || semantic || a.Semantic || g.Semantic
 		event.Terminal = event.Terminal || terminal || a.Terminal || g.Terminal
 	}
-	// Emitting bytes closes the retry window; semantic output and TTFT are tracked separately.
+	// Mark nonempty bytes for retry commitment before delegation, including
+	// framing/keepalive output; the underlying sink records its actual write
+	// outcome separately.
 	event.CommitForRetry = event.CommitForRetry || len(event.Data) > 0
 	return s.OutputSink.Emit(event)
 }

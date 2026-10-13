@@ -10,6 +10,9 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// TestPrepareBedrockRequestBody_BasicFields supplies model and streaming
+// fields in a direct Messages body. It checks Invoke version injection,
+// URL-carried field removal, and retention of the requested output limit.
 func TestPrepareBedrockRequestBody_BasicFields(t *testing.T) {
 	input := `{"model":"claude-opus-4-6","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`
 	result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "")
@@ -21,6 +24,10 @@ func TestPrepareBedrockRequestBody_BasicFields(t *testing.T) {
 	assert.Equal(t, int64(1024), gjson.GetBytes(result, "max_tokens").Int())
 }
 
+// TestPrepareBedrockRequestBody_OutputFormatInlineSchema supplies array/string
+// user content and missing insertion targets. It checks schema text follows
+// the original prompt and object output_format is removed even when insertion
+// cannot occur.
 func TestPrepareBedrockRequestBody_OutputFormatInlineSchema(t *testing.T) {
 	t.Run("schema inlined into last user message array content", func(t *testing.T) {
 		input := `{"model":"claude-sonnet-4-5","output_format":{"type":"json","schema":{"name":"string"}},"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`
@@ -64,6 +71,9 @@ func TestPrepareBedrockRequestBody_OutputFormatInlineSchema(t *testing.T) {
 	})
 }
 
+// TestPrepareBedrockRequestBody_RemoveOutputConfig supplies direct
+// output_config with ordinary messages. It checks that preparation removes
+// that object before the body is sent using the Invoke dialect.
 func TestPrepareBedrockRequestBody_RemoveOutputConfig(t *testing.T) {
 	input := `{"model":"claude-sonnet-4-5","output_config":{"max_tokens":100},"messages":[]}`
 	result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-sonnet-4-5-v1", "")
@@ -72,6 +82,9 @@ func TestPrepareBedrockRequestBody_RemoveOutputConfig(t *testing.T) {
 	assert.False(t, gjson.GetBytes(result, "output_config").Exists())
 }
 
+// TestRemoveCustomFieldFromTools mixes extended and ordinary tool definitions.
+// It checks every custom extension is removed while tool names, descriptions,
+// and the number of definitions remain available.
 func TestRemoveCustomFieldFromTools(t *testing.T) {
 	input := `{
 		"tools": [
@@ -92,12 +105,18 @@ func TestRemoveCustomFieldFromTools(t *testing.T) {
 	assert.Equal(t, "tool3", tools[2].Get("name").String())
 }
 
+// TestRemoveCustomFieldFromTools_NoTools supplies a Messages request
+// containing no tools field. It checks the cleanup helper returns equivalent
+// JSON rather than manufacturing a tool collection.
 func TestRemoveCustomFieldFromTools_NoTools(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hi"}]}`
 	result := RemoveCustomFieldFromTools([]byte(input))
 	assert.JSONEq(t, input, string(result))
 }
 
+// TestSanitizeBedrockCacheControl_RemoveScope supplies cache controls in both
+// system and message content. It checks scope removal while the ephemeral
+// cache type remains at both locations.
 func TestSanitizeBedrockCacheControl_RemoveScope(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","scope":"global"}}],
@@ -111,6 +130,9 @@ func TestSanitizeBedrockCacheControl_RemoveScope(t *testing.T) {
 	assert.Equal(t, "ephemeral", gjson.GetBytes(result, "messages.0.content.0.cache_control.type").String())
 }
 
+// TestSanitizeBedrockCacheControl_TTL_OldModel supplies a TTL to a catalogue
+// entry without TTL capability. It checks removal of ttl while retaining the
+// remaining cache-control type.
 func TestSanitizeBedrockCacheControl_TTL_OldModel(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"5m"}}]
@@ -122,6 +144,9 @@ func TestSanitizeBedrockCacheControl_TTL_OldModel(t *testing.T) {
 	assert.Equal(t, "ephemeral", gjson.GetBytes(result, "system.0.cache_control.type").String())
 }
 
+// TestSanitizeBedrockCacheControl_TTL_Claude45_Supported supplies a recognized
+// five-minute TTL in system cache control for the registered model. It checks
+// capability-driven cleanup retains that exact duration field.
 func TestSanitizeBedrockCacheControl_TTL_Claude45_Supported(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"5m"}}]
@@ -133,16 +158,22 @@ func TestSanitizeBedrockCacheControl_TTL_Claude45_Supported(t *testing.T) {
 	assert.Equal(t, "5m", gjson.GetBytes(result, "system.0.cache_control.ttl").String())
 }
 
+// TestSanitizeBedrockCacheControl_TTL_Claude45_UnsupportedValue supplies
+// ten-minute TTL text to a TTL-capable model. It checks the unsupported
+// spelling is removed even though the model supports other TTL values.
 func TestSanitizeBedrockCacheControl_TTL_Claude45_UnsupportedValue(t *testing.T) {
 	input := `{
 		"system": [{"type":"text","text":"sys","cache_control":{"type":"ephemeral","ttl":"10m"}}]
 	}`
-	// Even a TTL-capable model rejects unrecognized durations.
+	// Local cleanup removes unrecognized duration text for this TTL-capable entry.
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
 	assert.False(t, gjson.GetBytes(result, "system.0.cache_control.ttl").Exists())
 }
 
+// TestSanitizeBedrockCacheControl_TTL_Claude46 supplies one-hour TTL in
+// message cache control for the registered Opus model. It checks the field
+// remains with its expected value.
 func TestSanitizeBedrockCacheControl_TTL_Claude46(t *testing.T) {
 	input := `{
 		"messages": [{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]
@@ -153,16 +184,22 @@ func TestSanitizeBedrockCacheControl_TTL_Claude46(t *testing.T) {
 	assert.Equal(t, "1h", gjson.GetBytes(result, "messages.0.content.0.cache_control.ttl").String())
 }
 
+// TestSanitizeBedrockCacheControl_NoCacheControl supplies system and message
+// text without cache objects. It checks cleanup returns equivalent JSON and
+// leaves those ordinary blocks available.
 func TestSanitizeBedrockCacheControl_NoCacheControl(t *testing.T) {
 	input := `{"system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`
 	result := SanitizeBedrockCacheControl([]byte(input), "us.anthropic.claude-opus-4-6-v1")
 	assert.JSONEq(t, input, string(result))
 }
 
+// TestIsBedrockClaude45OrNewer compares registered TTL-capable IDs with older,
+// unknown, and other-vendor entries. It checks catalogue capability lookup
+// rather than deriving support from apparent model version text.
 func TestIsBedrockClaude45OrNewer(t *testing.T) {
 	tests := []struct {
-		modelID string
-		expect  bool
+		modelID string // catalogue lookup model identifier
+		expect  bool   // expected capability predicate result
 	}{
 		{"us.anthropic.claude-opus-4-6-v1", true},
 		{"us.anthropic.claude-opus-4-8", true},
@@ -189,6 +226,10 @@ func TestIsBedrockClaude45OrNewer(t *testing.T) {
 	}
 }
 
+// TestPrepareBedrockRequestBody_FullIntegration combines schema, tool
+// extensions, beta input, and cache controls in one body. It checks their
+// combined preparation results and retained user text, output limit, recognized TTL
+// values, and tool identities.
 func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
 	// Combine Claude Code extensions to exercise their interaction during preparation.
 	input := `{
@@ -240,6 +281,9 @@ func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
 	assert.Equal(t, "1h", gjson.GetBytes(result, "messages.0.content.0.cache_control.ttl").String())
 }
 
+// TestPrepareBedrockRequestBody_BetaHeader supplies absent, single,
+// comma-separated, and JSON-array beta input. It checks final body encoding
+// and accepted token order for the supported fixture values.
 func TestPrepareBedrockRequestBody_BetaHeader(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100}`
 
@@ -276,6 +320,9 @@ func TestPrepareBedrockRequestBody_BetaHeader(t *testing.T) {
 	})
 }
 
+// TestParseAnthropicBetaHeader compares empty, comma-separated, spaced, and
+// JSON-array header forms. It checks delegation to the shared parser returns
+// the expected ordered token values.
 func TestParseAnthropicBetaHeader(t *testing.T) {
 	assert.Nil(t, ParseAnthropicBetaHeader(""))
 	assert.Equal(t, []string{"a"}, ParseAnthropicBetaHeader("a"))
@@ -285,6 +332,9 @@ func TestParseAnthropicBetaHeader(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, ParseAnthropicBetaHeader(`["a","b"]`))
 }
 
+// TestFilterBedrockBetaTokens combines accepted, rejected, duplicate, and
+// translated values. It checks encounter order, companion tool-examples
+// injection, and nil output when no allowed beta remains.
 func TestFilterBedrockBetaTokens(t *testing.T) {
 	t.Run("supported tokens pass through", func(t *testing.T) {
 		tokens := []string{"context-1m-2025-08-07", "compact-2026-01-12", "computer-use-2025-11-24"}
@@ -342,6 +392,10 @@ func TestFilterBedrockBetaTokens(t *testing.T) {
 	})
 }
 
+// TestPrepareBedrockRequestBody_BetaFiltering exercises allowlisting and
+// advanced-tool translation through full body preparation. It checks
+// unsupported tokens disappear and the final tool-search/examples pair is
+// encoded.
 func TestPrepareBedrockRequestBody_BetaFiltering(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100}`
 
@@ -365,6 +419,10 @@ func TestPrepareBedrockRequestBody_BetaFiltering(t *testing.T) {
 	})
 }
 
+// TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedBeta
+// supplies context edits with different final beta sets. It checks
+// dependent-field stripping, retention when enabled, and unchanged caller
+// token inputs.
 func TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedBeta(t *testing.T) {
 	modelID := "us.anthropic.claude-opus-4-6-v1"
 
@@ -417,7 +475,8 @@ func TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedB
 	})
 }
 
-// bedrockAnthropicBetaNames extracts the body's beta token strings.
+// bedrockAnthropicBetaNames returns converted string values from the prepared
+// body beta array for assertions.
 func bedrockAnthropicBetaNames(body []byte) []string {
 	arr := gjson.GetBytes(body, "anthropic_beta").Array()
 	names := make([]string, len(arr))
@@ -427,6 +486,9 @@ func bedrockAnthropicBetaNames(body []byte) []string {
 	return names
 }
 
+// TestAutoInjectBedrockBetaTokens combines computer, programmatic, example,
+// search, and ordinary tool inputs. It checks body-feature selection, existing
+// token retention, and absence of automatic beta injection for thinking alone.
 func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 	t.Run("no auto-inject for thinking (interleaved-thinking not supported)", func(t *testing.T) {
 		body := []byte(`{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[{"role":"user","content":"hi"}]}`)
@@ -502,6 +564,9 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 	})
 }
 
+// TestResolveBedrockBetaTokens supplies body-only tool features and
+// unsupported client tokens. It checks the combined list is translated and
+// filtered before becoming the final Invoke beta selection.
 func TestResolveBedrockBetaTokens(t *testing.T) {
 	t.Run("body-only tool features resolve to final bedrock tokens", func(t *testing.T) {
 		body := []byte(`{"tools":[{"name":"bash","allowed_callers":["code_execution_20250825"]}],"messages":[{"role":"user","content":"hi"}]}`)
@@ -517,6 +582,9 @@ func TestResolveBedrockBetaTokens(t *testing.T) {
 	})
 }
 
+// TestPrepareBedrockRequestBody_AutoBetaInjection supplies thinking with
+// absent or accepted header betas. It checks thinking alone does not add an
+// unlisted beta and existing accepted header tokens survive.
 func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
 	t.Run("thinking in body does not auto-inject beta (not supported)", func(t *testing.T) {
 		input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100,"thinking":{"type":"enabled","budget_tokens":10000}}`
@@ -540,10 +608,13 @@ func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
 	})
 }
 
+// TestIsBedrockOpus47OrNewer compares adaptive Opus entries with budget,
+// other-family, unknown-version, and other-vendor IDs. It checks both
+// catalogue mode and model-family conditions determine the result.
 func TestIsBedrockOpus47OrNewer(t *testing.T) {
 	tests := []struct {
-		modelID string
-		expect  bool
+		modelID string // catalogue lookup model identifier
+		expect  bool   // expected capability predicate result
 	}{
 		{"us.anthropic.claude-opus-4-8", true},
 		{"us.anthropic.claude-opus-4-7", true},
@@ -562,6 +633,9 @@ func TestIsBedrockOpus47OrNewer(t *testing.T) {
 	}
 }
 
+// TestSanitizeBedrockThinking supplies Fable/Opus/Sonnet thinking shapes with
+// absent or present budgets. It checks adaptive conversion, Fable budget
+// removal, budget defaults, and retention of supported existing values.
 func TestSanitizeBedrockThinking(t *testing.T) {
 	t.Run("Fable 5 将 enabled 转换为 adaptive 并移除预算", func(t *testing.T) {
 		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
@@ -618,6 +692,9 @@ func TestSanitizeBedrockThinking(t *testing.T) {
 	})
 }
 
+// TestSanitizeBedrockToolUseIDs supplies clean and disallowed characters in
+// call/result identities. It checks the shared alphabet replacement and skips
+// empty IDs, missing messages, and string content.
 func TestSanitizeBedrockToolUseIDs(t *testing.T) {
 	t.Run("clean IDs unchanged", func(t *testing.T) {
 		input := `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01AbCdEf","name":"bash","input":{}}]}]}`
@@ -675,6 +752,10 @@ func TestSanitizeBedrockToolUseIDs(t *testing.T) {
 	})
 }
 
+// TestSanitizeBedrockThinking_EdgeCases supplies disabled, empty, nonobject,
+// already adaptive, and standard-name inputs. It checks conditional adaptation
+// retains explicit adaptive Opus budget and preserves unaffected thinking
+// shapes.
 func TestSanitizeBedrockThinking_EdgeCases(t *testing.T) {
 	t.Run("opus 4.7 enabled without budget_tokens converts to adaptive", func(t *testing.T) {
 		input := `{"thinking":{"type":"enabled"},"messages":[]}`
@@ -724,10 +805,13 @@ func TestSanitizeBedrockThinking_EdgeCases(t *testing.T) {
 	})
 }
 
+// TestIsBedrockOpus47OrNewer_EdgeCases compares exact registered IDs and
+// standard names with an unknown dated suffix. It checks empty and unsupported
+// identities do not inherit another entry adaptive capability.
 func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
 	tests := []struct {
-		modelID string
-		expect  bool
+		modelID string // catalogue lookup model identifier
+		expect  bool   // expected capability predicate result
 	}{
 		{"anthropic.claude-opus-4-8", true},
 		{"anthropic.claude-opus-4-7", true},
@@ -746,6 +830,9 @@ func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestPrepareBedrockRequestBodyWithTokens_CCCompat supplies thinking and
+// paired dirty tool IDs with compatibility disabled/enabled. It checks extra
+// budget and identity normalization occurs only on the enabled path.
 func TestPrepareBedrockRequestBodyWithTokens_CCCompat(t *testing.T) {
 	input := `{
 		"model":"claude-opus-4-6",
@@ -784,6 +871,9 @@ func TestPrepareBedrockRequestBodyWithTokens_CCCompat(t *testing.T) {
 	})
 }
 
+// TestSanitizeBedrockCCFields combines unsupported direct fields with absent
+// or supplied defaults. It checks removals, default output/version insertion,
+// and retention of explicit existing values.
 func TestSanitizeBedrockCCFields(t *testing.T) {
 	t.Run("removes service_tier and interface_geo", func(t *testing.T) {
 		body := []byte(`{"model":"claude-opus-4-6","service_tier":"standard","interface_geo":"us","messages":[]}`)
@@ -853,6 +943,9 @@ func TestSanitizeBedrockCCFields(t *testing.T) {
 	})
 }
 
+// TestSanitizeBedrockCCBetaTokens supplies existing beta fields in several
+// feature configurations. It checks removal, translation, body-feature
+// injection, and the absent-field path that performs no beta insertion.
 func TestSanitizeBedrockCCBetaTokens(t *testing.T) {
 	t.Run("filters unsupported beta tokens", func(t *testing.T) {
 		input := `{"anthropic_beta":["prompt-caching-2024-07-31","context-1m-2025-08-07","unsupported-feature"],"messages":[]}`
@@ -914,6 +1007,10 @@ func TestSanitizeBedrockCCBetaTokens(t *testing.T) {
 	})
 }
 
+// TestPrepareBedrockRequestBodyWithTokens_FallbacksRequireSupportedBeta
+// supplies fallback fields and beta inputs that the local allowlist rejects.
+// It checks dependent fields are stripped while messages and output limits
+// remain.
 func TestPrepareBedrockRequestBodyWithTokens_FallbacksRequireSupportedBeta(t *testing.T) {
 	modelID := "us.anthropic.claude-opus-4-6-v1"
 
@@ -964,6 +1061,9 @@ func TestPrepareBedrockRequestBodyWithTokens_FallbacksRequireSupportedBeta(t *te
 	})
 }
 
+// TestSanitizeBedrockCCFields_StripsFallbacksUnconditionally supplies context
+// and fallback objects in a compatibility body. It checks every listed field
+// is removed while the messages collection remains.
 func TestSanitizeBedrockCCFields_StripsFallbacksUnconditionally(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-6","context_management":{"edits":[]},"fallbacks":"default","fallback_credit_token":"tok_123","messages":[]}`)
 	result := SanitizeBedrockCCFields(body)
@@ -974,6 +1074,9 @@ func TestSanitizeBedrockCCFields_StripsFallbacksUnconditionally(t *testing.T) {
 	assert.True(t, gjson.GetBytes(result, "messages").Exists())
 }
 
+// TestBuildBedrockURL constructs streamed and buffered regional model actions
+// with colon-bearing and suffix-free IDs. It checks exact action paths and
+// encoded model-version colon placement.
 func TestBuildBedrockURL(t *testing.T) {
 	t.Run("stream URL with colon in model ID", func(t *testing.T) {
 		url := BuildBedrockURL("us-east-1", "us.anthropic.claude-opus-4-5-20251101-v1:0", true)

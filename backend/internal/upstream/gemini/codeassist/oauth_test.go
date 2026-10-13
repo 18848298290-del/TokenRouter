@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// TestGenerateRandomBytes requests zero and several positive byte lengths from
+// the shared generator. It checks every successful sample has the requested
+// length and reports a returned error for the corresponding input.
 func TestGenerateRandomBytes(t *testing.T) {
 	tests := []int{0, 1, 16, 32, 64}
 	for _, n := range tests {
@@ -20,6 +23,9 @@ func TestGenerateRandomBytes(t *testing.T) {
 	}
 }
 
+// TestGenerateRandomBytes_Uniqueness takes two independent thirty-two-byte
+// samples. It checks their bytes differ in this run, protecting the generator
+// wiring without establishing a universal collision-free guarantee.
 func TestGenerateRandomBytes_Uniqueness(t *testing.T) {
 	// A collision between independent 32-byte samples is negligibly likely.
 	a, _ := GenerateRandomBytes(32)
@@ -29,6 +35,9 @@ func TestGenerateRandomBytes_Uniqueness(t *testing.T) {
 	}
 }
 
+// TestGenerateState obtains one authorization state value. It checks the value
+// is nonempty and its unpadded URL-safe spelling excludes equals, plus, and
+// slash characters.
 func TestGenerateState(t *testing.T) {
 	state, err := GenerateState()
 	if err != nil {
@@ -45,6 +54,9 @@ func TestGenerateState(t *testing.T) {
 	}
 }
 
+// TestGenerateSessionID obtains one local authorization session identifier. It
+// checks the thirty-two-character output decodes as hexadecimal, protecting
+// the sixteen-byte representation expected by session storage.
 func TestGenerateSessionID(t *testing.T) {
 	sid, err := GenerateSessionID()
 	if err != nil {
@@ -59,6 +71,9 @@ func TestGenerateSessionID(t *testing.T) {
 	}
 }
 
+// TestGenerateSessionID_Uniqueness generates two session identifiers in one
+// run. It checks their values differ, protecting independent sampling without
+// claiming collisions are impossible for every future sample.
 func TestGenerateSessionID_Uniqueness(t *testing.T) {
 	a, _ := GenerateSessionID()
 	b, _ := GenerateSessionID()
@@ -67,6 +82,9 @@ func TestGenerateSessionID_Uniqueness(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeVerifier obtains a shared PKCE verifier. It checks a
+// nonempty value, the minimum forty-three-character length, and an unpadded
+// URL-safe alphabet suitable for the authorization request.
 func TestGenerateCodeVerifier(t *testing.T) {
 	verifier, err := GenerateCodeVerifier()
 	if err != nil {
@@ -87,6 +105,9 @@ func TestGenerateCodeVerifier(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge uses the published Appendix B verifier/challenge
+// pair stored in the fixture. It checks the exact S256 output so hashing and
+// base64url encoding remain compatible.
 func TestGenerateCodeChallenge(t *testing.T) {
 	// Use the verifier and challenge from RFC 7636 Appendix B.
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
@@ -98,6 +119,9 @@ func TestGenerateCodeChallenge(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_NoPadding hashes a fixed verifier string. It
+// checks the challenge contains no equals padding, preserving the wire
+// spelling used for the consent URL parameter.
 func TestGenerateCodeChallenge_NoPadding(t *testing.T) {
 	challenge := GenerateCodeChallenge("test-verifier-string")
 	if strings.Contains(challenge, "=") {
@@ -105,10 +129,13 @@ func TestGenerateCodeChallenge_NoPadding(t *testing.T) {
 	}
 }
 
+// TestBase64URLEncode encodes empty, single-byte, multi-byte, and all-zero
+// inputs. It checks every output avoids equals padding and the plus/slash
+// symbols of ordinary base64.
 func TestBase64URLEncode(t *testing.T) {
 	tests := []struct {
-		name  string
-		input []byte
+		name  string // case identity label
+		input []byte // source encoding byte sequence
 	}{
 		{"空字节", []byte{}},
 		{"单字节", []byte{0xff}},
@@ -128,10 +155,14 @@ func TestBase64URLEncode(t *testing.T) {
 	}
 }
 
+// TestHasRestrictedScope compares Generative Language and Drive prefixes with
+// ordinary cloud/profile and unrelated values. It checks the local
+// built-in-client filter recognizes the configured prefix families and leaves
+// the other fixture values unrestricted.
 func TestHasRestrictedScope(t *testing.T) {
 	tests := []struct {
-		scope    string
-		expected bool
+		scope    string // scope text under classification
+		expected bool   // expected restricted-prefix classification
 	}{
 		// Restricted scope prefixes.
 		{"https://www.googleapis.com/auth/generative-language", true},
@@ -140,7 +171,7 @@ func TestHasRestrictedScope(t *testing.T) {
 		{"https://www.googleapis.com/auth/drive", true},
 		{"https://www.googleapis.com/auth/drive.readonly", true},
 		{"https://www.googleapis.com/auth/drive.file", true},
-		// Scopes supported by the built-in client.
+		// Scope tokens outside the local restricted prefixes.
 		{"https://www.googleapis.com/auth/cloud-platform", false},
 		{"https://www.googleapis.com/auth/userinfo.email", false},
 		{"https://www.googleapis.com/auth/userinfo.profile", false},
@@ -158,6 +189,9 @@ func TestHasRestrictedScope(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL builds a Code Assist consent URL using the
+// built-in identity. It checks required PKCE/session/consent parameters, the
+// Google endpoint prefix, and omission of an absent project identifier.
 func TestBuildAuthorizationURL(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-secret")
 
@@ -200,6 +234,9 @@ func TestBuildAuthorizationURL(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_EmptyRedirectURI supplies an empty callback to
+// built-in Code Assist authorization. It checks the builder returns a
+// redirect_uri error before producing a usable consent URL.
 func TestBuildAuthorizationURL_EmptyRedirectURI(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-secret")
 
@@ -219,6 +256,10 @@ func TestBuildAuthorizationURL_EmptyRedirectURI(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_WithProjectID builds authorization with a
+// configured project identifier. It checks the optional project_id parameter
+// appears alongside the ordinary consent request so project selection reaches
+// the browser flow.
 func TestBuildAuthorizationURL_WithProjectID(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-secret")
 
@@ -238,6 +279,10 @@ func TestBuildAuthorizationURL_WithProjectID(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_UsesBuiltinSecretFallback clears the secret
+// environment value and leaves client configuration empty. It checks consent
+// URL construction still selects the built-in client ID using its configured
+// constant.
 func TestBuildAuthorizationURL_UsesBuiltinSecretFallback(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "")
 
@@ -257,16 +302,20 @@ func TestBuildAuthorizationURL_UsesBuiltinSecretFallback(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_GoogleOne compares built-in and custom credential
+// inputs across Google One and Code Assist variants. It checks selected client
+// IDs and scopes, including default scopes after an entirely filtered built-in
+// list.
 func TestEffectiveOAuthConfig_GoogleOne(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
 	tests := []struct {
-		name         string
-		input        OAuthConfig
-		oauthType    string
-		wantClientID string
-		wantScopes   string
-		wantErr      bool
+		name         string      // case identity label
+		input        OAuthConfig // configured credential and scope input
+		oauthType    string      // selected OAuth variant
+		wantClientID string      // expected effective client identifier
+		wantScopes   string      // expected normalized scope text
+		wantErr      bool        // expected configuration error presence
 	}{
 		{
 			name:         "Google One 使用内置客户端（空配置）",
@@ -337,6 +386,10 @@ func TestEffectiveOAuthConfig_GoogleOne(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_ScopeFiltering combines cloud, profile, Generative
+// Language, and Drive scopes for the built-in Google One client. It checks
+// retained cloud/profile tokens and removal of both restricted prefix
+// families.
 func TestEffectiveOAuthConfig_ScopeFiltering(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
@@ -366,6 +419,9 @@ func TestEffectiveOAuthConfig_ScopeFiltering(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_OnlyClientID_NoSecret supplies one configured
+// credential field. It checks an error names both client fields so partial
+// configuration cannot silently combine configured and built-in credentials.
 func TestEffectiveOAuthConfig_OnlyClientID_NoSecret(t *testing.T) {
 	_, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID: "some-client-id",
@@ -378,6 +434,9 @@ func TestEffectiveOAuthConfig_OnlyClientID_NoSecret(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_OnlyClientSecret_NoID supplies a secret without its
+// client ID. It checks the configuration error mentions both required fields
+// before an effective OAuth identity is returned.
 func TestEffectiveOAuthConfig_OnlyClientSecret_NoID(t *testing.T) {
 	_, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientSecret: "some-client-secret",
@@ -390,10 +449,16 @@ func TestEffectiveOAuthConfig_OnlyClientSecret_NoID(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_AIStudio_DefaultScopes_BuiltinClient leaves
+// credentials and scopes absent for AI Studio. It checks the selected built-in
+// client uses Code Assist defaults according to the local restricted-scope
+// policy.
 func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_BuiltinClient(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
-	// The built-in client uses Code Assist scopes because its AI Studio scopes are restricted.
+	// The local AI Studio policy selects Code Assist defaults for the built-in
+	// client; the configured scope filter classifies Generative Language and Drive
+	// prefixes as restricted.
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{}, "ai_studio")
 	if err != nil {
 		t.Fatalf("EffectiveOAuthConfig() error = %v", err)
@@ -403,6 +468,9 @@ func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_BuiltinClient(t *testing.T)
 	}
 }
 
+// TestEffectiveOAuthConfig_AIStudio_DefaultScopes_CustomClient supplies a
+// complete custom credential pair with absent scopes. It checks AI Studio
+// receives its retriever defaults while retaining the custom-client path.
 func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_CustomClient(t *testing.T) {
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
@@ -416,6 +484,9 @@ func TestEffectiveOAuthConfig_AIStudio_DefaultScopes_CustomClient(t *testing.T) 
 	}
 }
 
+// TestEffectiveOAuthConfig_AIStudio_ScopeNormalization supplies the exact
+// legacy Generative Language scope to a custom AI Studio client. It checks the
+// retriever spelling appears and the legacy complete token is removed.
 func TestEffectiveOAuthConfig_AIStudio_ScopeNormalization(t *testing.T) {
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
@@ -439,6 +510,9 @@ func TestEffectiveOAuthConfig_AIStudio_ScopeNormalization(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_CommaSeparatedScopes supplies comma-separated cloud
+// and profile scopes with custom credentials. It checks commas are removed and
+// both requested token families remain in the normalized output.
 func TestEffectiveOAuthConfig_CommaSeparatedScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
@@ -461,6 +535,9 @@ func TestEffectiveOAuthConfig_CommaSeparatedScopes(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_MixedCommaAndSpaceScopes combines commas and spaces
+// between three configured scopes. It checks normalization yields exactly
+// three tokens, protecting the shared delimiter handling before filtering.
 func TestEffectiveOAuthConfig_MixedCommaAndSpaceScopes(t *testing.T) {
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "custom-id",
@@ -476,6 +553,9 @@ func TestEffectiveOAuthConfig_MixedCommaAndSpaceScopes(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_WhitespaceTriming surrounds custom credentials and
+// one scope with whitespace. It checks each value is trimmed before
+// configuration is returned for the token and consent clients.
 func TestEffectiveOAuthConfig_WhitespaceTriming(t *testing.T) {
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{
 		ClientID:     "  custom-id  ",
@@ -496,6 +576,9 @@ func TestEffectiveOAuthConfig_WhitespaceTriming(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_NoEnvSecret clears the secret environment variable
+// and omits configured credentials. It checks the built-in client ID and
+// nonblank secret remain available from their constants.
 func TestEffectiveOAuthConfig_NoEnvSecret(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "")
 
@@ -511,6 +594,10 @@ func TestEffectiveOAuthConfig_NoEnvSecret(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_AIStudio_BuiltinClient_CustomScopes provides
+// cloud-platform and retriever scopes with the built-in client. It checks
+// local filtering removes the restricted family while retaining cloud-platform
+// access text.
 func TestEffectiveOAuthConfig_AIStudio_BuiltinClient_CustomScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
@@ -528,6 +615,9 @@ func TestEffectiveOAuthConfig_AIStudio_BuiltinClient_CustomScopes(t *testing.T) 
 	}
 }
 
+// TestEffectiveOAuthConfig_UnknownOAuthType_DefaultScopes supplies an unknown
+// variant with absent configuration. It checks Code Assist scope defaults are
+// returned for the built-in identity rather than an empty scope set.
 func TestEffectiveOAuthConfig_UnknownOAuthType_DefaultScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
@@ -540,6 +630,9 @@ func TestEffectiveOAuthConfig_UnknownOAuthType_DefaultScopes(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_EmptyOAuthType_DefaultScopes supplies an empty
+// variant and no configuration. It checks the built-in identity uses Code
+// Assist scope defaults, protecting the unspecified-variant selection rule.
 func TestEffectiveOAuthConfig_EmptyOAuthType_DefaultScopes(t *testing.T) {
 	t.Setenv(GeminiCLIOAuthClientSecretEnv, "test-built-in-secret")
 
@@ -552,6 +645,10 @@ func TestEffectiveOAuthConfig_EmptyOAuthType_DefaultScopes(t *testing.T) {
 	}
 }
 
+// TestEffectiveOAuthConfig_CustomClient_NoScopeFiltering supplies a complete
+// custom Google One identity with both restricted prefix families. It checks
+// those configured scopes remain available because built-in filtering is keyed
+// by client ID.
 func TestEffectiveOAuthConfig_CustomClient_NoScopeFiltering(t *testing.T) {
 	// Custom clients retain scopes that are restricted for the built-in client.
 	cfg, err := EffectiveOAuthConfig(OAuthConfig{

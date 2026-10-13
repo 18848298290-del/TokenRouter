@@ -13,13 +13,22 @@ import (
 	"time"
 )
 
+// OAuth fixtures exercise the cached secret, endpoint preference, and PKCE
+// encoding independently of live account requests. Tests that replace package
+// globals restore them after completion and run serially; generated-value
+// checks describe the observed samples.
+
+// TestGetClientSecret_环境变量设置 copies a test environment value into the already
+// initialized secret cache. Retrieval must return that cached value, and
+// cleanup restores the cache for later serialized tests.
 func TestGetClientSecret_环境变量设置(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
 	t.Cleanup(func() { defaultClientSecret = old })
 	t.Setenv(AntigravityOAuthClientSecretEnv, "my-secret-value")
 
-	// init has already run, so apply the environment value to its cached variable.
+	// Initialization has already completed; copy the test environment value into
+	// its cached variable so this fixture exercises retrieval of startup state.
 	defaultClientSecret = os.Getenv(AntigravityOAuthClientSecretEnv)
 
 	secret, err := getClientSecret()
@@ -31,6 +40,9 @@ func TestGetClientSecret_环境变量设置(t *testing.T) {
 	}
 }
 
+// TestGetClientSecret_环境变量为空 sets the cached secret to empty and restores it
+// during cleanup. Retrieval must fail with guidance naming the environment
+// variable used for configuration.
 func TestGetClientSecret_环境变量为空(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
@@ -45,6 +57,9 @@ func TestGetClientSecret_环境变量为空(t *testing.T) {
 	}
 }
 
+// TestGetClientSecret_环境变量未设置 empties the cached secret without rerunning
+// initialization. Retrieval must reject that state, while cleanup restores the
+// value used by subsequent serialized OAuth tests.
 func TestGetClientSecret_环境变量未设置(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = ""
@@ -56,6 +71,9 @@ func TestGetClientSecret_环境变量未设置(t *testing.T) {
 	}
 }
 
+// TestGetClientSecret_环境变量含空格 sets the cached secret to whitespace and
+// restores it during cleanup. Trimming must make retrieval fail rather than
+// treating whitespace as a usable credential.
 func TestGetClientSecret_环境变量含空格(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "   "
@@ -67,6 +85,9 @@ func TestGetClientSecret_环境变量含空格(t *testing.T) {
 	}
 }
 
+// TestGetClientSecret_环境变量有前后空格 surrounds a usable cached secret with spaces.
+// Retrieval must return the trimmed credential, and cleanup restores the
+// shared startup cache afterward.
 func TestGetClientSecret_环境变量有前后空格(t *testing.T) {
 	old := defaultClientSecret
 	defaultClientSecret = "  valid-secret  "
@@ -81,6 +102,9 @@ func TestGetClientSecret_环境变量有前后空格(t *testing.T) {
 	}
 }
 
+// TestForwardBaseURLs_Daily优先 checks the configured endpoint copy against its
+// daily-first rule. The resulting list must retain the configured count and
+// include the production endpoint as well.
 func TestForwardBaseURLs_Daily优先(t *testing.T) {
 	urls := ForwardBaseURLs()
 	if len(urls) == 0 {
@@ -104,6 +128,9 @@ func TestForwardBaseURLs_Daily优先(t *testing.T) {
 	}
 }
 
+// TestForwardBaseURLs_不修改原切片 records the first configured endpoint before
+// requesting a forwarding-order copy. The first BaseURLs element must retain
+// its observed value after the helper returns.
 func TestForwardBaseURLs_不修改原切片(t *testing.T) {
 	originalFirst := BaseURLs[0]
 	_ = ForwardBaseURLs()
@@ -112,6 +139,9 @@ func TestForwardBaseURLs_不修改原切片(t *testing.T) {
 	}
 }
 
+// TestNewURLAvailability constructs a tracker with a five-minute failure TTL.
+// The result must contain initialized failure storage and retain the supplied
+// duration for subsequent endpoint marks.
 func TestNewURLAvailability(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	if ua == nil {
@@ -125,6 +155,9 @@ func TestNewURLAvailability(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_MarkUnavailable marks a previously eligible endpoint
+// using a five-minute TTL. Its immediate availability check must reject the
+// endpoint while the newly recorded deadline remains active.
 func TestURLAvailability_MarkUnavailable(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	testURL := "https://example.com"
@@ -136,6 +169,9 @@ func TestURLAvailability_MarkUnavailable(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_MarkSuccess marks an endpoint unavailable before
+// recording success. Success must restore immediate eligibility and store the
+// endpoint as the latest preference under the tracker lock.
 func TestURLAvailability_MarkSuccess(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	testURL := "https://example.com"
@@ -157,12 +193,16 @@ func TestURLAvailability_MarkSuccess(t *testing.T) {
 	ua.mu.RUnlock()
 }
 
+// TestURLAvailability_IsAvailable_TTL过期 marks a one-millisecond failure and
+// waits beyond that lifetime. The later check must treat the recorded endpoint
+// as eligible after expiry.
 func TestURLAvailability_IsAvailable_TTL过期(t *testing.T) {
 	ua := NewURLAvailability(1 * time.Millisecond)
 	testURL := "https://example.com"
 
 	ua.MarkUnavailable(testURL)
-	// Allow the failure TTL to expire before checking eligibility.
+	// Wait beyond the one-millisecond fixture deadline so the next eligibility
+	// check exercises expiry rather than a still-active endpoint failure.
 	time.Sleep(5 * time.Millisecond)
 
 	if !ua.IsAvailable(testURL) {
@@ -170,6 +210,9 @@ func TestURLAvailability_IsAvailable_TTL过期(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_IsAvailable_未标记的URL queries an endpoint without a
+// failure mark in a fresh tracker. The check must report eligibility even
+// though that endpoint has not been recorded.
 func TestURLAvailability_IsAvailable_未标记的URL(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	if !ua.IsAvailable("https://never-marked.com") {
@@ -177,6 +220,9 @@ func TestURLAvailability_IsAvailable_未标记的URL(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_GetAvailableURLs selects from configured endpoints using
+// a fresh tracker. With no recorded failures, the returned count must match
+// every entry in the supplied BaseURLs list.
 func TestURLAvailability_GetAvailableURLs(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 
@@ -186,6 +232,9 @@ func TestURLAvailability_GetAvailableURLs(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_GetAvailableURLs_标记一个不可用 marks the first configured
+// endpoint with an active deadline. When at least two endpoints exist,
+// selection must exclude the marked endpoint from its results.
 func TestURLAvailability_GetAvailableURLs_标记一个不可用(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 
@@ -203,6 +252,9 @@ func TestURLAvailability_GetAvailableURLs_标记一个不可用(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_GetAvailableURLsWithBase selects a custom three-endpoint
+// list through an empty tracker. Its result must have three entries, checking
+// the selected count against the caller-supplied list size.
 func TestURLAvailability_GetAvailableURLsWithBase(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 	customURLs := []string{"https://a.com", "https://b.com", "https://c.com"}
@@ -213,6 +265,9 @@ func TestURLAvailability_GetAvailableURLsWithBase(t *testing.T) {
 	}
 }
 
+// TestURLAvailability_GetAvailableURLsWithBase_LastSuccess优先 marks the final
+// custom endpoint successful before selection. It must move first while the
+// other eligible endpoints retain their supplied order.
 func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess优先(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 	customURLs := []string{"https://a.com", "https://b.com", "https://c.com"}
@@ -235,6 +290,10 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess优先(t *testing.T
 	}
 }
 
+// TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不可用 marks the
+// preferred endpoint unavailable after recording its success. Selection must
+// return the other supplied endpoint while the preferred failure deadline
+// remains active.
 func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不可用(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 	customURLs := []string{"https://a.com", "https://b.com"}
@@ -251,6 +310,10 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不可用(t *testin
 	}
 }
 
+// TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不在列表中 records
+// success for an endpoint outside the supplied list. Selection must retain the
+// two-entry count; this assertion checks the count rather than endpoint
+// membership.
 func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不在列表中(t *testing.T) {
 	ua := NewURLAvailability(10 * time.Minute)
 	customURLs := []string{"https://a.com", "https://b.com"}
@@ -264,6 +327,9 @@ func TestURLAvailability_GetAvailableURLsWithBase_LastSuccess不在列表中(t *
 	}
 }
 
+// TestGenerateRandomBytes_长度正确 requests several nonnegative byte counts,
+// including zero. Each successful result must match its requested length
+// across the small and larger allocation fixtures.
 func TestGenerateRandomBytes_长度正确(t *testing.T) {
 	sizes := []int{0, 1, 16, 32, 64, 128}
 	for _, size := range sizes {
@@ -277,6 +343,9 @@ func TestGenerateRandomBytes_长度正确(t *testing.T) {
 	}
 }
 
+// TestGenerateRandomBytes_不同调用产生不同结果 requests two independent thirty-two-byte
+// samples. The observed values must differ in this run; the comparison checks
+// samples rather than a universal uniqueness guarantee.
 func TestGenerateRandomBytes_不同调用产生不同结果(t *testing.T) {
 	b1, err := GenerateRandomBytes(32)
 	if err != nil {
@@ -292,6 +361,9 @@ func TestGenerateRandomBytes_不同调用产生不同结果(t *testing.T) {
 	}
 }
 
+// TestGenerateState_返回值格式 checks one generated OAuth state sample. The result
+// must be nonempty, contain no standard-base64 punctuation or padding, and
+// have forty-three encoded characters.
 func TestGenerateState_返回值格式(t *testing.T) {
 	state, err := GenerateState()
 	if err != nil {
@@ -309,6 +381,9 @@ func TestGenerateState_返回值格式(t *testing.T) {
 	}
 }
 
+// TestGenerateState_唯一性 compares two generated OAuth state samples. The
+// observed pair must differ in this run, exercising fresh generation without
+// proving collision-free output for every call.
 func TestGenerateState_唯一性(t *testing.T) {
 	s1, _ := GenerateState()
 	s2, _ := GenerateState()
@@ -317,6 +392,9 @@ func TestGenerateState_唯一性(t *testing.T) {
 	}
 }
 
+// TestGenerateSessionID_返回值格式 checks a generated session-key sample. It must
+// be nonempty, have thirty-two characters, and decode successfully as the
+// hexadecimal representation of random bytes.
 func TestGenerateSessionID_返回值格式(t *testing.T) {
 	id, err := GenerateSessionID()
 	if err != nil {
@@ -334,6 +412,9 @@ func TestGenerateSessionID_返回值格式(t *testing.T) {
 	}
 }
 
+// TestGenerateSessionID_唯一性 compares two generated session-key samples. The
+// observed pair must differ in this run, checking fresh allocation and
+// generation without asserting universal uniqueness.
 func TestGenerateSessionID_唯一性(t *testing.T) {
 	id1, _ := GenerateSessionID()
 	id2, _ := GenerateSessionID()
@@ -342,6 +423,9 @@ func TestGenerateSessionID_唯一性(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeVerifier_返回值格式 checks one generated PKCE verifier sample. It
+// must have forty-three unpadded URL-safe characters and remain nonempty for
+// pairing with a token-exchange challenge.
 func TestGenerateCodeVerifier_返回值格式(t *testing.T) {
 	verifier, err := GenerateCodeVerifier()
 	if err != nil {
@@ -359,6 +443,9 @@ func TestGenerateCodeVerifier_返回值格式(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeVerifier_唯一性 compares two freshly generated PKCE verifier
+// samples. The observed pair must differ during this run, checking sample
+// variation without establishing collision-free verifier generation.
 func TestGenerateCodeVerifier_唯一性(t *testing.T) {
 	v1, _ := GenerateCodeVerifier()
 	v2, _ := GenerateCodeVerifier()
@@ -367,12 +454,16 @@ func TestGenerateCodeVerifier_唯一性(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_SHA256_Base64URL computes the expected challenge
+// independently from a supplied verifier. Helper output must equal SHA-256
+// encoded with URL-safe base64 after padding removal.
 func TestGenerateCodeChallenge_SHA256_Base64URL(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 
 	challenge := GenerateCodeChallenge(verifier)
 
-	// Compute the PKCE challenge independently of the helper.
+	// Hash and encode the supplied verifier independently so the expected result
+	// can detect a shared-helper change to digest input or base64 padding.
 	hash := sha256.Sum256([]byte(verifier))
 	expected := strings.TrimRight(base64.URLEncoding.EncodeToString(hash[:]), "=")
 
@@ -381,6 +472,9 @@ func TestGenerateCodeChallenge_SHA256_Base64URL(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_不含填充字符 derives a challenge from a fixed verifier.
+// The generated spelling must omit base64 padding characters so the query
+// parameter uses unpadded PKCE encoding.
 func TestGenerateCodeChallenge_不含填充字符(t *testing.T) {
 	challenge := GenerateCodeChallenge("test-verifier")
 	if strings.Contains(challenge, "=") {
@@ -388,6 +482,9 @@ func TestGenerateCodeChallenge_不含填充字符(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_不含非URL安全字符 derives a challenge from another fixed
+// verifier. Its spelling must exclude plus and slash characters from ordinary
+// base64, retaining the URL-safe alphabet.
 func TestGenerateCodeChallenge_不含非URL安全字符(t *testing.T) {
 	challenge := GenerateCodeChallenge("another-verifier")
 	if strings.ContainsAny(challenge, "+/") {
@@ -395,6 +492,9 @@ func TestGenerateCodeChallenge_不含非URL安全字符(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_相同输入相同输出 derives the challenge twice from one
+// fixed verifier. Both results must match because hashing and encoding the
+// same input produces deterministic challenge spelling.
 func TestGenerateCodeChallenge_相同输入相同输出(t *testing.T) {
 	c1 := GenerateCodeChallenge("same-verifier")
 	c2 := GenerateCodeChallenge("same-verifier")
@@ -403,6 +503,9 @@ func TestGenerateCodeChallenge_相同输入相同输出(t *testing.T) {
 	}
 }
 
+// TestGenerateCodeChallenge_不同输入不同输出 derives challenges from two distinct
+// fixed verifiers. Their observed digests must differ for these fixtures,
+// guarding against a helper that ignores its input.
 func TestGenerateCodeChallenge_不同输入不同输出(t *testing.T) {
 	c1 := GenerateCodeChallenge("verifier-1")
 	c2 := GenerateCodeChallenge("verifier-2")
@@ -411,6 +514,9 @@ func TestGenerateCodeChallenge_不同输入不同输出(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_参数验证 parses a consent URL built with supplied
+// state and challenge values. Its query must match all ten configured OAuth,
+// PKCE, and offline-consent parameters.
 func TestBuildAuthorizationURL_参数验证(t *testing.T) {
 	state := "test-state-123"
 	codeChallenge := "test-challenge-abc"
@@ -449,6 +555,9 @@ func TestBuildAuthorizationURL_参数验证(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_参数数量 parses the consent query for simple state and
+// challenge input. The resulting parameter map must contain exactly the ten
+// keys asserted by this fixture.
 func TestBuildAuthorizationURL_参数数量(t *testing.T) {
 	authURL := BuildAuthorizationURL("s", "c")
 	parsed, err := url.Parse(authURL)
@@ -463,6 +572,9 @@ func TestBuildAuthorizationURL_参数数量(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURL_特殊字符编码 puts query-special characters in the
+// supplied state value. Parsing the resulting consent URL must recover that
+// state exactly from the encoded query.
 func TestBuildAuthorizationURL_特殊字符编码(t *testing.T) {
 	state := "state+with/special=chars"
 	codeChallenge := "challenge+value"
@@ -479,6 +591,10 @@ func TestBuildAuthorizationURL_特殊字符编码(t *testing.T) {
 	}
 }
 
+// TestConstants_值正确 pins configured OAuth endpoints, client identity,
+// lifetimes, and startup identity values. The fixture expects built-in secret
+// and User-Agent settings, so external startup overrides affect its
+// assertions.
 func TestConstants_值正确(t *testing.T) {
 	if AuthorizeURL != "https://accounts.google.com/o/oauth2/v2/auth" {
 		t.Errorf("AuthorizeURL 不匹配: got %s", AuthorizeURL)
@@ -513,6 +629,9 @@ func TestConstants_值正确(t *testing.T) {
 	}
 }
 
+// TestScopes_包含必要范围 checks the configured scope string for five required
+// permissions. Each expected cloud, user-information, logging, and experiment
+// scope must occur in the consent configuration.
 func TestScopes_包含必要范围(t *testing.T) {
 	expectedScopes := []string{
 		"https://www.googleapis.com/auth/cloud-platform",

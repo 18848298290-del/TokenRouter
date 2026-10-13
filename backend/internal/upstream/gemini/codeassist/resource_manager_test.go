@@ -12,7 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// TestResourceManagerProjectSelectionLocal returns companion, default, and
+// first-ACTIVE fixture lists through a local HTTP endpoint. It checks selected
+// project priority, bearer/CLI headers, proxy forwarding to the factory, and
+// resolved-IP validation options.
 func TestResourceManagerProjectSelectionLocal(t *testing.T) {
+	// name labels the project fixture, body supplies its Resource Manager JSON,
+	// and want identifies the project selected from that list.
 	cases := []struct{ name, body, want string }{
 		{"companion", `{"projects":[{"projectId":"plain","lifecycleState":"ACTIVE"},{"projectId":"default-one","lifecycleState":"ACTIVE"},{"projectId":"cloud-ai-companion-one","lifecycleState":"ACTIVE"}]}`, "cloud-ai-companion-one"},
 		{"default", `{"projects":[{"projectId":"plain","lifecycleState":"ACTIVE"},{"projectId":"default-one","lifecycleState":"ACTIVE"}]}`, "default-one"},

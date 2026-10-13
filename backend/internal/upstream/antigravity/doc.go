@@ -1,14 +1,17 @@
-// Package antigravity forwards Claude and Gemini requests through Antigravity v1internal.
+// Package antigravity forwards Claude and Gemini generation through
+// project-scoped v1internal requests. Forwarding keeps provider retry decisions
+// separate from client-protocol conversion, while response observation can retain
+// usage from the upstream tail after client output fails.
 //
-// Start with:
-//   - execute.go: one upstream exchange and client-protocol output.
-//   - request_transformer.go: Claude-to-Gemini conversion and the v1internal envelope.
-//   - retry_loop.go: rate limits, capacity exhaustion, and retries.
+// Reading entry points:
+//   - execute.go: Selects one exchange, client output, and attempt observations.
+//   - request_transformer.go: Converts Claude input and chooses identity instructions.
+//   - retry_loop.go: Selects rate-limit waits, capacity retries, and provider switching.
 //
 // File groups:
-//   - oauth.go, client.go: OAuth configuration, tokens, tiers, and model queries.
-//   - request_transformer.go, payload.go, gemini_types.go: request formats, model mapping, and schema cleanup.
-//   - response*.go, stream_transformer.go: streaming and non-streaming response conversion.
-//   - retry*.go, quota_errors.go, recovery*.go: retries, quota errors, and request recovery.
-//   - execute.go, probe.go: execution and provider connection probes.
+//   - oauth.go and client.go: OAuth credentials, endpoint availability, and account queries.
+//   - payload.go and gemini_types.go: Request preparation and shared wire aliases.
+//   - response*.go and stream_transformer.go: Native and compatible response adaptation.
+//   - retry*.go, quota_errors.go, and recovery*.go: Provider-local recovery decisions.
+//   - probe.go: Connection probes using the forwarding retry adapter.
 package antigravity

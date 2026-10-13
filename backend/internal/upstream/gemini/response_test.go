@@ -11,6 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages converts
+// text, image, and tool parts with the image option enabled and disabled. It
+// checks generated message identity, content order, tool retention, and
+// option-specific image text omission.
 func TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages(t *testing.T) {
 	geminiResp := map[string]any{
 		"candidates": []any{map[string]any{
@@ -55,7 +59,9 @@ func TestConvertGeminiToClaudeMessageOmitsInlineDataForAnthropicMessages(t *test
 	require.Equal(t, map[string]any{"type": "text", "text": "after"}, contentWithoutInlineData[2])
 }
 
-// TestUnwrapGeminiResponse checks that scalar response fields leave the body intact.
+// TestUnwrapGeminiResponse supplies wrapped, direct, scalar, null, malformed,
+// nested, and large response bodies. It checks one-layer object extraction and
+// unchanged raw spelling when no object wrapper is selected.
 func TestUnwrapGeminiResponse(t *testing.T) {
 	// Exercise a response object larger than 50 KiB.
 	largePadding := strings.Repeat("x", 50*1024)
@@ -63,10 +69,10 @@ func TestUnwrapGeminiResponse(t *testing.T) {
 	largeExpected := fmt.Sprintf(`{"id":"big","pad":"%s"}`, largePadding)
 
 	tests := []struct {
-		name     string
-		input    []byte
-		expected string
-		wantErr  bool
+		name     string // case identity label
+		input    []byte // source response body bytes
+		expected string // expected unwrapped JSON text
+		wantErr  bool   // expected unwrap error presence
 	}{
 		{
 			name: "正常 response 包装（JSON 对象）",
@@ -136,12 +142,15 @@ func TestUnwrapGeminiResponse(t *testing.T) {
 	}
 }
 
+// TestExtractGeminiUsage supplies ordinary, cached, thinking, absent, null,
+// and explicit-zero usage metadata. It checks normalized input/output/cache
+// buckets and distinguishes an absent observation from present zero counters.
 func TestExtractGeminiUsage(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantNil   bool
-		wantUsage *upstream.TokenUsage
+		name      string               // case identity label
+		input     string               // source usage JSON text
+		wantNil   bool                 // expected absent usage observation
+		wantUsage *upstream.TokenUsage // expected normalized token counters
 	}{
 		{
 			name: "完整 usageMetadata",
