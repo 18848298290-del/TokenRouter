@@ -19,10 +19,10 @@ import (
 // known entries exist. A failed detail request retains the usage observation,
 // and a supplied detail count overrides the earlier count even when zero.
 // Email normalization preserves the first spelling while deduplicating
-// case-insensitively and enforcing a five-address limit. Consumption generates
-// a request ID before submission and returns it with the requested credit
-// choice; no post-consumption cache or health recovery is implemented by this
-// service.
+// case-insensitively and enforcing a five-address limit. Consumption obtains
+// its request ID from the injected callback and returns it with the requested
+// credit choice; no post-consumption cache or health recovery is implemented
+// by this service.
 
 // Codex invitation constants select referral identity, per-operation email
 // count, and nonfatal administrator availability diagnostics used when
@@ -63,9 +63,9 @@ type CodexInviteResetOptions struct {
 	// protocol client. Its selected record remains stable during the account
 	// operation.
 	Client func(context.Context, *Record) (CodexInviteClient, error)
-	// NewID is required during Consume and creates one redeem identifier per
-	// call before protocol submission. Its signature provides no generation error
-	// result.
+	// NewID supplies the redeem identifier after account preparation succeeds.
+	// Consume uses that value in the request and result; the callback provides
+	// uniqueness when needed.
 	NewID func() string
 	// Warn is required for reached eligibility or credit-detail failures.
 	// Those warnings accompany retained usable status instead of aborting
@@ -98,21 +98,28 @@ type codexInviteResetInviteState struct {
 	// eligibility and rules retain independent borrowed client responses.
 	// Either failed query clears its own object and makes available false;
 	// callers keep retained objects stable while inspecting invitation status.
-	// borrowed raw eligibility observation
-	eligibility        map[string]any
-	rules              map[string]any // borrowed raw invitation rules
-	available          bool           // both invitation requests succeeded
-	unavailableReason  string         // stable invitation availability reason
-	unavailableMessage string         // administrator invitation availability text
+	eligibility map[string]any // borrowed raw eligibility observation
+	rules       map[string]any // borrowed raw invitation rules
+	available   bool           // both invitation requests succeeded
+	// unavailableReason and unavailableMessage carry the administrator
+	// diagnostics when available is false. Successful paired queries leave both
+	// strings empty, so consumers can distinguish availability from diagnostic text.
+	unavailableReason  string // stable invitation availability reason
+	unavailableMessage string // administrator invitation availability text
 }
 
 // codexInviteResetCreditState associates usage counts with optional
 // reset-credit detail observations.
 type codexInviteResetCreditState struct {
-	availableCount int // retained available credit count
-	// normalized reset credit entries
-	credits    []CodexInviteResetCredit
-	rawCredits map[string]any // borrowed raw credit observation
+	// availableCount begins with the usage count, substituting the number of
+	// available entries in credits when that count is zero. A successful detail
+	// query replaces credits and rawCredits; availableCount changes only when
+	// the detail count field is present. rawCredits and each credit's Raw map
+	// remain borrowed, so consumers keep those maps stable
+	// while inspecting the returned status.
+	availableCount int                      // retained available credit count
+	credits        []CodexInviteResetCredit // normalized reset credit entries
+	rawCredits     map[string]any           // borrowed raw credit observation
 }
 
 // prepareProvider loads a nonnil OpenAI OAuth-like record and creates its
@@ -156,10 +163,11 @@ func (s *CodexInviteResetService) postJSON(ctx context.Context, value *codexInvi
 //
 // Eligibility and rules are queried independently of the subsequent core usage
 // read. Either invitation failure produces nonfatal availability diagnostics,
-// while usage failure aborts the result. Credit-detail failure keeps usage
-// totals and list observations; supplied detail count wins, otherwise its
-// list-derived count is used where selected. Raw objects remain borrowed from
-// protocol results, so callers synchronize any subsequent mutable edits.
+// while usage failure aborts the result. Credit-detail failure keeps the
+// usage-derived count and entries. Successful details replace the credit list
+// and raw object; a present detail count overrides the initial count, otherwise
+// that initial count remains. Raw objects remain borrowed from protocol results,
+// so callers synchronize any subsequent mutable edits.
 // Missing consent metadata defaults to requiring confirmation.
 func (s *CodexInviteResetService) GetStatus(ctx context.Context, providerID int64) (*CodexInviteResetStatus, error) {
 	providerCtx, err := s.prepareProvider(ctx, providerID)
@@ -221,6 +229,9 @@ func (s *CodexInviteResetService) getInviteState(ctx context.Context, providerCt
 			available:   true,
 		}
 	}
+	// Each failed eligibility or rules query clears its own response and emits
+	// a warning. GetStatus can still obtain existing credits after either
+	// invitation request fails.
 	if eligibilityErr != nil {
 		s.Options.Warn("codex_invite_reset_eligibility_unavailable", "provider_id", providerCtx.provider.ID, "error", eligibilityErr)
 		eligibility = nil
@@ -322,16 +333,17 @@ func (s *CodexInviteResetService) SendInvite(ctx context.Context, providerID int
 	}, nil
 }
 
-// Consume generates a new redeem request ID and submits a trimmed optional
-// credit ID. Empty choice lets upstream select a credit, while supplied choice
-// is retained in the returned result.
+// Consume obtains a redeem request ID from NewID and submits a trimmed
+// optional credit ID. Empty choice omits credit_id for upstream selection;
+// a supplied choice is retained in the returned result.
 //
-// The generated ID is returned alongside upstream response data so callers can
-// correlate this particular submission. Each call generates another ID and
-// performs one protocol action, with no local rollback or post-reset recovery.
-// A present available_count becomes a pointer even when conversion yields
-// zero, and remaining credit/raw objects stay borrowed. Callers provide
-// reached NewID and do not treat this method as an automatic retry loop.
+// The supplied ID is returned alongside upstream response data so callers can
+// correlate this submission. After successful account preparation, Consume
+// calls NewID and PostJSON once each; the configured client owns any retries
+// during that PostJSON call. A present available_count becomes a pointer even
+// when conversion yields zero, and remaining credit/raw objects stay borrowed.
+// Callers supply the reached NewID callback and coordinate repeated operations
+// because this service adds no local rollback or post-reset recovery.
 func (s *CodexInviteResetService) Consume(ctx context.Context, providerID int64, creditID string) (*CodexInviteResetConsumeResult, error) {
 	providerCtx, err := s.prepareProvider(ctx, providerID)
 	if err != nil {
@@ -343,8 +355,9 @@ func (s *CodexInviteResetService) Consume(ctx context.Context, providerID int64,
 	payload := map[string]any{
 		"redeem_request_id": redeemRequestID,
 	}
-	// Send a selected credit ID when supplied; otherwise upstream chooses an
-	// available credit.
+	// Include a supplied credit ID in the request. Automatic selection leaves
+	// that field absent and returns the empty input as CreditID; response credit
+	// identity remains in Raw.
 	if creditID != "" {
 		payload["credit_id"] = creditID
 	}
@@ -388,6 +401,9 @@ func normalizeCodexInviteEmails(emails []string) ([]string, error) {
 			if email == "" {
 				continue
 			}
+			// Lowercase keys identify duplicate addresses while the first spelling
+			// stays in the invitation payload. Later case variants reuse that
+			// address's slot in the five-email limit.
 			key := strings.ToLower(email)
 			if _, exists := seen[key]; exists {
 				continue
@@ -455,6 +471,9 @@ func normalizeCodexInviteResetCredits(raw map[string]any) []CodexInviteResetCred
 // least one typed object. Empty or incompatible containers permit later-key
 // fallback, and the returned slice contains borrowed map elements.
 func firstNonEmptyCodexInviteResetMapSlice(raw map[string]any, keys ...string) []map[string]any {
+	// Credit normalization supplies alternate response keys in preference order;
+	// empty or incompatible lists let the next spelling supply the credit
+	// entries.
 	for _, key := range keys {
 		if items := codexInviteResetMapSliceFromMap(raw, key); len(items) > 0 {
 			return items
@@ -492,6 +511,9 @@ func normalizeCodexInviteResetRules(raw map[string]any) []string {
 				rules = append(rules, trimmed)
 			}
 		case map[string]any:
+			// Select one nonempty converted value per rule object in preference
+			// order, so multiple supported text fields in that object cannot
+			// produce duplicate rule lines.
 			for _, key := range []string{"text", "description", "message", "title"} {
 				if text := codexInviteResetStringFromMap(value, key); text != "" {
 					rules = append(rules, text)
@@ -516,6 +538,9 @@ func normalizeCodexInviteResetGrantType(hasRewards *bool, action string) string 
 	if hasRewards != nil && !*hasRewards {
 		return "none"
 	}
+	// Translate reward actions into administrator grant labels while GetStatus
+	// exposes the action separately. Unrecognized action text remains visible
+	// alongside the unknown label.
 	switch strings.TrimSpace(action) {
 	case "rate_limit_reset_credit":
 		return "rate_limit_reset"
@@ -527,7 +552,7 @@ func normalizeCodexInviteResetGrantType(hasRewards *bool, action string) string 
 }
 
 // codexInviteResetStringFromMap trims string, fmt.Stringer, or formatted
-// scalar/object text. Missing and nil values return empty; the fallback
+// scalar/object text. Missing keys and nil interfaces return empty; the fallback
 // formatting supplies diagnostic/display text rather than validating upstream
 // field shape.
 func codexInviteResetStringFromMap(raw map[string]any, key string) string {
@@ -544,6 +569,9 @@ func codexInviteResetStringFromMap(raw map[string]any, key string) string {
 	case fmt.Stringer:
 		return strings.TrimSpace(v.String())
 	default:
+		// Format other field types so invitation messages and credit labels can
+		// retain diagnostic text when an upstream object has an unexpected
+		// shape.
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
 }
@@ -552,6 +580,8 @@ func codexInviteResetStringFromMap(raw map[string]any, key string) string {
 // value in key order. Blank or missing candidates allow later keys to provide
 // display text; unresolved input returns empty.
 func codexInviteResetFirstStringFromMap(raw map[string]any, keys ...string) string {
+	// Credit normalization passes alternate reset and timestamp spellings here;
+	// a blank earlier field lets the later spelling supply the displayed value.
 	for _, key := range keys {
 		if value := codexInviteResetStringFromMap(raw, key); value != "" {
 			return value
@@ -571,9 +601,16 @@ func codexInviteResetMapFromMap(raw map[string]any, key string) map[string]any {
 	return value
 }
 
-// codexInviteResetIntFromMap converts int, int64, float64, or json.Number into
-// int. Other or unparseable values yield zero; float conversion truncates and
-// numeric input should remain finite and within range.
+// codexInviteResetIntFromMap converts int, int64, float64, or json.Number
+// fields to int; missing and unsupported types return zero. Finite floats
+// whose truncated values fit int discard their fractions; other floats are
+// converted without validity checks. Integer conversion can narrow to the
+// platform's int width. json.Number.Int64 syntax errors yield zero; range
+// errors retain a signed int64 limit before conversion to int. Callers needing
+// valid counts supply finite, representable numeric values.
+//
+// openai.CodexInviteClient decodes JSON numbers as float64; injected clients may
+// supply json.Number, whose conversion still follows these rules.
 func codexInviteResetIntFromMap(raw map[string]any, key string) int {
 	if raw == nil {
 		return 0
@@ -582,14 +619,17 @@ func codexInviteResetIntFromMap(raw map[string]any, key string) int {
 	case int:
 		return value
 	case int64:
+		// On thirty-two-bit platforms, count conversion discards the high bits.
 		return int(value)
 	case float64:
-		// Discard fractional count precision; validity and range remain caller
-		// obligations.
+		// Convert directly after numeric type recognition; callers needing
+		// validated counts check finite values and int range before supplying this
+		// field.
 		return int(value)
 	case json.Number:
-		// Failed integer parsing becomes zero so optional count readers can
-		// retain key presence even when upstream numeric text was unusable.
+		// Discard Int64's error and pass its numeric result through int conversion.
+		// Optional readers still allocate a pointer for present keys when parsing
+		// reports a syntax or range error.
 		i, _ := value.Int64()
 		return int(i)
 	default:

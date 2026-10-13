@@ -8,10 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsRetryableGrokBillingStatus compares transient gateway statuses with
+// authentication, entitlement, and throttling statuses. It asserts that 502,
+// 503, and 504 are retryable while the other listed statuses are not.
 func TestIsRetryableGrokBillingStatus(t *testing.T) {
 	tests := []struct {
-		status int
-		want   bool
+		status int  // upstream response HTTP status
+		want   bool // expected billing retry decision
 	}{
 		{status: http.StatusBadGateway, want: true},
 		{status: http.StatusServiceUnavailable, want: true},

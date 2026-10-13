@@ -230,9 +230,9 @@ func (r *RedeemCode) CanDelete() bool {
 }
 
 // GenerateRedeemCode returns sixteen random bytes encoded as thirty-two
-// lowercase hexadecimal characters. It delegates entropy to crypto/rand and
-// returns any reported read error; callers persist the credential and handle
-// uniqueness conflicts at creation.
+// lowercase hexadecimal characters with nil error. crypto/rand.Read terminates
+// the process when io.ReadFull reports an error. Callers persist a returned
+// credential and handle uniqueness conflicts at creation.
 func GenerateRedeemCode() (string, error) {
 	// Sixteen entropy bytes become thirty-two hexadecimal credential characters.
 	b := make([]byte, 16)

@@ -21,89 +21,151 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// User usage reports bind visibility to the authenticated actor and include
+// its owned team's records through repository scope. Direct record detail is
+// stricter: the stored actor must match the requester before request metadata
+// is exposed.
+//
+// Optional list bounds remain absent until supplied, while chart defaults
+// select a calendar or period range. Request-ID queries keep omitted filter
+// bounds unrestricted and supply epoch-to-now scalar bounds for charts. User
+// formatting exposes charged costs and measured usage while omitting provider
+// costs and outbound breakdowns. Ranking response pointers keep visible zero
+// metrics distinct from fields hidden by the supplied visibility settings.
+
+// Daily key-usage limits bound the default calendar-day count and largest
+// accepted user or public report range.
 const (
-	defaultAPIKeyDailyUsageDays = 30
-	maxAPIKeyDailyUsageDays     = 90
+	defaultAPIKeyDailyUsageDays = 30 // default daily report day count
+	maxAPIKeyDailyUsageDays     = 90 // maximum daily report day count
 )
 
+// userUsageFilters carries scoped repository selectors and scalar bounds
+// needed by user chart calls.
 type userUsageFilters struct {
-	Filters   usage.UsageLogFilters
-	StartTime time.Time
-	EndTime   time.Time
+	// Filters retains optional time pointers, including nil when request lookup
+	// supplied no dates. Chart methods separately receive scalar StartTime and
+	// EndTime values for their query signatures.
+	Filters usage.UsageLogFilters // scoped repository query selectors
+	// StartTime and EndTime hold chart bounds. Request-ID queries with omitted
+	// dates use epoch and current UTC time here while corresponding Filters time
+	// pointers remain nil.
+	StartTime time.Time // scalar chart start instant
+	EndTime   time.Time // scalar chart end instant
 }
 
+// userModelStat carries model usage and charged amounts selected for user
+// response encoding.
 type userModelStat struct {
-	Model               string  `json:"model"`
-	Requests            int64   `json:"requests"`
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`
-	ActualCost          float64 `json:"actual_cost"`
+	Model               string  `json:"model"`                 // internal request model label
+	Requests            int64   `json:"requests"`              // matching usage record count
+	InputTokens         int64   `json:"input_tokens"`          // measured input token count
+	OutputTokens        int64   `json:"output_tokens"`         // measured output token count
+	CacheCreationTokens int64   `json:"cache_creation_tokens"` // cache creation token count
+	CacheReadTokens     int64   `json:"cache_read_tokens"`     // cache read token count
+	TotalTokens         int64   `json:"total_tokens"`          // combined general token total
+	Cost                float64 `json:"cost"`                  // standard cost total USD
+	ActualCost          float64 `json:"actual_cost"`           // user charge total USD
 }
 
+// userGroupStat carries group identity, measured usage and charges selected
+// for user response encoding.
 type userGroupStat struct {
-	GroupID     int64   `json:"group_id"`
-	GroupName   string  `json:"group_name"`
-	Requests    int64   `json:"requests"`
-	TotalTokens int64   `json:"total_tokens"`
-	Cost        float64 `json:"cost"`
-	ActualCost  float64 `json:"actual_cost"`
+	GroupID     int64   `json:"group_id"`     // selected group identifier
+	GroupName   string  `json:"group_name"`   // current group display name
+	Requests    int64   `json:"requests"`     // matching usage record count
+	TotalTokens int64   `json:"total_tokens"` // combined general token total
+	Cost        float64 `json:"cost"`         // standard cost total USD
+	ActualCost  float64 `json:"actual_cost"`  // user charge total USD
 }
 
+// usageRankingItemResponse carries payer identity and optional metrics
+// permitted by ranking visibility settings.
 type usageRankingItemResponse struct {
-	Rank                int      `json:"rank"`
-	UserID              int64    `json:"user_id"`
-	DisplayName         string   `json:"display_name"`
-	AvatarURL           string   `json:"avatar_url"`
-	Requests            *int64   `json:"requests,omitempty"`
-	InputTokens         *int64   `json:"input_tokens,omitempty"`
-	OutputTokens        *int64   `json:"output_tokens,omitempty"`
-	CacheCreationTokens *int64   `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens     *int64   `json:"cache_read_tokens,omitempty"`
-	TotalTokens         *int64   `json:"total_tokens,omitempty"`
-	ActualCost          *float64 `json:"actual_cost,omitempty"`
+	Rank        int    `json:"rank"`         // one based payer position
+	UserID      int64  `json:"user_id"`      // ranked payer user identifier
+	DisplayName string `json:"display_name"` // public payer display name
+	AvatarURL   string `json:"avatar_url"`   // public payer avatar URL
+	// Requests is populated when ShowRequests is true. A new pointer retains
+	// visible zero counts, while nil omits that metric from the encoded row.
+	Requests *int64 `json:"requests,omitempty"` // optional visible request total
+	// InputTokens, OutputTokens, CacheCreationTokens, CacheReadTokens and
+	// TotalTokens are populated together when ShowTotalTokens is true. Separate
+	// pointers retain visible zero values; nil leaves the hidden metric fields
+	// omitted.
+	InputTokens         *int64 `json:"input_tokens,omitempty"`          // optional input token total
+	OutputTokens        *int64 `json:"output_tokens,omitempty"`         // optional output token total
+	CacheCreationTokens *int64 `json:"cache_creation_tokens,omitempty"` // optional cache creation token total
+	CacheReadTokens     *int64 `json:"cache_read_tokens,omitempty"`     // optional cache read token total
+	TotalTokens         *int64 `json:"total_tokens,omitempty"`          // optional combined token total
+	// ActualCost is populated when ShowActualCost is true. A new pointer retains
+	// visible zero charges, while nil omits that metric from the encoded row.
+	ActualCost *float64 `json:"actual_cost,omitempty"` // optional user charge total USD
 }
 
+// usageRankingResponse carries public payer rows, optional totals and applied
+// ranking display metadata.
 type usageRankingResponse struct {
-	Ranking         []usageRankingItemResponse `json:"ranking"`
-	TotalRequests   *int64                     `json:"total_requests,omitempty"`
-	TotalTokens     *int64                     `json:"total_tokens,omitempty"`
-	TotalActualCost *float64                   `json:"total_actual_cost,omitempty"`
-	SortBy          string                     `json:"sort_by"`
-	ShowTotalTokens bool                       `json:"show_total_tokens"`
-	ShowRequests    bool                       `json:"show_requests"`
-	ShowActualCost  bool                       `json:"show_actual_cost"`
-	StartDate       string                     `json:"start_date"`
-	EndDate         string                     `json:"end_date"`
-	Limit           int                        `json:"limit"`
+	Ranking []usageRankingItemResponse `json:"ranking"` // ordered visible payer rows
+	// TotalRequests, TotalTokens and TotalActualCost follow ShowRequests,
+	// ShowTotalTokens and ShowActualCost respectively. Nil suppresses hidden
+	// totals while a nonnil pointer retains each visible zero total during JSON
+	// encoding.
+	TotalRequests   *int64   `json:"total_requests,omitempty"`    // optional visible request total
+	TotalTokens     *int64   `json:"total_tokens,omitempty"`      // optional visible token total
+	TotalActualCost *float64 `json:"total_actual_cost,omitempty"` // optional visible user charge USD
+	SortBy          string   `json:"sort_by"`                     // applied ranking order metric
+	ShowTotalTokens bool     `json:"show_total_tokens"`           // token metric visibility flag
+	ShowRequests    bool     `json:"show_requests"`               // request metric visibility flag
+	ShowActualCost  bool     `json:"show_actual_cost"`            // charge metric visibility flag
+	StartDate       string   `json:"start_date"`                  // formatted applied start date
+	EndDate         string   `json:"end_date"`                    // formatted last included date
+	Limit           int      `json:"limit"`                       // configured ranking row limit
 }
 
-// UsageHandler serves user usage queries.
+// UsageHandler serves authenticated usage reports, rankings, key summaries
+// and failed-request views.
 type UsageHandler struct {
-	calendar       timezone.Calendar
-	usageService   *usage.UsageService
-	apiKeyService  ports.KeyReader
-	opsService     ports.UserErrors
-	settingService ports.Settings
+	calendar      timezone.Calendar   // user query range calendar
+	usageService  *usage.UsageService // usage record and report service
+	apiKeyService ports.KeyReader     // key lookup and ownership reader
+	// opsService supplies scoped failed-request reads. Nil makes the error
+	// routes return unavailable after their server-side permission check.
+	opsService ports.UserErrors // optional user failed request reader
+	// settingService supplies ranking configuration and error-view permission.
+	// Ranking needs a bound reader, while error endpoints reject access when
+	// this reader is nil.
+	settingService ports.Settings // ranking and error visibility reader
 }
 
-// BatchAPIKeysUsageRequest selects API keys for a batch usage query.
+// BatchAPIKeysUsageRequest carries key identifiers submitted for the
+// authenticated user's batch report.
 type BatchAPIKeysUsageRequest struct {
-	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
+	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"` // submitted key identifier list
 }
 
+// usageRankingInt64Ptr returns independent pointer storage for a visible
+// integer ranking metric.
 func usageRankingInt64Ptr(value int64) *int64 {
 	return &value
 }
 
+// usageRankingFloat64Ptr returns independent pointer storage for a visible
+// floating-point ranking metric.
 func usageRankingFloat64Ptr(value float64) *float64 {
 	return &value
 }
 
-// projectUsageRankingResponse exposes ranking fields allowed by public visibility settings.
+// projectUsageRankingResponse formats a nonnil ranking under the supplied
+// visibility settings. It copies payer identity and initializes an empty row
+// slice, then includes aggregate and row metrics whose visibility flags are
+// true.
+//
+// Optional pointers distinguish visible zero values from hidden fields during
+// JSON encoding. Token visibility controls all five token fields together,
+// while requests and charged cost use separate flags. Every populated metric
+// receives independent pointer storage; settings normalization belongs to the
+// caller's settings reader.
 func projectUsageRankingResponse(ranking *usage.UsageRankingResponse, settings usage.UsageRankingSettings) usageRankingResponse {
 	result := usageRankingResponse{
 		Ranking:         make([]usageRankingItemResponse, 0, len(ranking.Ranking)),
@@ -146,7 +208,8 @@ func projectUsageRankingResponse(ranking *usage.UsageRankingResponse, settings u
 	return result
 }
 
-// NewUsageHandler creates the user usage handler.
+// NewUsageHandler binds user report, key, error and settings readers with the
+// query calendar.
 func NewUsageHandler(
 	usageService *usage.UsageService,
 	apiKeyService ports.KeyReader,
@@ -163,6 +226,20 @@ func NewUsageHandler(
 	}
 }
 
+// parseUserUsageFilters returns actor-scoped selectors and scalar chart
+// bounds, writing an error response when validation fails. Authentication
+// supplies UserID and IncludeOwnedTeam is true; key lookup checks existence
+// while storage applies record visibility.
+//
+// Request category takes precedence over stream. Supplied dates form optional
+// half-open filter bounds, with date-only ends advanced by calendar day. When
+// requireRange is true and request ID is absent, omitted sides receive period
+// or seven-date chart defaults.
+//
+// Request lookup keeps omitted filter time pointers nil for retained-history
+// lists and totals, while scalar chart bounds become epoch through current
+// UTC time. Explicit dates remain in both representations. A false result
+// means callers stop because this helper already wrote the rejection.
 func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) (*userUsageFilters, bool) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -186,7 +263,8 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			response.ErrorFrom(c, err)
 			return nil, false
 		}
-		// The usage scope enforces visibility; owners may filter keys belonging to other team members.
+		// Lookup establishes key existence. Repository actor and owned-team scope
+		// still restricts records while owners select another member's team key for reports.
 		apiKeyID = id
 	}
 
@@ -268,13 +346,16 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			return nil, false
 		}
 		if dateOnly {
-			// Use the next calendar midnight as the exclusive end for date-only inputs.
+			// Calendar expansion covers the selected local date across DST transitions
+			// while retaining the repository's exclusive end comparison for these optional bounds.
 			t = t.AddDate(0, 0, 1)
 		}
 		endTime = t
 		endPtr = &endTime
 	}
 
+	// Chart callers need bounds, but request identity already selects retained
+	// history. Fill ordinary defaults when that lookup intent was not supplied by a request ID.
 	if requireRange && strings.TrimSpace(c.Query("request_id")) == "" {
 		if startPtr == nil {
 			switch c.DefaultQuery("period", "") {
@@ -299,6 +380,8 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		}
 	}
 
+	// Omitted filter pointers keep lists and totals unrestricted. Scalar chart calls
+	// still need epoch-to-now time arguments for the same request identity lookup.
 	if strings.TrimSpace(c.Query("request_id")) != "" {
 		if startPtr == nil {
 			startTime = time.Unix(0, 0).UTC()
@@ -333,8 +416,9 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 	}, true
 }
 
-// List returns a page of usage records visible to the current user.
-// GET /api/v1/usage
+// List returns an authenticated actor and owned-team usage page under
+// optional filters. Missing dates remain unrestricted, sorting is passed to
+// storage, and nested DTO display uses the request locale.
 func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	parsed, ok := h.parseUserUsageFilters(c, false)
@@ -362,8 +446,9 @@ func (h *UsageHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// ListErrors returns redacted failed requests belonging to the current user.
-// GET /api/v1/usage/errors
+// ListErrors returns redacted failed requests after server-side error-view
+// permission is checked. It caps pages at one hundred, accepts date-only
+// ranges and optional error selectors, and requires an available Ops reader.
 func (h *UsageHandler) ListErrors(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -371,7 +456,8 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		return
 	}
 
-	// Enforce visibility on the server even if the frontend hides the entry point.
+	// Check permission on each server request. A hidden browser entry cannot
+	// authorize these scoped observations when user error visibility is disabled in settings.
 	if h.settingService == nil || !h.settingService.IsUserErrorViewAllowed(c.Request.Context()) {
 		response.Forbidden(c, "Error requests view is disabled")
 		return
@@ -382,13 +468,13 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 	}
 
 	page, pageSize := response.ParsePagination(c)
+	// Bound the failed-request rows fetched for a single user page.
 	if pageSize > 100 {
 		pageSize = 100
 	}
 
 	filter := &ops.OpsErrorLogFilter{Page: page, PageSize: pageSize, RequestID: strings.TrimSpace(c.Query("request_id"))}
 
-	// Use the same half-open [start, end) date range as the usage list.
 	userTZ := c.Query("timezone")
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		t, err := h.calendar.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
@@ -404,6 +490,8 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
 			return
 		}
+		// Calendar expansion includes the selected error date across DST shifts while
+		// matching the owning Ops reader's exclusive end comparison for these date-only bounds.
 		t = t.AddDate(0, 0, 1)
 		filter.EndTime = &t
 	}
@@ -436,7 +524,9 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		filter.ErrorTypesAny = types
 	}
 
-	// The repository validates columns and normalizes direction, defaulting invalid sort values to created_at DESC.
+	// SetSort trims the requested strings. The PostgreSQL reader later chooses
+	// a permitted column and direction before using them in this user-scoped
+	// query.
 	filter.SetSort(c.Query("sort_by"), c.Query("sort_order"))
 
 	result, err := h.opsService.ListUserErrorRequests(c.Request.Context(), subject.UserID, filter)
@@ -447,8 +537,9 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 	response.Paginated(c, result.Items, int64(result.Total), result.Page, result.PageSize)
 }
 
-// GetErrorDetail returns one redacted failed request belonging to the current user.
-// GET /api/v1/usage/errors/:id
+// GetErrorDetail returns one redacted failure under the authenticated user
+// scope. Server-side visibility is checked first, positive IDs are required,
+// and an unavailable Ops reader returns a service-unavailable response.
 func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -476,8 +567,9 @@ func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
 	response.Success(c, detail)
 }
 
-// GetByID returns a usage record belonging to the current requester.
-// GET /api/v1/usage/:id
+// GetByID returns request metadata only when the record's acting user matches
+// the requester. Lookup errors propagate through HTTP mapping; other actors
+// receive forbidden even when broader reports include owned-team records.
 func (h *UsageHandler) GetByID(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -497,7 +589,8 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	// Record details require the actual requester so team members cannot read another member's request metadata.
+	// Detail exposes request metadata. Require its recorded actor even when broader
+	// actor-plus-owned-team reporting scope can include this row for another authenticated requester.
 	if record.UserID != subject.UserID {
 		response.Forbidden(c, "Not authorized to access this record")
 		return
@@ -506,8 +599,10 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 	response.Success(c, dto.FromUsage(record, locale.FromContext(c.Request.Context())))
 }
 
-// Ranking returns usage rankings for the selected time range.
-// GET /api/v1/usage/ranking
+// Ranking returns payer rows using configured enablement, limit, order and
+// metric visibility. It requires authentication, rejects disabled ranking
+// before querying, and validates a strictly increasing range in the selected
+// calendar location.
 func (h *UsageHandler) Ranking(c *gin.Context) {
 	if _, ok := authctx.GetAuthSubjectFromContext(c); !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -542,11 +637,13 @@ func (h *UsageHandler) Ranking(c *gin.Context) {
 	projected.EndDate = usageRankingDisplayEndDate(endTime)
 	projected.Limit = rankingSettings.Limit
 
-	// The response includes the applied range formatted in the user's timezone.
 	response.Success(c, projected)
 }
 
-// parseUsageRankingTimeRange defaults to today in the user's timezone when no dates are supplied.
+// parseUsageRankingTimeRange returns a strictly increasing ranking range with
+// today-to-tomorrow defaults. Supplied sides replace defaults independently;
+// date-only ends advance one local calendar date, while datetime bounds
+// retain the parsed instant.
 func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, calendar timezone.Calendar) (time.Time, time.Time, error) {
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
@@ -571,7 +668,8 @@ func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, ca
 			return time.Time{}, time.Time{}, errors.New("invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 		}
 		if dateOnly {
-			// Include the selected end date by using the next midnight with created_at < endTime.
+			// A date names a complete local day. Calendar expansion includes it across
+			// DST shifts while explicitly timed end values retain their supplied instant.
 			parsed = parsed.AddDate(0, 0, 1)
 		}
 		endTime = parsed
@@ -582,13 +680,16 @@ func parseUsageRankingTimeRange(c *gin.Context, now time.Time, userTZ string, ca
 	return startTime, endTime, nil
 }
 
-// usageRankingDisplayEndDate converts an exclusive end to the last included display date.
+// usageRankingDisplayEndDate formats the date containing the final included
+// instant of an exclusive range. Subtracting one nanosecond lets midnight
+// bounds display the preceding local date across DST transitions.
 func usageRankingDisplayEndDate(endTime time.Time) string {
 	return endTime.Add(-time.Nanosecond).Format("2006-01-02")
 }
 
-// Stats returns usage statistics within the current user's scope.
-// GET /api/v1/usage/stats
+// Stats returns visible totals under authenticated actor and owned-team
+// filters. It uses range defaults when needed, then clears provider cost and
+// outbound endpoint breakdowns before encoding the user response.
 func (h *UsageHandler) Stats(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
 	if !ok {
@@ -600,6 +701,8 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// User totals expose charges and inbound breakdowns. Remove provider cost and
+	// outbound chart fields before the scoped statistics are encoded for this requester.
 	stats.TotalProviderCost = nil
 	stats.UpstreamEndpoints = nil
 	stats.EndpointPaths = nil
@@ -607,6 +710,9 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
+// parseAPIKeyDailyUsageDays returns thirty for empty or whitespace-only text
+// and otherwise parses the integer as supplied. Values outside one through
+// ninety or text rejected by Atoi return a false validation result.
 func parseAPIKeyDailyUsageDays(raw string) (int, bool) {
 	if strings.TrimSpace(raw) == "" {
 		return defaultAPIKeyDailyUsageDays, true
@@ -618,6 +724,10 @@ func parseAPIKeyDailyUsageDays(raw string) (int, bool) {
 	return days, true
 }
 
+// apiKeyDailyUsageRange returns calendar midnights covering days dates
+// through today in the selected zone. Callers validate days first; an
+// unavailable user zone uses the server calendar and the end is tomorrow
+// midnight.
 func apiKeyDailyUsageRange(days int, userTZ string, calendar timezone.Calendar) (time.Time, time.Time) {
 	now := calendar.NowInUserLocation(userTZ)
 	startTime := calendar.StartOfDayInUserLocation(now.AddDate(0, 0, -(days-1)), userTZ)
@@ -625,8 +735,10 @@ func apiKeyDailyUsageRange(days int, userTZ string, calendar timezone.Calendar) 
 	return startTime, endTime
 }
 
-// DashboardStats returns the user's dashboard counters.
-// GET /api/v1/usage/dashboard/stats
+// DashboardStats returns the authenticated user's dashboard counters through
+// UsageService. Missing authentication rejects the read; storage determines
+// retained totals, today's values, platform breakdowns and the current rate
+// observations.
 func (h *UsageHandler) DashboardStats(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -643,8 +755,10 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// DashboardTrend returns usage trends within the user's scope.
-// GET /api/v1/usage/dashboard/trend
+// DashboardTrend returns usage buckets under authenticated actor and
+// owned-team filters. It supplies scalar chart bounds from
+// parseUserUsageFilters, passes granularity to storage, and displays the
+// range's final included date.
 func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
 	if !ok {
@@ -666,8 +780,10 @@ func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 	})
 }
 
-// DashboardModels returns usage grouped by requested model within the user's scope.
-// GET /api/v1/usage/dashboard/models
+// DashboardModels returns internal requested-model grouping within
+// authenticated visibility and filters. Empty or requested model_source is
+// accepted, other sources are rejected, and userModelStatsFromUsageStats
+// formats the permitted metric fields.
 func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
 	if !ok {
@@ -693,8 +809,10 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	})
 }
 
-// DashboardSnapshotV2 returns a combined chart snapshot for the user's usage page.
-// GET /api/v1/usage/dashboard/snapshot-v2
+// DashboardSnapshotV2 returns enabled user chart sections under one parsed
+// scope and range. Inclusion flags use strict boolean parsing, granularity
+// selects hour or day, and any enabled-query failure rejects the combined
+// response.
 func (h *UsageHandler) DashboardSnapshotV2(c *gin.Context) {
 	parsed, ok := h.parseUserUsageFilters(c, true)
 	if !ok {
@@ -753,6 +871,9 @@ func (h *UsageHandler) DashboardSnapshotV2(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// userModelStatsFromUsageStats copies permitted model metrics into the user
+// response slice. Nil input produces an allocated empty result, and provider
+// costs have no field in this returned response type.
 func userModelStatsFromUsageStats(stats []usage.ModelStat) []userModelStat {
 	out := make([]userModelStat, 0, len(stats))
 	for _, stat := range stats {
@@ -771,6 +892,9 @@ func userModelStatsFromUsageStats(stats []usage.ModelStat) []userModelStat {
 	return out
 }
 
+// userGroupStatsFromUsageStats copies permitted group metrics into the user
+// response slice. Nil input produces an allocated empty result, and provider
+// costs have no field in this returned response type.
 func userGroupStatsFromUsageStats(stats []usage.GroupStat) []userGroupStat {
 	out := make([]userGroupStat, 0, len(stats))
 	for _, stat := range stats {
@@ -786,6 +910,9 @@ func userGroupStatsFromUsageStats(stats []usage.GroupStat) []userGroupStat {
 	return out
 }
 
+// parseBoolQueryWithDefault returns fallback for empty or whitespace-only
+// query text and otherwise parses raw boolean text. Invalid values write bad
+// request; callers stop when the second result is false.
 func parseBoolQueryWithDefault(c *gin.Context, key string, fallback bool) (bool, bool) {
 	raw := c.Query(key)
 	if strings.TrimSpace(raw) == "" {
@@ -799,7 +926,9 @@ func parseBoolQueryWithDefault(c *gin.Context, key string, fallback bool) (bool,
 	return parsed, true
 }
 
-// usageFilterDisplayEndDate converts the half-open range's end to the last included display date.
+// usageFilterDisplayEndDate formats the final included date from an exclusive
+// end. Zero returns empty text; other bounds subtract one nanosecond before
+// formatting in their retained location.
 func usageFilterDisplayEndDate(endTime time.Time) string {
 	if endTime.IsZero() {
 		return ""
@@ -807,8 +936,9 @@ func usageFilterDisplayEndDate(endTime time.Time) string {
 	return endTime.Add(-time.Nanosecond).Format("2006-01-02")
 }
 
-// DashboardAPIKeysUsage returns batch usage for keys owned by the current user.
-// POST /api/v1/usage/dashboard/api-keys-usage
+// DashboardAPIKeysUsage queries charges for the authenticated actor's owned
+// IDs from a bounded list. More than one hundred inputs is rejected, empty
+// owned subsets return empty stats, and storage receives zero range defaults.
 func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -853,8 +983,10 @@ func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 	response.Success(c, gin.H{"stats": stats})
 }
 
-// GetMyAPIKeyDailyUsage returns daily usage for a key owned by the current user.
-// GET /api/v1/user/api-keys/:id/usage/daily?days=30
+// GetMyAPIKeyDailyUsage returns daily usage after key lookup proves actor
+// ownership. It validates one through ninety days, requires a key reader, and
+// queries local-calendar bounds using the authenticated user and requested
+// key.
 func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -905,5 +1037,7 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	})
 }
 
-// ParseAPIKeyDailyUsageDays shares daily-range validation with the public usage endpoint.
+// ParseAPIKeyDailyUsageDays exposes user daily-range validation to the public
+// usage endpoint. Blank input selects thirty days, while unsupported integers
+// or text return false so that endpoint can reject the request.
 func ParseAPIKeyDailyUsageDays(raw string) (int, bool) { return parseAPIKeyDailyUsageDays(raw) }

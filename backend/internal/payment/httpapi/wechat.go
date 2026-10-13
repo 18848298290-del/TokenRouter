@@ -107,9 +107,10 @@ type WechatPaymentOAuthContext struct {
 	// after the signed token returns.
 	Amount    string `json:"amount,omitempty"`
 	OrderType string `json:"order_type,omitempty"` // requested purchase category label
-	// PlanID is parsed at start, with malformed text becoming zero and valid
-	// negative values retained. Later continuation application only replaces the
-	// checkout plan for positive IDs.
+	// PlanID carries ParseWeChatPaymentPlanID's result through encoded OAuth
+	// context. Continuation application can adopt positive values, including
+	// the maximum int64 returned for a positive range error, as the checkout
+	// plan selection.
 	PlanID int64 `json:"plan_id,omitempty"`
 }
 
@@ -397,14 +398,14 @@ func DecodeWeChatPaymentOAuthContext(raw string) (WechatPaymentOAuthContext, err
 	return ctx, nil
 }
 
-// ParseWeChatPaymentPlanID parses trimmed decimal int64 text and discards
-// parse errors into zero. It retains a valid negative number; later
-// continuation application separately requires a positive ID before replacing
-// checkout selection.
+// ParseWeChatPaymentPlanID parses trimmed decimal text and returns ParseInt's
+// int64 value while discarding its error. Syntax errors yield zero; range errors
+// yield the minimum or maximum int64. UserApplyWeChatPaymentResumeClaims uses
+// positive results as the chosen plan when its earlier validation succeeds.
 func ParseWeChatPaymentPlanID(raw string) int64 {
-	// Malformed plan text supplies zero rather than failing OAuth start. A parsed
-	// negative value is carried unchanged, and checkout continuation decides
-	// whether that identity can select a plan.
+	// Discarding the error lets OAuth start continue with ParseInt's value.
+	// A range error carries its saturated int64 result into the cookie context,
+	// which callback passes into the signed checkout continuation.
 	id, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	return id
 }

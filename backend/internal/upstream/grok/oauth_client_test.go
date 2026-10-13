@@ -11,6 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGrokOAuthClientExchangeAndRefreshUseFormFields serves a loopback token
+// endpoint for code and refresh grants. It asserts the posted form fields and
+// decoded token values, including verifier use for code exchange and rotated
+// refresh-token data.
 func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
@@ -51,7 +55,8 @@ func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	// The loopback token endpoint requires the unsafe override switch in this test.
+	// A local token endpoint supplies deterministic grant responses. Enable format-only
+	// overrides so this fixture can use HTTP loopback while production defaults remain trusted-host based.
 	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 	t.Setenv(EnvTokenURL, server.URL)
 
@@ -70,11 +75,15 @@ func TestGrokOAuthClientExchangeAndRefreshUseFormFields(t *testing.T) {
 	require.Equal(t, int64(7200), refreshed.ExpiresIn)
 }
 
+// TestGrokOAuthClientRefreshForbiddenClassifiesOnlyExplicitEntitlement
+// returns two forbidden token bodies from loopback servers. It asserts an
+// explicit access_denied marker selects entitlement denial while generic
+// forbidden retains the ordinary refresh failure reason.
 func TestGrokOAuthClientRefreshForbiddenClassifiesOnlyExplicitEntitlement(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantReason string
+		name       string // refresh classification case name
+		body       string // failed token response JSON
+		wantReason string // expected refresh error reason
 	}{
 		{name: "explicit entitlement", body: `{"error":"access_denied"}`, wantReason: "GROK_OAUTH_ENTITLEMENT_DENIED"},
 		{name: "generic forbidden", body: `{"error":"forbidden"}`, wantReason: "GROK_OAUTH_TOKEN_REFRESH_FAILED"},
@@ -97,6 +106,10 @@ func TestGrokOAuthClientRefreshForbiddenClassifiesOnlyExplicitEntitlement(t *tes
 	}
 }
 
+// TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody returns a failed
+// grant body containing access, refresh, and verifier secrets. It asserts the
+// error keeps HTTP status and redaction markers while omitting each supplied
+// secret value.
 func TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -118,6 +131,10 @@ func TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody(t *testing.T) {
 	require.NotContains(t, errText, "verifier-secret")
 }
 
+// TestGrokOAuthEntitlementDenialRequiresExplicitEvidence compares configured
+// denial markers with generic forbidden and quota-exhaustion bodies. It
+// asserts explicit markers qualify while generic text and exhausted-credit
+// phrases suppress entitlement denial classification.
 func TestGrokOAuthEntitlementDenialRequiresExplicitEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -130,8 +147,14 @@ func TestGrokOAuthEntitlementDenialRequiresExplicitEvidence(t *testing.T) {
 	require.False(t, grokOAuthHasExplicitEntitlementDenial(`{"code":"subscription_required","message":"included free usage exhausted"}`))
 }
 
+// TestNewGrokOAuthClient_UnvalidatedTokenURLFallsBackToDefault configures an
+// untrusted token host with unsafe overrides disabled. It asserts client
+// construction pins DefaultTokenURL rather than accepting that environment
+// endpoint for later credential exchange.
 func TestNewGrokOAuthClient_UnvalidatedTokenURLFallsBackToDefault(t *testing.T) {
-	// An arbitrary environment endpoint must not receive tokens when overrides are disabled.
+	// Disable the unsafe switch before constructing this client so an untrusted
+	// environment endpoint is rejected during selection, before a
+	// credential-bearing request can be built.
 	t.Setenv(EnvAllowUnsafeURLOverrides, "")
 	t.Setenv(EnvTokenURL, "https://evil.example/oauth/token")
 

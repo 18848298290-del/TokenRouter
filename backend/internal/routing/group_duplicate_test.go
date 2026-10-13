@@ -17,19 +17,48 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-type duplicateGroupRepoStub struct {
-	routing.GroupRepository
+// Group duplication needs a saved operation identity for retries and a unique
+// display name for separate copies. The in-memory repository records those
+// identities beside group values and source provider bindings, then returns a
+// reloaded response with fixture-derived membership counts.
+//
+// The scenarios compare selected configuration fields, mutate several copied
+// collections and pointers, recover a repeated administrator key, and
+// distinguish another administrator's request. Name collisions exercise
+// suffix advancement, while a multibyte name tests the rune limit directly.
+// The injected creation error returns before this fixture writes any maps, so
+// its failure assertion observes unchanged fixture state rather than a
+// partially completed persistence transaction.
 
-	nextID             int64
-	groups             map[int64]*routing.Group
-	names              map[string]struct{}
-	byOperation        map[string]int64
-	sourceBindings     map[int64][]providercore.GroupMembership
-	createdBindings    map[int64][]providercore.GroupMembership
-	createdFromSources []int64
-	atomicCreateErr    error
+// duplicateGroupRepoStub keeps sequential in-memory group, uniqueness,
+// operation, and membership state for duplication scenarios. Tests seed its
+// source and names before calling the administration service.
+type duplicateGroupRepoStub struct {
+	// GroupRepository supplies unused methods through a nil embedded interface.
+	// Duplication scenarios rely on this fixture's GetByID and CreateFromSource
+	// implementations.
+	routing.GroupRepository // unused repository method placeholders
+
+	nextID int64 // next allocated fixture identity
+	// groups, names, byOperation, sourceBindings, and createdBindings connect a
+	// duplicate to its source memberships and uniqueness records. CreateFromSource
+	// reads sourceBindings and updates the destination maps after rejection
+	// checks; tests access all of these maps sequentially.
+	groups             map[int64]*routing.Group                 // stored fixture group values
+	names              map[string]struct{}                      // reserved fixture group names
+	byOperation        map[string]int64                         // saved operation identity index
+	sourceBindings     map[int64][]providercore.GroupMembership // seeded source provider memberships
+	createdBindings    map[int64][]providercore.GroupMembership // saved copied provider memberships
+	createdFromSources []int64                                  // recorded successful source group IDs
+	// atomicCreateErr returns before identity allocation or map writes, letting
+	// failure assertions inspect the unchanged seeded source and operation
+	// state.
+	atomicCreateErr error // injected pre-write creation error
 }
 
+// newDuplicateGroupRepoStub initializes empty maps and begins new fixture IDs
+// above 100. A nonnil source is retained directly in groups and its name is
+// reserved before duplication runs.
 func newDuplicateGroupRepoStub(source *routing.Group) *duplicateGroupRepoStub {
 	repo := &duplicateGroupRepoStub{
 		nextID:          100,
@@ -46,6 +75,11 @@ func newDuplicateGroupRepoStub(source *routing.Group) *duplicateGroupRepoStub {
 	return repo
 }
 
+// cloneGroupForDuplicateTest returns nil for nil input and otherwise starts
+// with a shallow group value copy. It detaches fallback IDs, scheduler
+// override pointers, model-routing slices, scopes, client protocols, and
+// custom model names. Other fields retain the storage referenced by that
+// value copy.
 func cloneGroupForDuplicateTest(group *routing.Group) *routing.Group {
 	if group == nil {
 		return nil
@@ -62,6 +96,9 @@ func cloneGroupForDuplicateTest(group *routing.Group) *routing.Group {
 	return &cloned
 }
 
+// GetByID returns a fixture clone for a stored group and marks the returned
+// value hydrated. Missing IDs return ErrGroupNotFound; nested copying follows
+// cloneGroupForDuplicateTest's limited set of fields.
 func (r *duplicateGroupRepoStub) GetByID(_ context.Context, id int64) (*routing.Group, error) {
 	group := r.groups[id]
 	if group == nil {
@@ -72,6 +109,9 @@ func (r *duplicateGroupRepoStub) GetByID(_ context.Context, id int64) (*routing.
 	return cloned, nil
 }
 
+// FindByDuplicateOperationID resolves a saved digest through byOperation and
+// clones the indexed group. An absent digest returns nil with no error,
+// allowing the service to start a new duplication attempt.
 func (r *duplicateGroupRepoStub) FindByDuplicateOperationID(_ context.Context, operationID string) (*routing.Group, error) {
 	id := r.byOperation[operationID]
 	if id == 0 {
@@ -80,6 +120,15 @@ func (r *duplicateGroupRepoStub) FindByDuplicateOperationID(_ context.Context, o
 	return cloneGroupForDuplicateTest(r.groups[id]), nil
 }
 
+// CreateFromSource assigns an ID and timestamps, copies source memberships to
+// the new ID, and stores the group and operation indexes. A configured error
+// or an existing operation or name returns before any of those writes.
+//
+// Copied membership counts include every seeded binding as active,
+// irrespective of provider state, matching this fixture's reload data. Stored
+// groups use cloneGroupForDuplicateTest, which detaches selected fields while
+// other references remain shared. Tests call this fixture sequentially; its
+// coordinated map updates simulate the successful repository response.
 func (r *duplicateGroupRepoStub) CreateFromSource(_ context.Context, group *routing.Group, sourceGroupID int64) error {
 	if r.atomicCreateErr != nil {
 		return r.atomicCreateErr
@@ -96,12 +145,18 @@ func (r *duplicateGroupRepoStub) CreateFromSource(_ context.Context, group *rout
 	group.ID = r.nextID
 	group.CreatedAt = time.Now().UTC()
 	group.UpdatedAt = group.CreatedAt
+	// Copy source membership values before rewriting their group IDs so the
+	// newly stored bindings do not alter the source fixture's association
+	// identities.
 	bindings := append([]providercore.GroupMembership(nil), r.sourceBindings[sourceGroupID]...)
 	for i := range bindings {
 		bindings[i].GroupID = group.ID
 	}
 	group.ProviderCount = int64(len(bindings))
 	group.ActiveProviderCount = int64(len(bindings))
+	// Publish membership observations and uniqueness indexes after all rejection
+	// checks, making the successful create visible to the subsequent fixture
+	// reload and operation recovery.
 	r.createdBindings[group.ID] = bindings
 	r.createdFromSources = append(r.createdFromSources, sourceGroupID)
 	r.names[group.Name] = struct{}{}
@@ -112,8 +167,15 @@ func (r *duplicateGroupRepoStub) CreateFromSource(_ context.Context, group *rout
 	return nil
 }
 
+// groupDuplicateTestPointer returns newly allocated storage for the supplied
+// test value.
 func groupDuplicateTestPointer[T any](value T) *T { return &value }
 
+// TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState duplicates
+// an active source with two seeded memberships and compares selected saved
+// fields and inactive status. Mutations then check independence of the
+// routing slices, fallback and scheduler pointers, scopes, protocols, names,
+// and effort mappings exercised here.
 func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 1, 2, 3, 4, 0, time.UTC)
 	source := &routing.Group{
@@ -226,6 +288,10 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, 4.5, *source.AdvancedSchedulerOverrides.WeightPriority)
 }
 
+// TestDuplicateGroupRecoversSameOperationAndScopesByAdmin repeats a source
+// and key for one administrator, then uses another administrator. Repeated
+// and recovered results share an ID; the other administrator gets a distinct
+// numbered copy.
 func TestDuplicateGroupRecoversSameOperationAndScopesByAdmin(t *testing.T) {
 	source := &routing.Group{ID: 9, Name: "team", Status: billing.StatusActive}
 	repo := newDuplicateGroupRepoStub(source)
@@ -247,6 +313,9 @@ func TestDuplicateGroupRecoversSameOperationAndScopesByAdmin(t *testing.T) {
 	require.Equal(t, "team (Copy 2)", otherAdmin.Name)
 }
 
+// TestDuplicateGroupAdvancesNameAndTruncatesUnicodeByRunes reserves the first
+// copy name before duplication and directly formats a long Chinese name.
+// Assertions check the next suffix, rune limit, and retained numbered suffix.
 func TestDuplicateGroupAdvancesNameAndTruncatesUnicodeByRunes(t *testing.T) {
 	source := &routing.Group{ID: 12, Name: "team", Status: billing.StatusActive}
 	repo := newDuplicateGroupRepoStub(source)
@@ -257,11 +326,16 @@ func TestDuplicateGroupAdvancesNameAndTruncatesUnicodeByRunes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "team (Copy 2)", duplicate.Name)
 
+	// Use multibyte characters at the shared name limit so suffix reservation is
+	// checked in runes rather than UTF-8 byte length.
 	unicodeName := routing.DuplicateGroupName(strings.Repeat("组", 100), 23)
 	require.Equal(t, routing.MaxGroupNameRunes, utf8.RuneCountInString(unicodeName))
 	require.True(t, strings.HasSuffix(unicodeName, " (Copy 23)"))
 }
 
+// TestDuplicateGroupAtomicCreateFailureReturnsNoCopy injects a repository
+// error before the fixture stores a duplicate. The service returns that error
+// and no group, while the source map and operation index remain unchanged.
 func TestDuplicateGroupAtomicCreateFailureReturnsNoCopy(t *testing.T) {
 	source := &routing.Group{ID: 15, Name: "team", Status: billing.StatusActive}
 	repo := newDuplicateGroupRepoStub(source)

@@ -757,10 +757,11 @@ func MaskEmail(email string) string {
 	return localPart[:1] + "***" + localPart[len(localPart)-1:] + domain
 }
 
-// GenerateRandomToken returns hexadecimal text for byteLength
-// cryptographically random bytes. Zero returns empty text, a negative length
-// panics at allocation, and random-read failure returns an error; callers
-// choose the entropy length before encoding doubles its text size.
+// GenerateRandomToken returns hexadecimal text for byteLength cryptographically
+// random bytes with nil error. Zero returns empty text, a negative length
+// panics at allocation, and encoding doubles the selected byte count.
+// crypto/rand.Read terminates the process when its io.ReadFull operation
+// reports an error.
 func GenerateRandomToken(byteLength int) (string, error) {
 	b := make([]byte, byteLength)
 	if _, err := rand.Read(b); err != nil {

@@ -9,8 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// TestGrokProbeResultDoesNotExposeSharedValues checks that shared probe results give each caller independent
-// quota, headers, and usage.
+// TestGrokProbeResultDoesNotExposeSharedValues returns one shared probe result
+// and mutates the delivered token limit, retry value, header map, and local
+// token total. It asserts those four original values remain unchanged.
 func TestGrokProbeResultDoesNotExposeSharedValues(t *testing.T) {
 	limit, retry := int64(20), 9
 	source := &GrokQuotaProbeResult{Snapshot: &usageview.QuotaSnapshot{

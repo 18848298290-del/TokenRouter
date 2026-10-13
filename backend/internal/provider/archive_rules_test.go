@@ -8,7 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// TestArchiveIdentityHintsDoNotReplaceExplicitValues protects the platform, type, and nonempty credentials during hint filling.
+// TestArchiveIdentityHintsDoNotReplaceExplicitValues checks OpenAI OAuth token
+// selection and explicit import identities. Existing email survives hint
+// filling, empty or non-string keys are filled, and API Key or nil entries have
+// no selected ID token.
 func TestArchiveIdentityHintsDoNotReplaceExplicitValues(t *testing.T) {
 	item := transfer.DataProvider{Platform: " OpenAI ", Type: " OAUTH ", Credentials: map[string]any{"id_token": " fixture-token ", "email": "admin@example.test", "plan_type": nil}}
 	require.Equal(t, " fixture-token ", ArchiveIDToken(&item))

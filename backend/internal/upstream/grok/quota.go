@@ -9,18 +9,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// GrokFreeRolling24hTokenLimit is the nominal Free rolling-day quota used by the soft gate.
-// Upstream headers can still report the older one-million or two-million limits.
+// Quota evidence can arrive as request limits, token limits, retry timing, or
+// tier and entitlement headers independently. Passive parsing omits responses
+// with none of those signals, while active observations retain status and
+// probe time even when headers are absent. The raw header map contains a
+// fixed allowlist of nonblank values.
+//
+// Window resets use one Unix-second representation after interpreting numeric
+// magnitude, duration text, or RFC3339 timestamps. Relative values are
+// anchored at parsing time, and positive subsecond durations are raised to
+// one second before that conversion. Retry-After keeps numeric delays as
+// supplied but converts HTTP dates to a nonnegative countdown. Observation
+// timestamps mark header presence separately from a recorded probe attempt.
+
+// GrokFreeRolling24hTokenLimit defines the nominal Free rolling-day amount for
+// local soft gating; the classifier also accepts its configured alternate limits.
 const GrokFreeRolling24hTokenLimit int64 = 500_000
 
+// These values select accepted Free quota variants and response headers retained
+// as evidence; unlisted headers never enter the snapshot's raw header map.
 var (
 	grokFreeRolling24hTokenLimits = map[int64]struct{}{
 		GrokFreeRolling24hTokenLimit: {},
 
+		// One-million and two-million values are accepted Free token limits.
+		// Both variants are exercised by TestIsGrokFreeRolling24hTokenLimit.
 		1_000_000: {},
-		// Observed Free quota variant.
 		2_000_000: {},
-		// Legacy Free quota observed before July 2026.
 	}
 
 	quotaHeaderAllowlist = []string{
@@ -54,24 +69,48 @@ var (
 	}
 )
 
-// QuotaWindow shares the provider display value; this package parses vendor headers.
+// QuotaWindow aliases the shared display representation of one parsed quota
+// dimension.
 type QuotaWindow = usageview.QuotaWindow
 
+// QuotaSnapshot aliases the shared provider display value for Grok quota
+// evidence.
 type QuotaSnapshot = usageview.QuotaSnapshot
 
+// IsGrokFreeRolling24hTokenLimit reports whether a limit matches a configured
+// Free rolling-day variant.
 func IsGrokFreeRolling24hTokenLimit(limit int64) bool {
 	_, ok := grokFreeRolling24hTokenLimits[limit]
 	return ok
 }
 
+// ParseQuotaHeaders constructs quota evidence from recognized response
+// headers. Nil or headerless input returns nil, even for status 429; use
+// ObserveQuotaHeaders or ParseQuotaObservation when a status-only observation
+// needs to be retained.
 func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
 	return parseQuotaHeaders(headers, statusCode, "", false)
 }
 
+// ObserveQuotaHeaders constructs an observation even when recognized headers
+// are absent. A trimmed active_probe source stamps LastProbeAt; header
+// evidence separately stamps LastHeadersSeenAt, allowing consumers to
+// distinguish a probe attempt from usable quota data.
 func ObserveQuotaHeaders(headers http.Header, statusCode int, source string) *QuotaSnapshot {
 	return parseQuotaHeaders(headers, statusCode, source, true)
 }
 
+// parseQuotaHeaders builds request/token windows and metadata from
+// allowlisted response values. keepEmpty retains a status-only snapshot;
+// otherwise absent evidence returns nil. Tier and entitlement use ordered
+// header aliases, with the first nonblank value selected before the raw
+// values are copied.
+//
+// A present window, parsed retry delay, tier, entitlement, or allowlisted raw
+// header marks headers observed. Raw nonblank but unparsable values therefore
+// still record header presence. UpdatedAt is the current UTC time,
+// LastProbeAt depends on the active_probe source, and LastHeadersSeenAt is
+// set only when this evidence check succeeds.
 func parseQuotaHeaders(headers http.Header, statusCode int, source string, keepEmpty bool) *QuotaSnapshot {
 	if headers == nil && !keepEmpty {
 		return nil
@@ -137,6 +176,16 @@ func parseQuotaHeaders(headers http.Header, statusCode int, source string, keepE
 	return snapshot
 }
 
+// parseQuotaWindow parses request or token fields through preferred
+// x-ratelimit names before x-rate-limit aliases. The first nonblank value
+// wins for each field, even when it fails parsing; a later alias cannot
+// replace that selection.
+//
+// Limit, remaining, and reset values stay independently optional, and the
+// window is omitted only when all three parsed values are absent. A parsed
+// reset receives Unix seconds and UTC RFC3339 text. parseQuotaHeaders can
+// still retain unparsable source text in its raw header map when this helper
+// returns no window.
 func parseQuotaWindow(headers http.Header, dimension string) *QuotaWindow {
 	limitHeader := firstHeader(headers,
 		"x-ratelimit-limit-"+dimension,
@@ -164,25 +213,38 @@ func parseQuotaWindow(headers http.Header, dimension string) *QuotaWindow {
 	return window
 }
 
+// parseResetHeader converts reset text to Unix seconds, returning nil when no
+// accepted representation parses. Numeric values at least one trillion are
+// millisecond epochs, values at least one billion are second epochs, and
+// smaller values are relative seconds, including zero or negatives.
+//
+// Nonnumeric positive Go durations are added to the current time after
+// raising durations below one second to one second. RFC3339 text supplies an
+// absolute timestamp. Relative conversions read the wall clock here, so
+// callers cannot inject their observation time through this parser.
 func parseResetHeader(raw string) *int64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
+	// Interpret numeric, duration, and date forms in order. A parsed form
+	// establishes a reset epoch; invalid text leaves other quota evidence usable without a reset.
 	if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		// Compatible upstreams report milliseconds, Unix seconds, or relative seconds.
-		// Use magnitude to keep a relative value such as 60 from becoming a 1970 timestamp.
+		// Numeric magnitude distinguishes absolute timestamps from relative delays.
+		// Treating a value such as 60 as an epoch would give consumers an expired reset.
 		switch {
-		case value >= 1_000_000_000_000: // milliseconds epoch → seconds
+		case value >= 1_000_000_000_000: // millisecond epoch threshold
 			value /= 1000
-		case value >= 1_000_000_000: // already a plausible unix-seconds epoch (>= 2001-09)
-			// Keep an absolute Unix timestamp in seconds.
-		default: // relative seconds from now
+		case value >= 1_000_000_000: // Unix-second epoch threshold
+			// Absolute second timestamps keep their supplied epoch value.
+		default: // seconds relative to parsing time
 			value = time.Now().Unix() + value
 		}
 		return &value
 	}
 	if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+		// Raising subsecond resets to one second prevents Unix-second conversion from
+		// collapsing their wait into the current second solely because of truncation.
 		if duration < time.Second {
 			duration = time.Second
 		}
@@ -196,26 +258,39 @@ func parseResetHeader(raw string) *int64 {
 	return nil
 }
 
+// parseRetryAfter returns a numeric delay unchanged, including negative
+// values, or a nonnegative integer countdown from an HTTP date. Invalid text
+// returns nil; date countdowns truncate fractional seconds before clamping
+// past dates to zero.
 func parseRetryAfter(raw string) *int {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
+	// Delay seconds retain their supplied sign before date interpretation. Invalid
+	// timing text leaves other snapshot evidence available instead of creating a retry interval.
 	if value, err := strconv.Atoi(raw); err == nil {
 		return &value
 	}
 	if t, err := http.ParseTime(raw); err == nil {
+		// HTTP dates become remaining whole seconds for consumers; elapsed reset dates
+		// use zero so this representation cannot add a negative waiting interval.
 		seconds := max(int(time.Until(t).Seconds()), 0)
 		return &seconds
 	}
 	return nil
 }
 
+// parseInt64Ptr parses trimmed decimal text into an optional signed integer.
+// Blank or invalid values return nil, while zero and negative values remain
+// present for quota consumers to interpret.
 func parseInt64Ptr(raw string) *int64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
+	// Malformed numeric headers leave this parsed dimension unset while snapshots
+	// can still retain raw header evidence and other successfully parsed quota values.
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return nil
@@ -223,6 +298,9 @@ func parseInt64Ptr(raw string) *int64 {
 	return &value
 }
 
+// firstHeader returns the first nonblank trimmed value among the supplied
+// header names. An invalid nonblank value still wins; callers parse it
+// afterward rather than trying a later alias on parse failure.
 func firstHeader(headers http.Header, names ...string) string {
 	for _, name := range names {
 		if value := strings.TrimSpace(headers.Get(name)); value != "" {
@@ -232,9 +310,14 @@ func firstHeader(headers http.Header, names ...string) string {
 	return ""
 }
 
-// ParseQuotaObservation parses quota headers or records a headerless 429 observation.
+// ParseQuotaObservation returns parsed headers or a status-only snapshot for
+// a headerless 429. The supplied now stamps that special snapshot only;
+// recognized-header parsing uses its own wall clock, and other headerless
+// statuses return nil.
 func ParseQuotaObservation(headers http.Header, status int, now time.Time) *QuotaSnapshot {
 	snapshot := ParseQuotaHeaders(headers, status)
+	// A headerless 429 still records exhaustion status at the caller's observation
+	// time, allowing health consumers to process throttling when window headers are absent.
 	if snapshot == nil && status == http.StatusTooManyRequests {
 		return &QuotaSnapshot{StatusCode: status, UpdatedAt: now.UTC().Format(time.RFC3339)}
 	}

@@ -1,16 +1,15 @@
-// Package routing manages group policies, model catalogs, and pricing configurations and builds request route
-// plans.
+// Package routing keeps group model permissions and client admission separate
+// from provider execution and shared price configuration. It resolves saved
+// candidates into request routes and public model views, while administration
+// persists group settings, memberships, and reusable billing rules through
+// injected storage.
 //
-// Entry points:
-//   - plan.go builds routes from the request group and protocol and resolves provider candidates.
-//   - group_admin.go creates, updates, and deletes groups and queries available models.
-//   - requestable.go resolves models from provider configuration, group mappings, and allowlists.
-//
-// File groups:
-//   - group*.go and client_group.go handle group settings, administration, capacity, and availability probes.
-//   - plan.go and reasoning.go handle model mapping, candidate protocols, and reasoning effort.
-//   - model*.go and requestable*.go handle attributes, availability diagnostics, and requestable catalogs.
-//   - pricing*.go handle price catalogs, configuration storage and caching, and time-based pricing.
-//   - marketplace.go and availability_window.go provide public models, quotes, and availability windows.
-//   - admin*.go and runtime_settings.go provide administrative catalogs and runtime routing settings.
+// Start with plan.go for request routing, group_admin.go for group mutations,
+// and requestable.go for finite configured model catalogs. group*.go and
+// client_group.go cover policy, capacity, and probe lifetimes; model*.go and
+// requestable*.go cover attributes and eligibility. pricing*.go cover shared
+// settings, card lookup, and cache publication. marketplace.go and
+// availability_window.go assemble public quotes and probe windows, and
+// admin*.go plus runtime_settings.go handle administrative catalogs and stored
+// routing settings.
 package routing

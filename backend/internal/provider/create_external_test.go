@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestCreateProviderDiscardsDeprecatedBillingProbeExtra creates an API Key
+// provider containing obsolete billing-probe values. Creation removes both
+// retired keys while retaining the unrelated custom configuration supplied in
+// the same Extra object.
 func TestCreateProviderDiscardsDeprecatedBillingProbeExtra(t *testing.T) {
 	repo := &providerServiceTestRepo{}
 	created, err := newProviderEditorForTest(repo).CreateProvider(context.Background(), &provider.CreateProviderInput{

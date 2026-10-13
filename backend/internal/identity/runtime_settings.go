@@ -359,8 +359,9 @@ func (s *RuntimeSettings) GetTencentCaptchaConfig(ctx context.Context) TencentCa
 
 // GenerateAdminAPIKey creates and persists a random administrator credential.
 // Thirty-two random bytes become lowercase hex after AdminAPIKeyPrefix; the raw
-// key is returned only when the setting write succeeds, and generation or
-// persistence failures are returned to the administrator.
+// key is returned only when the setting write succeeds, and persistence errors
+// are returned to the administrator. An io.ReadFull error in crypto/rand.Read
+// terminates the process before the setting write.
 func (s *RuntimeSettings) GenerateAdminAPIKey(ctx context.Context) (string, error) {
 	// Thirty-two random bytes produce sixty-four hexadecimal credential
 	// characters.

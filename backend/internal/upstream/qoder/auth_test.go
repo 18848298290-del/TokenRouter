@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+// Center fixtures inspect the encoded envelope and supplied request context
+// independently of live credentials. PAT and refresh cases assert token
+// extraction, required security-token handling, and propagation of cancellation
+// to the injected transport, keeping authentication failures visible to the
+// provider owner.
+
+// TestExchangePATPostsSignedCenterRequest decodes a PAT request captured by a
+// local Center fixture. It checks signature presence, personalToken,
+// needRefresh=false, and the security token returned in the identity.
 func TestExchangePATPostsSignedCenterRequest(t *testing.T) {
 	var capturedHeader http.Header
 	var capturedBody map[string]any
@@ -23,6 +32,9 @@ func TestExchangePATPostsSignedCenterRequest(t *testing.T) {
 		if err := json.Unmarshal([]byte(decoded), &capturedBody); err != nil {
 			t.Fatalf("parse body: %v", err)
 		}
+		// Send the fixture response after request assertions. A response-writer
+		// error is left to the client operation, whose response or error is checked
+		// by this test.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":                 "user-1",
 			"name":               "User",
@@ -60,7 +72,12 @@ func TestExchangePATPostsSignedCenterRequest(t *testing.T) {
 	}
 }
 
+// TestExchangePATContextUsesProvidedDoerAndContext supplies a transport probe
+// and a context value to PAT exchange. It checks the selected endpoint, context
+// marker, probe invocation, and returned security token.
 func TestExchangePATContextUsesProvidedDoerAndContext(t *testing.T) {
+	// contextKey identifies the fixture value used to inspect request-context
+	// propagation.
 	type contextKey string
 	ctx := context.WithValue(context.Background(), contextKey("marker"), "ctx-value")
 	called := false
@@ -102,6 +119,9 @@ func TestExchangePATContextUsesProvidedDoerAndContext(t *testing.T) {
 	}
 }
 
+// TestRefreshSessionPostsRefreshPayload captures a refresh request and returns a
+// replacement token pair. It checks both old request tokens, needRefresh=true,
+// and the new identity tokens.
 func TestRefreshSessionPostsRefreshPayload(t *testing.T) {
 	var capturedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +132,9 @@ func TestRefreshSessionPostsRefreshPayload(t *testing.T) {
 		if err := json.Unmarshal([]byte(decoded), &capturedBody); err != nil {
 			t.Fatalf("parse body: %v", err)
 		}
+		// Send the fixture response after request assertions. A response-writer
+		// error is left to the client operation, whose response or error is checked
+		// by this test.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":                 "user-2",
 			"name":               "User 2",
@@ -152,6 +175,9 @@ func TestRefreshSessionPostsRefreshPayload(t *testing.T) {
 	}
 }
 
+// TestRefreshSessionContextRejectsEmptySecurityOauthToken supplies a successful
+// response with an empty security token. It requires the missing-token error
+// rather than accepting the response as an inference identity.
 func TestRefreshSessionContextRejectsEmptySecurityOauthToken(t *testing.T) {
 	_, err := RefreshSessionContext(context.Background(), "old-refresh", "old-token", &MachineIdentity{
 		MachineID:    "machine-1",
@@ -180,6 +206,9 @@ func TestRefreshSessionContextRejectsEmptySecurityOauthToken(t *testing.T) {
 	}
 }
 
+// TestRefreshSessionContextRejectsEmptyInputSecurityOauthToken supplies
+// whitespace as the existing security token before refresh. It checks the
+// required-token error and confirms the transport probe remains uncalled.
 func TestRefreshSessionContextRejectsEmptyInputSecurityOauthToken(t *testing.T) {
 	called := false
 	_, err := RefreshSessionContext(context.Background(), "old-refresh", "  ", &MachineIdentity{
@@ -202,6 +231,9 @@ func TestRefreshSessionContextRejectsEmptyInputSecurityOauthToken(t *testing.T) 
 	}
 }
 
+// TestRefreshSessionContextPropagatesCanceledContextToDoer starts with an
+// already cancelled request context. The probe observes that cancellation and
+// the wrapped refresh error remains identifiable as context.Canceled.
 func TestRefreshSessionContextPropagatesCanceledContextToDoer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

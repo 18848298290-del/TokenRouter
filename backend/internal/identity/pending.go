@@ -219,14 +219,24 @@ type PendingStore interface {
 	// already consumed or expired row.
 	IssueCompletionCode(ctx context.Context, input IssuePendingAuthCompletionCodeInput) (*IssuePendingAuthCompletionCodeResult, error)
 	// ConsumeCompletionCode looks up a trimmed code digest and conditionally
-	// consumes its pending session. PostgreSQL rechecks consumption, lifetime
-	// and browser state in the write; the earlier hash lookup is separate and is
-	// not rechecked against concurrent reissuance.
+	// consumes its pending session. PostgreSQL rechecks consumption, lifetime,
+	// and browser state in the write.
+	//
+	// The earlier hash lookup remains separate and is not rechecked against
+	// concurrent reissuance. A code found before replacement can therefore
+	// consume the session when its remaining checks still pass. Success
+	// sanitizes local completion data and clears the saved credentials; callers
+	// handle code lifecycle and storage errors.
 	ConsumeCompletionCode(ctx context.Context, rawCode, browserSessionKey string) (*PendingAuthSession, error)
 	// ConsumeBrowserSession loads the trimmed session token and conditionally
-	// marks that session consumed. The PostgreSQL write rechecks current
-	// lifetime and browser state, sanitizes local completion fields and clears
-	// completion credentials; failures remain errors for the caller.
+	// marks that session consumed. PostgreSQL rechecks lifetime, consumption,
+	// and browser state; success sanitizes local completion data and clears
+	// completion credentials.
+	//
+	// The read and write use separate observations, so intervening consumption
+	// or expiry can reject a previously valid snapshot. Callers handle session
+	// lifecycle and storage errors, and a successful earlier read does not
+	// reserve this consumption.
 	ConsumeBrowserSession(ctx context.Context, sessionToken, browserSessionKey string) (*PendingAuthSession, error)
 	// GetBrowserSession loads and validates a browser-bound pending snapshot
 	// without consuming it. Missing, consumed, expired or mismatched states
@@ -234,10 +244,16 @@ type PendingStore interface {
 	// issuance or consumption.
 	GetBrowserSession(ctx context.Context, sessionToken, browserSessionKey string) (*PendingAuthSession, error)
 	// UpsertAdoptionDecision saves one pending session's profile choices and
-	// optional identity association. The PostgreSQL adapter coordinates
-	// competing identity links, replaces supplied values and timestamps the
-	// decision; callers still handle persistence errors and adapter-owned
-	// transaction completion.
+	// optional identity association. PostgreSQL serializes the pending and
+	// identity keys while clearing competing identity links before the current
+	// decision is inserted or updated.
+	//
+	// An adapter-owned transaction commits those changes together after
+	// decision readback. When the retained client is already transactional, an
+	// existing context transaction takes precedence and its owner retains
+	// completion. Advisory locks follow the selected transaction lifetime.
+	// Persistence and transaction completion failures remain errors for the
+	// caller.
 	UpsertAdoptionDecision(ctx context.Context, input PendingIdentityAdoptionDecisionInput) (*IdentityAdoptionDecision, error)
 }
 
@@ -330,10 +346,10 @@ func CopyPendingMap(in map[string]any) map[string]any {
 	return out
 }
 
-// RandomOpaqueToken returns hexadecimal text generated from random bytes.
-// Nonpositive byteLen selects sixteen bytes; each byte contributes two
-// characters, and random-read errors remain errors before any token text is
-// returned.
+// RandomOpaqueToken returns hexadecimal text generated from random bytes with
+// nil error. Nonpositive byteLen selects sixteen bytes, and each byte
+// contributes two characters. crypto/rand.Read terminates the process when its
+// io.ReadFull operation reports an error.
 func RandomOpaqueToken(byteLen int) (string, error) {
 	if byteLen <= 0 {
 		byteLen = 16

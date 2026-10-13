@@ -16,37 +16,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Shadow creation writes a provider before binding its groups, so validation
-// and failed-binding cleanup determine whether a retry can succeed. External
-// tests use controlled repositories to exercise parent requirements, group
-// inheritance, scheduling defaults, compensation, and conflicts that arise
-// after the initial duplicate check.
+// Shadow creation writes a provider before binding its groups, so rejected
+// bindings can leave the parent's shadow slot occupied until cleanup succeeds.
+// These external tests use controlled repositories to check validation before
+// creation, cleanup after binding failure, and conflicts after the initial
+// duplicate check. They also assert group inheritance, name, concurrency and
+// priority defaults, and one parent link for credential resolution.
 
-// sparkShadowGroupRepoStub supplies active groups for shadow group-selection
-// tests.
-// Unexpected methods on the embedded nil repository panic.
+// sparkShadowGroupRepoStub supplies configured active groups to shadow
+// creation tests.
 type sparkShadowGroupRepoStub struct {
-	routing.GroupRepository                 // unused repository methods panic
-	groups                  []routing.Group // configured active group fixtures
+	// GroupRepository supplies methods not overridden here. These tests leave it
+	// nil, so calling an inherited repository method panics.
+	routing.GroupRepository // unused repository methods panic
+	// groups supplies active fixtures for each test. ListActive shares this
+	// slice's backing array, so editing a returned element changes the fixture.
+	groups []routing.Group // configured active group fixtures
 }
 
 // bindFailRepoStub fails group binding to check compensating deletion of the
 // new shadow.
 type bindFailRepoStub struct {
+	// sparkShadowRepoStub is the base store queried after the failed request.
+	// Embedded Create and Delete operate on that same store, exposing cleanup.
 	*sparkShadowRepoStub // shared in-memory shadow repository
 }
 
 // raceCreateRepoStub simulates a competing shadow creation that wins the unique
-// index.
-// The subsequent reread finds that shadow, allowing CreateShadow to return a
-// structured 409.
+// index. The subsequent reread finds that shadow, allowing CreateShadow to
+// return a structured 409.
 type raceCreateRepoStub struct {
+	// sparkShadowRepoStub remains shared with the test's base store. The wrapper
+	// overrides creation while other operations continue using that same store.
 	*sparkShadowRepoStub // competing-create shadow repository state
 }
 
-// ListActive returns the fixture's configured group slice directly and
-// succeeds. The result shares its backing array with the fixture, so test
-// callers treat those returned group values as read-only.
+// ListActive returns the fixture's configured active groups and reports no
+// error. Nil or empty selections pass through, and callers treat returned
+// elements as read-only fixture data.
 func (s *sparkShadowGroupRepoStub) ListActive(_ context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
@@ -128,7 +135,7 @@ func TestCreateShadow_InvalidGroupRejectedNoOrphan(t *testing.T) {
 
 // TestCreateShadow_BindFailureRollsBackShadow accepts the selected group but
 // injects a binding failure after creation. The request fails and compensating
-// deletion removes the shadow, leaving the one-shadow slot available.
+// deletion leaves the fixture's parent-shadow list empty after the failure.
 func TestCreateShadow_BindFailureRollsBackShadow(t *testing.T) {
 	ctx := context.Background()
 	base := newSparkShadowRepoStub()

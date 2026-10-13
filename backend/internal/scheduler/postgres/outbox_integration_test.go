@@ -12,9 +12,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
+// A pending idempotent event blocks another insert with the same
+// deduplication key until a poll releases that key. PostgreSQL-backed
+// scenarios exercise that release and compare payload-sensitive coalescing
+// with last-used events that retain each observation.
+
+// TestEnqueueSchedulerOutbox_DeduplicatesIdempotentEvents inserts the same
+// provider change twice before polling. It checks one pending row, then a
+// second insertion after selection releases the first row's key.
 func TestEnqueueSchedulerOutbox_DeduplicatesIdempotentEvents(t *testing.T) {
 	integrationDB := postgrescontainer.New(t)
 	ctx := context.Background()
+	// Reset this isolated fixture's rows and ID sequence before counting
+	// inserts; the later assertions expose any unexpected rows even though reset
+	// errors are discarded.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE scheduler_outbox RESTART IDENTITY")
 
 	providerID := int64(12345)
@@ -37,9 +48,15 @@ func TestEnqueueSchedulerOutbox_DeduplicatesIdempotentEvents(t *testing.T) {
 	require.Equal(t, 2, count)
 }
 
+// TestSchedulerOutbox_ListAfterAndReleaseDedup_AllowsSameKeyWhileEventInFlight
+// selects an event before inserting the same change again. It checks two
+// persisted rows with exactly one remaining pending deduplication key.
 func TestSchedulerOutbox_ListAfterAndReleaseDedup_AllowsSameKeyWhileEventInFlight(t *testing.T) {
 	integrationDB := postgrescontainer.New(t)
 	ctx := context.Background()
+	// Reset this isolated fixture's rows and ID sequence before counting
+	// inserts; the later assertions expose any unexpected rows even though reset
+	// errors are discarded.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE scheduler_outbox RESTART IDENTITY")
 
 	providerID := int64(17345)
@@ -60,9 +77,15 @@ func TestSchedulerOutbox_ListAfterAndReleaseDedup_AllowsSameKeyWhileEventInFligh
 	require.Equal(t, 1, pendingKeys)
 }
 
+// TestEnqueueSchedulerOutbox_CoalescesProviderStateBurst inserts fifty
+// identical provider-change events before polling. It checks that their
+// shared pending deduplication key leaves one row in PostgreSQL.
 func TestEnqueueSchedulerOutbox_CoalescesProviderStateBurst(t *testing.T) {
 	integrationDB := postgrescontainer.New(t)
 	ctx := context.Background()
+	// Reset this isolated fixture's rows and ID sequence before counting
+	// inserts; the later assertions expose any unexpected rows even though reset
+	// errors are discarded.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE scheduler_outbox RESTART IDENTITY")
 
 	providerID := int64(22345)
@@ -76,9 +99,15 @@ func TestEnqueueSchedulerOutbox_CoalescesProviderStateBurst(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
+// TestEnqueueSchedulerOutbox_DoesNotDeduplicateDifferentPayload uses the same
+// provider with two group payloads. It checks that different encoded group
+// identities produce two persisted change events.
 func TestEnqueueSchedulerOutbox_DoesNotDeduplicateDifferentPayload(t *testing.T) {
 	integrationDB := postgrescontainer.New(t)
 	ctx := context.Background()
+	// Reset this isolated fixture's rows and ID sequence before counting
+	// inserts; the later assertions expose any unexpected rows even though reset
+	// errors are discarded.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE scheduler_outbox RESTART IDENTITY")
 
 	providerID := int64(32345)
@@ -92,9 +121,15 @@ func TestEnqueueSchedulerOutbox_DoesNotDeduplicateDifferentPayload(t *testing.T)
 	require.Equal(t, 2, count)
 }
 
+// TestEnqueueSchedulerOutbox_DoesNotDeduplicateLastUsed inserts two last-used
+// observations for one provider. It checks that both timestamp updates remain
+// rows because this event type bypasses pending deduplication.
 func TestEnqueueSchedulerOutbox_DoesNotDeduplicateLastUsed(t *testing.T) {
 	integrationDB := postgrescontainer.New(t)
 	ctx := context.Background()
+	// Reset this isolated fixture's rows and ID sequence before counting
+	// inserts; the later assertions expose any unexpected rows even though reset
+	// errors are discarded.
 	_, _ = integrationDB.ExecContext(ctx, "TRUNCATE scheduler_outbox RESTART IDENTITY")
 
 	providerID := int64(67890)

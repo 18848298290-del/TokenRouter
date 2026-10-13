@@ -22,10 +22,10 @@ import (
 //
 // The spending hash stores amounts and Unix-second starts for three windows.
 // Lua resets missing/expired starts to the supplied current second and cost;
-// PostgreSQL instead retains usage at a missing start and aligns
-// daily/seven-day starts to connection midnight. These cache updates are
-// calculated and written in one Lua execution, while initial hash writes
-// pipeline the value and expiry commands separately.
+// postgres.KeyUsageStore.IncrementRateLimitUsage instead adds cost to prior
+// usage at a missing start and aligns daily/seven-day starts to database-session
+// midnight. These cache updates are calculated and written in one Lua execution,
+// while initial hash writes pipeline the value and expiry commands separately.
 
 const (
 	// Billing key prefixes separate user balance strings from API Key spending
@@ -78,9 +78,9 @@ var (
 	// and cost; active windows add cost, and the hash expiry is refreshed.
 	//
 	// Its six arguments are cost, TTL seconds, now Unix seconds, then the three
-	// window durations in seconds. Missing hashes stay absent. These starts
-	// differ from PostgreSQL daily/seven-day midnight alignment and missing-start
-	// usage retention.
+	// window durations in seconds. Missing hashes stay absent. Compared with
+	// postgres.KeyUsageStore.IncrementRateLimitUsage, Lua resets usage at missing
+	// starts and uses current seconds for daily/seven-day anchors.
 	updateRateLimitUsageScript = redis.NewScript(`
 		local exists = redis.call('EXISTS', KEYS[1])
 		if exists == 0 then
@@ -204,10 +204,11 @@ func (c *Cache) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	return c.rdb.Del(ctx, key).Err()
 }
 
-// GetAPIKeyRateLimit reads amounts and Unix-second window starts from the key
-// hash. An empty hash yields redis.Nil; missing fields retain zero, and
-// parsing errors are discarded while their companion numeric values are
-// stored. Callers validate trusted snapshot values before using them.
+// GetAPIKeyRateLimit reads USD usage and Unix-second window starts from the
+// key hash. An empty hash yields redis.Nil; missing fields retain zero, and
+// parsed values are kept even when decoding reports an error. Eligibility
+// converts positive starts to times and evaluates window expiry and usage
+// ceilings; that path adds no check that usage is finite or nonnegative.
 func (c *Cache) GetAPIKeyRateLimit(ctx context.Context, keyID int64) (*billing.APIKeyRateLimitCacheData, error) {
 	key := billingRateLimitKey(keyID)
 	result, err := c.rdb.HGetAll(ctx, key).Result()
@@ -218,9 +219,9 @@ func (c *Cache) GetAPIKeyRateLimit(ctx context.Context, keyID int64) (*billing.A
 		return nil, redis.Nil
 	}
 	data := &billing.APIKeyRateLimitCacheData{}
-	// Retain decoder companion values while discarding field errors; absent
-	// fields keep zero, allowing the caller to receive the complete partial
-	// snapshot.
+	// Syntax errors supply zero. Range errors retain signed integer limits or
+	// float infinities, and accepted NaN/Inf usage text also reaches eligibility
+	// unchanged.
 	if v, ok := result[rateLimitFieldUsage5h]; ok {
 		data.Usage5h, _ = strconv.ParseFloat(v, 64)
 	}

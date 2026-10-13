@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestDuplicateProviderNamePreservesSuffixWithinSchemaLimit copies a label
+// containing one hundred multibyte characters. The helper's result contains one
+// hundred runes and retains the complete copy suffix without splitting source
+// characters.
 func TestDuplicateProviderNamePreservesSuffixWithinSchemaLimit(t *testing.T) {
 	name := duplicateProviderName(strings.Repeat("界", 100))
 

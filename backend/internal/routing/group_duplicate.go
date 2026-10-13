@@ -13,11 +13,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// A duplication operation has two identities: its actor-scoped recovery digest
+// and its generated administrative display name. Repeated keyed requests can
+// recover a committed copy, while name collisions alone advance the numbered
+// copy suffix.
+//
+// The configuration copy begins inactive and omits persistent identity and
+// derived counts, then the duplicate repository writes its source memberships
+// and scheduling event in one transaction. Reloading returns saved management
+// data after that write. Collection cloning separates editable routing and
+// protocol collections according to their supported shapes. The probe retry
+// pointer remains shared by the value copy, and localized content is not
+// assigned by the clone constructor. Name truncation reserves suffix space and
+// counts Unicode runes.
+
+// Duplication reserves bounded administrative names and an inactive saved state
+// so copied groups require activation before serving ordinary routing requests.
 const (
 	MaxGroupNameRunes            = 100
 	DuplicateGroupInactiveStatus = "inactive"
 )
 
+// DuplicateGroupOperationID builds a stable lookup identity from the source,
+// actor scope, and operation key. A blank trimmed key disables recovery, and a
+// blank actor scope becomes admin:0.
+//
+// The fixed duplicate-operation tag, trimmed actor scope, decimal source ID,
+// and trimmed key are joined with NUL separators before SHA-256 hashing.
+// Callers use a stable authenticated-actor scope so repeated keys recover
+// within that administrator and source group. The digest is an identity lookup
+// value rather than a generated group name.
 func DuplicateGroupOperationID(sourceID int64, actorScope, operationKey string) string {
 	operationKey = strings.TrimSpace(operationKey)
 	if operationKey == "" {
@@ -32,6 +57,15 @@ func DuplicateGroupOperationID(sourceID int64, actorScope, operationKey string) 
 	return fmt.Sprintf("%x", digest)
 }
 
+// DuplicateGroupName creates a numbered copy name within MaxGroupNameRunes.
+// Nonpositive copy numbers become one, and the source name is trimmed before
+// adding the English copy suffix.
+//
+// Suffix space is reserved before truncating the base so the requested copy
+// number survives the length limit. Truncation uses runes, keeping multibyte
+// characters intact even when the administrative name is long. A blank source
+// still yields the suffix, and callers check saved-name uniqueness through the
+// duplicate repository.
 func DuplicateGroupName(sourceName string, copyNumber int) string {
 	if copyNumber < 1 {
 		copyNumber = 1
@@ -43,11 +77,17 @@ func DuplicateGroupName(sourceName string, copyNumber int) string {
 	baseRunes := []rune(strings.TrimSpace(sourceName))
 	maxBaseRunes := max(MaxGroupNameRunes-len([]rune(suffix)), 0)
 	if len(baseRunes) > maxBaseRunes {
+		// Reserve the whole numbered suffix and truncate only the rune slice, keeping
+		// a multibyte source name valid within the shared administrative length
+		// ceiling.
 		baseRunes = baseRunes[:maxBaseRunes]
 	}
 	return string(baseRunes) + suffix
 }
 
+// CloneGroupValuePointer allocates pointer storage for a shallow copy of one
+// value and returns nil for nil input. Mutable members inside T remain shared;
+// duplication uses this helper for scalar fallback IDs.
 func CloneGroupValuePointer[T any](value *T) *T {
 	if value == nil {
 		return nil
@@ -56,6 +96,9 @@ func CloneGroupValuePointer[T any](value *T) *T {
 	return &cloned
 }
 
+// CloneGroupModelRouting copies the preference map and each provider-ID slice
+// for a duplicate group. Nil input returns nil, and empty slices can become nil
+// because append copies their elements into a nil destination.
 func CloneGroupModelRouting(value map[string][]int64) map[string][]int64 {
 	if value == nil {
 		return nil
@@ -67,6 +110,19 @@ func CloneGroupModelRouting(value map[string][]int64) map[string][]int64 {
 	return cloned
 }
 
+// CloneGroupForDuplicate builds an inactive configuration copy carrying the
+// supplied operation identity. Supply a non-nil source; persistent identity,
+// timestamps, hydration, and provider counts start unset, and Localization
+// starts with its zero value.
+//
+// Routing rules, protocol collections, preference lists, scheduler overrides,
+// fallback pointers, and effort mappings receive copied storage.
+// RoutingPolicy.Clone copies its supported feature-map and slice shapes; other
+// dynamic feature values retain their supplied references.
+// AvailabilityProbeConfig is assigned by value, so its MaxRetries pointer stays
+// shared until a caller copies it before editing. Display order is retained
+// from the source, and the copy name starts at the first suffix until
+// persistence resolves conflicts.
 func CloneGroupForDuplicate(source *Group, operationID string) *Group {
 	return &Group{
 		Name:        DuplicateGroupName(source.Name, 1),
@@ -106,6 +162,9 @@ func CloneGroupForDuplicate(source *Group, operationID string) *Group {
 			Enabled: source.ModelsListConfig.Enabled,
 			Models:  append([]string(nil), source.ModelsListConfig.Models...),
 		},
+		// Keep the value-copied config's retry count read-only while both groups
+		// reference it. Direct callers of this clone helper copy MaxRetries before
+		// editing either group's count.
 		AvailabilityProbeConfig:     source.AvailabilityProbeConfig,
 		RPMLimit:                    source.RPMLimit,
 		MaxReasoningEffort:          source.MaxReasoningEffort,
@@ -114,12 +173,18 @@ func CloneGroupForDuplicate(source *Group, operationID string) *Group {
 	}
 }
 
-// CloneGroupClientProtocols returns an independent, non-nil protocol slice.
+// CloneGroupClientProtocols returns an independent non-nil slice of client
+// protocol IDs. Nil or empty input produces an empty selection, allowing a
+// duplicate to keep closed admission rather than imply an omitted
+// configuration.
 func CloneGroupClientProtocols(protocols []protocol.ProtocolID) []protocol.ProtocolID {
 	return append([]protocol.ProtocolID{}, protocols...)
 }
 
-// RecoverDuplicateGroup looks up a committed copy by actor, source group, and idempotency key.
+// RecoverDuplicateGroup resolves a saved copy by source ID, actor scope, and
+// operation key. Blank keys or absent saved operations return nil without an
+// error; a matched copy is reloaded through GetByID to include management
+// counts.
 func (s *GroupAdmin) RecoverDuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
 	operationID := DuplicateGroupOperationID(id, actorScope, operationKey)
 	if operationID == "" {
@@ -142,8 +207,15 @@ func (s *GroupAdmin) RecoverDuplicateGroup(ctx context.Context, id int64, actorS
 	return hydrated, nil
 }
 
-// DuplicateGroup creates a disabled configuration copy while retaining provider priorities.
-// The repository commits the group, bindings, and outbox together so a binding failure rolls back the copy.
+// DuplicateGroup returns a recovered operation or creates an inactive group
+// from the current source configuration. A stable actor scope and key let later
+// calls return an existing committed copy before loading the source again.
+//
+// The duplicate repository saves the copy, source memberships, and scheduling
+// outbox together, then GetByID reloads the response. Uniqueness conflicts may
+// identify either a saved operation or a generated name, so recovery is tried
+// before advancing the suffix. Other errors return immediately; name conflicts
+// have no fixed retry limit, and repository calls receive ctx.
 func (s *GroupAdmin) DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
 	existing, err := s.RecoverDuplicateGroup(ctx, id, actorScope, operationKey)
 	if err != nil {
@@ -163,6 +235,9 @@ func (s *GroupAdmin) DuplicateGroup(ctx context.Context, id int64, actorScope, o
 
 	duplicate := CloneGroupForDuplicate(source, DuplicateGroupOperationID(id, actorScope, operationKey))
 	SanitizeGroupReasoningEffortPolicy(duplicate)
+	// Reuse one normalized configuration while resetting persistence-populated
+	// identity and timestamps before each generated-name attempt; a failed write
+	// can have populated those working fields.
 	for copyNumber := 1; ; copyNumber++ {
 		duplicate.Name = DuplicateGroupName(source.Name, copyNumber)
 		duplicate.ID = 0
@@ -178,8 +253,9 @@ func (s *GroupAdmin) DuplicateGroup(ctx context.Context, id int64, actorScope, o
 			return nil, fmt.Errorf("create duplicate group: %w", err)
 		}
 
-		// A uniqueness conflict can be a generated name or an operation ID. Try recovering the operation first;
-		// if it is absent, retry with the next copy name.
+		// Both name and operation-ID uniqueness use ErrGroupExists. Recover a saved
+		// keyed copy first so the next suffix is tried only for an unresolved name
+		// collision.
 		recovered, recoverErr := s.RecoverDuplicateGroup(ctx, id, actorScope, operationKey)
 		if recoverErr != nil {
 			return nil, recoverErr

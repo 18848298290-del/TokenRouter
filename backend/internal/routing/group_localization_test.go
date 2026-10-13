@@ -10,7 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestGroupLocalizationWithoutCopy checks omitted creation copy and later editing of a zero-revision record.
+// A newly created group receives editable source copy from its administrative
+// fields when localization is omitted. The same editing path also accepts a
+// legacy zero-revision record, allowing later source-language and display-name
+// updates to produce resolved localized output.
+
+// TestGroupLocalizationWithoutCopy creates initial copy and edits both saved
+// and zero-revision records. It checks allocated translations, revision-one
+// initialization, and the display name resolved after a source-language edit.
 func TestGroupLocalizationWithoutCopy(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	admin := newGroupAdminForTest(repo, nil, nil)

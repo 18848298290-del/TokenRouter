@@ -10,7 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// decodeAuthStatusRequest decodes and validates the Gateway test request envelope.
+// Gateway identity fixtures inspect the decoded inner JSON and the outer
+// encodeVersion envelope. They distinguish status responses that omit existing
+// request tokens from legacy CN refresh responses that replace them, keeping
+// protocol shape and token-selection assertions separate.
+
+// decodeAuthStatusRequest decodes a captured Gateway body and asserts its
+// expected envelope fields. It requires encodeVersion one, absent requestId, and
+// valid inner parameters before returning both decoded objects to the fixture.
 func decodeAuthStatusRequest(t *testing.T, r *http.Request) (gatewayHTTPPayload, AuthStatusParams) {
 	t.Helper()
 	decoded, err := DecodeString(readAllString(t, r))
@@ -29,7 +36,7 @@ func decodeAuthStatusRequest(t *testing.T, r *http.Request) (gatewayHTTPPayload,
 	return envelope, params
 }
 
-// mapKeys exposes the JSON field set so tests can reject unexpected envelope fields.
+// mapKeys returns raw JSON field names for unordered envelope-shape assertions.
 func mapKeys(values map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -38,6 +45,9 @@ func mapKeys(values map[string]json.RawMessage) []string {
 	return keys
 }
 
+// TestMarshalAuthStatusRequestUsesOfficialEnvelope marshals a status request
+// with user and token fields. The JSON assertion protects the exact outer keys
+// and the serialized empty token, refresh marker, and authInfo fields.
 func TestMarshalAuthStatusRequestUsesOfficialEnvelope(t *testing.T) {
 	body, err := marshalAuthStatusRequest(AuthStatusParams{
 		UserID:             "uid-1",
@@ -51,6 +61,9 @@ func TestMarshalAuthStatusRequestUsesOfficialEnvelope(t *testing.T) {
 	}`, string(body))
 }
 
+// TestIdentityFromAuthStatusFallsBackToRequestToken supplies status identity
+// without returned token fields. It checks that the request access and refresh
+// tokens remain in the assembled authentication identity.
 func TestIdentityFromAuthStatusFallsBackToRequestToken(t *testing.T) {
 	identity, err := identityFromAuthStatus(&AuthStatusResult{
 		ID:       "uid-1",
@@ -65,6 +78,9 @@ func TestIdentityFromAuthStatusFallsBackToRequestToken(t *testing.T) {
 	require.Equal(t, "request-refresh", identity.RefreshToken)
 }
 
+// TestRefreshCosySessionForProfileUsesGatewayRefreshPath captures the CN legacy
+// refresh URL and encoded request. It checks user/organization/token inputs and
+// the replacement token pair and user type from the wrapped response.
 func TestRefreshCosySessionForProfileUsesGatewayRefreshPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/algo"+CosyRefreshTokenPath, r.URL.Path)
@@ -93,6 +109,9 @@ func TestRefreshCosySessionForProfileUsesGatewayRefreshPath(t *testing.T) {
 			UserType:           "enterprise_standard",
 		})
 		require.NoError(t, err)
+		// Send the fixture response after request assertions. A response-writer
+		// error is left to the client operation, whose response or error is checked
+		// by this test.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"statusCodeValue": http.StatusOK,
 			"body":            string(inner),

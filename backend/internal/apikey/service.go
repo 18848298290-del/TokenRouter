@@ -769,9 +769,10 @@ func (s *APIKeyService) KeyCompileAPIKeyIPRules(apiKey *APIKey) {
 }
 
 // GenerateKey returns a cryptographically generated credential using the
-// retained Options prefix. Callers provide nonnil Options; an empty prefix
-// selects sk-, and the shared generator handles whitespace-only prefix input
-// and entropy failure.
+// retained Options prefix. Callers provide nonnil Options; an empty or
+// whitespace-only prefix selects sk-. The shared generator returns complete
+// text with nil error. An io.ReadFull error in crypto/rand.Read terminates the
+// process.
 func (s *APIKeyService) GenerateKey() (string, error) {
 	prefix := s.cfg.Default.APIKeyPrefix
 	if prefix == "" {
@@ -781,9 +782,9 @@ func (s *APIKeyService) GenerateKey() (string, error) {
 }
 
 // GenerateAPIKeyString returns prefix plus hexadecimal encoding of thirty-two
-// random bytes. Empty or whitespace-only prefix selects sk-; other supplied
-// text is retained unchanged, and entropy failure returns an error before any
-// credential is produced.
+// random bytes with nil error. Empty or whitespace-only prefix selects sk-;
+// other supplied text is retained unchanged. crypto/rand.Read terminates the
+// process when its io.ReadFull operation reports an error.
 func GenerateAPIKeyString(prefix string) (string, error) {
 	// Thirty-two random bytes become sixty-four hexadecimal characters, giving
 	// generated secrets a fixed-size payload after their configured prefix.

@@ -12,23 +12,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
+// archiveProvidersFixture records provider selection and creation order for
+// archive tests.
 type archiveProvidersFixture struct {
-	ArchiveProviders
-	values  []*Record
-	events  *[]string
+	ArchiveProviders // unused archive provider methods
+	// values is returned directly for explicit-ID export selection. The pointers
+	// and their mutable containers remain shared with the fixture's caller.
+	values []*Record
+	// events points to the timeline also used by the proxy fixture and injected
+	// callbacks. Each operation appends its phase before returning.
+	events *[]string
+	// created retains shallow copies of submitted CreateProviderInput values.
+	// Their credential maps remain available for assertions after the import's
+	// enrichment step.
 	created []CreateProviderInput
 }
 
+// archiveProxiesFixture records proxy import before the archive's provider
+// writes.
 type archiveProxiesFixture struct {
-	ArchiveProxies
+	ArchiveProxies // unused archive proxy methods
+	// events points to the shared archive timeline. Proxy import appends its phase
+	// before returning the keys used by provider creation.
 	events *[]string
 }
 
+// GetProvidersByIDs records provider selection in the shared event list and
+// returns retained fixture pointers. The fixture performs no ID filtering or
+// copying so export owns the isolation exercised by this test.
 func (f *archiveProvidersFixture) GetProvidersByIDs(context.Context, []int64) ([]*Record, error) {
 	*f.events = append(*f.events, "providers")
 	return f.values, nil
 }
 
+// CreateProvider records every attempted input before applying its named
+// failure scenario. It retains a shallow input copy, rejects the bad label, and
+// otherwise returns a minimal created record.
 func (f *archiveProvidersFixture) CreateProvider(_ context.Context, input *CreateProviderInput) (*Record, error) {
 	*f.events = append(*f.events, "create")
 	f.created = append(f.created, *input)
@@ -38,12 +57,18 @@ func (f *archiveProvidersFixture) CreateProvider(_ context.Context, input *Creat
 	return &Record{ID: 1, Name: input.Name, Platform: input.Platform, Type: input.Type}, nil
 }
 
+// ImportForProviderBinding records the proxy phase and returns the fixed
+// known-key mapping. It reports one created proxy, letting Archive's
+// partial-result test observe proxy work completed before provider entries.
 func (f archiveProxiesFixture) ImportForProviderBinding(context.Context, []egress.TransferProxy) (map[string]int64, egress.ProxyImportResult, error) {
 	*f.events = append(*f.events, "proxies")
 	return map[string]int64{"known": 7}, egress.ProxyImportResult{ProxyCreated: 1}, nil
 }
 
-// TestArchiveExportPreservesOrderAndIndependentSecrets checks deferred include_proxies validation and independent exported credentials.
+// TestArchiveExportPreservesOrderAndIndependentSecrets exports credentials
+// after deferred proxy-option validation. The assertions protect validation
+// order, the injected UTC timestamp, an allocated empty proxy slice, and
+// isolation of the nested model mapping.
 func TestArchiveExportPreservesOrderAndIndependentSecrets(t *testing.T) {
 	events := []string{}
 	mapping := map[string]any{"alias": "upstream"}
@@ -66,7 +91,10 @@ func TestArchiveExportPreservesOrderAndIndependentSecrets(t *testing.T) {
 	require.Equal(t, "upstream", mapping["alias"])
 }
 
-// TestArchiveImportRetainsPartialResults checks partial import success and identity hints applied to copied credentials.
+// TestArchiveImportRetainsPartialResults imports one accepted entry and one
+// rejected entry after proxy handling. Counts retain partial success, decoded
+// identity hints reach creation, and the request's credential map remains
+// unchanged.
 func TestArchiveImportRetainsPartialResults(t *testing.T) {
 	events := []string{}
 	records := &archiveProvidersFixture{events: &events}

@@ -22,48 +22,94 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// marketplaceLoadingProtocols contains the client protocols resolved for alias.
+// Public marketplace assembly keeps model identity, pricing identity, route
+// attributes, and observations separate. The batch fixture returns one alias
+// for two visible groups, exposing which identities reach pricing and
+// attribute callbacks and which groups receive optional capacity and
+// probe-history reads.
+//
+// Pricing scenarios use the shared production resolver with offline catalog
+// data or explicit configuration cards, covering missing prices, free
+// amounts, image inputs, context intervals, and the group's displayed factor.
+// Separate modality checks exercise the legacy pricing-metadata reader, while
+// the route-attribute scenario supplies an OAuth Responses target. Fixture
+// readers record inputs directly, allowing assertions to describe the
+// assembly calls and returned presentation rather than an upstream request's
+// execution.
+
+// marketplaceLoadingProtocols supplies two client protocols for the alias fixture.
+// Its first entry also forms the fixture's returned native-protocol selection.
 var marketplaceLoadingProtocols = []capability.ProtocolID{capability.ProtocolAnthropicMessages, capability.ProtocolOpenAIChatCompletions}
 
-// modelCatalogFixture holds test catalogue prices.
+// modelCatalogFixture supplies offline price records for snapshot-backed
+// catalog construction.
 type modelCatalogFixture struct {
-	pricingData map[string]*billingpricing.CatalogModelPricing
+	// pricingData is passed directly to NewServiceFromSnapshot, which retains
+	// the map and its entries. Tests keep that storage stable while the catalog
+	// reads it.
+	pricingData map[string]*billingpricing.CatalogModelPricing // offline catalog price records
 }
 
-// marketplaceLoadingModels returns empty catalogues for some groups to test attribute and observation filtering.
+// marketplaceLoadingModels returns one alias for the two selected visible
+// fixture groups.
 type marketplaceLoadingModels struct{}
 
-// marketplaceLoadingObservations records groups included in capacity and availability queries.
+// marketplaceLoadingObservations records capacity and history queries for
+// visible-group assertions.
 type marketplaceLoadingObservations struct {
-	capacityCalls      int
-	capacityGroups     []int64
-	availabilityGroups []int64
+	capacityCalls int // recorded capacity batch count
+	// capacityGroups and availabilityGroups retain the caller's ID slices
+	// directly. Tests inspect them after synchronous ListPublic returns and keep
+	// the supplied slices unchanged.
+	capacityGroups     []int64 // borrowed queried capacity group IDs
+	availabilityGroups []int64 // borrowed queried history group IDs
 }
 
-// marketplaceLoadingPrices records quotes and legacy modality queries.
+// marketplaceLoadingPrices records quote requests and legacy modality-reader
+// call counts.
 type marketplaceLoadingPrices struct {
-	requests      []routing.MarketplaceQuoteRequest
-	modalityCalls int
+	requests      []routing.MarketplaceQuoteRequest // recorded market quote inputs
+	modalityCalls int                               // recorded legacy modality query count
 }
 
+// marketplaceQuoteFixture connects market display queries to a calculator and
+// shared price resolver.
 type marketplaceQuoteFixture struct {
-	calculator *billing.Calculator
-	resolver   *billing.PriceResolver
+	// calculator supplies legacy modality lookup even when resolver is provided.
+	// newMarketplaceFixture installs this quote fixture only for a nonnil
+	// calculator.
+	calculator *billing.Calculator // supplied offline billing calculator
+	// resolver supplies Quote when nonnil. A nil resolver causes that method to
+	// construct a catalog-based resolver from calculator for the current query.
+	resolver *billing.PriceResolver // optional shared pricing resolver
 }
 
+// marketplaceGroupRepoStub supplies a configured active-group list for public
+// assembly tests.
 type marketplaceGroupRepoStub struct {
-	routing.GroupRepository
+	// GroupRepository supplies unused methods through a nil embedded interface.
+	// Public assembly uses the ListActive override; another promoted call panics.
+	routing.GroupRepository // unused group repository methods
 
-	groups []routing.Group
+	// groups is returned directly from ListActive. Tests seed the list before
+	// synchronous assembly, including deliberately excluded rows whose fields
+	// exercise visibility filtering.
+	groups []routing.Group // supplied active listing rows
 }
 
+// marketplaceSettingRepoStub supplies stored setting strings requested during
+// public assembly.
 type marketplaceSettingRepoStub struct {
-	settingscore.Repository
-	settings map[string]string
+	// Repository supplies unused methods through a nil embedded interface. Public
+	// assembly uses GetMultiple; calling another promoted repository method panics.
+	settingscore.Repository                   // unused settings repository methods
+	settings                map[string]string // supplied stored setting strings
 }
 
-// TestMarketplaceBatchAttributesAndOptionalCapacity covers batch reads, attribute failures, capacity opt-out, and
-// protocol forwarding.
+// TestMarketplaceBatchAttributesAndOptionalCapacity varies attribute failure
+// and capacity inclusion over mixed visible and excluded groups. It checks
+// one attribute batch, quote identity, protocol forwarding, repository order,
+// probe filtering, and unknown attributes after failure.
 func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 	for _, attributesFail := range []bool{false, true} {
 		for _, includeCapacity := range []bool{false, true} {
@@ -128,12 +174,15 @@ func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 	}
 }
 
+// TestParseMarketplaceAvailabilityWindowSettings supplies missing, valid,
+// invalid, and oversized history settings. Assertions check defaults and
+// widening a ninety-day window's buckets to one hundred eighty minutes.
 func TestParseMarketplaceAvailabilityWindowSettings(t *testing.T) {
 	tests := []struct {
-		name              string
-		settings          map[string]string
-		wantWindowDays    int
-		wantBucketMinutes int
+		name              string            // subtest window settings label
+		settings          map[string]string // supplied stored window strings
+		wantWindowDays    int               // expected displayed history days
+		wantBucketMinutes int               // expected history bucket minutes
 	}{
 		{
 			name:              "missing settings use defaults",
@@ -180,6 +229,9 @@ func TestParseMarketplaceAvailabilityWindowSettings(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceQoderModelUsesStandardPricing asks the offline catalog
+// for a known Claude model through PublicModelPricing. It checks positive
+// token input and output amounts and priced status.
 func TestModelMarketplaceQoderModelUsesStandardPricing(t *testing.T) {
 	svc := newMarketplaceFixture(nil, nil, newMarketplaceCalculator(nil, nil), nil)
 	group := &routing.Group{ID: 1, RateMultiplier: 1}
@@ -192,6 +244,10 @@ func TestModelMarketplaceQoderModelUsesStandardPricing(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceQoderGroupMappedBasisDoesNotUseRequestedStandardPricing
+// supplies a requestable definition whose pricing model is an unpriced mapped
+// target. Display pricing remains unknown even though the public request name
+// has a catalog price.
 func TestModelMarketplaceQoderGroupMappedBasisDoesNotUseRequestedStandardPricing(t *testing.T) {
 	groupID := int64(902)
 	cache := routingtestkit.NewModelConfigData()
@@ -217,6 +273,10 @@ func TestModelMarketplaceQoderGroupMappedBasisDoesNotUseRequestedStandardPricing
 	}
 }
 
+// TestModelMarketplaceQoderUpstreamBasisDoesNotUseRequestedStandardPricing
+// supplies upstream-source metadata and an unpriced pricing-model target. The
+// returned presentation stays unknown instead of borrowing the public request
+// name's catalog amount.
 func TestModelMarketplaceQoderUpstreamBasisDoesNotUseRequestedStandardPricing(t *testing.T) {
 	groupID := int64(902)
 	cache := routingtestkit.NewModelConfigData()
@@ -242,6 +302,10 @@ func TestModelMarketplaceQoderUpstreamBasisDoesNotUseRequestedStandardPricing(t 
 	}
 }
 
+// TestModelMarketplaceQoderCustomImageAliasWithoutManualPricingRemainsUnknown
+// assigns an unpriced target to a custom image-named alias. The requestable
+// definition produces unknown pricing, so the alias spelling supplies no
+// image amount.
 func TestModelMarketplaceQoderCustomImageAliasWithoutManualPricingRemainsUnknown(t *testing.T) {
 	groupID := int64(902)
 	cache := routingtestkit.NewModelConfigData()
@@ -266,6 +330,9 @@ func TestModelMarketplaceQoderCustomImageAliasWithoutManualPricingRemainsUnknown
 	}
 }
 
+// TestModelMarketplaceQoderAliasesWithoutAnyBasePricingRemainUnknown queries
+// three names absent from the offline price fixture. Every displayed result
+// for those full model IDs retains unknown mode and unpriced status.
 func TestModelMarketplaceQoderAliasesWithoutAnyBasePricingRemainUnknown(t *testing.T) {
 	billingService := newMarketplaceCalculator(nil, nil)
 	svc := newMarketplaceFixture(nil, nil, billingService, nil)
@@ -279,6 +346,9 @@ func TestModelMarketplaceQoderAliasesWithoutAnyBasePricingRemainUnknown(t *testi
 	}
 }
 
+// TestModelMarketplaceQoderManualConfigPricingOverridesDefaultAliasDisplayPricing
+// supplies explicit input and output amounts for the auto request name.
+// Public pricing returns those exact configured token values.
 func TestModelMarketplaceQoderManualConfigPricingOverridesDefaultAliasDisplayPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -309,6 +379,10 @@ func TestModelMarketplaceQoderManualConfigPricingOverridesDefaultAliasDisplayPri
 	}
 }
 
+// TestModelMarketplacePricingConfigImageInputPricingIsDisplayed supplies
+// token prices with a separate image-input amount and a group factor of 1.5.
+// The quote reports priced token mode and an image-input rate scaled by the
+// group factor.
 func TestModelMarketplacePricingConfigImageInputPricingIsDisplayed(t *testing.T) {
 	groupID := int64(904)
 	inputPrice := 0.01
@@ -344,14 +418,18 @@ func TestModelMarketplacePricingConfigImageInputPricingIsDisplayed(t *testing.T)
 	}
 }
 
+// TestModelDisplayPricingImageInputFastRates compares a priority multiplier,
+// independent priority text price, and configuration Fast multiplier.
+// Standard and Fast image-input fields follow the corresponding supplied
+// image-price rule and group factor.
 func TestModelDisplayPricingImageInputFastRates(t *testing.T) {
 	fastModeMultiplier := 3.0
 	priorityMultiplier := 2.0
 	tests := []struct {
-		name          string
-		pricing       billingpricing.ModelPricing
-		wantImage     float64
-		wantFastImage float64
+		name          string                      // subtest image rate label
+		pricing       billingpricing.ModelPricing // supplied token price record
+		wantImage     float64                     // expected standard image token rate
+		wantFastImage float64                     // expected Fast image token rate
 	}{
 		{
 			name: "显式 priority 倍率同步应用到图片输入价",
@@ -399,6 +477,9 @@ func TestModelDisplayPricingImageInputFastRates(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceQoderBlankConfigPricingRemainsUnknown supplies a token
+// card with no price buckets for auto. The missing catalog amount and blank
+// card yield unknown mode and unpriced status.
 func TestModelMarketplaceQoderBlankConfigPricingRemainsUnknown(t *testing.T) {
 	groupID := int64(902)
 	cache := routingtestkit.NewModelConfigData()
@@ -425,6 +506,9 @@ func TestModelMarketplaceQoderBlankConfigPricingRemainsUnknown(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceQoderBlankRouteKeyPricingShowsAliasManualPricing
+// supplies a blank qmodel card and explicit prices for qwen3.7-plus. Direct
+// public pricing for that name returns its configured amounts.
 func TestModelMarketplaceQoderBlankRouteKeyPricingShowsAliasManualPricing(t *testing.T) {
 	groupID := int64(902)
 	aliasInputPrice := 0.01
@@ -458,6 +542,9 @@ func TestModelMarketplaceQoderBlankRouteKeyPricingShowsAliasManualPricing(t *tes
 	}
 }
 
+// TestModelMarketplaceQoderRequestedBasisDoesNotInferRouteKeyPricing stores
+// prices for qmodel and queries qwen3.7-plus directly. The unmatched request
+// identity remains unknown despite a priced different name.
 func TestModelMarketplaceQoderRequestedBasisDoesNotInferRouteKeyPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -488,6 +575,9 @@ func TestModelMarketplaceQoderRequestedBasisDoesNotInferRouteKeyPricing(t *testi
 	}
 }
 
+// TestModelMarketplaceQoderAliasManualPricingOverridesRouteKeyManualPricing
+// supplies different amounts for qmodel and qwen3.7-plus. Direct public
+// pricing for qwen3.7-plus returns its own input and output values.
 func TestModelMarketplaceQoderAliasManualPricingOverridesRouteKeyManualPricing(t *testing.T) {
 	groupID := int64(902)
 	aliasInputPrice := 0.01
@@ -525,6 +615,9 @@ func TestModelMarketplaceQoderAliasManualPricingOverridesRouteKeyManualPricing(t
 	}
 }
 
+// TestModelMarketplaceQoderNonUniformIntervalsDisplayAsContextIntervals
+// supplies two token ranges with different prices for one model. It checks
+// priced token mode, two displayed ranges, and their distinct input amounts.
 func TestModelMarketplaceQoderNonUniformIntervalsDisplayAsContextIntervals(t *testing.T) {
 	groupID := int64(902)
 	firstInput := 0.01
@@ -566,6 +659,9 @@ func TestModelMarketplaceQoderNonUniformIntervalsDisplayAsContextIntervals(t *te
 	}
 }
 
+// TestModelMarketplaceQoderStandardModelPartialIntervalKeepsBaseDisplayFields
+// overrides input price in one interval for a catalog model. The displayed
+// input changes while output matches the offline catalog's base amount.
 func TestModelMarketplaceQoderStandardModelPartialIntervalKeepsBaseDisplayFields(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -601,6 +697,9 @@ func TestModelMarketplaceQoderStandardModelPartialIntervalKeepsBaseDisplayFields
 	}
 }
 
+// TestModelMarketplaceUsesConfigPricingWithGroupMultiplier supplies explicit
+// input and output card amounts and a group factor of two. Both displayed
+// token amounts equal their configured values multiplied by that factor.
 func TestModelMarketplaceUsesConfigPricingWithGroupMultiplier(t *testing.T) {
 	groupID := int64(905)
 	pricingConfigInput := 0.5
@@ -633,6 +732,9 @@ func TestModelMarketplaceUsesConfigPricingWithGroupMultiplier(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceGroupExplicitZeroPricingRemainsPriced supplies explicit
+// zero input and output prices for a catalog model. The display remains token
+// and priced with free amounts.
 func TestModelMarketplaceGroupExplicitZeroPricingRemainsPriced(t *testing.T) {
 	zero := 0.0
 	billingService := newMarketplaceCalculator(nil, nil)
@@ -647,6 +749,10 @@ func TestModelMarketplaceGroupExplicitZeroPricingRemainsPriced(t *testing.T) {
 	}
 }
 
+// TestModelMarketplaceGroupCanDisableBuiltInLongContextDisplay disables
+// catalog context pricing in shared settings without supplying model cards.
+// The known model remains priced token usage and exposes no context
+// intervals.
 func TestModelMarketplaceGroupCanDisableBuiltInLongContextDisplay(t *testing.T) {
 	billingService := newMarketplaceCalculator(nil, nil)
 	settings := billingpricing.DefaultBillingSettings()
@@ -661,6 +767,9 @@ func TestModelMarketplaceGroupCanDisableBuiltInLongContextDisplay(t *testing.T) 
 	}
 }
 
+// TestModelMarketplaceDoesNotInventModelsWithoutCandidates supplies an active
+// group with a positive provider count but no model reader. ListPublic
+// returns an empty group list despite valid currency settings.
 func TestModelMarketplaceDoesNotInventModelsWithoutCandidates(t *testing.T) {
 	settingRepo := &marketplaceSettingRepoStub{settings: map[string]string{
 		billing.SettingKeyReasoningPointRMBUnitPrice: "1",
@@ -684,6 +793,9 @@ func TestModelMarketplaceDoesNotInventModelsWithoutCandidates(t *testing.T) {
 	require.Empty(t, groups, "提供商计数不能替代实际可请求能力")
 }
 
+// TestModelMarketplaceDisplayPricing_SharedImageRateUsesGroupMultiplier
+// supplies a wildcard image card with one size amount and a group factor of
+// two. Display mode is image and its 1K amount doubles.
 func TestModelMarketplaceDisplayPricing_SharedImageRateUsesGroupMultiplier(t *testing.T) {
 	image1K := 10.0
 	group := &routing.Group{
@@ -702,6 +814,9 @@ func TestModelMarketplaceDisplayPricing_SharedImageRateUsesGroupMultiplier(t *te
 	}
 }
 
+// TestModelMarketplaceModelModalitiesComeFromPricingMetadata queries legacy
+// modalities from image and vision-chat catalog fixtures. It checks the
+// supplied input/output shapes and nil modalities for an unknown name.
 func TestModelMarketplaceModelModalitiesComeFromPricingMetadata(t *testing.T) {
 	pricingSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-image-2": {Mode: "image_generation", InputCostPerImageToken: 8e-6},
@@ -723,6 +838,10 @@ func TestModelMarketplaceModelModalitiesComeFromPricingMetadata(t *testing.T) {
 	require.Nil(t, output)
 }
 
+// TestModelMarketplacePublicModelsIncludeModalities assembles two explicit
+// public definitions using legacy price metadata. Both models remain present;
+// the known image model gets modalities and the unknown model retains nil
+// input modalities.
 func TestModelMarketplacePublicModelsIncludeModalities(t *testing.T) {
 	pricingSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-image-2": {Mode: "image_generation", InputCostPerImageToken: 8e-6},
@@ -743,8 +862,10 @@ func TestModelMarketplacePublicModelsIncludeModalities(t *testing.T) {
 	require.Nil(t, models[1].OutputModalities)
 }
 
-// TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs checks metadata lookup by PricingModel while retaining
-// public IDs and audio/video inputs.
+// TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs supplies full
+// Gemini price identities and one distinct public alias with a PricingModel.
+// Assembly retains each public ID while returning the priced target's text,
+// image, audio, and video modalities.
 func TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs(t *testing.T) {
 	pricing := &billingpricing.CatalogModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 1e-5,
@@ -772,13 +893,20 @@ func TestModelMarketplaceGeminiTierModalitiesPreservePublicIDs(t *testing.T) {
 	}
 }
 
+// newModelCatalogFixture builds a snapshot-backed catalog from the supplied
+// price map and production lookup candidates. The service retains map
+// storage, so tests keep its entries stable during queries.
 func newModelCatalogFixture(fixture modelCatalogFixture) *provider.Service {
 	return provider.NewServiceFromSnapshot(provider.Options{
 		ModelLookupCandidates: modelidentity.CandidatesFactory,
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// newMarketplaceFixture connects pricing configuration and model catalogue fixtures.
+// newMarketplaceFixture connects groups and settings with an offline quote
+// adapter when calculator is supplied. Provide a group reader for ListPublic;
+// direct pricing and modality queries can use a nil group reader. Model,
+// observation, and attribute readers remain absent, while clock and warning
+// callbacks are time.Now and slog.Warn.
 func newMarketplaceFixture(groups routing.MarketplaceGroups, settings routing.MarketplaceSettings, calculator *billing.Calculator, resolver *billing.PriceResolver) *routing.Marketplace {
 	var prices routing.MarketplacePrices
 	if calculator != nil {
@@ -787,10 +915,18 @@ func newMarketplaceFixture(groups routing.MarketplaceGroups, settings routing.Ma
 	return routing.NewMarketplace(groups, settings, nil, routing.RequestableResolver{}, prices, nil, nil, routing.MarketplaceOptions{Now: time.Now, Warn: slog.Warn})
 }
 
+// newMarketplaceCalculator delegates offline calculator construction to
+// billingtestkit.Calculator. When catalog and prices are both nil, that
+// helper loads historical token and media fixtures; supplied data follows its
+// catalog precedence rules.
 func newMarketplaceCalculator(catalog *provider.Service, prices map[string]*billingpricing.ModelPricing) *billing.Calculator {
 	return billingtestkit.Calculator(catalog, prices)
 }
 
+// NewModelPricingResolver connects optional shared pricing with the supplied
+// calculator and model identity rules. A nil pricing service leaves
+// configuration lookup absent, and catalog lookup failures are recorded
+// through the diagnostic callback.
 func NewModelPricingResolver(pricingConfigs *routing.PricingConfigService, calculator *billing.Calculator) *billing.PriceResolver {
 	var source billing.ConfigPrices
 	if pricingConfigs != nil {
@@ -801,10 +937,15 @@ func NewModelPricingResolver(pricingConfigs *routing.PricingConfigService, calcu
 	})
 }
 
+// Prefetch reports prefetch unavailable so assembly uses per-group fixture
+// resolution.
 func (marketplaceLoadingModels) Prefetch(context.Context) ([]routing.CatalogueProvider, bool, error) {
 	return nil, false, nil
 }
 
+// ResolveRequestableModels returns the alias fixture for group IDs at most
+// two and an empty result for larger IDs. It requires a nonnil ID pointer and
+// returns shared protocol slice storage.
 func (marketplaceLoadingModels) ResolveRequestableModels(_ context.Context, id *int64, _ string) routing.RequestableModelsResult {
 	if *id > 2 {
 		return routing.RequestableModelsResult{}
@@ -812,32 +953,48 @@ func (marketplaceLoadingModels) ResolveRequestableModels(_ context.Context, id *
 	return routing.RequestableModelsResult{Models: []routing.RequestableModel{{ID: "alias", PricingModel: "priced", UpstreamModels: []string{"upstream"}, Protocols: marketplaceLoadingProtocols, NativeProtocols: marketplaceLoadingProtocols[:1]}}}
 }
 
+// GetGroupCapacityByIDs records the call and retains the supplied group-ID
+// slice directly. It returns a present zero summary for group 1, letting
+// assembly distinguish that observation from missing groups.
 func (o *marketplaceLoadingObservations) GetGroupCapacityByIDs(_ context.Context, ids []int64) (map[int64]routing.GroupCapacitySummary, error) {
 	o.capacityCalls++
 	o.capacityGroups = ids
 	return map[int64]routing.GroupCapacitySummary{1: {}}, nil
 }
 
+// GetSummaryByGroupIDs retains the supplied group-ID slice directly and
+// returns a group 1 summary with a three-day window. Other query inputs are
+// ignored by this observation fixture.
 func (o *marketplaceLoadingObservations) GetSummaryByGroupIDs(_ context.Context, ids []int64, _ int, _ int, _ string, _ time.Time) (map[int64]*routing.GroupAvailabilitySummary, error) {
 	o.availabilityGroups = ids
 	return map[int64]*routing.GroupAvailabilitySummary{1: {WindowDays: 3}}, nil
 }
 
+// Quote records the request and returns a priced input token amount equal to
+// its RateMultiplier for marketplace forwarding assertions.
 func (p *marketplaceLoadingPrices) Quote(_ context.Context, request routing.MarketplaceQuoteRequest) billingpricing.ModelDisplayPricing {
 	p.requests = append(p.requests, request)
 	return billingpricing.ModelDisplayPricing{PriceStatus: "priced", InputPricePerToken: request.RateMultiplier}
 }
 
+// GetModelModalities counts the legacy metadata query and returns text-only
+// input and output.
 func (p *marketplaceLoadingPrices) GetModelModalities(string) ([]string, []string) {
 	p.modalityCalls++
 	return []string{"text"}, []string{"text"}
 }
 
-// testImageModelPricing creates image-model prices for tests.
+// testImageModelPricing returns one wildcard image card from supplied
+// size-price pointers. It delegates interval construction to
+// testMediaModelPricing, whose map traversal order is unspecified and whose
+// amount pointers remain shared.
 func testImageModelPricing(prices map[string]*float64) []routing.ModelPricingEntry {
 	return testMediaModelPricing(routing.BillingModeImage, prices)
 }
 
+// testMediaModelPricing returns one wildcard card with a labeled interval for
+// every supplied map entry. It retains the price pointers, keeps unspecified
+// map iteration order, and performs no validation.
 func testMediaModelPricing(mode routing.BillingMode, prices map[string]*float64) []routing.ModelPricingEntry {
 	card := routing.ModelPricingEntry{Models: []string{"*"}, BillingMode: mode}
 	for tier, price := range prices {
@@ -846,8 +1003,14 @@ func testMediaModelPricing(mode routing.BillingMode, prices map[string]*float64)
 	return []routing.ModelPricingEntry{card}
 }
 
+// Quote sends the selected model, group ID, factor, and free-Fast flag
+// through the shared PublicQuote calculation. A nil resolver constructs a
+// catalog-only resolver from calculator for this call.
 func (p marketplaceQuoteFixture) Quote(ctx context.Context, req routing.MarketplaceQuoteRequest) billingpricing.ModelDisplayPricing {
 	resolver := p.resolver
+	// Construct a resolver when this quote adapter has no supplied one, letting
+	// direct catalog-price scenarios use the same PublicQuote path as
+	// configured-price fixtures.
 	if resolver == nil {
 		resolver = billing.NewPriceResolver(nil, p.calculator, modelidentity.Identity, func(model string, err error) {
 			slog.Debug("failed to get model pricing from model catalog, using fallback", "model", model, "error", err)
@@ -856,20 +1019,30 @@ func (p marketplaceQuoteFixture) Quote(ctx context.Context, req routing.Marketpl
 	return resolver.PublicQuote(ctx, billing.PublicQuoteInput{PricingInput: billing.PricingInput{Model: req.Model, GroupID: &req.GroupID}, RateMultiplier: req.RateMultiplier, FreeFastApplicable: req.FreeFastApplicable})
 }
 
+// GetModelModalities delegates legacy price-metadata lookup to the supplied
+// calculator.
 func (p marketplaceQuoteFixture) GetModelModalities(model string) ([]string, []string) {
 	return p.calculator.GetModelModalities(model)
 }
 
-// marketplaceWithConfig connects marketplace quotes to the shared pricing resolver.
+// marketplaceWithConfig builds one active shared configuration for the
+// supplied group, settings, and model cards. It connects that service to the
+// calculator through NewModelPricingResolver for marketplace quotes.
 func marketplaceWithConfig(calculator *billing.Calculator, groupID int64, settings billingpricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Marketplace {
 	configs := routingtestkit.ModelConfigFromData(routingtestkit.ModelConfigDataFromRows([]routingtestkit.Configuration{{ID: 1, Status: routing.StatusActive, GroupIDs: []int64{groupID}, BillingSettings: &settings, ModelPricing: cards}}, nil))
 	return newMarketplaceFixture(nil, nil, calculator, NewModelPricingResolver(configs, calculator))
 }
 
+// ListActive returns the fixture's group slice directly with no error. Tests
+// provide visibility data before assembly and keep the retained backing
+// storage stable during the call.
 func (s *marketplaceGroupRepoStub) ListActive(context.Context) ([]routing.Group, error) {
 	return s.groups, nil
 }
 
+// GetMultiple returns a new map for the requested keys, using empty strings
+// for missing fixture settings. The stored settings map remains separate from
+// the returned map.
 func (s *marketplaceSettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -878,6 +1051,9 @@ func (s *marketplaceSettingRepoStub) GetMultiple(_ context.Context, keys []strin
 	return out, nil
 }
 
+// TestMarketplaceUsesRouteAttributes supplies an OAuth Responses route behind
+// a public alias and resolves attributes from the offline catalog. Assembly
+// returns that route's text input and disabled temperature capability.
 func TestMarketplaceUsesRouteAttributes(t *testing.T) {
 	attrs := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
 	service := routing.NewMarketplace(nil, nil, nil, routing.RequestableResolver{}, nil, nil, nil, routing.MarketplaceOptions{Attributes: attrs.ResolveGroups})

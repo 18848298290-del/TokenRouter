@@ -12,65 +12,128 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// Provider health policies use separate persisted settings keys and different
+// normalization rules. Missing or malformed cooldown settings select their
+// owning defaults, while valid decoded values can still require range
+// correction. Setters validate administrator input before storage and may
+// normalize the same supplied object when a disabled control permits an
+// otherwise invalid value.
+//
+// OpenAI 403 policy distinguishes the enabled cooldown from its optional
+// failure-threshold action, so each switch controls validation of its own
+// timing and count fields. The API Key health breaker additionally keeps a
+// thirty-second scalar snapshot and returns value copies to callers. Platform
+// scheduling thresholds use another cache owned by the same runtime instance,
+// with their coalesced reads and committed-setting publication implemented
+// alongside the threshold parser.
+
+// Persisted provider policy keys and image-cooldown bounds connect settings
+// storage with health actions; the API Key breaker lifetime controls
+// process-local reuse.
 const (
-	// SettingKeyOllamaCloudUsageSettings identifies persisted Ollama Cloud usage settings.
+	// SettingKeyOllamaCloudUsageSettings identifies persisted Ollama Cloud usage
+	// settings.
 	SettingKeyOllamaCloudUsageSettings = "ollama_cloud_usage_settings"
 
-	// The provider module interprets these persisted runtime settings.
-	SettingKeyOpenAI403CooldownSettings                    = "openai_oauth_403_cooldown_settings"
-	SettingKeyOpenAIAPIKeyHealthBreakerSettings            = "openai_apikey_health_breaker_settings"
+	// These keys select independently stored cooldown, failure-counter, and
+	// stream policies interpreted by provider health commands.
+	// SettingKeyOpenAI403CooldownSettings: OAuth 403 policy.
+	SettingKeyOpenAI403CooldownSettings = "openai_oauth_403_cooldown_settings"
+	// SettingKeyOpenAIAPIKeyHealthBreakerSettings: pool API Key failure policy.
+	SettingKeyOpenAIAPIKeyHealthBreakerSettings = "openai_apikey_health_breaker_settings"
+	// SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings: OAuth image
+	// cooldown policy.
 	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
-	SettingKeyOverloadCooldownSettings                     = "overload_cooldown_settings"
-	SettingKeyRateLimit429CooldownSettings                 = "rate_limit_429_cooldown_settings"
-	SettingKeyStreamTimeoutSettings                        = "stream_timeout_settings"
+	// SettingKeyOverloadCooldownSettings: overload cooldown policy.
+	SettingKeyOverloadCooldownSettings = "overload_cooldown_settings"
+	// SettingKeyRateLimit429CooldownSettings: rate-limit response policy.
+	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
+	// SettingKeyStreamTimeoutSettings: stream timeout policy.
+	SettingKeyStreamTimeoutSettings = "stream_timeout_settings"
 
-	// OpenAIImagesOAuthUnavailableDefaultCooldownMinutes is the default image-unavailability cooldown in minutes.
+	// OpenAIImagesOAuthUnavailableDefaultCooldownMinutes selects the built-in
+	// image pause when stored policy data is absent, malformed, or outside the
+	// supported range.
 	OpenAIImagesOAuthUnavailableDefaultCooldownMinutes = 30
 
-	// OpenAIImagesOAuthUnavailableMaxCooldownMinutes is the maximum image-unavailability cooldown in minutes.
+	// OpenAIImagesOAuthUnavailableMaxCooldownMinutes bounds administrator image
+	// pauses and selects default replacement for excessive stored durations.
 	OpenAIImagesOAuthUnavailableMaxCooldownMinutes = 120
-	openAIAPIKeyHealthBreakerSettingsCacheTTL      = 30 * time.Second
+	// openAIAPIKeyHealthBreakerSettingsCacheTTL: process policy reuse duration.
+	openAIAPIKeyHealthBreakerSettingsCacheTTL = 30 * time.Second
 )
 
-// RuntimeSettingsStore reads and writes provider settings by key.
+// RuntimeSettingsStore supplies persisted single-key provider policy reads
+// and writes.
 type RuntimeSettingsStore interface {
+	// GetValue returns a stored policy string for key. Missing keys use the
+	// sentinel passed to NewRuntimeSettings so each getter can distinguish
+	// defaults from an actual storage outage.
 	GetValue(context.Context, string) (string, error)
+	// Set persists the encoded policy under its settings key. Setters have
+	// already validated or normalized their input before calling it, and
+	// propagate its error to the administrator.
 	Set(context.Context, string, string) error
 }
 
-// RuntimeSettings owns provider health settings and their local caches.
+// RuntimeSettings retains the provider settings store and process-local
+// policy caches. Construct it before use and keep repository dependencies
+// usable while synchronous and detached threshold reads are active. Keep this
+// runtime at its original address after first use, as required by its atomic
+// caches and flight synchronization.
 type RuntimeSettings struct {
-	providerSchedulingThresholdsCache atomic.Value
-	providerSchedulingThresholdsSF    singleflight.Group
-	settingRepo                       RuntimeSettingsStore
-	notFound                          error
-	openAIAPIKeyHealthBreakerCache    atomic.Value
+	// providerSchedulingThresholdsCache and providerSchedulingThresholdsSF
+	// combine an immutable published map with coalesced reloads. The cached
+	// entry is replaced as a whole, and returned maps are copied.
+	providerSchedulingThresholdsCache atomic.Value       // atomic platform threshold observation
+	providerSchedulingThresholdsSF    singleflight.Group // shared threshold read group
+	// settingRepo is borrowed for later policy reads and writes. Detached
+	// threshold lookups can continue using it after the initiating context is
+	// cancelled.
+	settingRepo RuntimeSettingsStore // retained provider settings store
+	notFound    error                // repository missing-key sentinel
+	// openAIAPIKeyHealthBreakerCache stores immutable scalar policy entries
+	// after successful observations. Get returns copies and independently
+	// reloads expired entries without coalescing those reads.
+	openAIAPIKeyHealthBreakerCache atomic.Value // atomic API Key breaker observation
 }
 
-// OpenAIImagesOAuthUnavailableCooldownSettings configures the cooldown for unavailable OAuth image generation.
+// OpenAIImagesOAuthUnavailableCooldownSettings sets the duration of a
+// provider's OAuth image-unavailability pause.
 type OpenAIImagesOAuthUnavailableCooldownSettings struct {
-	CooldownMinutes int `json:"cooldown_minutes"`
+	CooldownMinutes int `json:"cooldown_minutes"` // minutes
 }
 
-// OpenAIAPIKeyHealthBreakerSettings configures failure-triggered OpenAI API Key circuit breaking.
+// OpenAIAPIKeyHealthBreakerSettings configures rolling OpenAI pool API Key
+// failure accounting and the resulting cooldown.
 type OpenAIAPIKeyHealthBreakerSettings struct {
-	Enabled          bool `json:"enabled"`
-	WindowMinutes    int  `json:"window_minutes"`
-	FailureThreshold int  `json:"failure_threshold"`
-	CooldownMinutes  int  `json:"cooldown_minutes"`
+	// WindowMinutes and FailureThreshold describe the same rolling failure
+	// history. Enabled selects whether health handling records that history, and
+	// CooldownMinutes supplies the provider hold after its threshold trips.
+	Enabled          bool `json:"enabled"`           // failure breaker enabled flag
+	WindowMinutes    int  `json:"window_minutes"`    // minutes
+	FailureThreshold int  `json:"failure_threshold"` // rolling failure count threshold
+	CooldownMinutes  int  `json:"cooldown_minutes"`  // minutes
 }
 
+// cachedOpenAIAPIKeyHealthBreakerSettings holds a scalar policy copy with its
+// process-local expiration.
 type cachedOpenAIAPIKeyHealthBreakerSettings struct {
-	settings  OpenAIAPIKeyHealthBreakerSettings
-	expiresAt time.Time
+	settings  OpenAIAPIKeyHealthBreakerSettings // cached scalar breaker policy
+	expiresAt time.Time                         // breaker observation expiration instant
 }
 
-// NewRuntimeSettings stores dependencies; it performs no I/O.
+// NewRuntimeSettings retains a settings repository and its missing-key
+// sentinel for provider policy reads. Construction initializes no
+// observations; methods with required storage expect a nonnil repository,
+// while optional getters provide their own defaults.
 func NewRuntimeSettings(repo RuntimeSettingsStore, notFound error) *RuntimeSettings {
 	return &RuntimeSettings{settingRepo: repo, notFound: notFound}
 }
 
-// GetOllamaCloudUsageSettings returns disabled defaults when settings are absent.
+// GetOllamaCloudUsageSettings returns decoded usage settings or disabled
+// defaults for absent storage or a missing key. Other repository failures are
+// wrapped, and malformed JSON is reported by the owning decoder.
 func (s *RuntimeSettings) GetOllamaCloudUsageSettings(ctx context.Context) (*OllamaCloudUsageSettings, error) {
 	defaults := DefaultOllamaCloudUsageSettings()
 	if s == nil || s.settingRepo == nil {
@@ -86,7 +149,11 @@ func (s *RuntimeSettings) GetOllamaCloudUsageSettings(ctx context.Context) (*Oll
 	return DecodeOllamaCloudUsageSettings(raw)
 }
 
-// SetOllamaCloudUsageSettings validates and encodes usage settings before persisting the settings key.
+// SetOllamaCloudUsageSettings validates and encodes the supplied settings
+// before writing their key. Missing storage returns
+// ErrOllamaCloudUsageUnavailable; encoding can default or normalize the
+// caller's object before either successful persistence or a later validation
+// failure.
 func (s *RuntimeSettings) SetOllamaCloudUsageSettings(ctx context.Context, settings *OllamaCloudUsageSettings) error {
 	if s == nil || s.settingRepo == nil {
 		return ErrOllamaCloudUsageUnavailable
@@ -98,7 +165,9 @@ func (s *RuntimeSettings) SetOllamaCloudUsageSettings(ctx context.Context, setti
 	return s.settingRepo.Set(ctx, SettingKeyOllamaCloudUsageSettings, data)
 }
 
-// DefaultStreamTimeoutSettings returns the built-in stream timeout policy.
+// DefaultStreamTimeoutSettings returns a disabled policy using temporary
+// blocking, five-minute suspension, and three failures within ten minutes.
+// Each call allocates a scalar policy that the caller can customize.
 func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 	return &StreamTimeoutSettings{
 		Enabled:                false,
@@ -109,7 +178,9 @@ func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 	}
 }
 
-// DefaultOverloadCooldownSettings returns the built-in overload cooldown policy.
+// DefaultOverloadCooldownSettings returns an enabled overload policy using a
+// ten-minute provider cooldown. Each call allocates a scalar policy that the
+// caller can customize independently of other default reads.
 func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	return &OverloadCooldownSettings{
 		Enabled:         true,
@@ -117,12 +188,17 @@ func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	}
 }
 
-// DefaultOpenAIImagesOAuthUnavailableCooldownSettings returns the default OAuth image cooldown.
+// DefaultOpenAIImagesOAuthUnavailableCooldownSettings returns a thirty-minute
+// OAuth image-unavailability cooldown for absent or unusable stored policies.
+// Each call allocates a separate scalar settings object for the caller to
+// use.
 func DefaultOpenAIImagesOAuthUnavailableCooldownSettings() *OpenAIImagesOAuthUnavailableCooldownSettings {
 	return &OpenAIImagesOAuthUnavailableCooldownSettings{CooldownMinutes: OpenAIImagesOAuthUnavailableDefaultCooldownMinutes}
 }
 
-// DefaultOpenAIAPIKeyHealthBreakerSettings returns the default API Key circuit breaker policy.
+// DefaultOpenAIAPIKeyHealthBreakerSettings returns a disabled breaker with a
+// two-minute window, ten-failure threshold, and five-minute cooldown. Each
+// call allocates a scalar policy that the caller can customize.
 func DefaultOpenAIAPIKeyHealthBreakerSettings() *OpenAIAPIKeyHealthBreakerSettings {
 	return &OpenAIAPIKeyHealthBreakerSettings{
 		Enabled:          false,
@@ -132,11 +208,17 @@ func DefaultOpenAIAPIKeyHealthBreakerSettings() *OpenAIAPIKeyHealthBreakerSettin
 	}
 }
 
+// normalizeOpenAIAPIKeyHealthBreakerSettings returns a copied policy bounded
+// to supported window, count, and cooldown ranges. Nil input selects
+// defaults; scalar copying leaves the supplied policy unchanged while
+// retaining its Enabled flag.
 func normalizeOpenAIAPIKeyHealthBreakerSettings(settings *OpenAIAPIKeyHealthBreakerSettings) *OpenAIAPIKeyHealthBreakerSettings {
 	if settings == nil {
 		return DefaultOpenAIAPIKeyHealthBreakerSettings()
 	}
 	result := *settings
+	// Bound successfully decoded legacy or direct-storage policies so rolling
+	// failure accounting receives its supported count and minute ranges.
 	if result.WindowMinutes < 1 {
 		result.WindowMinutes = 1
 	} else if result.WindowMinutes > 60 {
@@ -155,8 +237,10 @@ func normalizeOpenAIAPIKeyHealthBreakerSettings(settings *OpenAIAPIKeyHealthBrea
 	return &result
 }
 
-// GetOverloadCooldownSettings reads the policy, defaults missing or malformed JSON, and clamps cooldown to
-// 1-120 minutes.
+// GetOverloadCooldownSettings reads overload policy from configured storage,
+// defaulting missing keys, empty values, and malformed JSON. Valid decoded
+// cooldowns are bounded to one through one hundred twenty minutes; other
+// repository errors are returned.
 func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*OverloadCooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOverloadCooldownSettings)
 	if err != nil {
@@ -170,11 +254,14 @@ func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*Ove
 	}
 
 	var settings OverloadCooldownSettings
+	// Discard a failed decoder's partial result so malformed policy text cannot
+	// supply a mixture of decoded fields and zero-valued cooldown behavior.
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultOverloadCooldownSettings(), nil
 	}
 
-	// Clamp stored cooldown values into the supported range.
+	// Valid JSON can still contain older or directly stored durations. Bound
+	// them before overload health commands calculate a provider pause deadline.
 	if settings.CooldownMinutes < 1 {
 		settings.CooldownMinutes = 1
 	}
@@ -185,18 +272,22 @@ func (s *RuntimeSettings) GetOverloadCooldownSettings(ctx context.Context) (*Ove
 	return &settings, nil
 }
 
-// SetOverloadCooldownSettings validates enabled cooldowns and normalizes invalid disabled values before saving.
+// SetOverloadCooldownSettings persists a nonnil overload policy after
+// validating its duration. Enabled out-of-range values fail; disabled ones
+// are replaced with ten minutes on the supplied object before encoding, even
+// if storage later fails.
 func (s *RuntimeSettings) SetOverloadCooldownSettings(ctx context.Context, settings *OverloadCooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// Disabled policies accept invalid durations after normalization.
+	// An inactive policy can be saved with an invalid duration; normalize the
+	// same object so re-enabling it later starts with a supported cooldown.
 	if settings.CooldownMinutes < 1 || settings.CooldownMinutes > 120 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_minutes must be between 1-120")
 		}
-		settings.CooldownMinutes = 10 // Use the default duration while disabled.
+		settings.CooldownMinutes = 10
 	}
 
 	data, err := json.Marshal(settings)
@@ -207,7 +298,10 @@ func (s *RuntimeSettings) SetOverloadCooldownSettings(ctx context.Context, setti
 	return s.settingRepo.Set(ctx, SettingKeyOverloadCooldownSettings, string(data))
 }
 
-// GetRateLimit429CooldownSettings reads the policy and clamps stored cooldowns to 1-7200 seconds.
+// GetRateLimit429CooldownSettings reads the 429 policy, defaulting missing
+// keys, empty values, and malformed JSON. Valid decoded seconds are bounded
+// to one through seven thousand two hundred; other repository failures are
+// returned.
 func (s *RuntimeSettings) GetRateLimit429CooldownSettings(ctx context.Context) (*RateLimit429CooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRateLimit429CooldownSettings)
 	if err != nil {
@@ -221,10 +315,14 @@ func (s *RuntimeSettings) GetRateLimit429CooldownSettings(ctx context.Context) (
 	}
 
 	var settings RateLimit429CooldownSettings
+	// Discard partially decoded fields on JSON failure so fallback 429 handling
+	// receives the complete built-in policy rather than incomplete data.
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultRateLimit429CooldownSettings(), nil
 	}
 
+	// Directly stored seconds are bounded before fallback 429 handling uses them
+	// to calculate its short provider recovery deadline.
 	if settings.CooldownSeconds < 1 {
 		settings.CooldownSeconds = 1
 	}
@@ -235,12 +333,17 @@ func (s *RuntimeSettings) GetRateLimit429CooldownSettings(ctx context.Context) (
 	return &settings, nil
 }
 
-// SetRateLimit429CooldownSettings validates enabled cooldowns and normalizes invalid disabled values to five seconds.
+// SetRateLimit429CooldownSettings persists a nonnil 429 policy after
+// validating its duration. Enabled out-of-range values fail; disabled ones
+// become five seconds on the supplied object before encoding, including when
+// the later write fails.
 func (s *RuntimeSettings) SetRateLimit429CooldownSettings(ctx context.Context, settings *RateLimit429CooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
+	// Normalize inactive policy input on the caller's object before storage; an
+	// active invalid duration still fails before the settings key is written.
 	if settings.CooldownSeconds < 1 || settings.CooldownSeconds > 7200 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_seconds must be between 1-7200")
@@ -256,7 +359,10 @@ func (s *RuntimeSettings) SetRateLimit429CooldownSettings(ctx context.Context, s
 	return s.settingRepo.Set(ctx, SettingKeyRateLimit429CooldownSettings, string(data))
 }
 
-// GetOpenAIImagesOAuthUnavailableCooldownSettings returns defaults for missing, malformed, or out-of-range settings.
+// GetOpenAIImagesOAuthUnavailableCooldownSettings reads the OAuth image
+// cooldown, selecting thirty minutes for missing, empty, malformed, or
+// out-of-range data. A valid stored duration is returned directly; other
+// storage failures are wrapped.
 func (s *RuntimeSettings) GetOpenAIImagesOAuthUnavailableCooldownSettings(ctx context.Context) (*OpenAIImagesOAuthUnavailableCooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings)
 	if err != nil {
@@ -270,6 +376,9 @@ func (s *RuntimeSettings) GetOpenAIImagesOAuthUnavailableCooldownSettings(ctx co
 	}
 
 	var settings OpenAIImagesOAuthUnavailableCooldownSettings
+	// Unusable image-cooldown JSON or an unsupported duration selects the
+	// complete built-in pause, keeping health deadline calculation within its
+	// configured supported range.
 	if err := json.Unmarshal([]byte(value), &settings); err != nil ||
 		settings.CooldownMinutes <= 0 || settings.CooldownMinutes > OpenAIImagesOAuthUnavailableMaxCooldownMinutes {
 		return DefaultOpenAIImagesOAuthUnavailableCooldownSettings(), nil
@@ -277,11 +386,15 @@ func (s *RuntimeSettings) GetOpenAIImagesOAuthUnavailableCooldownSettings(ctx co
 	return &settings, nil
 }
 
-// SetOpenAIImagesOAuthUnavailableCooldownSettings requires a cooldown from 1 through 120 minutes before saving.
+// SetOpenAIImagesOAuthUnavailableCooldownSettings saves a nonnil OAuth image
+// cooldown from one through one hundred twenty minutes. Invalid input returns
+// before encoding or storage, and valid input is encoded without modifying
+// the supplied value.
 func (s *RuntimeSettings) SetOpenAIImagesOAuthUnavailableCooldownSettings(ctx context.Context, settings *OpenAIImagesOAuthUnavailableCooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
+	// Reject unsupported image-pause durations before writing the settings key.
 	if settings.CooldownMinutes <= 0 || settings.CooldownMinutes > OpenAIImagesOAuthUnavailableMaxCooldownMinutes {
 		return fmt.Errorf("cooldown_minutes must be between 1-%d", OpenAIImagesOAuthUnavailableMaxCooldownMinutes)
 	}
@@ -292,7 +405,10 @@ func (s *RuntimeSettings) SetOpenAIImagesOAuthUnavailableCooldownSettings(ctx co
 	return s.settingRepo.Set(ctx, SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings, string(data))
 }
 
-// GetStreamTimeoutSettings reads the policy, applying defaults and normalizing stored ranges and actions.
+// GetStreamTimeoutSettings reads stream-timeout policy, defaulting missing,
+// empty, and malformed settings. Valid decoded timing and count values are
+// bounded, unknown actions select temporary blocking, and unrelated
+// repository errors are returned.
 func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*StreamTimeoutSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStreamTimeoutSettings)
 	if err != nil {
@@ -306,11 +422,15 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 	}
 
 	var settings StreamTimeoutSettings
+	// A JSON error can leave fields partially assigned. Return the complete
+	// disabled policy so timeout handling does not combine incomplete controls.
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultStreamTimeoutSettings(), nil
 	}
 
-	// Clamp stored values to the supported ranges.
+	// Stored stream policies can bypass administrator validation. Bound all
+	// count and timing fields before timeout commands use them for suspension
+	// and rolling failure history.
 	if settings.TempUnschedMinutes < 1 {
 		settings.TempUnschedMinutes = 1
 	}
@@ -330,10 +450,10 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 		settings.ThresholdWindowMinutes = 60
 	}
 
-	// Unknown stored actions use the temporary-block action.
+	// A stored action outside the supported choices selects temporary blocking
+	// so timeout handling has a recognized response when the counter trips.
 	switch settings.Action {
 	case StreamTimeoutActionTempUnsched, StreamTimeoutActionError, StreamTimeoutActionNone:
-		// valid
 	default:
 		settings.Action = StreamTimeoutActionTempUnsched
 	}
@@ -341,13 +461,16 @@ func (s *RuntimeSettings) GetStreamTimeoutSettings(ctx context.Context) (*Stream
 	return &settings, nil
 }
 
-// SetStreamTimeoutSettings rejects invalid durations, thresholds, and actions before saving.
+// SetStreamTimeoutSettings validates a nonnil stream policy's durations,
+// count, and action before encoding and storage. Invalid values fail even
+// when the policy is disabled; the supplied object remains unchanged.
 func (s *RuntimeSettings) SetStreamTimeoutSettings(ctx context.Context, settings *StreamTimeoutSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// Validate durations and counts before encoding.
+	// Validate suspension and counting ranges together before persistence so
+	// timeout commands receive supported timing and failure-history controls.
 	if settings.TempUnschedMinutes < 1 || settings.TempUnschedMinutes > 60 {
 		return fmt.Errorf("temp_unsched_minutes must be between 1-60")
 	}
@@ -360,7 +483,6 @@ func (s *RuntimeSettings) SetStreamTimeoutSettings(ctx context.Context, settings
 
 	switch settings.Action {
 	case StreamTimeoutActionTempUnsched, StreamTimeoutActionError, StreamTimeoutActionNone:
-		// valid
 	default:
 		return fmt.Errorf("invalid action: %s", settings.Action)
 	}
@@ -373,7 +495,10 @@ func (s *RuntimeSettings) SetStreamTimeoutSettings(ctx context.Context, settings
 	return s.settingRepo.Set(ctx, SettingKeyStreamTimeoutSettings, string(data))
 }
 
-// GetOpenAI403CooldownSettings reads over the default policy and normalizes stored durations and thresholds.
+// GetOpenAI403CooldownSettings decodes 403 policy over built-in defaults, so
+// omitted fields inherit those values. Missing, empty, and malformed settings
+// return defaults; nonpositive decoded ranges restore defaults and oversized
+// ranges are capped.
 func (s *RuntimeSettings) GetOpenAI403CooldownSettings(ctx context.Context) (*OpenAI403CooldownSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAI403CooldownSettings)
 	if err != nil {
@@ -387,10 +512,14 @@ func (s *RuntimeSettings) GetOpenAI403CooldownSettings(ctx context.Context) (*Op
 	}
 
 	settings := *DefaultOpenAI403CooldownSettings()
+	// Omitted fields retain defaults, but a failed decoder discards all partial
+	// assignments so the 403 command receives one complete known policy.
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultOpenAI403CooldownSettings(), nil
 	}
 
+	// Decode over defaults, then repair nonpositive explicit fields and cap
+	// oversized values before the 403 command applies cooldown or escalation.
 	if settings.CooldownMinutes < 1 {
 		settings.CooldownMinutes = OpenAI403CooldownMinutesDefault
 	}
@@ -413,13 +542,25 @@ func (s *RuntimeSettings) GetOpenAI403CooldownSettings(ctx context.Context) (*Op
 	return &settings, nil
 }
 
-// SetOpenAI403CooldownSettings validates active controls and normalizes inactive controls before saving.
+// SetOpenAI403CooldownSettings validates or normalizes a nonnil policy before
+// saving it. Cooldown duration is mandatory when Enabled is true; failure
+// count and its window are mandatory only when Enabled and
+// ErrorOnThresholdEnabled are both true.
+//
+// Invalid inactive controls receive their built-in defaults on the caller's
+// object while the switches retain their supplied values. These shared switch
+// conditions mean an active-range validation failure returns before any
+// inactive-field normalization can occur. Encoding and persistence follow
+// successful range handling, and a storage failure leaves the already
+// normalized caller object changed.
 func (s *RuntimeSettings) SetOpenAI403CooldownSettings(ctx context.Context, settings *OpenAI403CooldownSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
 
-	// Invalid values are normalized when their corresponding control is disabled.
+	// Enabled selects the cooldown, while escalation also needs its own switch.
+	// Normalize inactive fields in place so persisted controls remain usable
+	// when later enabled; an active invalid field returns immediately.
 	if settings.CooldownMinutes < 1 || settings.CooldownMinutes > 120 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_minutes must be between 1-120")
@@ -447,7 +588,16 @@ func (s *RuntimeSettings) SetOpenAI403CooldownSettings(ctx context.Context, sett
 	return s.settingRepo.Set(ctx, SettingKeyOpenAI403CooldownSettings, string(data))
 }
 
-// GetOpenAIAPIKeyHealthBreakerSettings returns a copy of cached settings, reloading and normalizing after expiry.
+// GetOpenAIAPIKeyHealthBreakerSettings returns a new scalar policy copy,
+// reusing a fresh thirty-second observation. Nil or absent storage selects
+// uncached defaults; missing, blank, or malformed values also select
+// defaults, while other storage errors return before cache publication.
+//
+// Expired reads independently decode and normalize storage before publishing.
+// Concurrent misses may perform separate calls, and the latest Store supplies
+// the visible observation. Callers can change their returned policy without
+// changing the cached settings; successful observations measure their
+// expiration after the storage read.
 func (s *RuntimeSettings) GetOpenAIAPIKeyHealthBreakerSettings(ctx context.Context) (*OpenAIAPIKeyHealthBreakerSettings, error) {
 	if s == nil || s.settingRepo == nil {
 		return DefaultOpenAIAPIKeyHealthBreakerSettings(), nil
@@ -464,10 +614,14 @@ func (s *RuntimeSettings) GetOpenAIAPIKeyHealthBreakerSettings(ctx context.Conte
 	}
 	if err == nil && strings.TrimSpace(value) != "" {
 		var stored OpenAIAPIKeyHealthBreakerSettings
+		// Invalid JSON leaves the initialized disabled defaults selected, then
+		// caches that policy normally instead of reporting a decoding error.
 		if json.Unmarshal([]byte(value), &stored) == nil {
 			settings = normalizeOpenAIAPIKeyHealthBreakerSettings(&stored)
 		}
 	}
+	// Publish a scalar copy after the read so callers cannot mutate this
+	// observation through either the decoded settings or returned pointer.
 	s.openAIAPIKeyHealthBreakerCache.Store(&cachedOpenAIAPIKeyHealthBreakerSettings{
 		settings:  *settings,
 		expiresAt: time.Now().Add(openAIAPIKeyHealthBreakerSettingsCacheTTL),

@@ -16,30 +16,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Administrator chart handlers can reuse identical service-cache queries or
+// separate them by team. Capture fixtures inspect request-type precedence,
+// model-source acceptance, ranking limits and user-breakdown selectors before
+// the HTTP response is decoded.
+//
+// Date tests use explicit calendars to check inclusive date input across a
+// spring DST transition. Response cases inspect selected fields and limits
+// rather than database grouping; for example, the accepted upstream-source
+// fixture only checks HTTP success through a repository lacking that optional
+// source capability.
+
+// dashboardUsageRepoCacheProbe counts trend loader invocations through atomic
+// fixture counters.
 type dashboardUsageRepoCacheProbe struct {
-	usage.UsageLogRepository
-	trendCalls      atomic.Int32
-	usersTrendCalls atomic.Int32
+	usage.UsageLogRepository              // unused usage repository method slots
+	trendCalls               atomic.Int32 // atomic trend loader invocation count
+	usersTrendCalls          atomic.Int32 // atomic payer trend loader count
 }
 
+// dashboardUsageRepoCapture records parsed category selectors and supplies
+// configured spending rows for HTTP tests.
 type dashboardUsageRepoCapture struct {
-	usage.UsageLogRepository
-	trendRequestType *int16
-	trendStream      *bool
-	modelRequestType *int16
-	modelStream      *bool
-	rankingLimit     int
-	ranking          []usage.UserSpendingRankingItem
-	rankingTotal     float64
+	usage.UsageLogRepository                                 // unused usage repository method slots
+	trendRequestType         *int16                          // captured trend category pointer
+	trendStream              *bool                           // captured trend stream pointer
+	modelRequestType         *int16                          // captured model category pointer
+	modelStream              *bool                           // captured model stream pointer
+	rankingLimit             int                             // captured applied ranking limit
+	ranking                  []usage.UserSpendingRankingItem // configured spending ranking rows
+	rankingTotal             float64                         // configured full range charge total
 }
 
+// userBreakdownRepoCapture records supplied breakdown dimensions and row
+// limits for administrator requests.
 type userBreakdownRepoCapture struct {
-	usage.UsageLogRepository
-	capturedDim   usage.UserBreakdownDimension
-	capturedLimit int
-	result        []usage.UserBreakdownItem
+	usage.UsageLogRepository                              // unused usage repository method slots
+	capturedDim              usage.UserBreakdownDimension // captured breakdown query dimensions
+	capturedLimit            int                          // captured breakdown result limit
+	result                   []usage.UserBreakdownItem    // configured shared payer breakdown rows
 }
 
+// GetUsageTrendWithFilters counts the service-cache load and returns fixed
+// trend fields for HTTP assertions.
 func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithFilters(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -60,6 +79,8 @@ func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithFilters(
 	}}, nil
 }
 
+// GetUserUsageTrend counts the service-cache load and returns fixed payer
+// trend fields for HTTP assertions.
 func (r *dashboardUsageRepoCacheProbe) GetUserUsageTrend(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -78,10 +99,17 @@ func (r *dashboardUsageRepoCacheProbe) GetUserUsageTrend(
 	}}, nil
 }
 
+// resetDashboardReadCachesForTest replaces the process-wide composite
+// snapshot cache with an empty cache. These tests invoke resets serially;
+// individual dashboard services construct their own chart caches for each
+// fixture.
 func resetDashboardReadCachesForTest() {
 	dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
 }
 
+// TestDashboardHandler_GetUsageTrend_UsesCache repeats identical trend
+// requests. It requires a miss followed by a hit, successful responses and
+// exactly one repository trend load.
 func TestDashboardHandler_GetUsageTrend_UsesCache(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
@@ -106,7 +134,9 @@ func TestDashboardHandler_GetUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, int32(1), repo.trendCalls.Load())
 }
 
-// TestDashboardHandler_GetUsageTrend_SeparatesTeams checks separate queries and cache entries for different teams.
+// TestDashboardHandler_GetUsageTrend_SeparatesTeams requests otherwise
+// identical ranges for two teams. It requires two cache misses and two loader
+// calls for those tested IDs.
 func TestDashboardHandler_GetUsageTrend_SeparatesTeams(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
@@ -128,6 +158,9 @@ func TestDashboardHandler_GetUsageTrend_SeparatesTeams(t *testing.T) {
 	require.Equal(t, int32(2), repo.trendCalls.Load())
 }
 
+// TestDashboardHandler_GetUserUsageTrend_UsesCache repeats one payer trend
+// range and limit. It requires successful miss then hit responses and one
+// repository trend load.
 func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
@@ -152,6 +185,8 @@ func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
 }
 
+// GetUsageTrendWithFilters captures request category and stream pointers for
+// the synchronous HTTP test query.
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -167,6 +202,8 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
 	return []usage.TrendDataPoint{}, nil
 }
 
+// GetModelStatsWithFilters captures request category and stream pointers for
+// the synchronous model HTTP test query.
 func (s *dashboardUsageRepoCapture) GetModelStatsWithFilters(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -180,6 +217,8 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithFilters(
 	return []usage.ModelStat{}, nil
 }
 
+// GetUserSpendingRanking captures the applied limit and returns configured
+// rows plus fixed range totals.
 func (s *dashboardUsageRepoCapture) GetUserSpendingRanking(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -194,6 +233,8 @@ func (s *dashboardUsageRepoCapture) GetUserSpendingRanking(
 	}, nil
 }
 
+// newDashboardRequestTypeTestRouter constructs trend, model and ranking
+// routes with the supplied capture fixture.
 func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Engine {
 	dashboardSvc := usage.NewDashboardService(repo, nil, nil, nil)
 	handler := NewDashboardHandler(dashboardSvc, timezone.NewCalendar(time.Local))
@@ -204,6 +245,9 @@ func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Eng
 	return router
 }
 
+// TestDashboardTrendRequestTypePriority sends WS v2 beside malformed legacy
+// stream text. It requires HTTP success, a captured WS v2 category and absent
+// stream selector.
 func TestDashboardTrendRequestTypePriority(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -218,6 +262,9 @@ func TestDashboardTrendRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.trendStream)
 }
 
+// TestDashboardTrendInvalidRequestType submits unsupported category text to
+// the trend route. It requires a bad-request response from that handler's
+// category validation path.
 func TestDashboardTrendInvalidRequestType(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -229,6 +276,9 @@ func TestDashboardTrendInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestDashboardTrendInvalidStream submits malformed stream text with no
+// category. It requires a bad-request response from the trend handler's
+// legacy boolean validation path.
 func TestDashboardTrendInvalidStream(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -240,6 +290,9 @@ func TestDashboardTrendInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestDashboardModelStatsRequestTypePriority sends sync beside malformed
+// stream text to model grouping. It requires success, the category pointer
+// and an absent stream selector.
 func TestDashboardModelStatsRequestTypePriority(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -254,6 +307,9 @@ func TestDashboardModelStatsRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.modelStream)
 }
 
+// TestDashboardModelStatsInvalidRequestType submits unsupported category text
+// to model grouping. It requires a bad-request response from the handler
+// before the request can succeed.
 func TestDashboardModelStatsInvalidRequestType(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -265,6 +321,9 @@ func TestDashboardModelStatsInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestDashboardModelStatsInvalidStream submits malformed legacy stream text
+// without a category. It requires a bad-request response from the model
+// grouping handler for that input.
 func TestDashboardModelStatsInvalidStream(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -276,6 +335,9 @@ func TestDashboardModelStatsInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestDashboardModelStatsInvalidModelSource submits an unsupported reporting
+// source. It requires a bad-request response from the model handler's source
+// validation for the supplied query.
 func TestDashboardModelStatsInvalidModelSource(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -287,6 +349,9 @@ func TestDashboardModelStatsInvalidModelSource(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestDashboardModelStatsValidModelSource submits the supported upstream
+// reporting label. It requires HTTP success through this fixture; the
+// assertions do not inspect the returned model dimension.
 func TestDashboardModelStatsValidModelSource(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{}
 	router := newDashboardRequestTypeTestRouter(repo)
@@ -298,6 +363,9 @@ func TestDashboardModelStatsValidModelSource(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestDashboardUsersRankingLimitAndCache submits an oversized ranking limit
+// twice. It checks the fifty-row applied limit, full-range totals and the
+// response's miss-to-hit cache transition.
 func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 	repo := &dashboardUsageRepoCapture{
 		ranking: []usage.UserSpendingRankingItem{
@@ -326,6 +394,9 @@ func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 }
 
+// GetUserBreakdownStats records dimensions and limit before returning the
+// configured result. Missing result data produces an allocated empty slice,
+// allowing response-shape cases to inspect an empty successful query.
 func (r *userBreakdownRepoCapture) GetUserBreakdownStats(
 	_ context.Context, _, _ time.Time,
 	dim usage.UserBreakdownDimension, limit int,
@@ -338,6 +409,8 @@ func (r *userBreakdownRepoCapture) GetUserBreakdownStats(
 	return []usage.UserBreakdownItem{}, nil
 }
 
+// newUserBreakdownRouter constructs the administrator breakdown route with
+// its supplied capture fixture.
 func newUserBreakdownRouter(repo *userBreakdownRepoCapture) *gin.Engine {
 	svc := usage.NewDashboardService(repo, nil, nil, nil)
 	h := NewDashboardHandler(svc, timezone.NewCalendar(time.Local))
@@ -346,6 +419,9 @@ func newUserBreakdownRouter(repo *userBreakdownRepoCapture) *gin.Engine {
 	return router
 }
 
+// TestGetUserBreakdown_GroupIDFilter supplies only a group dimension. It
+// checks the captured group, absent other dimensions, default fifty-row limit
+// and empty sort text for repository defaulting.
 func TestGetUserBreakdown_GroupIDFilter(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -363,6 +439,9 @@ func TestGetUserBreakdown_GroupIDFilter(t *testing.T) {
 	require.Empty(t, repo.capturedDim.SortBy) // The repository selects the default sort when sort_by is absent.
 }
 
+// TestGetUserBreakdown_SortBy supplies the total_tokens ordering field. It
+// requires successful HTTP handling and that exact sort text in the captured
+// repository dimension.
 func TestGetUserBreakdown_SortBy(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -376,6 +455,9 @@ func TestGetUserBreakdown_SortBy(t *testing.T) {
 	require.Equal(t, "total_tokens", repo.capturedDim.SortBy)
 }
 
+// TestGetUserBreakdown_ModelFilter supplies a model without a group selector.
+// It checks the captured model, requested-source default and zero group scope
+// alongside HTTP success.
 func TestGetUserBreakdown_ModelFilter(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -391,6 +473,9 @@ func TestGetUserBreakdown_ModelFilter(t *testing.T) {
 	require.Equal(t, int64(0), repo.capturedDim.GroupID)
 }
 
+// TestGetUserBreakdown_ModelSourceFilter supplies a model and upstream source
+// label. It requires successful handling and the upstream source in the
+// captured breakdown dimension.
 func TestGetUserBreakdown_ModelSourceFilter(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -404,6 +489,9 @@ func TestGetUserBreakdown_ModelSourceFilter(t *testing.T) {
 	require.Equal(t, usage.ModelSourceUpstream, repo.capturedDim.ModelType)
 }
 
+// TestGetUserBreakdown_InvalidModelSource supplies unsupported dimension text
+// to user breakdown. It requires the handler to return a bad-request response
+// for that source selection.
 func TestGetUserBreakdown_InvalidModelSource(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -416,6 +504,9 @@ func TestGetUserBreakdown_InvalidModelSource(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestGetUserBreakdown_EndpointFilter supplies an upstream endpoint value and
+// type. It requires successful handling and both exact values in the captured
+// repository dimension.
 func TestGetUserBreakdown_EndpointFilter(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -430,6 +521,9 @@ func TestGetUserBreakdown_EndpointFilter(t *testing.T) {
 	require.Equal(t, "upstream", repo.capturedDim.EndpointType)
 }
 
+// TestGetUserBreakdown_DefaultEndpointType supplies endpoint text without an
+// endpoint type. It requires successful handling and the captured inbound
+// endpoint-type default for repository selection.
 func TestGetUserBreakdown_DefaultEndpointType(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -443,6 +537,9 @@ func TestGetUserBreakdown_DefaultEndpointType(t *testing.T) {
 	require.Equal(t, "inbound", repo.capturedDim.EndpointType)
 }
 
+// TestGetUserBreakdown_CustomLimit supplies one hundred as a valid row limit.
+// It requires HTTP success and that value in the captured repository query
+// call.
 func TestGetUserBreakdown_CustomLimit(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -456,11 +553,13 @@ func TestGetUserBreakdown_CustomLimit(t *testing.T) {
 	require.Equal(t, 100, repo.capturedLimit)
 }
 
+// TestGetUserBreakdown_LimitClamped supplies a value above two hundred. It
+// requires HTTP success and the default fifty-row limit, rather than a
+// two-hundred-row capped result.
 func TestGetUserBreakdown_LimitClamped(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
 
-	// limit > 200 should fall back to default 50
 	req := httptest.NewRequest(http.MethodGet,
 		"/admin/dashboard/user-breakdown?start_date=2026-03-01&end_date=2026-03-16&model=test&limit=999", nil)
 	w := httptest.NewRecorder()
@@ -470,6 +569,9 @@ func TestGetUserBreakdown_LimitClamped(t *testing.T) {
 	require.Equal(t, 50, repo.capturedLimit)
 }
 
+// TestGetUserBreakdown_ResponseFormat returns two configured payer rows for
+// an explicit range. It checks envelope status, selected first-row values,
+// row count and displayed start and end dates.
 func TestGetUserBreakdown_ResponseFormat(t *testing.T) {
 	repo := &userBreakdownRepoCapture{
 		result: []usage.UserBreakdownItem{
@@ -487,12 +589,12 @@ func TestGetUserBreakdown_ResponseFormat(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // decoded envelope result code
 		Data struct {
-			Users     []usage.UserBreakdownItem `json:"users"`
-			StartDate string                    `json:"start_date"`
-			EndDate   string                    `json:"end_date"`
-		} `json:"data"`
+			Users     []usage.UserBreakdownItem `json:"users"`      // decoded payer breakdown rows
+			StartDate string                    `json:"start_date"` // decoded displayed start date
+			EndDate   string                    `json:"end_date"`   // decoded displayed end date
+		} `json:"data"` // decoded dashboard response payload
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
@@ -501,11 +603,15 @@ func TestGetUserBreakdown_ResponseFormat(t *testing.T) {
 	require.Equal(t, int64(1), resp.Data.Users[0].UserID)
 	require.Equal(t, "alice@test.com", resp.Data.Users[0].Email)
 	require.Equal(t, int64(100), resp.Data.Users[0].Requests)
+	// Permit the fixture's small floating-point decoding tolerance for this charge.
 	require.InDelta(t, 1.2, resp.Data.Users[0].ActualCost, 0.001)
 	require.Equal(t, "2026-03-01", resp.Data.StartDate)
 	require.Equal(t, "2026-03-16", resp.Data.EndDate)
 }
 
+// TestGetUserBreakdown_EmptyResult queries a fixture with no configured rows.
+// It requires a successful response whose decoded users collection is empty
+// for that range.
 func TestGetUserBreakdown_EmptyResult(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -519,14 +625,17 @@ func TestGetUserBreakdown_EmptyResult(t *testing.T) {
 
 	var resp struct {
 		Data struct {
-			Users []usage.UserBreakdownItem `json:"users"`
-		} `json:"data"`
+			Users []usage.UserBreakdownItem `json:"users"` // decoded payer breakdown rows
+		} `json:"data"` // decoded dashboard response payload
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	require.Empty(t, resp.Data.Users)
 }
 
+// TestGetUserBreakdown_NoFilters supplies an explicit range with no breakdown
+// dimension. It requires success and captured zero group, empty model and
+// empty endpoint selectors.
 func TestGetUserBreakdown_NoFilters(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -542,11 +651,14 @@ func TestGetUserBreakdown_NoFilters(t *testing.T) {
 	require.Empty(t, repo.capturedDim.Endpoint)
 }
 
+// TestGetUserBreakdown_RequestTypeStringFilter supplies the four category
+// labels listed in its table. It checks successful responses and the
+// corresponding stored integer selector for each fixture.
 func TestGetUserBreakdown_RequestTypeStringFilter(t *testing.T) {
 	cases := []struct {
-		name  string
-		value string
-		want  int16
+		name  string // subtest case label
+		value string // input category label text
+		want  int16  // expected stored category selector
 	}{
 		{"ws_v2", "ws_v2", int16(usage.RequestTypeWSV2)},
 		{"stream", "stream", int16(usage.RequestTypeStream)},
@@ -570,6 +682,9 @@ func TestGetUserBreakdown_RequestTypeStringFilter(t *testing.T) {
 	}
 }
 
+// TestGetUserBreakdown_InvalidRequestType submits unsupported category text
+// to the breakdown route. It requires a bad-request response for that invalid
+// request-type filter value.
 func TestGetUserBreakdown_InvalidRequestType(t *testing.T) {
 	repo := &userBreakdownRepoCapture{}
 	router := newUserBreakdownRouter(repo)
@@ -582,6 +697,9 @@ func TestGetUserBreakdown_InvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestParseTimeRange checks an explicit UTC date pair and malformed start
+// text. It requires the exact expanded pair first, then only nonzero fallback
+// bounds in the invalid case.
 func TestParseTimeRange(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -599,7 +717,9 @@ func TestParseTimeRange(t *testing.T) {
 	require.False(t, end.IsZero())
 }
 
-// TestParseTimeRangeInjectedCalendar checks server defaults, user overrides, and calendar-day end expansion.
+// TestParseTimeRangeInjectedCalendar supplies a spring-DST date under server,
+// invalid-user and valid-user zones. It checks exact local midnights and
+// their expected twenty-three or twenty-four-hour durations.
 func TestParseTimeRangeInjectedCalendar(t *testing.T) {
 	newYork, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -607,10 +727,10 @@ func TestParseTimeRangeInjectedCalendar(t *testing.T) {
 	require.NoError(t, err)
 	calendar := timezone.NewCalendar(newYork)
 	for _, tc := range []struct {
-		name     string
-		query    string
-		location *time.Location
-		duration time.Duration
+		name     string         // subtest case label
+		query    string         // input timezone query suffix
+		location *time.Location // expected date parsing location
+		duration time.Duration  // expected elapsed range duration
 	}{
 		{name: "server_default", location: newYork, duration: 23 * time.Hour},
 		{name: "invalid_user_fallback", query: "&timezone=invalid-zone", location: newYork, duration: 23 * time.Hour},

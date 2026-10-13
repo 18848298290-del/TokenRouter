@@ -8,6 +8,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestAppendMissingGrokFreeCacheNativeTools_PureClientFunctionNoInject
+// supplies a client-only function with automatic choice and no client opt-in.
+// It asserts neither native search tool is added to that local-tool request.
 func TestAppendMissingGrokFreeCacheNativeTools_PureClientFunctionNoInject(t *testing.T) {
 	body := []byte(`{
 		"model": "grok-4.5",
@@ -28,6 +31,10 @@ func TestAppendMissingGrokFreeCacheNativeTools_PureClientFunctionNoInject(t *tes
 	}
 }
 
+// TestAppendMissingGrokFreeCacheNativeTools_FunctionPlusWebSearchInjects
+// combines a client function with a search function. It asserts search-
+// function conversion produces native web_search and adds the x_search
+// companion when client-only injection is disabled.
 func TestAppendMissingGrokFreeCacheNativeTools_FunctionPlusWebSearchInjects(t *testing.T) {
 	body := []byte(`{
 		"model": "grok-4.5",
@@ -49,6 +56,9 @@ func TestAppendMissingGrokFreeCacheNativeTools_FunctionPlusWebSearchInjects(t *t
 	assert.True(t, types["x_search"], "x_search should be injected when web_search is present alongside client functions")
 }
 
+// TestAppendMissingGrokFreeCacheNativeTools_NativeSearchAlreadyPresent
+// combines a client function with existing native web_search. It asserts that
+// web search remains present and the missing X-search companion is added.
 func TestAppendMissingGrokFreeCacheNativeTools_NativeSearchAlreadyPresent(t *testing.T) {
 	body := []byte(`{
 		"model": "grok-4.5",
@@ -70,6 +80,10 @@ func TestAppendMissingGrokFreeCacheNativeTools_NativeSearchAlreadyPresent(t *tes
 	assert.True(t, types["x_search"], "x_search should be injected when web_search is already present")
 }
 
+// TestAppendMissingGrokFreeCacheNativeTools_MultipleFunctionsNoSearch
+// supplies two client functions with no search declaration or opt-in. It
+// asserts the result retains two tools, preventing automatic addition of
+// search companions.
 func TestAppendMissingGrokFreeCacheNativeTools_MultipleFunctionsNoSearch(t *testing.T) {
 	body := []byte(`{
 		"model": "grok-4.5",

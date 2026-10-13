@@ -10,33 +10,70 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// OpenAI workspace deactivation affects other OAuth-like records with the same
+// saved ChatGPT account ID. Propagation claims a process-local team key before
+// querying, so a failed lookup still delays another attempt until the
+// deduplication interval expires.
+//
+// Returned teammates receive runtime blocks as a group before individual
+// persistent error writes begin. An individual write failure leaves that block
+// installed and does not stop later teammates. Persistence uses a context
+// detached from request cancellation with its own deadline; the synchronous
+// block callback has no context parameter and must return for persistence to
+// proceed.
+
+// openAITeamLinkedErrorDedupTTL and openAITeamLinkedErrorFanoutTimeout limit
+// repeated team propagation and its detached store calls.
+// OpenAITeamLinkedErrorBlockReason identifies runtime blocks installed for
+// teammates.
 const (
-	openAITeamLinkedErrorDedupTTL      = 60 * time.Second
-	openAITeamLinkedErrorFanoutTimeout = 30 * time.Second
-	OpenAITeamLinkedErrorBlockReason   = "team_linked_error"
+	openAITeamLinkedErrorDedupTTL      = 60 * time.Second    // team propagation interval
+	openAITeamLinkedErrorFanoutTimeout = 30 * time.Second    // detached persistence budget
+	OpenAITeamLinkedErrorBlockReason   = "team_linked_error" // teammate runtime reason
 )
 
-// TeamLinkedStore lists providers by platform and writes each provider's error state separately.
+// TeamLinkedStore provides platform records and separate writes of provider
+// error state.
 type TeamLinkedStore interface {
+	// ListByPlatform returns the platform records available for teammate
+	// filtering.
 	ListByPlatform(context.Context, string) ([]Record, error)
+	// SetError records the supplied diagnostic for one provider's persistent error
+	// state.
 	SetError(context.Context, int64, string) error
 }
 
-// TeamLinkedOptions supplies runtime blocking, logging, and the clock.
+// TeamLinkedOptions supplies the clock and callbacks for teammate propagation.
 type TeamLinkedOptions struct {
-	Now   func() time.Time
-	Warn  func(string, ...any)
+	// Now timestamps deduplication entries before team admission acquires its
+	// mutex. Concurrent handlers can call it together, so supply a clock safe for
+	// those calls; NewTeamLinkedHealth uses time.Now when it is absent.
+	Now func() time.Time
+	// Warn receives query, write, and completion diagnostics; NewTeamLinkedHealth
+	// replaces an absent callback with a no-op.
+	Warn func(string, ...any)
+	// Block receives each matched record before any persistent write, using a zero
+	// deadline. NewTeamLinkedHealth supplies a no-op when absent.
 	Block func(*Record, time.Time, string)
 }
 
-// TeamLinkedHealth owns process-local deduplication for workspace-wide error propagation.
+// TeamLinkedHealth coordinates teammate propagation with deduplication shared
+// by its callers.
 type TeamLinkedHealth struct {
-	providerRepo           TeamLinkedStore
-	options                TeamLinkedOptions
-	openaiTeamLinkedMu     sync.Mutex
-	openaiTeamLinkedRecent map[string]time.Time
+	// providerRepo supplies propagation targets and error writes. A missing store
+	// makes HandleWorkspaceDeactivated return before claiming a team key.
+	providerRepo TeamLinkedStore
+	options      TeamLinkedOptions // normalized propagation callbacks
+	// openaiTeamLinkedMu protects all access to openaiTeamLinkedRecent. Each
+	// admitted team receives an expiry before external work, and subsequent calls
+	// share that process-local claim.
+	openaiTeamLinkedMu     sync.Mutex           // team admission lock
+	openaiTeamLinkedRecent map[string]time.Time // team admission expiries
 }
 
+// NewTeamLinkedHealth creates an idle propagation service using store and
+// options. Missing Now uses time.Now, and missing Warn or Block becomes a
+// no-op; construction performs no provider queries.
 func NewTeamLinkedHealth(store TeamLinkedStore, options TeamLinkedOptions) *TeamLinkedHealth {
 	if options.Now == nil {
 		options.Now = time.Now
@@ -50,9 +87,17 @@ func NewTeamLinkedHealth(store TeamLinkedStore, options TeamLinkedOptions) *Team
 	return &TeamLinkedHealth{providerRepo: store, options: options}
 }
 
-// HandleWorkspaceDeactivated marks other providers with the same ChatGPT account ID as errored.
-// It blocks matching non-shadow records returned by the store before writing their state.
-// The triggering provider is handled by the ordinary 402 path.
+// HandleWorkspaceDeactivated propagates a confirmed workspace deactivation to
+// other non-shadow records with the same trimmed ChatGPT account ID. Nil services
+// or stores, ineligible triggers, missing IDs, and a live deduplication claim
+// skip propagation. The triggering provider's ordinary 402 handling
+// remains with its caller.
+//
+// The team claim precedes the store query and survives query or write failures.
+// Runtime callbacks run for every matched target before separate error writes,
+// and failed writes are logged while later targets continue. Store calls use a
+// detached thirty-second context; Block receives that target's record
+// synchronously and has no cancellation parameter.
 func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provider *Record, deactivated bool) {
 	if s == nil || s.providerRepo == nil || !deactivated || provider == nil || !provider.IsOpenAIOAuthLike() {
 		return
@@ -64,7 +109,9 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	if !s.markOpenAITeamLinkedFired(teamID) {
 		return
 	}
-	// Persistence has a separate budget because the failed request may already be canceled.
+	// Detach request cancellation while retaining context values, then bound the
+	// store work independently so a canceled triggering request can still
+	// propagate teammate errors.
 	baseCtx := context.Background()
 	if ctx != nil {
 		baseCtx = context.WithoutCancel(ctx)
@@ -88,15 +135,18 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	if len(targets) == 0 {
 		return
 	}
-	// Block all matching providers locally before writing their states one at a time.
+	// The store writes can fail independently. Install every target's runtime
+	// block first so failure on an early target still leaves later teammates
+	// blocked locally.
 	for _, acc := range targets {
 		s.options.Block(acc, time.Time{}, OpenAITeamLinkedErrorBlockReason)
 	}
 	errorMsg := fmt.Sprintf("Workspace deactivated (402): team-linked error triggered by provider #%d", provider.ID)
 	marked := 0
 	for _, acc := range targets {
-		// Continue after an individual write failure. The runtime block is already installed,
-		// and another failure after the deduplication TTL can retry the persistent update.
+		// A failed write leaves its target's runtime block installed. Continue with
+		// other targets; a later trigger can retry this team after deduplication
+		// expires.
 		if err := s.providerRepo.SetError(opCtx, acc.ID, errorMsg); err != nil {
 			s.options.Warn("openai_team_linked_error_set_error_failed", "provider_id", acc.ID, "error", err)
 			continue
@@ -111,9 +161,19 @@ func (s *TeamLinkedHealth) HandleWorkspaceDeactivated(ctx context.Context, provi
 	)
 }
 
-// markOpenAITeamLinkedFired admits one propagation per team per TTL within this process.
+// markOpenAITeamLinkedFired reports whether this team can begin another
+// propagation. It serializes claim checks and expiry updates, pruning expired
+// teams only when a new claim is admitted.
+//
+// A live expiry rejects another claim for the same case-sensitive ID. Admission
+// records the next expiry before releasing the lock, so concurrent handlers
+// share one claim even while its caller is still querying or writing providers.
+// Failures outside this helper do not roll back that claim.
 func (s *TeamLinkedHealth) markOpenAITeamLinkedFired(teamID string) bool {
 	now := s.options.Now()
+	// Keep claim inspection, pruning and installation under one lock so concurrent
+	// team observations cannot both admit propagation before either installs its
+	// expiry.
 	s.openaiTeamLinkedMu.Lock()
 	defer s.openaiTeamLinkedMu.Unlock()
 	if expiry, ok := s.openaiTeamLinkedRecent[teamID]; ok && expiry.After(now) {
@@ -122,6 +182,8 @@ func (s *TeamLinkedHealth) markOpenAITeamLinkedFired(teamID string) bool {
 	if s.openaiTeamLinkedRecent == nil {
 		s.openaiTeamLinkedRecent = make(map[string]time.Time)
 	}
+	// Cleanup is driven by admitted propagations. Repeated attempts within a live
+	// team's TTL return earlier and therefore do not sweep other teams.
 	for k, v := range s.openaiTeamLinkedRecent {
 		if !v.After(now) {
 			delete(s.openaiTeamLinkedRecent, k)

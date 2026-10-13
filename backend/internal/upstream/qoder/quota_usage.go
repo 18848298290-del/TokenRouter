@@ -7,48 +7,87 @@ import (
 	"strings"
 )
 
-// QuotaUsageResponse accepts site quota fields and their legacy aliases.
+// Quota responses can report a field as zero or omit it entirely, and those
+// cases affect derived remaining capacity. QuotaProgress stores presence flags
+// beside numeric values so normalization can distinguish an explicit observation
+// from a value synthesized for display.
+//
+// Canonical and legacy quota objects remain separate pointers in the response,
+// allowing the provider reader to choose the first present bucket even when all
+// its values are zero. Normalization can use cap or used plus remaining when
+// requested, retains an explicitly supplied remaining amount, and clamps
+// negative remaining to zero. Percentage values from zero through one are
+// interpreted as fractions before rounding to two decimal percent places.
+
+// QuotaUsageResponse contains site quota metadata and alternative wire names for
+// capacity buckets.
 type QuotaUsageResponse struct {
-	UserID               string         `json:"userId"`
-	UserType             string         `json:"userType"`
-	UsageType            string         `json:"usageType"`
-	TotalUsagePercentage float64        `json:"totalUsagePercentage"`
-	IsQuotaExceeded      bool           `json:"isQuotaExceeded"`
-	ExpiresAt            FlexibleInt64  `json:"expiresAt"`
-	UpgradeURL           string         `json:"upgradeUrl"`
-	AddCreditsURL        string         `json:"addCreditsUrl"`
-	UserQuota            *QuotaProgress `json:"userQuota"`
-	AddOnQuota           *QuotaProgress `json:"addOnQuota"`
-	AddOnQuotaSnake      *QuotaProgress `json:"add_on_quota"`
-	OrgResourcePackage   *QuotaProgress `json:"orgResourcePackage"`
-	OrgResourcePkgSnake  *QuotaProgress `json:"org_resource_package"`
-	SharedQuota          *QuotaProgress `json:"sharedQuota"`
-	SharedQuotaSnake     *QuotaProgress `json:"shared_quota"`
-	IsPlanQuotaProrated  bool           `json:"isPlanQuotaProrated"`
+	UserID               string         `json:"userId"`               // quota user identifier
+	UserType             string         `json:"userType"`             // quota account classification
+	UsageType            string         `json:"usageType"`            // quota usage category
+	TotalUsagePercentage float64        `json:"totalUsagePercentage"` // percent or fraction
+	IsQuotaExceeded      bool           `json:"isQuotaExceeded"`      // reported quota exhaustion
+	ExpiresAt            FlexibleInt64  `json:"expiresAt"`            // upstream quota expiry
+	UpgradeURL           string         `json:"upgradeUrl"`           // plan upgrade URL
+	AddCreditsURL        string         `json:"addCreditsUrl"`        // credit purchase URL
+	UserQuota            *QuotaProgress `json:"userQuota"`            // primary user quota
+	// AddOnQuota and AddOnQuotaSnake are alternative addon buckets. The provider
+	// reader selects the canonical pointer first, including a present zero-valued
+	// object.
+	AddOnQuota      *QuotaProgress `json:"addOnQuota"`   // canonical addon quota
+	AddOnQuotaSnake *QuotaProgress `json:"add_on_quota"` // legacy addon quota
+	// OrgResourcePackage, OrgResourcePkgSnake, SharedQuota, and SharedQuotaSnake
+	// name alternative organization buckets. The provider reader chooses the first
+	// present pointer in this order.
+	OrgResourcePackage  *QuotaProgress `json:"orgResourcePackage"`   // canonical organization quota
+	OrgResourcePkgSnake *QuotaProgress `json:"org_resource_package"` // legacy organization quota
+	SharedQuota         *QuotaProgress `json:"sharedQuota"`          // canonical shared quota
+	SharedQuotaSnake    *QuotaProgress `json:"shared_quota"`         // legacy shared quota
+	IsPlanQuotaProrated bool           `json:"isPlanQuotaProrated"`  // reported prorated plan
 }
 
-// QuotaProgress distinguishes missing fields from explicit zero values when deriving available quota.
+// QuotaProgress holds observed quota amounts and JSON presence needed for
+// display derivation.
 type QuotaProgress struct {
-	Total          float64 `json:"total"`
-	Cap            float64 `json:"cap"`
-	Used           float64 `json:"used"`
-	Remaining      float64 `json:"remaining"`
-	Percentage     float64 `json:"percentage"`
-	Unit           string  `json:"unit"`
-	DetailURL      string  `json:"detailUrl"`
-	DetailURLSnake string  `json:"detail_url"`
-	Available      bool    `json:"available"`
-	OrganizationID string  `json:"organizationId"`
+	Total float64 `json:"total"` // observed total capacity
+	Cap   float64 `json:"cap"`   // observed base capacity
+	Used  float64 `json:"used"`  // observed consumed capacity
+	// Remaining holds an observed value when its JSON field is present.
+	// NormalizeQuotaProgress infers total minus used only when that observation is
+	// absent.
+	Remaining  float64 `json:"remaining"`  // observed remaining capacity
+	Percentage float64 `json:"percentage"` // percent or fraction
+	Unit       string  `json:"unit"`       // quota display unit
+	// DetailURL and DetailURLSnake hold alternate bucket-detail links.
+	// NormalizeQuotaProgress prefers nonblank DetailURL, then DetailURLSnake, and
+	// trims the chosen text before returning display metadata.
+	DetailURL      string `json:"detailUrl"`  // canonical detail URL
+	DetailURLSnake string `json:"detail_url"` // legacy detail URL
+	// Available retains an explicitly supplied availability flag. With cap-based
+	// normalization, an absent JSON flag is derived from observed base capacity.
+	Available      bool   `json:"available"`      // reported bucket availability
+	OrganizationID string `json:"organizationId"` // quota organization identifier
 
-	totalSet      bool
-	capSet        bool
-	usedSet       bool
-	remainingSet  bool
-	percentageSet bool
-	availableSet  bool
+	// totalSet, capSet, usedSet, remainingSet, percentageSet, and availableSet
+	// distinguish nonnull JSON fields from omissions. Explicit zero or false values
+	// remain observations during normalization.
+	totalSet      bool // nonnull total present
+	capSet        bool // nonnull cap present
+	usedSet       bool // nonnull used present
+	remainingSet  bool // nonnull remaining present
+	percentageSet bool // nonnull percentage present
+	availableSet  bool // nonnull available present
 }
 
+// UnmarshalJSON decodes quota values and records which derivation inputs were
+// present. The receiver is replaced with the decoded value before checking raw
+// field presence. A JSON null field counts as absent, while a supplied numeric
+// zero or false value counts as present. NormalizeQuotaProgress uses these flags
+// to keep explicit zero remaining capacity from being replaced by total minus
+// used and to retain supplied availability.
 func (r *QuotaProgress) UnmarshalJSON(data []byte) error {
+	// alias decodes quota values without recursively invoking the presence-tracking
+	// JSON method.
 	type alias QuotaProgress
 	var decoded alias
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -57,6 +96,9 @@ func (r *QuotaProgress) UnmarshalJSON(data []byte) error {
 	*r = QuotaProgress(decoded)
 
 	var fields map[string]json.RawMessage
+	// Numeric decoding already succeeded. If raw presence inspection fails, retain
+	// the decoded values and let nonzero-value inference serve manually built
+	// buckets.
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil
 	}
@@ -69,6 +111,9 @@ func (r *QuotaProgress) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// qoderJSONHasAnyField reports whether any named raw JSON field is present and
+// nonnull. An explicit zero or false is present; missing names and null values
+// are absent for quota derivation.
 func qoderJSONHasAnyField(fields map[string]json.RawMessage, names ...string) bool {
 	for _, name := range names {
 		raw, ok := fields[name]
@@ -83,7 +128,15 @@ func qoderJSONHasAnyField(fields map[string]json.RawMessage, names ...string) bo
 	return false
 }
 
-// NormalizeQuotaProgress derives quota totals, remaining capacity, and percentage for display.
+// NormalizeQuotaProgress derives a display bucket from observed quota values and
+// presence flags. Nil input returns nil. When useCapAsTotal is enabled, missing
+// or nonpositive total can use cap and then used plus remaining; explicit
+// remaining wins over inferred total minus used.
+//
+// Negative remaining becomes zero, and percentage uses an explicit value or the
+// used/total fraction. Availability inference uses observed base cap or total
+// when its JSON field was absent, keeping an explicit false authoritative. The
+// result is newly allocated and trims display metadata.
 func NormalizeQuotaProgress(raw *QuotaProgress, useCapAsTotal bool) *QuotaProgress {
 	if raw == nil {
 		return nil
@@ -92,6 +145,9 @@ func NormalizeQuotaProgress(raw *QuotaProgress, useCapAsTotal bool) *QuotaProgre
 	if qoderQuotaRawFieldSet(raw.totalSet, raw.Total) {
 		total = raw.Total
 	}
+	// Some buckets describe capacity with cap or used plus remaining. Apply those
+	// alternatives when requested so the provider display can derive a complete
+	// total.
 	if useCapAsTotal && total <= 0 {
 		if qoderQuotaRawFieldSet(raw.capSet, raw.Cap) {
 			total = raw.Cap
@@ -110,6 +166,7 @@ func NormalizeQuotaProgress(raw *QuotaProgress, useCapAsTotal bool) *QuotaProgre
 	} else if total > used {
 		remaining = total - used
 	}
+	// Display remaining capacity cannot be negative after normalization.
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -143,16 +200,26 @@ func NormalizeQuotaProgress(raw *QuotaProgress, useCapAsTotal bool) *QuotaProgre
 	}
 }
 
+// qoderQuotaRawFieldSet treats nonzero manually constructed values as present
+// alongside decoded presence flags.
 func qoderQuotaRawFieldSet(explicit bool, value float64) bool {
 	return explicit || value != 0
 }
 
+// NormalizeQuotaPercentage converts a reported fraction or percent and rounds
+// it to two decimal places. Values through one become percentages; negative,
+// NaN, and infinite inputs become zero. Large finite values reach the arithmetic
+// unchanged, so rounding multiplication can overflow.
 func NormalizeQuotaPercentage(value float64) float64 {
+	// Invalid display percentages become zero so callers can format the result as a
+	// finite number even when the upstream bucket has no usable percentage.
 	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
+	// Fractions through one become percentage units for display.
 	if value >= 0 && value <= 1 {
 		value *= 100
 	}
+	// Round the displayed percentage to two decimal places.
 	return math.Round(value*100) / 100
 }

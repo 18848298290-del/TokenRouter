@@ -12,66 +12,122 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// Grok billing can report weekly credit progress and monthly included
+// spending in the same configuration. Weekly reset dates remain separate from
+// monthly billing dates so an exhausted weekly window is not assigned a
+// month-end reset. Amount parsing accepts wrapped values, numbers, and
+// numeric strings while retaining absence through nil pointers.
+//
+// Summary construction caps included monthly usage at a positive limit and
+// converts monthly cents to display dollars. Probe merging replaces
+// successful windows independently, retaining values and observation times
+// for failed windows. Merges reuse input pointer and slice storage, while a
+// new FailedWindows slice describes the latest probe outcome. Consumers need
+// a separate copy before independently mutating retained amounts or product
+// entries.
+
+// Billing endpoint paths select weekly credits or monthly spending, while the
+// fixed CLI identity and recognized cent limits define request and display policy.
 const (
-	// CLITokenAuthHeader carries the CLI identity required by cli-chat-proxy billing.
-	CLITokenAuthHeader     = "x-xai-token-auth"
-	CLITokenAuthValue      = "xai-grok-cli"
-	CLIClientVersionHeader = "x-grok-client-version"
+	// CLITokenAuthHeader names the fixed token identity header sent by billing probes.
+	CLITokenAuthHeader     = "x-xai-token-auth"      // CLI token identity header
+	CLITokenAuthValue      = "xai-grok-cli"          // CLI token identity value
+	CLIClientVersionHeader = "x-grok-client-version" // CLI client version header
 	// CLIClientVersion is the shared version used to construct Grok CLI request identities.
-	// Update it with the supported release at https://x.ai/cli/stable.
+	// Billing probes use this bundled version independently of the environment override.
 	CLIClientVersion = "0.2.120"
-	// billingCLIUserAgent uses the pager/shell identity for billing probes.
-	// CLIUserAgent in cli_identity.go uses the workspace identity.
+	// billingCLIUserAgent advertises the pinned pager and shell billing identity;
+	// general forwarding obtains a separately resolved workspace User-Agent.
 	billingCLIUserAgent = "grok-pager/" + CLIClientVersion + " grok-shell/" + CLIClientVersion + " (macos; aarch64)"
 
-	BillingWeeklyPath  = "/billing?format=credits"
-	BillingMonthlyPath = "/billing"
+	BillingWeeklyPath  = "/billing?format=credits" // weekly credits request suffix
+	BillingMonthlyPath = "/billing"                // monthly billing request suffix
 
 	SuperGrokLimitCents      = 15_000  // $150.00
 	SuperGrokHeavyLimitCents = 150_000 // $1,500.00
 )
 
-// BillingPeriod describes a weekly or monthly usage window.
+// BillingPeriod carries the upstream period label and its reported date
+// strings.
 type BillingPeriod struct {
-	Type  string `json:"type,omitempty"`
-	Start string `json:"start,omitempty"`
-	End   string `json:"end,omitempty"`
+	// Type, Start, and End describe one CurrentPeriod observation.
+	// BuildBillingSummary uses these dates for weekly evidence independently of
+	// BillingPeriodStart and BillingPeriodEnd, which represent the monthly
+	// billing window.
+	Type  string `json:"type,omitempty"`  // reported period type
+	Start string `json:"start,omitempty"` // reported period start text
+	End   string `json:"end,omitempty"`   // reported period end text
 }
 
-// BillingProductUsage records one product in a weekly credits window.
+// BillingProductUsage represents one upstream product and its optional credit
+// progress percentage.
 type BillingProductUsage struct {
-	Product      string   `json:"product,omitempty"`
-	UsagePercent *float64 `json:"usagePercent,omitempty"`
+	Product string `json:"product,omitempty"` // upstream product display name
+	// UsagePercent distinguishes an absent percentage from a reported zero.
+	// BuildBillingSummary copies a present value when retaining this product.
+	UsagePercent *float64 `json:"usagePercent,omitempty"` // reported credit progress percent
 }
 
-// BillingConfig is the nested config object from /v1/billing.
+// BillingConfig retains weekly credit and monthly spending fields decoded
+// from a billing response.
 type BillingConfig struct {
-	CurrentPeriod        *BillingPeriod        `json:"currentPeriod,omitempty"`
-	CreditUsagePercent   *float64              `json:"creditUsagePercent,omitempty"`
-	ProductUsage         []BillingProductUsage `json:"productUsage,omitempty"`
-	MonthlyLimit         json.RawMessage       `json:"monthlyLimit,omitempty"`
-	Used                 json.RawMessage       `json:"used,omitempty"`
-	OnDemandCap          json.RawMessage       `json:"onDemandCap,omitempty"`
-	OnDemandUsed         json.RawMessage       `json:"onDemandUsed,omitempty"`
-	PrepaidBalance       json.RawMessage       `json:"prepaidBalance,omitempty"`
-	IsUnifiedBillingUser bool                  `json:"isUnifiedBillingUser,omitempty"`
-	TopUpMethod          string                `json:"topUpMethod,omitempty"`
-	BillingPeriodStart   string                `json:"billingPeriodStart,omitempty"`
-	BillingPeriodEnd     string                `json:"billingPeriodEnd,omitempty"`
+	// CurrentPeriod supplies primary period type and dates when present.
+	// BuildBillingSummary keeps missing weekly dates empty even when monthly
+	// dates exist.
+	CurrentPeriod *BillingPeriod `json:"currentPeriod,omitempty"` // upstream primary period object
+	// CreditUsagePercent being present establishes weekly evidence, including
+	// zero. BuildBillingSummary keeps monthly included-credit progress in a
+	// separate UsedPercent field.
+	CreditUsagePercent *float64 `json:"creditUsagePercent,omitempty"` // reported weekly progress percent
+	// ProductUsage also establishes weekly evidence when usable product names
+	// remain. BuildBillingSummary skips blank names and copies retained
+	// percentage pointers.
+	ProductUsage []BillingProductUsage `json:"productUsage,omitempty"` // reported weekly product observations
+	// MonthlyLimit and Used carry monthly cents in wrapped, numeric, or string
+	// JSON form. BuildBillingSummary caps included usage at a positive limit and
+	// also derives dollar-valued display amounts.
+	MonthlyLimit json.RawMessage `json:"monthlyLimit,omitempty"` // cents
+	Used         json.RawMessage `json:"used,omitempty"`         // cents
+	// OnDemandCap, OnDemandUsed, and PrepaidBalance carry dollar amounts in the
+	// same accepted numeric forms. A successfully parsed value establishes
+	// weekly credit evidence; these amounts retain dollar units during display conversion.
+	OnDemandCap    json.RawMessage `json:"onDemandCap,omitempty"`    // USD
+	OnDemandUsed   json.RawMessage `json:"onDemandUsed,omitempty"`   // USD
+	PrepaidBalance json.RawMessage `json:"prepaidBalance,omitempty"` // USD
+	// IsUnifiedBillingUser records source membership, including its zero value.
+	// Weekly merging accepts true and retains the previous membership when
+	// this source reports false.
+	IsUnifiedBillingUser bool `json:"isUnifiedBillingUser,omitempty"` // reported unified billing membership
+	// TopUpMethod is trimmed during summary construction. Weekly merging replaces
+	// retained method text only when the new summary supplies a nonblank value.
+	TopUpMethod string `json:"topUpMethod,omitempty"` // reported top-up method text
+	// BillingPeriodStart and BillingPeriodEnd describe monthly billing dates.
+	// BuildBillingSummary copies them separately when monthly evidence exists,
+	// preserving the distinction from the primary weekly period's Start and End.
+	BillingPeriodStart string `json:"billingPeriodStart,omitempty"` // monthly billing start text
+	BillingPeriodEnd   string `json:"billingPeriodEnd,omitempty"`   // monthly billing end text
 }
 
-// BillingPayload is the top-level /v1/billing response.
+// BillingPayload wraps the optional configuration returned by the billing
+// endpoint.
 type BillingPayload struct {
-	Config *BillingConfig `json:"config,omitempty"`
+	// Config can be absent in successfully decoded JSON. BuildBillingSummary
+	// returns nil for missing configuration, so callers do not infer a usage
+	// window.
+	Config *BillingConfig `json:"config,omitempty"` // optional upstream billing configuration
 }
 
-// BillingProductSummary is the shared display value for product usage.
+// BillingProductSummary aliases the product display value shared with
+// provider usage consumers.
 type BillingProductSummary = usageview.BillingProductSummary
 
-// BillingSummary is the shared display value for parsed billing data.
+// BillingSummary aliases the billing display value shared with provider usage
+// consumers.
 type BillingSummary = usageview.BillingSummary
 
-// BuildBillingURL builds the CLI chat proxy weekly or monthly billing URL.
+// BuildBillingURL appends the weekly credits or monthly billing path to
+// DefaultCLIBaseURL. The boolean selects the endpoint representation; this
+// default-only helper does not consult runtime or saved provider base URLs.
 func BuildBillingURL(formatCredits bool) string {
 	base := strings.TrimRight(DefaultCLIBaseURL, "/")
 	if formatCredits {
@@ -80,8 +136,10 @@ func BuildBillingURL(formatCredits bool) string {
 	return base + BillingMonthlyPath
 }
 
-// BuildBillingURLWithValidator validates the supplied base URL before adding the billing path.
-// Callers supply the forwarding base URL so custom upstreams also receive quota probes.
+// BuildBillingURLWithValidator appends the selected billing path after
+// validating and normalizing baseURL. A nil validator uses platform base
+// policy; callers pass their provider policy for custom endpoints and receive
+// validation failures before a URL is built.
 func BuildBillingURLWithValidator(baseURL string, formatCredits bool, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -93,7 +151,10 @@ func BuildBillingURLWithValidator(baseURL string, formatCredits bool, validator 
 	return validatedBaseURL + BillingMonthlyPath, nil
 }
 
-// ApplyCLIBillingHeaders sets bearer authentication and CLI identity headers for billing requests.
+// ApplyCLIBillingHeaders sets JSON headers and the pinned billing CLI
+// identity. A nonblank trimmed access token replaces Authorization; a blank
+// token leaves any existing value. Nil requests are ignored and other
+// requests need an allocated Header map.
 func ApplyCLIBillingHeaders(req *http.Request, accessToken string) {
 	if req == nil {
 		return
@@ -109,7 +170,9 @@ func ApplyCLIBillingHeaders(req *http.Request, accessToken string) {
 	req.Header.Set("User-Agent", billingCLIUserAgent)
 }
 
-// ParseBillingPayload decodes a billing API response.
+// ParseBillingPayload decodes the billing response into its optional config.
+// Empty bytes or malformed JSON return an error; valid JSON with no config
+// returns a payload whose Config remains nil for summary construction.
 func ParseBillingPayload(body []byte) (*BillingPayload, error) {
 	if len(body) == 0 {
 		return nil, fmt.Errorf("empty billing body")
@@ -121,7 +184,20 @@ func ParseBillingPayload(body []byte) (*BillingPayload, error) {
 	return &payload, nil
 }
 
-// BuildBillingSummary normalizes billing configuration for display.
+// BuildBillingSummary derives a display summary from optional weekly and
+// monthly billing evidence. Nil configuration or no recognized billing
+// evidence returns nil. Parsed numeric pointers are copied, and product
+// entries with blank names are skipped. Monthly UsedCents remains the
+// reported total, while IncludedUsedCents is capped at a positive monthly
+// limit before deriving its usage percentage.
+//
+// Weekly evidence selects CurrentPeriod as the primary date/type source and
+// the reported credit percentage; otherwise monthly billing dates become
+// primary. Unknown primary type becomes weekly when weekly evidence exists,
+// while a recognized CurrentPeriod label is retained. Monthly billing dates
+// remain separate from those primary dates. Credit balances retain reported
+// dollars, and monthly cent amounts receive dollar display fields. A
+// recognized monthly limit supplies the display plan.
 func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	if config == nil {
 		return nil
@@ -131,7 +207,8 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	periodType := resolvePeriodType(period)
 	creditUsage := cloneFloat(config.CreditUsagePercent)
 
-	// Keep weekly dates separate: substituting a monthly end date could block an exhausted weekly quota until month end.
+	// A weekly reset belongs to CurrentPeriod even when its dates are missing.
+	// Copying monthly billing dates here would give consumers the wrong window endpoint.
 	periodStart := ""
 	periodEnd := ""
 	if period != nil {
@@ -153,13 +230,17 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 
 	monthlyLimit := parseCentValue(config.MonthlyLimit)
 	used := parseCentValue(config.Used)
-	// Credits amounts are in dollars; monthly limit and used values are in cents.
+	// Credit balances share the numeric parser with monthly cents but retain dollar
+	// units, so only monthly limit and usage receive the later division by one hundred.
 	prepaid := parseCentValue(config.PrepaidBalance)
 	onDemandCap := parseCentValue(config.OnDemandCap)
 	onDemandUsed := parseCentValue(config.OnDemandUsed)
 	billingStart := strings.TrimSpace(config.BillingPeriodStart)
 	billingEnd := strings.TrimSpace(config.BillingPeriodEnd)
 
+	// Keep reported total usage separately while capping the included-credit
+	// amount, so display consumers can distinguish the quantities when total
+	// spending exceeds the included limit.
 	var includedUsed *float64
 	if used != nil {
 		if monthlyLimit != nil && *monthlyLimit > 0 {
@@ -171,6 +252,8 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	}
 
 	var usedPercent *float64
+	// Monthly included-credit progress uses percent, keeping the weekly credit
+	// UsagePercent independent even when both windows appear in the same summary.
 	if monthlyLimit != nil && *monthlyLimit > 0 && includedUsed != nil {
 		v := (*includedUsed / *monthlyLimit) * 100
 		usedPercent = &v
@@ -191,7 +274,8 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 		summary.PeriodStart = periodStart
 		summary.PeriodEnd = periodEnd
 	} else {
-		// UsagePercent belongs to the weekly progress bar; monthly data uses UsedPercent.
+		// A monthly-only summary exposes included-credit progress through UsedPercent;
+		// leaving UsagePercent absent keeps consumers from displaying it as weekly credit usage.
 		summary.PeriodType = "monthly"
 		summary.PeriodStart = billingStart
 		summary.PeriodEnd = billingEnd
@@ -212,7 +296,8 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	if onDemandUsed != nil {
 		summary.OnDemandUsed = onDemandUsed
 	}
-	// Convert monthly cents to dollars for the displayed absolute amounts.
+	// Display monthly absolute amounts in dollars while retaining the cent-valued
+	// fields used for plan recognition and included-credit percentage calculation.
 	if monthlyLimit != nil {
 		v := *monthlyLimit / 100
 		summary.MonthlyLimit = &v
@@ -227,11 +312,26 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	return summary
 }
 
-// MergeBillingProbeResult updates successful probe windows and retains previous values for failed windows.
+// MergeBillingProbeResult combines weekly and monthly outcomes with a
+// previous summary. Successful nonnil windows replace their own fields and
+// advance their UTC timestamps; failed windows retain previous data. Missing
+// previous window timestamps can use prior UpdatedAt, then FetchedAt, when
+// recognized window fields exist. Successful flags with nil summaries affect
+// Partial and FailedWindows but install no values. Both failed probes with no
+// previous summary return nil.
+//
+// The merge shallow-copies the previous struct and assigns pointer and slice
+// fields from supplied summaries. Treat retained fields as immutable unless
+// copied separately. Weekly credit amounts update when present; monthly on-
+// demand values fill empty fields. FailedWindows is rebuilt for this attempt
+// so its slice does not overwrite the previous summary's failure list.
 func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK, monthlyOK bool) *BillingSummary {
 	var out BillingSummary
 	if previous != nil {
 		out = *previous
+		// A supplied summary can lack per-window timestamps. Reuse its retained
+		// overall observation time only for recognized window fields, keeping
+		// missing evidence from gaining a timestamp.
 		previousUpdatedAt := previous.UpdatedAt
 		if previousUpdatedAt == "" {
 			previousUpdatedAt = previous.FetchedAt
@@ -251,7 +351,8 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 		out.PeriodStart = weekly.PeriodStart
 		out.PeriodEnd = weekly.PeriodEnd
 		out.ProductUsage = weekly.ProductUsage
-		// The weekly credits response supplies prepaid and on-demand dollar amounts.
+		// Present weekly credit amounts replace retained values independently, allowing
+		// missing balance fields in an otherwise successful response to keep earlier evidence.
 		if weekly.PrepaidBalance != nil {
 			out.PrepaidBalance = weekly.PrepaidBalance
 		}
@@ -281,7 +382,8 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 		out.UsedPercent = monthly.UsedPercent
 		out.MonthlyLimit = monthly.MonthlyLimit
 		out.MonthlyUsed = monthly.MonthlyUsed
-		// Use monthly on-demand values when no value is already available.
+		// Monthly on-demand amounts fill empty output fields, allowing weekly or
+		// previously retained credit values to keep precedence when both sources expose them.
 		if monthly.OnDemandCap != nil && out.OnDemandCap == nil {
 			out.OnDemandCap = monthly.OnDemandCap
 		}
@@ -306,7 +408,10 @@ func MergeBillingProbeResult(previous, weekly, monthly *BillingSummary, weeklyOK
 	return &out
 }
 
-// StampBillingSummary sets fetch status, source, and timestamps in place.
+// StampBillingSummary mutates a summary's status, source, FetchedAt, and
+// UpdatedAt using the current UTC RFC3339 time. Nil input returns nil;
+// callers serialize mutation of shared summaries and retain independently
+// tracked window timestamps.
 func StampBillingSummary(summary *BillingSummary, statusCode int, source string) *BillingSummary {
 	if summary == nil {
 		return nil
@@ -319,6 +424,9 @@ func StampBillingSummary(summary *BillingSummary, statusCode int, source string)
 	return summary
 }
 
+// resolvePeriodType returns weekly, monthly, or unknown from the upstream
+// period label. Nil or unmatched labels are unknown, and the lowercased
+// weekly substring is checked before monthly when a label contains both.
 func resolvePeriodType(period *BillingPeriod) string {
 	if period == nil {
 		return "unknown"
@@ -333,11 +441,14 @@ func resolvePeriodType(period *BillingPeriod) string {
 	return "unknown"
 }
 
+// resolvePlan matches a rounded monthly cent limit to the configured plan
+// amounts. Missing or unmatched limits return empty; rounding allows nearby
+// floating-point representations to match the local display-plan thresholds.
 func resolvePlan(monthlyLimitCents *float64) string {
 	if monthlyLimitCents == nil {
 		return ""
 	}
-	// Round away small floating-point errors before matching plan limits.
+	// Rounded cents allow nearby numeric representations to match plan thresholds.
 	limit := math.Round(*monthlyLimitCents)
 	switch limit {
 	case SuperGrokLimitCents:
@@ -349,18 +460,23 @@ func resolvePlan(monthlyLimitCents *float64) string {
 	}
 }
 
+// parseCentValue decodes a wrapped val, bare number, or numeric string into a
+// numeric pointer. Empty, null, malformed, or unsupported input returns nil.
+// Despite its name, callers also use it for dollar-valued credit fields.
 func parseCentValue(raw json.RawMessage) *float64 {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	// Accept the wrapped form: {"val": 123}.
+	// Billing values can wrap the same numeric payload under val. Decode that
+	// representation first, then let bare values use the shared conversion path.
 	var obj struct {
-		Val any `json:"val"`
+		Val any `json:"val"` // wrapped numeric billing value
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil && obj.Val != nil {
 		return anyToFloat(obj.Val)
 	}
-	// Also accept a bare number or numeric string.
+	// Without a successfully decoded, nonnil wrapped val, try the bare JSON
+	// form so numeric and string payloads use the shared amount conversion.
 	var n any
 	if err := json.Unmarshal(raw, &n); err != nil {
 		return nil
@@ -368,7 +484,12 @@ func parseCentValue(raw json.RawMessage) *float64 {
 	return anyToFloat(n)
 }
 
+// anyToFloat converts supported numeric Go values or trimmed numeric strings
+// to a float64 pointer. Blank, unparseable, or unsupported values return nil;
+// negative and nonfinite values are not rejected by this helper.
 func anyToFloat(v any) *float64 {
+	// Conversion failure is absent billing evidence for this value. Summary
+	// construction can retain other valid amounts or windows instead of rejecting the whole configuration.
 	switch n := v.(type) {
 	case float64:
 		return &n
@@ -402,6 +523,9 @@ func anyToFloat(v any) *float64 {
 	}
 }
 
+// cloneFloat copies a present float into independently allocated pointer
+// storage. Nil input remains nil, allowing billing consumers to distinguish
+// missing observations from reported zero amounts.
 func cloneFloat(v *float64) *float64 {
 	if v == nil {
 		return nil

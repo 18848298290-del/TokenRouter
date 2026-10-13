@@ -9,15 +9,19 @@ import (
 	urlvalidator "github.com/TokenFlux/TokenRouter/internal/egress/urlpolicy"
 )
 
+// TestParseAuthorizationInput compares callback URLs, query strings, and a
+// bare authorization code. It asserts extracted code/state values and the
+// source-form flag, including callback representations whose required state
+// was omitted.
 func TestParseAuthorizationInput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name              string
-		raw               string
-		wantCode          string
-		wantState         string
-		wantRequiresState bool
+		name              string // authorization input case name
+		raw               string // supplied callback or URL
+		wantCode          string // expected parsed authorization code
+		wantState         string // expected parsed callback state
+		wantRequiresState bool   // expected callback state requirement
 	}{
 		{
 			name: "full callback url",
@@ -77,6 +81,10 @@ func TestParseAuthorizationInput(t *testing.T) {
 	}
 }
 
+// TestBuildAuthorizationURLIncludesHermesCompatibleParameters supplies
+// configured client, scope, and authorize endpoint values. It asserts the
+// encoded code-flow, redirect, state, nonce, S256, plan, and referrer
+// parameters are retained in the resulting URL.
 func TestBuildAuthorizationURLIncludesHermesCompatibleParameters(t *testing.T) {
 	t.Setenv(EnvAuthorizeURL, "https://auth.example.test/oauth2/authorize")
 	t.Setenv(EnvClientID, "client-id")
@@ -104,6 +112,10 @@ func TestBuildAuthorizationURLIncludesHermesCompatibleParameters(t *testing.T) {
 	require.Equal(t, "tokenrouter", values.Get("referrer"))
 }
 
+// TestValidateXAIURLsAllowOfficialOAuthAndGatewayHosts exercises default
+// issuer, public API, and CLI URLs. It asserts those values validate, an
+// empty official path becomes /v1, and Chat construction appends its endpoint
+// after trimming.
 func TestValidateXAIURLsAllowOfficialOAuthAndGatewayHosts(t *testing.T) {
 	authorizeURL, err := ValidateOAuthEndpointURL(DefaultAuthorizeURL)
 	require.NoError(t, err)
@@ -130,6 +142,9 @@ func TestValidateXAIURLsAllowOfficialOAuthAndGatewayHosts(t *testing.T) {
 	require.Equal(t, DefaultCLIBaseURL+"/chat/completions", chatURL)
 }
 
+// TestBuildGrokMediaURLs builds image and video generation/edit/extension
+// targets plus a video status URL. It asserts expected suffixes and escaped
+// task IDs while blank, dot-segment, and control-character identifiers fail.
 func TestBuildGrokMediaURLs(t *testing.T) {
 	imagesURL, err := BuildImagesGenerationsURLWithValidator(DefaultBaseURL+"/", nil)
 	require.NoError(t, err)
@@ -158,13 +173,18 @@ func TestBuildGrokMediaURLs(t *testing.T) {
 	_, err = BuildVideoURLWithValidator(DefaultBaseURL, " ", nil)
 	require.Error(t, err)
 
-	// Reject dot segments and NUL/CR/LF before constructing a video URL.
+	// These task identifiers could alter endpoint resolution or header-like text
+	// before escaping. Assert rejection so status URL construction retains its segment constraint.
 	for _, requestID := range []string{".", "..", "req\x00id", "req\rid", "req\nid"} {
 		_, err = BuildVideoURLWithValidator(DefaultBaseURL, requestID, nil)
 		require.Error(t, err, "request_id=%q", requestID)
 	}
 }
 
+// TestValidateXAIURLsRejectUntrustedOAuthAndUnsafeBaseURLsByDefault supplies
+// an untrusted issuer, insecure loopback base, and wrong official API path.
+// It asserts default validation rejects each listed input before request
+// construction.
 func TestValidateXAIURLsRejectUntrustedOAuthAndUnsafeBaseURLsByDefault(t *testing.T) {
 	_, err := ValidateOAuthEndpointURL("https://auth.example.test/oauth2/token")
 	require.Error(t, err)
@@ -176,6 +196,10 @@ func TestValidateXAIURLsRejectUntrustedOAuthAndUnsafeBaseURLsByDefault(t *testin
 	require.Error(t, err)
 }
 
+// TestValidateBaseURLAllowsPublicThirdPartyGrokAPI supplies a custom HTTPS
+// relay with a trailing slash. It asserts the public-base policy accepts and
+// normalizes it, while trusted official-host validation rejects that same
+// relay.
 func TestValidateBaseURLAllowsPublicThirdPartyGrokAPI(t *testing.T) {
 	baseURL, err := ValidateBaseURL("https://grok.example.test/v1/")
 	require.NoError(t, err)
@@ -185,8 +209,13 @@ func TestValidateBaseURLAllowsPublicThirdPartyGrokAPI(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestValidateBaseURLPathPrefixPolicy compares custom prefixes, custom empty
+// paths, and wrong official paths. It asserts custom prefixes remain usable,
+// empty paths become /v1, and official hosts reject other decoded prefixes.
 func TestValidateBaseURLPathPrefixPolicy(t *testing.T) {
-	// Custom hosts retain administrator-defined path prefixes.
+	// Custom relay deployments can place their API under different prefixes.
+	// These cases assert construction retains that routing prefix after
+	// trailing-slash normalization.
 	prefixed, err := ValidateBaseURL("https://relay.example.test/xai/v1/")
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/xai/v1", prefixed)
@@ -195,18 +224,24 @@ func TestValidateBaseURLPathPrefixPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/tenant-a/proxy", deepPrefixed)
 
-	// Empty paths default to /v1 for existing configurations.
+	// The empty custom path receives the common API prefix so endpoint builders
+	// append their suffix below /v1 rather than treating the host root as an endpoint.
 	rootOnly, err := ValidateBaseURL("https://relay.example.test")
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.test/v1", rootOnly)
 
-	// Official hosts require the /v1 prefix.
+	// Official hosts use the fixed API prefix even when a custom relay accepts
+	// other prefixes; assert those unrelated path choices cannot be reused for official targets.
 	_, err = ValidateBaseURL("https://api.x.ai/xai/v1")
 	require.Error(t, err)
 	_, err = ValidateBaseURL("https://cli-chat-proxy.grok.com/other")
 	require.Error(t, err)
 }
 
+// TestIsOfficialBaseURL compares stored official URL spellings, invalid
+// input, custom gateways, and lookalike host suffixes. It asserts default-
+// selecting inputs and genuine official hosts qualify while each listed
+// custom host does not.
 func TestIsOfficialBaseURL(t *testing.T) {
 	official := []string{
 		"",
@@ -237,6 +272,10 @@ func TestIsOfficialBaseURL(t *testing.T) {
 	}
 }
 
+// TestRegionalAPIEndpointsAreOfficialAndTrusted supplies the listed regional
+// API endpoints and a wrong regional path. It asserts each region is
+// recognized and trusted while the regional /v1 path requirement still
+// applies.
 func TestRegionalAPIEndpointsAreOfficialAndTrusted(t *testing.T) {
 	regional := []string{
 		"https://us-east-1.api.x.ai/v1",
@@ -251,11 +290,16 @@ func TestRegionalAPIEndpointsAreOfficialAndTrusted(t *testing.T) {
 		require.Equal(t, raw, validated)
 	}
 
-	// Regional hosts also require /v1.
+	// Regional targets share the official API-prefix rule. This case ensures
+	// adding regional host recognition does not broaden their permitted path beyond that shared prefix.
 	_, err := ValidateTrustedBaseURL("https://us-east-1.api.x.ai/other")
 	require.Error(t, err)
 }
 
+// TestValidateBaseURLsRejectEmptyQueryDelimiter supplies otherwise usable
+// custom and official bases ending with an empty query marker. It asserts
+// both validation paths reject that component before endpoint suffixes are
+// appended.
 func TestValidateBaseURLsRejectEmptyQueryDelimiter(t *testing.T) {
 	_, err := ValidateBaseURL("https://grok.example.test/v1?")
 	require.Error(t, err)
@@ -264,6 +308,10 @@ func TestValidateBaseURLsRejectEmptyQueryDelimiter(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestBuildResponsesURLWithValidatorUsesCallerPolicy injects an HTTP-
+// permitting format validator for a custom host. It asserts Responses
+// construction honors that caller policy and appends the suffix after base-
+// path normalization.
 func TestBuildResponsesURLWithValidatorUsesCallerPolicy(t *testing.T) {
 	validator := func(raw string) (string, error) {
 		return urlvalidator.ValidateURLFormat(raw, true)
@@ -274,6 +322,10 @@ func TestBuildResponsesURLWithValidatorUsesCallerPolicy(t *testing.T) {
 	require.Equal(t, "http://grok.example.test/v1/responses", target)
 }
 
+// TestValidateTrustedBaseURLAcceptsOfficialRegionalHosts iterates the three
+// configured regional default constants. It asserts trusted validation
+// accepts each complete URL and returns its existing /v1 path spelling
+// unchanged.
 func TestValidateTrustedBaseURLAcceptsOfficialRegionalHosts(t *testing.T) {
 	for _, raw := range []string{DefaultUSEast1BaseURL, DefaultUSWest2BaseURL, DefaultEUWest1BaseURL} {
 		got, err := ValidateTrustedBaseURL(raw)
@@ -282,6 +334,10 @@ func TestValidateTrustedBaseURLAcceptsOfficialRegionalHosts(t *testing.T) {
 	}
 }
 
+// TestBuildResponsesURLPreservesUnsafeOverrideCustomPath enables unsafe mode
+// and supplies a loopback URL with a custom path. It asserts the nil-
+// validator builder keeps that path before appending Responses under format-
+// only policy.
 func TestBuildResponsesURLPreservesUnsafeOverrideCustomPath(t *testing.T) {
 	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 
@@ -290,11 +346,15 @@ func TestBuildResponsesURLPreservesUnsafeOverrideCustomPath(t *testing.T) {
 	require.Equal(t, "http://localhost:8080/custom/responses", target)
 }
 
+// TestBuildResponsesURLWithValidatorRejectsBaseURLComponents injects a
+// permissive validator for bases containing userinfo, queries, or fragments.
+// It asserts post-validation path normalization rejects those components and
+// its returned errors omit the supplied secret text.
 func TestBuildResponsesURLWithValidatorRejectsBaseURLComponents(t *testing.T) {
 	permissive := func(raw string) (string, error) { return raw, nil }
 	tests := []struct {
-		name string
-		raw  string
+		name string // URL policy case name
+		raw  string // supplied callback or URL
 	}{
 		{name: "userinfo", raw: "https://user:secret@grok.example.test/v1"},
 		{name: "query", raw: "https://grok.example.test/v1?token=secret"},
@@ -311,6 +371,9 @@ func TestBuildResponsesURLWithValidatorRejectsBaseURLComponents(t *testing.T) {
 	}
 }
 
+// TestValidateXAIURLsAllowUnsafeDevOverride enables format-only override mode
+// for loopback HTTP endpoints. It asserts the issuer and forwarding URL are
+// accepted and trailing base slashes are trimmed by that selected policy.
 func TestValidateXAIURLsAllowUnsafeDevOverride(t *testing.T) {
 	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 
@@ -323,6 +386,10 @@ func TestValidateXAIURLsAllowUnsafeDevOverride(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8080/v1", baseURL)
 }
 
+// TestRuntimeSanityReportsSafeDefaults clears configured URL and unsafe
+// switch values before building diagnostics. It asserts defaults validate,
+// the base is marked default, and the fixed scope/proxy labels and disabled
+// relaxations are reported.
 func TestRuntimeSanityReportsSafeDefaults(t *testing.T) {
 	t.Setenv(EnvBaseURL, "")
 	t.Setenv(EnvAuthorizeURL, "")
@@ -345,6 +412,10 @@ func TestRuntimeSanityReportsSafeDefaults(t *testing.T) {
 	require.Contains(t, report.ProxyPolicy, "API-key base URLs require public HTTPS")
 }
 
+// TestRuntimeSanityReportsInvalidOverridesWithoutSecrets supplies invalid URL
+// overrides containing secret text and a client identifier. It asserts failed
+// validation is reported while the checked display fields omit the specific
+// supplied secrets.
 func TestRuntimeSanityReportsInvalidOverridesWithoutSecrets(t *testing.T) {
 	t.Setenv(EnvBaseURL, "http://127.0.0.1:8080/v1?access_token=secret")
 	t.Setenv(EnvAuthorizeURL, "https://auth.example.test/oauth2/authorize")
@@ -364,6 +435,10 @@ func TestRuntimeSanityReportsInvalidOverridesWithoutSecrets(t *testing.T) {
 	require.NotContains(t, report.ProxyPolicy, "client-secret-like-value")
 }
 
+// TestNormalizeModelID compares omitted, whitespace-padded, aliased,
+// suffixed, and vendor-qualified IDs. It asserts only blank input selects the
+// Responses default and nonblank IDs retain their full spelling after
+// surrounding whitespace is trimmed.
 func TestNormalizeModelID(t *testing.T) {
 	t.Parallel()
 

@@ -14,69 +14,126 @@ import (
 	p "github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// Aggregation progress can be updated while manual backfill is reading its
+// target, and shutdown can cancel a repair that has already entered storage.
+// Controlled read and repair channels reproduce those orderings, while
+// range-capturing fixtures expose which hours, dates and persistence
+// operations a round attempted.
+//
+// Historical cases examine saved cursors and phase transitions after bounded
+// work, failed daily rebuilding or a query deadline. Runtime-setting cases
+// inspect dispatch and schedule admission separately from storage contents.
+// The complete-bucket-named repair case checks which method received the
+// supplied range; it does not inspect rebuilt database buckets. Fixture
+// configuration and observations are serialized except for the explicitly
+// synchronized regression helpers.
+
+// SettingKeyPreAggregationSettings names the persisted pre-aggregation JSON
+// key used by runtime configuration fixture reads.
 const SettingKeyPreAggregationSettings = p.SettingKeyPreAggregationSettings
 
+// blockingAggregation holds one repair query and records whether its runtime
+// context was canceled.
 type blockingAggregation struct {
-	DashboardAggregationRepository
-	entered  chan struct{}
-	release  chan struct{}
-	canceled atomic.Bool
+	DashboardAggregationRepository // unused dashboard repository method slots
+	// entered and release separate one repair's invocation from its completion.
+	// Configure both before dispatch; canceled records which context result
+	// the selected wait returned.
+	entered  chan struct{} // first blocked operation entry signal
+	release  chan struct{} // explicit blocked operation release signal
+	canceled atomic.Bool   // atomic context cancellation observation flag
 }
 
-// stateRepo controls manual-backfill reads so tests can interleave live-progress writes.
+// stateRepo blocks the first copied state read so manual-request and
+// live-progress writes can interleave. Its current state is protected by mu,
+// while reads counts invocations atomically.
 type stateRepo struct {
-	UsageAnalyticsAggregationRepository
-	mu      sync.Mutex
-	state   UsageAnalyticsAggregationState
-	reads   atomic.Int32
-	entered chan struct{}
-	release chan struct{}
+	UsageAnalyticsAggregationRepository // unused analytics repository method slots
+	// mu protects state during copying, replacement and field-specific merges.
+	// Copies retain timestamp pointers, so callers leave those pointed-to values
+	// stable while concurrent top-level updates are applied.
+	mu    sync.Mutex                     // fixture progress state access mutex
+	state UsageAnalyticsAggregationState // configured shallow aggregation progress state
+	reads atomic.Int32                   // atomic state read invocation count
+	// entered closes after the first read copies state, and release controls
+	// when that old snapshot returns. Later reads bypass this gate while live
+	// progress can advance.
+	entered chan struct{} // first blocked operation entry signal
+	release chan struct{} // explicit blocked operation release signal
 }
 
+// dashboardAggregationRepoTestStub captures requested ranges and retention
+// calls for serial aggregation tests. Configure its outcomes before dispatch
+// and inspect captured fields after the tested round completes.
 type dashboardAggregationRepoTestStub struct {
-	aggregateCalls       int
-	aggregateRanges      []aggregationRangeCall
-	recomputeCalls       int
-	cleanupUsageCalls    int
-	cleanupDedupCalls    int
-	ensurePartitionCalls int
-	lastStart            time.Time
-	lastEnd              time.Time
-	watermark            time.Time
-	aggregateErr         error
-	cleanupAggregatesErr error
-	cleanupUsageErr      error
-	cleanupDedupErr      error
-	ensurePartitionErr   error
-	aggregateStarted     chan struct{}
+	aggregateCalls       int                    // captured dashboard aggregation invocation count
+	aggregateRanges      []aggregationRangeCall // captured dashboard aggregation ranges
+	recomputeCalls       int                    // captured dashboard repair invocation count
+	cleanupUsageCalls    int                    // recorded original row cleanup attempts
+	cleanupDedupCalls    int                    // recorded dedup cleanup attempts
+	ensurePartitionCalls int                    // recorded partition preparation attempts
+	lastStart            time.Time              // latest dashboard write start
+	lastEnd              time.Time              // latest dashboard write end
+	watermark            time.Time              // configured dashboard progress instant
+	aggregateErr         error                  // injected dashboard write failure
+	cleanupAggregatesErr error                  // injected rollup cleanup failure
+	cleanupUsageErr      error                  // injected original row cleanup failure
+	cleanupDedupErr      error                  // injected dedup cleanup failure
+	ensurePartitionErr   error                  // injected partition preparation failure
+	// aggregateStarted optionally receives a nonblocking invocation signal.
+	// A channel whose send is not ready drops that notification, and reception
+	// can precede completion of the admitted round.
+	aggregateStarted chan struct{} // optional dashboard write notification channel
 }
 
+// aggregationRangeCall records one start and end pair passed to an
+// aggregation fixture.
 type aggregationRangeCall struct {
-	start time.Time
-	end   time.Time
+	start time.Time // captured range beginning instant
+	end   time.Time // captured range ending instant
 }
 
+// usageAnalyticsAggregationRepoTestStub captures analytics stage ranges and
+// stores shallow progress copies. These test cases use its state and callback
+// configuration serially; synchronized concurrent-state tests use stateRepo.
 type usageAnalyticsAggregationRepoTestStub struct {
-	state          UsageAnalyticsAggregationState
-	oldest         *time.Time
-	aggregateCalls []aggregationRangeCall
-	hourlyCalls    []aggregationRangeCall
-	dailyCalls     []aggregationRangeCall
-	recomputeCalls []aggregationRangeCall
-	hourlyCallback func(context.Context, time.Time, time.Time) error
-	dailyCallback  func(context.Context, time.Time, time.Time) error
+	state          UsageAnalyticsAggregationState                    // configured shallow aggregation progress state
+	oldest         *time.Time                                        // configured retained source beginning instant
+	aggregateCalls []aggregationRangeCall                            // captured full analytics write ranges
+	hourlyCalls    []aggregationRangeCall                            // captured analytics hourly write ranges
+	dailyCalls     []aggregationRangeCall                            // captured analytics daily write ranges
+	recomputeCalls []aggregationRangeCall                            // captured analytics repair request ranges
+	hourlyCallback func(context.Context, time.Time, time.Time) error // optional hourly outcome injection callback
+	dailyCallback  func(context.Context, time.Time, time.Time) error // optional daily outcome injection callback
 }
 
 type (
+	// PreAggregationUsageSettings names runtime usage settings used by
+	// aggregation configuration fixtures.
 	PreAggregationUsageSettings = p.PreAggregationUsageSettings
-	PreAggregationOpsSettings   = p.PreAggregationOpsSettings
-	runtimeSettingRepoStub      struct {
-		mu     sync.Mutex
-		values map[string]string
+	// PreAggregationOpsSettings names runtime Ops settings included in
+	// aggregation configuration fixtures.
+	PreAggregationOpsSettings = p.PreAggregationOpsSettings
+	// runtimeSettingRepoStub stores configuration text under a mutex for runtime
+	// setting tests.
+	runtimeSettingRepoStub struct {
+		mu     sync.Mutex        // fixture setting map access mutex
+		values map[string]string // configured persisted setting text map
 	}
 )
 
+// RecomputeRange announces one repair query and blocks until its selected
+// release or context-cancellation case. The fixture is configured before its
+// single invocation, and cancellation is recorded atomically.
+//
+// The shutdown test can therefore observe whether runtime cancellation
+// reaches an already-entered repository operation. A release result succeeds,
+// while a canceled result returns ctx.Err. The select decides which ready
+// branch supplies the result; the fixture does not impose priority when both
+// signals are ready.
 func (r *blockingAggregation) RecomputeRange(ctx context.Context, a, b time.Time) error {
+	// Publish entry before choosing release or cancellation so the test starts
+	// shutdown while this repair is already registered and executing in storage.
 	close(r.entered)
 	select {
 	case <-ctx.Done():
@@ -87,6 +144,9 @@ func (r *blockingAggregation) RecomputeRange(ctx context.Context, a, b time.Time
 	}
 }
 
+// TestRegressionAggregationStopCancelsWork dispatches a repair blocked inside
+// storage, then calls Stop. It requires shutdown completion within the
+// observation timeout and a recorded canceled repository context.
 func TestRegressionAggregationStopCancelsWork(t *testing.T) {
 	r := &blockingAggregation{entered: make(chan struct{}), release: make(chan struct{})}
 	s := NewDashboardAggregationService(r, nil, nil)
@@ -96,6 +156,8 @@ func TestRegressionAggregationStopCancelsWork(t *testing.T) {
 	}
 	<-r.entered
 	done := make(chan struct{})
+	// Start shutdown after repository entry so the runtime must cancel and wait
+	// for accepted repair work, rather than reject a dispatch that never entered storage.
 	go func() { s.Stop(); close(done) }()
 	select {
 	case <-done:
@@ -109,10 +171,21 @@ func TestRegressionAggregationStopCancelsWork(t *testing.T) {
 	}
 }
 
+// GetUsageAnalyticsAggregationState copies current progress under mu, then
+// holds the first read before returning it. The returned state is shallow, so
+// its timestamp pointers retain their stored references.
+//
+// The first invocation closes entered only after copying, and release delays
+// publication of that old snapshot. Another field-specific update can
+// therefore advance live progress while the manual caller still holds its
+// earlier observation. Callers configure the two channels before use and
+// invoke this controlled first-read path once.
 func (r *stateRepo) GetUsageAnalyticsAggregationState(context.Context) (*UsageAnalyticsAggregationState, error) {
 	r.mu.Lock()
 	v := r.state
 	r.mu.Unlock()
+	// Hold the first copied snapshot outside mu so another update can publish live
+	// progress while its reader still carries the earlier state for manual-request persistence.
 	if r.reads.Add(1) == 1 {
 		close(r.entered)
 		<-r.release
@@ -120,6 +193,9 @@ func (r *stateRepo) GetUsageAnalyticsAggregationState(context.Context) (*UsageAn
 	return &v, nil
 }
 
+// SaveUsageAnalyticsAggregationState stores the supplied state by value under
+// mu. Callers supply a nonnil pointer, and retained timestamp pointers remain
+// shared with the fixture's shallow state representation.
 func (r *stateRepo) SaveUsageAnalyticsAggregationState(_ context.Context, v *UsageAnalyticsAggregationState) error {
 	r.mu.Lock()
 	r.state = *v
@@ -127,6 +203,9 @@ func (r *stateRepo) SaveUsageAnalyticsAggregationState(_ context.Context, v *Usa
 	return nil
 }
 
+// TestRegressionManualBackfillPreservesLiveProgress holds a manual request's
+// first state read while live progress advances. It requires successful
+// request creation and retention of the later live watermark.
 func TestRegressionManualBackfillPreservesLiveProgress(t *testing.T) {
 	old := time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC)
 	next := old.Add(time.Hour)
@@ -134,7 +213,11 @@ func TestRegressionManualBackfillPreservesLiveProgress(t *testing.T) {
 	s := NewDashboardAggregationService(&dashboardAggregationRepoTestStub{}, nil, &Options{DashboardAgg: DashboardAggregationConfig{BackfillEnabled: true}})
 	s.analyticsRepo = r
 	done := make(chan error, 1)
+	// Start manual persistence through the controlled read, allowing a later
+	// live watermark to be published before the older manual observation returns.
 	go func() { done <- s.TriggerBackfill(old.Add(-time.Hour), old) }()
+	// The first snapshot is held after copying state. Publish a newer live watermark
+	// before releasing that stale read so manual persistence must use current owned fields.
 	<-r.entered
 	s.markAnalyticsLiveSuccess(context.Background(), next, old, time.Now())
 	close(r.release)
@@ -149,6 +232,9 @@ func TestRegressionManualBackfillPreservesLiveProgress(t *testing.T) {
 	}
 }
 
+// ApplyUsageAnalyticsState merges the change against current state under mu
+// before replacing it. This lets the regression apply field-specific manual
+// updates to the latest live watermark rather than its blocked read copy.
 func (r *stateRepo) ApplyUsageAnalyticsState(_ context.Context, c AnalyticsStateChange) (*UsageAnalyticsAggregationState, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -156,10 +242,15 @@ func (r *stateRepo) ApplyUsageAnalyticsState(_ context.Context, c AnalyticsState
 	if e != nil {
 		return nil, e
 	}
+	// Merge against the latest guarded state before publication. A blocked earlier
+	// read can then supply a manual change while this fixture keeps current live progress.
 	r.state = v
 	return &v, nil
 }
 
+// AggregateRange captures dashboard range calls and optionally announces an
+// attempted write. The notification is nonblocking, and the configured
+// aggregation error is returned after its serial fixture fields are recorded.
 func (s *dashboardAggregationRepoTestStub) AggregateRange(ctx context.Context, start, end time.Time) error {
 	s.aggregateCalls++
 	s.aggregateRanges = append(s.aggregateRanges, aggregationRangeCall{start: start, end: end})
@@ -174,11 +265,17 @@ func (s *dashboardAggregationRepoTestStub) AggregateRange(ctx context.Context, s
 	return s.aggregateErr
 }
 
+// AggregateUsageAnalyticsRange records the full analytics range attempted by
+// a serial test round.
 func (s *usageAnalyticsAggregationRepoTestStub) AggregateUsageAnalyticsRange(_ context.Context, start, end time.Time) error {
 	s.aggregateCalls = append(s.aggregateCalls, aggregationRangeCall{start: start, end: end})
 	return nil
 }
 
+// AggregateUsageAnalyticsHourlyRange records the attempted hour before
+// calling its optional injected callback. A missing callback succeeds, while
+// configured delays or failures control the historical budget and retry
+// cases.
 func (s *usageAnalyticsAggregationRepoTestStub) AggregateUsageAnalyticsHourlyRange(ctx context.Context, start, end time.Time) error {
 	s.hourlyCalls = append(s.hourlyCalls, aggregationRangeCall{start: start, end: end})
 	if s.hourlyCallback != nil {
@@ -187,6 +284,9 @@ func (s *usageAnalyticsAggregationRepoTestStub) AggregateUsageAnalyticsHourlyRan
 	return nil
 }
 
+// RebuildUsageAnalyticsDailyRange records the attempted daily range before
+// its optional callback runs. A missing callback succeeds, and injected
+// failure lets tests inspect cursor publication after the daily stage.
 func (s *usageAnalyticsAggregationRepoTestStub) RebuildUsageAnalyticsDailyRange(ctx context.Context, start, end time.Time) error {
 	s.dailyCalls = append(s.dailyCalls, aggregationRangeCall{start: start, end: end})
 	if s.dailyCallback != nil {
@@ -195,16 +295,25 @@ func (s *usageAnalyticsAggregationRepoTestStub) RebuildUsageAnalyticsDailyRange(
 	return nil
 }
 
+// RecomputeUsageAnalyticsRange records the supplied repair range for
+// analytics dispatch assertions.
 func (s *usageAnalyticsAggregationRepoTestStub) RecomputeUsageAnalyticsRange(_ context.Context, start, end time.Time) error {
 	s.recomputeCalls = append(s.recomputeCalls, aggregationRangeCall{start: start, end: end})
 	return nil
 }
 
+// GetUsageAnalyticsAggregationState returns a shallow state copy for the
+// serial fixture. Timestamp pointers retain their references, while later
+// top-level field assignments update only the returned copy until persistence
+// runs.
 func (s *usageAnalyticsAggregationRepoTestStub) GetUsageAnalyticsAggregationState(context.Context) (*UsageAnalyticsAggregationState, error) {
 	state := s.state
 	return &state, nil
 }
 
+// SaveUsageAnalyticsAggregationState stores a shallow copy of a supplied
+// nonnil state. Nil input succeeds with the current fixture state retained,
+// and callers serialize access in these range and budget tests.
 func (s *usageAnalyticsAggregationRepoTestStub) SaveUsageAnalyticsAggregationState(_ context.Context, state *UsageAnalyticsAggregationState) error {
 	if state != nil {
 		s.state = *state
@@ -212,46 +321,67 @@ func (s *usageAnalyticsAggregationRepoTestStub) SaveUsageAnalyticsAggregationSta
 	return nil
 }
 
+// GetOldestUsageLogTime returns the configured retained-source starting
+// instant for backfill fixtures.
 func (s *usageAnalyticsAggregationRepoTestStub) GetOldestUsageLogTime(context.Context) (*time.Time, error) {
 	return s.oldest, nil
 }
 
+// CleanupUsageAnalytics acknowledges unused analytics retention calls in the
+// backfill fixtures.
 func (s *usageAnalyticsAggregationRepoTestStub) CleanupUsageAnalytics(context.Context, time.Time, time.Time) error {
 	return nil
 }
 
+// RecomputeRange counts a repair invocation before delegating to the
+// range-capturing fixture write.
 func (s *dashboardAggregationRepoTestStub) RecomputeRange(ctx context.Context, start, end time.Time) error {
 	s.recomputeCalls++
 	return s.AggregateRange(ctx, start, end)
 }
 
+// GetAggregationWatermark returns the configured dashboard progress instant
+// for scheduled-round fixtures.
 func (s *dashboardAggregationRepoTestStub) GetAggregationWatermark(ctx context.Context) (time.Time, error) {
 	return s.watermark, nil
 }
 
+// UpdateAggregationWatermark acknowledges progress publication calls in the
+// scheduled-round fixture.
 func (s *dashboardAggregationRepoTestStub) UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error {
 	return nil
 }
 
+// CleanupAggregates returns the configured rollup retention outcome for the
+// tested round.
 func (s *dashboardAggregationRepoTestStub) CleanupAggregates(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
 	return s.cleanupAggregatesErr
 }
 
+// CleanupUsageLogs records one original-row retention attempt and returns its
+// configured outcome.
 func (s *dashboardAggregationRepoTestStub) CleanupUsageLogs(ctx context.Context, cutoff time.Time) error {
 	s.cleanupUsageCalls++
 	return s.cleanupUsageErr
 }
 
+// CleanupUsageBillingDedup records one deduplication retention attempt and
+// returns its configured outcome.
 func (s *dashboardAggregationRepoTestStub) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
 	s.cleanupDedupCalls++
 	return s.cleanupDedupErr
 }
 
+// EnsureUsageLogsPartitions records one partition preparation attempt and
+// returns its configured outcome.
 func (s *dashboardAggregationRepoTestStub) EnsureUsageLogsPartitions(ctx context.Context, now time.Time) error {
 	s.ensurePartitionCalls++
 	return s.ensurePartitionErr
 }
 
+// TestDashboardAggregationService_RunScheduledAggregation_EpochUsesLiveLookback
+// supplies epoch progress and a two-minute lookback. It requires one
+// aggregate call with a start near the captured end minus that lookback.
 func TestDashboardAggregationService_RunScheduledAggregation_EpochUsesLiveLookback(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{watermark: time.Unix(0, 0).UTC()}
 	svc := &DashboardAggregationService{
@@ -275,7 +405,9 @@ func TestDashboardAggregationService_RunScheduledAggregation_EpochUsesLiveLookba
 	require.WithinDuration(t, repo.lastEnd.Add(-120*time.Second), repo.lastStart, time.Second)
 }
 
-// TestDashboardAggregationServiceRuntimeDisabledStopsWrites checks that disabled scheduled rounds leave rollups untouched.
+// TestDashboardAggregationServiceRuntimeDisabledStopsWrites supplies disabled
+// runtime usage settings under enabled deployment configuration. It requires
+// the scheduled attempt to make zero dashboard aggregation calls.
 func TestDashboardAggregationServiceRuntimeDisabledStopsWrites(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{watermark: time.Unix(0, 0).UTC()}
 	settingRepo := newRuntimeSettingRepoStub()
@@ -290,7 +422,9 @@ func TestDashboardAggregationServiceRuntimeDisabledStopsWrites(t *testing.T) {
 	require.Zero(t, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceRuntimeEnableTriggersImmediately checks that enabling aggregation wakes work immediately.
+// TestDashboardAggregationServiceRuntimeEnableTriggersImmediately starts an
+// initially disabled runtime, then enables usage settings. It requires a
+// range-write notification before the observation timeout expires.
 func TestDashboardAggregationServiceRuntimeEnableTriggersImmediately(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{
 		watermark:        time.Unix(0, 0).UTC(),
@@ -322,7 +456,9 @@ func TestDashboardAggregationServiceRuntimeEnableTriggersImmediately(t *testing.
 	}
 }
 
-// TestDashboardAggregationServiceRunningJobPreservesWakeup checks that active work leaves a new wakeup pending.
+// TestDashboardAggregationServiceRunningJobPreservesWakeup sets an occupied
+// local running flag beside a cleared schedule timestamp. It requires no
+// aggregate call and the immediate-run timestamp to remain cleared.
 func TestDashboardAggregationServiceRunningJobPreservesWakeup(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -341,7 +477,10 @@ func TestDashboardAggregationServiceRunningJobPreservesWakeup(t *testing.T) {
 	require.Zero(t, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled checks that deletion repair runs while aggregation is disabled.
+// TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled starts
+// with runtime usage disabled and requests repair. It requires successful
+// dispatch and a repository repair notification despite the scheduled-work
+// setting.
 func TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{aggregateStarted: make(chan struct{}, 1)}
 	settingRepo := newRuntimeSettingRepoStub()
@@ -362,6 +501,10 @@ func TestDashboardAggregationServiceRecomputeRunsWhileRuntimeDisabled(t *testing
 	}
 }
 
+// TestDashboardAggregationService_CleanupRetentionFailure_DoesNotRecord
+// injects a rollup retention cleanup failure. It requires an absent
+// successful-cleanup timestamp while original-row and billing-deduplication
+// cleanup calls are still recorded.
 func TestDashboardAggregationService_CleanupRetentionFailure_DoesNotRecord(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{cleanupAggregatesErr: errors.New("清理失败")}
 	svc := &DashboardAggregationService{
@@ -382,6 +525,10 @@ func TestDashboardAggregationService_CleanupRetentionFailure_DoesNotRecord(t *te
 	require.Equal(t, 1, repo.cleanupDedupCalls)
 }
 
+// TestDashboardAggregationService_CleanupDedupFailure_DoesNotRecord injects a
+// billing deduplication retention failure. It requires an absent
+// successful-cleanup timestamp and exactly one captured deduplication cleanup
+// attempt for this round.
 func TestDashboardAggregationService_CleanupDedupFailure_DoesNotRecord(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{cleanupDedupErr: errors.New("dedup cleanup failed")}
 	svc := &DashboardAggregationService{
@@ -401,6 +548,9 @@ func TestDashboardAggregationService_CleanupDedupFailure_DoesNotRecord(t *testin
 	require.Equal(t, 1, repo.cleanupDedupCalls)
 }
 
+// TestDashboardAggregationService_PartitionFailure_DoesNotAggregate injects a
+// partition preparation error. Its assertions require one partition check and
+// one aggregation call, so the tested behavior continues range aggregation.
 func TestDashboardAggregationService_PartitionFailure_DoesNotAggregate(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{ensurePartitionErr: errors.New("partition failed")}
 	svc := &DashboardAggregationService{
@@ -424,6 +574,9 @@ func TestDashboardAggregationService_PartitionFailure_DoesNotAggregate(t *testin
 	require.Equal(t, 1, repo.aggregateCalls)
 }
 
+// TestDashboardAggregationService_TriggerBackfill_TooLarge requests more than
+// the configured one-day range. It requires the oversized-backfill sentinel
+// and no dashboard range write during request validation.
 func TestDashboardAggregationService_TriggerBackfill_TooLarge(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -441,7 +594,10 @@ func TestDashboardAggregationService_TriggerBackfill_TooLarge(t *testing.T) {
 	require.Equal(t, 0, repo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceTriggerBackfillPersistsManualRange checks that manual requests retain the automatic cursor.
+// TestDashboardAggregationServiceTriggerBackfillPersistsManualRange supplies
+// an intrahour request beside automatic progress. It checks UTC-hour manual
+// fields, retained automatic cursor, backfill phase and cleared historical
+// admission timestamp.
 func TestDashboardAggregationServiceTriggerBackfillPersistsManualRange(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 35, 0, 0, time.UTC)
 	automaticCursor := now.AddDate(0, 0, -10).Truncate(time.Hour)
@@ -467,7 +623,10 @@ func TestDashboardAggregationServiceTriggerBackfillPersistsManualRange(t *testin
 	require.Zero(t, svc.lastBackfillAt.Load())
 }
 
-// TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart checks that manual work stops at its target.
+// TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart supplies
+// a two-hour manual request with older retained history. It checks two chunk
+// calls, the final chunk's exact range, cleared manual fields and coverage at
+// the requested target.
 func TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	target := now.Add(-2 * time.Hour)
@@ -498,8 +657,10 @@ func TestDashboardAggregationServiceManualBackfillStopsAtRequestedStart(t *testi
 	require.Equal(t, 2, dashboardRepo.aggregateCalls)
 }
 
-// TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor checks resumption across round limits without
-// passing the target.
+// TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor
+// requests twenty-six hours and invokes two rounds. It checks the
+// twenty-four-hour first-round cursor and the remaining two chunks before
+// manual fields clear.
 func TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor(t *testing.T) {
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	target := now.Add(-26 * time.Hour)
@@ -533,7 +694,9 @@ func TestDashboardAggregationServiceManualBackfillResumesFromSavedCursor(t *test
 	require.Nil(t, analyticsRepo.state.ManualBackfillCursor)
 }
 
-// TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays checks daily refresh throughout the late-record lookback.
+// TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays advances a
+// live lookback across UTC midnight. It checks daily rebuild ranges while
+// yesterday is touched, then no daily call after the start reaches today.
 func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.T) {
 	analyticsRepo := &usageAnalyticsAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -551,7 +714,8 @@ func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.
 	}}, analyticsRepo.dailyCalls)
 
 	analyticsRepo.dailyCalls = nil
-	// Yesterday's late records can arrive after the first round; crossing midnight must still refresh the daily bucket.
+	// Keep yesterday's bucket eligible for refresh while the next lookback still
+	// crosses midnight, allowing another round to absorb its late records.
 	require.NoError(t, svc.aggregateLiveRange(context.Background(), start.Add(time.Minute), end.Add(time.Minute)))
 	require.Equal(t, []aggregationRangeCall{{
 		start: truncateToDayUTC(start),
@@ -564,7 +728,9 @@ func TestDashboardAggregationServiceLiveRebuildsTouchedClosedUTCDays(t *testing.
 	require.Empty(t, analyticsRepo.dailyCalls)
 }
 
-// TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay checks one daily rebuild after completing a UTC day.
+// TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay
+// supplies one complete retained UTC date. It checks twenty-four hourly
+// calls, one daily range and an idle cursor at the oldest hour.
 func TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-24 * time.Hour)
@@ -588,7 +754,10 @@ func TestDashboardAggregationServiceAutomaticBackfillRebuildsCompletedDay(t *tes
 	require.Equal(t, "idle", analyticsRepo.state.Phase)
 }
 
-// TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay checks daily rebuilding at the oldest partial day.
+// TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay
+// supplies three retained hours within one date. It checks three hourly
+// calls, a full-date daily rebuild request and the cursor at oldest source
+// time.
 func TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay(t *testing.T) {
 	cursor := time.Date(2026, 8, 2, 8, 0, 0, 0, time.UTC)
 	oldest := time.Date(2026, 8, 2, 5, 0, 0, 0, time.UTC)
@@ -612,7 +781,10 @@ func TestDashboardAggregationServiceAutomaticBackfillRebuildsOldestPartialDay(t 
 	require.Equal(t, oldest, *analyticsRepo.state.BackfillCursor)
 }
 
-// TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor checks cursor retention and retry after a daily write fails.
+// TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor fails daily
+// rebuilding after its hourly write, then retries successfully. It checks
+// retained cursor and error phase first, followed by repeated calls and
+// completed idle progress.
 func TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor(t *testing.T) {
 	oldest := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
 	cursor := oldest.Add(time.Hour)
@@ -646,8 +818,9 @@ func TestDashboardAggregationServiceDailyFailureDoesNotAdvanceCursor(t *testing.
 	require.Equal(t, "idle", analyticsRepo.state.Phase)
 }
 
-// TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill checks that timeout after progress pauses backfill
-// without an error state.
+// TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill succeeds one
+// hour before later work waits for its deadline. It requires backfill phase,
+// cleared prior error observations and one hour of saved progress.
 func TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-4 * time.Hour)
@@ -663,6 +836,8 @@ func TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill(t *testing.T) 
 		hourlyCallback: func(ctx context.Context, _ time.Time, _ time.Time) error {
 			call++
 			if call == 1 {
+				// Complete one hour with measurable elapsed work before later calls wait
+				// for deadline, letting the test inspect saved progress after a budget pause.
 				time.Sleep(5 * time.Millisecond)
 				return nil
 			}
@@ -684,7 +859,9 @@ func TestDashboardAggregationServiceBudgetExhaustionKeepsBackfill(t *testing.T) 
 	require.Equal(t, cursor.Add(-time.Hour), *analyticsRepo.state.BackfillCursor)
 }
 
-// TestDashboardAggregationServiceFirstChunkTimeoutIsError checks the error state when the first hour exhausts the budget.
+// TestDashboardAggregationServiceFirstChunkTimeoutIsError blocks the first
+// hour through its short deadline. It requires error phase, the budget
+// diagnostic and an unchanged cursor with a recorded error instant.
 func TestDashboardAggregationServiceFirstChunkTimeoutIsError(t *testing.T) {
 	cursor := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
 	oldest := cursor.Add(-2 * time.Hour)
@@ -713,7 +890,10 @@ func TestDashboardAggregationServiceFirstChunkTimeoutIsError(t *testing.T) {
 	require.Equal(t, cursor, *analyticsRepo.state.BackfillCursor)
 }
 
-// TestShouldStartBackfillChunkUsesPreviousDuration checks that the next chunk waits when the remaining budget is too small.
+// TestShouldStartBackfillChunkUsesPreviousDuration exercises first-chunk
+// admission and later remaining-time comparisons. It requires strict
+// greater-than admission for later chunks and rejection when remaining time
+// is exhausted.
 func TestShouldStartBackfillChunkUsesPreviousDuration(t *testing.T) {
 	require.True(t, shouldStartBackfillChunk(0, time.Millisecond, time.Second))
 	require.True(t, shouldStartBackfillChunk(1, 11*time.Millisecond, 10*time.Millisecond))
@@ -721,7 +901,10 @@ func TestShouldStartBackfillChunkUsesPreviousDuration(t *testing.T) {
 	require.False(t, shouldStartBackfillChunk(1, 0, time.Millisecond))
 }
 
-// TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets checks that deletion repair uses complete-bucket recomputation.
+// TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets
+// supplies intrahour repair bounds. It requires the analytics recompute
+// method to receive those bounds and the generic analytics aggregate method
+// to remain unused.
 func TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets(t *testing.T) {
 	analyticsRepo := &usageAnalyticsAggregationRepoTestStub{}
 	svc := &DashboardAggregationService{
@@ -737,6 +920,9 @@ func TestDashboardAggregationServiceRecomputeUsesCompleteAnalyticsBuckets(t *tes
 	require.Equal(t, []aggregationRangeCall{{start: start, end: end}}, analyticsRepo.recomputeCalls)
 }
 
+// ApplyUsageAnalyticsState merges a field-specific change into the serial
+// fixture's current state. Merge errors retain that state; a successful
+// returned shallow value becomes the configured result for later reads.
 func (s *usageAnalyticsAggregationRepoTestStub) ApplyUsageAnalyticsState(_ context.Context, c AnalyticsStateChange) (*UsageAnalyticsAggregationState, error) {
 	v, e := ApplyAnalyticsStateChange(s.state, c)
 	if e != nil {
@@ -746,10 +932,15 @@ func (s *usageAnalyticsAggregationRepoTestStub) ApplyUsageAnalyticsState(_ conte
 	return &v, nil
 }
 
+// newRuntimeSettingRepoStub constructs an empty runtime setting map for
+// aggregation fixtures.
 func newRuntimeSettingRepoStub() *runtimeSettingRepoStub {
 	return &runtimeSettingRepoStub{values: map[string]string{}}
 }
 
+// GetValue returns stored setting text under the fixture mutex or
+// ErrSettingNotFound. This missing-key result lets the runtime settings
+// service apply its configured deployment defaults in the tested service.
 func (s *runtimeSettingRepoStub) GetValue(_ context.Context, k string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -760,6 +951,8 @@ func (s *runtimeSettingRepoStub) GetValue(_ context.Context, k string) (string, 
 	return v, nil
 }
 
+// Set stores supplied setting text under the fixture mutex for runtime
+// updates.
 func (s *runtimeSettingRepoStub) Set(_ context.Context, k, v string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -767,6 +960,10 @@ func (s *runtimeSettingRepoStub) Set(_ context.Context, k, v string) error {
 	return nil
 }
 
+// NewPreAggregationSettingsService converts usage Options into the owning
+// runtime settings service inputs. Nil options stay nil, while supplied
+// deployment settings provide usage enablement, interval and manual-backfill
+// limits to the fixture.
 func NewPreAggregationSettingsService(repo p.Repository, cfg *Options) *p.PreAggregationSettingsService {
 	var options *p.Options
 	if cfg != nil {

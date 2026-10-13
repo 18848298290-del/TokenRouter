@@ -47,8 +47,9 @@ func TestS3BackupStoreUploadFileWithProgressUsesConcurrentMultipart(t *testing.T
 		switch {
 		case r.Method == http.MethodPost && hasRawQueryKey(query, "uploads"):
 			w.Header().Set("Content-Type", "application/xml")
-			// Supply the upload ID needed for subsequent part requests. A failed fixture
-			// response write is observed by the client result checked after this server interaction.
+			// Supply the upload ID needed for subsequent part requests. Response-write
+			// errors are ignored; the test checks upload success through the client
+			// result after these server interactions.
 			_, _ = fmt.Fprint(w, `<CreateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>bucket-a</Bucket><Key>exports/test.bin</Key><UploadId>upload-1</UploadId></CreateMultipartUploadResult>`)
 		case r.Method == http.MethodPut && query.Get("partNumber") != "" && query.Get("uploadId") == "upload-1":
 			current := activeParts.Add(1)
@@ -78,8 +79,9 @@ func TestS3BackupStoreUploadFileWithProgressUsesConcurrentMultipart(t *testing.T
 			// byte and overlap assertions describe uploaded parts, while the client checks completion success.
 			_, _ = io.Copy(io.Discard, r.Body)
 			w.Header().Set("Content-Type", "application/xml")
-			// Return completion metadata accepted by the SDK. Transport write failure remains
-			// visible through the upload result instead of a separate server-side assertion here.
+			// Return completion metadata accepted by the SDK. Response-write errors
+			// are ignored, while the test asserts successful completion through the
+			// returned client result.
 			_, _ = fmt.Fprint(w, `<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Location>http://example.test/bucket-a/exports/test.bin</Location><Bucket>bucket-a</Bucket><Key>exports/test.bin</Key><ETag>"complete"</ETag></CompleteMultipartUploadResult>`)
 		default:
 			t.Errorf("unexpected S3 request: method=%s path=%s query=%s", r.Method, r.URL.Path, r.URL.RawQuery)
@@ -117,7 +119,7 @@ func TestS3BackupStoreUploadFileWithProgressUsesConcurrentMultipart(t *testing.T
 }
 
 // TestS3BackupStoreUploadSizedUsesSinglePut supplies a measured archive segment to
-// the sized uploader. The endpoint must receive one ordinary PutObject request
+// the sized uploader. The endpoint must receive an ordinary PutObject request
 // with exact Content-Length and body bytes, without multipart query state.
 func TestS3BackupStoreUploadSizedUsesSinglePut(t *testing.T) {
 	payload := bytes.Repeat([]byte("part"), 1024)
@@ -184,8 +186,9 @@ func TestS3UploadConfigNormalizers(t *testing.T) {
 }
 
 // TestS3BackupStoreUploadFileWithProgressReturnsPartialProgressOnCancel cancels
-// after the first multipart request starts. The upload must fail with a bounded
-// observed byte count, request multipart abortion, and leave the fixture's unexpected-request list empty.
+// after the first part request starts. The upload must fail, return a byte
+// count no greater than the payload size, request multipart abortion, and
+// leave the fixture's unexpected-request list empty.
 func TestS3BackupStoreUploadFileWithProgressReturnsPartialProgressOnCancel(t *testing.T) {
 	var started atomic.Int64
 	var abortSeen atomic.Bool
@@ -196,8 +199,9 @@ func TestS3BackupStoreUploadFileWithProgressReturnsPartialProgressOnCancel(t *te
 		switch {
 		case r.Method == http.MethodPost && hasRawQueryKey(query, "uploads"):
 			w.Header().Set("Content-Type", "application/xml")
-			// Provide the ID needed to observe part startup and later abortion. A response
-			// write error is left to the cancelled client attempt rather than masking its result here.
+			// Provide the ID needed to observe part startup and later abortion.
+			// Response-write errors are ignored while the test checks cancellation,
+			// progress bounds, and observed abort requests through the client attempt.
 			_, _ = fmt.Fprint(w, `<CreateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>bucket-a</Bucket><Key>exports/cancel.bin</Key><UploadId>upload-1</UploadId></CreateMultipartUploadResult>`)
 		case r.Method == http.MethodPut && query.Get("partNumber") != "":
 			started.Add(1)
@@ -213,11 +217,14 @@ func TestS3BackupStoreUploadFileWithProgressReturnsPartialProgressOnCancel(t *te
 			abortSeen.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			// Unexpected requests may lack a numeric part identifier. Use zero for their
-			// diagnostic label while retaining the exact method, path, and raw query for assertions.
+			// Discard the conversion error while keeping Atoi's number for diagnostics;
+			// syntax errors yield zero and range errors yield a signed int limit.
+			// The raw query keeps the supplied partNumber text in the failure
+			// diagnostic printed when the unexpected-request assertion fails.
 			partNumber, _ := strconv.Atoi(query.Get("partNumber"))
-			// Protect unexpected-request diagnostics across concurrent server handlers so
-			// final assertions can inspect every recorded request after the SDK upload attempt finishes.
+			// Unexpected request handlers append under the mutex because multipart
+			// requests can overlap. The final empty-list assertion takes the same
+			// mutex when inspecting these diagnostics.
 			mu.Lock()
 			unexpected = append(unexpected, fmt.Sprintf("method=%s part=%d path=%s query=%s", r.Method, partNumber, r.URL.Path, r.URL.RawQuery))
 			mu.Unlock()
@@ -366,7 +373,7 @@ func TestS3BackupStoreUploadSpooledPutRemovesTemporaryFileOnReadError(t *testing
 	require.Empty(t, tempFiles)
 }
 
-// Read simulates a backup stream failing during disk spooling.
+// Read returns an injected source error with zero bytes consumed.
 func (failingBackupReader) Read([]byte) (int, error) {
 	return 0, errors.New("read backup failed")
 }
@@ -380,7 +387,8 @@ func (r *generatedBackupReader) Read(p []byte) (int, error) {
 	}
 	n := len(p)
 	if int64(n) > r.remaining {
-		// Keep the final read inside the synthetic payload's remaining byte count.
+		// remaining fits int because this branch has already compared its value
+		// with len(p), so conversion keeps the final read inside the payload.
 		n = int(r.remaining)
 	}
 	for i := range n {

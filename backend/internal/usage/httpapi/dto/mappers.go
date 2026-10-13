@@ -7,11 +7,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage detail responses display the client model while administrator
+// responses add outbound observations and provider costs. Request categories
+// also supply older transport flags, so converting a record resolves those
+// representations before filling the response.
+//
+// The mappers keep absent observations absent and restrict administrator
+// additions to AdminUsageLog. Billing allocations receive their own entries
+// and copied subscription and plan identifiers. Other optional log values,
+// image-size maps and timing pointers retain the source references, so
+// callers treat those shared values as immutable while a response is being
+// encoded.
+
+// usageLogFromServiceUser builds the common usage response from a nonnil
+// record and optional display language. It selects RequestedModel when
+// present, otherwise Model, and resolves the effective request category
+// before deriving the legacy stream and WebSocket flags.
+//
+// These choices let client-facing names and older transport fields remain
+// useful together. Billing allocations are copied by
+// cloneBillingAllocationsDTO; other optional pointers and ImageSizeBreakdown
+// remain shared with l. Administrator additions are supplied later by
+// FromUsageAdmin.
 func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
-	// Keep provider costs and upstream internals out of user responses; FromUsageAdmin adds those fields.
 	requestType := l.EffectiveRequestType()
 	stream, openAIWSMode := usage.ApplyLegacyRequestFields(requestType, l.Stream, l.OpenAIWSMode)
 	requestedModel := l.RequestedModel
+	// Historical records can lack the client display name. Use their stored model
+	// so both user and administrator responses still identify the recorded request.
 	if requestedModel == "" {
 		requestedModel = l.Model
 	}
@@ -78,6 +101,10 @@ func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
 	}
 }
 
+// cloneBillingAllocationsDTO copies allocation entries and their optional
+// SubscriptionID and PlanID values. Empty input returns nil, while each
+// populated identifier gets independent storage for the response's billing
+// details.
 func cloneBillingAllocationsDTO(allocations []billing.BillingAllocation) []billing.BillingAllocation {
 	if len(allocations) == 0 {
 		return nil
@@ -98,8 +125,9 @@ func cloneBillingAllocationsDTO(allocations []billing.BillingAllocation) []billi
 	return out
 }
 
-// FromUsage converts a service UsageLog to DTO for regular users.
-// Provider costs and upstream internals are reserved for FromUsageAdmin.
+// FromUsage builds the regular user's usage response, returning nil for a nil
+// record. The response retains optional log pointers and the image-size map;
+// callers treat those shared values as immutable during encoding.
 func FromUsage(l *usage.UsageLog, language ...string) *UsageLog {
 	if l == nil {
 		return nil
@@ -108,8 +136,9 @@ func FromUsage(l *usage.UsageLog, language ...string) *UsageLog {
 	return &u
 }
 
-// FromUsageAdmin converts a service UsageLog to DTO for admin users.
-// It adds provider costs, upstream diagnostics, and provider ID/name, with no provider credentials.
+// FromUsageAdmin builds an administrator response, returning nil for a nil
+// record. It adds outbound observations, provider costs and the provider
+// identity; optional source pointers remain shared during response encoding.
 func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 	if l == nil {
 		return nil
@@ -132,7 +161,10 @@ func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 	}
 }
 
-// TimingFromOps copies the stage timings needed by administrator usage views.
+// TimingFromOps builds the stage-timing response, returning nil when no
+// observation is available. Offset and count pointers remain shared with
+// timing, so callers leave their values unchanged while encoding the
+// response.
 func TimingFromOps(timing *ops.OpsRequestTiming) *UsageLogTiming {
 	if timing == nil {
 		return nil
@@ -156,6 +188,9 @@ func TimingFromOps(timing *ops.OpsRequestTiming) *UsageLogTiming {
 	}
 }
 
+// CleanupFromUsage builds a cleanup-task response, returning nil for a nil
+// task. It maps the DTO's declared filter fields and converts request type to
+// text; other filter and lifecycle pointers remain shared.
 func CleanupFromUsage(task *usage.UsageCleanupTask) *UsageCleanupTask {
 	if task == nil {
 		return nil
@@ -187,6 +222,9 @@ func CleanupFromUsage(task *usage.UsageCleanupTask) *UsageCleanupTask {
 	}
 }
 
+// RequestTypeStringPtr returns a new display-string pointer for a stored
+// request category. Nil input returns nil, while invalid stored integers
+// normalize to unknown before their lowercase label is produced.
 func RequestTypeStringPtr(requestType *int16) *string {
 	if requestType == nil {
 		return nil

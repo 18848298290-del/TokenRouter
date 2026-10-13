@@ -12,15 +12,31 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// Message-lock maintenance relies on a separately written expiry index, which
+// can be missing or stale while a lock remains in Redis. Integration cases
+// check index creation/removal, naturally expired and persistent locks,
+// live-score repair, malformed members and discovery repair during
+// contention.
+
+// UserMsgQueueCacheSuite exercises serialization lock indexing and cleanup in
+// namespaced Redis fixtures.
 type UserMsgQueueCacheSuite struct {
-	IntegrationRedisSuite
-	cache *userMsgQueueCache
+	IntegrationRedisSuite // namespaced Redis test fixture
+	// cache is rebuilt after SetupTest creates the fixture client, giving each
+	// method independent lock and index keys for its maintenance assertions.
+	cache *userMsgQueueCache // message lock test subject
 }
 
+// TestUserMsgQueueCacheSuite runs serialization ownership and index
+// maintenance against the integration Redis fixture. Every method receives
+// its own key namespace and automatic fixture cleanup.
 func TestUserMsgQueueCacheSuite(t *testing.T) {
 	suite.Run(t, new(UserMsgQueueCacheSuite))
 }
 
+// SetupTest creates the namespaced Redis fixture and asserts the
+// constructor's concrete message-lock cache type. It keeps that adapter for
+// maintenance methods absent from the public interface.
 func (s *UserMsgQueueCacheSuite) SetupTest() {
 	s.IntegrationRedisSuite.SetupTest()
 	cache, ok := NewUserMsgQueueCache(s.rdb).(*userMsgQueueCache)
@@ -28,6 +44,9 @@ func (s *UserMsgQueueCacheSuite) SetupTest() {
 	s.cache = cache
 }
 
+// TestAcquireLockWritesIndexAndReleaseRemovesIt acquires and releases one
+// request owner. It checks that acquisition creates a future expiry score and
+// successful release removes that provider's index member.
 func (s *UserMsgQueueCacheSuite) TestAcquireLockWritesIndexAndReleaseRemovesIt() {
 	providerID := int64(701)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
@@ -49,6 +68,9 @@ func (s *UserMsgQueueCacheSuite) TestAcquireLockWritesIndexAndReleaseRemovesIt()
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestReconcileExpiredLockCandidatesRemovesNaturallyExpiredLockIndex lets a
+// short-lived lock expire before reconciliation. It checks removal of its
+// index member with zero persistent-lock deletions returned.
 func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesNaturallyExpiredLockIndex() {
 	providerID := int64(702)
 	acquired, err := s.cache.AcquireLock(s.ctx, providerID, "req-702", 20)
@@ -57,6 +79,8 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesNatura
 
 	_, err = s.rdb.ZScore(s.ctx, umqLockIndexKey, "702").Result()
 	require.NoError(s.T(), err)
+	// Observe key expiry before running reconciliation so this scenario tests
+	// stale index removal rather than deletion of an existing persistent lock.
 	require.Eventually(s.T(), func() bool {
 		_, err := s.rdb.Get(s.ctx, umqLockKey(providerID)).Result()
 		return errors.Is(err, redis.Nil)
@@ -70,11 +94,16 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesNatura
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestReconcileExpiredLockCandidatesRefreshesLiveLockIndex seeds a live lock
+// with an already due score. It checks a future replacement score, retained
+// lock key and zero deletion count.
 func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRefreshesLiveLockIndex() {
 	providerID := int64(703)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, umqLockKey(providerID), "req-703", time.Minute).Err())
+	// Seed an already due discovery score for a still-live lock so maintenance
+	// must recheck remaining PTTL before deciding whether cleanup is needed.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, umqLockIndexKey, redis.Z{
 		Score:  float64(nowMs - 1),
 		Member: "703",
@@ -92,10 +121,15 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRefreshesLive
 	require.EqualValues(s.T(), 1, exists)
 }
 
+// TestReconcileExpiredLockCandidatesDeletesNoTTLLock seeds a persistent lock
+// and due index member. It checks one counted deletion and removal of both
+// the lock and its discovery member.
 func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesDeletesNoTTLLock() {
 	providerID := int64(704)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
+	// Seed a persistent owner plus a due index entry to make the no-TTL anomaly
+	// discoverable by the normal candidate reconciliation path.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, umqLockKey(providerID), "req-704", 0).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, umqLockIndexKey, redis.Z{
 		Score:  float64(nowMs),
@@ -113,6 +147,10 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesDeletesNoTTLL
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestReconcileExpiredLockCandidatesRemovesInvalidMember seeds a due
+// nonnumeric index member. It checks successful removal with zero deleted
+// persistent locks, protecting maintenance from malformed discovery
+// identities.
 func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesInvalidMember() {
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
@@ -129,15 +167,19 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesInvali
 	require.True(s.T(), errors.Is(err, redis.Nil))
 }
 
+// TestAcquireLockBusyPathReindexesUnindexedLiveLock seeds a live owner
+// without a discovery member. It checks that rejected contention restores a
+// future index score while retaining the existing owner.
 func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathReindexesUnindexedLiveLock() {
-	// Simulate a missing index entry after an upgrade, failed index write, or release race.
-	// The lock has a TTL but no index member.
+	// Seed an existing holder with an expiring lock but no index member so
+	// rejected contention has discovery state to repair.
 	providerID := int64(705)
 	nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, umqLockKey(providerID), "holder-705", time.Minute).Err())
 
-	// A failed contention attempt repairs the observed owner's index entry.
+	// Attempt acquisition as a different owner so the returned rejection can be
+	// checked together with a newly indexed observation of the existing lock.
 	acquired, err := s.cache.AcquireLock(s.ctx, providerID, "contender-705", 10_000)
 	require.NoError(s.T(), err)
 	require.False(s.T(), acquired)
@@ -145,12 +187,14 @@ func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathReindexesUnindexedLiveLo
 	score, err := s.rdb.ZScore(s.ctx, umqLockIndexKey, "705").Result()
 	require.NoError(s.T(), err, "busy acquire should re-index the observed live lock")
 	require.Greater(s.T(), int64(score), nowMs)
-	// The contender leaves the lock owner unchanged.
 	val, err := s.rdb.Get(s.ctx, umqLockKey(providerID)).Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "holder-705", val)
 }
 
+// TestAcquireLockBusyPathMakesNoTTLLockReconcilable seeds an unindexed
+// persistent owner. It checks rejected contention indexing that lock as due,
+// followed by one counted deletion and removal of its index member.
 func (s *UserMsgQueueCacheSuite) TestAcquireLockBusyPathMakesNoTTLLockReconcilable() {
 	// An unindexed persistent lock would be invisible to reconciliation.
 	// Failed acquisition indexes it as already due so background cleanup can remove it.

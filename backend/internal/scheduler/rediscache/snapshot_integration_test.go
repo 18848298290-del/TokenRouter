@@ -20,7 +20,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// TestBucketLeaseExpiredOwnerCannotReleaseSuccessor checks that an expired owner's release leaves the successor lock intact.
+// A bucket or group owner can outlive its Redis lock expiry, so delayed
+// release needs to leave a successor's token intact. Integration fixtures
+// check that ownership rule beside slim/full payload separation and
+// retirement generations that fence earlier bucket writers.
+
+// TestBucketLeaseExpiredOwnerCannotReleaseSuccessor waits for a short bucket
+// lease to expire before acquiring another owner. It checks the stale release
+// reports loss, preserves the successor and allows repeated successful
+// successor cleanup.
 func TestBucketLeaseExpiredOwnerCannotReleaseSuccessor(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -29,6 +37,9 @@ func TestBucketLeaseExpiredOwnerCannotReleaseSuccessor(t *testing.T) {
 	first, acquired, err := cache.AcquireBucketLease(ctx, bucket, 20*time.Millisecond)
 	require.NoError(t, err)
 	require.True(t, acquired)
+	// Wait beyond the first lease's short TTL before obtaining a successor,
+	// making the later release exercise a changed owner token instead of normal
+	// cleanup.
 	time.Sleep(40 * time.Millisecond)
 	second, acquired, err := cache.AcquireBucketLease(ctx, bucket, time.Minute)
 	require.NoError(t, err)
@@ -50,6 +61,10 @@ func TestBucketLeaseExpiredOwnerCannotReleaseSuccessor(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullProvider stores a
+// provider with tokens, large fields, runtime gates and hydrated groups. It
+// checks selection reads retain required slim fields while full lookup still
+// returns execution data.
 func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullProvider(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -144,6 +159,10 @@ func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullProvider(t *testing.T
 	require.NotNil(t, full.ProviderGroups[0].Group)
 }
 
+// TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration publishes and
+// retires a bucket twice before reopening it. It checks retired misses, a
+// newer epoch, old-token rejection and successful publication by the reopened
+// generation.
 func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -177,6 +196,10 @@ func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
 	require.Equal(t, provider.ID, snapshot[0].ID)
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseOwnerAndTTLIntegration waits for a
+// bounded group lease to expire and obtains its successor. It checks TTL
+// bounds, stale/repeated release loss, retained successor ownership and later
+// reacquisition.
 func TestSchedulerCacheGroupLifecycleLeaseOwnerAndTTLIntegration(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -193,6 +216,9 @@ func TestSchedulerCacheGroupLifecycleLeaseOwnerAndTTLIntegration(t *testing.T) {
 	require.LessOrEqual(t, pttl, ttl)
 
 	var second scheduler.SchedulerGroupLifecycleLease
+	// Attempt reacquisition until the first lock expires so stale-token release
+	// is checked against a live successor acquired through the normal lease
+	// path.
 	require.Eventually(t, func() bool {
 		var acquireErr error
 		second, acquired, acquireErr = cache.TryAcquireGroupLifecycleLease(ctx, groupID, time.Minute)
@@ -214,6 +240,9 @@ func TestSchedulerCacheGroupLifecycleLeaseOwnerAndTTLIntegration(t *testing.T) {
 	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, third))
 }
 
+// NewSchedulerCache constructs the provider-based integration adapter over
+// the supplied namespaced Redis client. It uses the production provider
+// codec, and the fixture keeps client ownership and cleanup.
 func NewSchedulerCache(rdb *redis.Client) *schedulerCache {
 	return &schedulerCache{NewSnapshotCache(rdb, codec.ProviderCodec{})}
 }

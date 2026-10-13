@@ -1,7 +1,5 @@
 package rediscache
 
-// These scenarios check the snapshot codec interface and the provider payload and metadata codecs.
-
 import (
 	"testing"
 
@@ -15,6 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
+// Candidate metadata needs protocol, subscription, model, quota and group
+// identity before full provider hydration, while large execution-only values
+// are filtered away. These cases compare retained eligibility behavior and
+// historical full/metadata bytes, including nil/empty collections and
+// configured model restrictions after JSON round trips.
+
+// TestFilterSchedulerCredentialsKeepsSubscriptionPlanType supplies a
+// subscription plan beside access and refresh tokens. It checks that the plan
+// remains available while those execution token fields are filtered away.
 func TestFilterSchedulerCredentialsKeepsSubscriptionPlanType(t *testing.T) {
 	filtered := filterSchedulerCredentials(map[string]any{
 		"plan_type":     "plus",
@@ -27,6 +34,9 @@ func TestFilterSchedulerCredentialsKeepsSubscriptionPlanType(t *testing.T) {
 	require.NotContains(t, filtered, "refresh_token")
 }
 
+// TestSchedulerMetadataProviderKeepsOpenAISubscriptionIdentity builds
+// metadata for an OAuth provider with a Plus plan. It checks subscription
+// recognition and an empty access-token lookup on the filtered record.
 func TestSchedulerMetadataProviderKeepsOpenAISubscriptionIdentity(t *testing.T) {
 	provider := providercore.Record{
 		ID:       24,
@@ -44,10 +54,17 @@ func TestSchedulerMetadataProviderKeepsOpenAISubscriptionIdentity(t *testing.T) 
 	require.Empty(t, metadata.GetCredential("access_token"))
 }
 
+// TestMarshalSchedulerCacheProviderKeepsEncodingJSONWireFormat covers nil
+// collections, empty collections and nested values requiring JSON escaping.
+// It checks full and metadata payload bytes against fixed historical fixtures
+// for each named case.
 func TestMarshalSchedulerCacheProviderKeepsEncodingJSONWireFormat(t *testing.T) {
 	cases := []struct {
-		name     string
-		provider providercore.Record
+		// name and provider pair a wire-shape fixture with its subtest identity;
+		// historicalSchedulerPayload uses that test name to locate the fixed full
+		// and metadata byte files.
+		name     string              // historical encoding scenario name
+		provider providercore.Record // provider representation fixture input
 	}{
 		{name: "nil collections", provider: providercore.Record{ID: 801}},
 		{name: "empty collections", provider: providercore.Record{
@@ -75,6 +92,10 @@ func TestMarshalSchedulerCacheProviderKeepsEncodingJSONWireFormat(t *testing.T) 
 	}
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsOpenAIAPIKeyProtocolFields supplies
+// current routing/compaction fields beside legacy flags and an access token.
+// It checks retained selection inputs and filtering of obsolete or unrelated
+// values.
 func TestBuildSchedulerMetadataProvider_KeepsOpenAIAPIKeyProtocolFields(t *testing.T) {
 	provider := providercore.Record{
 		ID:       42,
@@ -114,6 +135,10 @@ func TestBuildSchedulerMetadataProvider_KeepsOpenAIAPIKeyProtocolFields(t *testi
 	require.Nil(t, got.Credentials["access_token"])
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsGrokMediaEligibility supplies an
+// administrator denial and a forbidden billing observation in separate cases.
+// It checks their filtered records still reject media generation with the
+// corresponding reasons.
 func TestBuildSchedulerMetadataProvider_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		provider := providercore.Record{
@@ -158,6 +183,10 @@ func TestBuildSchedulerMetadataProvider_KeepsGrokMediaEligibility(t *testing.T) 
 	})
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsSlimGroupMembership supplies
+// duplicate/invalid direct IDs plus hydrated membership records. It checks
+// merged positive group IDs and scalar memberships whose nested
+// provider/group graphs are filtered away.
 func TestBuildSchedulerMetadataProvider_KeepsSlimGroupMembership(t *testing.T) {
 	provider := providercore.Record{
 		ID:       42,
@@ -194,6 +223,10 @@ func TestBuildSchedulerMetadataProvider_KeepsSlimGroupMembership(t *testing.T) {
 	require.Nil(t, got.Groups)
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsQuotaAutoPauseFields supplies usage
+// percentages, resets, observation time and pause overrides. It checks each
+// supplied observation survives metadata filtering for later quota-based
+// candidate checks.
 func TestBuildSchedulerMetadataProvider_KeepsQuotaAutoPauseFields(t *testing.T) {
 	provider := providercore.Record{
 		ID: 88,
@@ -227,6 +260,9 @@ func TestBuildSchedulerMetadataProvider_KeepsQuotaAutoPauseFields(t *testing.T) 
 	require.Equal(t, false, got.Extra["auto_pause_7d_disabled"])
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsModelRateLimits supplies two keyed
+// model cooldown observations and an unrelated extra value. It checks both
+// model keys remain while the unrelated field is filtered away.
 func TestBuildSchedulerMetadataProvider_KeepsModelRateLimits(t *testing.T) {
 	provider := providercore.Record{
 		ID:       90,
@@ -253,6 +289,10 @@ func TestBuildSchedulerMetadataProvider_KeepsModelRateLimits(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsSparkShadowRoutingIdentity supplies
+// shadow-parent identity, quota dimension and ordinary/compact model
+// mappings. It checks retained routing associations while filtering the
+// fixture access token.
 func TestBuildSchedulerMetadataProvider_KeepsSparkShadowRoutingIdentity(t *testing.T) {
 	parentID := int64(100)
 	provider := providercore.Record{
@@ -282,7 +322,10 @@ func TestBuildSchedulerMetadataProvider_KeepsSparkShadowRoutingIdentity(t *testi
 	require.Nil(t, got.Credentials["access_token"])
 }
 
-// TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough checks that passthrough snapshots retain model restrictions.
+// TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough
+// enables each passthrough flag with a restrictive model map and whitelist.
+// It checks the unsupported model remains rejected after filtered metadata is
+// serialized and decoded.
 func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t *testing.T) {
 	for _, key := range []string{"openai_passthrough", "openai_oauth_passthrough"} {
 		t.Run(key, func(t *testing.T) {
@@ -303,7 +346,9 @@ func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t 
 
 			meta := buildSchedulerMetadataProvider(provider)
 
-			// Round-trip the metadata payload to check that serialization retains model restrictions.
+			// Serialize the filtered record before checking eligibility so the
+			// assertion includes cached restoration of passthrough flags, configured
+			// mappings and whitelist scope.
 			payload, err := codec.MarshalProviderRecord(&meta)
 			require.NoError(t, err)
 			restored, err := codec.UnmarshalProviderRecord(payload)
@@ -313,13 +358,15 @@ func TestBuildSchedulerMetadataProvider_KeepsExplicitModelScopeForPassthrough(t 
 			require.True(t, restored.IsOpenAIPassthroughEnabled())
 			require.False(t, restored.IsModelSupported("gpt-5.6-sol", provideradapter.ModelDefaults(), provideradapter.ModelRules(restored)),
 				"缓存恢复不能放宽提供商模型范围")
-			// The cached record also retains the configured mapping.
 			require.Equal(t, map[string]any{"gpt-5.5": "gpt-5.5"}, restored.Credentials["model_mapping"])
 		})
 	}
 }
 
-// TestSchedulerProtocolProjection checks protocol and authentication metadata while excluding execution credentials.
+// TestSchedulerProtocolProjection supplies WebSocket protocol and
+// personal-access-token authentication metadata beside a secret token. It
+// checks retained protocol/authentication behavior, token filtering, Live
+// exclusion and an empty protocol list after replacement.
 func TestSchedulerProtocolProjection(t *testing.T) {
 	provider := providercore.Record{ID: 72, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"upstream_protocols": []string{"openai_responses_websocket"}, "auth_mode": "personalAccessToken", "access_token": "hidden"}}
 	metadata := buildSchedulerMetadataProvider(provider)
@@ -332,10 +379,17 @@ func TestSchedulerProtocolProjection(t *testing.T) {
 	require.Empty(t, metadata.UpstreamProtocols())
 }
 
+// filterSchedulerCredentials delegates credential selection through
+// ProviderCodec.Metadata for these fixtures. The returned outer map contains
+// selected values, while any retained nested mutable values stay shared with
+// the supplied input.
 func filterSchedulerCredentials(value map[string]any) map[string]any {
 	return buildSchedulerMetadataProvider(providercore.Record{Credentials: value}).Credentials
 }
 
+// buildSchedulerMetadataProvider delegates fixture metadata creation to the
+// production provider codec. Its output retains selected nested values and
+// scalar pointers, so callers treat those references as shared.
 func buildSchedulerMetadataProvider(value providercore.Record) providercore.Record {
 	return (codec.ProviderCodec{}).Metadata(value)
 }

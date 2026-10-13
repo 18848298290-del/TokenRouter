@@ -1,16 +1,19 @@
-// Package qoder adapts Qoder authentication, encrypted requests, streaming responses, and conversation state.
+// Package qoder adapts Qoder authentication, encrypted session headers, stream
+// output, and conversation identity for the gateway. Client protocols
+// normalize into one site-specific request shape, and observed output and
+// usage return to the attempt owner for completion accounting.
 //
-// Entry points:
-//   - execute.go prepares upstream requests and emits the requested client protocol.
-//   - client.go sends signed requests, parses SSE, and classifies API errors.
-//   - payload.go converts Chat, Messages, and Responses requests into Qoder payloads.
+// Start with execute.go for preparation, cancellation, acceptance, and output
+// ownership. Read client.go for signing, HTTP errors, and SSE normalization.
+// Read payload.go for protocol input conversion and tool history
+// normalization.
 //
-// File groups:
-//   - auth*.go, oauth.go, credential_builder.go, refresh_exchange.go: PAT, device login, credentials, and refresh.
-//   - session.go, signature.go, encoding.go: encrypted sessions, signing, and body encoding.
-//   - site.go, models.go: site profiles, model aliases, and capabilities.
-//   - client.go, execute.go, output_observation.go: transport, execution, cancellation, and output observation.
-//   - payload.go, stream_conversion.go: request conversion and client protocol output.
-//   - conversation.go: conversation identity, incremental history, commits, and rollback.
-//   - quota_usage.go: quota response fields and numeric parsing.
+// Credential workflows use auth.go, auth_status.go, authorization.go,
+// oauth.go, credential_builder.go, and refresh_exchange.go. Session headers
+// and request encoding use session.go, signature.go, and encoding.go. Site and
+// model controls use site.go and models.go. Conversation snapshots and
+// rollback use conversation.go, while stream_conversion.go and
+// output_observation.go retain output and usage evidence. Quota metadata uses
+// quota_usage.go; the localauth package isolates manual import and opt-in
+// local tests.
 package qoder

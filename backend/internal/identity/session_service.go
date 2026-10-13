@@ -256,7 +256,10 @@ func (s *SessionService) GetAccessTokenExpiresIn() int {
 	return s.options.ExpireHour * 3600
 }
 
-// HashPassword returns a bcrypt password hash using the library default cost.
+// HashPassword returns a bcrypt hash of the supplied password bytes at the
+// library's default cost. A password longer than seventy-two bytes returns
+// ErrPasswordTooLong before salt generation; accepted passwords are hashed as
+// supplied for later comparison.
 func (s *SessionService) HashPassword(password string) (string, error) {
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -265,12 +268,12 @@ func (s *SessionService) HashPassword(password string) (string, error) {
 	return string(hashedBytes), nil
 }
 
-// CheckPassword reports whether bcrypt accepts the password against the
-// supplied hash.
+// CheckPassword reports whether bcrypt accepts the supplied password against
+// its hash. Mismatches, malformed hashes, and other bcrypt comparison errors
+// produce false, so authentication receives one rejection decision.
 func (s *SessionService) CheckPassword(password, hashedPassword string) bool {
-	// Bcrypt represents mismatches and malformed hashes as errors; authentication
-	// needs one decision here, so every non-nil result becomes a rejected
-	// password.
+	// A malformed stored hash can fail before bcrypt compares the password.
+	// Reject that error so unusable credential data cannot authenticate an account.
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
 }
@@ -648,9 +651,9 @@ func ResolvedTokenVersion(user *User) int64 {
 }
 
 // RandomHexString returns lowercase hex for the requested number of random
-// bytes. Nonpositive lengths select sixteen bytes, and callers receive twice
-// the byte count as text characters; random-source failures are returned before
-// any result.
+// bytes with nil error. Nonpositive lengths select sixteen bytes, and callers
+// receive twice the byte count as text characters. crypto/rand.Read terminates
+// the process when its io.ReadFull operation reports an error.
 func RandomHexString(byteLength int) (string, error) {
 	if byteLength <= 0 {
 		byteLength = 16

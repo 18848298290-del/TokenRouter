@@ -9,6 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMapJWTSubscriptionTierNumber enumerates the locally mapped numeric
+// tiers and an unknown ID. It asserts each recognized label and the unknown
+// ID's decimal representation, covering metadata interpretation without token
+// verification.
 func TestMapJWTSubscriptionTierNumber(t *testing.T) {
 	t.Parallel()
 
@@ -23,6 +27,10 @@ func TestMapJWTSubscriptionTierNumber(t *testing.T) {
 	require.Equal(t, "9", MapJWTSubscriptionTier(9))
 }
 
+// TestNormalizeSubscriptionTierAliases supplies case, whitespace, hyphen,
+// compact-name, and display-name variants. It asserts each listed alias
+// resolves to its local canonical tier label, including ambiguous Pro and
+// clear Lite signals.
 func TestNormalizeSubscriptionTierAliases(t *testing.T) {
 	t.Parallel()
 
@@ -41,6 +49,10 @@ func TestNormalizeSubscriptionTierAliases(t *testing.T) {
 	require.Equal(t, "supergrok_lite", NormalizeSubscriptionTier("supergrok_lite"))
 }
 
+// TestSubscriptionTierFromJWTUsesNumericClaim constructs unverified JWT-
+// shaped fixtures with numeric tiers and missing claims. It asserts known
+// numeric labels, missing-tier emptiness, and malformed-token emptiness for
+// the metadata reader.
 func TestSubscriptionTierFromJWTUsesNumericClaim(t *testing.T) {
 	t.Parallel()
 
@@ -51,6 +63,10 @@ func TestSubscriptionTierFromJWTUsesNumericClaim(t *testing.T) {
 	require.Empty(t, SubscriptionTierFromJWT("not-a-jwt"))
 }
 
+// TestCanonicalGrokPlanUsesOnlyGrok45ResponsesWindow combines tier labels,
+// billing limits, model windows, and freshness times. It asserts Heavy
+// inference uses qualifying current or carried evidence, clear Free stays
+// Free, and stale or other-model windows cannot upgrade ambiguous tiers.
 func TestCanonicalGrokPlanUsesOnlyGrok45ResponsesWindow(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +137,9 @@ func TestCanonicalGrokPlanUsesOnlyGrok45ResponsesWindow(t *testing.T) {
 	require.Equal(t, "supergrok_heavy", CanonicalGrokPlan(&heavyCents, "SuperGrokPro", nil))
 }
 
+// TestApplyGrok45ResponsesPlanSignalCarriesHint records a Heavy-sized Grok
+// 4.5 window, then observes another model. It asserts the inferred Heavy
+// label and its originating timestamp are carried into the later snapshot.
 func TestApplyGrok45ResponsesPlanSignalCarriesHint(t *testing.T) {
 	t.Parallel()
 
@@ -144,8 +163,12 @@ func TestApplyGrok45ResponsesPlanSignalCarriesHint(t *testing.T) {
 	require.Equal(t, prev.PlanFrom45ResponsesAt, next.PlanFrom45ResponsesAt)
 }
 
+// int64Ptr returns a pointer to one integer for quota-limit test fixtures.
 func int64Ptr(v int64) *int64 { return &v }
 
+// jwtWithClaims encodes fixture claims as a JWT-shaped string with fixed
+// header and signature text. It fails the test on marshal error and supplies
+// no real signature, matching the metadata decoder's unverified input scope.
 func jwtWithClaims(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	payload, err := json.Marshal(claims)

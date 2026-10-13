@@ -10,12 +10,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// geminiQuotaUsageFixture exceeds the free daily request allowance while reporting no requests in the current minute.
+// Gemini quota prechecks run on cached provider records before full hydration
+// supplies execution data. The fixture exceeds the free daily allowance while
+// leaving the current minute empty, exposing whether source and tier fields
+// survive both full and metadata encoding.
+
+// geminiQuotaUsageFixture supplies daily quota exhaustion while leaving the
+// selected minute empty.
 type geminiQuotaUsageFixture struct {
-	minute time.Time
-	calls  int
+	minute time.Time // empty current-minute window start
+	// calls increments on each fixture read so the test can distinguish skipped
+	// third-party quota checks from official usage queries.
+	calls int // observed usage query count
 }
 
+// GetModelUsage counts the fixture query and returns an empty result for the
+// configured minute start. Other windows return 1510 daily requests,
+// exceeding the tested free-tier allowance.
 func (f *geminiQuotaUsageFixture) GetModelUsage(_ context.Context, _ int64, start, _ time.Time) ([]provider.GeminiModelUsage, error) {
 	f.calls++
 	if start.Equal(f.minute) {
@@ -24,14 +35,17 @@ func (f *geminiQuotaUsageFixture) GetModelUsage(_ context.Context, _ int64, star
 	return []provider.GeminiModelUsage{{Model: "gemini-3.8-flash", Requests: 1510}}, nil
 }
 
-// TestProviderCodecGeminiQuotaPrecheck checks source and tier fields in individual and batch quota checks after cache decoding.
+// TestProviderCodecGeminiQuotaPrecheck round-trips third-party, free and paid
+// Gemini provider identities through full and metadata payloads. It checks
+// individual and batch admission outcomes and whether quota usage was
+// queried.
 func TestProviderCodecGeminiQuotaPrecheck(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		kind        string
-		credentials map[string]any
-		allowed     bool
-		usageReads  bool
+		name        string         // quota identity scenario name
+		kind        string         // provider authentication type
+		credentials map[string]any // configured quota identity fields
+		allowed     bool           // expected quota admission result
+		usageReads  bool           // expected official usage querying
 	}{
 		{
 			name: "third_party",
@@ -84,6 +98,9 @@ func TestProviderCodecGeminiQuotaPrecheck(t *testing.T) {
 					decoded, err := RecordValue(snapshot)
 					require.NoError(t, err)
 					for _, batch := range []bool{false, true} {
+						// Fix the precheck clock and minute cutoff so daily exhaustion, rather
+						// than wall-clock window movement, decides each full and metadata
+						// admission assertion.
 						now := time.Date(2026, 10, 8, 6, 0, 30, 0, time.UTC)
 						usage := &geminiQuotaUsageFixture{minute: now.Truncate(time.Minute)}
 						precheck := provider.NewGeminiPrecheck(

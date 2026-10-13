@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseQuotaHeaders combines request/token windows, retry delay, tier,
+// and entitlement with an authorization header. It asserts parsed values,
+// reset spelling, header-observation metadata, and allowlisted copying while
+// credentials are excluded from the raw map.
 func TestParseQuotaHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -40,6 +44,10 @@ func TestParseQuotaHeaders(t *testing.T) {
 	require.NotContains(t, snapshot.Headers, "authorization")
 }
 
+// TestParseQuotaHeadersAcceptsXAITierAliases supplies alternate user-tier and
+// entitlement header names. It asserts both values populate normalized
+// snapshot fields and remain available under their raw allowlisted header
+// keys.
 func TestParseQuotaHeadersAcceptsXAITierAliases(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +64,9 @@ func TestParseQuotaHeadersAcceptsXAITierAliases(t *testing.T) {
 	require.Equal(t, "enabled", snapshot.Headers["x-xai-user-entitlement-status"])
 }
 
+// TestParseQuotaHeadersAcceptsRateLimitAliases uses the x-rate-limit token
+// header spelling. It asserts limit, remaining, and absolute reset values
+// populate the token window and the raw alias header is retained.
 func TestParseQuotaHeadersAcceptsRateLimitAliases(t *testing.T) {
 	t.Parallel()
 
@@ -73,11 +84,16 @@ func TestParseQuotaHeadersAcceptsRateLimitAliases(t *testing.T) {
 	require.Contains(t, snapshot.Headers, "x-rate-limit-limit-tokens")
 }
 
+// TestParseResetHeaderRelativeSecondsNotMisreadAsEpoch supplies a numeric
+// sixty-second reset with exhausted requests. It asserts the resulting epoch
+// falls near one minute after observation rather than representing a time in
+// 1970.
 func TestParseResetHeaderRelativeSecondsNotMisreadAsEpoch(t *testing.T) {
 	t.Parallel()
 
 	headers := http.Header{}
-	// A relative reset value of 60 means approximately one minute from observation.
+	// A small numeric reset belongs to a relative window. Sampling both sides
+	// of parsing gives the assertion tolerance for elapsed wall-clock time during the test.
 	headers.Set("x-ratelimit-reset-requests", "60")
 	headers.Set("x-ratelimit-remaining-requests", "0")
 
@@ -91,6 +107,9 @@ func TestParseResetHeaderRelativeSecondsNotMisreadAsEpoch(t *testing.T) {
 	require.LessOrEqual(t, got, time.Now().Unix()+61)
 }
 
+// TestParseResetHeaderDurationWindow supplies a six-minute duration string
+// with exhausted requests. It asserts the parsed reset falls near six minutes
+// after the test's observation time, covering duration-based relative resets.
 func TestParseResetHeaderDurationWindow(t *testing.T) {
 	t.Parallel()
 
@@ -108,6 +127,10 @@ func TestParseResetHeaderDurationWindow(t *testing.T) {
 	require.LessOrEqual(t, got, time.Now().Unix()+361)
 }
 
+// TestParseResetHeaderSubsecondDurationCeilsToFutureSecond supplies a
+// 250-millisecond token reset. It asserts a parsed reset exists within the
+// test's current-to-two-seconds window; this assertion does not require a
+// strictly later epoch second.
 func TestParseResetHeaderSubsecondDurationCeilsToFutureSecond(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +147,10 @@ func TestParseResetHeaderSubsecondDurationCeilsToFutureSecond(t *testing.T) {
 	require.LessOrEqual(t, *snapshot.Tokens.ResetUnix, time.Now().Unix()+2)
 }
 
+// TestParseResetHeaderMillisecondsEpochNormalized supplies an absolute
+// millisecond timestamp for an exhausted token window. It asserts
+// normalization stores the expected Unix-second epoch rather than leaving
+// milliseconds in ResetUnix.
 func TestParseResetHeaderMillisecondsEpochNormalized(t *testing.T) {
 	t.Parallel()
 
@@ -137,12 +164,19 @@ func TestParseResetHeaderMillisecondsEpochNormalized(t *testing.T) {
 	require.Equal(t, int64(1893456000), *snapshot.Tokens.ResetUnix)
 }
 
+// TestParseQuotaHeadersReturnsNilForMissingHeaders supplies an empty
+// successful response header map. It asserts passive parsing yields no
+// snapshot, retaining the distinction between an unobserved quota and a
+// parsed zero-valued quota window.
 func TestParseQuotaHeadersReturnsNilForMissingHeaders(t *testing.T) {
 	t.Parallel()
 
 	require.Nil(t, ParseQuotaHeaders(http.Header{}, http.StatusOK))
 }
 
+// TestObserveQuotaHeadersRecordsNoHeaderProbe records a successful active
+// probe with an empty header map. It asserts attempt status/time remain while
+// header-observation markers, windows, and last-header time stay absent.
 func TestObserveQuotaHeadersRecordsNoHeaderProbe(t *testing.T) {
 	t.Parallel()
 
@@ -158,6 +192,9 @@ func TestObserveQuotaHeadersRecordsNoHeaderProbe(t *testing.T) {
 	require.Nil(t, snapshot.Tokens)
 }
 
+// TestIsGrokFreeRolling24hTokenLimit compares the nominal rolling-day limit
+// and configured alternate amounts with an unmatched value. It asserts all
+// listed accepted limits classify as Free and the unrelated amount does not.
 func TestIsGrokFreeRolling24hTokenLimit(t *testing.T) {
 	t.Parallel()
 

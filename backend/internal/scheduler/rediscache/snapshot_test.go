@@ -21,8 +21,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
+// A newer scheduling side timestamp can outlive the JSON record written by an
+// earlier provider rebuild. Fixtures compare full and metadata bytes before
+// and after hot updates, then exercise monotonic reads, stale payload
+// replacement and missing-provider cleanup so last-used state keeps its
+// intended provider association.
+//
+// Bucket membership and shared payloads have separate lifetimes. These cases
+// check encoded-ID reuse, duplicate ordinals, empty or missing metadata,
+// retirement epochs and delayed activation. Two barrier-based scenarios
+// collect concurrent reopen or group-lock results using buffered channels;
+// the assertions inspect returned tokens and owner identity after every
+// operation result is collected.
+//
+// Payload benchmarks measure local encoding and member construction on fixed
+// provider fixtures. Their aggregate totals combine payload byte lengths with
+// member-entry counts, keeping the constructed results observable.
+
+// schedulerCachePayloadBenchmarkSink retains encoded-byte and member-entry
+// totals produced by each local payload benchmark iteration.
 var schedulerCachePayloadBenchmarkSink int
 
+// TestSchedulerCacheUpdateLastUsedUsesSideKeyWithoutRewritingPayloads updates
+// a large provider's recent-use time after bucket publication. It checks
+// unchanged full/metadata bytes, the side-key timestamp and newer times
+// returned by full and bucket reads.
 func TestSchedulerCacheUpdateLastUsedUsesSideKeyWithoutRewritingPayloads(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -81,6 +104,10 @@ func TestSchedulerCacheUpdateLastUsedUsesSideKeyWithoutRewritingPayloads(t *test
 	require.Equal(t, latest, *snapshot[0].LastUsedAt)
 }
 
+// TestSchedulerCacheLastUsedSideKeyIsMonotonicAndRequiresProvider sends newer
+// then older observations to an existing provider. It checks retained newer
+// time, no side key for a missing provider and side deletion when the
+// provider is removed.
 func TestSchedulerCacheLastUsedSideKeyIsMonotonicAndRequiresProvider(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -109,6 +136,9 @@ func TestSchedulerCacheLastUsedSideKeyIsMonotonicAndRequiresProvider(t *testing.
 	require.ErrorIs(t, err, redis.Nil)
 }
 
+// TestSchedulerCacheLastUsedSideKeyFallsBackToNewerEmbeddedValue seeds a side
+// timestamp older than the stored record. It checks that full lookup returns
+// the later embedded scheduling time.
 func TestSchedulerCacheLastUsedSideKeyFallsBackToNewerEmbeddedValue(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -129,6 +159,10 @@ func TestSchedulerCacheLastUsedSideKeyFallsBackToNewerEmbeddedValue(t *testing.T
 	require.Equal(t, embedded, *cached.LastUsedAt)
 }
 
+// TestSchedulerCacheLastUsedSideKeySurvivesStaleProviderAndSnapshotWrites
+// updates the side time before rewriting stale full and bucket payloads. It
+// checks the side key survives and both read paths return its newer
+// observation.
 func TestSchedulerCacheLastUsedSideKeySurvivesStaleProviderAndSnapshotWrites(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -167,9 +201,15 @@ func TestSchedulerCacheLastUsedSideKeySurvivesStaleProviderAndSnapshotWrites(t *
 	require.Equal(t, latest, *snapshot[0].LastUsedAt)
 }
 
+// TestSchedulerCacheUpdateLastUsedChunksLargeBatches creates one more
+// provider than the Lua chunk limit and gives each a distinct time. It checks
+// every side key receives its associated timestamp across the batch split.
 func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
+	// Cross the script chunk boundary by one provider so another chunk is
+	// required; checking every distinct timestamp exposes misplaced key/argument
+	// pairs despite unordered map iteration.
 	total := schedulerLastUsedUpdateChunkSize + 1
 	providers := make([]providercore.Record, 0, total)
 	updates := make(map[int64]time.Time, total)
@@ -191,23 +231,35 @@ func TestSchedulerCacheUpdateLastUsedChunksLargeBatches(t *testing.T) {
 	}
 }
 
+// newSchedulerCacheUnit returns a provider-based snapshot cache backed by a
+// fresh unit Redis fixture. The delegated fixture helper registers client
+// cleanup and manages server lifetime through the current test.
 func newSchedulerCacheUnit(t *testing.T) *schedulerCache {
 	cache, _ := newSchedulerCacheUnitWithRedis(t)
 	return cache
 }
 
+// newSchedulerCacheUnitWithRedis returns a cache and its miniredis server for
+// controlled key expiry in unit tests. The test owns the server lifecycle and
+// registers cleanup of the cache's client.
 func newSchedulerCacheUnitWithRedis(t *testing.T) (*schedulerCache, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// Close the fixture client after the test's assertions finish; teardown
+	// discards close errors while miniredis manages its own test-server cleanup.
 	t.Cleanup(func() { _ = rdb.Close() })
 	cache := newSchedulerCacheWithChunkSizes(rdb, defaultSchedulerSnapshotMGetChunkSize, defaultSchedulerSnapshotWriteChunkSize)
 	return cache, mr
 }
 
+// TestSchedulerCacheWriteProviderIDsSkipsUnencodableTimes supplies one valid
+// provider beside a record with an unencodable expiry. It checks only the
+// valid ID returns and only its full record is retrievable.
 func TestSchedulerCacheWriteProviderIDsSkipsUnencodableTimes(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 	providerIDs, err := cache.writeProviderIDs(ctx, []providercore.Record{
@@ -226,6 +278,9 @@ func TestSchedulerCacheWriteProviderIDsSkipsUnencodableTimes(t *testing.T) {
 	require.Nil(t, invalid)
 }
 
+// TestSchedulerCacheSetProviderClearsUnencodablePayload first stores a valid
+// record, then supplies an unencodable expiry update. It checks the operation
+// returns successfully and subsequent full provider lookup misses.
 func TestSchedulerCacheSetProviderClearsUnencodablePayload(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -233,6 +288,7 @@ func TestSchedulerCacheSetProviderClearsUnencodablePayload(t *testing.T) {
 	provider := providercore.Record{ID: 113, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	require.NoError(t, cache.SetProvider(ctx, &provider))
 
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	provider.ExpiresAt = &invalidTime
 	require.NoError(t, cache.SetProvider(ctx, &provider))
@@ -242,12 +298,16 @@ func TestSchedulerCacheSetProviderClearsUnencodablePayload(t *testing.T) {
 	require.Nil(t, cached)
 }
 
+// TestSchedulerCacheUpdateLastUsedClearsUnencodablePayload stores a provider
+// before sending a recent-use time outside JSON's supported year range. It
+// checks a successful update response followed by a full provider miss.
 func TestSchedulerCacheUpdateLastUsedClearsUnencodablePayload(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
 	provider := providercore.Record{ID: 114, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	require.NoError(t, cache.SetProvider(ctx, &provider))
 
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, cache.UpdateLastUsed(ctx, map[int64]time.Time{provider.ID: invalidTime}))
 
@@ -256,9 +316,14 @@ func TestSchedulerCacheUpdateLastUsedClearsUnencodablePayload(t *testing.T) {
 	require.Nil(t, cached)
 }
 
+// TestSchedulerCacheSnapshotProviderIDReusePreservesPayloadAndMembers mixes
+// valid, unencodable and duplicate providers before reusing encoded IDs in
+// another bucket. It checks fixed payload bytes, unchanged shared records,
+// final duplicate ordinals and absence of the skipped provider.
 func TestSchedulerCacheSnapshotProviderIDReusePreservesPayloadAndMembers(t *testing.T) {
 	ctx := context.Background()
 	cache, _ := newSchedulerCacheUnitWithRedis(t)
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	validOne := providercore.Record{
 		ID:          701,
@@ -313,9 +378,14 @@ func TestSchedulerCacheSnapshotProviderIDReusePreservesPayloadAndMembers(t *test
 	require.Nil(t, missing)
 }
 
+// TestSchedulerCacheSetSnapshotMatchesIDPublishing compares SetSnapshot with
+// SetSnapshotAndReturnProviderIDs on the same records. It checks identical
+// payloads/member ordering and returned encoded IDs after the invalid-time
+// provider is skipped.
 func TestSchedulerCacheSetSnapshotMatchesIDPublishing(t *testing.T) {
 	ctx := context.Background()
 	cache, _ := newSchedulerCacheUnitWithRedis(t)
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	validOne := providercore.Record{
 		ID:          721,
@@ -363,9 +433,14 @@ func TestSchedulerCacheSetSnapshotMatchesIDPublishing(t *testing.T) {
 	}
 }
 
+// TestSchedulerCacheSnapshotProviderIDReuseKeepsEmptySnapshotSemantics
+// supplies an unencodable provider and reuses the resulting empty ID list. It
+// checks both buckets become marked ready but return misses for their empty
+// membership.
 func TestSchedulerCacheSnapshotProviderIDReuseKeepsEmptySnapshotSemantics(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
+	// Year ten thousand exceeds JSON's four-digit timestamp year format.
 	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	providers := []providercore.Record{{ID: 811, Platform: capability.PlatformOpenAI, ExpiresAt: &invalidTime}}
 
@@ -392,6 +467,9 @@ func TestSchedulerCacheSnapshotProviderIDReuseKeepsEmptySnapshotSemantics(t *tes
 	}
 }
 
+// TestSchedulerCacheSetSnapshotByProviderIDsKeepsFencing calls the ID writer
+// with an invalid token, then a token from a retired bucket. It checks
+// rejection before version allocation and the retired-writer error.
 func TestSchedulerCacheSetSnapshotByProviderIDsKeepsFencing(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -409,6 +487,10 @@ func TestSchedulerCacheSetSnapshotByProviderIDsKeepsFencing(t *testing.T) {
 	require.ErrorIs(t, err, scheduler.ErrSchedulerBucketRetired)
 }
 
+// TestSchedulerCacheSetSnapshotByProviderIDsDoesNotResurrectDeletedProvider
+// removes shared data after an earlier encoded-ID write. It checks later
+// ID-only membership leaves full lookup missing and the new bucket read
+// misses on absent metadata.
 func TestSchedulerCacheSetSnapshotByProviderIDsDoesNotResurrectDeletedProvider(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -419,6 +501,9 @@ func TestSchedulerCacheSetSnapshotByProviderIDsDoesNotResurrectDeletedProvider(t
 	providerIDs, err := cache.SetSnapshotAndReturnProviderIDs(ctx, single, singleToken, []providercore.Record{provider})
 	require.NoError(t, err)
 	require.Equal(t, []int64{provider.ID}, providerIDs)
+	// Remove shared payloads after obtaining reusable IDs so the next bucket
+	// publication exposes whether membership-only work accidentally recreates a
+	// deleted provider.
 	require.NoError(t, cache.DeleteProvider(ctx, provider.ID))
 
 	forced := scheduler.SchedulerBucket{GroupID: 20, Platform: capability.PlatformOpenAI, Mode: scheduler.SchedulerModeForced}
@@ -435,6 +520,10 @@ func TestSchedulerCacheSetSnapshotByProviderIDsDoesNotResurrectDeletedProvider(t
 	require.Nil(t, snapshot)
 }
 
+// TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders
+// serializes total-quota exhaustion and active/expired daily and weekly
+// observations across provider types. It checks retained quota extras,
+// filtered unrelated data and the resulting quota/schedulability decisions.
 func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *testing.T) {
 	now := time.Now().UTC()
 	activeStart := now.Add(-time.Hour).Format(time.RFC3339)
@@ -443,11 +532,14 @@ func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *tes
 	weeklyResetDay := float64(now.AddDate(0, 0, 1).Weekday())
 
 	cases := []struct {
-		name          string
-		platform      string
-		typ           string
-		extra         map[string]any
-		quotaExceeded bool
+		// name, platform, typ, extra and quotaExceeded form one cached-eligibility
+		// case; the test copies the outer extra map before adding an unrelated
+		// value for filtering assertions.
+		name          string         // quota eligibility scenario name
+		platform      string         // fixture provider platform
+		typ           string         // provider authentication fixture type
+		extra         map[string]any // configured quota state observations
+		quotaExceeded bool           // expected quota exhaustion result
 	}{
 		{
 			name: "anthropic api key total quota exhausted", platform: capability.PlatformAnthropic, typ: capability.ProviderTypeAPIKey,
@@ -513,6 +605,10 @@ func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *tes
 	}
 }
 
+// TestSchedulerCacheBucketRetirementFencesWritersAndReopen publishes two
+// buckets before retiring one and later reopening it. It checks identity
+// fencing, stable repeated retirement, grace expiry, unaffected peer state
+// and new-generation publication.
 func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	ctx := context.Background()
 	cache, mr := newSchedulerCacheUnitWithRedis(t)
@@ -525,7 +621,8 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.True(t, token.ValidFor(bucket))
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []providercore.Record{provider}))
 
-	// A write token binds both the complete bucket identity and its epoch.
+	// Reuse a token in another bucket before that bucket allocates its own
+	// version; rejection must leave the peer's version key absent.
 	err = cache.SetSnapshot(ctx, otherBucket, token, []providercore.Record{provider})
 	require.ErrorIs(t, err, scheduler.ErrSchedulerBucketWriteFenced)
 	_, err = cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, otherBucket)).Result()
@@ -543,13 +640,14 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, retiredEpoch, token.Epoch)
 
-	// Repeated retirement keeps the same epoch.
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 	retiredEpochAgain, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Int64()
 	require.NoError(t, err)
 	require.Equal(t, retiredEpoch, retiredEpochAgain)
 
-	// Deleting ready and active markers makes new reads miss; readers with the prior version have a grace period to finish.
+	// Inspect the new-reader miss beside the still-readable prior membership and
+	// its bounded TTL, checking retirement's separate marker and retained-set
+	// effects.
 	_, hit, err := cache.GetSnapshot(ctx, bucket)
 	require.NoError(t, err)
 	require.False(t, hit)
@@ -586,6 +684,9 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	retired, err := cache.rdb.Exists(ctx, schedulerBucketKey(schedulerRetiredPrefix, bucket)).Result()
 	require.NoError(t, err)
 	require.EqualValues(t, 1, retired, "ordinary writers must never clear the tombstone")
+	// Advance beyond retirement's grace window after checking new-reader misses,
+	// then verify the previously retained membership key is removed by fixture
+	// expiry.
 	mr.FastForward(time.Duration(snapshotGraceTTLSeconds+1) * time.Second)
 	exists, err := cache.rdb.Exists(ctx, schedulerSnapshotKey(bucket, activeVersion)).Result()
 	require.NoError(t, err)
@@ -612,6 +713,10 @@ func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
 	require.Equal(t, provider.ID, snapshot[0].ID)
 }
 
+// TestSchedulerCacheActivationIsFencedAfterRetire retires and reopens between
+// an old writer's preparation and activation. It checks the old activation
+// fails, removes its unpublished membership and leaves no
+// active/ready/registration markers.
 func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -625,7 +730,9 @@ func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
 	_, err = cache.writeSnapshotVersionAndReturnProviderIDs(ctx, bucket, version, []providercore.Record{provider})
 	require.NoError(t, err)
 
-	// Retire and reopen after allocation and writing, but before the old writer activates.
+	// Change the generation after payload and membership preparation so
+	// activation must recheck the token even though this writer already finished
+	// its earlier writes.
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 	_, err = cache.ReopenBucket(ctx, bucket)
 	require.NoError(t, err)
@@ -647,6 +754,10 @@ func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
 	require.NotContains(t, buckets, bucket)
 }
 
+// TestSchedulerCacheConcurrentReopenReturnsSameToken releases two goroutines
+// from one barrier to reopen a retired bucket. It checks equal newer tokens,
+// old-token rejection and successful publication with the returned
+// generation.
 func TestSchedulerCacheConcurrentReopenReturnsSameToken(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -657,10 +768,18 @@ func TestSchedulerCacheConcurrentReopenReturnsSameToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, cache.RetireBucket(ctx, bucket))
 
+	// reopenResult carries one concurrent bucket reopen token and its operation
+	// error.
 	type reopenResult struct {
-		token scheduler.SchedulerBucketWriteToken
-		err   error
+		// token and err carry the same ReopenBucket call through the result
+		// channel; assertions inspect generation identity after requiring that
+		// call's error to be nil.
+		token scheduler.SchedulerBucketWriteToken // returned bucket generation token
+		err   error                               // reopen operation failure cause
 	}
+	// Gate both reopen workers on one channel and buffer one result per worker,
+	// then release the gate and collect both outcomes before comparing
+	// generations.
 	start := make(chan struct{})
 	results := make(chan reopenResult, 2)
 	for range 2 {
@@ -682,6 +801,10 @@ func TestSchedulerCacheConcurrentReopenReturnsSameToken(t *testing.T) {
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, first.token, []providercore.Record{provider}))
 }
 
+// TestSchedulerCacheReopenExpiresPreviousActiveSnapshot seeds retirement
+// markers while an old version remains active. It checks reopening removes
+// readiness, expires the old members, fences the prior token and permits new
+// publication.
 func TestSchedulerCacheReopenExpiresPreviousActiveSnapshot(t *testing.T) {
 	ctx := context.Background()
 	cache, mr := newSchedulerCacheUnitWithRedis(t)
@@ -709,6 +832,8 @@ func TestSchedulerCacheReopenExpiresPreviousActiveSnapshot(t *testing.T) {
 	require.LessOrEqual(t, ttl, time.Duration(snapshotGraceTTLSeconds)*time.Second)
 
 	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []providercore.Record{provider}), scheduler.ErrSchedulerBucketWriteFenced)
+	// Advance beyond the reopening grace window to remove the superseded
+	// membership set before publishing a version under the returned generation.
 	mr.FastForward(time.Duration(snapshotGraceTTLSeconds+1) * time.Second)
 	exists, err := cache.rdb.Exists(ctx, schedulerSnapshotKey(bucket, oldVersion)).Result()
 	require.NoError(t, err)
@@ -716,16 +841,28 @@ func TestSchedulerCacheReopenExpiresPreviousActiveSnapshot(t *testing.T) {
 	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []providercore.Record{provider}))
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseConcurrentAcquireSingleOwner releases
+// thirty-two acquisition workers from one barrier. It checks one valid owner,
+// empty loser leases, lowercase hexadecimal token shape and a different owner
+// after release/reacquisition.
 func TestSchedulerCacheGroupLifecycleLeaseConcurrentAcquireSingleOwner(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
 	const groupID int64 = 71
 
+	// result carries one concurrent group-lock attempt's handle, confirmation
+	// and failure.
 	type result struct {
-		lease    scheduler.SchedulerGroupLifecycleLease
-		acquired bool
-		err      error
+		// lease, acquired and err describe one acquisition attempt in the buffered
+		// result channel; successful owners supply a valid lease while unsuccessful
+		// confirmations keep the empty handle.
+		lease    scheduler.SchedulerGroupLifecycleLease // returned group owner handle
+		acquired bool                                   // confirmed lock acquisition flag
+		err      error                                  // lease attempt failure cause
 	}
+	// Gate acquisition workers together and buffer every outcome so result sends
+	// can finish before collection; inspect all attempts before releasing the
+	// winning owner.
 	start := make(chan struct{})
 	results := make(chan result, 32)
 	for range 32 {
@@ -766,6 +903,10 @@ func TestSchedulerCacheGroupLifecycleLeaseConcurrentAcquireSingleOwner(t *testin
 	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, next))
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseStaleReleaseCannotDeleteSuccessor
+// expires one owner before acquiring a successor. It checks stale release
+// loss, retained successor identity and lost ownership on a repeated
+// successor release.
 func TestSchedulerCacheGroupLifecycleLeaseStaleReleaseCannotDeleteSuccessor(t *testing.T) {
 	ctx := context.Background()
 	cache, mr := newSchedulerCacheUnitWithRedis(t)
@@ -776,6 +917,8 @@ func TestSchedulerCacheGroupLifecycleLeaseStaleReleaseCannotDeleteSuccessor(t *t
 	require.NoError(t, err)
 	require.True(t, acquired)
 
+	// Expire the first owner's key before acquiring its successor so stale-token
+	// release is tested against a new live owner stored for that group.
 	mr.FastForward(ttl + time.Second)
 	second, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, groupID, ttl)
 	require.NoError(t, err)
@@ -794,6 +937,9 @@ func TestSchedulerCacheGroupLifecycleLeaseStaleReleaseCannotDeleteSuccessor(t *t
 	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, second), scheduler.ErrSchedulerGroupLifecycleLeaseLost)
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseExpiredReleaseIsLost expires a group
+// owner's fixture key before releasing it. It checks the release reports
+// lease loss even when no successor has been acquired.
 func TestSchedulerCacheGroupLifecycleLeaseExpiredReleaseIsLost(t *testing.T) {
 	ctx := context.Background()
 	cache, mr := newSchedulerCacheUnitWithRedis(t)
@@ -803,11 +949,17 @@ func TestSchedulerCacheGroupLifecycleLeaseExpiredReleaseIsLost(t *testing.T) {
 	lease, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, groupID, ttl)
 	require.NoError(t, err)
 	require.True(t, acquired)
+	// Expire the sole owner's key before release so a missing lock, with no
+	// successor present, still produces the lease-loss result.
 	mr.FastForward(ttl + time.Second)
 
 	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, lease), scheduler.ErrSchedulerGroupLifecycleLeaseLost)
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseWrongOwnerAndCrossGroupAreLost
+// acquires separate group owners before using forged and cross-group handles.
+// It checks both invalid releases report loss while each real owner remains
+// stored and releasable.
 func TestSchedulerCacheGroupLifecycleLeaseWrongOwnerAndCrossGroupAreLost(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -822,6 +974,8 @@ func TestSchedulerCacheGroupLifecycleLeaseWrongOwnerAndCrossGroupAreLost(t *test
 	require.True(t, acquired, "different groups must acquire independently")
 	require.NotEqual(t, first.OwnerToken, second.OwnerToken)
 
+	// Choose a forged token distinct from the real random owner so the loss
+	// assertion cannot accidentally exercise a valid owner release.
 	wrongOwner := first
 	wrongOwner.OwnerToken = strings.Repeat("0", schedulerGroupLifecycleOwnerTokenBytes*2)
 	if wrongOwner.OwnerToken == first.OwnerToken {
@@ -844,9 +998,15 @@ func TestSchedulerCacheGroupLifecycleLeaseWrongOwnerAndCrossGroupAreLost(t *test
 	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, second))
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseCanceledContextFailsClosed cancels
+// acquisition before later acquiring with a usable context. It checks
+// rejected acquisition, failed canceled release, retained ownership and
+// successful cleanup with the usable context.
 func TestSchedulerCacheGroupLifecycleLeaseCanceledContextFailsClosed(t *testing.T) {
 	cache := newSchedulerCacheUnit(t)
 	canceledCtx, cancel := context.WithCancel(context.Background())
+	// Cancel before attempting lock acquisition so the fixture checks context
+	// failure without first creating an owner key that would require cleanup.
 	cancel()
 
 	lease, acquired, err := cache.TryAcquireGroupLifecycleLease(canceledCtx, 76, time.Minute)
@@ -865,6 +1025,9 @@ func TestSchedulerCacheGroupLifecycleLeaseCanceledContextFailsClosed(t *testing.
 	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, lease))
 }
 
+// TestSchedulerCacheGroupLifecycleLeaseRejectsInvalidInput supplies a zero
+// group ID, zero TTL and invalid release handle with a canceled context. It
+// checks lease-invalid errors, empty results and no fixture keys created.
 func TestSchedulerCacheGroupLifecycleLeaseRejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
@@ -880,6 +1043,8 @@ func TestSchedulerCacheGroupLifecycleLeaseRejectsInvalidInput(t *testing.T) {
 	require.Equal(t, scheduler.SchedulerGroupLifecycleLease{}, lease)
 
 	canceledCtx, cancel := context.WithCancel(ctx)
+	// Use a canceled context with an invalid handle to check that lease
+	// validation precedes Redis dispatch and returns the invalid-input error.
 	cancel()
 	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(canceledCtx, scheduler.SchedulerGroupLifecycleLease{}), scheduler.ErrSchedulerGroupLifecycleLeaseInvalid)
 	keys, err := cache.rdb.DBSize(ctx).Result()
@@ -887,6 +1052,10 @@ func TestSchedulerCacheGroupLifecycleLeaseRejectsInvalidInput(t *testing.T) {
 	require.Zero(t, keys)
 }
 
+// BenchmarkSchedulerCacheProviderPayloadReuse compares repeated encoding with
+// reusable IDs for fixed provider counts and one/two-bucket workloads. It
+// records allocations and local aggregate work, including member entries,
+// without sending Redis publication commands.
 func BenchmarkSchedulerCacheProviderPayloadReuse(b *testing.B) {
 	for _, size := range []int{1, 100, 10_000} {
 		providers := schedulerCacheBenchmarkProviders(size)
@@ -911,7 +1080,9 @@ func BenchmarkSchedulerCacheProviderPayloadReuse(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				// Later buckets reuse provider JSON and global keys, constructing members from the shared IDs.
+				// Count later bucket-member construction from the retained IDs without
+				// repeating encoding; this models the local reusable-ID workload and
+				// performs no Redis writes.
 				total += len(schedulerSnapshotMembers(ids))
 				schedulerCachePayloadBenchmarkSink = total
 			}
@@ -940,17 +1111,33 @@ func BenchmarkSchedulerCacheProviderPayloadReuse(b *testing.B) {
 	}
 }
 
+// benchmarkSchedulerLegacySnapshotPayload sums full/metadata byte lengths and
+// builds ordinal members for successfully encoded provider records. Encoding
+// errors are skipped, and the returned error is nil for this local workload.
+//
+// A temporary record slice keeps the member inputs aligned with the providers
+// whose payloads were counted. Its copied Record values retain nested
+// references from the stable benchmark fixtures. The returned integer adds
+// member-entry count to payload bytes, so it is an aggregate sink value
+// rather than a serialized network byte size; no Redis publication occurs
+// here.
 func benchmarkSchedulerLegacySnapshotPayload(providers []providercore.Record) (int, error) {
 	cacheable := make([]providercore.Record, 0, len(providers))
 	total := 0
 	for _, provider := range providers {
 		full, meta, err := marshalSchedulerCacheProvider(provider)
+		// Omit failed encodings from both byte accounting and later member
+		// construction so the local comparison counts the same retained provider
+		// population.
 		if err != nil {
 			continue
 		}
 		total += len(full) + len(meta)
 		cacheable = append(cacheable, provider)
 	}
+	// Assign ordinals from the retained provider slice so skipped encodings do
+	// not consume member positions or separate membership from the counted
+	// payload population.
 	members := make([]redis.Z, 0, len(cacheable))
 	for idx, provider := range cacheable {
 		members = append(members, redis.Z{Score: float64(idx), Member: strconv.FormatInt(provider.ID, 10)})
@@ -958,11 +1145,24 @@ func benchmarkSchedulerLegacySnapshotPayload(providers []providercore.Record) (i
 	return total + len(members), nil
 }
 
+// benchmarkSchedulerReusableSnapshotPayload returns successful provider IDs
+// and the full/metadata byte total plus first-bucket member count. Encoding
+// failures are skipped, the ID list keeps input order and duplicates, and the
+// returned error is nil.
+//
+// Members are constructed from retained IDs so a caller can perform later
+// bucket-member work without encoding the provider data again. The aggregate
+// combines bytes with entry counts to keep the benchmark result observable.
+// It describes local construction work on stable fixtures, leaving Redis
+// writes, version allocation and activation outside this helper.
 func benchmarkSchedulerReusableSnapshotPayload(providers []providercore.Record) ([]int64, int, error) {
 	providerIDs := make([]int64, 0, len(providers))
 	total := 0
 	for _, provider := range providers {
 		full, meta, err := marshalSchedulerCacheProvider(provider)
+		// Keep successful encoded IDs aligned with counted payload bytes by
+		// omitting failures from both outputs before first-bucket members are
+		// constructed.
 		if err != nil {
 			continue
 		}
@@ -973,7 +1173,13 @@ func benchmarkSchedulerReusableSnapshotPayload(providers []providercore.Record) 
 	return providerIDs, total, nil
 }
 
+// schedulerCacheBenchmarkProviders constructs size records with distinct IDs
+// and shared credential/extra maps for read-only payload benchmarks. Supply a
+// nonnegative size; callers keep the shared nested values stable during
+// encoding.
 func schedulerCacheBenchmarkProviders(size int) []providercore.Record {
+	// Use sizeable arbitrary fields to exercise full-versus-filtered payload
+	// encoding.
 	largeValue := strings.Repeat("x", 4096)
 	credentials := map[string]any{
 		"api_key":       "benchmark-key",
@@ -1008,19 +1214,33 @@ func schedulerCacheBenchmarkProviders(size int) []providercore.Record {
 	return providers
 }
 
+// SetSnapshotAndReturnProviderIDs wraps fixture records and delegates
+// token-checked preparation/publication to the core cache. Inputs stay stable
+// during encoding; returned IDs include encodable duplicates in their
+// supplied order.
 func (c *schedulerCache) SetSnapshotAndReturnProviderIDs(ctx context.Context, bucket scheduler.SchedulerBucket, token scheduler.SchedulerBucketWriteToken, values []providercore.Record) ([]int64, error) {
 	return c.SnapshotCache.SetSnapshotAndReturnProviderIDs(ctx, bucket, token, snapshotRecords(values))
 }
 
-// newSchedulerCacheWithChunkSizes creates a test cache with supplied batch sizes and the provider codec.
+// newSchedulerCacheWithChunkSizes constructs a provider-codec fixture with
+// read/write batch overrides. Positive sizes select the requested limits,
+// while nonpositive values use core defaults; the caller retains Redis client
+// ownership.
 func newSchedulerCacheWithChunkSizes(rdb *redis.Client, read, write int) *schedulerCache {
 	return &schedulerCache{NewSnapshotCache(rdb, codec.ProviderCodec{}, SnapshotCacheOptions{MGetChunkSize: read, WriteChunkSize: write})}
 }
 
+// writeProviderIDs wraps fixture records and delegates shared full/metadata
+// writes to the core cache. Encoding failures can omit IDs, while Redis
+// errors can follow earlier completed writes.
 func (c *schedulerCache) writeProviderIDs(ctx context.Context, values []providercore.Record) ([]int64, error) {
 	return c.SnapshotCache.writeProviderIDs(ctx, snapshotRecords(values))
 }
 
+// writeSnapshotVersionAndReturnProviderIDs wraps fixture records for shared
+// payload and unpublished membership preparation. The supplied version comes
+// from allocation, and failure can leave earlier provider writes completed
+// before activation is attempted.
 func (c *schedulerCache) writeSnapshotVersionAndReturnProviderIDs(ctx context.Context, bucket scheduler.SchedulerBucket, version string, values []providercore.Record) ([]int64, error) {
 	return c.SnapshotCache.writeSnapshotVersionAndReturnProviderIDs(ctx, bucket, version, snapshotRecords(values))
 }

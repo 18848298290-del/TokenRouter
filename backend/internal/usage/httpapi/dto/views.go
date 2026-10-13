@@ -10,6 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage rows carry account, key and group data loaded for display. HTTP
+// conversion passes that data to the owning modules' DTO mappers, which apply
+// their own field selection and language handling before the nested response
+// is encoded.
+
+// groupFromView formats a loaded group through the routing DTO mapper and
+// supplied display language. Nil views return nil; nested group values follow
+// that mapper's ownership rules during response encoding.
 func groupFromView(v *usage.GroupView, language ...string) *Group {
 	if v == nil {
 		return nil
@@ -17,6 +25,9 @@ func groupFromView(v *usage.GroupView, language ...string) *Group {
 	return routingdto.GroupFromRouting((*routing.Group)(v), language...)
 }
 
+// providerFromView copies the loaded provider identity into a display
+// summary. Nil input returns nil, and the response contains the ID and name
+// supplied by the usage relation.
 func providerFromView(v *usage.ProviderView) *ProviderSummary {
 	if v == nil {
 		return nil
@@ -24,6 +35,9 @@ func providerFromView(v *usage.ProviderView) *ProviderSummary {
 	return &ProviderSummary{ID: v.ID, Name: v.Name}
 }
 
+// userFromView formats a loaded account through the shallow identity DTO
+// mapper. Nil input returns nil; account slices and optional pointers
+// retained by that mapper remain shared during response encoding.
 func userFromView(v *usage.UserView) *User {
 	if v == nil {
 		return nil
@@ -32,6 +46,9 @@ func userFromView(v *usage.UserView) *User {
 	return identitydto.UserFromIdentityShallow[APIKey](u)
 }
 
+// keyFromView formats loaded key metadata and composite bindings through the
+// API-key DTO mapper. Nil input returns nil; model mappings are copied there,
+// while access-list slices and optional pointers remain shared.
 func keyFromView(v *usage.KeyView, language ...string) *APIKey {
 	if v == nil {
 		return nil

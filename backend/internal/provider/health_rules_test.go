@@ -6,12 +6,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Temporary-pause keywords match a lowercased response while retaining the
+// selected keyword's trimmed original spelling. Table cases cover absent inputs
+// and keyword selection, then verify byte truncation followed by whitespace
+// trimming for the retained diagnostic text.
+
+// TestMatchTempUnschedKeyword supplies lowercased bodies with ordered, blank,
+// absent, and uppercase keywords. Results retain the matched keyword's spelling
+// and return empty when these fixtures contain no usable match.
 func TestMatchTempUnschedKeyword(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		keywords []string
-		want     string
+		name     string   // named table scenario
+		body     string   // already lowercased response
+		keywords []string // ordered keyword candidates
+		want     string   // expected retained spelling
 	}{
 		{
 			name:     "match_first",
@@ -50,7 +58,9 @@ func TestMatchTempUnschedKeyword(t *testing.T) {
 			want:     "overloaded",
 		},
 		{
-			// MatchTempUnschedKeyword requires an already-lowercased body and normalizes keywords itself.
+			// The response fixture is already lowercase; uppercase keywords exercise
+			// normalization while requiring the returned match to retain its configured
+			// spelling.
 			name:     "case_insensitive_body_lowered",
 			body:     "server is overloaded",
 			keywords: []string{"OVERLOADED"},
@@ -66,12 +76,15 @@ func TestMatchTempUnschedKeyword(t *testing.T) {
 	}
 }
 
+// TestTruncateTempUnschedMessage checks empty input, zero limits, whitespace
+// trimming, and a byte cut ending in a space. Expected text reflects truncation
+// before trimming the retained diagnostic.
 func TestTruncateTempUnschedMessage(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     []byte
-		maxBytes int
-		want     string
+		name     string // named table scenario
+		body     []byte // source diagnostic bytes
+		maxBytes int    // retained byte limit
+		want     string // expected trimmed diagnostic
 	}{
 		{
 			name:     "short_message",
@@ -80,7 +93,9 @@ func TestTruncateTempUnschedMessage(t *testing.T) {
 			want:     "short",
 		},
 		{
-			// Truncation is followed by TrimSpace, removing the trailing space at the cut.
+			// The twentieth byte is a space after long. This fixture distinguishes
+			// trimming the truncated prefix from retaining the full diagnostic or its
+			// trailing blank.
 			name:     "truncate_long_message",
 			body:     []byte("this is a very long message that needs to be truncated"),
 			maxBytes: 20,

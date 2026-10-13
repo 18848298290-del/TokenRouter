@@ -17,25 +17,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// Gateway responses can carry effective status and JSON inside an outer
+// envelope, while inference streams mix choice deltas and Anthropic-like event
+// shapes. Parsing converts these representations into SSEEvent values before
+// protocol writers assemble calls and usage.
+//
+// Signing binds the encoded body to its logical path after removing /algo and
+// query parameters. Site and machine metadata select headers, including CN
+// status requests before COSY identity exists. Error extraction
+// resolves nested vendor codes and reset times before redaction; those
+// separate observations remain available to refresh and failover policy when
+// credential text is hidden.
+
+// Gateway authentication modes select header construction; GenerationPath fixes
+// the encoded inference endpoint and its agent/model-result query parameters.
 const (
-	qoderJSONAuthCOSY qoderJSONAuthMode = iota
-	qoderJSONAuthSignature
-	qoderJSONAuthBearer
+	qoderJSONAuthCOSY      qoderJSONAuthMode = iota // encrypted COSY session headers
+	qoderJSONAuthSignature                          // pre-login Appcode signature headers
+	qoderJSONAuthBearer                             // security OAuth Bearer headers
 
 	// GenerationPath is the Qoder LLM inference SSE endpoint.
 	GenerationPath = "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
 )
 
+// Error patterns redact credentials and identity fields while recognizing
+// numeric vendor codes that retry and cooldown policy still needs.
 var (
+	// Bearer, cookie, and inline-secret patterns remove recognized credential text
+	// before and after the shared redactor. Parsed vendor code and reset fields
+	// remain separate retry observations.
 	qoderBearerTokenPattern  = regexp.MustCompile(`(?i)\b(authorization\s*[:=]\s*bearer\s+|bearer\s+)([^\s"',;]+)`)
 	qoderCookiePattern       = regexp.MustCompile(`(?i)\b(cookie|set-cookie)(\s*[:=]\s*)([^\r\n"]+)`)
 	qoderInlineSecretPattern = regexp.MustCompile(`(?i)\b(securityOauthToken|security_oauth_token|refreshToken|refresh_token|personalToken|personal_token|cosy-key|cosyKey)(\s*[:=]\s*)([^,\s"']+)`)
-	qoderJSONCodeStringRe    = regexp.MustCompile(`(?i)("code"\s*:\s*")([0-9]{1,8})(")`)
-	qoderJSONCodeNumberRe    = regexp.MustCompile(`(?i)("code"\s*:\s*)([0-9]{1,8})(\b)`)
-	qoderPlainCodeNumberRe   = regexp.MustCompile(`(?i)\b(code)(\s*[:=]\s*)([0-9]{1,8})\b`)
-	redactedJSONCodeRe       = regexp.MustCompile(`(?i)("code"\s*:\s*)"\*\*\*"`)
-	redactedPlainCodeRe      = regexp.MustCompile(`(?i)\b(code)(\s*[:=]\s*)\*\*\*`)
+	// Original-code patterns and redacted-code patterns recognize the accepted
+	// numeric code forms before and after generic redaction, allowing
+	// restoreQoderNumericCode to retain vendor failure classification.
+	qoderJSONCodeStringRe  = regexp.MustCompile(`(?i)("code"\s*:\s*")([0-9]{1,8})(")`)
+	qoderJSONCodeNumberRe  = regexp.MustCompile(`(?i)("code"\s*:\s*)([0-9]{1,8})(\b)`)
+	qoderPlainCodeNumberRe = regexp.MustCompile(`(?i)\b(code)(\s*[:=]\s*)([0-9]{1,8})\b`)
+	redactedJSONCodeRe     = regexp.MustCompile(`(?i)("code"\s*:\s*)"\*\*\*"`)
+	redactedPlainCodeRe    = regexp.MustCompile(`(?i)\b(code)(\s*[:=]\s*)\*\*\*`)
 
+	// qoderSensitiveErrorKeys extends the shared text redactor with Qoder
+	// credential and account fields before error body and message logging.
 	qoderSensitiveErrorKeys = []string{
 		"authorization",
 		"cookie",
@@ -56,135 +80,225 @@ var (
 	}
 )
 
-// Client sends Qoder API requests using the COSY protocol.
+// Client retains Gateway endpoint and machine metadata used to prepare signed
+// HTTP requests.
 type Client struct {
-	APIBaseURL    string
-	ClientVersion string
-	Site          Site
-	MachineOS     string
-	ClientIP      string
-	HTTPClient    *http.Client
+	APIBaseURL string // Gateway endpoint base
+	// ClientVersion wins over SessionContext.ClientVersion after trimming. Empty
+	// values let requestClientVersion use the session and then the global version.
+	ClientVersion string // preferred client version
+	// Site selects basic header defaults unless SessionContext supplies a
+	// nonempty site. CN and global choose different machine and client shapes.
+	Site Site // default request site
+	// MachineOS overrides the runtime platform when nonblank. Empty text asks
+	// setBasicHeaders to discover the current Go architecture and OS.
+	MachineOS string // machine platform text
+	// ClientIP overrides CN local-interface discovery when nonblank. Global
+	// headers instead use the session machine ID for their client-IP field.
+	ClientIP string // CN local IP
+	// HTTPClient supplies transport when no request doer is provided. Nil selects
+	// http.DefaultClient, and callers bound inference through their request
+	// context.
+	HTTPClient *http.Client // default HTTP transport
 }
 
-// RequestDoer executes a prepared HTTP request.
+// RequestDoer sends a prepared HTTP request using the caller's selected
+// transport.
 type RequestDoer func(req *http.Request) (*http.Response, error)
 
+// qoderJSONAuthMode selects COSY, pre-login signature, or security-token Gateway
+// authentication.
 type qoderJSONAuthMode uint8
 
-// APIError describes a Qoder API failure.
+// APIError holds effective HTTP and vendor details used for retry decisions.
 type APIError struct {
-	StatusCode          int
-	Body                string
-	Code                string
-	Message             string
-	AgentLimitResetTime int64
+	StatusCode int // effective HTTP status
+	// Body and Message are redacted by ParseAPIErrorBody and transport failure
+	// construction. Direct struct callers supply their own text; Error formats
+	// Message as stored for ordinary vendor failures.
+	Body                string // error or envelope body
+	Code                string // vendor error code
+	Message             string // wire message value
+	AgentLimitResetTime int64  // Unix milliseconds
 }
 
-// SSEEvent is an event parsed from a Qoder stream.
+// SSEEvent is the normalized content, identity, usage, or completion observation
+// from Qoder.
 type SSEEvent struct {
-	Type             string // text_delta, reasoning_delta, tool_call_delta, usage, or error
-	Text             string // Content of text_delta or reasoning_delta
-	ToolCallID       string // Tool call ID
-	ToolCallIndex    int    // Tool call index
-	HasToolCallIndex bool   // Whether a tool call index is available
-	ToolType         string // Tool call type
-	ToolName         string // Tool name
-	Arguments        string // Tool arguments as JSON text
-	PromptTokens     int    // Input tokens from usage
-	CompletionTokens int    // Output tokens from usage
-	TotalTokens      int    // Total tokens from usage
-	UsageDetails     UsageDetails
-	HasUsage         bool // Whether Qoder supplied a usage payload
-	IsDone           bool // Whether the stream signals completion
+	Type string // normalized event type
+	Text string // text or reasoning delta
+	// ToolCallID, ToolCallIndex, HasToolCallIndex, and ToolName carry call identity
+	// separately from ToolType. A default function type alone cannot select a
+	// parallel argument destination.
+	ToolCallID    string // upstream call identifier
+	ToolCallIndex int    // upstream call position
+	// HasToolCallIndex distinguishes a missing position from explicit index zero.
+	// The accumulator considers ToolCallIndex for association when this flag is set
+	// and its value is nonnegative.
+	HasToolCallIndex bool   // call position present
+	ToolType         string // normalized tool type
+	ToolName         string // upstream function name
+	Arguments        string // JSON argument text
+	// PromptTokens, CompletionTokens, and TotalTokens represent the normalized
+	// event counts. Usage parsing fills zero primary counts from input/output
+	// aliases and derives missing totals.
+	PromptTokens     int          // input tokens
+	CompletionTokens int          // output tokens
+	TotalTokens      int          // total tokens
+	UsageDetails     UsageDetails // optional usage breakdown
+	// HasUsage records payload presence independently of token counts. Explicitly
+	// reported zero usage remains observable to execution and partial-result
+	// accounting.
+	HasUsage bool // usage payload observed
+	IsDone   bool // stream completion observed
 }
 
+// UsageDetails retains optional prompt and completion details from the latest
+// usage payload.
 type UsageDetails struct {
-	PromptTokensDetails     *PromptTokensDetails
-	CompletionTokensDetails *CompletionTokensDetails
+	// PromptTokensDetails and CompletionTokensDetails retain objects shared by
+	// copies of normalized events. Consumers keep those objects stable while
+	// aggregating usage and serializing protocol responses. PromptTokensDetails
+	// selects cache splitting when present. MergeQoderUsageEvent treats a nil
+	// pointer as ordinary prompt input and clears cache-read counts.
+	PromptTokensDetails *PromptTokensDetails // prompt usage breakdown
+	// CompletionTokensDetails retains reasoning counts used by Chat usage output. A
+	// nil pointer omits that breakdown, and event copies share the retained object
+	// during conversion.
+	CompletionTokensDetails *CompletionTokensDetails // completion usage breakdown
 }
 
+// PromptTokensDetails holds cached and cacheable token observations from Qoder
+// usage.
 type PromptTokensDetails struct {
-	CachedTokens    int
-	CacheableTokens int
+	CachedTokens    int // cached input tokens
+	CacheableTokens int // cacheable input tokens
 }
 
+// CompletionTokensDetails holds reasoning token observations from the completion
+// usage payload.
 type CompletionTokensDetails struct {
-	ReasoningTokens int
+	ReasoningTokens int // completion reasoning tokens
 }
 
-// QoderSSEWrapper is the outer Qoder SSE envelope.
+// QoderSSEWrapper contains string body and effective status fields around SSE
+// data.
 type QoderSSEWrapper struct {
-	Body            string `json:"body"`
-	StatusCode      string `json:"statusCode"`
-	StatusCodeValue int    `json:"statusCodeValue"`
+	Body string `json:"body"` // error or envelope body
+	// StatusCodeValue supplies the effective status when positive. StatusCode
+	// supplies a decimal code or recognized name otherwise;
+	// unknown text resolves to zero for the parser's next decision.
+	StatusCode      string `json:"statusCode"`      // effective HTTP status
+	StatusCodeValue int    `json:"statusCodeValue"` // numeric HTTP status
 }
 
+// qoderErrorBody accepts nested vendor error metadata before error text is
+// redacted.
 type qoderErrorBody struct {
-	Code                qoderErrorCode  `json:"code"`
-	Message             string          `json:"message"`
-	Data                json.RawMessage `json:"data"`
-	AgentLimitResetTime int64           `json:"agentLimitResetTime"`
+	Code                qoderErrorCode  `json:"code"`                // vendor error code
+	Message             string          `json:"message"`             // wire message value
+	Data                json.RawMessage `json:"data"`                // nested event/error JSON
+	AgentLimitResetTime int64           `json:"agentLimitResetTime"` // Unix milliseconds
 }
 
+// qoderErrorCode normalizes numeric and string vendor codes for retry
+// classification.
 type qoderErrorCode string
 
-// QoderSSEInner is the decoded body of a Qoder SSE envelope.
+// QoderSSEInner represents choice, usage, and event-envelope variants of decoded
+// SSE bodies.
 type QoderSSEInner struct {
-	Choices []QoderSSEChoice `json:"choices"`
-	Usage   *QoderSSEUsage   `json:"usage,omitempty"`
-	Event   string           `json:"event,omitempty"`
-	Type    string           `json:"type,omitempty"`
-	Data    json.RawMessage  `json:"data,omitempty"`
-	Index   *int             `json:"index,omitempty"`
+	Choices []QoderSSEChoice `json:"choices"` // choice content observations
+	// Usage records payload presence through its pointer. ParseSSELine emits
+	// HasUsage when this pointer is nonnil, including a decoded zero-count
+	// observation.
+	Usage *QoderSSEUsage `json:"usage,omitempty"` // optional usage payload
+	// Event and Type hold alternative envelope labels. qoderSSEEnvelopeEvents
+	// prefers a nonblank Event and otherwise uses Type, retaining the selected
+	// spelling for exact supported-label matching.
+	Event string          `json:"event,omitempty"` // preferred envelope label
+	Type  string          `json:"type,omitempty"`  // alternate envelope label
+	Data  json.RawMessage `json:"data,omitempty"`  // nested event/error JSON
+	// Index retains pointer presence so an explicit zero position can differ from a
+	// missing position. Event normalization carries this into HasToolCallIndex.
+	Index *int `json:"index,omitempty"` // optional call position
 }
 
+// QoderSSEChoice retains delta and final-message representations plus completion
+// evidence.
 type QoderSSEChoice struct {
-	Delta        QoderSSEDelta   `json:"delta"`
-	Message      QoderSSEMessage `json:"message"`
-	FinishReason string          `json:"finish_reason"`
+	Delta        QoderSSEDelta   `json:"delta"`         // incremental choice content
+	Message      QoderSSEMessage `json:"message"`       // wire message value
+	FinishReason string          `json:"finish_reason"` // final choice marker
 }
 
+// QoderSSEDelta contains incremental text, reasoning, and tool-call wire
+// observations.
 type QoderSSEDelta struct {
-	Content          string             `json:"content"`
-	ReasoningContent string             `json:"reasoning_content"`
-	ToolCalls        []QoderSSEToolCall `json:"tool_calls"`
+	Content          string             `json:"content"`           // visible message content
+	ReasoningContent string             `json:"reasoning_content"` // reasoning message content
+	ToolCalls        []QoderSSEToolCall `json:"tool_calls"`        // wire tool calls
 }
 
+// QoderSSEMessage contains final content and calls from a completed choice.
 type QoderSSEMessage struct {
-	Content          any                `json:"content"`
-	ReasoningContent string             `json:"reasoning_content"`
-	ToolCalls        []QoderSSEToolCall `json:"tool_calls"`
+	Content          any                `json:"content"`           // visible message content
+	ReasoningContent string             `json:"reasoning_content"` // reasoning message content
+	ToolCalls        []QoderSSEToolCall `json:"tool_calls"`        // wire tool calls
 }
 
+// QoderSSEToolCall accepts nested and flat identity and argument wire variants.
 type QoderSSEToolCall struct {
-	Index      *int            `json:"index,omitempty"`
-	ID         string          `json:"id"`
-	ToolCallID string          `json:"tool_call_id"`
-	CallID     string          `json:"call_id"`
-	Type       string          `json:"type"`
-	Name       string          `json:"name"`
-	ToolName   string          `json:"tool_name"`
-	Arguments  json.RawMessage `json:"arguments"`
-	Input      json.RawMessage `json:"input"`
-	Parameters json.RawMessage `json:"parameters"`
-	Function   struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+	// Index retains pointer presence so an explicit zero position can differ from a
+	// missing position. Event normalization carries this into HasToolCallIndex.
+	Index *int `json:"index,omitempty"` // optional call position
+	// ID, ToolCallID, and CallID supply alternate invocation identifiers.
+	// appendQoderToolCallEvents chooses the first nonblank field in that order
+	// and retains its spelling for the accumulator.
+	ID         string `json:"id"`           // preferred call identifier
+	ToolCallID string `json:"tool_call_id"` // upstream call identifier
+	CallID     string `json:"call_id"`      // alternate call identifier
+	Type       string `json:"type"`         // wire tool type
+	// Function.Name takes precedence over Name and ToolName for call naming.
+	// Function.Arguments precedes Arguments, Input, and Parameters, selecting one
+	// representation for the later accumulator.
+	Name       string          `json:"name"`       // function name text
+	ToolName   string          `json:"tool_name"`  // upstream function name
+	Arguments  json.RawMessage `json:"arguments"`  // JSON argument text
+	Input      json.RawMessage `json:"input"`      // alternate argument JSON
+	Parameters json.RawMessage `json:"parameters"` // alternate argument JSON
+	Function   struct {        // nested function payload
+		Name      string          `json:"name"`      // function name text
+		Arguments json.RawMessage `json:"arguments"` // JSON argument text
 	} `json:"function"`
 }
 
-// QoderSSEUsage holds token counts from a Qoder SSE payload.
+// QoderSSEUsage holds tolerated primary and alias token counts plus optional
+// details.
 type QoderSSEUsage struct {
-	PromptTokens            int                      `json:"-"`
-	CompletionTokens        int                      `json:"-"`
-	TotalTokens             int                      `json:"-"`
-	InputTokens             int                      `json:"-"`
-	OutputTokens            int                      `json:"-"`
-	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	// PromptTokens and CompletionTokens are primary counts; InputTokens and
+	// OutputTokens supply aliases when their corresponding primary count is zero.
+	// Parsing derives a zero TotalTokens from the selected pair.
+	PromptTokens     int `json:"-"` // input tokens
+	CompletionTokens int `json:"-"` // output tokens
+	TotalTokens      int `json:"-"` // total tokens
+	InputTokens      int `json:"-"` // alias input tokens
+	OutputTokens     int `json:"-"` // alias output tokens
+	// PromptTokensDetails and CompletionTokensDetails retain objects shared by
+	// copies of normalized events. Consumers keep those objects stable while
+	// aggregating usage and serializing protocol responses. PromptTokensDetails
+	// selects cache splitting when present. MergeQoderUsageEvent treats a nil
+	// pointer as ordinary prompt input and clears cache-read counts.
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"` // prompt usage breakdown
+	// CompletionTokensDetails retains reasoning counts used by Chat usage output. A
+	// nil pointer omits that breakdown, and event copies share the retained object
+	// during conversion.
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"` // completion usage breakdown
 }
 
-// MayRefreshAttempt permits refresh for HTTP 401 or 403, except quota and entitlement failures.
+// MayRefreshAttempt permits refresh for wrapped API errors with HTTP 401 or 403.
+// Agent-limit and entitlement failures return false, so retry policy does not
+// spend refresh tokens on quota or model-access rejection.
 func MayRefreshAttempt(err error) bool {
 	var failure *APIError
 	if !errors.As(err, &failure) || failure.IsAgentLimit() || failure.IsEntitlementDenied() {
@@ -193,18 +307,23 @@ func MayRefreshAttempt(err error) bool {
 	return failure.StatusCode == http.StatusUnauthorized || failure.StatusCode == http.StatusForbidden
 }
 
-// MaySwitchAttempt reports whether an error permits provider failover.
-// The caller controls the retry window and attempt count.
+// MaySwitchAttempt reports retryable API failures and permits unknown errors for
+// the Chat path. The attempt owner controls retry count and whether downstream
+// output has already closed the retry window.
 func MaySwitchAttempt(err error) bool {
 	return maySwitchAttempt(err, true)
 }
 
-// MaySwitchCompatibleAttempt reports whether Messages or Responses may fail over.
-// Errors that do not wrap APIError return false.
+// MaySwitchCompatibleAttempt reports API failures eligible for Messages or
+// Responses provider failover. Errors that do not wrap APIError return false;
+// the attempt owner still controls output commitment and retries.
 func MaySwitchCompatibleAttempt(err error) bool {
 	return maySwitchAttempt(err, false)
 }
 
+// maySwitchAttempt classifies agent-limit, entitlement, HTTP 429, and server
+// failures for failover. The unknown argument controls errors lacking APIError,
+// keeping Chat and compatible protocol retry decisions separate.
 func maySwitchAttempt(err error, unknown bool) bool {
 	var failure *APIError
 	if !errors.As(err, &failure) {
@@ -213,7 +332,9 @@ func maySwitchAttempt(err error, unknown bool) bool {
 	return failure.IsAgentLimit() || failure.IsEntitlementDenied() || failure.StatusCode == http.StatusTooManyRequests || failure.StatusCode >= 500
 }
 
-// NewClient creates a global-site client, optionally overriding its gateway URL.
+// NewClient constructs a global Gateway client with an optional base-URL
+// override. The override is trimmed and loses trailing slashes; empty input
+// selects the global profile and caller contexts bound requests.
 func NewClient(apiBaseURL string) *Client {
 	profile := MustProfileForSite(SiteGlobal)
 	if strings.TrimSpace(apiBaseURL) != "" {
@@ -222,10 +343,15 @@ func NewClient(apiBaseURL string) *Client {
 	return NewClientForProfile(profile)
 }
 
-// NewClientForProfile creates a COSY client with the profile endpoints.
-// An invalid site selects the default global profile.
+// NewClientForProfile constructs a Gateway client from normalized site endpoints
+// and client metadata. An invalid site selects global defaults. The HTTP client
+// has no timeout, so inference callers supply cancellation and execution
+// budgets.
 func NewClientForProfile(profile Profile) *Client {
 	normalized, err := NormalizeProfile(profile)
+	// Client construction can receive an invalid override profile. Select complete
+	// global defaults so endpoint and client metadata remain a coherent request
+	// shape.
 	if err != nil {
 		normalized = MustProfileForSite(SiteGlobal)
 	}
@@ -239,13 +365,18 @@ func NewClientForProfile(profile Profile) *Client {
 	}
 }
 
-// StreamRequestContext sends a streaming POST. The caller closes the response body.
+// StreamRequestContext sends a signed streaming POST using the client transport.
+// Empty path selects GenerationPath and nil context selects Background. Callers
+// provide a complete session and consume or close a successful response body.
 func (c *Client) StreamRequestContext(ctx context.Context, session *SessionContext, path string, bodyJSON []byte, extraHeaders map[string]string) (*http.Response, error) {
 	return c.StreamRequestContextWithDoer(ctx, session, path, bodyJSON, extraHeaders, nil)
 }
 
-// StreamRequestContextWithDoer sends a streaming POST through doer.
-// A nil doer uses the client HTTP transport. The caller closes a successful response body.
+// StreamRequestContextWithDoer sends a signed streaming POST through the
+// selected doer. Empty path and nil context select endpoint and context
+// defaults; nil doer uses HTTPClient or http.DefaultClient. Callers provide a
+// complete session, extra headers override generated headers, and successful
+// response bodies belong to the reader.
 func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *SessionContext, path string, bodyJSON []byte, extraHeaders map[string]string, doer RequestDoer) (*http.Response, error) {
 	if path == "" {
 		path = GenerationPath
@@ -283,6 +414,9 @@ func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *Sess
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Bound failure text before consuming and closing the rejected response.
+		// Parsing and redaction retain retry metadata while limiting diagnostic body
+		// size.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		apiErr := ParseAPIErrorBody(resp.StatusCode, string(body))
@@ -301,8 +435,9 @@ func (c *Client) StreamRequestContextWithDoer(ctx context.Context, session *Sess
 	return resp, nil
 }
 
-// JSONRequestContextWithDoer sends a signed COSY request and decodes the JSON response.
-// The request URL receives an /algo prefix when logicalPath does not already contain it.
+// JSONRequestContextWithDoer sends Gateway JSON using COSY authentication and
+// decodes into out. The logical path gains /algo for transport and Encode=1 for
+// nonempty bodies; response consumption and closure belong to this call.
 func (c *Client) JSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -316,7 +451,9 @@ func (c *Client) JSONRequestContextWithDoer(
 	return c.jsonRequestContextWithDoer(ctx, method, session, logicalPath, bodyJSON, extraHeaders, doer, out, qoderJSONAuthCOSY)
 }
 
-// SignatureJSONRequestContextWithDoer sends gateway JSON using pre-login Appcode signing.
+// SignatureJSONRequestContextWithDoer sends Gateway JSON with pre-login Appcode
+// authentication. The session needs a machine and can omit identity; the shared
+// request implementation owns body encoding, response decoding, and closure.
 func (c *Client) SignatureJSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -330,7 +467,10 @@ func (c *Client) SignatureJSONRequestContextWithDoer(
 	return c.jsonRequestContextWithDoer(ctx, method, session, logicalPath, bodyJSON, extraHeaders, doer, out, qoderJSONAuthSignature)
 }
 
-// BearerJSONRequestContextWithDoer sends gateway JSON with the security OAuth token.
+// BearerJSONRequestContextWithDoer sends Gateway JSON using the session's
+// security OAuth token. A nonempty token and machine identity are required; the
+// shared request implementation owns body encoding, response decoding, and
+// closure.
 func (c *Client) BearerJSONRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -344,6 +484,16 @@ func (c *Client) BearerJSONRequestContextWithDoer(
 	return c.jsonRequestContextWithDoer(ctx, method, session, logicalPath, bodyJSON, extraHeaders, doer, out, qoderJSONAuthBearer)
 }
 
+// jsonRequestContextWithDoer sends one encoded Gateway request and resolves its
+// effective response status. Client, machine, logical path, and the selected
+// authentication inputs are validated before transport. Nil context selects
+// Background and nil doer selects the configured or default HTTP client; extra
+// headers are applied last.
+//
+// Transport uses /algo and an Encode query marker, while COSY signing uses the
+// original logical path. HTTP and wrapped statuses are checked before decoding
+// out. The body is bounded and closed here, and empty decoded content or nil out
+// permits success without JSON assignment.
 func (c *Client) jsonRequestContextWithDoer(
 	ctx context.Context,
 	method string,
@@ -385,7 +535,9 @@ func (c *Client) jsonRequestContextWithDoer(
 	}
 	requestURL := c.APIBaseURL + actualPath
 	if encodedBody != "" {
-		// Encode=1 marks the COSY-encoded body; signing uses the logical path without its query.
+		// A nonempty body is COSY encoded for transport. Add Encode=1 to its URL while
+		// signing the logical path independently so query markers cannot change the
+		// digest.
 		parsedURL, parseErr := url.Parse(requestURL)
 		if parseErr != nil {
 			return fmt.Errorf("qoder: parse gateway request URL: %w", parseErr)
@@ -423,6 +575,9 @@ func (c *Client) jsonRequestContextWithDoer(
 		return fmt.Errorf("qoder: gateway request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Gateway metadata responses have a bounded read budget. Larger content is
+	// truncated here and JSON parsing then reports an incomplete representation
+	// when applicable.
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return fmt.Errorf("qoder: read gateway response: %w", err)
@@ -446,6 +601,9 @@ func (c *Client) jsonRequestContextWithDoer(
 	return nil
 }
 
+// ensureLeadingSlash supplies a leading slash when the caller omitted it.
+// Existing leading slashes remain as provided, and empty input becomes a slash
+// for Gateway path construction.
 func ensureLeadingSlash(path string) string {
 	if strings.HasPrefix(path, "/") {
 		return path
@@ -453,16 +611,23 @@ func ensureLeadingSlash(path string) string {
 	return "/" + path
 }
 
-// unwrapQoderJSONResponse accepts gateway envelopes, plain JSON, and encoded bodies.
+// unwrapQoderJSONResponse resolves plain, encoded, and enveloped Gateway
+// response bodies with their status. Empty content returns HTTP 200. A wrapper
+// can contain an object or a string, and its numeric status wins over the
+// status-name form.
+// String bodies retain their JSON when valid and otherwise attempt COSY
+// decoding. Plain JSON uses HTTP 200; non-JSON outer content needs successful
+// COSY decoding into valid JSON. This keeps body representation conversion
+// separate from the caller's decision to parse an effective error status.
 func unwrapQoderJSONResponse(body []byte) ([]byte, int, error) {
 	trimmed := []byte(strings.TrimSpace(string(body)))
 	if len(trimmed) == 0 {
 		return nil, http.StatusOK, nil
 	}
 	var wrapper struct {
-		Body            json.RawMessage `json:"body"`
-		StatusCodeValue int             `json:"statusCodeValue"`
-		StatusCode      string          `json:"statusCode"`
+		Body            json.RawMessage `json:"body"`            // error or envelope body
+		StatusCodeValue int             `json:"statusCodeValue"` // numeric HTTP status
+		StatusCode      string          `json:"statusCode"`      // effective HTTP status
 	}
 	if json.Unmarshal(trimmed, &wrapper) == nil && len(wrapper.Body) > 0 {
 		statusCode := wrapper.StatusCodeValue
@@ -476,6 +641,9 @@ func unwrapQoderJSONResponse(body []byte) ([]byte, int, error) {
 		if json.Unmarshal(wrapper.Body, &bodyString) == nil {
 			inner := []byte(strings.TrimSpace(bodyString))
 			if len(inner) > 0 && !json.Valid(inner) {
+				// A string wrapper body can hold COSY text instead of JSON. Try decoding
+				// that representation, retaining the original inner text when decoding
+				// fails.
 				if decoded, err := Decode(bodyString); err == nil {
 					inner = decoded
 				}
@@ -494,6 +662,9 @@ func unwrapQoderJSONResponse(body []byte) ([]byte, int, error) {
 	return decoded, http.StatusOK, nil
 }
 
+// Error formats vendor error, HTTP status, or agent-reset information for the
+// caller. Nil receiver returns empty text. Agent limits take precedence and
+// format a known reset in Asia/Shanghai before ordinary code/message formatting.
 func (e *APIError) Error() string {
 	if e == nil {
 		return ""
@@ -516,18 +687,24 @@ func (e *APIError) Error() string {
 	return "Qoder upstream error"
 }
 
-// IsAgentLimit reports whether the error identifies an agent quota or rate limit.
+// IsAgentLimit reports whether the error contains code 115 or a positive agent
+// reset timestamp. Nil errors return false; either observation can select
+// agent-limit formatting and cooldown handling.
 func (e *APIError) IsAgentLimit() bool {
 	return e != nil && (e.Code == "115" || e.AgentLimitResetTime > 0)
 }
 
-// IsEntitlementDenied reports a model or provider entitlement rejection.
-// Entitlement failures do not justify spending a refresh token.
+// IsEntitlementDenied reports the vendor's code 112 model or account
+// entitlement rejection. Nil errors return false, and MayRefreshAttempt
+// excludes this classification before considering authentication-status
+// refresh eligibility.
 func (e *APIError) IsEntitlementDenied() bool {
 	return e != nil && e.Code == "112"
 }
 
-// AgentLimitResetAt returns the reset time decoded from Unix milliseconds.
+// AgentLimitResetAt returns the positive agent reset timestamp interpreted as
+// Unix milliseconds. Nil errors and absent or nonpositive timestamps report no
+// reset time, allowing callers to choose their usual cooldown policy.
 func (e *APIError) AgentLimitResetAt() (time.Time, bool) {
 	if e == nil || e.AgentLimitResetTime <= 0 {
 		return time.Time{}, false
@@ -535,7 +712,9 @@ func (e *APIError) AgentLimitResetAt() (time.Time, bool) {
 	return time.UnixMilli(e.AgentLimitResetTime), true
 }
 
-// ParseAPIErrorBody parses and redacts a Qoder HTTP or SSE error body.
+// ParseAPIErrorBody extracts HTTP/vendor details and redacts the error body and
+// message. Invalid or empty JSON keeps the generic HTTP message; nested code and
+// reset metadata are resolved before body/message redaction.
 func ParseAPIErrorBody(statusCode int, body string) *APIError {
 	apiErr := &APIError{
 		StatusCode: statusCode,
@@ -547,7 +726,14 @@ func ParseAPIErrorBody(statusCode int, body string) *APIError {
 	return apiErr
 }
 
-// RedactSensitiveText removes Qoder credentials before errors reach clients, logs, or snapshots.
+// RedactSensitiveText trims error text and hides recognized Qoder secrets while
+// retaining numeric vendor codes. Empty input returns empty text. Inline bearer,
+// cookie, and token forms are processed before and after the shared text
+// redactor so structured and unstructured messages use the same protection.
+//
+// The shared redactor can hide a code field. Recognized numeric code forms of
+// one through eight digits are restored from the original text, keeping retry
+// and diagnostic information available through the recognized code fields.
 func RedactSensitiveText(input string) string {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -559,6 +745,8 @@ func RedactSensitiveText(input string) string {
 	return restoreQoderNumericCode(input, redacted)
 }
 
+// redactQoderInlineSecrets replaces recognized inline bearer, cookie, and
+// credential values with markers.
 func redactQoderInlineSecrets(input string) string {
 	redacted := qoderBearerTokenPattern.ReplaceAllString(input, `${1}***`)
 	redacted = qoderCookiePattern.ReplaceAllString(redacted, `${1}${2}***`)
@@ -566,6 +754,18 @@ func redactQoderInlineSecrets(input string) string {
 	return redacted
 }
 
+// restoreQoderNumericCode reinstalls recognized decimal code fields after
+// generic redaction. JSON string, JSON number, and plain code forms are tried
+// in order; each accepts one through eight digits and uses its first original
+// match.
+//
+// Number and plain patterns use a word boundary after their digits, so they can
+// match an integer prefix before a decimal point. Every redacted marker matched
+// by the chosen form receives that same value.
+// The rule treats those numeric code fields as vendor diagnostics, while
+// unrecognized originals leave the redactor's output unchanged. Callers
+// extract structured error classification separately before applying this text
+// restoration.
 func restoreQoderNumericCode(original, redacted string) string {
 	if match := qoderJSONCodeStringRe.FindStringSubmatch(original); len(match) == 4 {
 		return redactedJSONCodeRe.ReplaceAllString(redacted, `${1}"`+match[2]+`"`)
@@ -579,6 +779,9 @@ func restoreQoderNumericCode(original, redacted string) string {
 	return redacted
 }
 
+// redactQoderAPIError mutates an error's body and message through the Qoder text
+// redactor. Nil input is ignored, and vendor code/status fields remain available
+// separately for retry and cooldown classification.
 func redactQoderAPIError(apiErr *APIError) {
 	if apiErr == nil {
 		return
@@ -587,12 +790,22 @@ func redactQoderAPIError(apiErr *APIError) {
 	apiErr.Message = RedactSensitiveText(apiErr.Message)
 }
 
+// applyQoderErrorPayload reads nested vendor code, message, and positive reset
+// metadata into an error. Nil target, empty payload, or malformed JSON leaves
+// the existing values available.
+//
+// Nonempty fields replace current observations, then nested data and JSON-valued
+// message text are inspected in order. A nested error can therefore supply the
+// effective vendor code or reset timestamp while the outer HTTP status stays on
+// APIError. Redaction runs after extraction in the public parsers.
 func applyQoderErrorPayload(apiErr *APIError, payload []byte) {
 	if apiErr == nil || len(payload) == 0 {
 		return
 	}
 	var body qoderErrorBody
 	if err := json.Unmarshal(payload, &body); err != nil {
+		// Unrecognized vendor text still has an outer HTTP failure classification.
+		// Keep that classification and leave the raw diagnostic text for redaction.
 		return
 	}
 	if code := strings.TrimSpace(string(body.Code)); code != "" {
@@ -604,6 +817,9 @@ func applyQoderErrorPayload(apiErr *APIError, payload []byte) {
 	if body.AgentLimitResetTime > 0 {
 		apiErr.AgentLimitResetTime = body.AgentLimitResetTime
 	}
+	// Nested data and JSON-valued message text can carry the effective vendor
+	// rejection. Inspect them after outer fields so their code and reset
+	// observations can replace the enclosing values.
 	if len(body.Data) > 0 {
 		applyQoderErrorPayload(apiErr, body.Data)
 	}
@@ -612,6 +828,16 @@ func applyQoderErrorPayload(apiErr *APIError, payload []byte) {
 	}
 }
 
+// setHeaders constructs Gateway authentication from a complete stable session
+// and the encoded body. Callers provide the exact transmitted body and request
+// path; pathWithoutAlgo strips transport prefix and query before signing. Client
+// version selection also feeds the encoded identity header.
+//
+// COSY Authorization binds payload, key, Unix date, body, and logical path.
+// Basic site headers and Appcode date/signature accompany it, while CN and
+// global choose distinct data-policy and organization/business headers. Session
+// identity and machine references are read synchronously and must remain stable
+// during request preparation.
 func (c *Client) setHeaders(req *http.Request, session *SessionContext, path, encodedBody string) {
 	now := strconv.FormatInt(time.Now().Unix(), 10)
 	pathNoAlgo := pathWithoutAlgo(path)
@@ -637,7 +863,9 @@ func (c *Client) setHeaders(req *http.Request, session *SessionContext, path, en
 	req.Header.Set("cosy-organization-id", session.Identity.OrganizationID)
 	req.Header.Set("cosy-organization-tags", organizationTags)
 	if site != SiteCN {
-		// Global inference requests include the CLI agent business headers.
+		// Global inference follows the CLI agent header shape. Add its scene and
+		// business fields here while CN keeps the desktop header shape selected by
+		// site.
 		req.Header.Set("cosy-scene", "assistant")
 		req.Header.Set("cosy-business-product", "cli")
 		req.Header.Set("cosy-business-type", "agent")
@@ -645,6 +873,9 @@ func (c *Client) setHeaders(req *http.Request, session *SessionContext, path, en
 	req.Header.Set("Authorization", ComposeBearer(payloadB64, signature))
 }
 
+// setSignatureHeaders installs machine and Appcode headers for a pre-login
+// Gateway request. A usable machine is required, while identity and encrypted
+// COSY parameters can be absent because completion obtains that identity.
 func (c *Client) setSignatureHeaders(req *http.Request, session *SessionContext) {
 	c.setBasicHeaders(req, session)
 	httpDate := time.Now().UTC().Format(http.TimeFormat)
@@ -653,11 +884,25 @@ func (c *Client) setSignatureHeaders(req *http.Request, session *SessionContext)
 	req.Header.Set("Appcode", AppCode)
 }
 
+// setBearerHeaders installs basic machine headers and trimmed security OAuth
+// Bearer authentication. The request implementation validates a nonempty token
+// before this call; callers supply a complete session identity and machine.
 func (c *Client) setBearerHeaders(req *http.Request, session *SessionContext) {
 	c.setBasicHeaders(req, session)
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(session.Identity.SecurityOauthToken))
 }
 
+// setBasicHeaders writes machine, version, and client headers and returns
+// their effective site. A nonempty session site overrides the client site, and
+// callers provide stable machine metadata. CN uses the machine ID with empty
+// token/type fields and client type zero; other sites fill omitted legacy
+// token/type values from machine ID and five.
+//
+// CN client IP prefers ClientIP before local interface discovery, while global
+// client IP uses the machine ID. MachineOS can use its configured override or
+// current runtime value. Version selection follows requestClientVersion so
+// these basic headers agree with the encrypted signing payload's selected
+// version.
 func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Site {
 	mid := session.Machine.MachineID
 	machineToken := strings.TrimSpace(session.Machine.MachineToken)
@@ -667,7 +912,9 @@ func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Sit
 		site = session.Site
 	}
 	if site == SiteCN {
-		// The CN gateway expects empty machine token, type, and code headers.
+		// CN uses the stored machine ID with empty machine token/type fields. Clear
+		// legacy random values so imported credentials still produce its desktop
+		// header shape.
 		machineToken = ""
 		machineType = ""
 	} else {
@@ -692,7 +939,9 @@ func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Sit
 	clientVersion := c.requestClientVersion(session)
 	clientType := "5"
 	if site == SiteCN {
-		// The CN desktop IDE client uses protocol client type 0.
+		// The CN profile follows the desktop IDE header shape. Use its client-type
+		// value with empty machine fields so the Gateway sees one consistent site
+		// representation.
 		clientType = "0"
 	}
 
@@ -713,6 +962,9 @@ func (c *Client) setBasicHeaders(req *http.Request, session *SessionContext) Sit
 	return site
 }
 
+// requestClientVersion prefers the client version, then the session version,
+// then global defaults. Values are trimmed before selection; nil session is
+// accepted when only client or default version is available.
 func (c *Client) requestClientVersion(session *SessionContext) string {
 	clientVersion := strings.TrimSpace(c.ClientVersion)
 	if clientVersion == "" && session != nil {
@@ -724,6 +976,9 @@ func (c *Client) requestClientVersion(session *SessionContext) string {
 	return clientVersion
 }
 
+// UnmarshalJSON accepts a vendor code as trimmed string or formatted JSON
+// number. Malformed JSON returns an error; other decoded types leave the
+// receiver unchanged for the enclosing error parser.
 func (c *qoderErrorCode) UnmarshalJSON(data []byte) error {
 	var raw any
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -738,8 +993,15 @@ func (c *qoderErrorCode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UnmarshalJSON decodes tolerated numeric token values and optional usage detail
+// objects. Malformed usage input is ignored, leaving prior receiver values
+// available. Numeric strings and floats are converted through qoderIntField;
+// optional detail parsing uses zero values on failure.
 func (u *QoderSSEUsage) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
+	// Invalid usage objects leave existing receiver values available while
+	// content parsing continues. The outer usage pointer still determines whether
+	// ParseSSELine emits a present, potentially zero-count observation.
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
@@ -748,6 +1010,10 @@ func (u *QoderSSEUsage) UnmarshalJSON(data []byte) error {
 	u.TotalTokens = qoderIntField(raw, "total_tokens")
 	u.InputTokens = qoderIntField(raw, "input_tokens")
 	u.OutputTokens = qoderIntField(raw, "output_tokens")
+	// Prompt and completion details come from successfully decoded generic JSON,
+	// so their values can be marshaled again before count decoding. Keep allocated
+	// detail pointers even when tolerated fields yield zero; presence remains
+	// available to cache splitting and client breakdown output.
 	if value, ok := raw["prompt_tokens_details"]; ok {
 		body, _ := json.Marshal(value)
 		details := &PromptTokensDetails{}
@@ -763,8 +1029,14 @@ func (u *QoderSSEUsage) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UnmarshalJSON decodes cached and cacheable counts using the tolerated numeric
+// field reader. Malformed input is ignored, leaving receiver values available;
+// missing or unsupported numeric fields become zero.
 func (d *PromptTokensDetails) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
+	// Prompt details are optional usage metadata. Keep the receiver on
+	// object-decode failure; supported numeric fields use the same zero-result
+	// reader as primary counts.
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
@@ -773,8 +1045,14 @@ func (d *PromptTokensDetails) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UnmarshalJSON decodes reasoning token counts using the tolerated numeric field
+// reader. Malformed input is ignored, leaving receiver values available; a
+// missing or unsupported reasoning_tokens field becomes zero.
 func (d *CompletionTokensDetails) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
+	// Reasoning detail is optional usage metadata. Keep the receiver on
+	// object-decode failure so an unusable breakdown cannot reject the whole
+	// content stream.
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
@@ -782,24 +1060,44 @@ func (d *CompletionTokensDetails) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// qoderIntField reads floating JSON values or trimmed numeric strings as
+// optional usage counts. Finite, representable floating values truncate toward
+// zero. Missing fields, unsupported types, and strings rejected by both
+// parsers become zero; nonfinite or unrepresentable floating values reach
+// direct Go integer conversion without range validation.
 func qoderIntField(raw map[string]any, key string) int {
 	switch value := raw[key].(type) {
 	case float64:
+		// Finite, representable floating counts truncate toward zero during conversion.
 		return int(value)
 	case string:
 		trimmed := strings.TrimSpace(value)
 		if parsed, err := strconv.Atoi(trimmed); err == nil {
 			return parsed
 		}
+		// Decimal or exponent strings can describe token counts rejected by Atoi.
+		// Try floating parsing before the zero result, retaining the direct
+		// conversion behavior for accepted nonfinite or out-of-range values.
 		if parsed, err := strconv.ParseFloat(trimmed, 64); err == nil {
 			return int(parsed)
 		}
 	}
+	// Unavailable numeric fields contribute zero to optional usage decoding. That
+	// result also covers unsupported representations after both accepted
+	// numeric-string forms were tried.
 	return 0
 }
 
-// ParseSSELine parses one Qoder SSE data line.
-// Non-data lines and envelopes without events return nil; malformed JSON returns an error.
+// ParseSSELine converts one wrapped SSE data line into ordered content, tool,
+// usage, and completion events. Non-data lines and empty bodies return nil;
+// outer or inner malformed JSON returns an error, and wrapped failure statuses
+// return APIError before content parsing.
+//
+// Choice deltas and final messages are both inspected, alongside supported event
+// envelopes. Usage aliases fill zero primary counts and derive total when
+// absent. A final-message payload with finish_reason adds completion after
+// content and usage, while standalone or wrapped DONE produces an immediate
+// completion event.
 func ParseSSELine(line string) ([]SSEEvent, error) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "data:") {
@@ -874,6 +1172,9 @@ func ParseSSELine(line string) ([]SSEEvent, error) {
 	if inner.Usage != nil {
 		promptTokens := inner.Usage.PromptTokens
 		if promptTokens == 0 {
+			// The two wire protocols use different input/output names. Fill zero primary
+			// counts from their aliases before deriving the event total for downstream
+			// usage conversion.
 			promptTokens = inner.Usage.InputTokens
 		}
 		completionTokens := inner.Usage.CompletionTokens
@@ -903,6 +1204,9 @@ func ParseSSELine(line string) ([]SSEEvent, error) {
 	return events, nil
 }
 
+// qoderWrapperHTTPStatus resolves a wrapper's numeric status before its text
+// status form. Text can be a decimal HTTP code or a recognized error name; blank
+// and unknown forms return zero.
 func qoderWrapperHTTPStatus(wrapper QoderSSEWrapper) int {
 	if wrapper.StatusCodeValue > 0 {
 		return wrapper.StatusCodeValue
@@ -938,6 +1242,14 @@ func qoderWrapperHTTPStatus(wrapper QoderSSEWrapper) int {
 	}
 }
 
+// appendQoderToolCallEvents normalizes wire tool calls into identity-bearing
+// stream deltas. Nested function arguments win over flat arguments, input, and
+// parameters; named and ID fields also follow their declared precedence.
+// Explicit indices remain available, while multi-call arrays without indices
+// receive compact synthetic positions after placeholder removal. A type-only
+// function placeholder contributes no event or slot. This lets the accumulator
+// associate later parameters with actual parallel calls rather than empty parser
+// entries.
 func appendQoderToolCallEvents(events []SSEEvent, toolCalls []QoderSSEToolCall) []SSEEvent {
 	syntheticIndex := 0
 	for _, tc := range toolCalls {
@@ -961,6 +1273,9 @@ func appendQoderToolCallEvents(events []SSEEvent, toolCalls []QoderSSEToolCall) 
 			event.ToolCallIndex = *tc.Index
 			event.HasToolCallIndex = true
 		} else if len(toolCalls) > 1 {
+			// Placeholder removal changes array positions. Give each retained parsed
+			// entry a compact position so downstream writers receive those references;
+			// the accumulator separately decides how incomplete identity can be used.
 			event.ToolCallIndex = syntheticIndex
 			event.HasToolCallIndex = true
 		}
@@ -970,6 +1285,9 @@ func appendQoderToolCallEvents(events []SSEEvent, toolCalls []QoderSSEToolCall) 
 	return events
 }
 
+// qoderSSEToolCallIsPlaceholder reports calls lacking ID, name, and nonblank
+// arguments with a function-like type. Index alone does not make the entry
+// meaningful; a different supplied tool type keeps it available.
 func qoderSSEToolCallIsPlaceholder(tc QoderSSEToolCall, arguments string) bool {
 	meaningful := firstNonEmptyQoderSSEString(tc.ID, tc.ToolCallID, tc.CallID, tc.Function.Name, tc.Name, tc.ToolName)
 	if meaningful != "" || strings.TrimSpace(arguments) != "" {
@@ -978,6 +1296,9 @@ func qoderSSEToolCallIsPlaceholder(tc QoderSSEToolCall, arguments string) bool {
 	return strings.TrimSpace(tc.Type) == "" || qoderSSEToolType(tc.Type) == "function"
 }
 
+// qoderSSEEnvelopeEvents dispatches recognized event/type envelopes into
+// normalized stream events. Event takes precedence over Type, message_stop marks
+// completion, and unknown or missing event labels return no events.
 func qoderSSEEnvelopeEvents(inner QoderSSEInner) []SSEEvent {
 	eventType := firstNonEmptyQoderSSEString(inner.Event, inner.Type)
 	if eventType == "" {
@@ -999,14 +1320,19 @@ func qoderSSEEnvelopeEvents(inner QoderSSEInner) []SSEEvent {
 	}
 }
 
+// qoderSSEContentBlockDeltaEvents extracts nonempty text from a content-block
+// delta envelope. Malformed or absent data produces no event; thinking_delta
+// becomes reasoning_delta and other text-bearing blocks become text_delta.
 func qoderSSEContentBlockDeltaEvents(raw json.RawMessage) []SSEEvent {
 	if len(raw) == 0 {
 		return nil
 	}
 	var delta struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type string `json:"type"` // wire block type
+		Text string `json:"text"` // text or reasoning delta
 	}
+	// Malformed or empty optional block data contributes no readable fragment.
+	// Omit that envelope so later valid content can still be normalized.
 	if err := json.Unmarshal(raw, &delta); err != nil || delta.Text == "" {
 		return nil
 	}
@@ -1017,18 +1343,32 @@ func qoderSSEContentBlockDeltaEvents(raw json.RawMessage) []SSEEvent {
 	return []SSEEvent{{Type: eventType, Text: delta.Text}}
 }
 
+// qoderSSEToolUseStartEvents creates a tool-start delta from supported identity
+// fields. Absent or malformed data produces no event. The data index takes
+// precedence over envelope index, retaining explicit zero as an available index,
+// and ID aliases are checked in order.
+//
+// A start can have empty arguments; its ID, index, or name supplies later
+// association information. Missing tool type becomes function for protocol
+// output, while that default alone does not identify the call receiving later
+// parameters.
 func qoderSSEToolUseStartEvents(raw json.RawMessage, envelopeIndex *int) []SSEEvent {
 	if len(raw) == 0 {
 		return nil
 	}
 	var toolUse struct {
-		Index      *int   `json:"index,omitempty"`
-		ID         string `json:"id"`
-		ToolCallID string `json:"tool_call_id"`
-		CallID     string `json:"call_id"`
-		Name       string `json:"name"`
-		Type       string `json:"type"`
+		// Index retains pointer presence so an explicit zero position can differ from
+		// a missing position. Event normalization carries this into HasToolCallIndex.
+		Index      *int   `json:"index,omitempty"` // optional call position
+		ID         string `json:"id"`              // preferred call identifier
+		ToolCallID string `json:"tool_call_id"`    // upstream call identifier
+		CallID     string `json:"call_id"`         // alternate call identifier
+		Name       string `json:"name"`            // function name text
+		Type       string `json:"type"`            // wire tool type
 	}
+	// A malformed start cannot establish a usable invocation identity. Drop this
+	// optional envelope while allowing other supported stream observations to
+	// continue.
 	if err := json.Unmarshal(raw, &toolUse); err != nil {
 		return nil
 	}
@@ -1045,22 +1385,36 @@ func qoderSSEToolUseStartEvents(raw json.RawMessage, envelopeIndex *int) []SSEEv
 	return []SSEEvent{event}
 }
 
+// qoderSSEToolUseDeltaEvents extracts identity and arguments from a tool
+// continuation envelope. Absent or malformed data produces no event. Argument
+// aliases are decoded in order, and the data index takes precedence over
+// envelope index, including zero.
+//
+// A function-like type with no ID, name, or arguments is dropped as a
+// placeholder. Argument-only events remain available to the accumulator, which
+// decides whether a single existing call identifies their destination or
+// parallel calls make them ambiguous.
 func qoderSSEToolUseDeltaEvents(raw json.RawMessage, envelopeIndex *int) []SSEEvent {
 	if len(raw) == 0 {
 		return nil
 	}
 	var delta struct {
-		Index      *int            `json:"index,omitempty"`
-		ID         string          `json:"id"`
-		ToolCallID string          `json:"tool_call_id"`
-		CallID     string          `json:"call_id"`
-		Name       string          `json:"name"`
-		ToolName   string          `json:"tool_name"`
-		Type       string          `json:"type"`
-		Arguments  json.RawMessage `json:"arguments"`
-		Input      json.RawMessage `json:"input"`
-		Parameters json.RawMessage `json:"parameters"`
+		// Index retains pointer presence so an explicit zero position can differ from
+		// a missing position. Event normalization carries this into HasToolCallIndex.
+		Index      *int            `json:"index,omitempty"` // optional call position
+		ID         string          `json:"id"`              // preferred call identifier
+		ToolCallID string          `json:"tool_call_id"`    // upstream call identifier
+		CallID     string          `json:"call_id"`         // alternate call identifier
+		Name       string          `json:"name"`            // function name text
+		ToolName   string          `json:"tool_name"`       // upstream function name
+		Type       string          `json:"type"`            // wire tool type
+		Arguments  json.RawMessage `json:"arguments"`       // JSON argument text
+		Input      json.RawMessage `json:"input"`           // alternate argument JSON
+		Parameters json.RawMessage `json:"parameters"`      // alternate argument JSON
 	}
+	// Unreadable continuation metadata cannot identify a destination or argument
+	// fragment. Omit this optional envelope so it cannot corrupt an accumulated
+	// call.
 	if err := json.Unmarshal(raw, &delta); err != nil {
 		return nil
 	}
@@ -1071,6 +1425,8 @@ func qoderSSEToolUseDeltaEvents(raw json.RawMessage, envelopeIndex *int) []SSEEv
 		ToolName:   firstNonEmptyQoderSSEString(delta.Name, delta.ToolName),
 		Arguments:  parseQoderToolCallArguments(delta.Arguments, delta.Input, delta.Parameters),
 	}
+	// A function-type default alone contains no usable call identity or argument
+	// fragment. Drop that placeholder before assigning any envelope position to it.
 	if event.ToolCallID == "" && event.ToolName == "" && strings.TrimSpace(event.Arguments) == "" && event.ToolType == "function" {
 		return nil
 	}
@@ -1081,18 +1437,33 @@ func qoderSSEToolUseDeltaEvents(raw json.RawMessage, envelopeIndex *int) []SSEEv
 	return []SSEEvent{event}
 }
 
+// qoderSSEMessageDeltaEvents converts envelope usage into an observed token
+// event. Missing data or a nil usage pointer produces no event. The usage
+// decoder tolerates malformed objects, so a present pointer can yield a zero-
+// count observation.
+//
+// Zero prompt and completion counts use input/output aliases before a zero
+// total is derived from their sum. Detail pointers are retained for downstream
+// cache splitting and serialization. This sequence gives envelope usage the
+// same alias rules as choice usage while retaining the distinction between
+// present zero usage and absent metadata.
 func qoderSSEMessageDeltaEvents(raw json.RawMessage) []SSEEvent {
 	if len(raw) == 0 {
 		return nil
 	}
 	var delta struct {
-		Usage *QoderSSEUsage `json:"usage"`
+		Usage *QoderSSEUsage `json:"usage"` // optional usage payload
 	}
+	// An absent usage pointer contributes no observation, while an unreadable
+	// enclosing delta has no usable payload to pass to downstream accounting.
 	if err := json.Unmarshal(raw, &delta); err != nil || delta.Usage == nil {
 		return nil
 	}
 	promptTokens := delta.Usage.PromptTokens
 	if promptTokens == 0 {
+		// Event-envelope usage can use input/output aliases instead of Chat names.
+		// Apply the same count fallback as choice usage so both representations
+		// produce matching observations.
 		promptTokens = delta.Usage.InputTokens
 	}
 	completionTokens := delta.Usage.CompletionTokens
@@ -1116,6 +1487,9 @@ func qoderSSEMessageDeltaEvents(raw json.RawMessage) []SSEEvent {
 	}}
 }
 
+// qoderSSEContentText extracts string content or joins text blocks with
+// newlines. Unsupported representations and non-text blocks contribute empty
+// text, allowing the final-message parser to handle wire content variants.
 func qoderSSEContentText(raw any) string {
 	switch v := raw.(type) {
 	case string:
@@ -1137,16 +1511,24 @@ func qoderSSEContentText(raw any) string {
 	}
 }
 
+// qoderSSEMessageHasPayload reports content presence, reasoning text, or tool
+// calls in a final message.
 func qoderSSEMessageHasPayload(message QoderSSEMessage) bool {
 	return message.Content != nil || message.ReasoningContent != "" || len(message.ToolCalls) > 0
 }
 
+// parseQoderToolCallArguments selects the first nonempty argument representation
+// in caller-specified order. JSON strings are unquoted, null and blank strings
+// are skipped, and other raw JSON retains its text for later assembly.
 func parseQoderToolCallArguments(values ...json.RawMessage) string {
 	for _, raw := range values {
 		if len(raw) == 0 || string(raw) == "null" {
 			continue
 		}
 		var s string
+		// Arguments can be JSON-encoded strings or complete raw objects. Unquote
+		// string fragments while retaining object JSON text for the accumulator's
+		// later concatenation and validation.
 		if err := json.Unmarshal(raw, &s); err == nil {
 			if strings.TrimSpace(s) != "" {
 				return s
@@ -1158,6 +1540,9 @@ func parseQoderToolCallArguments(values ...json.RawMessage) string {
 	return ""
 }
 
+// firstNonEmptyQoderSSEString selects the first value containing non-
+// whitespace text and retains its supplied spelling. Missing candidates and an
+// entirely blank list return empty text for the parser's next default.
 func firstNonEmptyQoderSSEString(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -1167,6 +1552,9 @@ func firstNonEmptyQoderSSEString(values ...string) string {
 	return ""
 }
 
+// firstNonNilQoderSSEInt returns the first supplied pointer, preserving
+// explicit zero as an available index. An empty or entirely nil list returns
+// nil; the chosen pointer still refers to the caller's integer.
 func firstNonNilQoderSSEInt(values ...*int) *int {
 	for _, value := range values {
 		if value != nil {
@@ -1176,6 +1564,9 @@ func firstNonNilQoderSSEInt(values ...*int) *int {
 	return nil
 }
 
+// qoderSSEToolType maps empty, tool_use, and tool_call types to function for
+// compatibility. Other type strings retain their supplied spelling; callers keep
+// identity selection separate from this default.
 func qoderSSEToolType(value string) string {
 	switch strings.TrimSpace(value) {
 	case "", "tool_use", "tool_call":
@@ -1185,6 +1576,9 @@ func qoderSSEToolType(value string) string {
 	}
 }
 
+// parseWrappedAPIError extracts and redacts vendor details from an already
+// failed SSE wrapper. The wrapper's effective numeric status is retained, while
+// absent details keep a generic HTTP failure message.
 func parseWrappedAPIError(wrapper QoderSSEWrapper) error {
 	apiErr := &APIError{
 		StatusCode: wrapper.StatusCodeValue,
@@ -1196,15 +1590,26 @@ func parseWrappedAPIError(wrapper QoderSSEWrapper) error {
 	return apiErr
 }
 
-// StreamEvents reads SSE events and closes the response body when reading ends.
-// Callers must drain the channel so the reader goroutine can finish.
+// StreamEvents starts a scanner goroutine and returns its buffered event
+// channel. The goroutine owns body and channel closure. Callers drain the
+// channel so sends can finish; closing the body can release a blocked read but
+// cannot release a blocked send.
+//
+// A parser failure emits a terminal error event, and a completion event ends
+// scanning. Scanner errors are omitted by this standalone helper. Executor
+// paths use StreamQoderEvents for cancellation-aware sends and scanner error
+// reporting, so early-stopping consumers choose their reader according to
+// those lifetime requirements.
 func StreamEvents(resp *http.Response) <-chan SSEEvent {
 	ch := make(chan SSEEvent, 16)
+	// The returned channel transfers events from a scanner that owns body cleanup.
+	// Drain it so a blocked send can reach its completion and close the response.
 	go func() {
 		defer close(ch)
 		defer func() { _ = resp.Body.Close() }()
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Bound each line while permitting large wrapped tool arguments.
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()

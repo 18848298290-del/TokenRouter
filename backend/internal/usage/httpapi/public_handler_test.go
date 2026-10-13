@@ -20,7 +20,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestPublicUsageDateRangeInjectedCalendar checks injected timezones and calendar-day end expansion.
+// Public usage displays resolved funding source alongside request range
+// information. These cases check injected-calendar DST expansion and explicit
+// offsets, then inspect subscription and wallet response shapes, including
+// unavailable selected grants and their exposed weekly-window anchor.
+
+// TestPublicUsageDateRangeInjectedCalendar parses a fall-DST date using
+// injected server calendars and an invalid user zone. It requires next local
+// midnight and a twenty-five-hour New York range.
 func TestPublicUsageDateRangeInjectedCalendar(t *testing.T) {
 	newYork, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -39,7 +46,9 @@ func TestPublicUsageDateRangeInjectedCalendar(t *testing.T) {
 	}
 }
 
-// TestPublicUsageDateRangeExplicitOffset checks that offset timestamps retain their supplied instants.
+// TestPublicUsageDateRangeExplicitOffset supplies start and end timestamps
+// with their own offsets across the spring shift. It requires those exact UTC
+// instants rather than date expansion.
 func TestPublicUsageDateRangeExplicitOffset(t *testing.T) {
 	h := NewPublicUsageHandler(nil, nil, nil, nil, PublicUsageContext{}, timezone.NewCalendar(time.UTC))
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -49,6 +58,9 @@ func TestPublicUsageDateRangeExplicitOffset(t *testing.T) {
 	require.Equal(t, time.Date(2026, 3, 8, 7, 0, 0, 0, time.UTC), end.UTC())
 }
 
+// TestUsageUnrestrictedIncludesWeeklyWindowStart supplies a selected
+// subscription with a weekly anchor. It requires successful JSON and a
+// decoded anchor equal to the supplied instant.
 func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -76,14 +88,17 @@ func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response struct {
 		Subscription struct {
-			WeeklyWindowStart *time.Time `json:"weekly_window_start"`
-		} `json:"subscription"`
+			WeeklyWindowStart *time.Time `json:"weekly_window_start"` // optional weekly spending anchor
+		} `json:"subscription"` // the selected grant response body
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	require.NotNil(t, response.Subscription.WeeklyWindowStart)
 	require.True(t, weeklyWindowStart.Equal(*response.Subscription.WeeklyWindowStart))
 }
 
+// TestUsageUnrestrictedPreferredSubscriptionDoesNotExposeBalance supplies an
+// unavailable selected grant beside wallet funds. It requires subscription
+// source and preferred ID while the wallet field remains absent.
 func TestUsageUnrestrictedPreferredSubscriptionDoesNotExposeBalance(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -120,6 +135,9 @@ func TestUsageUnrestrictedPreferredSubscriptionDoesNotExposeBalance(t *testing.T
 	require.False(t, hasBalance)
 }
 
+// TestUsageUnrestrictedBalanceModeDoesNotExposeSubscription supplies resolved
+// wallet funding. It requires wallet source and the loaded balance while a
+// subscription response field remains absent.
 func TestUsageUnrestrictedBalanceModeDoesNotExposeSubscription(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -150,7 +168,9 @@ func TestUsageUnrestrictedBalanceModeDoesNotExposeSubscription(t *testing.T) {
 	require.False(t, hasSubscription)
 }
 
-// publicUsageContractHandler supplies request context readers and a calendar for HTTP tests.
+// publicUsageContractHandler constructs the public response fixture with
+// gateway funding callbacks. It binds billing and subscription readers plus
+// the process calendar; these cases call funding formatting directly.
 func publicUsageContractHandler() *PublicUsageHandler {
 	return NewPublicUsageHandler(nil, nil, nil, nil, PublicUsageContext{
 		Billing: func(c *gin.Context) (*billingcore.APIKeyBillingContext, bool) {

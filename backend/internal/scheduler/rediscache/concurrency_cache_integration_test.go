@@ -18,31 +18,68 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// testSlotTTLMinutes matches the default fifteen-minute lifetime.
+// Discovery scores can be due while ordinary members are still live, and
+// unindexed primary sets can remain outside maintenance queries. These Redis
+// fixtures seed both states to check rescheduling and cleanup scope,
+// alongside slot admission, lease renewal, queue counters and request-owned
+// release after unconfirmed wait admission.
+
+// testSlotTTLMinutes selects the default ordinary-slot lifetime so
+// integration admission and expiry assertions use the same configured minute
+// window.
 const testSlotTTLMinutes = 15
 
-// testSlotTTL is the duration used in TTL assertions.
+// testSlotTTL supplies fixture expiry and score cutoffs in duration form for
+// the selected ordinary-slot lifetime used throughout this suite.
 var testSlotTTL = time.Duration(testSlotTTLMinutes) * time.Minute
 
+// ConcurrencyCacheSuite exercises Redis admission, expiry observations and
+// ordinary-load discovery maintenance.
 type ConcurrencyCacheSuite struct {
-	IntegrationRedisSuite
-	cache    scheduler.ConcurrencyCache
-	rawCache *concurrencyCache
+	IntegrationRedisSuite // namespaced Redis test fixture
+	// cache and rawCache refer to the same adapter rebuilt after SetupTest
+	// creates its namespaced client; interface calls exercise admission while
+	// concrete helpers inspect maintenance state.
+	cache    scheduler.ConcurrencyCache // shared admission interface subject
+	rawCache *concurrencyCache          // concrete maintenance test subject
 }
 
+// apiKeyConcurrencyCacheForTest exposes API-key statistics operations needed
+// by the Redis integration suite.
 type apiKeyConcurrencyCacheForTest interface {
+	// TrackAPIKeySlot records or refreshes an ordinary request member used for
+	// API-key statistics. Callers release the tracked identity when that counted
+	// request finishes, and command failures propagate.
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
+	// ReleaseAPIKeySlot removes the ordinary statistics member for a request
+	// identity. Missing members are harmless, while Redis failures return to the
+	// fixture so cleanup assertions can report them.
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
+	// GetAPIKeyConcurrencyBatch returns combined ordinary/Live statistics for
+	// the supplied API-key identities. Empty input produces an empty map, and
+	// absent member sets contribute zero counts for requested IDs.
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
 }
 
-// waitIncrementFault injects admission transport errors while reads and releases use test Redis.
-type waitIncrementFault struct{ scheduler.ConcurrencyCache }
+// waitIncrementFault reports unconfirmed admission while delegating real wait
+// observations and releases.
+type waitIncrementFault struct {
+	// ConcurrencyCache supplies the real Redis reads and cleanup methods; the
+	// fixture overrides user/provider increments so new admission remains
+	// unconfirmed.
+	scheduler.ConcurrencyCache // delegated Redis concurrency subject
+}
 
+// TestConcurrencyCacheSuite runs Redis slot, lease, queue and maintenance
+// scenarios through the shared suite. Per-method clients prefix known key
+// arguments and register fixture cleanup.
 func TestConcurrencyCacheSuite(t *testing.T) {
 	suite.Run(t, new(ConcurrencyCacheSuite))
 }
 
+// SetupTest creates the namespaced Redis fixture and checks the constructor's
+// concrete concurrency adapter. The interface and concrete references share
+// that adapter for admission calls and maintenance inspection.
 func (s *ConcurrencyCacheSuite) SetupTest() {
 	s.IntegrationRedisSuite.SetupTest()
 	cache, ok := NewConcurrencyCache(s.rdb, testSlotTTLMinutes, int(testSlotTTL.Seconds())).(*concurrencyCache)
@@ -51,12 +88,19 @@ func (s *ConcurrencyCacheSuite) SetupTest() {
 	s.cache = s.rawCache
 }
 
+// apiKeyConcurrencyCache retrieves the fixture's API-key statistics methods
+// and asserts that the adapter implements them. The returned interface lets
+// tests inspect request-member statistics alongside public admission
+// operations.
 func (s *ConcurrencyCacheSuite) apiKeyConcurrencyCache() apiKeyConcurrencyCacheForTest {
 	cache, ok := s.cache.(apiKeyConcurrencyCacheForTest)
 	require.True(s.T(), ok)
 	return cache
 }
 
+// TestOpenAIWSIngressAPIKeySlot_HardLimitRefreshAndRelease acquires one
+// ingress connection at capacity one. It checks rejection of another ID,
+// successful renewal and new admission immediately after release.
 func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_HardLimitRefreshAndRelease() {
 	apiKeyID := int64(9011)
 	firstLeaseID := "ingress-first"
@@ -80,11 +124,16 @@ func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_HardLimitRefreshAn
 	require.True(s.T(), ok, "released capacity must become available immediately")
 }
 
+// TestOpenAIWSIngressAPIKeySlot_ReapsCrashedLeaseWithoutDeletingLiveOtherInstance
+// seeds one expired and one fresh ingress member. It checks pruning the old
+// member while retaining the fresh peer and admitting another connection.
 func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_ReapsCrashedLeaseWithoutDeletingLiveOtherInstance() {
 	apiKeyID := int64(9012)
 	key := openAIWSIngressLeaseKey(apiKeyID)
 	now, err := s.rawCache.redisUnixSeconds(s.ctx)
 	require.NoError(s.T(), err)
+	// Seed both sides of the sixty-second inactivity cutoff so acquisition must
+	// prune the old connection while preserving a still-fresh peer.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, key,
 		redis.Z{Score: float64(now - openAIWSIngressLeaseTTLSeconds - 1), Member: "crashed-instance"},
 		redis.Z{Score: float64(now), Member: "live-other-instance"},
@@ -104,6 +153,10 @@ func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_ReapsCrashedLeaseW
 	require.Equal(s.T(), int64(2), count)
 }
 
+// TestLiveLease_CountsTowardRegularProviderAndUserLimits reserves one Live
+// lease at provider/user capacity one. It checks ordinary rejection on both
+// identities, successful renewal and provider admission after the Live
+// release.
 func (s *ConcurrencyCacheSuite) TestLiveLease_CountsTowardRegularProviderAndUserLimits() {
 	liveCache, ok := s.cache.(scheduler.LiveConcurrencyCache)
 	require.True(s.T(), ok)
@@ -140,6 +193,9 @@ func (s *ConcurrencyCacheSuite) TestLiveLease_CountsTowardRegularProviderAndUser
 	require.True(s.T(), regularProvider)
 }
 
+// TestProviderSlot_AcquireAndRelease fills two ordinary provider slots and
+// attempts a third request. It checks rejection at capacity, the observed
+// count and a reduced count after one release.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_AcquireAndRelease() {
 	providerID := int64(10)
 	reqID1, reqID2, reqID3 := "req1", "req2", "req3"
@@ -167,6 +223,9 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_AcquireAndRelease() {
 	require.Equal(s.T(), 1, cur, "expected 1 after release")
 }
 
+// TestProviderActiveIndex_AcquireAndRelease acquires one ordinary provider
+// request before releasing it. It checks a future discovery score and removal
+// of that index member when observed load is empty.
 func (s *ConcurrencyCacheSuite) TestProviderActiveIndex_AcquireAndRelease() {
 	providerID := int64(610)
 	member := strconv.FormatInt(providerID, 10)
@@ -189,6 +248,9 @@ func (s *ConcurrencyCacheSuite) TestProviderActiveIndex_AcquireAndRelease() {
 	require.ErrorIs(s.T(), err, redis.Nil, "index member should be removed after load drops to zero")
 }
 
+// TestProviderActiveIndex_WaitLifecycle records one provider waiter without
+// occupied request slots. It checks discovery of queue-only load and removal
+// of its index member after decrement.
 func (s *ConcurrencyCacheSuite) TestProviderActiveIndex_WaitLifecycle() {
 	providerID := int64(611)
 	member := strconv.FormatInt(providerID, 10)
@@ -206,6 +268,9 @@ func (s *ConcurrencyCacheSuite) TestProviderActiveIndex_WaitLifecycle() {
 	require.ErrorIs(s.T(), err, redis.Nil, "index member should be removed after wait drops to zero")
 }
 
+// TestUserActiveIndex_AcquireAndRelease acquires and releases one ordinary
+// user member. It checks that user discovery is present while loaded and
+// absent after its request member is removed.
 func (s *ConcurrencyCacheSuite) TestUserActiveIndex_AcquireAndRelease() {
 	userID := int64(612)
 	member := strconv.FormatInt(userID, 10)
@@ -224,6 +289,9 @@ func (s *ConcurrencyCacheSuite) TestUserActiveIndex_AcquireAndRelease() {
 	require.ErrorIs(s.T(), err, redis.Nil, "user index member should be removed after release")
 }
 
+// TestProviderSlot_TTL acquires an ordinary member using the suite's selected
+// provider lifetime. It checks that the set has a positive Redis TTL bounded
+// by that configured duration.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_TTL() {
 	providerID := int64(11)
 	reqID := "req_ttl_test"
@@ -238,6 +306,9 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_TTL() {
 	s.AssertTTLWithin(ttl, 1*time.Second, testSlotTTL)
 }
 
+// TestProviderSlot_DuplicateReqID acquires the same ordinary provider request
+// identity twice. It checks both admissions succeed while the counted
+// provider membership remains one rather than two.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_DuplicateReqID() {
 	providerID := int64(12)
 	reqID := "dup-req"
@@ -246,7 +317,6 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_DuplicateReqID() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
-	// Acquiring with same reqID should be idempotent
 	ok, err = s.cache.AcquireProviderSlot(s.ctx, providerID, 2, reqID)
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
@@ -256,6 +326,9 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_DuplicateReqID() {
 	require.Equal(s.T(), 1, cur, "expected concurrency=1 (idempotent)")
 }
 
+// TestProviderSlot_ReleaseIdempotent releases an acquired request, repeats
+// that removal and removes an unrelated absent ID. It checks successful
+// cleanup calls and a final zero concurrency count.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_ReleaseIdempotent() {
 	providerID := int64(13)
 	reqID := "release-test"
@@ -265,9 +338,7 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_ReleaseIdempotent() {
 	require.True(s.T(), ok)
 
 	require.NoError(s.T(), s.cache.ReleaseProviderSlot(s.ctx, providerID, reqID), "ReleaseProviderSlot")
-	// Releasing again should not error
 	require.NoError(s.T(), s.cache.ReleaseProviderSlot(s.ctx, providerID, reqID), "ReleaseProviderSlot again")
-	// Releasing non-existent should not error
 	require.NoError(s.T(), s.cache.ReleaseProviderSlot(s.ctx, providerID, "non-existent"), "ReleaseProviderSlot non-existent")
 
 	cur, err := s.cache.GetProviderConcurrency(s.ctx, providerID)
@@ -275,6 +346,9 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_ReleaseIdempotent() {
 	require.Equal(s.T(), 0, cur)
 }
 
+// TestProviderSlot_MaxZero attempts a new ordinary provider reservation with
+// a zero capacity. It checks that the request is rejected successfully
+// through the Redis adapter.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_MaxZero() {
 	providerID := int64(14)
 	reqID := "max-zero-test"
@@ -284,6 +358,9 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_MaxZero() {
 	require.False(s.T(), ok, "expected acquire to fail with max=0")
 }
 
+// TestUserSlot_AcquireAndRelease fills one user's ordinary capacity and
+// attempts another request. It checks rejection, observed occupancy and
+// successful cleanup of present and absent identities before a zero count.
 func (s *ConcurrencyCacheSuite) TestUserSlot_AcquireAndRelease() {
 	userID := int64(42)
 	reqID1, reqID2 := "req1", "req2"
@@ -301,7 +378,6 @@ func (s *ConcurrencyCacheSuite) TestUserSlot_AcquireAndRelease() {
 	require.Equal(s.T(), 1, cur, "expected concurrency=1")
 
 	require.NoError(s.T(), s.cache.ReleaseUserSlot(s.ctx, userID, reqID1), "ReleaseUserSlot")
-	// Releasing a non-existent slot should not error
 	require.NoError(s.T(), s.cache.ReleaseUserSlot(s.ctx, userID, "non-existent"), "ReleaseUserSlot non-existent")
 
 	cur, err = s.cache.GetUserConcurrency(s.ctx, userID)
@@ -309,6 +385,9 @@ func (s *ConcurrencyCacheSuite) TestUserSlot_AcquireAndRelease() {
 	require.Equal(s.T(), 0, cur, "expected concurrency=0 after release")
 }
 
+// TestUserSlot_TTL acquires an ordinary user member with the suite's selected
+// lifetime. It checks a positive Redis set TTL bounded by the configured slot
+// duration.
 func (s *ConcurrencyCacheSuite) TestUserSlot_TTL() {
 	userID := int64(200)
 	reqID := "req_ttl_test"
@@ -323,6 +402,9 @@ func (s *ConcurrencyCacheSuite) TestUserSlot_TTL() {
 	s.AssertTTLWithin(ttl, 1*time.Second, testSlotTTL)
 }
 
+// TestAPIKeySlot_TrackReleaseAndBatchCount tracks two request identities
+// beside an empty API-key set. It checks their batch counts, bounded TTL and
+// stepwise count reduction as tracked members are released.
 func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchCount() {
 	cache := s.apiKeyConcurrencyCache()
 	apiKeyID := int64(300)
@@ -351,6 +433,9 @@ func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchCount() {
 	require.Equal(s.T(), 0, counts[apiKeyID])
 }
 
+// TestWaitQueue_IncrementAndDecrement fills a two-waiter user queue and
+// attempts one more increment. It checks capacity rejection, bounded expiry
+// and a count of one after cleanup.
 func (s *ConcurrencyCacheSuite) TestWaitQueue_IncrementAndDecrement() {
 	userID := int64(20)
 	waitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, userID)
@@ -380,32 +465,32 @@ func (s *ConcurrencyCacheSuite) TestWaitQueue_IncrementAndDecrement() {
 	require.Equal(s.T(), 1, val, "expected wait count 1")
 }
 
+// TestWaitQueue_DecrementNoNegative decrements a missing user counter, then
+// decrements a confirmed one twice. It checks nonnegative observations for
+// the absent and zero-counter cleanup cases.
 func (s *ConcurrencyCacheSuite) TestWaitQueue_DecrementNoNegative() {
 	userID := int64(300)
 	waitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, userID)
 
-	// Test decrement on non-existent key - should not error and should not create negative value
+	// Exercise missing and zero-counter cleanup separately from request
+	// ownership, checking the adapter's nonnegative floor before and after a
+	// confirmed increment.
 	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID), "DecrementWaitCount on non-existent key")
 
-	// Verify no key was created or it's not negative
 	val, err := s.rdb.Get(s.ctx, waitKey).Int()
 	if !errors.Is(err, redis.Nil) {
 		require.NoError(s.T(), err, "Get waitKey")
 	}
 	require.GreaterOrEqual(s.T(), val, 0, "expected non-negative wait count after decrement on empty")
 
-	// Set count to 1, then decrement twice
 	ok, err := s.cache.IncrementWaitCount(s.ctx, userID, 5)
 	require.NoError(s.T(), err, "IncrementWaitCount")
 	require.True(s.T(), ok)
 
-	// Decrement once (1 -> 0)
 	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID), "DecrementWaitCount")
 
-	// Decrement again on 0 - should not go negative
 	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID), "DecrementWaitCount on zero")
 
-	// Check that repeated decrements keep the count nonnegative.
 	val, err = s.rdb.Get(s.ctx, waitKey).Int()
 	if !errors.Is(err, redis.Nil) {
 		require.NoError(s.T(), err, "Get waitKey after double decrement")
@@ -413,6 +498,9 @@ func (s *ConcurrencyCacheSuite) TestWaitQueue_DecrementNoNegative() {
 	require.GreaterOrEqual(s.T(), val, 0, "expected non-negative wait count")
 }
 
+// TestProviderWaitQueue_IncrementAndDecrement fills a two-waiter provider
+// queue before a third increment. It checks rejection, bounded expiry and a
+// remaining count of one after decrement.
 func (s *ConcurrencyCacheSuite) TestProviderWaitQueue_IncrementAndDecrement() {
 	providerID := int64(30)
 	waitKey := fmt.Sprintf("%s%d", providerWaitKeyPrefix, providerID)
@@ -442,8 +530,14 @@ func (s *ConcurrencyCacheSuite) TestProviderWaitQueue_IncrementAndDecrement() {
 	require.Equal(s.T(), 1, val, "expected provider wait count 1")
 }
 
+// TestCleanupStaleProcessSlots seeds indexed provider/user members with old
+// and retained prefixes while the sweep marker is present. It checks prefix
+// cleanup and wait reset while API-key statistics and unindexed provider data
+// remain.
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
-	// Preseed the migration marker to exercise index cleanup independently of the legacy sweep.
+	// Seed the completed-sweep marker so this scenario exercises indexed prefix
+	// cleanup while unindexed wait counters remain available for the scope
+	// assertions.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(901)
 	userID := int64(902)
@@ -496,7 +590,8 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"keep-2"}, userMembers)
 
-	// API key statistics slots are cleaned by score pruning and key TTL.
+	// Startup's indexed ordinary cleanup leaves API-key statistics alone, so
+	// both old and retained fixture prefixes remain present for the assertion.
 	apiKeyMembers, err := s.rdb.ZRange(s.ctx, apiKeyKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.ElementsMatch(s.T(), []string{"keep-3", "oldproc-3"}, apiKeyMembers)
@@ -514,27 +609,32 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	require.NoError(s.T(), err)
 }
 
+// TestGetProviderConcurrency_Missing queries a provider with no stored slot
+// members in its fixture namespace. It checks a successful zero observation
+// through the Redis concurrency adapter.
 func (s *ConcurrencyCacheSuite) TestGetProviderConcurrency_Missing() {
-	// When no slots exist, GetProviderConcurrency should return 0
 	cur, err := s.cache.GetProviderConcurrency(s.ctx, 999)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, cur)
 }
 
+// TestGetUserConcurrency_Missing queries a user with no stored slot members
+// in its fixture namespace. It checks a successful zero observation through
+// the Redis concurrency adapter.
 func (s *ConcurrencyCacheSuite) TestGetUserConcurrency_Missing() {
-	// When no slots exist, GetUserConcurrency should return 0
 	cur, err := s.cache.GetUserConcurrency(s.ctx, 999)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, cur)
 }
 
+// TestGetProvidersLoadBatch seeds full queue-adjusted, partial and idle
+// provider load at different capacities. It checks identities, slot/wait
+// counts and integer percentages of one hundred, fifty and zero.
 func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
-	// Setup: Create providers with different load states
 	provider1 := int64(100)
 	provider2 := int64(101)
 	provider3 := int64(102)
 
-	// Provider 1: 2/3 slots used, 1 waiting
 	ok, err := s.cache.AcquireProviderSlot(s.ctx, provider1, 3, "req1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
@@ -545,14 +645,10 @@ func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
-	// Provider 2: 1/2 slots used, 0 waiting
 	ok, err = s.cache.AcquireProviderSlot(s.ctx, provider2, 2, "req3")
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
-	// Provider 3: 0/1 slots used, 0 waiting (idle)
-
-	// Query batch load
 	providers := []scheduler.ProviderWithConcurrency{
 		{ID: provider1, MaxConcurrency: 3},
 		{ID: provider2, MaxConcurrency: 2},
@@ -563,7 +659,8 @@ func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
 	require.NoError(s.T(), err)
 	require.Len(s.T(), loadMap, 3)
 
-	// Verify provider1: (2 + 1) / 3 = 100%
+	// Two occupied slots plus one waiter reach three units of pressure against
+	// the first provider's capacity of three.
 	load1 := loadMap[provider1]
 	require.NotNil(s.T(), load1)
 	require.Equal(s.T(), provider1, load1.ProviderID)
@@ -571,7 +668,8 @@ func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
 	require.Equal(s.T(), 1, load1.WaitingCount)
 	require.Equal(s.T(), 100, load1.LoadRate)
 
-	// Verify provider2: (1 + 0) / 2 = 50%
+	// One occupied slot and no queue represent half of the second provider's
+	// capacity, so its load remains fifty percent.
 	load2 := loadMap[provider2]
 	require.NotNil(s.T(), load2)
 	require.Equal(s.T(), provider2, load2.ProviderID)
@@ -579,7 +677,8 @@ func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
 	require.Equal(s.T(), 0, load2.WaitingCount)
 	require.Equal(s.T(), 50, load2.LoadRate)
 
-	// Verify provider3: (0 + 0) / 1 = 0%
+	// The untouched provider still receives a zero-valued load entry, keeping
+	// the returned observations complete for every requested provider identity.
 	load3 := loadMap[provider3]
 	require.NotNil(s.T(), load3)
 	require.Equal(s.T(), provider3, load3.ProviderID)
@@ -588,18 +687,22 @@ func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch() {
 	require.Equal(s.T(), 0, load3.LoadRate)
 }
 
+// TestGetProvidersLoadBatch_Empty supplies an empty provider input list to
+// the load reader. It checks successful empty output so callers can omit a
+// batch when no candidates exist.
 func (s *ConcurrencyCacheSuite) TestGetProvidersLoadBatch_Empty() {
-	// Test with empty provider list
 	loadMap, err := s.cache.GetProvidersLoadBatch(s.ctx, []scheduler.ProviderWithConcurrency{})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), loadMap)
 }
 
+// TestCleanupExpiredProviderSlots moves two of three request scores past the
+// ordinary lifetime. It checks cleanup retains the fresh third member and
+// reports only its remaining concurrency.
 func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlots() {
 	providerID := int64(200)
 	slotKey := fmt.Sprintf("%s%d", providerSlotKeyPrefix, providerID)
 
-	// Acquire 3 slots
 	ok, err := s.cache.AcquireProviderSlot(s.ctx, providerID, 5, "req1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
@@ -610,39 +713,39 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlots() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
-	// Verify 3 slots exist
 	cur, err := s.cache.GetProviderConcurrency(s.ctx, providerID)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 3, cur)
 
-	// Manually set old timestamps for req1 and req2 (simulate expired slots)
 	now := time.Now().Unix()
-	expiredTime := now - int64(testSlotTTL.Seconds()) - 10 // 10 seconds past TTL
+	// Move two scores ten seconds beyond the selected ordinary lifetime while
+	// leaving the third request fresh, exposing score-based pruning rather than
+	// whole-key expiry.
+	expiredTime := now - int64(testSlotTTL.Seconds()) - 10
 	err = s.rdb.ZAdd(s.ctx, slotKey, redis.Z{Score: float64(expiredTime), Member: "req1"}).Err()
 	require.NoError(s.T(), err)
 	err = s.rdb.ZAdd(s.ctx, slotKey, redis.Z{Score: float64(expiredTime), Member: "req2"}).Err()
 	require.NoError(s.T(), err)
 
-	// Run cleanup
 	err = s.cache.CleanupExpiredProviderSlots(s.ctx, providerID)
 	require.NoError(s.T(), err)
 
-	// Verify only 1 slot remains (req3)
 	cur, err = s.cache.GetProviderConcurrency(s.ctx, providerID)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, cur)
 
-	// Verify req3 still exists
 	members, err := s.rdb.ZRange(s.ctx, slotKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.Len(s.T(), members, 1)
 	require.Equal(s.T(), "req3", members[0])
 }
 
+// TestCleanupExpiredProviderSlots_NoExpired acquires two fresh ordinary
+// request members before cleanup. It checks both remain counted when neither
+// member's score is past the configured lifetime.
 func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlots_NoExpired() {
 	providerID := int64(201)
 
-	// Acquire 2 fresh slots
 	ok, err := s.cache.AcquireProviderSlot(s.ctx, providerID, 5, "req1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
@@ -650,19 +753,23 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlots_NoExpired() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
-	// Run cleanup (should not remove anything)
 	err = s.cache.CleanupExpiredProviderSlots(s.ctx, providerID)
 	require.NoError(s.T(), err)
 
-	// Verify both slots still exist
 	cur, err := s.cache.GetProviderConcurrency(s.ctx, providerID)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 2, cur)
 }
 
+// TestCleanupExpiredProviderSlotKeys seeds due indexed providers beside
+// unindexed expired provider/user sets. It checks indexed pruning,
+// empty-member removal and loaded-score refresh while both unindexed sets
+// stay untouched.
 func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlotKeys() {
 	now, err := s.rawCache.redisUnixSeconds(s.ctx)
 	require.NoError(s.T(), err)
+	// Seed scores beyond the ordinary lifetime for indexed and unindexed sets so
+	// the assertions can distinguish score pruning from discovery scope.
 	expiredTime := now - int64(testSlotTTL.Seconds()) - 10
 	providerKeyWithFresh := fmt.Sprintf("%s%d", providerSlotKeyPrefix, 301)
 	providerKeyExpiredOnly := fmt.Sprintf("%s%d", providerSlotKeyPrefix, 302)
@@ -712,9 +819,15 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlotKeys() {
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestCleanupExpiredProviderSlotKeys_ReapsUserIndex seeds a loaded user, an
+// idle user and a malformed member with due scores. It checks loaded-score
+// renewal and removal of idle/malformed discovery entries.
 func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlotKeys_ReapsUserIndex() {
 	now, err := s.rawCache.redisUnixSeconds(s.ctx)
 	require.NoError(s.T(), err)
+	// Make discovery scores already due while the retained user's member score
+	// is fresh, so reconciliation must recheck primary load before removing an
+	// entry.
 	expiredScore := float64(now - 10)
 	userKeyWithFresh := fmt.Sprintf("%s%d", userSlotKeyPrefix, 401)
 
@@ -743,13 +856,18 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredProviderSlotKeys_ReapsUserInde
 	require.ErrorIs(s.T(), err, redis.Nil, "invalid member should be reaped")
 }
 
+// TestCleanupStaleProcessSlots_LegacyWaitSweepRunsOnce seeds unindexed wait
+// counters before the completion marker exists. It checks first-startup
+// deletion, a stored marker and retention of a newly seeded unindexed counter
+// on the second call.
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRunsOnce() {
 	unindexedProviderWaitKey := fmt.Sprintf("%s%d", providerWaitKeyPrefix, 2901)
 	unindexedUserWaitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, 2902)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedProviderWaitKey, 5, time.Minute).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedUserWaitKey, 3, time.Minute).Err())
 
-	// Without a marker, the first sweep removes legacy wait keys, including unindexed ones.
+	// Run startup with no completion marker so the wait-prefix scan must
+	// discover and remove both unindexed counters seeded by this fixture.
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 
 	_, err := s.rdb.Get(s.ctx, unindexedProviderWaitKey).Result()
@@ -761,7 +879,8 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRuns
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 1, exists, "sweep marker should be set after first run")
 
-	// The marker skips later sweeps, leaving unindexed wait counters intact.
+	// Seed new unindexed activity after the successful sweep marker is written;
+	// the second startup call must leave that newly recorded counter intact.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedProviderWaitKey, 5, time.Minute).Err())
 	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 	val, err := s.rdb.Get(s.ctx, unindexedProviderWaitKey).Int()
@@ -769,8 +888,13 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRuns
 	require.Equal(s.T(), 5, val)
 }
 
+// TestCleanupStaleProcessSlots_ProcessesExpiredIndexMembers seeds old-prefix
+// members behind already due provider/user discovery scores. It checks
+// startup still reaches those entries, removes their slot keys and clears the
+// associated indexes and provider wait.
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredIndexMembers() {
-	// Startup cleanup includes expired index members to find crash leftovers.
+	// Seed the completed-sweep marker before due index entries so startup must
+	// find old-prefix ordinary members through its full indexed cleanup path.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(3901)
 	userID := int64(3902)
@@ -787,7 +911,8 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 		redis.Z{Score: float64(now), Member: "oldproc-2"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, providerWaitKey, 4, time.Minute).Err())
-	// A past score represents an index entry left across a long shutdown.
+	// Give the indexed old-prefix sets past discovery scores, requiring
+	// startup's full index read to reach members a future-only query would skip.
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, providerActiveIndexKey, redis.Z{
 		Score:  float64(now - 100),
 		Member: strconv.FormatInt(providerID, 10),
@@ -816,8 +941,14 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestCleanupStaleProcessSlots_RemovesOldPrefixesAndWaitCounters seeds
+// indexed old and active process members with the sweep marker present. It
+// checks only active-prefix members remain and both indexed wait counters are
+// removed.
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOldPrefixesAndWaitCounters() {
-	// With the marker present, the index cleanup path removes wait counters.
+	// Seed the completed-sweep marker to select indexed cleanup, then retain
+	// active-prefix ordinary members while checking that their wait counters are
+	// reset.
 	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	providerID := int64(901)
 	userID := int64(902)
@@ -865,6 +996,9 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOldPrefixesA
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
 
+// TestCleanupStaleProcessSlots_DeletesEmptySlotKeys seeds one indexed
+// ordinary provider member outside the active prefix. It checks that startup
+// deletes its primary set after removing the last member.
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKeys() {
 	providerID := int64(903)
 	providerSlotKey := fmt.Sprintf("%s%d", providerSlotKeyPrefix, providerID)
@@ -884,15 +1018,26 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKey
 	require.EqualValues(s.T(), 0, exists)
 }
 
+// IncrementWaitCount returns an admission error without incrementing the
+// embedded Redis counter. The service treats that new admission as
+// unconfirmed, leaving existing real wait counts owned by their earlier
+// requests.
 func (c waitIncrementFault) IncrementWaitCount(context.Context, int64, int) (bool, error) {
 	return false, errors.New("增加等待计数未确认")
 }
 
+// IncrementProviderWaitCount returns an admission error without incrementing
+// the embedded provider counter. The service treats that admission as
+// unconfirmed, leaving existing Redis wait counts available for ownership
+// assertions.
 func (c waitIncrementFault) IncrementProviderWaitCount(context.Context, int64, int) (bool, error) {
 	return false, errors.New("增加提供商等待计数未确认")
 }
 
-// TestWaitFailOpenDoesNotReleaseOtherRequest checks that admission errors cannot release another request's user or provider wait count.
+// TestWaitFailOpenDoesNotReleaseOtherRequest seeds real user/provider wait
+// counts before injecting unconfirmed increment failures. It checks allowed
+// service results and retention of the existing counts after repeated release
+// calls.
 func TestWaitFailOpenDoesNotReleaseOtherRequest(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
@@ -903,6 +1048,9 @@ func TestWaitFailOpenDoesNotReleaseOtherRequest(t *testing.T) {
 	providerAllowed, err := cache.IncrementProviderWaitCount(ctx, 91002, 20)
 	require.NoError(t, err)
 	require.True(t, providerAllowed)
+	// Inject errors only into new admission while retaining real Redis reads and
+	// releases, making another request's counters visible if uncertain ownership
+	// mistakenly decrements them.
 	concurrency := scheduler.NewConcurrencyService(waitIncrementFault{cache}, scheduler.Diagnostics{
 		Logf: logging.LegacyPrintf,
 

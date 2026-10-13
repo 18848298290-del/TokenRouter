@@ -206,13 +206,14 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 // five-second context is not a strict end-to-end cap.
 func TestRedisConnection(cfg *RedisConfig) error { return bootstrap.TestSetupRedisConnection(cfg) }
 
-// Install performs ordinary first installation after checking NeedsSetup,
-// returning the failed stage as an error. cfg must be nonnil and contain
-// validated storage and administrator inputs; this sequence performs no
-// complete configuration validation or cross-process installation locking.
+// Install performs ordinary first installation after checking NeedsSetup. cfg
+// must be nonnil and contain validated storage and administrator inputs. This
+// sequence performs no complete configuration validation or cross-process
+// installation locking.
 //
 // An empty JWT secret is generated and assigned to cfg before probing
-// PostgreSQL and Redis. Database probing can create the target database,
+// PostgreSQL and Redis. An io.ReadFull error in crypto/rand.Read terminates the
+// process before either probe. Database probing can create the target database,
 // migrations follow successful probes, and administrator bootstrap keeps
 // existing user databases unchanged. Configuration is written before the
 // separate marker. Earlier database effects survive later errors, and a written
@@ -394,9 +395,10 @@ func writeConfigFile(cfg *SetupConfig) error {
 }
 
 // generateSecret returns lowercase hexadecimal text from length
-// cryptographically random bytes. The result has twice that many characters;
-// zero gives empty text, negative length panics on allocation, and random-read
-// errors are returned.
+// cryptographically random bytes with nil error. The result has twice that many
+// characters; zero gives empty text and negative length panics on allocation.
+// crypto/rand.Read terminates the process when its io.ReadFull operation
+// reports an error.
 func generateSecret(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {

@@ -2,11 +2,19 @@ package usage
 
 import "testing"
 
+// Model grouping accepts three exact source labels and uses requested for
+// unsupported text. The table cases check each supported value plus empty and
+// unknown input, separating validation's boolean result from normalization's
+// selected default.
+
+// TestIsValidModelSource supplies the three supported source labels plus
+// empty and unknown text. It checks the expected validity result for each
+// table case.
 func TestIsValidModelSource(t *testing.T) {
 	tests := []struct {
-		name   string
-		source string
-		want   bool
+		name   string // subtest case label
+		source string // input model source text
+		want   bool   // expected helper result
 	}{
 		{name: "requested", source: ModelSourceRequested, want: true},
 		{name: "upstream", source: ModelSourceUpstream, want: true},
@@ -24,11 +32,14 @@ func TestIsValidModelSource(t *testing.T) {
 	}
 }
 
+// TestNormalizeModelSource supplies supported, empty and unknown source text.
+// It requires supported labels to remain themselves and the other fixtures to
+// select requested.
 func TestNormalizeModelSource(t *testing.T) {
 	tests := []struct {
-		name   string
-		source string
-		want   string
+		name   string // subtest case label
+		source string // input model source text
+		want   string // expected helper result
 	}{
 		{name: "requested", source: ModelSourceRequested, want: ModelSourceRequested},
 		{name: "upstream", source: ModelSourceUpstream, want: ModelSourceUpstream},

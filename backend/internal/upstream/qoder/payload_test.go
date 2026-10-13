@@ -11,11 +11,19 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// Payload fixtures compare protocol history with Qoder's scalar content,
+// structured text, and call/result fields. Site input limits and thinking
+// controls are checked at every mirrored configuration path, while Responses
+// histories exercise retained matches and removal of incomplete tool pairs.
+
+// TestQoderHighestContextFlowsThroughAllProtocols parses Qwen input through
+// Chat, Responses, and Messages. It checks the same route and million-token
+// runtime configuration in every resulting global payload.
 func TestQoderHighestContextFlowsThroughAllProtocols(t *testing.T) {
 	tests := []struct {
-		name  string
-		body  []byte
-		parse func([]byte) (QoderPayloadRequest, error)
+		name  string                                    // fixture case label
+		body  []byte                                    // client request bytes
+		parse func([]byte) (QoderPayloadRequest, error) // protocol parsing callback
 	}{
 		{
 			name:  "Chat Completions",
@@ -47,13 +55,16 @@ func TestQoderHighestContextFlowsThroughAllProtocols(t *testing.T) {
 	}
 }
 
+// TestQoderContextCapabilityUsesSiteAndRouteFallback builds fixed, selectable,
+// unknown, hidden, and removed routes across sites. It checks each input limit
+// and whether runtime override fields are present.
 func TestQoderContextCapabilityUsesSiteAndRouteFallback(t *testing.T) {
 	tests := []struct {
-		name        string
-		site        Site
-		model       string
-		wantTokens  int
-		wantRuntime bool
+		name        string // fixture case label
+		site        Site   // selected credential site
+		model       string // model lookup input
+		wantTokens  int    // expected input tokens
+		wantRuntime bool   // expected runtime selection
 	}{
 		{name: "国际站固定 Auto", site: SiteGlobal, model: "auto", wantTokens: 180000},
 		{name: "国际站 Kimi K2.7", site: SiteGlobal, model: "kimi-k2.7-code", wantTokens: 256000, wantRuntime: true},
@@ -74,6 +85,9 @@ func TestQoderContextCapabilityUsesSiteAndRouteFallback(t *testing.T) {
 	}
 }
 
+// TestQoderContextCapabilityMergesWithThinkingOverride enables thinking on a
+// runtime-context route. It checks the mapped max effort and million-token limit
+// coexist in parameters and ideModelConfigOverride.
 func TestQoderContextCapabilityMergesWithThinkingOverride(t *testing.T) {
 	payload, _, err := BuildQoderPayloadFromChatCompletionsForSite([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -92,7 +106,9 @@ func TestQoderContextCapabilityMergesWithThinkingOverride(t *testing.T) {
 	require.Equal(t, 1000000, runtimeOverride["max_input_tokens"])
 }
 
-// assertQoderContextCapabilityForTest checks the input limit and both optional runtime overrides.
+// assertQoderContextCapabilityForTest checks model input limit and optional
+// runtime configuration locations. Runtime-enabled fixtures need both parameter
+// and IDE overrides; fixed-route fixtures require both to remain absent.
 func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, wantTokens int, wantRuntime bool) {
 	t.Helper()
 	modelConfig := requireQoderPayloadMapForTest(t, payload["model_config"], "model_config")
@@ -115,7 +131,9 @@ func assertQoderContextCapabilityForTest(t *testing.T, payload map[string]any, w
 	require.False(t, hasRuntimeOverride)
 }
 
-// requireQoderPayloadMapForTest returns a JSON object or fails with its payload path.
+// requireQoderPayloadMapForTest requires a decoded object and returns it for
+// payload assertions. Unexpected values fail with the supplied path, locating
+// the incorrect nested representation in the fixture.
 func requireQoderPayloadMapForTest(t *testing.T, value any, path string) map[string]any {
 	t.Helper()
 	result, ok := value.(map[string]any)
@@ -123,6 +141,10 @@ func requireQoderPayloadMapForTest(t *testing.T, value any, path string) map[str
 	return result
 }
 
+// TestBuildQoderPayloadFromChatCompletions converts control, user, assistant,
+// and tool messages with a declared tool. It checks output budget,
+// model/context/business fields, user text representation, and retained tool
+// content.
 func TestBuildQoderPayloadFromChatCompletions(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -179,6 +201,9 @@ func TestBuildQoderPayloadFromChatCompletions(t *testing.T) {
 	require.Len(t, tools, 1)
 }
 
+// TestBuildQoderPayloadUsesCNModelAndClientVersion converts the CN-only Qwen
+// Flash alias into a payload. It checks the CN route key and business client
+// version emitted for that site.
 func TestBuildQoderPayloadUsesCNModelAndClientVersion(t *testing.T) {
 	body := []byte(`{
 		"model":"qwen3.6-flash",
@@ -194,6 +219,9 @@ func TestBuildQoderPayloadUsesCNModelAndClientVersion(t *testing.T) {
 	require.Equal(t, "1.24.2", business["version"])
 }
 
+// TestBuildQoderPayloadUserSystemReplacesBuiltInSystem supplies one user-defined
+// system message and one user turn. It requires exactly one system message
+// containing the supplied text in the outgoing history.
 func TestBuildQoderPayloadUserSystemReplacesBuiltInSystem(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -221,6 +249,9 @@ func TestBuildQoderPayloadUserSystemReplacesBuiltInSystem(t *testing.T) {
 	require.Equal(t, 1, systemMessages)
 }
 
+// TestBuildQoderPayloadFromChatCompletionsPreservesToolHistory converts modern
+// assistant/tool history with object arguments. It checks serialized call
+// arguments and both Gateway result-ID fields plus the tool name.
 func TestBuildQoderPayloadFromChatCompletionsPreservesToolHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -253,6 +284,9 @@ func TestBuildQoderPayloadFromChatCompletionsPreservesToolHistory(t *testing.T) 
 	require.Equal(t, "bash", tool["name"])
 }
 
+// TestBuildQoderPayloadFromChatCompletionsPreservesLegacyFunctionHistory
+// converts legacy function_call and function-role output. It checks
+// function-name call identity, argument JSON, and matching result IDs and name.
 func TestBuildQoderPayloadFromChatCompletionsPreservesLegacyFunctionHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -284,6 +318,10 @@ func TestBuildQoderPayloadFromChatCompletionsPreservesLegacyFunctionHistory(t *t
 	require.Equal(t, "get_weather", tool["name"])
 }
 
+// TestBuildQoderPayloadFromChatCompletionsMergesParallelToolHistory converts two
+// assistant calls and their separately identified results. It checks both call
+// IDs, enriched result names, and absence of reasoning text in assistant
+// contents.
 func TestBuildQoderPayloadFromChatCompletionsMergesParallelToolHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"deepseek-v4-pro",
@@ -324,6 +362,10 @@ func TestBuildQoderPayloadFromChatCompletionsMergesParallelToolHistory(t *testin
 	require.Equal(t, "bash", secondTool["name"])
 }
 
+// TestBuildQoderPayloadAddsCacheControlToLastEligibleTextBlock mixes text, tool
+// results, and omitted thinking history. It checks retained earlier cache
+// control, an ephemeral marker on final text, and absent markers on non-text
+// contents.
 func TestBuildQoderPayloadAddsCacheControlToLastEligibleTextBlock(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -353,6 +395,9 @@ func TestBuildQoderPayloadAddsCacheControlToLastEligibleTextBlock(t *testing.T) 
 	}
 }
 
+// TestBuildQoderPayloadFromAnthropicMessages converts text-block system and
+// mixed user/tool-result content. It checks alias, output budget, joined system
+// text, user contents, and result identity.
 func TestBuildQoderPayloadFromAnthropicMessages(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-opus-4-6",
@@ -382,6 +427,9 @@ func TestBuildQoderPayloadFromAnthropicMessages(t *testing.T) {
 	require.Equal(t, "tool result", toolResult["content"])
 }
 
+// TestBuildQoderPayloadFromAnthropicMessagesPreservesToolUseHistory converts an
+// assistant tool-use block followed by its result. It checks call
+// ID/name/argument representation and the matching result fields and text.
 func TestBuildQoderPayloadFromAnthropicMessagesPreservesToolUseHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -414,6 +462,9 @@ func TestBuildQoderPayloadFromAnthropicMessagesPreservesToolUseHistory(t *testin
 	require.Equal(t, "file.txt", tool["content"])
 }
 
+// TestBuildQoderPayloadFromAnthropicMessagesIgnoresThinkingToolUseHistory mixes
+// assistant thinking and tool use before a result. It checks empty visible
+// assistant text with retained call identity, arguments, and result association.
 func TestBuildQoderPayloadFromAnthropicMessagesIgnoresThinkingToolUseHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-opus-4-6",
@@ -453,6 +504,9 @@ func TestBuildQoderPayloadFromAnthropicMessagesIgnoresThinkingToolUseHistory(t *
 	require.Equal(t, "contents", toolResult["content"])
 }
 
+// TestBuildQoderPayloadFromAnthropicMessagesDoesNotInventMissingToolResultID
+// supplies a result block without tool_use_id. It checks that conversion keeps
+// user role and creates neither call metadata nor an invented result ID.
 func TestBuildQoderPayloadFromAnthropicMessagesDoesNotInventMissingToolResultID(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -472,6 +526,9 @@ func TestBuildQoderPayloadFromAnthropicMessagesDoesNotInventMissingToolResultID(
 	require.NotContains(t, tool, "tool_call_id")
 }
 
+// TestBuildQoderPayloadFromAnthropicMessagesConvertsTools supplies a named
+// Messages tool with description and input schema. It checks Qoder function
+// type, nested name/schema, and removal of the Messages input_schema field.
 func TestBuildQoderPayloadFromAnthropicMessagesConvertsTools(t *testing.T) {
 	body := []byte(`{
 		"model":"auto",
@@ -504,6 +561,9 @@ func TestBuildQoderPayloadFromAnthropicMessagesConvertsTools(t *testing.T) {
 	require.Contains(t, parameters, "properties")
 }
 
+// TestQoderResponsesPayloadPreservesControlRoleInputAsSystemPrompt combines
+// instructions with system/developer input items. It checks all control text in
+// system and one remaining user history message.
 func TestQoderResponsesPayloadPreservesControlRoleInputAsSystemPrompt(t *testing.T) {
 	request, err := ParseQoderResponsesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -524,6 +584,9 @@ func TestQoderResponsesPayloadPreservesControlRoleInputAsSystemPrompt(t *testing
 	require.Equal(t, "hello", request.Messages[0].Text)
 }
 
+// TestQoderResponsesPayloadSkipsReasoningAndUnknownOutputItems mixes user text,
+// reasoning, function call, search output, and matched result. It checks only
+// user, assistant call, and tool result survive normalization.
 func TestQoderResponsesPayloadSkipsReasoningAndUnknownOutputItems(t *testing.T) {
 	request, err := ParseQoderResponsesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -547,6 +610,9 @@ func TestQoderResponsesPayloadSkipsReasoningAndUnknownOutputItems(t *testing.T) 
 	require.Equal(t, "deadbeef", request.Messages[2].Text)
 }
 
+// TestQoderResponsesPayloadDropsUnansweredParallelFunctionCall supplies two
+// parallel calls but a result for only one. It checks the retained call ID and
+// its immediately associated result in normalized history.
 func TestQoderResponsesPayloadDropsUnansweredParallelFunctionCall(t *testing.T) {
 	request, err := ParseQoderResponsesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -568,6 +634,9 @@ func TestQoderResponsesPayloadDropsUnansweredParallelFunctionCall(t *testing.T) 
 	require.Equal(t, "call_a", request.Messages[2].ToolCallID)
 }
 
+// TestQoderResponsesPayloadDropsOrphanFunctionCallOutput supplies user input and
+// an output lacking its owning call. It checks that normalized history retains
+// only the original user text.
 func TestQoderResponsesPayloadDropsOrphanFunctionCallOutput(t *testing.T) {
 	request, err := ParseQoderResponsesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -583,7 +652,9 @@ func TestQoderResponsesPayloadDropsOrphanFunctionCallOutput(t *testing.T) {
 	require.Equal(t, "hello", request.Messages[0].Text)
 }
 
-// TestQoderChatSystemTextPreservesDeveloperMessages checks developer text joins the system prompt.
+// TestQoderChatSystemTextPreservesDeveloperMessages supplies system, developer,
+// and user turns. It checks both control texts and their newline-joined order
+// while the user text stays outside system.
 func TestQoderChatSystemTextPreservesDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -598,7 +669,9 @@ func TestQoderChatSystemTextPreservesDeveloperMessages(t *testing.T) {
 	require.Equal(t, "You are helpful\nBe concise", systemText)
 }
 
-// TestQoderChatSystemTextOnlySystemMessages checks system text without developer messages.
+// TestQoderChatSystemTextOnlySystemMessages supplies a system turn followed by
+// ordinary user text. It checks the resulting prompt equals the system text with
+// no user contribution.
 func TestQoderChatSystemTextOnlySystemMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -610,7 +683,9 @@ func TestQoderChatSystemTextOnlySystemMessages(t *testing.T) {
 	require.Equal(t, "You are helpful", systemText)
 }
 
-// TestQoderChatSystemTextOnlyDeveloperMessages checks developer text without system messages.
+// TestQoderChatSystemTextOnlyDeveloperMessages supplies developer instructions
+// followed by ordinary user text. It checks that developer text alone becomes
+// the Qoder system prompt.
 func TestQoderChatSystemTextOnlyDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "developer", Content: []byte(`"Be concise"`)},
@@ -622,7 +697,9 @@ func TestQoderChatSystemTextOnlyDeveloperMessages(t *testing.T) {
 	require.Equal(t, "Be concise", systemText)
 }
 
-// TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper excludes ordinary conversation turns.
+// TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper supplies only user and
+// assistant conversation turns. It checks an empty system prompt so visible
+// history cannot become control text.
 func TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "user", Content: []byte(`"Hello"`)},
@@ -634,7 +711,9 @@ func TestQoderChatSystemTextEmptyWhenNoSystemOrDeveloper(t *testing.T) {
 	require.Equal(t, "", systemText)
 }
 
-// TestQoderChatSystemTextMultipleDeveloperMessages checks that all developer messages contribute.
+// TestQoderChatSystemTextMultipleDeveloperMessages supplies system instructions
+// and two developer turns before user input. It checks every control message
+// contributes text to the constructed system prompt.
 func TestQoderChatSystemTextMultipleDeveloperMessages(t *testing.T) {
 	messages := []protocolopenai.ChatMessage{
 		{Role: "system", Content: []byte(`"You are helpful"`)},
@@ -650,7 +729,9 @@ func TestQoderChatSystemTextMultipleDeveloperMessages(t *testing.T) {
 	require.Contains(t, systemText, "Use examples")
 }
 
-// TestQoderChatCompletionsRespectsMaxCompletionTokens checks precedence over max_tokens.
+// TestQoderChatCompletionsRespectsMaxCompletionTokens supplies positive
+// completion and legacy output limits together. It checks that the parsed budget
+// uses the completion-specific value selected by protocol precedence.
 func TestQoderChatCompletionsRespectsMaxCompletionTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -665,7 +746,9 @@ func TestQoderChatCompletionsRespectsMaxCompletionTokens(t *testing.T) {
 	require.Equal(t, 1000, req.MaxTokens, "max_completion_tokens should take precedence")
 }
 
-// TestQoderChatCompletionsFallsBackToMaxTokens checks requests without max_completion_tokens.
+// TestQoderChatCompletionsFallsBackToMaxTokens supplies a positive legacy limit
+// with no completion-specific limit. It checks that parsed output budget retains
+// the provided max_tokens value.
 func TestQoderChatCompletionsFallsBackToMaxTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -679,7 +762,9 @@ func TestQoderChatCompletionsFallsBackToMaxTokens(t *testing.T) {
 	require.Equal(t, 2000, req.MaxTokens, "should use max_tokens when max_completion_tokens absent")
 }
 
-// TestQoderChatCompletionsUsesDefaultWhenBothAbsent checks the default output limit.
+// TestQoderChatCompletionsUsesDefaultWhenBothAbsent parses user input with both
+// Chat output-limit fields omitted. It checks the resulting budget selects
+// QoderDefaultMaxTokens for payload construction.
 func TestQoderChatCompletionsUsesDefaultWhenBothAbsent(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -692,7 +777,9 @@ func TestQoderChatCompletionsUsesDefaultWhenBothAbsent(t *testing.T) {
 	require.Equal(t, QoderDefaultMaxTokens, req.MaxTokens, "should use default when both absent")
 }
 
-// TestQoderChatCompletionsIgnoresZeroMaxTokens checks a positive max_completion_tokens with max_tokens=0.
+// TestQoderChatCompletionsIgnoresZeroMaxTokens combines a positive completion
+// limit with zero legacy max_tokens. It checks that the positive completion
+// budget remains selected during Chat parsing.
 func TestQoderChatCompletionsIgnoresZeroMaxTokens(t *testing.T) {
 	body := []byte(`{
 		"model": "claude-opus-4-6",
@@ -707,7 +794,9 @@ func TestQoderChatCompletionsIgnoresZeroMaxTokens(t *testing.T) {
 	require.Equal(t, 1000, req.MaxTokens, "should ignore max_tokens when it's 0")
 }
 
-// assertQoderThinkingPayload checks every thinking switch and effort copy consumed by Qoder.
+// assertQoderThinkingPayload checks both reasoning switches and every optional
+// effort configuration copy. It requires the expected effort text when enabled
+// for that fixture, or absence of all four effort paths.
 func assertQoderThinkingPayload(t *testing.T, payload map[string]any, enabled bool, effort string, hasEffort bool) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
@@ -732,12 +821,15 @@ func assertQoderThinkingPayload(t *testing.T, payload map[string]any, enabled bo
 	}
 }
 
+// TestQoderThinkingDirectiveFromBody covers effort normalization, explicit
+// disable, budgets, switches, and invalid labels. It checks the normalized
+// directive selected by each control combination and precedence case.
 func TestQoderThinkingDirectiveFromBody(t *testing.T) {
 	tests := []struct {
-		name        string
-		body        string
-		effortPaths []string
-		want        QoderThinkingDirective
+		name        string                 // fixture case label
+		body        string                 // client request bytes
+		effortPaths []string               // ordered effort selectors
+		want        QoderThinkingDirective // expected thinking directive
 	}{
 		{name: "missing stays disabled", body: `{}`, effortPaths: []string{"reasoning.effort"}},
 		{name: "minimal normalizes low", body: `{"reasoning":{"effort":"minimal"}}`, effortPaths: []string{"reasoning.effort"}, want: QoderThinkingDirective{Enabled: true, Effort: "low"}},
@@ -763,6 +855,9 @@ func TestQoderThinkingDirectiveFromBody(t *testing.T) {
 	}
 }
 
+// TestQoderThinkingParsersUseProtocolNativeFields parses native control fields
+// from Chat, Responses, and Messages. It checks effort normalization and
+// confirms an unknown Messages effort reaches Qoder's disabled directive.
 func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	chat, err := ParseQoderChatCompletionsPayload([]byte(`{
 		"model":"deepseek-v4-pro",
@@ -780,7 +875,9 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "max"}, responses.Thinking)
 
-	// Anthropic effort takes precedence over a simultaneously supplied budget.
+	// The fixture supplies both effort and budget. Check the effort first so native
+	// Messages control precedence remains observable after tool-definition bridge
+	// conversion.
 	messages, err := ParseQoderAnthropicMessagesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
 		"max_tokens":1024,
@@ -791,7 +888,9 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, QoderThinkingDirective{Enabled: true, Effort: "low"}, messages.Thinking)
 
-	// Qoder tolerates unknown efforts; the shared Anthropic conversion must not reject them first.
+	// Unknown effort is handled by Qoder's control normalizer. This request
+	// verifies the shared tool converter does not reject it before that handling
+	// runs.
 	messages, err = ParseQoderAnthropicMessagesPayload([]byte(`{
 		"model":"deepseek-v4-pro",
 		"max_tokens":1024,
@@ -802,6 +901,9 @@ func TestQoderThinkingParsersUseProtocolNativeFields(t *testing.T) {
 	require.Equal(t, QoderThinkingDirective{}, messages.Thinking)
 }
 
+// TestBuildQoderAnthropicThinkingPayloadDefaultsToGlobalSite builds Messages
+// input without a site argument. It checks the global DeepSeek route and enabled
+// max effort across payload configuration copies.
 func TestBuildQoderAnthropicThinkingPayloadDefaultsToGlobalSite(t *testing.T) {
 	// The constructor without a site applies global thinking capabilities.
 	body := []byte(`{
@@ -817,15 +919,18 @@ func TestBuildQoderAnthropicThinkingPayloadDefaultsToGlobalSite(t *testing.T) {
 	assertQoderThinkingPayload(t, payload, true, "max", true)
 }
 
+// TestBuildQoderThinkingPayloadBySiteAndModelCapability combines controls with
+// toggle, effort, unsupported, and unknown routes. It checks route-specific
+// switch and effort values for global and CN payloads.
 func TestBuildQoderThinkingPayloadBySiteAndModelCapability(t *testing.T) {
 	tests := []struct {
-		name           string
-		site           Site
-		model          string
-		extra          map[string]any
-		wantEnabled    bool
-		wantEffort     string
-		wantEffortPath bool
+		name           string         // fixture case label
+		site           Site           // selected credential site
+		model          string         // model lookup input
+		extra          map[string]any // additional request fields
+		wantEnabled    bool           // expected thinking switch
+		wantEffort     string         // expected effort text
+		wantEffortPath bool           // expected effort presence
 	}{
 		{name: "global qwen 38 public alias on", site: SiteGlobal, model: "qwen3.8-max", extra: map[string]any{"reasoning_effort": "low"}, wantEnabled: true},
 		{name: "global qwen 38 raw route on", site: SiteGlobal, model: "qmodel_38max", extra: map[string]any{"reasoning_effort": "max"}, wantEnabled: true},
@@ -875,6 +980,9 @@ func TestBuildQoderThinkingPayloadBySiteAndModelCapability(t *testing.T) {
 	}
 }
 
+// TestBuildQoderThinkingPayloadKeepsGlobalOnlyModelIsolated requests max effort
+// on a global Kimi route lacking adjustable controls. It checks disabled
+// switches and absence of effort paths.
 func TestBuildQoderThinkingPayloadKeepsGlobalOnlyModelIsolated(t *testing.T) {
 	body := []byte(`{
 		"model":"kimi-k3",

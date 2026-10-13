@@ -12,36 +12,113 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Shared pricing lookup uses group associations and complete model
+// identities, with exact matches ahead of wildcard cards in supplied order.
+// Snapshot and lookup scenarios seed repository rows directly, including
+// overlapping patterns that normal write validation rejects, to inspect
+// runtime behavior for those inputs.
+//
+// Group mapping and restriction scenarios use an independent reader.
+// makePolicyRepo deliberately derives that fixture policy from configuration
+// status, billing source, and card names, so its price-shaped setup
+// represents supplied test rules. Separate CRUD callbacks expose validation
+// errors, reloads, snapshot rebuild counts, and authentication invalidation
+// requests. Copy assertions exercise selected scalar or slice observations,
+// and successful write callbacks may still reload an unchanged fixture when a
+// test has not implemented storage.
+
+// mockPricingConfigRepository supplies per-operation callbacks and empty
+// successful defaults for pricing tests. GetByID is the exception: its absent
+// callback reports ErrPricingConfigNotFound, while readGroup configures a
+// separate service policy reader.
 type mockPricingConfigRepository struct {
-	readGroup                        func(context.Context, int64) (*Group, error)
-	listAllFn                        func(ctx context.Context) ([]PricingConfig, error)
-	getGroupPlatformsFn              func(ctx context.Context, groupIDs []int64) (map[int64]string, error)
-	createFn                         func(ctx context.Context, pricingConfig *PricingConfig) error
-	getByIDFn                        func(ctx context.Context, id int64) (*PricingConfig, error)
-	updateFn                         func(ctx context.Context, pricingConfig *PricingConfig) error
-	deleteFn                         func(ctx context.Context, id int64) error
-	listFn                           func(ctx context.Context, params pagination.PaginationParams, status, search string) ([]PricingConfig, *pagination.PaginationResult, error)
-	existsByNameFn                   func(ctx context.Context, name string) (bool, error)
-	existsByNameExcludingFn          func(ctx context.Context, name string, excludeID int64) (bool, error)
-	getGroupIDsFn                    func(ctx context.Context, pricingConfigID int64) ([]int64, error)
-	setGroupIDsFn                    func(ctx context.Context, pricingConfigID int64, groupIDs []int64) error
-	getPricingConfigIDByGroupIDFn    func(ctx context.Context, groupID int64) (int64, error)
+	// readGroup is installed as the service's policy reader. Nil leaves group
+	// policy absent; configured callbacks supply that state separately from the
+	// cached price rows.
+	readGroup func(context.Context, int64) (*Group, error)
+	// listAllFn supplies ListAll's snapshot rows when installed. The callback
+	// chooses the returned slice and error, letting tests control stored input and
+	// count cache loads.
+	listAllFn func(ctx context.Context) ([]PricingConfig, error)
+	// getGroupPlatformsFn supplies GetGroupPlatforms metadata when installed.
+	// Tests can configure a failure or panic here to expose a pricing path that
+	// consults the supplied platform metadata.
+	getGroupPlatformsFn func(ctx context.Context, groupIDs []int64) (map[int64]string, error)
+	// createFn receives Create's working configuration when installed. Tests
+	// use its pointer to assign an ID or capture fields from the attempted write.
+	createFn func(ctx context.Context, pricingConfig *PricingConfig) error
+	// getByIDFn supplies GetByID's configuration and error when installed. Its
+	// chosen value determines what CRUD reloads observe after a write callback
+	// returns.
+	getByIDFn func(ctx context.Context, id int64) (*PricingConfig, error)
+	// updateFn receives Update's working configuration when installed. The
+	// callback decides whether to capture its fields, change stored fixture data,
+	// or report a write failure.
+	updateFn func(ctx context.Context, pricingConfig *PricingConfig) error
+	// deleteFn receives Delete's requested ID when installed. Tests use it to
+	// record removal attempts or decide whether their stored fixture changes.
+	deleteFn func(ctx context.Context, id int64) error
+	// listFn receives List's pagination, status, and search filters when
+	// installed. The callback controls result storage and supplies any page
+	// metadata the test expects to return.
+	listFn func(ctx context.Context, params pagination.PaginationParams, status, search string) ([]PricingConfig, *pagination.PaginationResult, error)
+	// existsByNameFn controls ExistsByName's answer when installed. Its supplied
+	// conflict or read error selects the creation validation path exercised by
+	// the test.
+	existsByNameFn func(ctx context.Context, name string) (bool, error)
+	// existsByNameExcludingFn receives a changed name and its current ID when
+	// installed. Tests use those inputs to supply a name conflict or read failure
+	// for update validation.
+	existsByNameExcludingFn func(ctx context.Context, name string, excludeID int64) (bool, error)
+	// getGroupIDsFn supplies GetGroupIDs membership observations when installed.
+	// Its chosen IDs determine authentication invalidation inputs, and the
+	// callback can also report a membership-read failure.
+	getGroupIDsFn func(ctx context.Context, pricingConfigID int64) ([]int64, error)
+	// setGroupIDsFn receives the original membership slice when installed.
+	// Callbacks choose whether to retain or copy its storage when recording a
+	// replacement attempt.
+	setGroupIDsFn func(ctx context.Context, pricingConfigID int64, groupIDs []int64) error
+	// getPricingConfigIDByGroupIDFn controls association lookup when installed.
+	// The callback supplies a configuration identity or read error for the
+	// requested group, with any observations retained by the test.
+	getPricingConfigIDByGroupIDFn func(ctx context.Context, groupID int64) (int64, error)
+	// getGroupsInOtherPricingConfigsFn receives the current configuration and
+	// requested group IDs when installed. Its supplied conflicting IDs or error
+	// select the membership validation result.
 	getGroupsInOtherPricingConfigsFn func(ctx context.Context, pricingConfigID int64, groupIDs []int64) ([]int64, error)
-	listModelPricingFn               func(ctx context.Context, pricingConfigID int64) ([]ModelPricingEntry, error)
-	createModelPricingFn             func(ctx context.Context, pricing *ModelPricingEntry) error
-	updateModelPricingFn             func(ctx context.Context, pricing *ModelPricingEntry) error
-	deleteModelPricingFn             func(ctx context.Context, id int64) error
-	replaceModelPricingFn            func(ctx context.Context, pricingConfigID int64, pricingList []ModelPricingEntry) error
+	// listModelPricingFn supplies ListModelPricing cards when installed. The
+	// callback controls their backing storage and error, and its results are
+	// forwarded directly to the caller.
+	listModelPricingFn func(ctx context.Context, pricingConfigID int64) ([]ModelPricingEntry, error)
+	// createModelPricingFn receives the card pointer when installed. The
+	// callback can assign a card identity or capture submitted amounts through
+	// that same working object.
+	createModelPricingFn func(ctx context.Context, pricing *ModelPricingEntry) error
+	// updateModelPricingFn receives the card pointer when installed. The
+	// callback determines which submitted fields are observed and whether the
+	// fixture's stored card changes.
+	updateModelPricingFn func(ctx context.Context, pricing *ModelPricingEntry) error
+	// deleteModelPricingFn receives the card ID when installed. The callback
+	// controls failure injection and any removal observation retained by the
+	// test.
+	deleteModelPricingFn func(ctx context.Context, id int64) error
+	// replaceModelPricingFn receives the original card slice when installed.
+	// The callback chooses how to capture its storage and whether replacing the
+	// fixture's stored cards succeeds.
+	replaceModelPricingFn func(ctx context.Context, pricingConfigID int64, pricingList []ModelPricingEntry) error
 }
 
+// mockPricingConfigAuthCacheInvalidator records credential, user, and group
+// invalidation requests for assertions.
 type mockPricingConfigAuthCacheInvalidator struct {
-	invalidatedGroupIDs []int64
-	invalidatedKeys     []string
-	invalidatedUserIDs  []int64
+	invalidatedGroupIDs []int64  // recorded group invalidation requests
+	invalidatedKeys     []string // recorded credential invalidation requests
+	invalidatedUserIDs  []int64  // recorded user invalidation requests
 }
 
-// TestPricingConfigPublicationOwnsSnapshot checks that later input mutations cannot change cached prices or group
-// associations.
+// TestPricingConfigPublicationOwnsSnapshot builds a cache from one associated
+// configuration and mutates the input status afterward. Assertions check the
+// cached active status and group association ID.
 func TestPricingConfigPublicationOwnsSnapshot(t *testing.T) {
 	pricingConfigs := []PricingConfig{{ID: 1, Status: StatusActive, GroupIDs: []int64{9}}}
 
@@ -52,13 +129,16 @@ func TestPricingConfigPublicationOwnsSnapshot(t *testing.T) {
 	require.Equal(t, int64(1), cache.pricingConfigByGroupID[9].ID)
 }
 
+// TestBuildModelMappingChain varies requested, group-mapped, and upstream
+// names with and without a mapping flag. Assertions check an empty chain for
+// unchanged identity and the ordered distinct stage text otherwise.
 func TestBuildModelMappingChain(t *testing.T) {
 	tests := []struct {
-		name          string
-		result        GroupMappingResult
-		requestModel  string
-		upstreamModel string
-		want          string
+		name          string             // subtest model chain label
+		result        GroupMappingResult // supplied group mapping metadata
+		requestModel  string             // configured client request name
+		upstreamModel string             // configured upstream execution name
+		want          string             // expected displayed model chain
 	}{
 		{
 			name:          "no mapping, no upstream diff",
@@ -105,12 +185,16 @@ func TestBuildModelMappingChain(t *testing.T) {
 	}
 }
 
+// TestValidateNoConflictingModels supplies exact, case, whitespace,
+// punctuation, overlapping wildcard, disjoint, and empty price-card patterns.
+// It checks rejection of intersecting normalized ranges and acceptance of
+// distinct punctuation identities.
 func TestValidateNoConflictingModels(t *testing.T) {
 	tests := []struct {
-		name        string
-		pricingList []ModelPricingEntry
-		wantErr     bool
-		errContains string
+		name        string              // subtest model conflict label
+		pricingList []ModelPricingEntry // supplied model pattern cards
+		wantErr     bool                // expected model conflict presence
+		errContains string              // expected conflict message fragment
 	}{
 		{
 			name: "no duplicates",
@@ -247,19 +331,21 @@ func TestValidateNoConflictingModels(t *testing.T) {
 		})
 	}
 
-	// Additional sub-case: explicit empty slice
 	t.Run("empty list (empty slice)", func(t *testing.T) {
 		err := validateNoConflictingModels([]ModelPricingEntry{})
 		require.NoError(t, err)
 	})
 }
 
-// TestValidateNoConflictingMappings rejects overlapping exact and wildcard source patterns.
+// TestValidateNoConflictingMappings supplies disjoint and intersecting source
+// patterns plus case and punctuation variants. Assertions check mapping
+// conflicts for overlap and case collisions while dot and hyphen spellings
+// remain distinct.
 func TestValidateNoConflictingMappings(t *testing.T) {
 	tests := []struct {
-		name     string
-		mapping  map[string]string
-		conflict bool
+		name     string            // subtest mapping conflict label
+		mapping  map[string]string // supplied source rewrite map
+		conflict bool              // expected mapping conflict presence
 	}{
 		{"nil", nil, false},
 		{"separate families", map[string]string{"claude-*": "a", "gpt-*": "b"}, false},
@@ -280,11 +366,14 @@ func TestValidateNoConflictingMappings(t *testing.T) {
 	}
 }
 
+// TestConflictsBetween compares prepared exact and wildcard entries for
+// identical, disjoint, prefix-overlapping, and catch-all ranges. Each case
+// checks the resulting conflict boolean.
 func TestConflictsBetween(t *testing.T) {
 	tests := []struct {
-		name string
-		a, b modelEntry
-		want bool
+		name string     // subtest prepared range label
+		a, b modelEntry // first and second prepared ranges
+		want bool       // expected range overlap result
 	}{
 		{
 			name: "exact same",
@@ -337,6 +426,9 @@ func TestConflictsBetween(t *testing.T) {
 	}
 }
 
+// TestGetPricingConfigForGroup_Success looks up a group-associated active
+// configuration and changes the returned name. A subsequent read returns the
+// configured name, demonstrating isolation for that scalar field.
 func TestGetPricingConfigForGroup_Success(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -353,13 +445,15 @@ func TestGetPricingConfigForGroup_Success(t *testing.T) {
 	require.Equal(t, int64(1), result.ID)
 	require.Equal(t, "test-price-config", result.Name)
 
-	// returned value should be a clone
 	result.Name = "mutated"
 	result2, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, "test-price-config", result2.Name)
 }
 
+// TestGetPricingConfigForGroup_InactivePricingConfig supplies a disabled
+// configuration still associated with the requested group. The lookup
+// succeeds with nil configuration rather than exposing the disabled row.
 func TestGetPricingConfigForGroup_InactivePricingConfig(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -374,6 +468,9 @@ func TestGetPricingConfigForGroup_InactivePricingConfig(t *testing.T) {
 	require.Nil(t, result)
 }
 
+// TestGetPricingConfigForGroup_NoPricingConfig requests group 999, which is
+// absent from the supplied configuration's membership list. The lookup
+// returns nil configuration with no error.
 func TestGetPricingConfigForGroup_NoPricingConfig(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -388,6 +485,9 @@ func TestGetPricingConfigForGroup_NoPricingConfig(t *testing.T) {
 	require.Nil(t, result)
 }
 
+// TestGetPricingConfigForGroup_CacheError injects failure into the
+// configuration snapshot read. The initiating lookup returns an error
+// containing the database message and a nil configuration.
 func TestGetPricingConfigForGroup_CacheError(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		listAllFn: func(_ context.Context) ([]PricingConfig, error) {
@@ -402,6 +502,9 @@ func TestGetPricingConfigForGroup_CacheError(t *testing.T) {
 	require.Contains(t, err.Error(), "db connection failed")
 }
 
+// TestGetConfigModelPricing_ExactMatch supplies one explicitly named price
+// card for an active associated configuration. The model lookup returns that
+// card ID and its small input amount within tolerance.
 func TestGetConfigModelPricing_ExactMatch(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -417,9 +520,14 @@ func TestGetConfigModelPricing_ExactMatch(t *testing.T) {
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, int64(100), result.ID)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 15e-6, *result.InputPrice, 1e-12)
 }
 
+// TestGetConfigModelPricing_CaseInsensitive looks up a stored lowercase model
+// name using mixed case. The returned card retains the configured ID,
+// demonstrating case-insensitive price identity.
 func TestGetConfigModelPricing_CaseInsensitive(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -437,6 +545,10 @@ func TestGetConfigModelPricing_CaseInsensitive(t *testing.T) {
 	require.Equal(t, int64(100), result.ID)
 }
 
+// TestGetConfigModelPricing_NormalizesDotsAndHyphens stores a dotted full
+// model ID and queries both dotted and hyphenated forms. Configured and
+// effective lookups reject the hyphenated form and return the dotted
+// per-request card.
 func TestGetConfigModelPricing_NormalizesDotsAndHyphens(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -454,6 +566,8 @@ func TestGetConfigModelPricing_NormalizesDotsAndHyphens(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, int64(100), result.ID)
 	require.Equal(t, BillingModePerRequest, result.BillingMode)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 0.007, *result.PerRequestPrice, 1e-12)
 
 	require.Nil(t, svc.GetEffectiveConfigModelPricing(context.Background(), 10, "claude-opus-4-8"))
@@ -461,9 +575,14 @@ func TestGetConfigModelPricing_NormalizesDotsAndHyphens(t *testing.T) {
 	require.NotNil(t, effective)
 	require.Equal(t, int64(100), effective.ID)
 	require.Equal(t, BillingModePerRequest, effective.BillingMode)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 0.007, *effective.PerRequestPrice, 1e-12)
 }
 
+// TestGetConfigModelPricing_WildcardMatch supplies a trailing-wildcard price
+// card and queries a matching Claude name. The lookup returns the ID of that
+// configured card.
 func TestGetConfigModelPricing_WildcardMatch(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -481,6 +600,9 @@ func TestGetConfigModelPricing_WildcardMatch(t *testing.T) {
 	require.Equal(t, int64(200), result.ID)
 }
 
+// TestGetConfigModelPricing_WildcardFirstMatch seeds overlapping wildcard
+// rows directly with the shorter prefix first. Runtime lookup returns that
+// first card and its price, bypassing write-validation rejection of overlap.
 func TestGetConfigModelPricing_WildcardFirstMatch(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -496,11 +618,15 @@ func TestGetConfigModelPricing_WildcardFirstMatch(t *testing.T) {
 
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-sonnet-4-20250514")
 	require.NotNil(t, result)
-	// "claude-*" is defined first, so it matches first regardless of prefix length
 	require.Equal(t, int64(200), result.ID)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 10e-6, *result.InputPrice, 1e-12)
 }
 
+// TestGetConfigModelPricing_NoMatch supplies a Claude card and queries an
+// unrelated GPT model. The configured price lookup returns nil for the absent
+// model identity.
 func TestGetConfigModelPricing_NoMatch(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -517,6 +643,9 @@ func TestGetConfigModelPricing_NoMatch(t *testing.T) {
 	require.Nil(t, result)
 }
 
+// TestGetConfigModelPricing_InactivePricingConfig supplies a matching card
+// inside a disabled associated configuration. The lookup returns nil, so the
+// inactive row provides no configured override.
 func TestGetConfigModelPricing_InactivePricingConfig(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -533,6 +662,9 @@ func TestGetConfigModelPricing_InactivePricingConfig(t *testing.T) {
 	require.Nil(t, result)
 }
 
+// TestGetConfigModelPricing_UnifiedModelSpace associates two groups with one
+// configuration containing Claude and GPT cards. Both groups can retrieve
+// both families, including the asserted shared card IDs.
 func TestGetConfigModelPricing_UnifiedModelSpace(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -561,6 +693,9 @@ func TestGetConfigModelPricing_UnifiedModelSpace(t *testing.T) {
 	require.NotNil(t, result)
 }
 
+// TestGetConfigModelPricing_ReturnsCopy appends a name and changes the ID in
+// a returned card. A later lookup retains the cached model-list length and
+// ID, checking those selected observations.
 func TestGetConfigModelPricing_ReturnsCopy(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -576,17 +711,18 @@ func TestGetConfigModelPricing_ReturnsCopy(t *testing.T) {
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 
-	// Mutate the returned model slice to test isolation from the cache.
 	result.Models = append(result.Models, "hacked")
 	result.ID = 999
 
-	// A later lookup must return the cached model list unchanged.
 	result2 := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result2)
 	require.Equal(t, 1, len(result2.Models))
 	require.Equal(t, int64(100), result2.ID)
 }
 
+// TestResolveGroupMapping_NoGroupPolicy queries a group with no fixture
+// policy reader and no pricing association. The result retains the requested
+// name, reports no mapping, and carries zero configuration ID.
 func TestResolveGroupMapping_NoGroupPolicy(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -596,13 +732,15 @@ func TestResolveGroupMapping_NoGroupPolicy(t *testing.T) {
 	repo := makeStandardRepo(ch, map[int64]string{10: "anthropic"})
 	svc := newTestPricingConfigService(repo)
 
-	// Group 999 has no associated pricing configuration.
 	result := svc.ResolveGroupMapping(context.Background(), 999, "claude-opus-4")
 	require.Equal(t, "claude-opus-4", result.MappedModel)
 	require.False(t, result.Mapped)
 	require.Equal(t, int64(0), result.PricingConfigID)
 }
 
+// TestResolveGroupMapping_ExactMapping supplies a group policy with one exact
+// rewrite and an active pricing association. The result reports mapping to
+// its configured target and the associated configuration ID.
 func TestResolveGroupMapping_ExactMapping(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-sonnet-4": "claude-sonnet-4-20250514"}}
 
@@ -620,6 +758,9 @@ func TestResolveGroupMapping_ExactMapping(t *testing.T) {
 	require.Equal(t, int64(1), result.PricingConfigID)
 }
 
+// TestResolveGroupMapping_WildcardMapping supplies a catch-all source pattern
+// in the fixture group policy. An arbitrary request name maps to the supplied
+// target and reports mapping applied.
 func TestResolveGroupMapping_WildcardMapping(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"*": "gpt-5.4"}}
 
@@ -636,6 +777,10 @@ func TestResolveGroupMapping_WildcardMapping(t *testing.T) {
 	require.Equal(t, "gpt-5.4", result.MappedModel)
 }
 
+// TestResolveGroupMapping_WildcardFirstMatch supplies two overlapping group
+// mapping patterns directly through the fixture reader. It checks that
+// mapping occurs and accepts either configured target, leaving precedence
+// unasserted.
 func TestResolveGroupMapping_WildcardFirstMatch(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-*": "target2", "claude-sonnet-*": "target1"}}
 
@@ -649,11 +794,12 @@ func TestResolveGroupMapping_WildcardFirstMatch(t *testing.T) {
 
 	result := svc.ResolveGroupMapping(context.Background(), 10, "claude-sonnet-4")
 	require.True(t, result.Mapped)
-	// This assertion checks that an overlapping wildcard resolves to a configured target.
-
 	require.Contains(t, []string{"target1", "target2"}, result.MappedModel)
 }
 
+// TestResolveGroupMapping_NoMapping requests a name outside the supplied
+// policy's exact rewrite. The result retains the request, reports no mapping,
+// and still carries its pricing association ID.
 func TestResolveGroupMapping_NoMapping(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-sonnet-4": "mapped"}}
 
@@ -671,6 +817,9 @@ func TestResolveGroupMapping_NoMapping(t *testing.T) {
 	require.Equal(t, int64(1), result.PricingConfigID)
 }
 
+// TestResolveGroupMapping_DefaultBillingModelSource reads a configuration
+// with an empty stored billing source. The mapping result selects
+// group_mapped metadata for its associated group.
 func TestResolveGroupMapping_DefaultBillingModelSource(t *testing.T) {
 	ch := PricingConfig{
 		ID:                 1,
@@ -685,6 +834,9 @@ func TestResolveGroupMapping_DefaultBillingModelSource(t *testing.T) {
 	require.Equal(t, BillingModelSourceGroupMapped, result.BillingModelSource)
 }
 
+// TestResolveGroupMapping_UpstreamBillingModelSource supplies upstream as an
+// active configuration's billing source. The group's mapping result retains
+// that billing metadata independently of a group rewrite.
 func TestResolveGroupMapping_UpstreamBillingModelSource(t *testing.T) {
 	ch := PricingConfig{
 		ID:                 1,
@@ -699,6 +851,10 @@ func TestResolveGroupMapping_UpstreamBillingModelSource(t *testing.T) {
 	require.Equal(t, BillingModelSourceUpstream, result.BillingModelSource)
 }
 
+// TestResolveGroupMapping_DisabledGroupPolicy uses makePolicyRepo, which
+// derives a disabled fixture policy from the supplied configuration status.
+// The request stays unmapped and its inactive pricing association produces
+// zero configuration ID.
 func TestResolveGroupMapping_DisabledGroupPolicy(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-sonnet-4": "mapped"}}
 
@@ -716,6 +872,9 @@ func TestResolveGroupMapping_DisabledGroupPolicy(t *testing.T) {
 	require.Equal(t, int64(0), result.PricingConfigID) // No associated pricing configuration.
 }
 
+// TestIsModelRestricted_NoPricingConfig queries a group absent from
+// makePolicyRepo's configured membership list. Its missing policy view allows
+// the supplied model despite a restriction on the fixture's associated group.
 func TestIsModelRestricted_NoPricingConfig(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -727,11 +886,13 @@ func TestIsModelRestricted_NoPricingConfig(t *testing.T) {
 	repo := makePolicyRepo(routingPolicy, ch, map[int64]string{10: "anthropic"})
 	svc := newTestPricingConfigService(repo)
 
-	// Group 999 has no associated group policy.
 	restricted := svc.IsModelRestricted(context.Background(), 999, "claude-opus-4")
 	require.False(t, restricted)
 }
 
+// TestIsModelRestricted_RestrictDisabled supplies a fixture policy whose
+// model restriction switch is false. A model absent from the derived
+// allowlist remains permitted.
 func TestIsModelRestricted_RestrictDisabled(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: false}
 
@@ -747,11 +908,16 @@ func TestIsModelRestricted_RestrictDisabled(t *testing.T) {
 	repo := makePolicyRepo(routingPolicy, ch, map[int64]string{10: "anthropic"})
 	svc := newTestPricingConfigService(repo)
 
-	// Even though model is not in pricing, RestrictModels=false
+	// makePolicyRepo supplies the restriction switch independently of its
+	// derived card-name allowlist. Disabling that switch makes the unknown
+	// request permissible.
 	restricted := svc.IsModelRestricted(context.Background(), 10, "nonexistent-model")
 	require.False(t, restricted)
 }
 
+// TestIsModelRestricted_InactivePricingConfig uses makePolicyRepo to derive a
+// disabled policy from a disabled row. The resulting zero policy allows the
+// queried model.
 func TestIsModelRestricted_InactivePricingConfig(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -767,6 +933,9 @@ func TestIsModelRestricted_InactivePricingConfig(t *testing.T) {
 	require.False(t, restricted)
 }
 
+// TestIsModelRestricted_ModelInPricing uses makePolicyRepo to copy price-card
+// names into a fixture allowlist. A configured exact model name is permitted
+// by that supplied policy.
 func TestIsModelRestricted_ModelInPricing(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -786,6 +955,9 @@ func TestIsModelRestricted_ModelInPricing(t *testing.T) {
 	require.False(t, restricted)
 }
 
+// TestIsModelRestricted_QoderBlankPricingIsAllowlist derives fixture
+// permissions from blank and explicitly free price-card names. Both names are
+// admitted because the reader supplies them in its allowlist.
 func TestIsModelRestricted_QoderBlankPricingIsAllowlist(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -807,6 +979,9 @@ func TestIsModelRestricted_QoderBlankPricingIsAllowlist(t *testing.T) {
 	require.False(t, svc.IsModelRestricted(context.Background(), 10, "free-model"))
 }
 
+// TestIsModelRestricted_QoderBlankWildcardDoesNotMaskEffectiveWildcard copies
+// two wildcard names into the fixture policy, one from a blank card. Models
+// matching each supplied pattern remain permitted by that allowlist.
 func TestIsModelRestricted_QoderBlankWildcardDoesNotMaskEffectiveWildcard(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -828,6 +1003,9 @@ func TestIsModelRestricted_QoderBlankWildcardDoesNotMaskEffectiveWildcard(t *tes
 	require.False(t, svc.IsModelRestricted(context.Background(), 10, "qwen3.6-plus"))
 }
 
+// TestIsModelRestricted_ModelInWildcard derives a trailing-wildcard allowlist
+// from the supplied fixture card. The matching Claude request is permitted by
+// the resulting group policy.
 func TestIsModelRestricted_ModelInWildcard(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -847,6 +1025,9 @@ func TestIsModelRestricted_ModelInWildcard(t *testing.T) {
 	require.False(t, restricted)
 }
 
+// TestIsModelRestricted_ModelNotFound derives one exact allowed name from the
+// fixture card and queries another family. The supplied enabled group policy
+// rejects that unmatched model.
 func TestIsModelRestricted_ModelNotFound(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -866,6 +1047,9 @@ func TestIsModelRestricted_ModelNotFound(t *testing.T) {
 	require.True(t, restricted)
 }
 
+// TestIsModelRestricted_CaseInsensitive derives a lowercase exact allowlist
+// entry from the fixture card. A mixed-case request matches that entry and
+// remains permitted.
 func TestIsModelRestricted_CaseInsensitive(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -885,6 +1069,9 @@ func TestIsModelRestricted_CaseInsensitive(t *testing.T) {
 	require.False(t, restricted)
 }
 
+// TestResolveGroupMapping_WithPolicy supplies an enabled restricted fixture
+// policy and an exact group rewrite. The mapping result reports restriction
+// and the expected mapped target.
 func TestResolveGroupMapping_WithPolicy(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-sonnet-4": "claude-sonnet-4-20250514"}, RestrictModels: true}
 
@@ -907,6 +1094,9 @@ func TestResolveGroupMapping_WithPolicy(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-20250514", mapping.MappedModel)
 }
 
+// TestResolveGroupMapping_UnmappedPolicy supplies a restricted fixture policy
+// with no model rewrite. An unknown name stays unchanged while the result
+// still reports that model restriction is enabled.
 func TestResolveGroupMapping_UnmappedPolicy(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -929,6 +1119,9 @@ func TestResolveGroupMapping_UnmappedPolicy(t *testing.T) {
 	require.Equal(t, "unknown-model", mapping.MappedModel)
 }
 
+// TestBuildCache_DBError makes the first snapshot query fail and counts
+// repository reads. The next immediate lookup reuses the empty error
+// snapshot, returning nil without error and without another database call.
 func TestBuildCache_DBError(t *testing.T) {
 	callCount := 0
 	repo := &mockPricingConfigRepository{
@@ -939,20 +1132,25 @@ func TestBuildCache_DBError(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// First call should fail
+	// The initiating lookup sees the storage failure while the service publishes
+	// its short-lived empty error snapshot for subsequent calls.
 	_, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "database down")
 	require.Equal(t, 1, callCount)
 
-	// The short-lived error snapshot is empty; the next lookup returns nil without another error.
+	// Read again immediately so the empty error snapshot is still eligible;
+	// that cache hit should supply no configuration and avoid another storage
+	// attempt.
 	result, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err)
 	require.Nil(t, result)
-	// Should NOT have hit DB again (error-TTL cache is active)
 	require.Equal(t, 1, callCount)
 }
 
+// TestBuildCacheDoesNotReadRetiredGroupPlatform configures a platform callback
+// to return an error and supplies valid configuration rows. Two association
+// lookups return nonnil configurations without surfacing that error.
 func TestBuildCacheDoesNotReadRetiredGroupPlatform(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -972,17 +1170,18 @@ func TestBuildCacheDoesNotReadRetiredGroupPlatform(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// Look up prices through the group's configuration association.
 	result, err := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// The next read reuses the same loaded snapshot.
 	result2, err2 := svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.NoError(t, err2)
 	require.NotNil(t, result2)
 }
 
+// TestBuildCache_MultipleGroupsSamePricingConfig associates three groups with
+// the same priced row. Each model lookup returns the same configured card ID
+// through its group association.
 func TestBuildCache_MultipleGroupsSamePricingConfig(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -1006,6 +1205,9 @@ func TestBuildCache_MultipleGroupsSamePricingConfig(t *testing.T) {
 	}
 }
 
+// TestBuildCache_UnifiedModelSpace associates two differently labeled fixture
+// groups with shared Claude and GPT cards. Every group-family lookup returns
+// a configured card.
 func TestBuildCache_UnifiedModelSpace(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
@@ -1029,13 +1231,19 @@ func TestBuildCache_UnifiedModelSpace(t *testing.T) {
 	require.NotNil(t, svc.GetConfigModelPricing(context.Background(), 20, "claude-opus-4"))
 }
 
+// TestBuildCache_WildcardPreservesConfigOrder seeds three overlapping
+// wildcard cards in increasing prefix length. Queries matching different
+// subsets still select the earliest configured card rather than a later
+// narrower prefix.
 func TestBuildCache_WildcardPreservesConfigOrder(t *testing.T) {
 	ch := PricingConfig{
 		ID:       1,
 		Status:   StatusActive,
 		GroupIDs: []int64{10},
 		ModelPricing: []ModelPricingEntry{
-			// Configuration order: shortest prefix first
+			// Seed overlapping wildcard rows directly so this lookup can exercise
+			// supplied-order resolution even though write validation would reject
+			// the intersecting model ranges.
 			{ID: 100, Models: []string{"c-*"}, InputPrice: testPtrFloat64(1e-6)},
 			{ID: 200, Models: []string{"c-son-*"}, InputPrice: testPtrFloat64(2e-6)},
 			{ID: 300, Models: []string{"c-son-4-*"}, InputPrice: testPtrFloat64(3e-6)},
@@ -1060,6 +1268,9 @@ func TestBuildCache_WildcardPreservesConfigOrder(t *testing.T) {
 	require.Equal(t, int64(100), result.ID)
 }
 
+// TestInvalidateCache counts snapshot reads before and after direct
+// invalidation. Repeated lookups initially reuse one load, while invalidation
+// and the following lookup leave the total at two.
 func TestInvalidateCache(t *testing.T) {
 	callCount := 0
 	ch := PricingConfig{
@@ -1081,25 +1292,27 @@ func TestInvalidateCache(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// First load
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, 1, callCount)
 
-	// Second call should use cache
 	result = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, 1, callCount) // no new DB call
 
-	// Invalidate
+	// Rebuild after clearing the published snapshot so the following lookup can
+	// verify immediate refresh through its repository count rather than waiting
+	// for normal expiry.
 	svc.invalidateCache()
 
-	// Invalidation rebuilds immediately; this read reuses the refreshed snapshot.
 	result = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, 2, callCount) // rebuilt
 }
 
+// TestCreate_Success supplies successful validation, creation, and reload
+// callbacks, with creation assigning ID forty-two. The service returns a
+// nonnil reloaded configuration carrying that assigned ID.
 func TestCreate_Success(t *testing.T) {
 	createdID := int64(42)
 	repo := &mockPricingConfigRepository{
@@ -1131,6 +1344,9 @@ func TestCreate_Success(t *testing.T) {
 	require.Equal(t, createdID, result.ID)
 }
 
+// TestCreate_NameExists makes the name-existence callback report a conflict
+// for the supplied creation name. The service returns ErrPricingConfigExists
+// before proceeding to repository creation.
 func TestCreate_NameExists(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		existsByNameFn: func(_ context.Context, _ string) (bool, error) {
@@ -1146,6 +1362,9 @@ func TestCreate_NameExists(t *testing.T) {
 	require.ErrorIs(t, err, ErrPricingConfigExists)
 }
 
+// TestCreate_GroupConflict reports group ten already associated elsewhere
+// when creation requests groups ten and twenty. The service returns
+// ErrGroupAlreadyInPricingConfig for that supplied membership conflict.
 func TestCreate_GroupConflict(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		existsByNameFn: func(_ context.Context, _ string) (bool, error) {
@@ -1165,6 +1384,9 @@ func TestCreate_GroupConflict(t *testing.T) {
 	require.ErrorIs(t, err, ErrGroupAlreadyInPricingConfig)
 }
 
+// TestCreate_DuplicateModel supplies duplicate exact model names in separate
+// cards during creation. The validation error contains that model name,
+// identifying the conflicting input.
 func TestCreate_DuplicateModel(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		existsByNameFn: func(_ context.Context, _ string) (bool, error) {
@@ -1184,6 +1406,9 @@ func TestCreate_DuplicateModel(t *testing.T) {
 	require.Contains(t, err.Error(), "claude-opus-4")
 }
 
+// TestCreate_InvalidPricingIntervals supplies two overlapping token intervals
+// for one card. Creation returns the interval reason and overlap message for
+// the rejected ranges.
 func TestCreate_InvalidPricingIntervals(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		existsByNameFn: func(_ context.Context, _ string) (bool, error) {
@@ -1209,6 +1434,9 @@ func TestCreate_InvalidPricingIntervals(t *testing.T) {
 	require.Contains(t, err.Error(), "overlap")
 }
 
+// TestCreate_DefaultBillingModelSource omits billing source and captures the
+// configuration passed to Create. The reloaded result contains group_mapped
+// as the default source.
 func TestCreate_DefaultBillingModelSource(t *testing.T) {
 	var capturedPricingConfig *PricingConfig
 	repo := &mockPricingConfigRepository{
@@ -1238,6 +1466,9 @@ func TestCreate_DefaultBillingModelSource(t *testing.T) {
 	require.Equal(t, BillingModelSourceGroupMapped, result.BillingModelSource)
 }
 
+// TestCreate_InvalidatesCache primes one snapshot read before successful
+// creation. Creation refreshes the snapshot, and the next model lookup leaves
+// the observed load count at two.
 func TestCreate_InvalidatesCache(t *testing.T) {
 	loadCount := 0
 	ch := PricingConfig{
@@ -1269,19 +1500,19 @@ func TestCreate_InvalidatesCache(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// Load cache
 	_ = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.Equal(t, 1, loadCount)
 
-	// Create triggers cache invalidation
 	_, err := svc.Create(context.Background(), &CreatePricingConfigInput{Name: "new"})
 	require.NoError(t, err)
 
-	// Create has already rebuilt the cache; the next read reuses it.
 	_ = svc.GetConfigModelPricing(context.Background(), 10, "claude-opus-4")
 	require.Equal(t, 2, loadCount)
 }
 
+// TestUpdate_Success supplies successful update and reload callbacks while
+// requesting name and description changes. It checks successful completion
+// and a nonnil result; reload returns the fixture's unchanged stored value.
 func TestUpdate_Success(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1312,6 +1543,9 @@ func TestUpdate_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
+// TestUpdate_NotFound makes the initial configuration reader return
+// ErrPricingConfigNotFound. The update exposes that sentinel through
+// errors.Is for the absent requested ID.
 func TestUpdate_NotFound(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		getByIDFn: func(_ context.Context, _ int64) (*PricingConfig, error) {
@@ -1327,6 +1561,9 @@ func TestUpdate_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrPricingConfigNotFound)
 }
 
+// TestUpdate_NameConflict supplies a different requested name whose
+// excluding-ID existence callback reports a conflict. The service returns
+// ErrPricingConfigExists for that update.
 func TestUpdate_NameConflict(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1350,6 +1587,9 @@ func TestUpdate_NameConflict(t *testing.T) {
 	require.ErrorIs(t, err, ErrPricingConfigExists)
 }
 
+// TestUpdate_GroupConflict reports a requested replacement group already
+// associated elsewhere. The service returns ErrGroupAlreadyInPricingConfig
+// before applying that conflicting membership change to persistence.
 func TestUpdate_GroupConflict(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1374,6 +1614,9 @@ func TestUpdate_GroupConflict(t *testing.T) {
 	require.ErrorIs(t, err, ErrGroupAlreadyInPricingConfig)
 }
 
+// TestUpdate_DuplicateModel supplies two replacement cards with the same
+// exact model name. The update returns a validation error containing that
+// duplicated name.
 func TestUpdate_DuplicateModel(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1398,6 +1641,9 @@ func TestUpdate_DuplicateModel(t *testing.T) {
 	require.Contains(t, err.Error(), "claude-opus-4")
 }
 
+// TestUpdate_InvalidPricingIntervals supplies an unbounded interval followed
+// by another token range. The update reports invalid intervals and identifies
+// the unbounded-range ordering violation.
 func TestUpdate_InvalidPricingIntervals(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1428,6 +1674,10 @@ func TestUpdate_InvalidPricingIntervals(t *testing.T) {
 	require.Contains(t, err.Error(), "unbounded")
 }
 
+// TestUpdate_InvalidatesPricingConfigCache primes a snapshot and then submits
+// a successful description update request through fixture callbacks. The
+// subsequent lookup leaves the snapshot-load count at two after update
+// refresh.
 func TestUpdate_InvalidatesPricingConfigCache(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1455,7 +1705,6 @@ func TestUpdate_InvalidatesPricingConfigCache(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// Load cache first
 	_, _ = svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Equal(t, 1, loadCount)
 
@@ -1465,11 +1714,13 @@ func TestUpdate_InvalidatesPricingConfigCache(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Update has already refreshed the pricing snapshot.
 	_, _ = svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Equal(t, 2, loadCount)
 }
 
+// TestUpdate_InvalidatesAuthCache supplies two old group associations and a
+// successful description update. Both group IDs appear in the recorded
+// authentication invalidation requests.
 func TestUpdate_InvalidatesAuthCache(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1499,10 +1750,12 @@ func TestUpdate_InvalidatesAuthCache(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Auth cache should be invalidated for both groups
 	require.ElementsMatch(t, []int64{10, 20}, auth.invalidatedGroupIDs)
 }
 
+// TestPricingConfigDelete_Success supplies a successful deletion callback
+// that records invocation. The service returns no error and the observed
+// deletion flag is set.
 func TestPricingConfigDelete_Success(t *testing.T) {
 	deleted := false
 	repo := &mockPricingConfigRepository{
@@ -1524,6 +1777,9 @@ func TestPricingConfigDelete_Success(t *testing.T) {
 	require.True(t, deleted)
 }
 
+// TestPricingConfigDelete_InvalidatesCaches primes prices and supplies two
+// associations before successful deletion. Both group invalidations are
+// recorded and the following lookup observes a second snapshot load.
 func TestPricingConfigDelete_InvalidatesCaches(t *testing.T) {
 	auth := &mockPricingConfigAuthCacheInvalidator{}
 	loadCount := 0
@@ -1544,21 +1800,21 @@ func TestPricingConfigDelete_InvalidatesCaches(t *testing.T) {
 	}
 	svc := newTestPricingConfigServiceWithAuth(repo, auth)
 
-	// Load cache first
 	_, _ = svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Equal(t, 1, loadCount)
 
 	err := svc.Delete(context.Background(), 1)
 	require.NoError(t, err)
 
-	// Auth cache invalidated for both groups
 	require.ElementsMatch(t, []int64{10, 20}, auth.invalidatedGroupIDs)
 
-	// PricingConfig cache invalidated
 	_, _ = svc.GetPricingConfigForGroup(context.Background(), 10)
 	require.Equal(t, 2, loadCount)
 }
 
+// TestPricingConfigDelete_NotFound injects a repository removal error for the
+// requested configuration. The service returns an error containing the
+// repository's not-found message.
 func TestPricingConfigDelete_NotFound(t *testing.T) {
 	repo := &mockPricingConfigRepository{
 		getGroupIDsFn: func(_ context.Context, _ int64) ([]int64, error) {
@@ -1575,6 +1831,9 @@ func TestPricingConfigDelete_NotFound(t *testing.T) {
 	require.Contains(t, err.Error(), "not found")
 }
 
+// TestCreate_NoGroups requests an empty membership list and supplies
+// successful creation and reload callbacks. The assigned ID is returned and
+// the competing-membership query remains uncalled.
 func TestCreate_NoGroups(t *testing.T) {
 	createdID := int64(55)
 	getGroupsInOtherPricingConfigsCalled := false
@@ -1606,10 +1865,14 @@ func TestCreate_NoGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, createdID, result.ID)
-	// GetGroupsInOtherPricingConfigs should NOT have been called (skipped by len(input.GroupIDs) > 0)
+	// An empty membership request has no IDs to conflict with another saved
+	// association, so creation should skip the competing-membership reader.
 	require.False(t, getGroupsInOtherPricingConfigsCalled)
 }
 
+// TestUpdate_StatusOnly captures the write argument while requesting a
+// disabled status. That argument has the disabled status and retains the
+// existing name, even though reload uses the unchanged fixture.
 func TestUpdate_StatusOnly(t *testing.T) {
 	existing := &PricingConfig{
 		ID:     1,
@@ -1639,13 +1902,14 @@ func TestUpdate_StatusOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	// The repository receives the updated configuration status.
 	require.NotNil(t, capturedPricingConfig)
 	require.Equal(t, StatusDisabled, capturedPricingConfig.Status)
-	// Name should remain unchanged
 	require.Equal(t, "test-price-config", capturedPricingConfig.Name)
 }
 
+// TestPricingConfigDelete_GetGroupIDsError fails membership lookup before a
+// successful removal callback. The service still succeeds and the recorded
+// flag shows that deletion was invoked.
 func TestPricingConfigDelete_GetGroupIDsError(t *testing.T) {
 	deleted := false
 	repo := &mockPricingConfigRepository{
@@ -1662,12 +1926,14 @@ func TestPricingConfigDelete_GetGroupIDsError(t *testing.T) {
 	}
 	svc := newTestPricingConfigService(repo)
 
-	// Deletion succeeds even if reading groups for cache invalidation fails.
 	err := svc.Delete(context.Background(), 1)
 	require.NoError(t, err)
 	require.True(t, deleted)
 }
 
+// TestResolveGroupMappingUsesUnifiedModelNames supplies an exact full-name
+// mapping through makePolicyRepo. The request resolves to the configured full
+// target and reports mapping applied.
 func TestResolveGroupMappingUsesUnifiedModelNames(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-opus-4-5": "claude-opus-4-6"}}
 
@@ -1684,6 +1950,9 @@ func TestResolveGroupMappingUsesUnifiedModelNames(t *testing.T) {
 	require.Equal(t, "claude-opus-4-6", result.MappedModel)
 }
 
+// TestResolveGroupMappingUsesExplicitAlias supplies a custom alias and exact
+// target in the fixture group policy. The result returns that target and
+// reports a successful mapping.
 func TestResolveGroupMappingUsesExplicitAlias(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"alias": "anthropic-target"}}
 
@@ -1700,6 +1969,9 @@ func TestResolveGroupMappingUsesExplicitAlias(t *testing.T) {
 	require.Equal(t, "anthropic-target", result.MappedModel)
 }
 
+// TestCheckRestrictedUsesUnifiedAllowlist derives one fixture allowlist name
+// from its shared card. The configured name is admitted and an unrelated
+// request is rejected by that supplied policy.
 func TestCheckRestrictedUsesUnifiedAllowlist(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{RestrictModels: true}
 
@@ -1722,8 +1994,10 @@ func TestCheckRestrictedUsesUnifiedAllowlist(t *testing.T) {
 	require.True(t, restricted, "unknown-model should be restricted for antigravity")
 }
 
+// TestGetConfigModelPricing_AntigravityOwnPricingWorks supplies Claude and
+// Gemini wildcard cards for one associated group. Each query selects its
+// configured card ID and small input amount within tolerance.
 func TestGetConfigModelPricing_AntigravityOwnPricingWorks(t *testing.T) {
-	// A group's prices cover both Claude and Gemini model families.
 	ch := PricingConfig{
 		ID:       1,
 		Status:   StatusActive,
@@ -1736,19 +2010,24 @@ func TestGetConfigModelPricing_AntigravityOwnPricingWorks(t *testing.T) {
 	repo := makeStandardRepo(ch, map[int64]string{10: PlatformAntigravity})
 	svc := newTestPricingConfigService(repo)
 
-	// Claude selects the matching configured price.
 	result := svc.GetConfigModelPricing(context.Background(), 10, "claude-sonnet-4")
 	require.NotNil(t, result)
 	require.Equal(t, int64(600), result.ID)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 15e-6, *result.InputPrice, 1e-12)
 
-	// Gemini selects the matching configured price.
 	result = svc.GetConfigModelPricing(context.Background(), 10, "gemini-2.5-flash")
 	require.NotNil(t, result)
 	require.Equal(t, int64(601), result.ID)
+	// The tiny absolute tolerance compares stored dollar-denominated price
+	// amounts.
 	require.InDelta(t, 2e-6, *result.InputPrice, 1e-12)
 }
 
+// TestToUsageFields_NoMapping supplies unchanged requested and upstream names
+// plus requested-source metadata. Usage fields retain the configuration ID,
+// both model names, and source, while the mapping chain is empty.
 func TestToUsageFields_NoMapping(t *testing.T) {
 	r := GroupMappingResult{
 		MappedModel:        "claude-opus-4",
@@ -1764,6 +2043,9 @@ func TestToUsageFields_NoMapping(t *testing.T) {
 	require.Empty(t, fields.ModelMappingChain)
 }
 
+// TestToUsageFields_WithGroupMapping supplies a changed group target matching
+// the upstream name. Usage fields retain the requested and group-mapped
+// identities and contain a two-stage chain.
 func TestToUsageFields_WithGroupMapping(t *testing.T) {
 	r := GroupMappingResult{
 		MappedModel:        "claude-sonnet-4-20250514",
@@ -1778,6 +2060,9 @@ func TestToUsageFields_WithGroupMapping(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4→claude-sonnet-4-20250514", fields.ModelMappingChain)
 }
 
+// TestToUsageFields_WithUpstreamDifference supplies distinct alias, group
+// target, and upstream names. Usage fields retain both requested and
+// group-mapped names and expose the three-stage chain.
 func TestToUsageFields_WithUpstreamDifference(t *testing.T) {
 	r := GroupMappingResult{
 		MappedModel:        "claude-sonnet-4",
@@ -1791,12 +2076,15 @@ func TestToUsageFields_WithUpstreamDifference(t *testing.T) {
 	require.Equal(t, "my-alias→claude-sonnet-4→claude-sonnet-4-20250514", fields.ModelMappingChain)
 }
 
+// TestValidatePricingBillingMode varies charging modes, explicit amount
+// presence, intervals, negative amounts, and modifiers. It checks accepted
+// combinations and the reported reason text for each invalid supplied card.
 func TestValidatePricingBillingMode(t *testing.T) {
 	tests := []struct {
-		name    string
-		pricing []ModelPricingEntry
-		wantErr bool
-		errMsg  string
+		name    string              // subtest billing validation label
+		pricing []ModelPricingEntry // supplied charging mode cards
+		wantErr bool                // expected validation error presence
+		errMsg  string              // expected validation message fragment
 	}{
 		{
 			name:    "token mode - valid",
@@ -1949,6 +2237,9 @@ func TestValidatePricingBillingMode(t *testing.T) {
 	}
 }
 
+// TestValidateProviderStatsPricingEntries_RejectsFastModeMultiplier supplies
+// a user Fast multiplier of two in a provider-cost card. Validation rejects
+// it with the provider statistics restriction message.
 func TestValidateProviderStatsPricingEntries_RejectsFastModeMultiplier(t *testing.T) {
 	err := (PricingConfigValidation{LoadLocation: time.LoadLocation}).ProviderStatsPricing([]ModelPricingEntry{{
 		BillingMode:        BillingModeToken,
@@ -1959,6 +2250,10 @@ func TestValidateProviderStatsPricingEntries_RejectsFastModeMultiplier(t *testin
 	require.Contains(t, err.Error(), "fast_mode_multiplier is not supported for provider stats pricing")
 }
 
+// TestValidatePricingEntries_RejectsTimePricingForNonTokenMode supplies an
+// explicit per-request amount and populated daily multiplier periods on a
+// per-request card. Entry validation returns the designated unsupported-mode
+// reason.
 func TestValidatePricingEntries_RejectsTimePricingForNonTokenMode(t *testing.T) {
 	err := (PricingConfigValidation{LoadLocation: time.LoadLocation}).PricingEntries([]ModelPricingEntry{{
 		BillingMode:     BillingModePerRequest,
@@ -1972,6 +2267,9 @@ func TestValidatePricingEntries_RejectsTimePricingForNonTokenMode(t *testing.T) 
 	require.Contains(t, err.Error(), "TIME_PRICING_UNSUPPORTED_MODE")
 }
 
+// TestModelPricingAcceptsTimePricing supplies a daily multiplier with an
+// empty billing mode and a valid timezone. Validation succeeds because the
+// omitted mode uses token requirements.
 func TestModelPricingAcceptsTimePricing(t *testing.T) {
 	err := (PricingConfigValidation{LoadLocation: time.LoadLocation}).PricingEntries([]ModelPricingEntry{{
 		Models: []string{"gpt-5"},
@@ -1983,6 +2281,9 @@ func TestModelPricingAcceptsTimePricing(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestResolveGroupMappingUnifiedWildcardsAcrossGroups supplies one fixture
+// policy with Claude and Gemini wildcard rewrites to two groups. Assertions
+// check both families in one group and the Claude rewrite in the other.
 func TestResolveGroupMappingUnifiedWildcardsAcrossGroups(t *testing.T) {
 	routingPolicy := GroupRoutingPolicy{ModelMapping: map[string]string{"claude-*": "claude-override", "gemini-*": "gemini-override"}}
 
@@ -2007,19 +2308,29 @@ func TestResolveGroupMappingUnifiedWildcardsAcrossGroups(t *testing.T) {
 	require.Equal(t, "claude-override", result.MappedModel)
 }
 
+// TestGroupRoutingPolicyCreateMappingConflict directly validates a group
+// policy containing overlapping wildcard sources. It checks the
+// mapping-pattern reason returned by policy validation before any
+// administrative creation is attempted.
 func TestGroupRoutingPolicyCreateMappingConflict(t *testing.T) {
 	err := ValidateGroupRoutingPolicy(GroupRoutingPolicy{ModelMapping: map[string]string{"claude-*": "a", "claude-opus-*": "b"}})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
 }
 
+// TestGroupRoutingPolicyUpdateMappingConflict directly validates the same
+// overlapping wildcard source shape through ValidateGroupRoutingPolicy. The
+// assertion checks its mapping-pattern reason independently of an
+// administrative update call.
 func TestGroupRoutingPolicyUpdateMappingConflict(t *testing.T) {
 	err := ValidateGroupRoutingPolicy(GroupRoutingPolicy{ModelMapping: map[string]string{"claude-*": "a", "claude-opus-*": "b"}})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
 }
 
-// TestPricingConfigModelLookupIndependentOfGroupPlatform checks lookup through configuration associations.
+// TestPricingConfigModelLookupIndependentOfGroupPlatform installs a platform
+// callback that panics and shares two cards between groups. Exact and
+// wildcard prices resolve for both groups without invoking that callback.
 func TestPricingConfigModelLookupIndependentOfGroupPlatform(t *testing.T) {
 	config := PricingConfig{ID: 1, Status: StatusActive, GroupIDs: []int64{10, 20}, ModelPricing: []ModelPricingEntry{{Models: []string{"claude-x"}, InputPrice: testPtrFloat64(3)}, {Models: []string{"gpt-*"}, InputPrice: testPtrFloat64(5)}}}
 	repo := &mockPricingConfigRepository{listAllFn: func(context.Context) ([]PricingConfig, error) { return []PricingConfig{config}, nil }, getGroupPlatformsFn: func(context.Context, []int64) (map[int64]string, error) {
@@ -2032,6 +2343,9 @@ func TestPricingConfigModelLookupIndependentOfGroupPlatform(t *testing.T) {
 	}
 }
 
+// Create invokes createFn with the supplied context and configuration when
+// configured. A nil callback returns success while leaving identity
+// assignment and stored fixture state untouched.
 func (m *mockPricingConfigRepository) Create(ctx context.Context, pricingConfig *PricingConfig) error {
 	if m.createFn != nil {
 		return m.createFn(ctx, pricingConfig)
@@ -2039,6 +2353,9 @@ func (m *mockPricingConfigRepository) Create(ctx context.Context, pricingConfig 
 	return nil
 }
 
+// GetByID delegates to getByIDFn when configured and forwards its result
+// directly. A nil callback returns nil with ErrPricingConfigNotFound, giving
+// absent fixture reads an explicit failure.
 func (m *mockPricingConfigRepository) GetByID(ctx context.Context, id int64) (*PricingConfig, error) {
 	if m.getByIDFn != nil {
 		return m.getByIDFn(ctx, id)
@@ -2046,6 +2363,9 @@ func (m *mockPricingConfigRepository) GetByID(ctx context.Context, id int64) (*P
 	return nil, ErrPricingConfigNotFound
 }
 
+// Update invokes updateFn with the supplied context and working configuration
+// when configured. A nil callback succeeds and records no mutation, so tests
+// install callbacks for observed writes.
 func (m *mockPricingConfigRepository) Update(ctx context.Context, pricingConfig *PricingConfig) error {
 	if m.updateFn != nil {
 		return m.updateFn(ctx, pricingConfig)
@@ -2053,6 +2373,9 @@ func (m *mockPricingConfigRepository) Update(ctx context.Context, pricingConfig 
 	return nil
 }
 
+// Delete invokes deleteFn with the supplied context and ID when configured. A
+// nil callback returns success and leaves fixture state unchanged, so
+// deletion observations require a callback.
 func (m *mockPricingConfigRepository) Delete(ctx context.Context, id int64) error {
 	if m.deleteFn != nil {
 		return m.deleteFn(ctx, id)
@@ -2060,6 +2383,9 @@ func (m *mockPricingConfigRepository) Delete(ctx context.Context, id int64) erro
 	return nil
 }
 
+// List forwards pagination, status, and search to listFn when configured. A
+// nil callback returns nil rows and nil pagination with no error, leaving
+// page metadata absent.
 func (m *mockPricingConfigRepository) List(ctx context.Context, params pagination.PaginationParams, status, search string) ([]PricingConfig, *pagination.PaginationResult, error) {
 	if m.listFn != nil {
 		return m.listFn(ctx, params, status, search)
@@ -2067,6 +2393,9 @@ func (m *mockPricingConfigRepository) List(ctx context.Context, params paginatio
 	return nil, nil, nil
 }
 
+// ListAll returns the supplied callback's configuration rows and error
+// directly. A nil listAllFn returns nil rows with no error, giving cache
+// construction an empty successful input.
 func (m *mockPricingConfigRepository) ListAll(ctx context.Context) ([]PricingConfig, error) {
 	if m.listAllFn != nil {
 		return m.listAllFn(ctx)
@@ -2074,6 +2403,9 @@ func (m *mockPricingConfigRepository) ListAll(ctx context.Context) ([]PricingCon
 	return nil, nil
 }
 
+// ExistsByName forwards the requested name to existsByNameFn when configured.
+// A nil callback reports false with no error, allowing fixture creation to
+// pass the name check.
 func (m *mockPricingConfigRepository) ExistsByName(ctx context.Context, name string) (bool, error) {
 	if m.existsByNameFn != nil {
 		return m.existsByNameFn(ctx, name)
@@ -2081,6 +2413,9 @@ func (m *mockPricingConfigRepository) ExistsByName(ctx context.Context, name str
 	return false, nil
 }
 
+// ExistsByNameExcluding forwards the name and excluded ID to its callback
+// when configured. A nil callback reports false with no error, allowing
+// changed names through fixture validation.
 func (m *mockPricingConfigRepository) ExistsByNameExcluding(ctx context.Context, name string, excludeID int64) (bool, error) {
 	if m.existsByNameExcludingFn != nil {
 		return m.existsByNameExcludingFn(ctx, name, excludeID)
@@ -2088,6 +2423,9 @@ func (m *mockPricingConfigRepository) ExistsByNameExcluding(ctx context.Context,
 	return false, nil
 }
 
+// GetGroupIDs forwards the configuration ID to getGroupIDsFn when configured.
+// A nil callback returns no IDs with no error, leaving group invalidation
+// inputs empty for that fixture.
 func (m *mockPricingConfigRepository) GetGroupIDs(ctx context.Context, pricingConfigID int64) ([]int64, error) {
 	if m.getGroupIDsFn != nil {
 		return m.getGroupIDsFn(ctx, pricingConfigID)
@@ -2095,6 +2433,9 @@ func (m *mockPricingConfigRepository) GetGroupIDs(ctx context.Context, pricingCo
 	return nil, nil
 }
 
+// SetGroupIDs forwards configuration identity and membership storage to
+// setGroupIDsFn when configured. A nil callback succeeds and records no
+// membership changes; callbacks control any observed state mutation.
 func (m *mockPricingConfigRepository) SetGroupIDs(ctx context.Context, pricingConfigID int64, groupIDs []int64) error {
 	if m.setGroupIDsFn != nil {
 		return m.setGroupIDsFn(ctx, pricingConfigID, groupIDs)
@@ -2102,6 +2443,9 @@ func (m *mockPricingConfigRepository) SetGroupIDs(ctx context.Context, pricingCo
 	return nil
 }
 
+// GetPricingConfigIDByGroupID forwards the group ID to its callback when
+// configured. A nil callback returns zero with no error, representing no
+// supplied association identity in this fixture.
 func (m *mockPricingConfigRepository) GetPricingConfigIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	if m.getPricingConfigIDByGroupIDFn != nil {
 		return m.getPricingConfigIDByGroupIDFn(ctx, groupID)
@@ -2109,6 +2453,9 @@ func (m *mockPricingConfigRepository) GetPricingConfigIDByGroupID(ctx context.Co
 	return 0, nil
 }
 
+// GetGroupsInOtherPricingConfigs forwards configuration identity and
+// requested groups to its callback when configured. A nil callback returns no
+// conflicts with no error, allowing supplied memberships through validation.
 func (m *mockPricingConfigRepository) GetGroupsInOtherPricingConfigs(ctx context.Context, pricingConfigID int64, groupIDs []int64) ([]int64, error) {
 	if m.getGroupsInOtherPricingConfigsFn != nil {
 		return m.getGroupsInOtherPricingConfigsFn(ctx, pricingConfigID, groupIDs)
@@ -2116,6 +2463,9 @@ func (m *mockPricingConfigRepository) GetGroupsInOtherPricingConfigs(ctx context
 	return nil, nil
 }
 
+// GetGroupPlatforms forwards group IDs to the supplied platform callback when
+// configured. A nil callback returns no metadata with no error; tests can
+// install a failing callback to detect unwanted reads.
 func (m *mockPricingConfigRepository) GetGroupPlatforms(ctx context.Context, groupIDs []int64) (map[int64]string, error) {
 	if m.getGroupPlatformsFn != nil {
 		return m.getGroupPlatformsFn(ctx, groupIDs)
@@ -2123,6 +2473,9 @@ func (m *mockPricingConfigRepository) GetGroupPlatforms(ctx context.Context, gro
 	return nil, nil
 }
 
+// ListModelPricing forwards the configuration ID to listModelPricingFn when
+// configured. A nil callback returns no cards with no error, giving the
+// caller an empty successful fixture read.
 func (m *mockPricingConfigRepository) ListModelPricing(ctx context.Context, pricingConfigID int64) ([]ModelPricingEntry, error) {
 	if m.listModelPricingFn != nil {
 		return m.listModelPricingFn(ctx, pricingConfigID)
@@ -2130,6 +2483,10 @@ func (m *mockPricingConfigRepository) ListModelPricing(ctx context.Context, pric
 	return nil, nil
 }
 
+// CreateModelPricing forwards the supplied card pointer to
+// createModelPricingFn when configured. A nil callback succeeds and assigns
+// no card identity; callbacks control any observable mutation of that
+// pointer.
 func (m *mockPricingConfigRepository) CreateModelPricing(ctx context.Context, pricing *ModelPricingEntry) error {
 	if m.createModelPricingFn != nil {
 		return m.createModelPricingFn(ctx, pricing)
@@ -2137,6 +2494,9 @@ func (m *mockPricingConfigRepository) CreateModelPricing(ctx context.Context, pr
 	return nil
 }
 
+// UpdateModelPricing forwards the supplied card pointer to
+// updateModelPricingFn when configured. A nil callback succeeds and records
+// no state change, so tests provide callbacks for observed writes.
 func (m *mockPricingConfigRepository) UpdateModelPricing(ctx context.Context, pricing *ModelPricingEntry) error {
 	if m.updateModelPricingFn != nil {
 		return m.updateModelPricingFn(ctx, pricing)
@@ -2144,6 +2504,9 @@ func (m *mockPricingConfigRepository) UpdateModelPricing(ctx context.Context, pr
 	return nil
 }
 
+// DeleteModelPricing forwards the supplied card ID to deleteModelPricingFn
+// when configured. A nil callback succeeds and leaves fixture state
+// unchanged; a callback supplies failure or removal observations.
 func (m *mockPricingConfigRepository) DeleteModelPricing(ctx context.Context, id int64) error {
 	if m.deleteModelPricingFn != nil {
 		return m.deleteModelPricingFn(ctx, id)
@@ -2151,6 +2514,10 @@ func (m *mockPricingConfigRepository) DeleteModelPricing(ctx context.Context, id
 	return nil
 }
 
+// ReplaceModelPricing forwards configuration ID and the supplied card slice
+// to replaceModelPricingFn when configured. A nil callback succeeds without
+// recording replacement, while callbacks control any retained slice
+// ownership.
 func (m *mockPricingConfigRepository) ReplaceModelPricing(ctx context.Context, pricingConfigID int64, pricingList []ModelPricingEntry) error {
 	if m.replaceModelPricingFn != nil {
 		return m.replaceModelPricingFn(ctx, pricingConfigID, pricingList)
@@ -2158,27 +2525,46 @@ func (m *mockPricingConfigRepository) ReplaceModelPricing(ctx context.Context, p
 	return nil
 }
 
+// InvalidateAuthCacheByKey records each credential string passed to the
+// authentication invalidator.
 func (m *mockPricingConfigAuthCacheInvalidator) InvalidateAuthCacheByKey(_ context.Context, key string) {
 	m.invalidatedKeys = append(m.invalidatedKeys, key)
 }
 
+// InvalidateAuthCacheByUserID records each user ID passed to the
+// authentication invalidator.
 func (m *mockPricingConfigAuthCacheInvalidator) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
 	m.invalidatedUserIDs = append(m.invalidatedUserIDs, userID)
 }
 
+// InvalidateAuthCacheByGroupID records each group ID passed to the
+// authentication invalidator.
 func (m *mockPricingConfigAuthCacheInvalidator) InvalidateAuthCacheByGroupID(_ context.Context, groupID int64) {
 	m.invalidatedGroupIDs = append(m.invalidatedGroupIDs, groupID)
 }
 
+// newTestPricingConfigService constructs pricing with a nonnil repository's
+// optional group-policy reader and time.LoadLocation. It installs no
+// authentication invalidator, and the production constructor supplies the
+// time.Now default clock.
 func newTestPricingConfigService(repo *mockPricingConfigRepository) *PricingConfigService {
 	return NewPricingConfigService(repo, nil, PricingConfigOptions{LoadLocation: time.LoadLocation, ReadGroup: repo.readGroup})
 }
 
+// newTestPricingConfigServiceWithAuth constructs pricing with the supplied
+// authentication fixture, policy callback, and time.LoadLocation. Supply a
+// nonnil repository and a nonnil auth pointer when exercising group
+// invalidation; the pointer is passed through an interface to the service.
+// A nil policy callback leaves policy absent, and the constructor supplies
+// its default clock.
 func newTestPricingConfigServiceWithAuth(repo *mockPricingConfigRepository, auth *mockPricingConfigAuthCacheInvalidator) *PricingConfigService {
 	return NewPricingConfigService(repo, auth, PricingConfigOptions{LoadLocation: time.LoadLocation, ReadGroup: repo.readGroup})
 }
 
-// makeStandardRepo supplies the given configuration and group-platform records.
+// makeStandardRepo returns the supplied configuration from ListAll and the
+// supplied platform map from GetGroupPlatforms. The outer row is copied into
+// a new slice, while its nested references and the platform map remain
+// shared.
 func makeStandardRepo(ch PricingConfig, groupPlatforms map[int64]string) *mockPricingConfigRepository {
 	return &mockPricingConfigRepository{
 		listAllFn: func(_ context.Context) ([]PricingConfig, error) {
@@ -2190,9 +2576,21 @@ func makeStandardRepo(ch PricingConfig, groupPlatforms map[int64]string) *mockPr
 	}
 }
 
-// makePolicyRepo supplies routing policies for test group reads.
+// makePolicyRepo supplies the configuration rows and a group reader with a
+// synthetic policy derived from those test rows. It sets Enabled from
+// configuration status, replaces the restriction stage with billing source,
+// and builds AllowedModels from all price-card names.
+//
+// Only IDs in config.GroupIDs receive a group; other reads return nil without
+// error. Each matching read returns policy.Clone so supported policy
+// collections can be edited separately. These fixture derivations supply the
+// test input and do not establish a production dependency between pricing
+// changes and group permissions.
 func makePolicyRepo(policy GroupRoutingPolicy, config PricingConfig, platforms map[int64]string) *mockPricingConfigRepository {
 	repo := makeStandardRepo(config, platforms)
+	// Replace these policy fields together before installing readGroup so every
+	// matching group receives the fixture's chosen enabled state, restriction
+	// stage, and card-name allowlist.
 	policy.Enabled = config.IsActive()
 	policy.RestrictionModelSource = config.BillingModelSource
 	policy.AllowedModels = []string{}
@@ -2208,9 +2606,12 @@ func makePolicyRepo(policy GroupRoutingPolicy, config PricingConfig, platforms m
 	return repo
 }
 
-// testPtrFloat64 creates a nullable price for test price cards.
+// testPtrFloat64 allocates a supplied floating-point amount for nullable test
+// prices.
 func testPtrFloat64(value float64) *float64 { return &value }
 
+// testPtrInt allocates a supplied integer value for nullable token ceilings.
 func testPtrInt(value int) *int { return &value }
 
+// testPtrString allocates a supplied string value for optional update fields.
 func testPtrString(value string) *string { return &value }

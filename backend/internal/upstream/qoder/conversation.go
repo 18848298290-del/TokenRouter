@@ -16,82 +16,143 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// RequestMetadata holds the inbound API key ID, Claude Code marker, and headers.
+// Conversation reuse depends on a provider-scoped key plus matching system,
+// tools, and message fingerprints. A plan records the previous snapshot before
+// inference, and acceptance publishes a versioned state so a later read or
+// output failure can restore the snapshot belonging to that attempt.
+//
+// The store replaces state pointers under its mutex. A rollback compares the
+// complete accepted state, including version and expiry, before restoring or
+// deleting it; a competing commit therefore makes an older rollback stale.
+// Commits retain a longer compatible history and the highest observed token
+// counts. Response aliases resolve to canonical keys, while request parsing can
+// append previous_response_id input or recognize a matching suffix.
+
+// RequestMetadata carries caller isolation and inbound headers used for
+// session-key selection.
 type RequestMetadata struct {
-	APIKeyID   int64
-	ClaudeCode bool
-	Headers    http.Header
+	APIKeyID   int64 // inbound API-key identifier
+	ClaudeCode bool  // Claude Code marker
+	// Headers borrows inbound metadata retained by the caller. Session-key
+	// selection reads it synchronously, so callers coordinate changes with
+	// planning.
+	Headers http.Header // inbound request headers
 }
 
+// QoderConversationStore owns versioned conversation snapshots and aliases
+// protected by Mu.
 type QoderConversationStore struct {
-	Mu    sync.Mutex
-	Ttl   time.Duration
-	Items map[string]*QoderConversationState
+	// Mu protects Ttl, Items, and Aliases during concurrent store use. Plans prune,
+	// resolve, publish, and roll back under this mutex. Treat stored state pointers
+	// and their fingerprint slices as immutable after publication; commits replace
+	// them and copy fingerprints for retained snapshots.
+	Mu    sync.Mutex                         // conversation map mutex
+	Ttl   time.Duration                      // stored state lifetime
+	Items map[string]*QoderConversationState // canonical conversation states
 	// Aliases maps external response or session IDs to canonical conversation keys.
 	// OpenAI Responses uses this map to resolve previous_response_id.
-	Aliases map[string]string
+	Aliases map[string]string // external identifier targets
 }
 
+// QoderConversationState is a published session-history and usage snapshot
+// retained until expiry.
 type QoderConversationState struct {
-	SessionID           string
-	SystemFingerprint   string
-	ToolsFingerprint    string
-	MessageFingerprints []string
-	HasUsage            bool
-	LastUsageInput      int
-	LastUsageOutput     int
-	ExpiresAt           time.Time
-	Version             int64 // Version used to detect stale rollbacks
+	SessionID           string   // upstream session identifier
+	SystemFingerprint   string   // normalized system hash
+	ToolsFingerprint    string   // serialized tool hash
+	MessageFingerprints []string // ordered history hashes
+	// HasUsage records that at least one input or output count was positive.
+	// LastUsageInput and LastUsageOutput retain the selected observations; a
+	// companion count can be zero or negative. Compatible commits keep larger
+	// concurrent values while planning captures the snapshot.
+	HasUsage        bool      // positive usage observed
+	LastUsageInput  int       // input tokens
+	LastUsageOutput int       // output tokens
+	ExpiresAt       time.Time // state expiry time
+	Version         int64     // accepted publication version
 }
 
+// QoderConversationPlan holds one attempt's reuse decision and acceptance
+// rollback snapshots. Each attempt owns its plan and calls mutation and
+// diagnostic methods serially; concurrent attempts share the store.
 type QoderConversationPlan struct {
-	Store                 *QoderConversationStore
-	Key                   string
-	SessionID             string
-	MessagesToSend        []QoderMessage
-	IncludeSystem         bool
-	IncludeTools          bool
-	Reused                bool
-	Fallback              bool
-	SystemFingerprint     string
-	ToolsFingerprint      string
-	MessageFingerprints   []string
-	CommittedFingerprints []string
-	HasPreviousUsage      bool
-	PreviousUsageInput    int
-	PreviousUsageOutput   int
-	MatchStatus           string
-	PreviousMessageCount  int
-	PrefixMessageCount    int
-	StoreItemCount        int
-	PreviousFirstHash     string
-	CurrentFirstHash      string
-	Diagnostics           QoderConversationDiagnostics
-	PreviousState         *QoderConversationState
-	AcceptedState         *QoderConversationState
-	AcceptedCommitted     bool
+	// Store and Key identify the publication target; nil Store or blank Key
+	// disables state writes. SessionID carries the upstream identity selected by
+	// planning for that target.
+	Store     *QoderConversationStore // owning conversation store
+	Key       string                  // canonical conversation key
+	SessionID string                  // upstream session identifier
+	// MessagesToSend borrows the request's message slice. Payload construction can
+	// read and mutate contained text blocks, so callers coordinate sharing with
+	// preparation.
+	MessagesToSend    []QoderMessage // outgoing request messages
+	IncludeSystem     bool           // send system prompt
+	IncludeTools      bool           // send tool definitions
+	Reused            bool           // saved session reused
+	Fallback          bool           // full replay fallback
+	SystemFingerprint string         // normalized system hash
+	ToolsFingerprint  string         // serialized tool hash
+	// MessageFingerprints and CommittedFingerprints can share the planning slice.
+	// Acceptance uses the selected prefix, while completion uses the committed
+	// sequence; store publication copies either sequence before retaining it.
+	MessageFingerprints   []string // ordered history hashes
+	CommittedFingerprints []string // completion history hashes
+	// HasPreviousUsage, PreviousUsageInput, and PreviousUsageOutput capture the
+	// planning snapshot. PreviousUsageSnapshot can combine them with later
+	// compatible stored observations before another publication.
+	HasPreviousUsage     bool                         // captured usage available
+	PreviousUsageInput   int                          // previous input tokens
+	PreviousUsageOutput  int                          // previous output tokens
+	MatchStatus          string                       // reuse decision label
+	PreviousMessageCount int                          // saved history count
+	PrefixMessageCount   int                          // matched prefix count
+	StoreItemCount       int                          // planning state count
+	PreviousFirstHash    string                       // saved first-message hash
+	CurrentFirstHash     string                       // current first-message hash
+	Diagnostics          QoderConversationDiagnostics // payload logging observations
+	// PreviousState is cloned during planning and supplies the restoration target.
+	// Rollback installs it only when the accepted publication still matches current
+	// state.
+	PreviousState *QoderConversationState // pre-attempt state snapshot
+	// AcceptedState is the cloned publication returned by CommitAccepted. Rollback
+	// compares it with current state to reject a later competing commit.
+	AcceptedState *QoderConversationState // accepted publication snapshot
+	// AcceptedCommitted records whether CommitAccepted published AcceptedState.
+	// RollbackAccepted requires both before considering PreviousState, preventing
+	// an unaccepted plan from restoring captured history.
+	AcceptedCommitted bool // acceptance publication marker
 }
 
+// QoderConversationDiagnostics records payload sizes and identity sources for
+// session and usage logs.
 type QoderConversationDiagnostics struct {
-	Protocol             string
-	Model                string
-	KeySource            string
-	RequestID            string
-	OriginalMessages     int
-	SentMessages         int
-	OriginalToolsCount   int
-	SentToolsCount       int
-	OriginalToolsBytes   int
-	SentToolsBytes       int
-	SystemBytes          int
-	SentSystemBytes      int
-	OutboundPayloadBytes int
+	Protocol             string // inbound protocol label
+	Model                string // client model name
+	KeySource            string // session identifier source
+	RequestID            string // outgoing request identifier
+	OriginalMessages     int    // received message count
+	SentMessages         int    // outgoing message count
+	OriginalToolsCount   int    // received tool count
+	SentToolsCount       int    // outgoing tool count
+	OriginalToolsBytes   int    // received tool bytes
+	SentToolsBytes       int    // outgoing tool bytes
+	SystemBytes          int    // received system bytes
+	SentSystemBytes      int    // outgoing system bytes
+	OutboundPayloadBytes int    // complete payload bytes
 }
 
+// QoderConversationPlanOptions controls continuation input handling during
+// saved-session reuse.
 type QoderConversationPlanOptions struct {
-	AppendToExisting bool
+	// AppendToExisting permits continuation input to inherit omitted system/tools
+	// and extend saved history. Execute enables it for Responses requests carrying
+	// previous_response_id.
+	AppendToExisting bool // continuation append mode
 }
 
+// NewQoderConversationStore allocates conversation state and alias maps with the
+// supplied TTL. Nonpositive TTL selects QoderConversationTTL; expiration is
+// checked when planning rather than by a background cleanup goroutine.
 func NewQoderConversationStore(ttl time.Duration) *QoderConversationStore {
 	if ttl <= 0 {
 		ttl = QoderConversationTTL
@@ -103,6 +164,16 @@ func NewQoderConversationStore(ttl time.Duration) *QoderConversationStore {
 	}
 }
 
+// PlanWithOptions selects a session and captures a snapshot for one request's
+// later commits. Nil store or blank key disables reuse and creates a random
+// session. Otherwise planning prunes expired state, resolves aliases, and
+// compares system, tool, and message fingerprints under Mu.
+//
+// A normal prefix match reuses the session while retaining the full supplied
+// messages. AppendToExisting permits missing system/tools to inherit saved
+// fingerprints and unmatched nonempty input to append, unless that input is
+// already a saved suffix. Mismatches produce full-replay plans and keep the
+// previous snapshot for rollback.
 func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any, messages []QoderMessage, options QoderConversationPlanOptions) *QoderConversationPlan {
 	systemFingerprint := QoderSystemFingerprint(system)
 	toolsFingerprint := QoderFingerprintAny(tools)
@@ -135,6 +206,8 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 			PreviousState:         CloneQoderConversationState(state),
 		}
 	}
+	// Disabled reuse has no stable store entry to publish or restore. Give this
+	// request a random session and detach the plan from shared state.
 	if s == nil || strings.TrimSpace(key) == "" {
 		plan := fullPlan(true, "disabled", nil, 0)
 		plan.Store = nil
@@ -152,6 +225,9 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 	if s.Aliases == nil {
 		s.Aliases = make(map[string]string)
 	}
+	// Expired state and its aliases must disappear together before session lookup.
+	// Prune under Mu so a response alias cannot reuse a conversation removed in
+	// this plan.
 	s.PruneExpiredLocked(now)
 	key = s.ResolveAliasLocked(key)
 	storeItemCount := len(s.Items)
@@ -188,6 +264,9 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 		if !options.AppendToExisting || len(messageFingerprints) == 0 {
 			return fullPlan(true, "prefix_mismatch", state, storeItemCount)
 		}
+		// previous_response_id can carry only new input. Recognize a saved suffix
+		// before appending so reconnect replay does not duplicate the continuation
+		// fingerprints.
 		committedFingerprints := append([]string(nil), state.MessageFingerprints...)
 		matchStatus := "reused_previous_response"
 		if QoderConversationHasSuffix(state.MessageFingerprints, messageFingerprints) {
@@ -219,6 +298,9 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 			PreviousState:         CloneQoderConversationState(state),
 		}
 	}
+	// Prefix matching chooses compatible session identity. Retain the entire
+	// submitted history and its system/tools flags here because this branch does
+	// not select a reduced outgoing payload.
 	return &QoderConversationPlan{
 		Store:                 s,
 		Key:                   key,
@@ -244,6 +326,15 @@ func (s *QoderConversationStore) PlanWithOptions(key, system string, tools []any
 	}
 }
 
+// PruneExpiredLocked removes nil or expired states and then aliases lacking a
+// stored target. Nil stores are ignored. Callers hold Mu across this operation so planning observes
+// one state-and-alias view. Expiry uses now.After, leaving a state present at
+// its exact expiry instant.
+//
+// An empty Items map clears every alias. Alias retention checks direct targets
+// in Items, so a link to another alias is removed unless that intermediate key
+// also holds state. Subsequent response lookup can then start a new
+// conversation when its saved target has disappeared.
 func (s *QoderConversationStore) PruneExpiredLocked(now time.Time) {
 	if s == nil {
 		return
@@ -266,6 +357,14 @@ func (s *QoderConversationStore) PruneExpiredLocked(now time.Time) {
 	}
 }
 
+// ResolveAliasLocked follows aliases until a canonical, missing, self, or
+// repeated link is reached. Callers hold Mu while consulting the map. Blank
+// input and nil store return the supplied key.
+//
+// Alias chains can refer through several response IDs to one conversation.
+// Tracking visited keys prevents a cycle from looping forever, and a missing
+// target leaves the last resolved key available for the caller's state lookup.
+// No alias entries are rewritten during resolution.
 func (s *QoderConversationStore) ResolveAliasLocked(key string) string {
 	if s == nil || strings.TrimSpace(key) == "" {
 		return key
@@ -284,6 +383,10 @@ func (s *QoderConversationStore) ResolveAliasLocked(key string) string {
 	}
 }
 
+// AddAlias records a trimmed external ID against a resolved canonical
+// conversation key. Blank, equal, or nil-store inputs are ignored; alias
+// resolution and publication occur together under Mu so the saved target uses
+// one map view.
 func (s *QoderConversationStore) AddAlias(alias, canonical string) {
 	alias = strings.TrimSpace(alias)
 	canonical = strings.TrimSpace(canonical)
@@ -298,10 +401,17 @@ func (s *QoderConversationStore) AddAlias(alias, canonical string) {
 	s.Aliases[alias] = s.ResolveAliasLocked(canonical)
 }
 
+// Commit publishes a nonnil plan's completion fingerprints and optional first
+// usage snapshot. Disabled plans are handled by CommitFingerprints, which owns
+// versioning, compatible-history merging, and stored expiry renewal; a nil
+// plan panics before that delegation.
 func (p *QoderConversationPlan) Commit(usages ...upstream.TokenUsage) {
 	p.CommitFingerprints(p.CommittedFingerprints, usages...)
 }
 
+// AddAlias records an external response identifier for this plan's conversation
+// key. Nil or disabled plans are ignored; the store trims and resolves the
+// canonical target while holding its mutex.
 func (p *QoderConversationPlan) AddAlias(alias string) {
 	if p == nil || p.Store == nil || strings.TrimSpace(p.Key) == "" {
 		return
@@ -309,6 +419,10 @@ func (p *QoderConversationPlan) AddAlias(alias string) {
 	p.Store.AddAlias(alias, p.Key)
 }
 
+// CommitAccepted publishes the fingerprints appropriate to transport acceptance
+// and saves its returned snapshot. Disabled or nil plans produce no accepted
+// state. The saved snapshot and flag let RollbackAccepted identify this
+// attempt's publication if later stream reading fails.
 func (p *QoderConversationPlan) CommitAccepted() {
 	if p == nil {
 		return
@@ -321,6 +435,14 @@ func (p *QoderConversationPlan) CommitAccepted() {
 	p.AcceptedCommitted = true
 }
 
+// RollbackAccepted restores the pre-attempt state when this plan still owns the
+// accepted publication. Nil, disabled, or unaccepted plans are ignored, and the
+// state comparison runs under the store mutex.
+//
+// The current state must equal the accepted snapshot in session, fingerprints,
+// usage, expiry, and version. A later commit changes that snapshot and causes
+// rollback to be skipped. An accepted new conversation is deleted; an existing
+// conversation is replaced with a clone of PreviousState.
 func (p *QoderConversationPlan) RollbackAccepted() {
 	if p == nil || !p.AcceptedCommitted || p.AcceptedState == nil || p.Store == nil || strings.TrimSpace(p.Key) == "" {
 		return
@@ -331,12 +453,16 @@ func (p *QoderConversationPlan) RollbackAccepted() {
 	if current == nil {
 		return
 	}
-	// Roll back the state written by this plan in CommitAccepted.
-	// A later commit from another goroutine makes this rollback stale.
+	// Restore only the publication saved by CommitAccepted. A later commit changes
+	// its version or other state, so this comparison leaves that competing work
+	// intact.
 	if !QoderConversationStateEqual(current, p.AcceptedState) {
 		logger.LegacyPrintf("service.qoder_conversation", "WARN: stale rollback abandoned key=%s accepted_version=%d current_version=%d", p.Key, p.AcceptedState.Version, current.Version)
 		return
 	}
+	// Equality established that this acceptance is still current. Delete a newly
+	// created conversation or restore its captured predecessor so failed work
+	// cannot remain the continuation target.
 	if p.PreviousState == nil {
 		delete(p.Store.Items, p.Key)
 		return
@@ -344,6 +470,9 @@ func (p *QoderConversationPlan) RollbackAccepted() {
 	p.Store.Items[p.Key] = CloneQoderConversationState(p.PreviousState)
 }
 
+// CloneQoderConversationState copies a state and its message-fingerprint slice,
+// returning nil for nil input. The returned snapshot can be retained across
+// later store replacements; strings and value fields need no additional copying.
 func CloneQoderConversationState(state *QoderConversationState) *QoderConversationState {
 	if state == nil {
 		return nil
@@ -353,6 +482,10 @@ func CloneQoderConversationState(state *QoderConversationState) *QoderConversati
 	return &cloned
 }
 
+// QoderConversationStateEqual compares complete state snapshots, including
+// version, expiry, and message order. Two nil states are equal; callers use this
+// comparison to reject rollback when a later publication changed any recorded
+// state.
 func QoderConversationStateEqual(a, b *QoderConversationState) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -378,6 +511,10 @@ func QoderConversationStateEqual(a, b *QoderConversationState) bool {
 	return true
 }
 
+// AcceptedFingerprints returns a copied history appropriate to this plan's
+// transport acceptance. A new plan uses all completion fingerprints; reused
+// plans keep the bounded saved prefix, leaving later completion to publish the
+// full history.
 func (p *QoderConversationPlan) AcceptedFingerprints() []string {
 	if p == nil {
 		return nil
@@ -385,10 +522,21 @@ func (p *QoderConversationPlan) AcceptedFingerprints() []string {
 	if !p.Reused {
 		return append([]string(nil), p.CommittedFingerprints...)
 	}
+	// Clamp the saved prefix count before slicing acceptance history.
 	prefixLen := min(max(p.PrefixMessageCount, 0), len(p.MessageFingerprints))
 	return append([]string(nil), p.MessageFingerprints[:prefixLen]...)
 }
 
+// CommitFingerprints publishes a versioned state and returns an independent
+// snapshot of it. Nil or disabled plans return nil. The first supplied usage
+// updates the snapshot only when its input or output count is positive;
+// otherwise previous usage remains available.
+//
+// Matching session/system/tools state advances the version, retains an existing
+// longer compatible history, and keeps maximum observed input/output counts.
+// Fingerprints are copied before publication and expiry renews from the store
+// TTL. This prevents a shorter concurrent commit from erasing accumulated
+// history and invalidates older acceptance rollbacks.
 func (p *QoderConversationPlan) CommitFingerprints(fingerprints []string, usages ...upstream.TokenUsage) *QoderConversationState {
 	if p == nil || p.Store == nil || strings.TrimSpace(p.Key) == "" {
 		return nil
@@ -410,11 +558,19 @@ func (p *QoderConversationPlan) CommitFingerprints(fingerprints []string, usages
 		existing.SessionID == p.SessionID &&
 		existing.SystemFingerprint == p.SystemFingerprint &&
 		existing.ToolsFingerprint == p.ToolsFingerprint {
-		// Increment the version so an older plan cannot roll back this commit.
+		// A compatible commit advances the publication version before replacing the
+		// state. Earlier accepted snapshots then fail rollback equality even for
+		// identical history.
 		newVersion = existing.Version + 1
+		// A competing compatible plan may have published a longer history. Keep that
+		// extension when this commit's fingerprints are its prefix so progress is not
+		// shortened.
 		if _, ok := QoderConversationPrefixLen(committedFingerprints, existing.MessageFingerprints); ok && len(existing.MessageFingerprints) > len(committedFingerprints) {
 			committedFingerprints = append([]string(nil), existing.MessageFingerprints...)
 		}
+		// Compatible attempts can finish with different usage observations. Retain
+		// the larger count in each category so a later shorter result cannot erase
+		// the diagnostic snapshot.
 		if existing.HasUsage && (!hasUsage || existing.LastUsageInput > lastUsageInput || existing.LastUsageOutput > lastUsageOutput) {
 			hasUsage = true
 			if existing.LastUsageInput > lastUsageInput {
@@ -440,6 +596,15 @@ func (p *QoderConversationPlan) CommitFingerprints(fingerprints []string, usages
 	return CloneQoderConversationState(next)
 }
 
+// PreviousUsageSnapshot combines the plan's captured usage with current
+// compatible store observations. Nil plans return no usage. Disabled plans
+// retain their captured values, while enabled plans read the current state
+// pointer under Mu.
+//
+// Stored states are replaced rather than mutated by commit operations, so the
+// retrieved pointer can be examined after unlocking. A matching session, system,
+// and tool identity contributes its maximum input and output counts. A different
+// identity contributes nothing to this plan's usage snapshot.
 func (p *QoderConversationPlan) PreviousUsageSnapshot() (bool, int, int) {
 	if p == nil {
 		return false, 0, 0
@@ -450,7 +615,9 @@ func (p *QoderConversationPlan) PreviousUsageSnapshot() (bool, int, int) {
 	if p.Store == nil || strings.TrimSpace(p.Key) == "" {
 		return hasUsage, lastUsageInput, lastUsageOutput
 	}
-	// Lock the map read against concurrent CommitFingerprints writes.
+	// CommitFingerprints replaces state pointers under Mu. Read that pointer under
+	// the same mutex, then inspect the immutable published snapshot after releasing
+	// it.
 	p.Store.Mu.Lock()
 	existing := p.Store.Items[p.Key]
 	p.Store.Mu.Unlock()
@@ -470,6 +637,9 @@ func (p *QoderConversationPlan) PreviousUsageSnapshot() (bool, int, int) {
 	return hasUsage, lastUsageInput, lastUsageOutput
 }
 
+// Log records payload sizes and conversation decisions for this plan's
+// diagnostics. Nil plans are ignored. It stores the computed diagnostics on the
+// plan and hashes the conversation key before logging request metadata.
 func (p *QoderConversationPlan) Log(metadata RequestMetadata, providerID int64, protocol, model, keySource string, request QoderPayloadRequest, payload map[string]any) {
 	if p == nil {
 		return
@@ -531,10 +701,20 @@ func (p *QoderConversationPlan) Log(metadata RequestMetadata, providerID int64, 
 	)
 }
 
+// RecordUsage returns the supplied upstream token usage unchanged for completion
+// accounting.
 func (p *QoderConversationPlan) RecordUsage(upstreamUsage upstream.TokenUsage) upstream.TokenUsage {
 	return upstreamUsage
 }
 
+// PreviousUsageForRecord reads the captured usage and any current compatible
+// history under Mu. Nil plans report no previous usage; disabled plans return
+// their captured values.
+//
+// Current state must have usage, match the session ID, and form a prefix of the
+// plan's message fingerprints. Only then are larger stored input/output counts
+// considered. These observations support logging heuristics and do not subtract
+// prior counts from the usage returned by RecordUsage.
 func (p *QoderConversationPlan) PreviousUsageForRecord() (int, int, bool) {
 	if p == nil {
 		return 0, 0, false
@@ -563,6 +743,16 @@ func (p *QoderConversationPlan) PreviousUsageForRecord() (int, int, bool) {
 	return input, output, true
 }
 
+// ShouldTreatUsageAsCumulative reports a logging suspicion when session reuse
+// combines a reduced payload with rising input usage. Nil or unreused plans,
+// absent previous usage, and nonpositive previous input return false. A larger
+// new input count qualifies only when sent messages, tool bytes, or system
+// bytes decreased from the request.
+//
+// LogUsage reports this flag with the counts used to derive it. The heuristic
+// observes payload reduction; RecordUsage returns the supplied usage
+// unchanged, so this decision contributes diagnostics rather than a
+// subtraction from completion accounting.
 func (p *QoderConversationPlan) ShouldTreatUsageAsCumulative(usage upstream.TokenUsage, previousInput int, hasPrevious bool) bool {
 	if p == nil || !p.Reused || !hasPrevious || previousInput <= 0 || usage.InputTokens <= previousInput {
 		return false
@@ -571,6 +761,10 @@ func (p *QoderConversationPlan) ShouldTreatUsageAsCumulative(usage upstream.Toke
 	return diag.SentMessages < diag.OriginalMessages || diag.SentToolsBytes < diag.OriginalToolsBytes || diag.SentSystemBytes < diag.SystemBytes
 }
 
+// LogUsage records upstream and recorded token counts with conversation
+// diagnostics. Nil plans are ignored. PreviousUsageForRecord and the reduction
+// heuristic add diagnostic context, while recorded usage values remain supplied
+// by the execution caller.
 func (p *QoderConversationPlan) LogUsage(metadata RequestMetadata, providerID int64, upstreamUsage upstream.TokenUsage, recordUsage upstream.TokenUsage) {
 	if p == nil {
 		return
@@ -608,6 +802,16 @@ func (p *QoderConversationPlan) LogUsage(metadata RequestMetadata, providerID in
 	)
 }
 
+// QoderConversationKey selects a provider-scoped key and names the source used
+// for reuse. Explicit body sessions win unless generated from the current
+// response; prompt-cache keys, Anthropic metadata session IDs, headers, and
+// Claude Code stable prefixes follow. A generated response session is considered
+// after those stable sources.
+//
+// API-key isolation is applied to every client-supplied session source, and
+// provider scoping keeps the same caller session separate across accounts. A
+// request lacking all stable sources receives a random request key. The protocol
+// argument is currently unused in this selection.
 func QoderConversationKey(metadata RequestMetadata, providerID int64, protocol string, request QoderPayloadRequest) (string, string) {
 	if value := strings.TrimSpace(request.ExplicitSession); value != "" && !request.AutoResponseSession {
 		return QoderProviderScopedConversationKey(providerID, QoderConversationExplicitSessionKey(metadata, value)), "body_session"
@@ -632,6 +836,10 @@ func QoderConversationKey(metadata RequestMetadata, providerID int64, protocol s
 	return QoderProviderScopedConversationKey(providerID, "request:"+uuid.NewString()), "request"
 }
 
+// QoderProviderScopedConversationKey prefixes a trimmed key with a positive
+// provider identifier. Blank keys or nonpositive provider IDs return the trimmed
+// key, allowing disabled or unscoped callers to retain their supplied
+// identifier.
 func QoderProviderScopedConversationKey(providerID int64, key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" || providerID <= 0 {
@@ -640,10 +848,18 @@ func QoderProviderScopedConversationKey(providerID int64, key string) string {
 	return fmt.Sprintf("account:%d:%s", providerID, key)
 }
 
+// QoderConversationExplicitSessionKey labels the API-key isolation digest of a
+// body session value. IsolateSessionID trims the value; blank input produces
+// the body_session label with an empty digest for the conversation caller to
+// handle.
 func QoderConversationExplicitSessionKey(metadata RequestMetadata, value string) string {
 	return "body_session:" + upstream.IsolateSessionID(metadata.APIKeyID, value)
 }
 
+// QoderHeaderSessionID returns the first nonempty recognized inbound
+// conversation header. Header values are trimmed and checked in the fixed
+// session/conversation order; nil headers or absent recognized values return
+// empty text.
 func QoderHeaderSessionID(headers http.Header) string {
 	if headers == nil {
 		return ""
@@ -656,6 +872,9 @@ func QoderHeaderSessionID(headers http.Header) string {
 	return ""
 }
 
+// QoderConversationPrefixLen reports whether previous is an ordered prefix of
+// current. An empty previous slice matches with length zero, while longer or
+// differing histories return false for the planner's replay decision.
 func QoderConversationPrefixLen(previous, current []string) (int, bool) {
 	if len(previous) > len(current) {
 		return 0, false
@@ -668,6 +887,9 @@ func QoderConversationPrefixLen(previous, current []string) (int, bool) {
 	return len(previous), true
 }
 
+// QoderConversationHasSuffix reports whether full ends with the supplied
+// fingerprint sequence. An empty or longer suffix returns false, so append
+// planning can distinguish a repeated nonempty continuation from new input.
 func QoderConversationHasSuffix(full, suffix []string) bool {
 	if len(suffix) == 0 || len(suffix) > len(full) {
 		return false
@@ -681,6 +903,9 @@ func QoderConversationHasSuffix(full, suffix []string) bool {
 	return true
 }
 
+// FirstQoderFingerprint returns the first ordered history hash for
+// diagnostics. An absent or empty slice returns empty text so logs can
+// distinguish a missing comparison endpoint from a present message.
 func FirstQoderFingerprint(fingerprints []string) string {
 	if len(fingerprints) == 0 {
 		return ""
@@ -688,14 +913,22 @@ func FirstQoderFingerprint(fingerprints []string) string {
 	return fingerprints[0]
 }
 
+// QoderJSONSize returns the byte length of compact JSON for diagnostic sizing.
+// Unmarshalable values use their formatted text length, allowing diagnostic
+// logging to continue even when a custom value cannot be encoded.
 func QoderJSONSize(value any) int {
 	body, err := json.Marshal(value)
 	if err != nil {
+		// Diagnostic sizing must still return a number for custom values that cannot
+		// be encoded. Measure their formatted text for this logging observation.
 		return len([]byte(fmt.Sprint(value)))
 	}
 	return len(body)
 }
 
+// QoderSessionIDForConversation derives a deterministic UUID from the key and
+// ordered fingerprints. System, tools, and messages participate in the joined
+// input, so a full-replay plan can identify the same normalized request history.
 func QoderSessionIDForConversation(key, systemFingerprint, toolsFingerprint string, messageFingerprints []string) string {
 	var b strings.Builder
 	_, _ = b.WriteString(key)

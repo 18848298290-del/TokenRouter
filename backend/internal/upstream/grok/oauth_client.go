@@ -21,29 +21,61 @@ import (
 	wiregrok "github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// OAuth token exchanges use a validated endpoint pinned when OAuthClient is
+// constructed. Invalid token overrides select the trusted default before
+// codes or refresh tokens are sent. Password authorization follows a separate
+// accounts-session path and returns a temporary SSO token that its caller
+// converts and keeps out of stored provider credentials.
+//
+// Error handling separates explicit entitlement denial from other forbidden
+// token responses. Quota-exhaustion phrases take precedence over denial
+// markers so those responses retain the ordinary exchange failure category.
+// SSO conversion maps typed status and context errors separately and uses a
+// client that exposes redirects to the device flow. CAPTCHA task polling uses
+// the request context and a local polling deadline, while each network
+// exchange depends on its client's timeout and cancellation handling.
+
+// Password login uses fixed accounts and Turnstile task endpoints; these values
+// locate its session exchange and the CAPTCHA provider's create and polling requests.
 const (
-	providersBaseURL     = "https://accounts.x.ai"
-	loginRPCEndpoint     = providersBaseURL + "/api/rpc"
-	turnstileWebsiteURL  = providersBaseURL
-	turnstileWebsiteKey  = "0x4AAAAAAAhr9JGVDZbrZOo0"
-	yesCaptchaCreateTask = "https://api.yescaptcha.com/createTask"
-	yesCaptchaGetResult  = "https://api.yescaptcha.com/getTaskResult"
+	providersBaseURL     = "https://accounts.x.ai"                    // accounts session service origin
+	loginRPCEndpoint     = providersBaseURL + "/api/rpc"              // accounts session RPC endpoint
+	turnstileWebsiteURL  = providersBaseURL                           // Turnstile challenge site URL
+	turnstileWebsiteKey  = "0x4AAAAAAAhr9JGVDZbrZOo0"                 // Turnstile challenge site key
+	yesCaptchaCreateTask = "https://api.yescaptcha.com/createTask"    // CAPTCHA task creation endpoint
+	yesCaptchaGetResult  = "https://api.yescaptcha.com/getTaskResult" // CAPTCHA task polling endpoint
 )
 
+// OAuthClient performs token grants against its construction-time validated
+// xAI token endpoint.
 type OAuthClient struct {
-	tokenURL string
+	// tokenURL is selected and validated by NewOAuthClient once. Later exchanges
+	// reuse it, so environment changes require constructing another client to
+	// select a new endpoint.
+	tokenURL string // pinned OAuth token endpoint
 }
 
+// NewOAuthClient pins the currently validated token endpoint for later
+// grants. An invalid or blank effective endpoint selects DefaultTokenURL,
+// preventing a rejected environment override from receiving codes or refresh
+// tokens through this client.
 func NewOAuthClient() *OAuthClient {
-	// Validate overrides before sending authorization codes or refresh tokens.
+	// Token grants reuse this construction-time endpoint. Validate it before
+	// credential-bearing requests so an environment override must pass the issuer policy.
 	tokenURL, err := ValidatedTokenURL()
 	if err != nil || strings.TrimSpace(tokenURL) == "" {
-		// An invalid override uses the trusted default rather than the raw environment URL.
+		// Invalid configuration cannot become a token destination through this client;
+		// the known default supplies a usable issuer endpoint after the validation failure.
 		tokenURL = DefaultTokenURL
 	}
 	return &OAuthClient{tokenURL: tokenURL}
 }
 
+// ExchangeCode submits an authorization-code form using the client's pinned
+// token endpoint and supplied request context/proxy. Blank clientID selects
+// EffectiveClientID; redirect selection uses EffectiveRedirectURI. Callers
+// verify authorization state and retain the matching code verifier before
+// invoking this exchange.
 func (c *OAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*TokenResponse, error) {
 	client, err := createGrokReqClient(proxyURL)
 	if err != nil {
@@ -78,6 +110,10 @@ func (c *OAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier, redi
 	return &tokenResp, nil
 }
 
+// RefreshToken submits the supplied refresh token using the pinned endpoint
+// and caller context/proxy. Blank clientID selects EffectiveClientID. The
+// returned token fields are decoded exchange data; callers coordinate refresh
+// races and persist successful credential rotation.
 func (c *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL, clientID string) (*TokenResponse, error) {
 	client, err := createGrokReqClient(proxyURL)
 	if err != nil {
@@ -110,8 +146,10 @@ func (c *OAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyURL, 
 	return &tokenResp, nil
 }
 
-// LoginWithPassword authenticates with accounts.x.ai and returns a temporary SSO cookie.
-// Callers must keep passwords and SSO cookies out of provider credentials and logs.
+// LoginWithPassword solves Turnstile, creates an accounts session, and
+// extracts its temporary SSO cookie. Callers supply cancellation and enforce
+// the password-authorization feature setting before invocation, then keep
+// passwords and returned SSO tokens out of provider credentials and logs.
 func (c *OAuthClient) LoginWithPassword(ctx context.Context, email, password, proxyURL string) (*wiregrok.PasswordLoginResult, error) {
 	turnstileToken, err := solveTurnstile(ctx)
 	if err != nil {
@@ -135,6 +173,10 @@ func (c *OAuthClient) LoginWithPassword(ctx context.Context, email, password, pr
 	}, nil
 }
 
+// ConvertSSOToBuild converts a supplied SSO token using a proxy-aware client
+// and an overall SSOConversionTimeout child context. It maps device-flow
+// errors into application categories; callers consume returned token fields
+// and coordinate any provider credential persistence.
 func (c *OAuthClient) ConvertSSOToBuild(ctx context.Context, ssoToken, proxyURL string) (*TokenResponse, error) {
 	client, err := createGrokSSOHTTPClient(proxyURL)
 	if err != nil {
@@ -150,6 +192,10 @@ func (c *OAuthClient) ConvertSSOToBuild(ctx context.Context, ssoToken, proxyURL 
 	return tokenResp, nil
 }
 
+// createGrokReqClient obtains the shared req client for a supplied proxy and
+// sixty-second request timeout. Shared-client construction errors propagate;
+// OAuth grant methods attach credential form values to individual requests
+// while client selection uses its proxy and timeout options.
 func createGrokReqClient(proxyURL string) (*req.Client, error) {
 	return sharedhttp.GetSharedReqClient(sharedhttp.ReqClientOptions{
 		ProxyURL: proxyURL,
@@ -157,6 +203,10 @@ func createGrokReqClient(proxyURL string) (*req.Client, error) {
 	})
 }
 
+// createGrokSSOHTTPClient obtains a shared proxy client, then copies its
+// client configuration to expose redirects without following them. The copied
+// client retains its transport and timeout settings, allowing the device flow
+// to validate each redirect itself.
 func createGrokSSOHTTPClient(proxyURL string) (*http.Client, error) {
 	client, err := sharedhttp.GetClient(sharedhttp.Options{
 		ProxyURL:              proxyURL,
@@ -167,12 +217,18 @@ func createGrokSSOHTTPClient(proxyURL string) (*http.Client, error) {
 		return nil, err
 	}
 	clone := *client
+	// The device flow handles redirects and cookies itself. Change the copied
+	// client's redirect policy while retaining the shared transport for the configured proxy.
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
 	return &clone, nil
 }
 
+// grokSSOConversionError maps known SSO sentinels, typed HTTP failures, and
+// context cancellation/deadlines to application errors. Generic polling-
+// timeout text remains an ordinary conversion failure; only matched context
+// errors select the gateway-timeout category.
 func grokSSOConversionError(err error) error {
 	if errors.Is(err, ErrSSOUnauthorized) {
 		return infraerrors.New(infraerrors.Category(http.StatusUnauthorized), "GROK_SSO_UNAUTHORIZED", "Grok Web SSO cookie is invalid or expired")
@@ -193,6 +249,10 @@ func grokSSOConversionError(err error) error {
 	return infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_SSO_CONVERSION_FAILED", "xAI SSO conversion failed: %v", err)
 }
 
+// grokOAuthStatusError builds a redacted exchange error with upstream
+// status/body context. Only a 403 whose body passes explicit entitlement
+// classification changes the category and reason to entitlement denial; nil
+// responses retain status zero and ordinary failure metadata.
 func grokOAuthStatusError(code, message string, resp *req.Response) error {
 	statusCode := http.StatusBadGateway
 	errorCode := code
@@ -209,10 +269,21 @@ func grokOAuthStatusError(code, message string, resp *req.Response) error {
 	return infraerrors.Newf(infraerrors.Category(statusCode), errorCode, "%s: status %d, body: %s", message, upstreamStatus, body)
 }
 
+// grokOAuthHasExplicitEntitlementDenial recognizes configured denial markers
+// and phrases after lowercasing the body. Generic forbidden text returns
+// false. Quota/spending exhaustion phrases are checked first and suppress
+// denial even when access_denied or subscription-required markers also
+// appear.
+//
+// The JSON-marker check removes whitespace before matching the configured
+// error, code, or reason string values. This classifier is text-based and
+// does not validate a JSON schema or credential status; grokOAuthStatusError
+// additionally requires HTTP 403 before using the result for entitlement
+// classification.
 func grokOAuthHasExplicitEntitlementDenial(body string) bool {
 	lower := strings.ToLower(body)
-	// Quota exhaustion can accompany a generic access_denied marker and is recoverable.
-	// Check quota messages before classifying refresh failures as entitlement denials.
+	// Exhaustion text can coexist with denial markers. Give it precedence so
+	// status mapping leaves the exchange failure available to the caller's quota recovery rules.
 	for _, phrase := range []string{
 		"spending limit",
 		"run out of credits",
@@ -237,6 +308,10 @@ func grokOAuthHasExplicitEntitlementDenial(body string) bool {
 		strings.Contains(lower, "no active grok subscription")
 }
 
+// createGrokHTTPClient constructs a fresh HTTP client with a parsed optional
+// proxy and a 120-second request timeout. noRedirect exposes redirect
+// responses to the caller; when false, normal client redirect handling
+// remains enabled for that client.
 func createGrokHTTPClient(proxyURL string, noRedirect bool) (*http.Client, error) {
 	transport := &http.Transport{}
 	if strings.TrimSpace(proxyURL) != "" {
@@ -255,6 +330,18 @@ func createGrokHTTPClient(proxyURL string, noRedirect bool) (*http.Client, error
 	return client, nil
 }
 
+// solveTurnstile creates a proxyless CAPTCHA task using the first nonblank
+// YESCAPTCHA_CLIENT_KEY or YESCAPTCHA_API_KEY. Missing keys and rejected task
+// responses return application errors. Polling waits five seconds between
+// attempts, honors ctx during waits, and retries transient poll build,
+// transport, or decode failures.
+//
+// A local ninety-second deadline is checked before each polling wait after
+// task creation. An admitted wait can start its request after that deadline;
+// the deadline does not cancel http.DefaultClient exchanges. Callers provide
+// a bounded context for network cancellation. A ready response needs nonblank
+// solution text. Explicit poll ErrorID ends immediately, and loop exhaustion
+// yields the CAPTCHA timeout error.
 func solveTurnstile(ctx context.Context) (string, error) {
 	clientKey := strings.TrimSpace(os.Getenv("YESCAPTCHA_CLIENT_KEY"))
 	if clientKey == "" {
@@ -284,10 +371,12 @@ func solveTurnstile(ctx context.Context) (string, error) {
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_CAPTCHA_FAILED", "create captcha task failed: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep the task identity from creation for all later polls so readiness
+	// and error observations cannot be attributed to another CAPTCHA task.
 	var createResp struct {
-		ErrorID          int    `json:"errorId"`
-		TaskID           string `json:"taskId"`
-		ErrorDescription string `json:"errorDescription"`
+		ErrorID          int    `json:"errorId"`          // CAPTCHA service error identifier
+		TaskID           string `json:"taskId"`           // created CAPTCHA task identifier
+		ErrorDescription string `json:"errorDescription"` // CAPTCHA service error text
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_CAPTCHA_FAILED", "decode captcha create response failed: %v", err)
@@ -295,6 +384,8 @@ func solveTurnstile(ctx context.Context) (string, error) {
 	if createResp.ErrorID != 0 || strings.TrimSpace(createResp.TaskID) == "" {
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_CAPTCHA_FAILED", "captcha create failed: %s", createResp.ErrorDescription)
 	}
+	// Check the local budget before each wait. A wait already admitted can
+	// issue its next request after expiry; ctx still controls network cancellation.
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
@@ -308,24 +399,33 @@ func solveTurnstile(ctx context.Context) (string, error) {
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, yesCaptchaGetResult, bytes.NewReader(body))
 		if err != nil {
+			// Poll construction failure leaves the created task pending. Retry within
+			// the local deadline because no solution or explicit task rejection was observed.
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			// A transient poll exchange supplies no task outcome. Keep polling until
+			// readiness, explicit task error, caller cancellation, or the local deadline decides completion.
 			continue
 		}
 		var pollResp struct {
-			ErrorID          int    `json:"errorId"`
-			Status           string `json:"status"`
-			ErrorDescription string `json:"errorDescription"`
-			Solution         struct {
-				Token string `json:"token"`
+			ErrorID int `json:"errorId"` // CAPTCHA service error identifier
+			// Status, Solution, and its Token jointly describe readiness. ErrorID is
+			// checked first; readiness returns a token only when Status is ready and Token
+			// is nonblank, leaving other states available for another poll.
+			Status           string   `json:"status"`           // CAPTCHA task progress status
+			ErrorDescription string   `json:"errorDescription"` // CAPTCHA service error text
+			Solution         struct { // CAPTCHA task solution object
+				Token string `json:"token"` // solved Turnstile token text
 			} `json:"solution"`
 		}
 		err = json.NewDecoder(resp.Body).Decode(&pollResp)
 		_ = resp.Body.Close()
 		if err != nil {
+			// An undecodable poll body supplies no usable status; the task can still
+			// be pending, so the next bounded poll may recover its completed solution.
 			continue
 		}
 		if pollResp.ErrorID != 0 {
@@ -338,6 +438,10 @@ func solveTurnstile(ctx context.Context) (string, error) {
 	return "", infraerrors.New(infraerrors.Category(http.StatusGatewayTimeout), "GROK_OAUTH_CAPTCHA_TIMEOUT", "captcha solve timed out")
 }
 
+// createGrokPasswordSession posts email/password and Turnstile credentials
+// through the supplied client and ctx. Callers pass the redirect-suppressed
+// password client. HTTP and decoded login errors are redacted; success
+// requires a nonblank cookieSetterUrl for later validation.
 func createGrokPasswordSession(ctx context.Context, client *http.Client, email, password, turnstileToken string) (string, error) {
 	payload, err := json.Marshal(map[string]any{
 		"rpc": "createSession",
@@ -371,13 +475,15 @@ func createGrokPasswordSession(ctx context.Context, client *http.Client, email, 
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_PASSWORD_LOGIN_FAILED", "password login request failed: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Discard read errors and retain available bytes for status diagnostics or
+	// JSON decoding. A successful status still needs decodable login fields below.
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_PASSWORD_LOGIN_FAILED", "password login returned status %d: %s", resp.StatusCode, logredact.RedactText(string(body)))
 	}
 	var loginResp struct {
-		CookieSetterURL string `json:"cookieSetterUrl"`
-		Error           string `json:"error"`
+		CookieSetterURL string `json:"cookieSetterUrl"` // accounts cookie setter URL
+		Error           string `json:"error"`           // accounts login error text
 	}
 	if err := json.Unmarshal(body, &loginResp); err != nil {
 		return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_PASSWORD_LOGIN_FAILED", "decode password login response failed: %v", err)
@@ -391,6 +497,11 @@ func createGrokPasswordSession(ctx context.Context, client *http.Client, email, 
 	return loginResp.CookieSetterURL, nil
 }
 
+// extractGrokSSOToken validates the accounts cookie-setter URL and reads
+// the first direct Set-Cookie value beginning sso=. Callers disable automatic
+// redirects. The body closes on return, and no matching cookie returns a
+// login failure. A matching cookie can yield empty trimmed text with nil
+// error; the authorization caller rejects that empty SSO result.
 func extractGrokSSOToken(ctx context.Context, client *http.Client, cookieSetterURL string) (string, error) {
 	safeURL, err := validateGrokCookieSetterURL(cookieSetterURL)
 	if err != nil {
@@ -419,6 +530,10 @@ func extractGrokSSOToken(ctx context.Context, client *http.Client, cookieSetterU
 	return "", infraerrors.Newf(infraerrors.Category(http.StatusBadGateway), "GROK_OAUTH_PASSWORD_LOGIN_FAILED", "no sso cookie found in response (status=%d)", resp.StatusCode)
 }
 
+// validateGrokCookieSetterURL requires an HTTPS accounts.x.ai URL with no
+// userinfo, nonempty port, fragment, or opaque form. It retains path and
+// query for the cookie setter; transport callers separately apply request and
+// DNS policy as needed.
 func validateGrokCookieSetterURL(rawURL string) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {

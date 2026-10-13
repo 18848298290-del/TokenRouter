@@ -10,17 +10,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// ForbiddenObservation carries the upstream 403 classification used by provider health rules.
+// A 403 classification can identify a quota-like concurrency response, an HTML
+// denial or a provider account error. Platform and classification determine
+// which health scope applies: Antigravity uses its classified account
+// diagnostic, Kimi concurrency takes its temporary command first, and OpenAI/CN
+// HTML observations leave this provider-health decision unhandled.
+//
+// Diagnostic construction prefers an adapter message, then a bounded body
+// representation, then a supplied fallback. JSON bodies are compacted before
+// bounded line conversion; adapter messages are trimmed at their edges and
+// otherwise remain untruncated. Antigravity validation can append its
+// verification URL; other classifications keep ordinary diagnostics. The
+// selected health command owns policy, storage and logged outcomes, so handled
+// results remain separate from confirmation of a persisted row.
+
+// ForbiddenObservation holds upstream denial evidence and adapter
+// classifications for provider health selection.
 type ForbiddenObservation struct {
-	Message                  string
-	Body                     []byte
-	HTML                     bool
-	Kind                     string
-	ValidationURL            string
-	ConcurrentRequestLimited bool
-	ConcurrencyReason        string
+	Message string // classified upstream diagnostic
+	// Body remains borrowed while diagnostic construction reads it. Keep its bytes
+	// stable until the synchronous health call finishes formatting the selected
+	// message.
+	Body []byte
+	// HTML supplies handleOpenAI403's provider-penalty exemption.
+	// ApplyForbiddenObservation considers Antigravity and Kimi concurrency before
+	// reaching that OpenAI/CN path.
+	HTML bool
+	// Kind and ValidationURL determine Antigravity's account diagnostic together.
+	// A validation classification can append its URL; violation and unrecognized
+	// kinds use their own ordinary message paths.
+	Kind          string // Antigravity denial kind
+	ValidationURL string // account verification URL
+	// ConcurrentRequestLimited and ConcurrencyReason select Kimi's temporary
+	// capacity command before HTML/default handling. The reason is passed to that
+	// command for its stored diagnostic.
+	ConcurrentRequestLimited bool   // Kimi concurrency classification
+	ConcurrencyReason        string // temporary capacity diagnostic
 }
 
+// buildForbiddenErrorMessage joins a normalized prefix with the first usable
+// diagnostic source. A trimmed nonblank adapter message wins and remains
+// untruncated; otherwise TruncateLine limits a compact JSON or raw body to 512
+// input bytes before escaping line breaks. An empty body selects fallback. The
+// diagnostic prefix and escapes can increase output length, and a body cut can
+// split UTF-8.
 func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody []byte, fallback string) string {
 	prefix = strings.TrimSpace(prefix)
 	if prefix != "" && !strings.HasSuffix(prefix, " ") {
@@ -33,6 +66,9 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 
 	rawBody := bytes.TrimSpace(responseBody)
 	if len(rawBody) > 0 {
+		// Compact valid JSON before bounded line conversion so whitespace consumes
+		// less of the diagnostic budget. If compaction fails, retain the raw-body
+		// path rather than lose the available evidence.
 		if json.Valid(rawBody) {
 			var compact bytes.Buffer
 			if err := json.Compact(&compact, rawBody); err == nil {
@@ -45,10 +81,17 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 	return prefix + fallback
 }
 
-// ApplyForbiddenObservation applies platform-specific health rules for HTTP 403 responses.
-// Antigravity failures become account errors. OpenAI and CN providers use HTML exemptions
-// and configured cooldown thresholds; Kimi concurrency failures use a temporary pause.
-// Remaining platforms are marked as errored.
+// ApplyForbiddenObservation chooses a health scope from the classified 403 and
+// provider platform. Supply a usable service and record with stable observation
+// data. Antigravity account handling runs first; Kimi concurrency selects its
+// temporary command before other CN denial policy.
+//
+// OpenAI and remaining CN observations reach handleOpenAI403, where HTML can
+// return false and non-HTML responses enter administrator cooldown/threshold
+// handling. Other platforms receive an account-error diagnostic. Each true
+// result denotes selected response handling even when the delegated health
+// write fails, while the HTML false result lets the caller retain its separate
+// request retry decision.
 func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
 	if provider.Platform == capability.PlatformAntigravity {
 		return s.handleAntigravity403(ctx, provider, observation)
@@ -62,7 +105,6 @@ func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider 
 	if provider.Platform == capability.PlatformOpenAI || provider.IsCNProvider() {
 		return s.handleOpenAI403(ctx, provider, observation)
 	}
-	// Remaining platforms treat the failure as an account error.
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
 		observation.Message,
@@ -73,10 +115,13 @@ func (s *HealthService) ApplyForbiddenObservation(ctx context.Context, provider 
 	return true
 }
 
+// handleOpenAI403 applies the OpenAI/CN HTML exemption before administrator 403
+// policy. HTML observations are logged and return false; other observations
+// build a diagnostic and delegate their handled result to ApplyForbidden.
 func (s *HealthService) handleOpenAI403(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
-	// An HTML 403 may come from a proxy or CDN before the request reaches the API.
-	// Treating it as a credential failure could penalize every provider tried during failover.
-	// Leave provider state unchanged here; the caller controls request retry behavior.
+	// The HTML exemption skips both shared 403 counting and provider writes. Keep
+	// that omission local to health handling while the caller retains its own
+	// response retry decision.
 	if observation.HTML {
 		s.options.Warn(
 			"openai_403_html_body_skips_provider_penalty",
@@ -95,14 +140,16 @@ func (s *HealthService) handleOpenAI403(ctx context.Context, provider *Record, o
 	return s.ApplyForbidden(ctx, provider, msg)
 }
 
-// handleAntigravity403 marks the provider as errored with a classification-specific message.
-// Validation failures include a verification URL when available so an administrator can act.
+// handleAntigravity403 builds an account-error diagnostic from the supplied
+// denial kind. Validation appends a nonempty verification URL, violation uses
+// its own fallback, and other kinds use ordinary access-forbidden text.
+// ApplyAuthenticationFailure owns persistence, and this method returns true
+// after selecting that handling.
 func (s *HealthService) handleAntigravity403(ctx context.Context, provider *Record, observation ForbiddenObservation) (shouldDisable bool) {
 	fbType := observation.Kind
 
 	switch fbType {
 	case ForbiddenTypeValidation:
-		// Google verification requires manual intervention before recovery.
 		msg := buildForbiddenErrorMessage(
 			"Validation required (403):",
 			observation.Message,
@@ -116,7 +163,6 @@ func (s *HealthService) handleAntigravity403(ctx context.Context, provider *Reco
 		return true
 
 	case ForbiddenTypeViolation:
-		// An account violation requires manual intervention before recovery.
 		msg := buildForbiddenErrorMessage(
 			"Provider violation (403):",
 			observation.Message,

@@ -16,8 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Local TLS checks that signed downloads omit credentials and relay downloads retain authentication
-// and Range.
+// TestVideoContentNativeLocalTLS exercises signed and relay downloads through
+// a local TLS transport rewrite. It asserts authentication/header
+// differences, Range forwarding, unknown content length, selected request ID,
+// and exactly two body closes with activity released once across repeated
+// resource Close calls.
 func TestVideoContentNativeLocalTLS(t *testing.T) {
 	for _, signed := range []bool{true, false} {
 		name := "relay"
@@ -54,6 +57,9 @@ func TestVideoContentNativeLocalTLS(t *testing.T) {
 					t.Error("local server does not support flushing")
 					return
 				}
+				// Flush headers before body bytes so the client observes unknown content
+				// length. The resource-forwarding assertion therefore exercises a
+				// chunked download rather than fixed-size buffering.
 				flusher.Flush()
 				_, _ = io.WriteString(w, "bcd")
 			}))
@@ -74,6 +80,9 @@ func TestVideoContentNativeLocalTLS(t *testing.T) {
 				HTTPError:      func(*http.Response, string) error { t.Error("unexpected HTTP error"); return io.ErrUnexpectedEOF },
 				Enter:          func() (func(), error) { active.Add(1); return func() { active.Add(-1) }, nil },
 			}
+			// Retain signed/relay request headers and path while rewriting the network
+			// target to the trusted local TLS fixture. Credential assertions then
+			// run independently of external services.
 			options.Do = func(req *http.Request) (*http.Response, error) {
 				forward := req.Clone(req.Context())
 				target := *req.URL

@@ -6,14 +6,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Stored usage request categories have text labels and older transport-flag
+// representations. These cases check the supplied parse spellings, invalid
+// numeric normalization and the chosen legacy mappings, including
+// special-category inputs whose booleans need to remain available.
+
+// TestParseUsageRequestType checks the supplied category labels, uppercase
+// input, surrounding spaces and unsupported text. It requires the expected
+// parsed category or an error for each fixture.
 func TestParseUsageRequestType(t *testing.T) {
 	t.Parallel()
 
+	// testCase pairs request category text with its expected parsing outcome.
 	type testCase struct {
-		name    string
-		input   string
-		want    RequestType
-		wantErr bool
+		name    string      // subtest case label
+		input   string      // input category text
+		want    RequestType // expected request category
+		wantErr bool        // expected parsing failure flag
 	}
 
 	cases := []testCase{
@@ -41,6 +50,9 @@ func TestParseUsageRequestType(t *testing.T) {
 	}
 }
 
+// TestRequestTypeNormalizeAndString supplies an unsupported numeric code and
+// the tested known categories. It requires unknown normalization and the
+// expected lowercase display labels.
 func TestRequestTypeNormalizeAndString(t *testing.T) {
 	t.Parallel()
 
@@ -52,6 +64,9 @@ func TestRequestTypeNormalizeAndString(t *testing.T) {
 	require.Equal(t, "cyber", RequestTypeCyberBlocked.String())
 }
 
+// TestRequestTypeFromLegacy supplies the three selected stream and WebSocket
+// flag combinations. It requires WebSocket precedence and the corresponding
+// stream or synchronous category.
 func TestRequestTypeFromLegacy(t *testing.T) {
 	t.Parallel()
 
@@ -60,6 +75,9 @@ func TestRequestTypeFromLegacy(t *testing.T) {
 	require.Equal(t, RequestTypeSync, RequestTypeFromLegacy(false, false))
 }
 
+// TestApplyLegacyRequestFields supplies transport categories plus cyber and
+// unknown fixtures. It checks rebuilt transport flags and retention of
+// supplied booleans for the two special fallback cases.
 func TestApplyLegacyRequestFields(t *testing.T) {
 	t.Parallel()
 

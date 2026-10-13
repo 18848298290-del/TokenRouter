@@ -17,67 +17,102 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Cleanup task execution can finish, fail or observe cancellation after
+// deleting only part of its selected rows. These fixtures capture each
+// delete, progress and terminal-state attempt, letting cases inspect the
+// reported totals and whether aggregate repair was dispatched after the
+// chosen exit.
+//
+// The blocking claim fixture separates context cancellation from repository
+// return. Its channels let the shutdown case hold accepted manual work after
+// cancellation and verify that Stop still waits. Other fixtures use mutexes
+// or atomic counters when asynchronous repair and worker dispatch cross the
+// test's read observations. Tests describe recorded method calls and injected
+// outcomes; these fixtures perform no database deletion.
+
+// partialCleanup supplies one full delete batch before a later status read
+// reports cancellation. Its counters are used by one serial executeTask call.
 type partialCleanup struct {
-	UsageCleanupRepository
-	checks  int
-	deleted int64
+	UsageCleanupRepository       // unused cleanup repository method slots
+	checks                 int   // serial cancellation status read count
+	deleted                int64 // configured or recorded deletion count
 }
 
+// recomputeRecorder counts legacy repair invocations through an atomic
+// counter for cancellation regression tests.
 type recomputeRecorder struct {
-	DashboardAggregationRepository
-	calls atomic.Int64
+	DashboardAggregationRepository              // unused aggregation repository method slots
+	calls                          atomic.Int64 // atomic legacy repair invocation count
 }
 
+// cleanupDeleteResponse carries one queued deletion result supplied to the
+// cleanup worker fixture.
 type cleanupDeleteResponse struct {
-	deleted int64
-	err     error
+	deleted int64 // configured or recorded deletion count
+	err     error // injected deletion result failure
 }
 
+// cleanupDeleteCall records the selected filters and batch limit passed by
+// cleanup execution.
 type cleanupDeleteCall struct {
-	filters UsageCleanupFilters
-	limit   int
+	filters UsageCleanupFilters // captured cleanup selection fields
+	limit   int                 // captured deletion batch limit
 }
 
+// cleanupMarkCall records a task status or progress write attempted by
+// cleanup execution.
 type cleanupMarkCall struct {
-	taskID      int64
-	deletedRows int64
-	errMsg      string
+	taskID      int64  // captured cleanup task identifier
+	deletedRows int64  // captured reported deletion total
+	errMsg      string // captured failed task diagnostic
 }
 
+// cleanupRepoStub supplies queued task outcomes and captures cleanup
+// repository calls. Its methods guard fixture data with mu; configure results
+// before dispatch and inspect captured values under that mutex.
 type cleanupRepoStub struct {
-	mu            sync.Mutex
-	created       []*UsageCleanupTask
-	createErr     error
-	listTasks     []UsageCleanupTask
-	listResult    *pagination.PaginationResult
-	listErr       error
-	claimQueue    []*UsageCleanupTask
-	claimErr      error
-	deleteQueue   []cleanupDeleteResponse
-	deleteCalls   []cleanupDeleteCall
-	markSucceeded []cleanupMarkCall
-	markFailed    []cleanupMarkCall
-	statusByID    map[int64]string
-	statusErr     error
-	progressCalls []cleanupMarkCall
-	updateErr     error
-	cancelCalls   []int64
-	cancelErr     error
-	cancelResult  *bool
-	markFailedErr error
+	mu            sync.Mutex                   // fixture storage access mutex
+	created       []*UsageCleanupTask          // captured shallow task creation copies
+	createErr     error                        // injected task creation failure
+	listTasks     []UsageCleanupTask           // configured shared task page
+	listResult    *pagination.PaginationResult // configured shared pagination result
+	listErr       error                        // injected task listing failure
+	claimQueue    []*UsageCleanupTask          // queued task claim pointers
+	claimErr      error                        // injected task claim failure
+	deleteQueue   []cleanupDeleteResponse      // queued deletion operation results
+	deleteCalls   []cleanupDeleteCall          // captured deletion query attempts
+	markSucceeded []cleanupMarkCall            // captured successful terminal write attempts
+	markFailed    []cleanupMarkCall            // captured failed terminal write attempts
+	statusByID    map[int64]string             // configured mutable task status map
+	statusErr     error                        // injected task status failure
+	progressCalls []cleanupMarkCall            // captured progress write attempts
+	updateErr     error                        // injected task progress failure
+	cancelCalls   []int64                      // captured task cancellation identifiers
+	cancelErr     error                        // injected cancellation operation failure
+	cancelResult  *bool                        // optional conditional cancellation outcome override
+	markFailedErr error                        // injected failed status publication error
 }
 
+// dashboardRepoStub counts legacy aggregate repair attempts and supplies an
+// injected repair failure.
 type dashboardRepoStub struct {
-	recomputeErr   error
-	recomputeCalls atomic.Int64
+	recomputeErr   error        // injected legacy repair failure
+	recomputeCalls atomic.Int64 // atomic legacy repair attempt count
 }
 
-// Manual creation dispatches immediately; Stop waits for that work to observe cancellation and return.
+// blockingCleanupClaimRepo holds one manual claim after cancellation until
+// the test releases it.
 type blockingCleanupClaimRepo struct {
-	UsageCleanupRepository
-	entered, canceled, release chan struct{}
+	UsageCleanupRepository // unused cleanup repository method slots
+	// entered closes at claim invocation and canceled closes after ctx ends.
+	// The test closes release only after observing canceled, keeping repository
+	// return separate from shutdown cancellation.
+	entered, canceled, release chan struct{} // entered: accepted claim; canceled: observed context; release: allowed repository return
 }
 
+// GetTaskStatus returns running once and canceled on later reads in this
+// serial fixture. The transition forces executeTask to observe cancellation
+// only after the first full deletion batch.
 func (r *partialCleanup) GetTaskStatus(context.Context, int64) (string, error) {
 	r.checks++
 	if r.checks > 1 {
@@ -86,18 +121,29 @@ func (r *partialCleanup) GetTaskStatus(context.Context, int64) (string, error) {
 	return UsageCleanupStatusRunning, nil
 }
 
+// DeleteUsageLogsBatch records and returns a fixed five-thousand-row deletion
+// in this fixture. That full default-size batch lets executeTask reach
+// another persisted-status check before completing its scan.
 func (r *partialCleanup) DeleteUsageLogsBatch(context.Context, UsageCleanupFilters, int) (int64, error) {
 	r.deleted = 5000
 	return 5000, nil
 }
 
+// UpdateTaskProgress acknowledges the unused progress write in the
+// partial-cancellation fixture.
 func (r *partialCleanup) UpdateTaskProgress(context.Context, int64, int64) error { return nil }
 
+// RecomputeRange atomically records a legacy aggregate repair attempt and
+// returns success.
 func (r *recomputeRecorder) RecomputeRange(context.Context, time.Time, time.Time) error {
 	r.calls.Add(1)
 	return nil
 }
 
+// TestRegressionCanceledCleanupRepairsAggregates deletes one full fixture
+// batch before cancellation. It requires the recorded five-thousand-row
+// deletion and at least one legacy repair invocation after runtime work
+// finishes.
 func TestRegressionCanceledCleanupRepairsAggregates(t *testing.T) {
 	r := &partialCleanup{}
 	ar := &recomputeRecorder{}
@@ -106,6 +152,8 @@ func TestRegressionCanceledCleanupRepairsAggregates(t *testing.T) {
 	s := NewUsageCleanupService(r, nil, agg, nil)
 	defer s.Stop()
 	s.executeTask(context.Background(), &UsageCleanupTask{ID: 1, Filters: UsageCleanupFilters{StartTime: time.Now().Add(-24 * time.Hour), EndTime: time.Now().Add(-time.Hour)}})
+	// Wait for dispatched repair before reading its atomic count and stopping the
+	// runtime, so the cancellation regression observes an attempted legacy recomputation.
 	agg.runtimeWG.Wait()
 	agg.Stop()
 	if r.deleted != 5000 {
@@ -116,41 +164,62 @@ func TestRegressionCanceledCleanupRepairsAggregates(t *testing.T) {
 	}
 }
 
+// NewTimingWheelService constructs a timing-wheel fixture with a nil error
+// result.
 func NewTimingWheelService() (*timingwheel.Wheel, error) { return timingwheel.New(), nil }
 
+// AggregateRange acknowledges unused live aggregation calls in cleanup task
+// fixtures.
 func (s *dashboardRepoStub) AggregateRange(ctx context.Context, start, end time.Time) error {
 	return nil
 }
 
+// RecomputeRange atomically counts repair attempts before returning the
+// configured repair error.
 func (s *dashboardRepoStub) RecomputeRange(ctx context.Context, start, end time.Time) error {
 	s.recomputeCalls.Add(1)
 	return s.recomputeErr
 }
 
+// GetAggregationWatermark supplies absent progress for cleanup task
+// aggregation fixtures.
 func (s *dashboardRepoStub) GetAggregationWatermark(ctx context.Context) (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// UpdateAggregationWatermark acknowledges unused watermark writes in cleanup
+// task fixtures.
 func (s *dashboardRepoStub) UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error {
 	return nil
 }
 
+// CleanupAggregates acknowledges unused rollup retention calls in cleanup
+// task fixtures.
 func (s *dashboardRepoStub) CleanupAggregates(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
 	return nil
 }
 
+// CleanupUsageLogs acknowledges unused usage retention calls in cleanup task
+// fixtures.
 func (s *dashboardRepoStub) CleanupUsageLogs(ctx context.Context, cutoff time.Time) error {
 	return nil
 }
 
+// CleanupUsageBillingDedup acknowledges unused billing retention calls in
+// cleanup task fixtures.
 func (s *dashboardRepoStub) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
 	return nil
 }
 
+// EnsureUsageLogsPartitions acknowledges unused partition preparation calls
+// in cleanup task fixtures.
 func (s *dashboardRepoStub) EnsureUsageLogsPartitions(ctx context.Context, now time.Time) error {
 	return nil
 }
 
+// CreateTask assigns absent task metadata and captures a shallow task copy
+// under mu. Nil tasks succeed immediately, configured creation errors return
+// before capture, and filter pointers retain their supplied storage.
 func (s *cleanupRepoStub) CreateTask(ctx context.Context, task *UsageCleanupTask) error {
 	if task == nil {
 		return nil
@@ -174,12 +243,18 @@ func (s *cleanupRepoStub) CreateTask(ctx context.Context, task *UsageCleanupTask
 	return nil
 }
 
+// ListTasks returns the configured task page, pagination pointer and error
+// under mu. Returned slice and pointer data remain shared, so tests configure
+// them before calls and inspect them after completion.
 func (s *cleanupRepoStub) ListTasks(ctx context.Context, params pagination.PaginationParams) ([]UsageCleanupTask, *pagination.PaginationResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listTasks, s.listResult, s.listErr
 }
 
+// ClaimNextPendingTask returns the next queued task and records running
+// status under mu. Configured errors and an empty queue end the claim, and
+// returned task pointers retain fixture storage.
 func (s *cleanupRepoStub) ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*UsageCleanupTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,6 +273,9 @@ func (s *cleanupRepoStub) ClaimNextPendingTask(ctx context.Context, staleRunning
 	return task, nil
 }
 
+// GetTaskStatus reads configured status under mu or returns the injected
+// status error. An absent map or missing ID produces ErrCleanupTaskNotFound
+// for cancellation and worker-read cases.
 func (s *cleanupRepoStub) GetTaskStatus(ctx context.Context, taskID int64) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -214,6 +292,9 @@ func (s *cleanupRepoStub) GetTaskStatus(ctx context.Context, taskID int64) (stri
 	return status, nil
 }
 
+// UpdateTaskProgress records an attempted progress write under mu before
+// returning its configured error. Captured attempts remain visible even when
+// the test injects failed progress persistence.
 func (s *cleanupRepoStub) UpdateTaskProgress(ctx context.Context, taskID int64, deletedRows int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,6 +305,10 @@ func (s *cleanupRepoStub) UpdateTaskProgress(ctx context.Context, taskID int64, 
 	return nil
 }
 
+// CancelTask records the requested ID and selects its configured or
+// status-dependent outcome under mu. Successful outcomes store canceled
+// status; injected errors or false outcomes let the service exercise
+// rejection and reread paths.
 func (s *cleanupRepoStub) CancelTask(ctx context.Context, taskID int64, canceledBy int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -252,6 +337,8 @@ func (s *cleanupRepoStub) CancelTask(ctx context.Context, taskID int64, canceled
 	return true, nil
 }
 
+// MarkTaskSucceeded records task identity and deletion total, then stores
+// succeeded status under mu.
 func (s *cleanupRepoStub) MarkTaskSucceeded(ctx context.Context, taskID int64, deletedRows int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,6 +350,9 @@ func (s *cleanupRepoStub) MarkTaskSucceeded(ctx context.Context, taskID int64, d
 	return nil
 }
 
+// MarkTaskFailed captures the failure write and stores failed status under mu
+// before returning an optional injected error. Tests can therefore observe
+// the attempted terminal publication even when its result fails.
 func (s *cleanupRepoStub) MarkTaskFailed(ctx context.Context, taskID int64, deletedRows int64, errorMsg string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,6 +367,10 @@ func (s *cleanupRepoStub) MarkTaskFailed(ctx context.Context, taskID int64, dele
 	return nil
 }
 
+// DeleteUsageLogsBatch records filters and limit before consuming one
+// configured outcome under mu. An empty queue returns zero successfully,
+// while queued errors let execution cases select their failure or
+// cancellation path.
 func (s *cleanupRepoStub) DeleteUsageLogsBatch(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -289,6 +383,9 @@ func (s *cleanupRepoStub) DeleteUsageLogsBatch(ctx context.Context, filters Usag
 	return resp.deleted, resp.err
 }
 
+// TestUsageCleanupServiceCreateTaskSanitizeFilters submits invalid user and
+// billing selectors with a spaced model. It checks pending task attribution,
+// cleared selectors and the retained key and trimmed model.
 func TestUsageCleanupServiceCreateTaskSanitizeFilters(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -321,6 +418,9 @@ func TestUsageCleanupServiceCreateTaskSanitizeFilters(t *testing.T) {
 	require.Equal(t, int64(9), task.CreatedBy)
 }
 
+// TestSanitizeUsageCleanupFiltersRequestTypePriority supplies WS v2 beside a
+// false stream selector and spaced model. It requires normalized category,
+// absent stream and trimmed model.
 func TestSanitizeUsageCleanupFiltersRequestTypePriority(t *testing.T) {
 	requestType := int16(RequestTypeWSV2)
 	stream := false
@@ -340,6 +440,9 @@ func TestSanitizeUsageCleanupFiltersRequestTypePriority(t *testing.T) {
 	require.Equal(t, "gpt-5", *filters.Model)
 }
 
+// TestSanitizeUsageCleanupFiltersInvalidRequestType supplies an unsupported
+// category beside true stream. It requires category removal while the legacy
+// stream selector remains present and true.
 func TestSanitizeUsageCleanupFiltersInvalidRequestType(t *testing.T) {
 	requestType := int16(99)
 	stream := true
@@ -355,6 +458,9 @@ func TestSanitizeUsageCleanupFiltersInvalidRequestType(t *testing.T) {
 	require.True(t, *filters.Stream)
 }
 
+// TestDescribeUsageCleanupFiltersIncludesRequestType formats a cleanup filter
+// carrying WS v2. It requires the diagnostic text to contain the normalized
+// request_type label for that category.
 func TestDescribeUsageCleanupFiltersIncludesRequestType(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -368,6 +474,9 @@ func TestDescribeUsageCleanupFiltersIncludesRequestType(t *testing.T) {
 	require.Contains(t, desc, "request_type=ws_v2")
 }
 
+// TestUsageCleanupServiceCreateTaskInvalidCreator supplies valid bounds with
+// creator zero. It requires a service error carrying the invalid-creator
+// reason used by cleanup command callers.
 func TestUsageCleanupServiceCreateTaskInvalidCreator(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -382,6 +491,9 @@ func TestUsageCleanupServiceCreateTaskInvalidCreator(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_INVALID_CREATOR", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCreateTaskDisabled supplies a disabled cleanup
+// configuration and valid bounds. It requires service-unavailable category
+// and the cleanup-disabled reason from task creation.
 func TestUsageCleanupServiceCreateTaskDisabled(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: false}}
@@ -397,6 +509,9 @@ func TestUsageCleanupServiceCreateTaskDisabled(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_DISABLED", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCreateTaskRangeTooLarge supplies a positive creator
+// and forty-eight elapsed hours under a configured one-day limit. It requires
+// the exact cleanup range-too-large service reason.
 func TestUsageCleanupServiceCreateTaskRangeTooLarge(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true, MaxRangeDays: 1}}
@@ -411,6 +526,9 @@ func TestUsageCleanupServiceCreateTaskRangeTooLarge(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_RANGE_TOO_LARGE", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCreateTaskMissingRange submits zero-valued filters
+// with a valid creator. It requires the missing-range reason before a task
+// can be created by the service.
 func TestUsageCleanupServiceCreateTaskMissingRange(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -421,6 +539,9 @@ func TestUsageCleanupServiceCreateTaskMissingRange(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_MISSING_RANGE", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCreateTaskRepoError injects a storage failure during
+// task creation. It requires an error whose text includes the service's
+// create-task operation context.
 func TestUsageCleanupServiceCreateTaskRepoError(t *testing.T) {
 	repo := &cleanupRepoStub{createErr: errors.New("db down")}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -435,6 +556,9 @@ func TestUsageCleanupServiceCreateTaskRepoError(t *testing.T) {
 	require.Contains(t, err.Error(), "create cleanup task")
 }
 
+// TestUsageCleanupServiceRunOnceSuccess queues two full batches and a short
+// final batch. It checks captured bounds and limit plus one succeeded write
+// reporting five removed rows.
 func TestUsageCleanupServiceRunOnceSuccess(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(2 * time.Hour)
@@ -468,6 +592,9 @@ func TestUsageCleanupServiceRunOnceSuccess(t *testing.T) {
 	require.Equal(t, end, repo.deleteCalls[0].filters.EndTime)
 }
 
+// TestUsageCleanupServiceRunOnceClaimError injects a claim failure before any
+// task is selected. It requires no succeeded or failed terminal writes in the
+// fixture.
 func TestUsageCleanupServiceRunOnceClaimError(t *testing.T) {
 	repo := &cleanupRepoStub{claimErr: errors.New("claim failed")}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -480,6 +607,9 @@ func TestUsageCleanupServiceRunOnceClaimError(t *testing.T) {
 	require.Empty(t, repo.markFailed)
 }
 
+// TestUsageCleanupServiceRunOnceAlreadyRunning invokes a service whose local
+// running flag is already set. Returning without panic is its smoke
+// observation; it contains no call or state assertions.
 func TestUsageCleanupServiceRunOnceAlreadyRunning(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -488,6 +618,9 @@ func TestUsageCleanupServiceRunOnceAlreadyRunning(t *testing.T) {
 	svc.runOnce()
 }
 
+// TestUsageCleanupServiceExecuteTaskFailed injects a six-hundred-byte
+// deletion error. It requires one failed-state attempt for the task and a
+// persisted diagnostic length of five hundred bytes.
 func TestUsageCleanupServiceExecuteTaskFailed(t *testing.T) {
 	longMsg := strings.Repeat("x", 600)
 	repo := &cleanupRepoStub{
@@ -514,6 +647,9 @@ func TestUsageCleanupServiceExecuteTaskFailed(t *testing.T) {
 	require.Equal(t, 500, len(repo.markFailed[0].errMsg))
 }
 
+// TestUsageCleanupServiceExecuteTaskProgressError fails the progress save
+// after a full batch and then returns zero deletion. It requires succeeded
+// status, one progress attempt and no failure write.
 func TestUsageCleanupServiceExecuteTaskProgressError(t *testing.T) {
 	repo := &cleanupRepoStub{
 		deleteQueue: []cleanupDeleteResponse{
@@ -541,6 +677,9 @@ func TestUsageCleanupServiceExecuteTaskProgressError(t *testing.T) {
 	require.Len(t, repo.progressCalls, 1)
 }
 
+// TestUsageCleanupServiceExecuteTaskDeleteCanceled injects context
+// cancellation from the delete operation. It requires neither succeeded nor
+// failed terminal writes after that interrupted batch call.
 func TestUsageCleanupServiceExecuteTaskDeleteCanceled(t *testing.T) {
 	repo := &cleanupRepoStub{
 		deleteQueue: []cleanupDeleteResponse{
@@ -565,6 +704,9 @@ func TestUsageCleanupServiceExecuteTaskDeleteCanceled(t *testing.T) {
 	require.Empty(t, repo.markFailed)
 }
 
+// TestUsageCleanupServiceExecuteTaskContextCanceled cancels the execution
+// context before entry. It requires no delete calls and no succeeded or
+// failed terminal writes in the fixture.
 func TestUsageCleanupServiceExecuteTaskContextCanceled(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true, BatchSize: 2}}
@@ -588,6 +730,9 @@ func TestUsageCleanupServiceExecuteTaskContextCanceled(t *testing.T) {
 	require.Empty(t, repo.deleteCalls)
 }
 
+// TestUsageCleanupServiceExecuteTaskMarkFailedUpdateError injects deletion
+// failure and failed terminal publication. It still requires one recorded
+// failed-state attempt carrying the supplied task ID.
 func TestUsageCleanupServiceExecuteTaskMarkFailedUpdateError(t *testing.T) {
 	repo := &cleanupRepoStub{
 		deleteQueue: []cleanupDeleteResponse{
@@ -613,6 +758,9 @@ func TestUsageCleanupServiceExecuteTaskMarkFailedUpdateError(t *testing.T) {
 	require.Equal(t, int64(13), repo.markFailed[0].taskID)
 }
 
+// TestUsageCleanupServiceExecuteTaskDashboardRecomputeError completes an
+// empty scan and injects repair failure. It requires a succeeded-task attempt
+// and eventually one legacy repair invocation.
 func TestUsageCleanupServiceExecuteTaskDashboardRecomputeError(t *testing.T) {
 	dashboardRepo := &dashboardRepoStub{recomputeErr: errors.New("recompute failed")}
 	repo := &cleanupRepoStub{
@@ -644,6 +792,9 @@ func TestUsageCleanupServiceExecuteTaskDashboardRecomputeError(t *testing.T) {
 	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageCleanupServiceExecuteTaskDashboardRecomputeSuccess completes an
+// empty scan with successful repair storage. It requires a succeeded-task
+// attempt and eventually one legacy repair invocation.
 func TestUsageCleanupServiceExecuteTaskDashboardRecomputeSuccess(t *testing.T) {
 	dashboardRepo := &dashboardRepoStub{}
 	repo := &cleanupRepoStub{
@@ -675,6 +826,9 @@ func TestUsageCleanupServiceExecuteTaskDashboardRecomputeSuccess(t *testing.T) {
 	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageCleanupServiceExecuteTaskCanceled supplies persisted canceled
+// status before execution. It requires no delete calls and no succeeded or
+// failed terminal writes for that task.
 func TestUsageCleanupServiceExecuteTaskCanceled(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -700,6 +854,9 @@ func TestUsageCleanupServiceExecuteTaskCanceled(t *testing.T) {
 	require.Empty(t, repo.markFailed)
 }
 
+// TestUsageCleanupServiceCancelTaskSuccess supplies a pending task and
+// positive operator. It requires canceled fixture status and one repository
+// cancellation attempt after a successful service return.
 func TestUsageCleanupServiceCancelTaskSuccess(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -718,6 +875,9 @@ func TestUsageCleanupServiceCancelTaskSuccess(t *testing.T) {
 	require.Len(t, repo.cancelCalls, 1)
 }
 
+// TestUsageCleanupServiceCancelTaskDisabled calls cancellation under disabled
+// cleanup configuration. It requires the service-unavailable category and
+// exact cleanup-disabled reason from the resulting application error.
 func TestUsageCleanupServiceCancelTaskDisabled(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: false}}
@@ -729,6 +889,9 @@ func TestUsageCleanupServiceCancelTaskDisabled(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_DISABLED", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCancelTaskNotFound requests an absent task ID from
+// the fixture. It requires not-found category and the exact
+// cleanup-task-not-found reason exposed by cancellation.
 func TestUsageCleanupServiceCancelTaskNotFound(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -740,6 +903,9 @@ func TestUsageCleanupServiceCancelTaskNotFound(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_TASK_NOT_FOUND", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCancelTaskStatusError injects a persisted-status
+// lookup failure for a pending cancellation request. It requires the
+// resulting service error to contain that supplied diagnostic text.
 func TestUsageCleanupServiceCancelTaskStatusError(t *testing.T) {
 	repo := &cleanupRepoStub{statusErr: errors.New("status broken")}
 	cfg := &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}}
@@ -750,6 +916,9 @@ func TestUsageCleanupServiceCancelTaskStatusError(t *testing.T) {
 	require.Contains(t, err.Error(), "status broken")
 }
 
+// TestUsageCleanupServiceCancelTaskConflict supplies succeeded task status
+// before cancellation is requested. It requires conflict category and the
+// exact cleanup-cancel-conflict reason for that terminal task.
 func TestUsageCleanupServiceCancelTaskConflict(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -765,6 +934,9 @@ func TestUsageCleanupServiceCancelTaskConflict(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_CANCEL_CONFLICT", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCancelTaskAlreadyCanceledIsIdempotent supplies an
+// already-canceled task. It requires successful service return and no
+// additional repository cancellation write in the captured calls.
 func TestUsageCleanupServiceCancelTaskAlreadyCanceledIsIdempotent(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -782,6 +954,9 @@ func TestUsageCleanupServiceCancelTaskAlreadyCanceledIsIdempotent(t *testing.T) 
 	require.Empty(t, repo.cancelCalls, "already canceled should return success without extra cancel write")
 }
 
+// TestUsageCleanupServiceCancelTaskRepoConflict supplies pending status but a
+// false conditional update result. It requires conflict category and the
+// cleanup cancellation conflict reason after reread.
 func TestUsageCleanupServiceCancelTaskRepoConflict(t *testing.T) {
 	shouldCancel := false
 	repo := &cleanupRepoStub{
@@ -799,6 +974,9 @@ func TestUsageCleanupServiceCancelTaskRepoConflict(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_CANCEL_CONFLICT", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceCancelTaskRepoError injects failure in the
+// repository cancellation operation. It requires the service to return an
+// error containing the supplied cancellation diagnostic.
 func TestUsageCleanupServiceCancelTaskRepoError(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -814,6 +992,9 @@ func TestUsageCleanupServiceCancelTaskRepoError(t *testing.T) {
 	require.Contains(t, err.Error(), "cancel failed")
 }
 
+// TestUsageCleanupServiceCancelTaskInvalidCanceller passes a zero operator
+// against a running task. It requires the invalid-canceller reason before a
+// repository cancellation can succeed.
 func TestUsageCleanupServiceCancelTaskInvalidCanceller(t *testing.T) {
 	repo := &cleanupRepoStub{
 		statusByID: map[int64]string{
@@ -828,6 +1009,9 @@ func TestUsageCleanupServiceCancelTaskInvalidCanceller(t *testing.T) {
 	require.Equal(t, "USAGE_CLEANUP_INVALID_CANCELLER", infraerrors.Reason(err))
 }
 
+// TestUsageCleanupServiceListTasks configures a two-task page and pagination
+// total. It requires successful listing, two returned task rows and the
+// configured total count.
 func TestUsageCleanupServiceListTasks(t *testing.T) {
 	repo := &cleanupRepoStub{
 		listTasks: []UsageCleanupTask{{ID: 1}, {ID: 2}},
@@ -846,6 +1030,9 @@ func TestUsageCleanupServiceListTasks(t *testing.T) {
 	require.Equal(t, int64(2), result.Total)
 }
 
+// TestUsageCleanupServiceListTasksNotReady calls listing on a nil service and
+// a service lacking storage. It requires an error from both incomplete
+// constructions.
 func TestUsageCleanupServiceListTasksNotReady(t *testing.T) {
 	var nilSvc *UsageCleanupService
 	_, _, err := nilSvc.ListTasks(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 20})
@@ -856,6 +1043,9 @@ func TestUsageCleanupServiceListTasksNotReady(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestUsageCleanupServiceDefaultsAndLifecycle checks nil and configured
+// default helpers, then invokes lifecycle paths. It asserts range, batch,
+// interval and timeout defaults plus a positive interval override.
 func TestUsageCleanupServiceDefaultsAndLifecycle(t *testing.T) {
 	var nilSvc *UsageCleanupService
 	require.Equal(t, 31, nilSvc.maxRangeDays())
@@ -890,6 +1080,9 @@ func TestUsageCleanupServiceDefaultsAndLifecycle(t *testing.T) {
 	svcMissingDeps.Start()
 }
 
+// TestSanitizeUsageCleanupFiltersModelEmpty supplies blank model text and
+// negative identity selectors. It requires removal of the tested user, key,
+// provider, group and model filters.
 func TestSanitizeUsageCleanupFiltersModelEmpty(t *testing.T) {
 	model := "   "
 	apiKeyID := int64(-5)
@@ -911,6 +1104,9 @@ func TestSanitizeUsageCleanupFiltersModelEmpty(t *testing.T) {
 	require.Nil(t, filters.Model)
 }
 
+// TestDescribeUsageCleanupFiltersAllFields supplies the displayed bounds and
+// tested optional selectors. It requires the complete formatted diagnostic
+// string, including trimmed model and legacy stream values.
 func TestDescribeUsageCleanupFiltersAllFields(t *testing.T) {
 	start := time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)
 	end := start.Add(2 * time.Hour)
@@ -937,6 +1133,9 @@ func TestDescribeUsageCleanupFiltersAllFields(t *testing.T) {
 	require.Equal(t, "start=2024-02-01T10:00:00Z end=2024-02-01T12:00:00Z user_id=1 api_key_id=2 provider_id=3 group_id=4 model=gpt-4 stream=true billing_type=2", desc)
 }
 
+// TestUsageCleanupServiceIsTaskCanceledNotFound queries an absent fixture
+// status row. It requires successful return with false cancellation,
+// distinguishing missing state from a stored canceled task.
 func TestUsageCleanupServiceIsTaskCanceledNotFound(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	svc := NewUsageCleanupService(repo, nil, nil, &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}})
@@ -946,6 +1145,9 @@ func TestUsageCleanupServiceIsTaskCanceledNotFound(t *testing.T) {
 	require.False(t, canceled)
 }
 
+// TestUsageCleanupServiceIsTaskCanceledError injects a fixture status-read
+// failure for the worker's cancellation check. It requires an error
+// containing the supplied diagnostic text from that lookup.
 func TestUsageCleanupServiceIsTaskCanceledError(t *testing.T) {
 	repo := &cleanupRepoStub{statusErr: errors.New("status err")}
 	svc := NewUsageCleanupService(repo, nil, nil, &Options{UsageCleanup: UsageCleanupConfig{Enabled: true}})
@@ -955,7 +1157,20 @@ func TestUsageCleanupServiceIsTaskCanceledError(t *testing.T) {
 	require.Contains(t, err.Error(), "status err")
 }
 
+// ClaimNextPendingTask announces one accepted claim, waits for context
+// cancellation and then waits for explicit release. Configure all three
+// channels before its single invocation and close release after observing
+// cancellation.
+//
+// This ordering makes canceled signal that the worker saw shutdown while the
+// repository call is still held. Stop must keep waiting until release allows
+// the accepted round to return. The fixture returns the canceled context
+// error afterward; repeated invocation would close its publication channels
+// again.
 func (r *blockingCleanupClaimRepo) ClaimNextPendingTask(ctx context.Context, _ int64) (*UsageCleanupTask, error) {
+	// Announce entry before waiting for cancellation, then hold return until
+	// release. The test can inspect Stop while this accepted claim still occupies
+	// its worker registration.
 	close(r.entered)
 	<-ctx.Done()
 	close(r.canceled)
@@ -963,14 +1178,21 @@ func (r *blockingCleanupClaimRepo) ClaimNextPendingTask(ctx context.Context, _ i
 	return nil, ctx.Err()
 }
 
+// TestUsageCleanupStopWaitsForManualDispatch holds a claim after it observes
+// shutdown cancellation. It requires Stop to keep waiting until repository
+// release, then exercises repeated stopped calls.
 func TestUsageCleanupStopWaitsForManualDispatch(t *testing.T) {
 	repo := &blockingCleanupClaimRepo{entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
 	svc := NewUsageCleanupService(repo, nil, nil, nil)
 	done := make(chan struct{})
+	// Admit manual work before starting shutdown. The claim fixture publishes entry
+	// so Stop's context cancellation applies to an already registered worker round.
 	go func() { svc.runOnce(); close(done) }()
 	<-repo.entered
 	stopped := make(chan struct{})
 	go func() { svc.Stop(); close(stopped) }()
+	// Hold repository return after it observes cancellation. Stop must continue
+	// waiting for registered work until explicit release ends this accepted worker round.
 	<-repo.canceled
 	select {
 	case <-stopped:

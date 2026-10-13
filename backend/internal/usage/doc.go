@@ -1,16 +1,21 @@
-// Package usage queries usage records and statistics, maintains rollups and cleanup tasks, and controls ranking settings.
+// Package usage stores completed-request analysis rows and serves statistics
+// for users, keys, providers and administrator dashboards. Financial effects
+// are recorded by billing; usage rows and rebuildable aggregates supply
+// reports, display data and diagnostic lookup.
 //
-// Reading entry points:
-//   - service.go queries usage by user, API key, provider, and request filters.
-//   - dashboard_service.go queries dashboard statistics, trends, and rankings.
-//   - dashboard_aggregation_service.go schedules rollups, historical backfill, and deletion repair.
+// Start with service.go for scoped queries and dashboard_service.go for
+// administrator statistics and cached charts.
+// dashboard_aggregation_service.go coordinates live aggregation, historical
+// coverage and deletion repair, while cleanup_service.go manages persisted
+// deletion tasks.
 //
-// File groups:
-//   - log*.go, request_type.go, and views.go define usage records, query results, request types, and display data.
-//   - repository.go, query_readers.go, and options.go define persistence, query capabilities, and service configuration.
-//   - dashboard*.go and query_cache.go implement dashboard queries, caches, and aggregation jobs.
-//   - analytics_aggregation.go and aggregation_state.go define rollup storage, watermarks, and backfill progress updates.
-//   - cleanup*.go creates, executes, and cancels batched usage deletion tasks.
-//   - provider*.go defines provider statistics and rolling token windows.
-//   - ranking.go, runtime_settings.go, settings_participant.go, and admin_settings_read.go control rankings and user error visibility.
+// log*.go, request_type.go and views.go define records, query results and
+// loaded display relations. repository.go, query_readers.go and options.go
+// define storage capabilities and construction inputs. dashboard*.go and
+// query_cache.go own query caches and aggregation work.
+// analytics_aggregation.go and aggregation_state.go define rollup storage and
+// field-specific progress updates. cleanup*.go covers task creation,
+// cancellation and execution. provider*.go describes provider costs and token
+// windows. ranking.go, runtime_settings.go, settings_participant.go and
+// admin_settings_read.go control ranking visibility and user error views.
 package usage

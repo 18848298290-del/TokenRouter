@@ -15,6 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// OAuth fixtures separate browser proof shape, polling readiness, and token
+// expiry normalization. CN exchange inspects the full OpenAPI/userinfo/status
+// sequence, while error fixtures ensure request credentials remain absent from
+// failure text and identity metadata follows the selected user.
+
+// TestQoderDeviceAuthRequestAuthorizationURL builds a browser URL from fixed
+// proof and machine values. It checks endpoint and every nonce, challenge,
+// method, client, and machine query value.
 func TestQoderDeviceAuthRequestAuthorizationURL(t *testing.T) {
 	req := &DeviceAuthRequest{
 		Nonce:         "nonce-1",
@@ -36,6 +44,10 @@ func TestQoderDeviceAuthRequestAuthorizationURL(t *testing.T) {
 	require.Equal(t, "machine-1", values.Get("machine_id"))
 }
 
+// TestQoderCNDeviceAuthRequestUsesCNProfileAndNonce generates CN browser proof
+// and parses its URL. It checks a 32-character hyphen-free nonce, CN endpoint
+// and client ID,
+// UUID-v4 machine identity, and absent redirect URI.
 func TestQoderCNDeviceAuthRequestUsesCNProfileAndNonce(t *testing.T) {
 	req, err := NewDeviceAuthRequestForSite(SiteCN)
 	require.NoError(t, err)
@@ -54,6 +66,10 @@ func TestQoderCNDeviceAuthRequestUsesCNProfileAndNonce(t *testing.T) {
 	require.Equal(t, uuid.Version(4), parsedMachineID.Version())
 }
 
+// TestExchangeQoderCN20PATCompletesUserInfoAndStatus records the CN PAT,
+// userinfo, and Gateway status sequence. It checks pre-login headers and
+// ownership ID, retained OpenAPI tokens, status identity, and interpreted
+// expiry.
 func TestExchangeQoderCN20PATCompletesUserInfoAndStatus(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +81,9 @@ func TestExchangeQoderCN20PATCompletesUserInfoAndStatus(t *testing.T) {
 			var body map[string]string
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			require.Equal(t, "pat-cn", body["personal_token"])
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"token":         "legacy-token",
 				"access_token":  "openapi-access",
@@ -74,6 +93,9 @@ func TestExchangeQoderCN20PATCompletesUserInfoAndStatus(t *testing.T) {
 			})
 		case UserInfoPath:
 			require.Equal(t, "Bearer openapi-access", r.Header.Get("Authorization"))
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user_id":   "user-info",
 				"user_name": "CN User",
@@ -109,6 +131,9 @@ func TestExchangeQoderCN20PATCompletesUserInfoAndStatus(t *testing.T) {
 			require.Equal(t, "user-token", params.UserID)
 			require.Equal(t, "openapi-access", params.SecurityOauthToken)
 			require.Equal(t, "openapi-refresh", params.RefreshToken)
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(AuthStatusResult{
 				Name:             "Status User",
 				ID:               "cosy-uid",
@@ -143,9 +168,16 @@ func TestExchangeQoderCN20PATCompletesUserInfoAndStatus(t *testing.T) {
 	require.True(t, expiresAt.After(time.Now().Add(59*time.Minute)))
 }
 
+// TestQoderCN20PATErrorRedactsResponse returns a rejected PAT response
+// containing private token values. It checks typed credential versus
+// server-failure classification, HTTP status presentation, and removal of both
+// secrets.
 func TestQoderCN20PATErrorRedactsResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
+		// The fixture has already selected its failure status. Send its diagnostic
+		// body; client assertions check the returned classification and text when
+		// response delivery succeeds.
 		_, _ = io.WriteString(w, `{"personal_token":"pat-secret","refresh_token":"refresh-secret","message":"invalid"}`)
 	}))
 	defer server.Close()
@@ -167,6 +199,9 @@ func TestQoderCN20PATErrorRedactsResponse(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "status 401"))
 }
 
+// TestQoderCN20RefreshPostsRefreshTokenAndValidatesExpiry captures the CN
+// refresh endpoint and submitted refresh token. It checks site User-Agent and
+// the access/refresh pair returned from a positive-expiry response.
 func TestQoderCN20RefreshPostsRefreshTokenAndValidatesExpiry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, DeviceTokenRefreshPath, r.URL.Path)
@@ -174,6 +209,9 @@ func TestQoderCN20RefreshPostsRefreshTokenAndValidatesExpiry(t *testing.T) {
 		var body map[string]string
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		require.Equal(t, "old-refresh", body["refresh_token"])
+		// Send the fixture response after request assertions. A response-writer
+		// error is left to the client operation, whose response or error is checked
+		// by this test.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  "new-access",
 			"refresh_token": "new-refresh",
@@ -191,12 +229,16 @@ func TestQoderCN20RefreshPostsRefreshTokenAndValidatesExpiry(t *testing.T) {
 	require.Equal(t, "new-refresh", token.RefreshToken)
 }
 
+// TestDeviceTokenResponseNormalizesExpiryFormats covers dates, Unix
+// seconds/milliseconds, relative values, and invalid absolute expiry. It checks
+// UTC instants, positive expires_in recovery, and rejection when that alternate
+// duration is absent.
 func TestDeviceTokenResponseNormalizesExpiryFormats(t *testing.T) {
 	now := time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name     string
-		payload  string
-		expected time.Time
+		name     string    // fixture case label
+		payload  string    // token response JSON
+		expected time.Time // expected UTC expiry
 	}{
 		{
 			name:     "RFC3339 日期",
@@ -248,11 +290,14 @@ func TestDeviceTokenResponseNormalizesExpiryFormats(t *testing.T) {
 	require.ErrorContains(t, err, "invalid expires_at")
 }
 
+// TestQoderOAuthClientUsesSiteUserAgent calls polling, userinfo, and
+// organization endpoints for both sites. Each fixture checks its product/version
+// User-Agent and successful decoding through the selected profile.
 func TestQoderOAuthClientUsesSiteUserAgent(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		site   Site
-		wantUA string
+		name   string // fixture case label
+		site   Site   // selected credential site
+		wantUA string // expected User-Agent text
 	}{
 		{name: "国际站", site: SiteGlobal, wantUA: "Qoder/1.24.2"},
 		{name: "国内站", site: SiteCN, wantUA: "Qoder CN/1.24.2"},
@@ -262,10 +307,19 @@ func TestQoderOAuthClientUsesSiteUserAgent(t *testing.T) {
 				require.Equal(t, tt.wantUA, r.Header.Get("User-Agent"))
 				switch r.URL.Path {
 				case DevicePollPath:
+					// Send the fixture response after request assertions. A response-writer
+					// error is left to the client operation, whose response or error is
+					// checked by this test.
 					_ = json.NewEncoder(w).Encode(DeviceTokenResponse{Token: "access-token"})
 				case UserInfoPath:
+					// Send the fixture response after request assertions. A response-writer
+					// error is left to the client operation, whose response or error is
+					// checked by this test.
 					_ = json.NewEncoder(w).Encode(UserInfo{ID: "user-1"})
 				case OrganizationTagsPathPrefix + "user-1/tags":
+					// Send the fixture response after request assertions. A response-writer
+					// error is left to the client operation, whose response or error is
+					// checked by this test.
 					_ = json.NewEncoder(w).Encode(OrganizationTags{OrganizationID: "org-1"})
 				default:
 					http.NotFound(w, r)
@@ -288,10 +342,16 @@ func TestQoderOAuthClientUsesSiteUserAgent(t *testing.T) {
 	}
 }
 
+// TestQoderGenerateCodeChallenge computes the S256 challenge for a fixed
+// verifier string. It checks the exact URL-safe digest shared by browser
+// authorization and later polling proof.
 func TestQoderGenerateCodeChallenge(t *testing.T) {
 	require.Equal(t, "iMnq5o6zALKXGivsnlom_0F5_WYda32GHkxlV7mq7hQ", GenerateCodeChallenge("verifier"))
 }
 
+// TestQoderOAuthClientPollDeviceTokenPending returns HTTP 404 after inspecting
+// the polling proof query. It requires no error, nil token, and ready=false for
+// the unfinished login.
 func TestQoderOAuthClientPollDeviceTokenPending(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, DevicePollPath, r.URL.Path)
@@ -309,12 +369,18 @@ func TestQoderOAuthClientPollDeviceTokenPending(t *testing.T) {
 	require.Nil(t, token)
 }
 
+// TestQoderOAuthClientPollDeviceTokenCompletedAndUserInfo completes polling with
+// both token spellings, then loads user and organization data. It checks
+// preferred access-token Bearer use and decoded identity metadata.
 func TestQoderOAuthClientPollDeviceTokenCompletedAndUserInfo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case DevicePollPath:
 			require.Equal(t, "nonce-2", r.URL.Query().Get("nonce"))
 			require.Equal(t, "verifier-2", r.URL.Query().Get("verifier"))
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(DeviceTokenResponse{
 				Token:        "legacy-token",
 				AccessToken:  "access-token",
@@ -323,6 +389,9 @@ func TestQoderOAuthClientPollDeviceTokenCompletedAndUserInfo(t *testing.T) {
 			})
 		case UserInfoPath:
 			require.Equal(t, "Bearer access-token", r.Header.Get("Authorization"))
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(UserInfo{
 				ID:       "user-from-info",
 				Name:     "Qoder User",
@@ -330,6 +399,9 @@ func TestQoderOAuthClientPollDeviceTokenCompletedAndUserInfo(t *testing.T) {
 			})
 		case OrganizationTagsPathPrefix + "user-from-info/tags":
 			require.Equal(t, "Bearer access-token", r.Header.Get("Authorization"))
+			// Send the fixture response after request assertions. A response-writer
+			// error is left to the client operation, whose response or error is checked
+			// by this test.
 			_ = json.NewEncoder(w).Encode(OrganizationTags{
 				OrganizationID:   "org-1",
 				OrganizationName: "Org 1",
@@ -359,6 +431,9 @@ func TestQoderOAuthClientPollDeviceTokenCompletedAndUserInfo(t *testing.T) {
 	require.Equal(t, "Org 1", tags.OrganizationName)
 }
 
+// TestDeviceTokenResponsePrefersAccessToken supplies both current and legacy
+// token fields, then clears the current field. It checks access-token precedence
+// and legacy token recovery.
 func TestDeviceTokenResponsePrefersAccessToken(t *testing.T) {
 	token := &DeviceTokenResponse{
 		Token:       "legacy-token",
@@ -370,6 +445,9 @@ func TestDeviceTokenResponsePrefersAccessToken(t *testing.T) {
 	require.Equal(t, "legacy-token", token.AccessTokenValue())
 }
 
+// TestQoderOAuthClientRedactsSensitiveErrorBodies returns one secret-bearing
+// server error from polling and metadata endpoints. Each error is checked for
+// status retention and removal of known token, identity, and cookie values.
 func TestQoderOAuthClientRedactsSensitiveErrorBodies(t *testing.T) {
 	sensitiveBody := `{"message":"failed","token":"cn-access-secret","securityOauthToken":"sec-secret","refresh_token":"rt-secret","uid":"uid-secret","cookie":"sid=secret"}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -392,6 +470,9 @@ func TestQoderOAuthClientRedactsSensitiveErrorBodies(t *testing.T) {
 	assertQoderOAuthErrorRedacted(t, err.Error())
 }
 
+// TestBuildIdentityFromDeviceToken combines userinfo with a token response
+// holding a different user ID. It checks userinfo precedence, account
+// classification, and the retained access/refresh pair.
 func TestBuildIdentityFromDeviceToken(t *testing.T) {
 	identity := BuildIdentityFromDeviceToken(&UserInfo{
 		ID:       "user-1",
@@ -411,6 +492,9 @@ func TestBuildIdentityFromDeviceToken(t *testing.T) {
 	require.Equal(t, "refresh-1", identity.RefreshToken)
 }
 
+// assertQoderOAuthErrorRedacted checks the fixture's status text, redaction
+// marker, and known secret values. It fails at the caller when any tested
+// credential or identity string remains visible.
 func assertQoderOAuthErrorRedacted(t *testing.T, errText string) {
 	t.Helper()
 	require.Contains(t, errText, "status 500")
@@ -422,6 +506,10 @@ func assertQoderOAuthErrorRedacted(t *testing.T, errText string) {
 	require.Contains(t, errText, "***")
 }
 
+// TestBuildIdentityFromDeviceTokenCopiesOrganizationFromUserInfo combines
+// organization-bearing userinfo with a token response containing a different
+// user identifier. It checks organization ID and name in the assembled session
+// identity.
 func TestBuildIdentityFromDeviceTokenCopiesOrganizationFromUserInfo(t *testing.T) {
 	identity := BuildIdentityFromDeviceToken(&UserInfo{
 		ID:               "user-1",

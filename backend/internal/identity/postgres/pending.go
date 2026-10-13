@@ -567,7 +567,8 @@ func (s *AuthPendingIdentityService) UpsertAdoptionDecision(ctx context.Context,
 }
 
 // sanitizePendingAuthLocalFlowState delegates copying and removal of legacy
-// credentials from stored completion state.
+// credentials from stored completion state. Nil and empty input return an
+// allocated empty map; nested mutable values stay shared with the supplied state.
 func sanitizePendingAuthLocalFlowState(localFlowState map[string]any) map[string]any {
 	return identity.SanitizePendingAuthLocalFlowState(localFlowState)
 }
@@ -585,8 +586,9 @@ func validatePendingSessionState(session *dbent.PendingAuthSession, browserSessi
 func copyPendingMap(in map[string]any) map[string]any { return identity.CopyPendingMap(in) }
 
 // randomOpaqueToken delegates random-byte generation encoded as hexadecimal
-// pending token text. Nonpositive byte length selects the identity default,
-// while entropy read failures remain errors before token delivery.
+// pending token text. Nonpositive byte length selects the identity default, and
+// a returned token has nil error. An io.ReadFull error terminates the process
+// inside crypto/rand.Read.
 func randomOpaqueToken(byteLen int) (string, error) { return identity.RandomOpaqueToken(byteLen) }
 
 // hashPendingAuthCode delegates the completion-code digest used for persistent

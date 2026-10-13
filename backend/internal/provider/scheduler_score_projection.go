@@ -8,49 +8,103 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// SchedulerScoreProviders reads candidate pools for administrative scoring independently of page size.
+// An administration page contains only some providers, but their relative
+// scores depend on a larger candidate pool. Base scores use the unpaginated
+// filter pool, and advanced group scores use each group's independently read
+// schedulable pool. The view returns group results only for IDs on the
+// requested page.
+//
+// Pools are collected before one deduplicated load read over their union, so
+// each scoring call receives the same load observations while retaining its
+// own group settings. Failed group reads omit that group's scores; failed
+// load reads continue with an empty observation map. Base scores remain
+// visible only for providers with an advanced group result, and the returned
+// group slices are ordered by group ID.
+
+// SchedulerScoreProviders reads full candidate pools for page-independent
+// administrative score calculations.
 type SchedulerScoreProviders interface {
+	// ListProvidersForSchedulerScoreFilter reads the entire pool matching the
+	// administration filters. Page size does not restrict these records, so base
+	// scores can reflect providers outside the current result page.
 	ListProvidersForSchedulerScoreFilter(context.Context, string, string, string, string, int64, string) ([]Record, error)
+	// ListSchedulableProvidersForAdvancedSchedulerScore reads the schedulable
+	// pool for a group and optional platform. Build requests an empty platform
+	// to score each advanced group's full candidate set.
 	ListSchedulableProvidersForAdvancedSchedulerScore(context.Context, *int64, string) ([]Record, error)
 }
 
+// SchedulerLoadRequest identifies a provider and the load denominator used by
+// the batch reader.
 type SchedulerLoadRequest struct {
-	ID             int64
-	MaxConcurrency int
+	ID             int64 // provider database identifier
+	MaxConcurrency int   // effective load denominator
 }
 
+// SchedulerLoad contains provider concurrency, waiting, and normalized load
+// observations for scoring.
 type SchedulerLoad struct {
-	ProviderID                                 int64
+	ProviderID int64 // observed provider database identifier
+	// CurrentConcurrency, WaitingCount, LoadRate: occupied provider slots,
+	// queued provider requests, and observed load percentage
 	CurrentConcurrency, WaitingCount, LoadRate int
 }
 
-// SchedulerScoreOptions supplies load and scoring callbacks using shared scheduler feedback.
+// SchedulerScoreOptions supplies synchronous administrative scoring, optional
+// load reads, and warning callbacks.
 type SchedulerScoreOptions struct {
-	Load  func(context.Context, []SchedulerLoadRequest) (map[int64]*SchedulerLoad, error)
+	// Load reads candidate observations when configured. Nil supplies an empty
+	// map to Score; successful maps and their pointers stay stable through all
+	// scoring calls in the page build.
+	Load func(context.Context, []SchedulerLoadRequest) (map[int64]*SchedulerLoad, error)
+	// Score computes pool results from pointers into supplied record slices
+	// and the shared batch-load map. Keep their data stable while this required
+	// synchronous callback calculates its provider-keyed scores. The callback
+	// leaves those inputs unchanged so later pools use the same observations.
 	Score func(context.Context, *accessview.GroupConfig, []*Record, map[int64]*SchedulerLoad) map[int64]ProviderSchedulerScore
-	Warn  func(string, ...any)
+	// Warn reports failed pool or load reads. NewSchedulerScoreView supplies a
+	// no-op callback when this optional warning function is nil.
+	Warn func(string, ...any) // failed observation warning callback
 }
 
+// SchedulerScoreView retains candidate-pool readers and scoring callbacks for
+// administrative result pages.
 type SchedulerScoreView struct {
-	adminService SchedulerScoreProviders
-	options      SchedulerScoreOptions
+	adminService SchedulerScoreProviders // retained full-pool reader
+	options      SchedulerScoreOptions   // retained load and score callbacks
 }
 
-// ProviderSchedulerScore holds scheduling scores displayed to administrators.
+// ProviderSchedulerScore holds the numeric and sticky-admission score fields
+// displayed for one provider.
 type ProviderSchedulerScore struct {
-	BaseScore             float64 `json:"base_score"`
-	StickyScore           float64 `json:"sticky_score"`
-	StickyScoreInfinity   bool    `json:"sticky_score_infinity"`
-	StickyWeightedEnabled bool    `json:"sticky_weighted_enabled"`
+	BaseScore float64 `json:"base_score"` // base weighted score
+	// StickyScore, StickyScoreInfinity, and StickyWeightedEnabled describe a
+	// hypothetical existing-affinity view. The production scoring adapter
+	// supplies a numeric adjusted score when weighted affinity is enabled, and
+	// zero plus the infinity flag when it uses hard affinity.
+	StickyScore float64 `json:"sticky_score"` // hypothetical affinity score
+	// StickyScoreInfinity: unbounded hard-sticky display flag
+	StickyScoreInfinity bool `json:"sticky_score_infinity"`
+	// StickyWeightedEnabled: weighted sticky scoring flag
+	StickyWeightedEnabled bool `json:"sticky_weighted_enabled"`
 }
 
-// ProviderSchedulerGroupScore holds a provider's scheduling score within one group.
+// ProviderSchedulerGroupScore attaches a group's identity to that group's
+// provider scoring result.
 type ProviderSchedulerGroupScore struct {
-	GroupID   *int64 `json:"group_id"`
-	GroupName string `json:"group_name,omitempty"`
-	ProviderSchedulerScore
+	// GroupID is shared by results from one scored group. Build supplies a
+	// nonnil pointer for those entries and uses it when ordering each provider's
+	// group slice. Treat the pointed-to identifier as immutable while these
+	// results are in use because other provider entries retain that same
+	// pointer.
+	GroupID                *int64 `json:"group_id"`             // scored group identifier
+	GroupName              string `json:"group_name,omitempty"` // scored group display name
+	ProviderSchedulerScore        // group's scalar score values
 }
 
+// NewSchedulerScoreView retains pool and scoring dependencies, defaulting
+// Warn to a no-op. Load and the pool reader can be absent; supply Score
+// whenever a nonempty schedulable pool can reach calculation.
 func NewSchedulerScoreView(reader SchedulerScoreProviders, options SchedulerScoreOptions) *SchedulerScoreView {
 	if options.Warn == nil {
 		options.Warn = func(string, ...any) {}
@@ -58,8 +112,11 @@ func NewSchedulerScoreView(reader SchedulerScoreProviders, options SchedulerScor
 	return &SchedulerScoreView{reader, options}
 }
 
-// scoreAdvancedSchedulerPool scores the schedulable providers in a pool.
-// A supplied loadMap may include extra providers; nil triggers a batch load read.
+// scoreAdvancedSchedulerPool scores records passing IsSchedulable and copies
+// callback values into a new map. Empty usable pools return nil; nil loadMap
+// triggers a batch read, while supplied maps are passed directly. Keep
+// provider data and supplied loads stable through the synchronous Score
+// callback.
 func (h *SchedulerScoreView) scoreAdvancedSchedulerPool(ctx context.Context, group *accessview.GroupConfig, providers []Record, loadMap map[int64]*SchedulerLoad) map[int64]ProviderSchedulerScore {
 	if len(providers) == 0 {
 		return nil
@@ -94,8 +151,11 @@ func (h *SchedulerScoreView) scoreAdvancedSchedulerPool(ctx context.Context, gro
 	return result
 }
 
-// fetchAdvancedSchedulerLoadMap reads candidate loads in one deduplicated batch.
-// Read failures are logged and return an empty map; missing load observations receive neutral scores.
+// fetchAdvancedSchedulerLoadMap reads one deduplicated batch using each
+// provider's effective load factor. The first occurrence of an ID supplies
+// its denominator. Nil loaders and empty inputs return an empty map; errors
+// warn and discard the returned batch, while a successful nonnil map is
+// passed through.
 func (h *SchedulerScoreView) fetchAdvancedSchedulerLoadMap(ctx context.Context, providers []*Record) map[int64]*SchedulerLoad {
 	loadMap := map[int64]*SchedulerLoad{}
 	if h.options.Load == nil || len(providers) == 0 {
@@ -116,6 +176,8 @@ func (h *SchedulerScoreView) fetchAdvancedSchedulerLoadMap(ctx context.Context, 
 			MaxConcurrency: provider.EffectiveLoadFactor(),
 		})
 	}
+	// Use the empty map on failure so optional load storage does not prevent
+	// Score from calculating results for otherwise schedulable candidate pools.
 	if batchLoad, err := h.options.Load(ctx, loadReq); err != nil {
 		h.options.Warn("advanced_scheduler_score_load_batch_failed", "error", err)
 	} else if batchLoad != nil {
@@ -124,6 +186,16 @@ func (h *SchedulerScoreView) fetchAdvancedSchedulerLoadMap(ctx context.Context, 
 	return loadMap
 }
 
+// buildAdvancedProviderSchedulerScores calculates base and advanced group
+// views for the requested page's provider IDs. An empty page returns nil
+// maps, and an absent filter pool uses the page records as its base pool.
+//
+// Advanced group IDs come from page memberships, then full group pools are
+// collected before one load read over all involved records. Each pool is
+// scored with that shared observation map; failed group reads omit their
+// result, and group scores are restricted to page IDs. Base scores without an
+// advanced group result are removed, and remaining group slices are sorted by
+// ID for stable display.
 func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 	ctx context.Context,
 	providers []Record,
@@ -154,8 +226,8 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 		return nil, nil
 	}
 
-	// Collect group pools before querying loads for the union of the filtered and group pools.
-	// Each scoring pool then shares that batch of load observations.
+	// Collect full group pools first so the single load batch covers base and
+	// group candidates together; later scoring calls share that observation map.
 	groupIDList := make([]int64, 0, len(advancedGroups))
 	for groupID := range advancedGroups {
 		groupIDList = append(groupIDList, groupID)
@@ -172,6 +244,8 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 			}
 			pool, err := h.adminService.ListSchedulableProvidersForAdvancedSchedulerScore(ctx, &gid, "")
 			if err != nil {
+				// Omit this group's scores when its pool cannot be read; scoring a
+				// partial result would change the candidate comparison for that group.
 				h.options.Warn("advanced_scheduler_group_score_pool_failed", "group_id", gid, "error", err)
 				continue
 			}
@@ -238,7 +312,9 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 		}
 		scoreGroupPool(&gid, advancedGroups[gid], groupNameByID, pool)
 	}
-	// Expose base scores for providers with advanced group scores; basic or ungrouped providers omit this view.
+	// A base score is displayed alongside an advanced group result. Remove
+	// entries whose page memberships produced no scored group, including failed
+	// pool reads, so their administration view does not imply group scoring.
 	for providerID := range baseScores {
 		if _, ok := groupScoresByProvider[providerID]; !ok {
 			delete(baseScores, providerID)
@@ -255,6 +331,10 @@ func (h *SchedulerScoreView) buildAdvancedProviderSchedulerScores(
 	return baseScores, groupScoresByProvider
 }
 
+// listProviderSchedulerScoreFilterPool reads the full administration filter
+// pool for base scores. Missing readers and failed reads return nil, with
+// failures warning; Build then lets its calculator use page records when no
+// pool is available.
 func (h *SchedulerScoreView) listProviderSchedulerScoreFilterPool(
 	ctx context.Context,
 	platform, providerType, status, search string,
@@ -266,13 +346,18 @@ func (h *SchedulerScoreView) listProviderSchedulerScoreFilterPool(
 	}
 	providers, err := h.adminService.ListProvidersForSchedulerScoreFilter(ctx, platform, providerType, status, search, groupID, privacyMode)
 	if err != nil {
+		// Return no filter pool on failure so the delegated calculator can use the
+		// supplied page records while still completing their display view.
 		h.options.Warn("advanced_scheduler_filter_score_pool_failed", "error", err)
 		return nil
 	}
 	return providers
 }
 
-// Build scores the filtered and group pools using shared load data and returns group scores ordered by group ID.
+// Build reads an unpaginated filter pool and returns base plus ordered group
+// score views for the supplied page. Failed or absent filter reads let the
+// delegated calculator use page records; callbacks run synchronously and
+// require stable input data.
 func (h *SchedulerScoreView) Build(ctx context.Context, values []Record, platform, kind, status, search string, groupID int64, privacy string) (map[int64]*ProviderSchedulerScore, map[int64][]ProviderSchedulerGroupScore) {
 	pool := h.listProviderSchedulerScoreFilterPool(ctx, platform, kind, status, search, groupID, privacy)
 	return h.buildAdvancedProviderSchedulerScores(ctx, values, pool)

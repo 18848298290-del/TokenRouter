@@ -18,8 +18,8 @@ import (
 // controls.
 
 // TestPropagateProviderProxyToShadows starts parent and shadow records on the
-// same proxy. Updating and clearing the parent proxy through the shared
-// propagation function produces the corresponding stored shadow selection.
+// same proxy in the shared-record fixture. Passing a replacement selection and
+// nil to propagation changes the stored shadow proxy to match each input.
 func TestPropagateProviderProxyToShadows(t *testing.T) {
 	ctx := context.Background()
 	repo := newCRSShadowStore()
@@ -46,7 +46,7 @@ func TestPropagateProviderProxyToShadows(t *testing.T) {
 	require.NotNil(t, got.ProxyID)
 	require.Equal(t, newProxy, *got.ProxyID, "shadow proxy must follow the parent's new proxy")
 
-	// Clearing the parent proxy also clears the shadow proxy.
+	// A nil selection clears the shadow's stored proxy pointer.
 	require.NoError(t, PropagateProviderProxyToShadows(ctx, repo, parentID, nil))
 	got, err = repo.GetByID(ctx, shadow.ID)
 	require.NoError(t, err)

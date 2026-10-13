@@ -15,9 +15,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// Group settings and provider memberships form one administrative mutation when
+// creation or replacement copying is requested. Validation and source-provider
+// reads occur before the transaction callback, while saving the group and
+// binding its providers use the callback's shared operation context.
+//
+// Automatic display positions read the current tail under an optional
+// transaction lock, and explicitly supplied positions bypass allocation.
+// Compatibility protocol inputs are normalized into one authoritative admission
+// set before persistence. Successful updates request group authentication-cache
+// invalidation; deletion captures bound Key strings before their associations
+// disappear so those snapshots can be invalidated afterward. Shared pricing
+// remains owned by its separate configuration service.
+
+// GroupSortOrderStep leaves gaps between automatically allocated display
+// positions so administrators can insert intermediate positions during manual
+// ordering.
 const GroupSortOrderStep = 10
 
-// ListGroups returns a filtered page of groups and the total match count.
+// ListGroups returns the selected group page and its total match count.
 func (s *GroupAdmin) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]Group, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, search, isExclusive)
@@ -27,23 +43,33 @@ func (s *GroupAdmin) ListGroups(ctx context.Context, page, pageSize int, platfor
 	return groups, result.Total, nil
 }
 
+// GetAllGroups returns active groups from the configured group repository.
 func (s *GroupAdmin) GetAllGroups(ctx context.Context) ([]Group, error) {
 	return s.groupRepo.ListActive(ctx)
 }
 
+// GetAllGroupsIncludingInactive requests the first unfiltered administrative
+// page with a size of 10,000. The PostgreSQL repository applies
+// pagination.Limit's 1,000-row ceiling, so this convenience method can return a
+// truncated collection.
 func (s *GroupAdmin) GetAllGroupsIncludingInactive(ctx context.Context) ([]Group, error) {
-	// An empty status includes active and disabled groups.
-	// Fetch up to 10,000 groups in this unpaginated administrative view.
+	// This view requests one page; the PostgreSQL pagination limit further caps
+	// it, so groups beyond that page are omitted from the unpaginated response.
 	groups, _, err := s.groupRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10000}, "", "", "", nil)
 	return groups, err
 }
 
+// GetGroup loads the requested group with repository-provided derived counts.
 func (s *GroupAdmin) GetGroup(ctx context.Context, id int64) (*Group, error) {
 	return s.groupRepo.GetByID(ctx, id)
 }
 
-// GetGroupModelsListCandidates returns default suggestions for new groups and resolves configured routes for
-// existing groups.
+// GetGroupModelsListCandidates returns model suggestions for new groups and
+// eligible request names for saved groups. Nonpositive IDs invoke
+// DefaultModels, a missing provider reader yields an empty slice, and enabled
+// custom lists intersect resolved candidates in administrator order. Policy
+// failures and cancellation absorbed by RequestableResolver yield empty
+// candidates with no administrative error after repository reads succeed.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64, _ string) ([]string, error) {
 	if id <= 0 {
@@ -60,6 +86,9 @@ func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64,
 	if err != nil {
 		return nil, err
 	}
+	// The resolver represents failed eligibility as a restricted empty catalog.
+	// Consuming Models leaves unavailable editor choices empty after the group
+	// and provider reads have succeeded.
 	resolution := s.options.ModelResolver.ResolveWithProviders(ctx, &id, "", nil, providers)
 	candidates := make([]string, 0, len(resolution.Models))
 	for _, model := range resolution.Models {
@@ -72,7 +101,10 @@ func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64,
 	return candidates, nil
 }
 
-// SanitizeGroupOpenAIFast normalizes group acceleration settings; execution providers determine applicability.
+// SanitizeGroupOpenAIFast updates saved acceleration fields to their effective
+// named policy. Nil groups are ignored; ForceOpenAIFast mirrors force_priority
+// alone, while provider execution determines whether the policy applies to its
+// route.
 func SanitizeGroupOpenAIFast(group *Group) {
 	if group == nil {
 		return
@@ -81,6 +113,17 @@ func SanitizeGroupOpenAIFast(group *Group) {
 	group.ForceOpenAIFast = group.OpenAIFastPolicy == GroupOpenAIFastPolicyForcePriority
 }
 
+// CreateGroup builds and saves an active group after validating routing,
+// scheduler, effort, fallback, protocol, and probe settings. Callers supply a
+// non-nil input and configure Mutate to complete the coordinated write through
+// the transaction owner.
+//
+// Source groups and distinct provider IDs are read before entering that
+// mutation. Within its operation context, automatic sorting acquires the
+// optional ordering lock, creation saves the group, and provider binding
+// follows it so binding failure can roll back creation. Legacy media input is
+// applied after original protocol validation, and returned configuration uses
+// the normalized working value.
 func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
 	if err := ValidateGroupRoutingPolicy(input.RoutingPolicy); err != nil {
 		return nil, err
@@ -143,7 +186,6 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		}
 	}
 
-	// The legacy MCP XML setting defaults to true unless false is supplied.
 	mcpXMLInject := true
 	if input.MCPXMLInject != nil {
 		mcpXMLInject = *input.MCPXMLInject
@@ -152,7 +194,9 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	allowImageGeneration := input.AllowImageGeneration
 	allowBatchImageGeneration := input.AllowBatchImageGeneration && allowImageGeneration
 
-	// Resolve source bindings before creating the group.
+	// Read source membership before opening the mutation so validation and
+	// copy-read failures return before allocating or writing the destination
+	// group.
 	var providerIDsToCopy []int64
 	if len(input.CopyProvidersFromGroupIDs) > 0 {
 		seen := make(map[int64]struct{})
@@ -164,7 +208,6 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 			}
 		}
 
-		// Require every source group to exist.
 		for _, srcGroupID := range uniqueSourceGroupIDs {
 			_, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
 			if err != nil {
@@ -172,7 +215,6 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 			}
 		}
 
-		// Read the distinct provider IDs across the source groups.
 		var err error
 		providerIDsToCopy, err = s.groupRepo.GetProviderIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
 		if err != nil {
@@ -249,7 +291,9 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		return nil, err
 	}
 
-	// Exclude API-key providers when require_oauth_only is enabled.
+	// Filter copied memberships using credential type before binding; API-key
+	// source records cannot be carried into a group configured for OAuth-only
+	// admission.
 	if group.RequireOAuthOnly && len(providerIDsToCopy) > 0 {
 		providers, err := s.providerRepo.GetByIDs(ctx, providerIDsToCopy)
 		if err != nil {
@@ -270,6 +314,9 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		providerIDsToCopy = filtered
 	}
 
+	// Allocate the optional tail position, create the row, and bind copied
+	// providers through the same mutation context so a later binding failure can
+	// roll back creation.
 	if err := s.options.Mutate(ctx, func(opCtx context.Context) error {
 		if input.SortOrder == nil {
 			resolvedSortOrder, err := s.NextGroupSortOrder(opCtx)
@@ -281,7 +328,6 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		if err := s.groupRepo.Create(opCtx, group); err != nil {
 			return err
 		}
-		// Bind providers inside the creation transaction so a failed binding rolls back the new group.
 		if len(providerIDsToCopy) > 0 {
 			if err := s.groupRepo.BindProvidersToGroup(opCtx, group.ID, providerIDsToCopy); err != nil {
 				return fmt.Errorf("failed to bind providers to new group: %w", err)
@@ -299,8 +345,15 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	return group, nil
 }
 
-// NextGroupSortOrder allocates the next position. Call it inside the creation transaction; the optional
-// repository serializes allocation.
+// NextGroupSortOrder computes the display position following the current
+// highest saved position. Call inside the creation transaction so an optional
+// repository lock protects the tail read and subsequent insertion together.
+//
+// An empty repository starts at zero; other allocations add GroupSortOrderStep
+// and reject detected integer wraparound. A nil sort-order repository leaves
+// the read without that serialization lock, so callers requiring concurrent
+// allocation protection provide the repository and the same operation context
+// through creation.
 func (s *GroupAdmin) NextGroupSortOrder(ctx context.Context) (int, error) {
 	if s.groupSortOrderRepo != nil {
 		if err := s.groupSortOrderRepo.LockGroupSortOrder(ctx); err != nil {
@@ -328,6 +381,8 @@ func (s *GroupAdmin) NextGroupSortOrder(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	// Leave fixed spacing after the saved tail while detecting signed integer
+	// wraparound before an automatic position is returned to creation.
 	next := groups[0].SortOrder + GroupSortOrderStep
 	if next < groups[0].SortOrder {
 		return 0, errors.New("group sort order overflow")
@@ -335,11 +390,17 @@ func (s *GroupAdmin) NextGroupSortOrder(ctx context.Context) (int, error) {
 	return next, nil
 }
 
-// ValidateFallbackGroup checks client-restriction fallback targets and rejects cycles.
-// Pass zero for currentGroupID when creating a group.
-// The immediate target must accept clients other than Claude Code.
+// ValidateFallbackGroup checks the configured client-restriction chain before
+// it is saved. Pass zero for currentGroupID during creation; the immediate
+// target must accept clients beyond Claude Code, and every reachable reference
+// must exist.
+//
+// The visited-ID set detects repeated targets and a path that returns to the
+// current group. Traversal follows saved FallbackGroupID links until a target
+// has none, so validation considers the entire chain rather than only direct
+// self-reference. Group activity and request-time permissions are checked by
+// their consuming routing paths.
 func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64) error {
-	// A group cannot fall back to itself.
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as fallback group")
 	}
@@ -355,13 +416,11 @@ func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, 
 			return fmt.Errorf("fallback group cycle detected")
 		}
 
-		// Each group in the fallback chain must exist.
 		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
 		if err != nil {
 			return fmt.Errorf("fallback group not found: %w", err)
 		}
 
-		// The immediate fallback must accept the clients rejected by the source group.
 		if nextID == fallbackGroupID && fallbackGroup.ClaudeCodeOnly {
 			return fmt.Errorf("fallback group cannot have claude_code_only enabled")
 		}
@@ -373,10 +432,10 @@ func (s *GroupAdmin) ValidateFallbackGroup(ctx context.Context, currentGroupID, 
 	}
 }
 
-// ValidateFallbackGroupOnInvalidRequest requires an existing target with no invalid-request fallback of its own.
-// Pass zero for currentGroupID when creating a group.
-// The platform parameter is retained for callers and is not used for validation.
-// The target cannot be the current group.
+// ValidateFallbackGroupOnInvalidRequest checks an existing invalid-request
+// target with no invalid-request fallback of its own. Pass zero for creation;
+// self-reference is rejected for a saved group, and the retained platform
+// parameter does not restrict the target.
 func (s *GroupAdmin) ValidateFallbackGroupOnInvalidRequest(ctx context.Context, currentGroupID int64, platform string, fallbackGroupID int64) error {
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as invalid request fallback group")
@@ -392,6 +451,22 @@ func (s *GroupAdmin) ValidateFallbackGroupOnInvalidRequest(ctx context.Context, 
 	return nil
 }
 
+// UpdateGroup applies supplied settings to a loaded working group, validates
+// the result, and saves it through Mutate. Omitted fields retain their
+// configured values according to UpdateGroupInput, while explicit empty or
+// nonpositive values can clear selected optional settings.
+//
+// Legacy text updates carry forward existing nontext entries before
+// original-set validation and switch patching. Provider-copy sources are
+// checked and read before the mutation; a nonempty source list triggers
+// membership clearing and replacement even when its eligible ID set is empty.
+// Settings and memberships use the same operation context, and authentication
+// invalidation is requested after Mutate returns success. When Mutate reuses an
+// enclosing transaction, that transaction's owner still controls completion.
+//
+// GetByID supplies the object mutated during preparation. Repositories provide
+// a disposable working value because a later validation or persistence error
+// leaves earlier in-memory edits applied.
 func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
@@ -429,7 +504,6 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	if input.AllowedProtocols != nil {
 		group.AllowedProtocols = append([]wireprotocol.ProtocolID{}, *input.AllowedProtocols...)
 	} else {
-		// An omitted protocol field retains the effective selection.
 		group.AllowedProtocols = previousAllowedProtocols
 	}
 	if input.DisplayBrand != nil {
@@ -459,7 +533,6 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		}
 		group.RoutingPolicy = input.RoutingPolicy.Clone()
 	}
-	// Image and batch permissions are stored independently of model price cards.
 	if input.AllowImageGeneration != nil {
 		group.AllowImageGeneration = *input.AllowImageGeneration
 	}
@@ -473,14 +546,12 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
 	}
 	if input.FallbackGroupID != nil {
-		// Positive IDs select a validated fallback.
 		if *input.FallbackGroupID > 0 {
 			if err := s.ValidateFallbackGroup(ctx, id, *input.FallbackGroupID); err != nil {
 				return nil, err
 			}
 			group.FallbackGroupID = input.FallbackGroupID
 		} else {
-			// Zero or a negative ID clears the fallback.
 			group.FallbackGroupID = nil
 		}
 	}
@@ -523,12 +594,10 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		group.MCPXMLInject = *input.MCPXMLInject
 	}
 
-	// Retain compatibility input for Antigravity model families.
 	if input.SupportedModelScopes != nil {
 		group.SupportedModelScopes = *input.SupportedModelScopes
 	}
 
-	// Legacy entry switches are normalized below; acceleration policy has its own validation.
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive
 	}
@@ -586,6 +655,9 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	SanitizeGroupMessagesDispatchFields(group)
 	SanitizeGroupOpenAIFast(group)
 	SanitizeGroupReasoningEffortPolicy(group)
+	// A legacy text-only selection cannot express media entries, so carry forward
+	// existing nontext protocols before applying the supplied compatibility
+	// switches and validation.
 	if input.LegacyProtocolInput {
 		for _, protocol := range previousAllowedProtocols {
 			if protocol != wireprotocol.ProtocolAnthropicMessages && protocol != wireprotocol.ProtocolOpenAIResponses && protocol != wireprotocol.ProtocolOpenAIChatCompletions && protocol != wireprotocol.ProtocolGeminiGenerateContent {
@@ -613,13 +685,14 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		return nil, err
 	}
 
-	// Supplying source groups replaces the current provider bindings.
+	// A nonempty source-group request replaces memberships even when copied
+	// eligibility is empty, so the mutation clears current bindings before
+	// optionally inserting the selected IDs.
 	var providerIDsToCopy []int64
 	if len(input.CopyProvidersFromGroupIDs) > 0 {
 		seen := make(map[int64]struct{})
 		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyProvidersFromGroupIDs))
 		for _, srcGroupID := range input.CopyProvidersFromGroupIDs {
-			// Copying from the destination group itself is invalid.
 			if srcGroupID == id {
 				return nil, fmt.Errorf("cannot copy providers from self")
 			}
@@ -629,7 +702,6 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 			}
 		}
 
-		// Require source groups to exist before copying their associations.
 		for _, srcGroupID := range uniqueSourceGroupIDs {
 			_, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
 			if err != nil {
@@ -637,13 +709,14 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 			}
 		}
 
-		// Read the distinct providers across source groups.
 		providerIDsToCopy, err = s.groupRepo.GetProviderIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get providers from source groups: %w", err)
 		}
 
-		// Exclude API-key providers when require_oauth_only is enabled.
+		// Apply the destination's authentication restriction to source IDs before
+		// replacement so API-key memberships are excluded even when the source group
+		// allowed them.
 		if group.RequireOAuthOnly && len(providerIDsToCopy) > 0 {
 			providers, err := s.providerRepo.GetByIDs(ctx, providerIDsToCopy)
 			if err != nil {
@@ -665,11 +738,13 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		}
 	}
 
+	// Save settings before clearing and rebinding on the same mutation context.
+	// Returning a membership error lets the transaction owner roll back all
+	// participant writes together.
 	if err := s.options.Mutate(ctx, func(opCtx context.Context) error {
 		if err := s.groupRepo.Update(opCtx, group); err != nil {
 			return err
 		}
-		// Update group settings and replace bindings in one transaction so a failure restores both.
 		if len(input.CopyProvidersFromGroupIDs) > 0 {
 			if _, err := s.groupRepo.DeleteProviderGroupsByGroupID(opCtx, id); err != nil {
 				return fmt.Errorf("failed to clear existing provider bindings: %w", err)
@@ -684,29 +759,44 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	}); err != nil {
 		return nil, err
 	}
+	// Invalidation follows the successful mutation callback. Later Key reads can
+	// load its changed settings once the transaction owner has committed the
+	// participant writes.
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
 	}
-	// Group policies are read through authentication snapshots.
-	// Shared pricing configuration is independent of these group updates.
 
 	return group, nil
 }
 
+// DeleteGroup removes a group through repository cascade cleanup and requests
+// invalidation of its previously bound Keys. A configured authentication
+// invalidator requires a Key reader before deletion begins.
+//
+// Bound Key strings are read first because their group associations may
+// disappear during cascade cleanup. A failed Key read is tolerated and leaves
+// no captured Keys, while cascade failure returns before invalidation. After
+// successful removal, each captured string is used to expire its authentication
+// snapshot; the repository's returned user IDs are not used by this operation.
 func (s *GroupAdmin) DeleteGroup(ctx context.Context, id int64) error {
 	var groupKeys []string
 	if s.authCacheInvalidator != nil {
 		keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, id)
+		// A Key-list failure leaves deletion available, but only successfully
+		// captured strings can be individually invalidated after their group bindings
+		// disappear.
 		if err == nil {
 			groupKeys = keys
 		}
 	}
 
+	// Credential eviction follows a successful cascade result. Returning a
+	// cascade error skips that phase, leaving the caller to resolve the storage
+	// outcome before another deletion attempt.
 	_, err := s.groupRepo.DeleteCascade(ctx, id)
 	if err != nil {
 		return err
 	}
-	// The foreign key cascades deletion to user_group_rate_multipliers.
 	if s.authCacheInvalidator != nil {
 		for _, key := range groupKeys {
 			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)
@@ -716,6 +806,8 @@ func (s *GroupAdmin) DeleteGroup(ctx context.Context, id int64) error {
 	return nil
 }
 
+// UpdateGroupSortOrders forwards administrative display positions to the group
+// repository.
 func (s *GroupAdmin) UpdateGroupSortOrders(ctx context.Context, updates []GroupSortOrderUpdate) error {
 	return s.groupRepo.UpdateSortOrders(ctx, updates)
 }

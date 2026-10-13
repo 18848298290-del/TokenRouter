@@ -9,7 +9,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Replay normalization retains complete messages and removes incomplete replay metadata.
+// TestSanitizeGrokResponsesModelInputNormalizesReplayHistory mixes complete
+// and incomplete assistant messages with reasoning replay. It asserts
+// incomplete metadata and null reasoning content disappear while complete
+// message metadata and reasoning summary text remain.
 func TestSanitizeGrokResponsesModelInputNormalizesReplayHistory(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -33,6 +36,10 @@ func TestSanitizeGrokResponsesModelInputNormalizesReplayHistory(t *testing.T) {
 	require.Equal(t, "completed", gjson.GetBytes(patched, "input.3.status").String())
 }
 
+// TestSanitizeGrokResponsesModelInputStripsOnlyNonPairCallIDs includes
+// nonpair output records beside a function call and reply. It asserts stray
+// call IDs are removed from the former and retained on both paired tool
+// items.
 func TestSanitizeGrokResponsesModelInputStripsOnlyNonPairCallIDs(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"message","role":"user","call_id":"remove_message","content":"continue"},
@@ -53,6 +60,10 @@ func TestSanitizeGrokResponsesModelInputStripsOnlyNonPairCallIDs(t *testing.T) {
 	require.Equal(t, "keep_function", gjson.GetBytes(patched, "input.4.call_id").String())
 }
 
+// TestSanitizeGrokResponsesModelInputPairsCallsInTwoPasses places a reply
+// before its call and includes alternate tool shapes. It asserts pairing,
+// argument/output normalization, large integer preservation, and retention of
+// an explicit orphan reply identifier.
 func TestSanitizeGrokResponsesModelInputPairsCallsInTwoPasses(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -93,6 +104,10 @@ func TestSanitizeGrokResponsesModelInputPairsCallsInTwoPasses(t *testing.T) {
 	require.Equal(t, "orphan", gjson.GetBytes(patched, "input.6.call_id").String())
 }
 
+// TestSanitizeGrokResponsesModelInputMapsAllItemAliasesAndRejectsConflicts
+// supplies a unique item alias and an item ID reused by two calls. It asserts
+// the unique alias pairs and the conflicting output receives a distinct
+// orphan identifier.
 func TestSanitizeGrokResponsesModelInputMapsAllItemAliasesAndRejectsConflicts(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","id":"fc_alias","call_id":"call_canonical","name":"one","arguments":"{}"},
@@ -121,6 +136,10 @@ func TestSanitizeGrokResponsesModelInputMapsAllItemAliasesAndRejectsConflicts(t 
 	require.NotEqual(t, thirdCallID, ambiguousOutputID)
 }
 
+// TestSanitizeGrokResponsesModelInputPreservesGrokShellOutputImages includes
+// two consecutive replies with separate top-level media arrays. It asserts
+// their text replies remain contiguous and a following user message retains
+// each labelled call's image URL.
 func TestSanitizeGrokResponsesModelInputPreservesGrokShellOutputImages(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","call_id":"call_a","name":"read_file","arguments":"{}"},
@@ -146,6 +165,10 @@ func TestSanitizeGrokResponsesModelInputPreservesGrokShellOutputImages(t *testin
 	require.Equal(t, "data:image/jpeg;base64,QkI=", gjson.GetBytes(patched, "input.4.content.3.image_url").String())
 }
 
+// TestSanitizeGrokResponsesModelInputPreservesGrok105StructuredOutputImages
+// supplies text and image parts inside structured tool output. It asserts
+// readable text is separated from base64 media and the image survives in a
+// subsequent user input-image message.
 func TestSanitizeGrokResponsesModelInputPreservesGrok105StructuredOutputImages(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","call_id":"call_read","name":"read_file","arguments":"{}"},
@@ -167,6 +190,10 @@ func TestSanitizeGrokResponsesModelInputPreservesGrok105StructuredOutputImages(t
 	require.Equal(t, "data:image/png;base64,QUE=", gjson.GetBytes(patched, "input.2.content.1.image_url").String())
 }
 
+// TestSanitizeGrokResponsesModelInputSkipsInvalidOutputImages supplies empty-
+// base64 and missing-URL media entries beside a normal user message. It
+// asserts no extra media message is emitted and both original logical
+// reply/message items remain.
 func TestSanitizeGrokResponsesModelInputSkipsInvalidOutputImages(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call_output","call_id":"call_empty","output":"done","images":[{"type":"image","url":"data:image/png;base64,"},{}]},

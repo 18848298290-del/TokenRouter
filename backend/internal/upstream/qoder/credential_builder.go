@@ -12,40 +12,81 @@ import (
 	"time"
 )
 
-// CredentialInput holds session credentials. Callers must exclude these fields from public responses.
+// Provider credentials can contain a PAT or an already exchanged COSY token set.
+// PAT construction exchanges the selected site's identity first, while imported
+// tokens need a saved machine ID and a user or account identifier before an
+// encrypted session can be built.
+//
+// Identity metadata is filled before the session becomes available to the
+// provider cache. Organization lookup is best effort and uses the provider
+// transport when supplied, so missing descriptive metadata does not reject
+// otherwise usable credentials. CN machine reconstruction keeps its UUID-style
+// ID and clears legacy token and type fields; global reconstruction fills
+// missing machine fields for older saved credentials.
+
+// CredentialInput holds private session input assembled from one saved provider
+// record.
 type CredentialInput struct {
-	Name               string
-	Pat                string
-	Site               string
-	RefreshMode        string
-	SecurityOauthToken string
-	MachineId          string
-	MachineToken       string
-	MachineType        string
-	Uid                string
-	Aid                string
-	IdentityName       string
-	UserType           string
-	RefreshToken       string
-	OrganizationId     string
-	OrganizationName   string
+	Name string // provider display name
+	// Pat and SecurityOauthToken supply alternate session inputs. BuildSession
+	// prefers nonblank Pat; imported SecurityOauthToken requires MachineId and
+	// either Uid or Aid before session construction.
+	Pat string // personal access token
+	// Site and RefreshMode identify credential workflow. Their parsers apply
+	// global and COSY legacy defaults. BuildSession validates mode for imported
+	// tokens; RefreshExchange validates it before choosing PAT reconstruction.
+	Site               string // saved provider site
+	RefreshMode        string // saved refresh workflow
+	SecurityOauthToken string // saved inference token
+	MachineId          string // saved machine identifier
+	MachineToken       string // saved machine token
+	MachineType        string // saved machine type
+	Uid                string // saved user identifier
+	Aid                string // saved account identifier
+	IdentityName       string // authenticated display name
+	UserType           string // saved account classification
+	RefreshToken       string // saved refresh token
+	OrganizationId     string // saved organization identifier
+	OrganizationName   string // saved organization name
 }
 
 type (
-	PATExchanger           func(context.Context, string, *MachineIdentity) (*AuthIdentity, error)
-	CNPATExchanger         func(context.Context, string, *MachineIdentity) (*AuthIdentity, time.Time, error)
+	// PATExchanger exchanges a global PAT with the supplied machine and request
+	// context.
+	PATExchanger func(context.Context, string, *MachineIdentity) (*AuthIdentity, error)
+	// CNPATExchanger exchanges a CN PAT and returns its identity and OpenAPI
+	// expiry.
+	CNPATExchanger func(context.Context, string, *MachineIdentity) (*AuthIdentity, time.Time, error)
+	// OrganizationTagsGetter looks up optional organization metadata using an
+	// access token and UID.
 	OrganizationTagsGetter func(context.Context, string, string) (*OrganizationTags, error)
 )
 
-// SessionBuilder exchanges credentials for sessions using the provider transport in Doer.
+// SessionBuilder combines optional exchange callbacks with the provider
+// transport for session construction.
 type SessionBuilder struct {
-	ExchangePAT   PATExchanger
-	ExchangeCNPAT CNPATExchanger
-	GetOrgTags    OrganizationTagsGetter
-	Doer          RequestDoer
+	// ExchangePAT replaces the global PAT exchange when supplied. A nil callback
+	// selects Center and Doer. Overrides supply an identity usable by inference;
+	// the builder can fill its metadata in place before encrypted publication.
+	ExchangePAT PATExchanger // global PAT override
+	// ExchangeCNPAT replaces CN PAT completion when supplied. A nil callback
+	// selects OpenAPI and status using Doer. Overrides supply an inference identity
+	// that the builder can complete in place before encrypted publication.
+	ExchangeCNPAT CNPATExchanger // CN PAT override
+	// GetOrgTags replaces optional organization lookup when supplied. A nil
+	// callback delegates to GetOrganizationTags with the selected provider site.
+	GetOrgTags OrganizationTagsGetter // organization lookup override
+	// Doer supplies the provider proxy and transport to default exchanges and
+	// metadata calls. Nil selects the platform client's HTTP defaults.
+	Doer RequestDoer // provider request transport
 }
 
+// String returns a fixed redacted label for credential formatting and logging.
 func (v *CredentialInput) String() string { return "qoder credentials [redacted]" }
+
+// GetCredential returns the saved string for a recognized provider credential
+// key. Unknown keys return an empty string; callers provide a nonnil
+// CredentialInput and apply validation or defaults for each requested field.
 func (v *CredentialInput) GetCredential(key string) string {
 	switch key {
 	case "pat":
@@ -80,6 +121,9 @@ func (v *CredentialInput) GetCredential(key string) string {
 	return ""
 }
 
+// credentialSite parses the credential site, selecting global for an empty site
+// value. A nil credential input returns an error, allowing builders to reject
+// absent provider data before reading individual fields.
 func credentialSite(v *CredentialInput) (Site, error) {
 	if v == nil {
 		return SiteGlobal, fmt.Errorf("qoder: provider is nil")
@@ -87,6 +131,9 @@ func credentialSite(v *CredentialInput) (Site, error) {
 	return ParseSite(v.Site)
 }
 
+// credentialProfile resolves site defaults from a nonnil provider credential
+// input. Site parsing errors propagate to callers, and the returned value can be
+// copied and overridden independently for request construction.
 func credentialProfile(v *CredentialInput) (Profile, error) {
 	site, err := credentialSite(v)
 	if err != nil {
@@ -95,6 +142,9 @@ func credentialProfile(v *CredentialInput) (Profile, error) {
 	return ProfileForSite(site)
 }
 
+// credentialRefreshMode parses the saved refresh workflow and applies the COSY
+// default. A nil credential input returns an error before refresh construction,
+// while unknown mode strings are rejected by ParseRefreshMode.
 func credentialRefreshMode(v *CredentialInput) (string, error) {
 	if v == nil {
 		return "", fmt.Errorf("qoder: provider is nil")
@@ -102,6 +152,16 @@ func credentialRefreshMode(v *CredentialInput) (string, error) {
 	return ParseRefreshMode(v.RefreshMode)
 }
 
+// BuildSession creates an encrypted session from a PAT or imported COSY
+// credentials. PAT takes precedence and uses the selected site's exchange
+// callback or default transport. Imported tokens require machine_id and uid or
+// aid; qodercn20 imported credentials require the CN site.
+//
+// The builder fills descriptive metadata before constructing a session that
+// retains identity and machine pointers. Global PAT and imported identities can
+// query organization tags best effort. CN PAT exchange supplies an expiry, while
+// global PAT and imported-token construction return a zero expiry for the cache
+// owner to interpret.
 func (p *SessionBuilder) BuildSession(ctx context.Context, provider *CredentialInput) (*SessionContext, time.Time, error) {
 	site, err := credentialSite(provider)
 	if err != nil {
@@ -135,11 +195,15 @@ func (p *SessionBuilder) BuildSession(ctx context.Context, provider *CredentialI
 			identity, err = exchangePAT(ctx, pat, machine)
 		}
 		if err != nil {
-			// Return the exchange failure to the caller for credential and cache handling.
+			// A failed PAT exchange supplies no identity to cache. Return the wrapped
+			// failure so the provider owner can handle rejected credentials or transport
+			// failure.
 			return nil, time.Time{}, fmt.Errorf("qoder pat exchange: %w", err)
 		}
 		ApplyIdentityMetadata(identity, provider)
-		// Populate metadata before publishing the session to avoid mutating a cached identity.
+		// The session retains the identity pointer. Resolve optional metadata before
+		// publication so later cached reads see the same encrypted identity and
+		// fields.
 		if site == SiteGlobal {
 			p.populateOrganizationFromAPI(ctx, provider, identity)
 		}
@@ -174,12 +238,19 @@ func (p *SessionBuilder) BuildSession(ctx context.Context, provider *CredentialI
 	return nil, time.Time{}, errors.New("qoder credentials require pat or security_oauth_token+machine_id")
 }
 
+// defaultExchangePAT returns a global Center exchange using this builder's
+// request doer. The returned callback follows ExchangePATContext defaults and
+// borrows the builder transport for each invocation; provider is currently
+// unused.
 func (p *SessionBuilder) defaultExchangePAT(provider *CredentialInput) PATExchanger {
 	return func(ctx context.Context, pat string, machine *MachineIdentity) (*AuthIdentity, error) {
 		return ExchangePATContext(ctx, pat, machine, "", p.Doer)
 	}
 }
 
+// defaultExchangeCNPAT returns the CN OpenAPI and status exchange using this
+// builder's doer. The callback selects the CN profile and returns its token
+// expiry; provider is currently unused.
 func (p *SessionBuilder) defaultExchangeCNPAT(provider *CredentialInput) CNPATExchanger {
 	return func(ctx context.Context, pat string, machine *MachineIdentity) (*AuthIdentity, time.Time, error) {
 		profile, err := ProfileForSite(SiteCN)
@@ -190,6 +261,10 @@ func (p *SessionBuilder) defaultExchangeCNPAT(provider *CredentialInput) CNPATEx
 	}
 }
 
+// populateOrganizationFromAPI mutates an identity with optional organization
+// tags before session publication. Existing organization IDs and missing
+// token/user inputs skip lookup. Callback or transport lookup failures leave the
+// identity usable and are suppressed.
 func (p *SessionBuilder) populateOrganizationFromAPI(ctx context.Context, provider *CredentialInput, identity *AuthIdentity) {
 	if p == nil || identity == nil {
 		return
@@ -212,6 +287,9 @@ func (p *SessionBuilder) populateOrganizationFromAPI(ctx context.Context, provid
 	} else {
 		tags, err = p.GetOrganizationTags(ctx, provider, token, uid)
 	}
+	// Organization metadata is optional for session construction. A failed or empty
+	// lookup leaves the authenticated identity usable before it is published to the
+	// cache.
 	if err != nil || tags == nil {
 		return
 	}
@@ -219,6 +297,11 @@ func (p *SessionBuilder) populateOrganizationFromAPI(ctx context.Context, provid
 	identity.OrganizationName = strings.TrimSpace(tags.OrganizationName)
 }
 
+// GetOrganizationTags fetches organization tags using the provider's site and
+// this builder's transport. A UID is required; a supplied doer controls the
+// request, otherwise the site's OAuth client performs the lookup. Response
+// bodies are consumed and closed here, and bounded HTTP failure text is
+// redacted.
 func (p *SessionBuilder) GetOrganizationTags(ctx context.Context, provider *CredentialInput, token, uid string) (*OrganizationTags, error) {
 	uid = strings.TrimSpace(uid)
 	if uid == "" {
@@ -244,6 +327,9 @@ func (p *SessionBuilder) GetOrganizationTags(ctx context.Context, provider *Cred
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
+			// HTTP rejection remains the reported failure even when bounded diagnostic
+			// reading fails. Redact the captured fragment before it reaches the provider
+			// owner.
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			return nil, fmt.Errorf("qoder: organization tags failed with status %d: %s", resp.StatusCode, RedactSensitiveText(string(body)))
 		}
@@ -254,9 +340,15 @@ func (p *SessionBuilder) GetOrganizationTags(ctx context.Context, provider *Cred
 		}
 		return &tags, nil
 	}
+	// No provider doer is available on this path. Delegate metadata lookup to the
+	// site's OAuth client so its context and response cleanup rules still apply.
 	return NewOAuthClientForProfile(profile, nil).GetOrganizationTags(ctx, token, uid)
 }
 
+// ApplyIdentityMetadata fills blank descriptive fields from saved provider
+// credentials. Existing identity name and organization fields take precedence;
+// nil inputs are ignored, and the identity is mutated before session
+// publication.
 func ApplyIdentityMetadata(identity *AuthIdentity, provider *CredentialInput) {
 	if identity == nil || provider == nil {
 		return
@@ -272,12 +364,18 @@ func ApplyIdentityMetadata(identity *AuthIdentity, provider *CredentialInput) {
 	}
 }
 
-// MachineForCredentials reads the saved machine identity and fills missing legacy values.
+// MachineForCredentials reconstructs the machine shape from saved credentials
+// and site defaults. Nil input creates a global machine, and an invalid site
+// uses global defaults. CN keeps only the machine ID; global missing token uses
+// that ID and missing type uses the legacy client type.
 func MachineForCredentials(provider *CredentialInput) *MachineIdentity {
 	if provider == nil {
 		return NewMachine()
 	}
 	site, err := credentialSite(provider)
+	// Machine reconstruction can receive an unvalidated stored site. Use global
+	// defaults here while the credential builder separately rejects invalid site
+	// input before exchange.
 	if err != nil {
 		site = SiteGlobal
 	}
@@ -286,7 +384,9 @@ func MachineForCredentials(provider *CredentialInput) *MachineIdentity {
 		machineID = NewMachineForSite(site).MachineID
 	}
 	if site == SiteCN {
-		// The CN protocol uses empty token and type values, including for older saved identities.
+		// CN Gateway requests send empty machine token and type headers. Reconstruct
+		// that shape even when older imported credentials contain random values for
+		// them.
 		return &MachineIdentity{MachineID: machineID}
 	}
 	return &MachineIdentity{

@@ -8,28 +8,67 @@ import (
 	"time"
 )
 
+// Saved credentials identify both a Qoder site and a refresh workflow, while PAT
+// credentials rebuild their session from the original personal token.
+// RefreshExchange chooses that workflow and returns identity, machine, and
+// expiry metadata for the provider's existing persistence and cache
+// coordination.
+//
+// CN QoderCN20 refresh uses OpenAPI followed by userinfo and status; imported CN
+// COSY tokens use Gateway refresh with user and organization IDs. Global COSY
+// refresh uses Center. Callback overrides replace their corresponding token
+// exchange, and the provider doer supplies transport to defaults. Credential
+// output contains nonempty new identity and machine values, retaining the saved
+// refresh token when an exchange omits its replacement.
+
 type (
-	SessionRefresher       func(context.Context, string, string, *MachineIdentity) (*AuthIdentity, error)
-	CN20SessionRefresher   func(context.Context, string, *MachineIdentity) (*AuthIdentity, time.Time, error)
+	// SessionRefresher exchanges global COSY tokens with a retained machine
+	// identity.
+	SessionRefresher func(context.Context, string, string, *MachineIdentity) (*AuthIdentity, error)
+	// CN20SessionRefresher exchanges a CN refresh token and returns identity plus
+	// expiry.
+	CN20SessionRefresher func(context.Context, string, *MachineIdentity) (*AuthIdentity, time.Time, error)
+	// CNCosySessionRefresher refreshes imported CN COSY identity with user and
+	// organization IDs.
 	CNCosySessionRefresher func(context.Context, string, string, string, string, *MachineIdentity) (*AuthIdentity, error)
-	RefreshExchange        struct {
-		RefreshSession SessionRefresher
-		RefreshCN20    CN20SessionRefresher
-		RefreshCNCosy  CNCosySessionRefresher
-		Doer           RequestDoer
+	// RefreshExchange combines workflow-specific overrides with one provider's
+	// request transport.
+	RefreshExchange struct {
+		// RefreshSession replaces global COSY exchange when supplied. A nil callback
+		// selects Center refresh through Doer.
+		RefreshSession SessionRefresher // global refresh override
+		// RefreshCN20 replaces CN OpenAPI completion when supplied. A nil callback
+		// selects refresh, userinfo, and status through Doer.
+		RefreshCN20 CN20SessionRefresher // CN20 refresh override
+		// RefreshCNCosy replaces imported CN COSY refresh when supplied. A nil
+		// callback selects the Gateway flow through Doer.
+		RefreshCNCosy CNCosySessionRefresher // CN COSY override
+		// Doer supplies transport for default exchanges. A nil value selects each
+		// platform client's HTTP defaults; callback overrides choose their own transport.
+		Doer RequestDoer // provider request transport
 	}
 )
 
+// RefreshResult carries exchanged credentials and workflow metadata for provider
+// persistence.
 type RefreshResult struct {
-	Identity  *AuthIdentity
-	Machine   *MachineIdentity
-	Site      Site
-	Mode      string
-	ExpiresAt time.Time
+	Identity  *AuthIdentity    // exchanged authentication identity
+	Machine   *MachineIdentity // retained machine identity
+	Site      Site             // selected credential site
+	Mode      string           // selected refresh workflow
+	ExpiresAt time.Time        // exchanged token expiry
 }
 
-// Refresh rebuilds PAT sessions or exchanges refresh tokens using the saved site and mode.
-// The caller persists the returned identity and expiry.
+// Refresh returns exchanged identity and machine metadata for the provider
+// persistence owner. Site and mode are validated first; PAT chooses COSY
+// reconstruction, while token-only refresh requires a saved machine ID. The
+// returned identity needs a nonempty security token.
+//
+// Workflow selection remains tied to the saved site and credential source.
+// Descriptive metadata is filled after exchange, and the result carries the
+// selected mode and any CN OpenAPI expiry. This method performs network exchange
+// and validation; the provider owner merges, persists, and invalidates cached
+// credentials.
 func (r *RefreshExchange) Refresh(ctx context.Context, provider *CredentialInput) (*RefreshResult, error) {
 	site, err := credentialSite(provider)
 	if err != nil {
@@ -39,6 +78,9 @@ func (r *RefreshExchange) Refresh(ctx context.Context, provider *CredentialInput
 	if err != nil {
 		return nil, err
 	}
+	// PAT credentials are reconstructed from their original token. Mark that
+	// credential source as COSY even when saved refresh metadata names another
+	// workflow.
 	if strings.TrimSpace(provider.GetCredential("pat")) != "" {
 		refreshMode = RefreshModeCosy
 	}
@@ -63,6 +105,15 @@ func (r *RefreshExchange) Refresh(ctx context.Context, provider *CredentialInput
 	return &RefreshResult{Identity: identity, Machine: machine, Site: site, Mode: refreshMode, ExpiresAt: expiresAt}, nil
 }
 
+// refreshIdentity selects the exchange appropriate to PAT, site, and refresh
+// mode. PAT rebuilds CN identity through OpenAPI/status or global identity
+// through Center. Token refresh requires a saved refresh token, and qodercn20 is
+// rejected outside CN.
+//
+// CN20, imported CN COSY, and global COSY paths each honor their own callback
+// override. Default paths use the supplied doer; imported COSY and global
+// refresh return zero expiry, while CN20 returns the OpenAPI expiry used by the
+// provider owner.
 func (r *RefreshExchange) refreshIdentity(
 	ctx context.Context,
 	provider *CredentialInput,
@@ -107,6 +158,9 @@ func (r *RefreshExchange) refreshIdentity(
 		return identity, time.Time{}, err
 	}
 	refreshSession := r.RefreshSession
+	// The global callback is optional. Bind the provider doer into the Center
+	// default so refresh requests use the same selected transport as session
+	// construction.
 	if refreshSession == nil {
 		refreshSession = func(ctx context.Context, refreshToken, securityOauthToken string, machine *MachineIdentity) (*AuthIdentity, error) {
 			return RefreshSessionContext(ctx, refreshToken, securityOauthToken, machine, "", doer)
@@ -116,6 +170,10 @@ func (r *RefreshExchange) refreshIdentity(
 	return identity, time.Time{}, err
 }
 
+// TokenInfoCredentials builds a new credential map from nonempty identity and
+// machine fields. Values copied from those inputs are trimmed. A saved provider
+// refresh token fills the map only when the new identity omitted one, retaining
+// its supplied spelling.
 func TokenInfoCredentials(identity *AuthIdentity, provider *CredentialInput, machine *MachineIdentity) map[string]any {
 	credentials := map[string]any{}
 	if identity != nil {
@@ -155,6 +213,8 @@ func TokenInfoCredentials(identity *AuthIdentity, provider *CredentialInput, mac
 			credentials["machine_type"] = machineType
 		}
 	}
+	// An exchange can omit its refresh-token replacement. Keep the saved token in
+	// that case so the provider's merge still has a token for future refreshes.
 	if provider != nil {
 		if refreshToken := provider.GetCredential("refresh_token"); refreshToken != "" {
 			if _, ok := credentials["refresh_token"]; !ok {

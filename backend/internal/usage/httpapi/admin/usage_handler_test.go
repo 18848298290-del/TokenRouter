@@ -25,35 +25,59 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// Administrator cleanup HTTP commands parse dates and operator identity
+// before calling the persisted task service. These capture fixtures inspect
+// authentication rejection, date validation, request-category precedence,
+// list envelopes and cancellation status mapping.
+//
+// Usage-read cases capture selectors and sort input passed through the
+// handler, then decode optional access-log timing and deleted-account
+// suggestions. The fixtures supply in-memory outcomes rather than SQL
+// results, so filter forwarding and response visibility are the observations
+// protected here.
+
+// The compile-time assertion keeps the cleanup fixture compatible with the
+// repository methods required by administrator task routes.
 var _ usage.UsageCleanupRepository = (*cleanupRepoStub)(nil)
 
+// cleanupRepoStub stores shallow creation records and cancellation state for
+// administrator HTTP tests. Configure its page inputs before use; methods
+// protect mutable state and captured task records with mu.
 type cleanupRepoStub struct {
-	mu         sync.Mutex
-	created    []*usage.UsageCleanupTask
-	listTasks  []usage.UsageCleanupTask
-	listResult *pagination.PaginationResult
-	listErr    error
-	statusByID map[int64]string
+	mu         sync.Mutex                   // fixture task state access mutex
+	created    []*usage.UsageCleanupTask    // captured shallow task creation copies
+	listTasks  []usage.UsageCleanupTask     // configured shared cleanup task page
+	listResult *pagination.PaginationResult // configured shared pagination result
+	listErr    error                        // injected task page failure
+	statusByID map[int64]string             // configured mutable cleanup status map
 }
 
+// adminUsageRepoCapture captures list and statistics input and supplies
+// configured usage rows.
 type adminUsageRepoCapture struct {
-	usage.UsageLogRepository
-	listParams   pagination.PaginationParams
-	listFilters  usage.UsageLogFilters
-	statsFilters usage.UsageLogFilters
-	logs         []usage.UsageLog
+	usage.UsageLogRepository                             // unused usage repository method slots
+	listParams               pagination.PaginationParams // captured list pagination and sort
+	listFilters              usage.UsageLogFilters       // captured usage list selectors
+	statsFilters             usage.UsageLogFilters       // captured usage statistics selectors
+	logs                     []usage.UsageLog            // configured shared usage record rows
 }
 
+// adminUsageTimingOpsRepo supplies persisted timing observations for
+// administrator response enrichment tests.
 type adminUsageTimingOpsRepo struct {
-	ops.OpsRepository
-	timings map[string]*ops.OpsRequestTiming
+	ops.OpsRepository                                  // unused Ops repository method slots
+	timings           map[string]*ops.OpsRequestTiming // configured shared request stage map
 }
 
-// searchUsersAdminStub captures query filters and includes deleted users in its results.
+// searchUsersAdminStub captures account suggestion filters and supplies
+// active and deleted identities.
 type searchUsersAdminStub struct {
-	gotFilters ports.UserListFilters
+	gotFilters ports.UserListFilters // captured account suggestion filters
 }
 
+// CreateTask assigns missing identity and creation time, then captures a
+// shallow task copy under mu. Nil input succeeds, and the fixture's stored
+// filters retain optional pointers from the supplied task.
 func (s *cleanupRepoStub) CreateTask(ctx context.Context, task *usage.UsageCleanupTask) error {
 	if task == nil {
 		return nil
@@ -72,16 +96,24 @@ func (s *cleanupRepoStub) CreateTask(ctx context.Context, task *usage.UsageClean
 	return nil
 }
 
+// ListTasks returns the configured task page, pagination pointer and error
+// under mu. Its slice and pointer results remain shared with fixture
+// configuration, which tests initialize before their request runs.
 func (s *cleanupRepoStub) ListTasks(ctx context.Context, params pagination.PaginationParams) ([]usage.UsageCleanupTask, *pagination.PaginationResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listTasks, s.listResult, s.listErr
 }
 
+// ClaimNextPendingTask supplies an empty queue for background dispatch in
+// administrator command tests.
 func (s *cleanupRepoStub) ClaimNextPendingTask(ctx context.Context, staleRunningAfterSeconds int64) (*usage.UsageCleanupTask, error) {
 	return nil, nil
 }
 
+// GetTaskStatus reads a configured status under mu or reports a missing task.
+// Missing results join the domain sentinel with sql.ErrNoRows, exercising the
+// service's error-chain handling for HTTP cancellation.
 func (s *cleanupRepoStub) GetTaskStatus(ctx context.Context, taskID int64) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -95,10 +127,15 @@ func (s *cleanupRepoStub) GetTaskStatus(ctx context.Context, taskID int64) (stri
 	return status, nil
 }
 
+// UpdateTaskProgress acknowledges unused worker progress in the administrator
+// command fixture.
 func (s *cleanupRepoStub) UpdateTaskProgress(ctx context.Context, taskID int64, deletedRows int64) error {
 	return nil
 }
 
+// CancelTask records canceled status only for pending or running fixture
+// tasks under mu. Other statuses return false, allowing the handler's service
+// to select its conflict response.
 func (s *cleanupRepoStub) CancelTask(ctx context.Context, taskID int64, canceledBy int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -113,18 +150,27 @@ func (s *cleanupRepoStub) CancelTask(ctx context.Context, taskID int64, canceled
 	return true, nil
 }
 
+// MarkTaskSucceeded acknowledges unused successful completion in the
+// administrator command fixture.
 func (s *cleanupRepoStub) MarkTaskSucceeded(ctx context.Context, taskID int64, deletedRows int64) error {
 	return nil
 }
 
+// MarkTaskFailed acknowledges unused failed completion in the administrator
+// command fixture.
 func (s *cleanupRepoStub) MarkTaskFailed(ctx context.Context, taskID int64, deletedRows int64, errorMsg string) error {
 	return nil
 }
 
+// DeleteUsageLogsBatch supplies zero removed rows for unused administrator
+// worker execution.
 func (s *cleanupRepoStub) DeleteUsageLogsBatch(ctx context.Context, filters usage.UsageCleanupFilters, limit int) (int64, error) {
 	return 0, nil
 }
 
+// setupCleanupRouter registers cleanup routes and optionally installs a
+// positive supplied user subject. Zero IDs leave authentication absent,
+// allowing HTTP cases to exercise the command handler's own operator checks.
 func setupCleanupRouter(cleanupService *usage.UsageCleanupService, userID int64) *gin.Engine {
 	router := gin.New()
 	if userID > 0 {
@@ -141,6 +187,9 @@ func setupCleanupRouter(cleanupService *usage.UsageCleanupService, userID int64)
 	return router
 }
 
+// TestUsageHandlerCreateCleanupTaskUnauthorized invokes creation without an
+// installed user subject. It requires unauthorized status before the cleanup
+// command can accept its empty request body.
 func TestUsageHandlerCreateCleanupTaskUnauthorized(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -155,6 +204,9 @@ func TestUsageHandlerCreateCleanupTaskUnauthorized(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskUnavailable installs a user subject but no
+// cleanup service. It requires service-unavailable status from the creation
+// endpoint for that configuration.
 func TestUsageHandlerCreateCleanupTaskUnavailable(t *testing.T) {
 	router := setupCleanupRouter(nil, 1)
 
@@ -166,6 +218,9 @@ func TestUsageHandlerCreateCleanupTaskUnavailable(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskBindError submits malformed JSON under an
+// authenticated subject. It requires a bad-request response from body binding
+// before cleanup task creation.
 func TestUsageHandlerCreateCleanupTaskBindError(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -180,6 +235,9 @@ func TestUsageHandlerCreateCleanupTaskBindError(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskMissingRange supplies a start date and
+// timezone with no end date. It requires the creation handler to return a
+// bad-request response.
 func TestUsageHandlerCreateCleanupTaskMissingRange(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -201,6 +259,9 @@ func TestUsageHandlerCreateCleanupTaskMissingRange(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskInvalidDate submits a start date with an
+// invalid month. It requires the creation handler to reject that date with
+// bad-request status.
 func TestUsageHandlerCreateCleanupTaskInvalidDate(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -223,6 +284,9 @@ func TestUsageHandlerCreateCleanupTaskInvalidDate(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskInvalidEndDate submits an end date with an
+// invalid day. It requires the creation handler to reject that date with
+// bad-request status.
 func TestUsageHandlerCreateCleanupTaskInvalidEndDate(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -245,6 +309,9 @@ func TestUsageHandlerCreateCleanupTaskInvalidEndDate(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskInvalidRequestType submits valid UTC dates
+// with an unsupported category label. It requires the creation handler to
+// reject that filter with bad-request status.
 func TestUsageHandlerCreateCleanupTaskInvalidRequestType(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -268,6 +335,9 @@ func TestUsageHandlerCreateCleanupTaskInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+// TestUsageHandlerCreateCleanupTaskRequestTypePriority submits WS v2 beside
+// false stream. It requires one accepted task carrying the WS v2 integer and
+// an absent stream selector.
 func TestUsageHandlerCreateCleanupTaskRequestTypePriority(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -300,6 +370,9 @@ func TestUsageHandlerCreateCleanupTaskRequestTypePriority(t *testing.T) {
 	require.Nil(t, created.Filters.Stream)
 }
 
+// TestUsageHandlerCreateCleanupTaskWithLegacyStream submits true stream
+// without a category. It requires one accepted task with absent request type
+// and the retained true stream filter.
 func TestUsageHandlerCreateCleanupTaskWithLegacyStream(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -331,6 +404,9 @@ func TestUsageHandlerCreateCleanupTaskWithLegacyStream(t *testing.T) {
 	require.True(t, *created.Filters.Stream)
 }
 
+// TestUsageHandlerCreateCleanupTaskSuccess supplies spaced start text, UTC
+// dates and model. It checks accepted envelope, operator, selected model and
+// the fixed elapsed-day inclusive end instant.
 func TestUsageHandlerCreateCleanupTaskSuccess(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -371,6 +447,9 @@ func TestUsageHandlerCreateCleanupTaskSuccess(t *testing.T) {
 	require.True(t, created.Filters.EndTime.Equal(end))
 }
 
+// TestUsageHandlerListCleanupTasksUnavailable registers listing without a
+// cleanup service. It requires service-unavailable status from the route when
+// its task page cannot be queried.
 func TestUsageHandlerListCleanupTasksUnavailable(t *testing.T) {
 	router := setupCleanupRouter(nil, 0)
 
@@ -381,6 +460,9 @@ func TestUsageHandlerListCleanupTasksUnavailable(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
+// TestUsageHandlerListCleanupTasksSuccess supplies a one-task page and
+// pagination data. It checks successful envelope, task ID, total and page
+// number in decoded JSON.
 func TestUsageHandlerListCleanupTasksSuccess(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	repo.listTasks = []usage.UsageCleanupTask{
@@ -402,12 +484,12 @@ func TestUsageHandlerListCleanupTasksSuccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // decoded envelope result code
 		Data struct {
-			Items []dto.UsageCleanupTask `json:"items"`
-			Total int64                  `json:"total"`
-			Page  int                    `json:"page"`
-		} `json:"data"`
+			Items []dto.UsageCleanupTask `json:"items"` // decoded cleanup task rows
+			Total int64                  `json:"total"` // decoded matching task count
+			Page  int                    `json:"page"`  // decoded current page number
+		} `json:"data"` // decoded administrator response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -417,6 +499,9 @@ func TestUsageHandlerListCleanupTasksSuccess(t *testing.T) {
 	require.Equal(t, 1, resp.Data.Page)
 }
 
+// TestUsageHandlerListCleanupTasksError injects a listing failure in cleanup
+// storage. It requires an internal-error response from the administrator task
+// page endpoint for that query.
 func TestUsageHandlerListCleanupTasksError(t *testing.T) {
 	repo := &cleanupRepoStub{listErr: errors.New("boom")}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
@@ -430,6 +515,9 @@ func TestUsageHandlerListCleanupTasksError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
+// TestUsageHandlerCancelCleanupTaskUnauthorized submits cancellation without
+// an installed user subject. It requires unauthorized status before the
+// service can process the supplied task ID.
 func TestUsageHandlerCancelCleanupTaskUnauthorized(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true}}
@@ -443,6 +531,9 @@ func TestUsageHandlerCancelCleanupTaskUnauthorized(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+// TestUsageHandlerCancelCleanupTaskNotFound requests an absent task with an
+// authenticated subject. It requires not-found status after the fixture's
+// joined domain and SQL status error.
 func TestUsageHandlerCancelCleanupTaskNotFound(t *testing.T) {
 	repo := &cleanupRepoStub{}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true}}
@@ -456,6 +547,9 @@ func TestUsageHandlerCancelCleanupTaskNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// TestUsageHandlerCancelCleanupTaskConflict supplies a task already marked
+// succeeded. It requires conflict status when an authenticated operator
+// requests cancellation of that terminal task.
 func TestUsageHandlerCancelCleanupTaskConflict(t *testing.T) {
 	repo := &cleanupRepoStub{statusByID: map[int64]string{2: usage.UsageCleanupStatusSucceeded}}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true}}
@@ -469,6 +563,9 @@ func TestUsageHandlerCancelCleanupTaskConflict(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code)
 }
 
+// TestUsageHandlerCancelCleanupTaskSuccess supplies a pending task and
+// authenticated operator. It requires the endpoint to return success after
+// the service's conditional cancellation handling.
 func TestUsageHandlerCancelCleanupTaskSuccess(t *testing.T) {
 	repo := &cleanupRepoStub{statusByID: map[int64]string{3: usage.UsageCleanupStatusPending}}
 	cfg := &usage.Options{UsageCleanup: usage.UsageCleanupConfig{Enabled: true}}
@@ -482,6 +579,10 @@ func TestUsageHandlerCancelCleanupTaskSuccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// ListWithFilters captures query selectors and pagination before returning
+// configured shared logs and a derived page. Tests read the capture after
+// synchronous request completion and leave configured records stable during
+// conversion.
 func (s *adminUsageRepoCapture) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usage.UsageLogFilters) ([]usage.UsageLog, *pagination.PaginationResult, error) {
 	s.listParams = params
 	s.listFilters = filters
@@ -493,10 +594,15 @@ func (s *adminUsageRepoCapture) ListWithFilters(ctx context.Context, params pagi
 	}, nil
 }
 
+// ListRequestTimings returns the configured shared timing map for
+// administrator enrichment fixtures.
 func (r *adminUsageTimingOpsRepo) ListRequestTimings(_ context.Context, ids []string) (map[string]*ops.OpsRequestTiming, error) {
 	return r.timings, nil
 }
 
+// TestAdminUsageListIncludesDetailedTiming supplies a historical
+// client-prefixed request and a matching timing observation. It requires the
+// decoded row's optional timing and exact first-byte offset.
 func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 	firstByte := int64(120000)
 	usageRepo := &adminUsageRepoCapture{logs: []usage.UsageLog{{
@@ -521,10 +627,10 @@ func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 		Data struct {
 			Items []struct {
 				DetailedTiming *struct {
-					UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"`
-				} `json:"detailed_timing,omitempty"`
-			} `json:"items"`
-		} `json:"data"`
+					UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"` // optional first byte offset milliseconds
+				} `json:"detailed_timing,omitempty"` // decoded optional request stage observations
+			} `json:"items"` // decoded cleanup or usage rows
+		} `json:"data"` // decoded administrator response payload
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Len(t, response.Data.Items, 1)
@@ -532,11 +638,15 @@ func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 	require.Equal(t, int64(120000), *response.Data.Items[0].DetailedTiming.UpstreamFirstResponseByteMs)
 }
 
+// GetStatsWithFilters captures supplied administrator selectors and returns
+// an empty successful summary.
 func (s *adminUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters usage.UsageLogFilters) (*usage.UsageStats, error) {
 	s.statsFilters = filters
 	return &usage.UsageStats{}, nil
 }
 
+// newAdminUsageRequestTypeTestRouter constructs administrator usage list and
+// statistics routes with a capture fixture.
 func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture) *gin.Engine {
 	usageSvc := usage.NewUsageService(repo)
 	handler := NewUsageHandler(usageSvc, nil, nil, nil, nil, timezone.NewCalendar(time.Local))
@@ -546,6 +656,9 @@ func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture) *gin.Engine
 	return router
 }
 
+// TestAdminUsageListRequestTypePriority sends WS v2 beside false legacy
+// stream. It checks successful response and the captured category pointer
+// with absent stream selection.
 func TestAdminUsageListRequestTypePriority(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -560,6 +673,9 @@ func TestAdminUsageListRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.listFilters.Stream)
 }
 
+// TestAdminUsageListUsesRequestedModelForDisplayModelFilter submits a model
+// name to listing. It checks success and the captured model text with the
+// requested reporting-source selector.
 func TestAdminUsageListUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -573,7 +689,9 @@ func TestAdminUsageListUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	require.Equal(t, usage.ModelSourceRequested, repo.listFilters.ModelFilterSource)
 }
 
-// TestAdminUsageListTeamFilter checks that team scope reaches the list repository.
+// TestAdminUsageListTeamFilter submits a team identifier to the usage list.
+// It requires a successful response and that identifier in the captured
+// repository selectors.
 func TestAdminUsageListTeamFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -586,6 +704,9 @@ func TestAdminUsageListTeamFilter(t *testing.T) {
 	require.Equal(t, int64(27), repo.listFilters.TeamID)
 }
 
+// TestAdminUsageListInvalidRequestType sends unsupported category text to
+// listing. It requires the handler to return a bad-request response for that
+// request-type input.
 func TestAdminUsageListInvalidRequestType(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -597,6 +718,9 @@ func TestAdminUsageListInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestAdminUsageListInvalidStream sends malformed legacy stream text without
+// a category. It requires the handler to return a bad-request response for
+// that boolean input.
 func TestAdminUsageListInvalidStream(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -608,6 +732,9 @@ func TestAdminUsageListInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestAdminUsageListExactTotalTrue requests an exact pagination total. It
+// requires a successful HTTP response and true ExactTotal in the selectors
+// captured by the repository fixture.
 func TestAdminUsageListExactTotalTrue(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -620,7 +747,9 @@ func TestAdminUsageListExactTotalTrue(t *testing.T) {
 	require.True(t, repo.listFilters.ExactTotal)
 }
 
-// TestAdminUsageListRequestIDFilter checks whitespace trimming and request-ID forwarding.
+// TestAdminUsageListRequestIDFilter supplies request identity surrounded by
+// encoded spaces. It requires HTTP success and trimmed request text in the
+// captured usage-list filters.
 func TestAdminUsageListRequestIDFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -633,6 +762,9 @@ func TestAdminUsageListRequestIDFilter(t *testing.T) {
 	require.Equal(t, "req-0123", repo.listFilters.RequestID)
 }
 
+// TestAdminUsageListInvalidExactTotal submits an unsupported exact_total
+// value. It requires a bad-request response from pagination-total boolean
+// validation in the administrator list handler.
 func TestAdminUsageListInvalidExactTotal(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -644,6 +776,9 @@ func TestAdminUsageListInvalidExactTotal(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestAdminUsageStatsRequestTypePriority sends stream category beside
+// malformed stream text. It requires success, the stored stream category
+// pointer and absent legacy stream selection in captured statistics filters.
 func TestAdminUsageStatsRequestTypePriority(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -658,6 +793,9 @@ func TestAdminUsageStatsRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.statsFilters.Stream)
 }
 
+// TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter supplies a
+// specific model name to summary statistics. It checks successful handling
+// and the exact model text plus requested source in captured filters.
 func TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -671,7 +809,9 @@ func TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	require.Equal(t, usage.ModelSourceRequested, repo.statsFilters.ModelFilterSource)
 }
 
-// TestAdminUsageStatsTeamFilter checks that summary statistics receive the team filter.
+// TestAdminUsageStatsTeamFilter supplies a team identifier to summary
+// statistics. It requires a successful response and that identifier in the
+// captured repository filter set.
 func TestAdminUsageStatsTeamFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -684,6 +824,9 @@ func TestAdminUsageStatsTeamFilter(t *testing.T) {
 	require.Equal(t, int64(31), repo.statsFilters.TeamID)
 }
 
+// TestAdminUsageStatsInvalidRequestType submits unsupported category text to
+// statistics. It requires the handler to return a bad-request response for
+// the supplied category input.
 func TestAdminUsageStatsInvalidRequestType(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -695,6 +838,9 @@ func TestAdminUsageStatsInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestAdminUsageStatsInvalidStream submits malformed legacy stream text with
+// no category. It requires the statistics handler to reject that input with
+// bad-request status.
 func TestAdminUsageStatsInvalidStream(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -706,7 +852,9 @@ func TestAdminUsageStatsInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// TestAdminUsageEndpointSource checks the all-chart default and rejection of unknown sources.
+// TestAdminUsageEndpointSource supplies empty, all, supported and invalid
+// chart sources. It checks all-to-empty normalization, supported selector
+// forwarding and bad-request rejection of the unknown source.
 func TestAdminUsageEndpointSource(t *testing.T) {
 	for _, source := range []string{"", "all", "inbound", "upstream", "path", "invalid"} {
 		repo := &adminUsageRepoCapture{}
@@ -725,6 +873,9 @@ func TestAdminUsageEndpointSource(t *testing.T) {
 	}
 }
 
+// ListUsers captures supplied search filters and returns two fixed account
+// references. One has a deletion instant, letting the HTTP test distinguish
+// active and deleted suggestion flags.
 func (s *searchUsersAdminStub) ListUsers(ctx context.Context, page, pageSize int, filters ports.UserListFilters, sortBy, sortOrder string) ([]ports.UserReference, int64, error) {
 	s.gotFilters = filters
 	ts := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
@@ -734,6 +885,9 @@ func (s *searchUsersAdminStub) ListUsers(ctx context.Context, page, pageSize int
 	}, 2, nil
 }
 
+// TestAdminUsageSearchUsers_IncludesDeletedAndFlags supplies active and
+// deleted suggestion fixtures. It checks the IncludeDeleted query flag, two
+// returned rows and their decoded deletion flags.
 func TestAdminUsageSearchUsers_IncludesDeletedAndFlags(t *testing.T) {
 	stub := &searchUsersAdminStub{}
 	handler := NewUsageHandler(nil, nil, stub, nil, nil, timezone.NewCalendar(time.Local))
@@ -749,10 +903,10 @@ func TestAdminUsageSearchUsers_IncludesDeletedAndFlags(t *testing.T) {
 
 	var resp struct {
 		Data []struct {
-			ID      int64  `json:"id"`
-			Email   string `json:"email"`
-			Deleted bool   `json:"deleted"`
-		} `json:"data"`
+			ID      int64  `json:"id"`      // decoded suggested account identifier
+			Email   string `json:"email"`   // decoded suggested account email
+			Deleted bool   `json:"deleted"` // decoded soft deletion flag
+		} `json:"data"` // decoded administrator response payload
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 2)
@@ -760,6 +914,9 @@ func TestAdminUsageSearchUsers_IncludesDeletedAndFlags(t *testing.T) {
 	require.True(t, resp.Data[1].Deleted, "已删用户必须标记 deleted=true")
 }
 
+// TestAdminUsageListSortParams supplies model sorting with uppercase
+// direction text. It requires successful HTTP handling and both strings
+// captured as supplied by the repository fixture.
 func TestAdminUsageListSortParams(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)
@@ -773,6 +930,9 @@ func TestAdminUsageListSortParams(t *testing.T) {
 	require.Equal(t, "ASC", repo.listParams.SortOrder)
 }
 
+// TestAdminUsageListSortDefaults omits list sorting parameters. It requires
+// successful HTTP handling and the created_at and descending defaults
+// captured in the repository pagination input.
 func TestAdminUsageListSortDefaults(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)

@@ -13,17 +13,48 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// Replayed tool calls can carry separate item IDs, call IDs, or no explicit
+// pairing ID. A two-pass scan registers all calls before pairing outputs so
+// an output can precede its call. Conflicting item aliases are removed from
+// alias lookup, while explicit call identifiers remain usable even in
+// malformed transcripts that reuse them.
+//
+// Tool output must also carry text and images through different input shapes.
+// Output text is serialized into function_call_output, while extracted media
+// is held until a contiguous output group ends and then appended as user
+// image content labelled by call. JSON number decoding retains large numeric
+// tokens. Completed assistant messages keep replay metadata, while incomplete
+// assistant text and reasoning receive the adjustments used by this request
+// normalizer.
+
+// GrokToolOutputImage associates one extracted image URL with the supplied
+// tool call identifier.
 type GrokToolOutputImage struct {
-	callID string
-	url    string
+	callID string // associated tool call identifier
+	url    string // extracted tool image URL
 }
 
-// SanitizeGrokResponsesModelInput normalizes replay messages and tool calls for xAI.
+// SanitizeGrokResponsesModelInput rebuilds object or array input into replay
+// messages and paired tool items. Missing, string, and unsupported input
+// shapes retain their body. The decoded array uses json.Number so large
+// numeric arguments and outputs survive reserialization. Call/output IDs are
+// established before filtering, allowing outputs to refer to calls later in
+// the transcript.
+//
+// Tool replies become string-valued function_call_output items; their
+// extracted images are appended after each contiguous reply group as labelled
+// user content. Nonblank standalone text becomes user messages, incomplete
+// assistant messages lose replay metadata, and reasoning loses status and
+// null content. Custom/search calls become functions with normalized names
+// and arguments. JSON mutation and encoding errors propagate; this normalizer
+// does not validate whether every surviving replay item is accepted upstream.
 func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() || input.Type == gjson.String {
 		return body, nil
 	}
+	// Treat an object as one replay item so the same pairing and filtering
+	// rules can process it through the array path below.
 	if input.IsObject() {
 		var err error
 		body, err = sjson.SetRawBytes(body, "input", []byte("["+input.Raw+"]"))
@@ -38,13 +69,19 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 
 	var items []any
 	decoder := json.NewDecoder(bytes.NewReader([]byte(input.Raw)))
+	// Preserve numeric spellings during replay reserialization so large IDs in
+	// arguments and tool output do not pass through lossy float64 decoding.
 	decoder.UseNumber()
 	if err := decoder.Decode(&items); err != nil {
 		return nil, fmt.Errorf("parse Grok Responses model input: %w", err)
 	}
+	// Discover calls before consuming outputs; a transcript can place a tool reply
+	// ahead of its call while still carrying an alias needed for correct pairing.
 	callIDs, outputIDs := m.PairGrokReplayCallIDs(items)
 	filtered := make([]any, 0, len(items))
 	pendingOutputImages := make([]GrokToolOutputImage, 0)
+	// Nonreply entries flush accumulated images before their own content. The
+	// final flush also retains media when the transcript ends in tool replies.
 	for index, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
@@ -58,6 +95,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 
 		itemType := strings.ToLower(strings.TrimSpace(m.GrokStringValue(item["type"])))
 		role := strings.ToLower(strings.TrimSpace(m.GrokStringValue(item["role"])))
+		// Keep contiguous tool replies as output items and postpone their images until
+		// the group ends, preserving pairing labels when media moves into user content.
 		if role == "tool" || role == "function" || m.IsGrokReplayOutputType(itemType) {
 			callID := outputIDs[index]
 			rawOutput := m.FirstNonNilGrokJSONValue(item["output"], item["content"], item["results"])
@@ -74,6 +113,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 		filtered = m.AppendGrokToolOutputImageMessage(filtered, pendingOutputImages)
 		pendingOutputImages = pendingOutputImages[:0]
 
+		// Convert standalone text and alternate tool-call shapes into message or
+		// function forms, giving the remaining replay normalization one representation to handle.
 		switch itemType {
 		case "text", "input_text", "output_text":
 			text := strings.TrimSpace(m.GrokStringValue(item["text"]))
@@ -110,6 +151,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 				continue
 			}
 			item["content"] = content
+			// Incomplete assistant items are replayed as content rather than retained
+			// output records; collapsing text and dropping metadata prevents partial IDs from persisting.
 			if role == "assistant" && !m.GrokIsCompleteOutputMessage(item) {
 				if text, ok := m.CollapseGrokAssistantOutputText(content); ok {
 					item["content"] = text
@@ -118,11 +161,15 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 				delete(item, "status")
 			}
 		} else if itemType == "reasoning" {
+			// Reasoning replay retains its other fields while dropping status and null
+			// content, avoiding unsupported output metadata in the normalized input representation.
 			delete(item, "status")
 			if content, exists := item["content"]; exists && content == nil {
 				delete(item, "content")
 			}
 		} else if itemType == "function_call" {
+			// Flatten alternate function names and arguments while assigning the paired
+			// identifier; remove source-specific fields so one call shape carries the replay relationship.
 			name := strings.TrimSpace(m.GrokStringValue(item["name"]))
 			arguments := item["arguments"]
 			if function, ok := item["function"].(map[string]any); ok {
@@ -149,6 +196,8 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 				delete(item, field)
 			}
 		}
+		// Nonpair output records must not carry a tool pairing identifier. Keep it
+		// on call/output items, where the earlier two-pass scan established its relationship.
 		if protocolopenai.ShouldStripNonPairCallID(itemType) {
 			delete(item, "call_id")
 		}
@@ -167,10 +216,20 @@ func (m BodyCodec) SanitizeGrokResponsesModelInput(body []byte) ([]byte, error) 
 	return updated, nil
 }
 
-// NormalizeGrokToolOutput separates images and serializes the remaining tool output.
-// Grok read_file can return structured media parts; xAI requires function_call_output.output to be a string.
+// NormalizeGrokToolOutput returns text and separately associated images for
+// one tool call. When no usable image is extracted, the original value is
+// serialized as a whole, including structured text arrays and unextracted
+// media data. Image-only content uses the empty marker.
+//
+// Once extraction supplies images, GrokStructuredToolOutputString serializes
+// or flattens the residual output. The image records retain callID for a
+// following user media message. Callers append that message after the
+// contiguous reply group; this helper returns the pieces and leaves their
+// ordering to the replay builder.
 func (m BodyCodec) NormalizeGrokToolOutput(value any, callID string) (string, []GrokToolOutputImage) {
 	stripped, images, keep := m.StripGrokToolOutputImages(value, callID)
+	// With no extracted media, retain whole-value serialization so structured
+	// output is not flattened solely because it resembles a list of text parts.
 	if len(images) == 0 {
 		return m.GrokModelInputString(value, "(empty)"), nil
 	}
@@ -180,6 +239,18 @@ func (m BodyCodec) NormalizeGrokToolOutput(value any, callID string) (string, []
 	return m.GrokStructuredToolOutputString(stripped, "(empty)"), images
 }
 
+// StripGrokToolOutputImages recursively separates media from arrays and known
+// content, output, results, or images fields, retaining the supplied callID
+// on each extracted image. Its boolean reports whether residual output
+// remains. Recognized image parts with missing or empty-base64 URLs are
+// discarded. Arrays and processed maps receive new outer storage; unrelated
+// nested values can remain shared with the input.
+//
+// Image parts leave the textual representation so NormalizeGrokToolOutput can
+// serialize text and AppendGrokToolOutputImageMessage can put media into user
+// content. Images arrays are removed after URL extraction, and emptied nested
+// output fields disappear. Unsupported scalar values remain as supplied, with
+// nil reporting no retained content.
 func (m BodyCodec) StripGrokToolOutputImages(value any, callID string) (any, []GrokToolOutputImage, bool) {
 	switch typed := value.(type) {
 	case []any:
@@ -194,6 +265,8 @@ func (m BodyCodec) StripGrokToolOutputImages(value any, callID string) (any, []G
 		}
 		return filtered, images, len(filtered) > 0
 	case map[string]any:
+		// Recognized image parts move to a separate media result; empty data URIs
+		// are discarded so later user image messages do not contain unusable placeholders.
 		partType := strings.ToLower(strings.TrimSpace(m.GrokStringValue(typed["type"])))
 		if partType == "image" || partType == "image_url" || partType == "input_image" {
 			url := m.GrokToolOutputImageURL(typed)
@@ -206,6 +279,8 @@ func (m BodyCodec) StripGrokToolOutputImages(value any, callID string) (any, []G
 		filtered := make(map[string]any, len(typed))
 		maps.Copy(filtered, typed)
 		images := make([]GrokToolOutputImage, 0)
+		// Move images arrays into separate media records before text serialization;
+		// retaining the array here would duplicate that media inside the tool-output string.
 		if rawImages, exists := filtered["images"]; exists {
 			if values, ok := rawImages.([]any); ok {
 				for _, rawImage := range values {
@@ -217,6 +292,8 @@ func (m BodyCodec) StripGrokToolOutputImages(value any, callID string) (any, []G
 				delete(filtered, "images")
 			}
 		}
+		// Descend through output-bearing fields after removing an images array,
+		// retaining unrelated metadata and deleting a field when its residual content is empty.
 		for _, field := range []string{"content", "output", "results"} {
 			item, exists := filtered[field]
 			if !exists {
@@ -236,12 +313,23 @@ func (m BodyCodec) StripGrokToolOutputImages(value any, callID string) (any, []G
 	}
 }
 
+// GrokStructuredToolOutputString joins a nonempty array of supported text
+// parts with newlines. Nonarray values use GrokModelInputString, and an all-
+// blank supported text array returns the caller's fallback marker.
+//
+// Every part must be a recognized text object before its text is flattened. A
+// nontext or nonobject part delegates whole-value serialization, keeping that
+// mixed structure available instead of extracting a partial text subset.
+// Blank supported text parts are omitted, while retained text is trimmed
+// before joining. This choice applies after tool images have been separated.
 func (m BodyCodec) GrokStructuredToolOutputString(value any, fallback string) string {
 	parts, ok := value.([]any)
 	if !ok || len(parts) == 0 {
 		return m.GrokModelInputString(value, fallback)
 	}
 
+	// Flatten only an entirely recognized text-part array. Any different part
+	// returns whole-value JSON serialization so its structure remains available in tool output.
 	texts := make([]string, 0, len(parts))
 	for _, rawPart := range parts {
 		part, ok := rawPart.(map[string]any)
@@ -262,8 +350,10 @@ func (m BodyCodec) GrokStructuredToolOutputString(value any, fallback string) st
 	return strings.Join(texts, "\n")
 }
 
-// ExtractGrokToolOutputImages extracts images from Grok Shell function_call_output.images.
-// Callers keep tool replies contiguous and append images in a subsequent user input_image message.
+// ExtractGrokToolOutputImages reads an item's images array and associates
+// accepted URLs with callID. Missing arrays, empty URLs, and empty-base64
+// data URIs contribute no images. Callers append these after the contiguous
+// tool reply group.
 func (m BodyCodec) ExtractGrokToolOutputImages(item map[string]any, callID string) []GrokToolOutputImage {
 	rawImages, ok := item["images"].([]any)
 	if !ok || len(rawImages) == 0 {
@@ -281,7 +371,12 @@ func (m BodyCodec) ExtractGrokToolOutputImages(item map[string]any, callID strin
 	return images
 }
 
+// GrokToolOutputImageURL extracts a trimmed string URL or the first usable
+// url, image_url, or file_url field. Each object field can hold a string or a
+// nested url object; unsupported or empty values return empty.
 func (m BodyCodec) GrokToolOutputImageURL(value any) string {
+	// Replay shapes can place the same image link under different fields.
+	// Choose a usable string in the configured order before returning an empty media result.
 	switch image := value.(type) {
 	case string:
 		return strings.TrimSpace(image)
@@ -303,6 +398,15 @@ func (m BodyCodec) GrokToolOutputImageURL(value any) string {
 	return ""
 }
 
+// AppendGrokToolOutputImageMessage appends one user message containing the
+// collected image parts. An empty image list returns the supplied items.
+// Callers finish the contiguous function-output group before invoking it,
+// keeping text replies together ahead of their media.
+//
+// Each change in adjacent callID adds a text label before that call's images,
+// so replayed media remains associated with its tool reply when moved out of
+// the output string. The append can reuse items backing storage; callers
+// retain normal slice ownership responsibilities when sharing the result.
 func (m BodyCodec) AppendGrokToolOutputImageMessage(items []any, images []GrokToolOutputImage) []any {
 	if len(images) == 0 {
 		return items
@@ -330,6 +434,23 @@ func (m BodyCodec) AppendGrokToolOutputImageMessage(items []any, images []GrokTo
 	})
 }
 
+// PairGrokReplayCallIDs returns per-index call and output identifiers after
+// scanning all calls before outputs. A supplied call_id wins before
+// tool_call_id; missing call identifiers receive counter-derived IDs. Calls
+// register their call, tool, and item aliases so later or earlier outputs can
+// use the same canonical pairing value.
+//
+// An alias naming different calls is removed from the alias map and marked
+// conflicting. Explicit output call identifiers remain authoritative; an
+// ambiguous item-only alias receives a synthetic orphan ID. An output lacking
+// a usable alias consumes the next unconsumed call in encounter order, then
+// receives a synthetic ID when none remain. Inputs are read directly, so
+// callers keep item maps stable during both scans.
+//
+// Counter-derived IDs use grok_replay_call_N without checking supplied
+// identifiers. Callers needing distinct synthesized pairings keep explicit
+// IDs outside that namespace; an orphan counter value can otherwise match a
+// transcript's explicit call ID.
 func (m BodyCodec) PairGrokReplayCallIDs(items []any) (map[int]string, map[int]string) {
 	callIDs := make(map[int]string)
 	outputIDs := make(map[int]string)
@@ -349,6 +470,9 @@ func (m BodyCodec) PairGrokReplayCallIDs(items []any) (map[int]string, map[int]s
 		if _, conflict := conflictingAliases[alias]; conflict {
 			return
 		}
+		// An alias naming another canonical call cannot identify a unique pairing.
+		// Remove its lookup and retain the conflict so outputs take their explicit-ID
+		// or counter path instead of resolving through that shared alias.
 		if existing, exists := aliases[alias]; exists && existing != canonical {
 			delete(aliases, alias)
 			conflictingAliases[alias] = struct{}{}
@@ -405,20 +529,25 @@ func (m BodyCodec) PairGrokReplayCallIDs(items []any) (map[int]string, map[int]s
 			outputIDs[index] = canonical
 			consumedCalls[canonical] = struct{}{}
 		} else if m.FirstNonEmptyGrokString(item["call_id"], item["tool_call_id"]) != "" {
-			// Explicit call identifiers remain authoritative even when an invalid
-			// transcript reuses the same identifier for more than one call.
+			// An explicit output call identifier remains the caller's pairing signal,
+			// even when a malformed transcript made its alias ambiguous across multiple calls.
 			outputIDs[index] = alias
 		} else if conflict {
-			// An item ID shared by multiple calls cannot safely identify either
-			// one. Keep it out of the call_id namespace and leave the output orphaned.
+			// An item-only conflict supplies no authoritative call identifier. Choose
+			// the next counter value instead of either alias mapping; explicit IDs can
+			// still collide with this synthetic namespace as described above.
 			outputIDs[index] = synthetic()
 		} else {
+			// An unidentified output consumes the next unconsumed call only after all
+			// aliases are known, allowing missing-ID replies that precede their calls to pair.
 			outputIDs[index] = consumeNextCall()
 		}
 	}
 	return callIDs, outputIDs
 }
 
+// IsGrokReplayCallType reports whether an exact item label denotes a replay
+// tool call.
 func (m BodyCodec) IsGrokReplayCallType(itemType string) bool {
 	switch itemType {
 	case "function_call", "custom_tool_call", "tool_search_call":
@@ -428,6 +557,8 @@ func (m BodyCodec) IsGrokReplayCallType(itemType string) bool {
 	}
 }
 
+// IsGrokReplayOutputType reports whether an exact item label denotes a replay
+// tool output.
 func (m BodyCodec) IsGrokReplayOutputType(itemType string) bool {
 	switch itemType {
 	case "function_call_output", "custom_tool_call_output", "tool_search_output", "tool_search_call_output":
@@ -437,6 +568,9 @@ func (m BodyCodec) IsGrokReplayOutputType(itemType string) bool {
 	}
 }
 
+// FirstNonEmptyGrokString returns the first nonblank trimmed string among
+// values. Nonstring values are ignored by GrokStringValue; an absent usable
+// string returns empty for the caller's next identity or naming choice.
 func (m BodyCodec) FirstNonEmptyGrokString(values ...any) string {
 	for _, value := range values {
 		if text := strings.TrimSpace(m.GrokStringValue(value)); text != "" {
@@ -446,6 +580,10 @@ func (m BodyCodec) FirstNonEmptyGrokString(values ...any) string {
 	return ""
 }
 
+// FirstNonNilGrokJSONValue returns the first value whose interface is not
+// nil. Empty strings, arrays, and maps still win, as do typed nil values held
+// in nonnil interfaces. All nil interfaces return nil for output or argument
+// handling.
 func (m BodyCodec) FirstNonNilGrokJSONValue(values ...any) any {
 	for _, value := range values {
 		if value != nil {
@@ -455,6 +593,15 @@ func (m BodyCodec) FirstNonNilGrokJSONValue(values ...any) any {
 	return nil
 }
 
+// SanitizeGrokMessageContent reports whether message content remains usable
+// after filtering blank text and unusable image parts. String content retains
+// its supplied whitespace when nonblank. Arrays receive new outer storage but
+// retained maps and other mutable values remain shared.
+//
+// Known text labels require nonblank text, and image_url/input_image labels
+// require recognized image evidence. Other part shapes survive, including
+// unsupported nonstring scalars. Nil or an emptied array reports false;
+// callers decide whether the containing message should be omitted.
 func (m BodyCodec) SanitizeGrokMessageContent(content any) (any, bool) {
 	switch value := content.(type) {
 	case nil:
@@ -462,6 +609,8 @@ func (m BodyCodec) SanitizeGrokMessageContent(content any) (any, bool) {
 	case string:
 		return value, strings.TrimSpace(value) != ""
 	case []any:
+		// Filter known empty parts while retaining unfamiliar shapes, since replay
+		// content can mix text and images with values this codec does not interpret.
 		filtered := make([]any, 0, len(value))
 		for _, rawPart := range value {
 			part, ok := rawPart.(map[string]any)
@@ -489,12 +638,18 @@ func (m BodyCodec) SanitizeGrokMessageContent(content any) (any, bool) {
 	}
 }
 
+// GrokContentPartHasImageURL accepts nonblank file_id or file_data, then a
+// usable image_url or file_url representation. The first nonnil URL field
+// wins even if unusable; URL strings and nested url objects reject empty-
+// base64 data URIs but receive no destination-policy validation here.
 func (m BodyCodec) GrokContentPartHasImageURL(part map[string]any) bool {
 	for _, field := range []string{"file_id", "file_data"} {
 		if strings.TrimSpace(m.GrokStringValue(part[field])) != "" {
 			return true
 		}
 	}
+	// A supplied image_url remains selected even when blank or malformed, so
+	// a later file_url cannot silently replace that representation of the replayed image input.
 	raw := m.FirstNonNilGrokJSONValue(part["image_url"], part["file_url"])
 	switch value := raw.(type) {
 	case string:
@@ -508,11 +663,18 @@ func (m BodyCodec) GrokContentPartHasImageURL(part map[string]any) bool {
 	}
 }
 
+// GrokStringValue returns a string value directly, otherwise empty text. It
+// performs no formatting or JSON conversion for other types, allowing callers
+// to distinguish actual string fields from unsupported representations.
 func (m BodyCodec) GrokStringValue(value any) string {
 	text, _ := value.(string)
 	return text
 }
 
+// GrokModelInputString retains nonblank strings and JSON-encodes other nonnil
+// values. Blank strings, nil, null encoding, or marshal failures return
+// fallback; callers choose whether that marker represents empty tool output
+// or empty arguments.
 func (m BodyCodec) GrokModelInputString(value any, fallback string) string {
 	if text, ok := value.(string); ok {
 		if strings.TrimSpace(text) == "" {
@@ -524,17 +686,26 @@ func (m BodyCodec) GrokModelInputString(value any, fallback string) string {
 		return fallback
 	}
 	encoded, err := json.Marshal(value)
+	// The caller's marker also covers unencodable values, keeping string-only
+	// tool output construction usable when arbitrary Go values cannot be marshaled.
 	if err != nil || len(encoded) == 0 || string(encoded) == "null" {
 		return fallback
 	}
 	return string(encoded)
 }
 
+// GrokIsCompleteOutputMessage reports whether id and status are both nonblank
+// string fields. It does not inspect the status value; callers use presence
+// to decide whether assistant replay metadata is retained.
 func (m BodyCodec) GrokIsCompleteOutputMessage(item map[string]any) bool {
 	return strings.TrimSpace(m.GrokStringValue(item["id"])) != "" &&
 		strings.TrimSpace(m.GrokStringValue(item["status"])) != ""
 }
 
+// CollapseGrokAssistantOutputText joins an array consisting entirely of
+// string-valued output_text objects. Missing, malformed, mixed, or wholly
+// blank content returns false; successful output retains each text's supplied
+// whitespace and inserts no separator.
 func (m BodyCodec) CollapseGrokAssistantOutputText(content any) (string, bool) {
 	parts, ok := content.([]any)
 	if !ok || len(parts) == 0 {

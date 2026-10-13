@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCNProviderThresholdCandidates reads five-hour and weekly candidates from a monitor snapshot.
+// Usage-window pause decisions depend on platform scale, trusted observation
+// identity, reset deadlines, and provider overrides. These fixtures exercise
+// the evaluator without applying health state, separating provider-wide
+// Anthropic windows from Fable scope and Grok header quota from official
+// billing observations.
+
+// TestCNProviderThresholdCandidates attaches two monitor limits to a Coding
+// Plan provider. It verifies candidate count, omission of usage-free limits,
+// and rejection after changing the credential identity.
 func TestCNProviderThresholdCandidates(t *testing.T) {
 	t.Parallel()
 	observed := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -25,16 +33,19 @@ func TestCNProviderThresholdCandidates(t *testing.T) {
 	cands := CNProviderThresholdCandidates(provider, capability.PlatformKimi)
 	require.Len(t, cands, 2)
 
-	// A window with no usage value produces no candidate.
 	partial := cnCodingTestProvider(capability.PlatformKimi)
 	attachCNMonitorLimits(partial, observed, []UpstreamUsageLimit{{Name: "5h", ResetAt: &reset5h}})
 	require.Empty(t, filterNil(CNProviderThresholdCandidates(partial, capability.PlatformKimi)))
 
-	// Changing credentials invalidates the prior snapshot identity.
+	// Keep the stored observation unchanged while replacing its API Key so the
+	// validator must reject the previous query identity before creating limits.
 	provider.Credentials["api_key"] = "sk-changed"
 	require.Empty(t, CNProviderThresholdCandidates(provider, capability.PlatformKimi))
 }
 
+// filterNil returns nonnil candidate pointers in their original order,
+// preserving shared candidate data. Empty usable input returns a nil slice
+// for assertions on omitted monitoring limits.
 func filterNil(cands []*SchedulingThresholdCandidate) []*SchedulingThresholdCandidate {
 	var out []*SchedulingThresholdCandidate
 	for _, c := range cands {
@@ -45,8 +56,9 @@ func filterNil(cands []*SchedulingThresholdCandidate) []*SchedulingThresholdCand
 	return out
 }
 
-// TestEvaluateProviderSchedulingThreshold_KimiCodingPlan checks that five-hour usage
-// above the threshold pauses a Coding Plan provider until that window resets.
+// TestEvaluateProviderSchedulingThreshold_KimiCodingPlan supplies one reached
+// five-hour threshold and a lower weekly observation. It verifies the Kimi
+// decision's percentage, window, platform, and future reset deadline.
 func TestEvaluateProviderSchedulingThreshold_KimiCodingPlan(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
@@ -67,19 +79,18 @@ func TestEvaluateProviderSchedulingThreshold_KimiCodingPlan(t *testing.T) {
 	require.True(t, reset.Equal(*decision.Until))
 }
 
-// TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped checks that expired windows
-// and usage below the threshold do not pause scheduling; matching requires a future reset.
+// TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped supplies an
+// expired high-usage observation and a future low-usage observation
+// separately. It verifies neither case selects a provider pause.
 func TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	// The reset deadline has elapsed.
 	expiredUsed := 99.0
 	expiredReset := now.Add(-time.Hour)
 	expired := cnCodingTestProvider(capability.PlatformZhipu)
 	attachCNMonitorLimits(expired, now, []UpstreamUsageLimit{{Name: "5h", Used: &expiredUsed, ResetAt: &expiredReset}})
 	require.False(t, EvaluateProviderSchedulingThreshold(expired, map[string]int{capability.PlatformZhipu: 80}, now).ShouldPause)
 
-	// Usage is below the configured threshold.
 	lowUsed := 20.0
 	lowReset := now.Add(3 * time.Hour)
 	low := cnCodingTestProvider(capability.PlatformZhipu)
@@ -87,6 +98,10 @@ func TestEvaluateProviderSchedulingThreshold_CNWindowResetSkipped(t *testing.T) 
 	require.False(t, EvaluateProviderSchedulingThreshold(low, map[string]int{capability.PlatformZhipu: 80}, now).ShouldPause)
 }
 
+// TestEvaluateProviderSchedulingThreshold_OpenAIChoosesLatestResetWindow
+// supplies two reached Codex window percentages with different future
+// deadlines. It verifies the later weekly reset wins together with that
+// window's percentage and empty scope.
 func TestEvaluateProviderSchedulingThreshold_OpenAIChoosesLatestResetWindow(t *testing.T) {
 	t.Parallel()
 
@@ -115,6 +130,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIChoosesLatestResetWindow(t *t
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_OpenAIIgnoresMismatchedCodexSnapshotIdentity
+// gives an OAuth record conflicting credential and observation account
+// fields. It verifies high weekly usage from that snapshot produces no pause.
 func TestEvaluateProviderSchedulingThreshold_OpenAIIgnoresMismatchedCodexSnapshotIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +162,10 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIIgnoresMismatchedCodexSnapsho
 	require.False(t, decision.ShouldPause)
 }
 
+// TestEvaluateProviderSchedulingThreshold_AnthropicIgnoresExpiredFiveHourWindow
+// combines an expired high five-hour ratio with a future reached weekly
+// ratio. It verifies the weekly observation supplies the selected percentage
+// and reset.
 func TestEvaluateProviderSchedulingThreshold_AnthropicIgnoresExpiredFiveHourWindow(t *testing.T) {
 	t.Parallel()
 
@@ -173,6 +195,10 @@ func TestEvaluateProviderSchedulingThreshold_AnthropicIgnoresExpiredFiveHourWind
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateAnthropicFableSchedulingThreshold_UsesProviderOverrideWithoutPausingProvider
+// lowers the credential threshold below Fable usage while ordinary weekly
+// usage stays lower. It verifies provider-wide evaluation remains clear and
+// Fable returns its model scope and deadline.
 func TestEvaluateAnthropicFableSchedulingThreshold_UsesProviderOverrideWithoutPausingProvider(t *testing.T) {
 	t.Parallel()
 
@@ -210,6 +236,10 @@ func TestEvaluateAnthropicFableSchedulingThreshold_UsesProviderOverrideWithoutPa
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_OpenAIPreservesPercentageSemantics
+// first supplies Codex usage of one percentage point, then ninety-one. It
+// verifies the former stays below threshold and the latter selects a pause
+// with unchanged percentage scale.
 func TestEvaluateProviderSchedulingThreshold_OpenAIPreservesPercentageSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -240,7 +270,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIPreservesPercentageSemantics(
 	require.Equal(t, 91.0, openAIDecision.UsedPercent)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot checks that stale usage cannot pause scheduling.
+// TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot supplies
+// exhausted usage observed exactly two hours earlier with a future reset. It
+// verifies reaching the staleness cutoff suppresses the pause.
 func TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -259,7 +291,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAISkipsStaleSnapshot(t *testing
 	require.False(t, decision.ShouldPause)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow checks that reset windows no longer contribute usage.
+// TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow supplies
+// freshly observed exhausted five-hour usage whose reset elapsed one second
+// earlier. It verifies that the window cannot select a provider pause.
 func TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow(t *testing.T) {
 	t.Parallel()
 
@@ -278,8 +312,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAISkipsResetWindow(t *testing.T
 	require.False(t, decision.ShouldPause)
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot checks a fresh five-hour snapshot
-// above threshold.
+// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot
+// supplies recent fully used five-hour data with a future reset. It verifies
+// the matching window, percentage, and proposed deadline.
 func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -303,8 +338,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSnapshot(
 	require.True(t, resetAt.Equal(*decision.Until))
 }
 
-// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow checks a fresh seven-day
-// snapshot above threshold.
+// TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow
+// supplies recent weekly usage above the configured threshold. It verifies
+// the weekly window's percentage and future reset form the pause decision.
 func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayWindow(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +364,9 @@ func TestEvaluateProviderSchedulingThreshold_OpenAIPausesFreshExhaustedSevenDayW
 	require.True(t, resetAt.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_AnthropicPreservesFractionalUtilizationSemantics
+// supplies a floating ratio of 0.92 with a future session end. It verifies
+// the evaluator compares ninety-two percentage points and selects a pause.
 func TestEvaluateProviderSchedulingThreshold_AnthropicPreservesFractionalUtilizationSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -350,6 +389,10 @@ func TestEvaluateProviderSchedulingThreshold_AnthropicPreservesFractionalUtiliza
 	require.Equal(t, 92.0, anthropicDecision.UsedPercent)
 }
 
+// TestEvaluateProviderSchedulingThreshold_ProviderOverrideCanLowerOpenAIThreshold
+// supplies usage between the lower credential override and higher platform
+// value. It verifies the override wins and its reached window supplies the
+// selected deadline.
 func TestEvaluateProviderSchedulingThreshold_ProviderOverrideCanLowerOpenAIThreshold(t *testing.T) {
 	t.Parallel()
 
@@ -380,6 +423,9 @@ func TestEvaluateProviderSchedulingThreshold_ProviderOverrideCanLowerOpenAIThres
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_ProviderOverrideHundredDisablesOpenAI
+// supplies a credential threshold of one hundred despite a lower platform
+// value. It verifies the resolved threshold disables the pause.
 func TestEvaluateProviderSchedulingThreshold_ProviderOverrideHundredDisablesOpenAI(t *testing.T) {
 	t.Parallel()
 
@@ -403,6 +449,10 @@ func TestEvaluateProviderSchedulingThreshold_ProviderOverrideHundredDisablesOpen
 	require.Equal(t, 100, decision.ThresholdPercent)
 }
 
+// TestEvaluateProviderSchedulingThreshold_ProviderOverrideRoundsDecimalThreshold
+// supplies a credential override of 75.5 percentage points with reached
+// usage. It verifies the override rounds to seventy-six before deciding the
+// pause and deadline.
 func TestEvaluateProviderSchedulingThreshold_ProviderOverrideRoundsDecimalThreshold(t *testing.T) {
 	t.Parallel()
 
@@ -430,15 +480,19 @@ func TestEvaluateProviderSchedulingThreshold_ProviderOverrideRoundsDecimalThresh
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_UnsupportedPlatformsDoNotPause
+// gives Gemini, Kiro, and Antigravity high observations and low credential
+// overrides. It verifies each unsupported platform returns no pause and no
+// resolved threshold.
 func TestEvaluateProviderSchedulingThreshold_UnsupportedPlatformsDoNotPause(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name      string
-		platform  string
-		threshold int
-		extra     map[string]any
+		name      string         // table case description
+		platform  string         // unsupported provider platform
+		threshold int            // configured platform percentage
+		extra     map[string]any // stored usage observation
 	}{
 		{
 			name:      "gemini",
@@ -499,6 +553,10 @@ func TestEvaluateProviderSchedulingThreshold_UnsupportedPlatformsDoNotPause(t *t
 	}
 }
 
+// TestEvaluateProviderSchedulingThreshold_GrokUsesConfiguredThresholds
+// supplies a reached rolling-header percentage and future deadline. It
+// verifies the platform threshold, Grok scope, observed percentage, and reset
+// are retained.
 func TestEvaluateProviderSchedulingThreshold_GrokUsesConfiguredThresholds(t *testing.T) {
 	t.Parallel()
 
@@ -525,9 +583,14 @@ func TestEvaluateProviderSchedulingThreshold_GrokUsesConfiguredThresholds(t *tes
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+// TestEvaluateProviderSchedulingThreshold_GrokUsesOnlyHeaderQuotaWindow
+// combines high official billing usage with a low rolling-header observation,
+// then raises the header value. It verifies only the header window selects
+// the pause and deadline.
 func TestEvaluateProviderSchedulingThreshold_GrokUsesOnlyHeaderQuotaWindow(t *testing.T) {
 	t.Parallel()
-	// Billing usage cannot trigger the pause; the grok_sched_* header window determines eligibility.
+	// Keep official billing high while the header window is below threshold,
+	// making the first decision distinguish the two independent observations.
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	weeklyEnd := now.Add(3 * time.Hour)
 	weeklyPct := 99.0
@@ -535,7 +598,7 @@ func TestEvaluateProviderSchedulingThreshold_GrokUsesOnlyHeaderQuotaWindow(t *te
 	provider := &Record{
 		Platform: PlatformGrok,
 		Extra: map[string]any{
-			"grok_sched_utilization": 50.0, // below threshold
+			"grok_sched_utilization": 50.0,
 			"grok_sched_reset_at":    headerUntil.Format(time.RFC3339),
 			GrokUsageBillingExtraKey: &usageview.BillingSummary{
 				UsagePercent: &weeklyPct,

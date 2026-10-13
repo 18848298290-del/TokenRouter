@@ -8,12 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mappedProbeExecutor checks that execution uses the selected model while history records the configured
-// request model.
+// A configured probe model can differ from the execution model returned by
+// provider selection. The mapped executor checks the selected target and
+// forwarded prompt while the result assertion retains the administrator's
+// requested model in history.
+//
+// Round tests expose claim entry to hold one run active while a second tick
+// arrives, then release and join the first run. Retry callbacks supply
+// controlled failures, success, timeout, and parent cancellation so
+// assertions can distinguish the initial attempt from additional retries and
+// inspect each child's deadline. These callbacks classify their own results;
+// the cancellation case returns failure and checks the number of calls that
+// follow it.
+
+// mappedProbeExecutor checks selected probe arguments through the owning
+// test's assertions.
 type mappedProbeExecutor struct {
-	t *testing.T
+	t *testing.T // owning probe assertion test
 }
 
+// TestGroupProbeAttemptUsesMappedTargetAndRecordsRequestedModel selects a
+// different execution model for the configured request. Executor assertions
+// check forwarded arguments, while the returned result retains the request
+// name and selected provider ID.
 func TestGroupProbeAttemptUsesMappedTargetAndRecordsRequestedModel(t *testing.T) {
 	runner := NewGroupAvailabilityProbeRunnerService(nil, mappedProbeExecutor{t: t}, GroupProbeOptions{})
 	result := runner.runProbeAttempt(context.Background(), GroupAvailabilityProbeDueGroup{GroupID: 59}, GroupAvailabilityProbeConfig{
@@ -24,6 +41,9 @@ func TestGroupProbeAttemptUsesMappedTargetAndRecordsRequestedModel(t *testing.T)
 	require.Equal(t, int64(3678), *result.ProviderID)
 }
 
+// TestGroupAvailabilityProbeRunDueClaimsOnlyRunnableBatch executes an empty
+// due-group round through the repository fixture. It checks one claim call
+// and a claim limit equal to the default worker count.
 func TestGroupAvailabilityProbeRunDueClaimsOnlyRunnableBatch(t *testing.T) {
 	repo := &groupAvailabilityProbeRunnerRepoStub{}
 	runner := &GroupAvailabilityProbeRunnerService{repo: repo, instanceID: "test-instance"}
@@ -39,10 +59,15 @@ func TestGroupAvailabilityProbeRunDueClaimsOnlyRunnableBatch(t *testing.T) {
 	}
 }
 
+// TestGroupAvailabilityProbeRunDueSkipsOverlappingRun blocks the first round
+// inside ClaimDue before invoking another round. The overlapping call makes
+// no extra claim, and releasing the fixture lets the first round finish.
 func TestGroupAvailabilityProbeRunDueSkipsOverlappingRun(t *testing.T) {
 	claimStarted := make(chan struct{})
 	releaseClaim := make(chan struct{})
 	released := false
+	// Release a blocked claim if the test exits before normal completion, so an
+	// assertion failure does not leave its runner goroutine waiting on the gate.
 	defer func() {
 		if !released {
 			close(releaseClaim)
@@ -52,25 +77,37 @@ func TestGroupAvailabilityProbeRunDueSkipsOverlappingRun(t *testing.T) {
 	repo := &groupAvailabilityProbeRunnerRepoStub{claimStarted: claimStarted, releaseClaim: releaseClaim}
 	runner := &GroupAvailabilityProbeRunnerService{repo: repo, instanceID: "test-instance"}
 	firstDone := make(chan struct{})
+	// Signal completion when the admitted round returns so the test can join its
+	// goroutine after releasing the repository gate.
 	go func() {
 		defer close(firstDone)
 		runner.runDue()
 	}()
 
+	// Establish claim entry before issuing the overlapping tick. The test
+	// deadline turns a round that never reaches the repository into a bounded
+	// failure.
 	select {
 	case <-claimStarted:
 	case <-time.After(time.Second):
 		t.Fatal("first run did not reach ClaimDue")
 	}
 
-	// A second call during an active round skips claiming; the instance limit bounds workers.
+	// Keep the first claim blocked while issuing another tick, so the single
+	// recorded claim demonstrates that overlapping rounds are rejected before
+	// reaching the repository.
 	runner.runDue()
 	if calls, _ := repo.claimSnapshot(); calls != 1 {
 		t.Fatalf("ClaimDue() calls during overlap = %d, want 1", calls)
 	}
 
+	// Release the admitted claim and mark the gate closed before deferred
+	// cleanup runs, preventing a second close during test teardown.
 	close(releaseClaim)
 	released = true
+	// Join after releasing the gate so the claim can return. The test deadline
+	// reports a round that remains unfinished instead of leaving this assertion
+	// blocked.
 	select {
 	case <-firstDone:
 	case <-time.After(time.Second):
@@ -78,8 +115,12 @@ func TestGroupAvailabilityProbeRunDueSkipsOverlappingRun(t *testing.T) {
 	}
 }
 
+// TestRunGroupAvailabilityProbeAttemptsStopsAfterSuccess fails two callbacks
+// before the third succeeds with retries still available. Each callback has a
+// deadline, and success ends the sequence at three attempts.
 func TestRunGroupAvailabilityProbeAttemptsStopsAfterSuccess(t *testing.T) {
 	attempts := 0
+	// A positive timeout makes each attempt's deadline observable.
 	result := runGroupAvailabilityProbeAttempts(context.Background(), 3, time.Second, func(ctx context.Context) *GroupAvailabilityProbeResult {
 		attempts++
 		if _, ok := ctx.Deadline(); !ok {
@@ -99,6 +140,9 @@ func TestRunGroupAvailabilityProbeAttemptsStopsAfterSuccess(t *testing.T) {
 	}
 }
 
+// TestRunGroupAvailabilityProbeAttemptsUsesRetriesAfterInitialAttempt returns
+// failure on every callback with three retries configured. It checks four
+// total attempts and a failed final result.
 func TestRunGroupAvailabilityProbeAttemptsUsesRetriesAfterInitialAttempt(t *testing.T) {
 	attempts := 0
 	result := runGroupAvailabilityProbeAttempts(context.Background(), 3, 0, func(context.Context) *GroupAvailabilityProbeResult {
@@ -118,11 +162,17 @@ func TestRunGroupAvailabilityProbeAttemptsUsesRetriesAfterInitialAttempt(t *test
 	}
 }
 
+// TestRunGroupAvailabilityProbeAttemptsRetriesAfterAttemptTimeout waits for
+// the first child deadline to expire and returns failure. The second callback
+// receives an active context and succeeds after exactly one retry.
 func TestRunGroupAvailabilityProbeAttemptsRetriesAfterAttemptTimeout(t *testing.T) {
 	attempts := 0
+	// A short attempt budget expires the deliberately blocked callback promptly.
 	result := runGroupAvailabilityProbeAttempts(context.Background(), 1, 5*time.Millisecond, func(ctx context.Context) *GroupAvailabilityProbeResult {
 		attempts++
 		if attempts == 1 {
+			// Make the first attempt consume its own deadline so the next callback
+			// proves that retries receive a fresh active child context.
 			<-ctx.Done()
 			return &GroupAvailabilityProbeResult{
 				Status:       GroupAvailabilityProbeStatusFailed,
@@ -144,11 +194,19 @@ func TestRunGroupAvailabilityProbeAttemptsRetriesAfterAttemptTimeout(t *testing.
 	}
 }
 
+// TestRunGroupAvailabilityProbeAttemptsStopsAfterParentCancellation cancels
+// the parent during the first callback and returns a failed result. The
+// assertion checks that no additional retry callback starts.
 func TestRunGroupAvailabilityProbeAttemptsStopsAfterParentCancellation(t *testing.T) {
+	// Give the callback control over its parent lifetime so canceling during
+	// failure can be observed before the helper admits another retry.
 	ctx, cancel := context.WithCancel(context.Background())
 	attempts := 0
 	runGroupAvailabilityProbeAttempts(ctx, 3, 0, func(context.Context) *GroupAvailabilityProbeResult {
 		attempts++
+		// Cancel the parent before returning failure, making the helper's
+		// post-attempt cancellation check responsible for stopping the remaining
+		// configured retries.
 		cancel()
 		return &GroupAvailabilityProbeResult{Status: GroupAvailabilityProbeStatusFailed, Success: false}
 	})
@@ -158,12 +216,19 @@ func TestRunGroupAvailabilityProbeAttemptsStopsAfterParentCancellation(t *testin
 	}
 }
 
+// Select asserts the configured group and request model, then returns
+// provider 3678 with a different mapped model. Those checks make selection
+// input observable inside the owning test.
 func (e mappedProbeExecutor) Select(_ context.Context, due GroupAvailabilityProbeDueGroup, model string) (GroupProbeTarget, error) {
 	require.Equal(e.t, int64(59), due.GroupID)
 	require.Equal(e.t, "gemini-3.8-flash", model)
 	return GroupProbeTarget{ProviderID: 3678, ModelID: "gemini-3.8-flash-tiered"}, nil
 }
 
+// Test asserts the selected provider, mapped model, prompt, and User-Agent
+// before returning successful status. Timing fields remain zero because this
+// executor verifies argument forwarding rather than measured execution
+// duration.
 func (e mappedProbeExecutor) Test(_ context.Context, id int64, model, prompt, userAgent string) (*ProbeExecutionResult, error) {
 	require.Equal(e.t, int64(3678), id)
 	require.Equal(e.t, "gemini-3.8-flash-tiered", model)

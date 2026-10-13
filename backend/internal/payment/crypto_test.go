@@ -12,9 +12,10 @@ import (
 // random keys per test; wrong decoded nonce length is outside this fixture
 // set.
 
-// makeKey returns a fresh thirty-two-byte cryptographic key for one test and
-// fails that test if randomness cannot be read. The returned bytes are
-// independent test storage used by Encrypt and Decrypt.
+// makeKey returns a fresh thirty-two-byte cryptographic key for one test. The
+// returned bytes are independent storage used by Encrypt and Decrypt. An
+// io.ReadFull error in crypto/rand.Read terminates the test process before the
+// defensive Fatalf branch.
 func makeKey(t *testing.T) []byte {
 	t.Helper()
 	// Allocate the exact AES-256 key size in bytes.

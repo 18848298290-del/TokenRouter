@@ -10,9 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// grokSSOPanicClient injects an SSO exchange panic into worker recovery tests.
 type grokSSOPanicClient struct{}
 
+// TestGrokSSOImportExpiryUsesTokenExpiryWithoutRefreshToken supplies expiring
+// token information with no renewable token. It asserts new provider expiry
+// equals token expiry and automatic pause is enabled.
 func TestGrokSSOImportExpiryUsesTokenExpiryWithoutRefreshToken(t *testing.T) {
+	// Import expiry selection consumes epoch seconds from token information.
 	tokenExpiry := time.Now().Add(6 * time.Hour).Unix()
 	expiresAt, autoPause := GrokSSOImportExpiry(nil, nil, &GrokTokenInfo{
 		ExpiresAt: tokenExpiry,
@@ -24,7 +29,12 @@ func TestGrokSSOImportExpiryUsesTokenExpiryWithoutRefreshToken(t *testing.T) {
 	require.True(t, *autoPause)
 }
 
+// TestGrokSSOImportExpiryUsesEarlierRequestedExpiryWithoutRefreshToken requests
+// an earlier expiry and disabled automatic pause for token-only information. It
+// asserts the earlier deadline wins and token-only handling forces pause.
 func TestGrokSSOImportExpiryUsesEarlierRequestedExpiryWithoutRefreshToken(t *testing.T) {
+	// Both deadlines use epoch seconds so the earlier requested time can be
+	// compared directly with the token information's credential expiry.
 	requestedExpiry := time.Now().Add(2 * time.Hour).Unix()
 	tokenExpiry := time.Now().Add(6 * time.Hour).Unix()
 	requestedAutoPause := false
@@ -38,7 +48,12 @@ func TestGrokSSOImportExpiryUsesEarlierRequestedExpiryWithoutRefreshToken(t *tes
 	require.True(t, *autoPause)
 }
 
+// TestGrokSSOImportExpiryPreservesRequestSettingsWithRefreshToken supplies
+// renewable credentials beside requested expiry and pause settings. It asserts
+// the exact request pointers are returned rather than newly constructed values.
 func TestGrokSSOImportExpiryPreservesRequestSettingsWithRefreshToken(t *testing.T) {
+	// Renewable-credential handling accepts the same epoch-seconds input format
+	// as token-only expiry selection, even when returning the supplied pointers.
 	requestedExpiry := time.Now().Add(2 * time.Hour).Unix()
 	requestedAutoPause := false
 	expiresAt, autoPause := GrokSSOImportExpiry(&requestedExpiry, &requestedAutoPause, &GrokTokenInfo{
@@ -50,6 +65,10 @@ func TestGrokSSOImportExpiryPreservesRequestSettingsWithRefreshToken(t *testing.
 	require.Same(t, &requestedAutoPause, autoPause)
 }
 
+// TestGrokSSOImportCredentialsPreservesRequestedBaseURL combines exchanged
+// access text with custom endpoint and header operations in a separate request
+// map. It asserts those final fields and that the request's base URL remains
+// unchanged.
 func TestGrokSSOImportCredentialsPreservesRequestedBaseURL(t *testing.T) {
 	built := map[string]any{
 		"access_token": "at-1",
@@ -72,6 +91,10 @@ func TestGrokSSOImportCredentialsPreservesRequestedBaseURL(t *testing.T) {
 	require.Equal(t, "https://relay.example.com/v1", reqCredentials["base_url"])
 }
 
+// TestGrokSSOImportCredentialsDefaultsToOfficialBaseURL supplies an exchanged
+// default endpoint with absent and whitespace-only requested endpoints. It
+// asserts both retain the built endpoint and the second keeps its exchanged
+// access token.
 func TestGrokSSOImportCredentialsDefaultsToOfficialBaseURL(t *testing.T) {
 	built := map[string]any{
 		"access_token": "at-1",
@@ -89,26 +112,45 @@ func TestGrokSSOImportCredentialsDefaultsToOfficialBaseURL(t *testing.T) {
 	require.Equal(t, "at-2", credentials["access_token"])
 }
 
+// ExchangeCode is an unused interface stub returning no response and no error.
+// The panic scenario reaches only ConvertSSOToBuild, so this method supplies
+// interface shape for that fixture.
 func (grokSSOPanicClient) ExchangeCode(context.Context, string, string, string, string, string) (*grok.TokenResponse, error) {
 	return nil, nil
 }
 
+// RefreshToken is an unused renewal stub returning no response and no error.
+// The worker panic test reaches the SSO converter, leaving this interface
+// method outside its observed path.
 func (grokSSOPanicClient) RefreshToken(context.Context, string, string, string) (*grok.TokenResponse, error) {
 	return nil, nil
 }
 
+// LoginWithPassword is an unused password stub returning no response and no
+// error. The fixture implements it for client compatibility while the worker
+// scenario reaches direct SSO conversion.
 func (grokSSOPanicClient) LoginWithPassword(context.Context, string, string, string) (*grok.PasswordLoginResult, error) {
 	return nil, nil
 }
 
+// ConvertSSOToBuild panics with supplied SSO text to model a dependency
+// exposing sensitive panic data. The worker wrapper catches it and the test
+// checks its public item error.
 func (grokSSOPanicClient) ConvertSSOToBuild(_ context.Context, ssoToken, _ string) (*grok.TokenResponse, error) {
 	panic(ssoToken)
 }
 
+// TestGrokSSOImportWorkerRecoversPanicWithoutExposingToken makes the SSO
+// dependency panic with sensitive text during one indexed worker operation. It
+// asserts a failed item keeps the supplied index and a generic error without
+// that token.
 func TestGrokSSOImportWorkerRecoversPanicWithoutExposingToken(t *testing.T) {
 	const sensitiveToken = "sensitive-sso-token"
 	oauthService := NewGrokAuthorization(grokSSOPanicClient{}, GrokAuthorizationOptions{})
 	oauthService.Start()
+	// The synchronous SSO panic unwinds its activity registration before this
+	// fixture stops. Discard the shutdown result under a background context
+	// after cleanup joins its session loop.
 	defer func() { _ = oauthService.StopContext(context.Background()) }()
 	h := &GrokProviderImport{Authorization: oauthService, Options: GrokProviderImportOptions{LogError: func(string, ...any) {}}}
 

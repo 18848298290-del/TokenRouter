@@ -8,9 +8,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// ArchiveIdentityHints contains decoded import hints; authentication uses a separate verification flow.
-type ArchiveIdentityHints struct{ Email, PlanType, ChatGPTAccountID, ChatGPTUserID, OrganizationID string }
+// Provider archive entries can carry OpenAI ID tokens alongside explicitly
+// supplied identity settings. Decoding those tokens supplies hints for missing
+// credential keys; imported nonempty string values remain authoritative, and a
+// non-string or empty value can receive a hint. The injected decoder supplies
+// import metadata; authenticating upstream requests uses credentials in the
+// separate request-execution path.
+//
+// Archive validation checks required fields, recognized credential kinds,
+// Qoder's platform/type pairing, and nonnegative scheduling inputs before
+// creation. Platform casing is normalized only for the Qoder pairing check.
+// ID-token selection tolerates trimmed OpenAI/OAuth spelling while returning
+// the original token text to the injected decoder.
 
+// ArchiveIdentityHints holds decoded OpenAI identity metadata used to fill
+// imported credentials.
+type ArchiveIdentityHints struct {
+	Email, // decoded account email
+	PlanType, // decoded subscription plan
+	ChatGPTAccountID, // decoded ChatGPT workspace identifier
+	ChatGPTUserID, // decoded ChatGPT user identifier
+	OrganizationID string // decoded organization identity hint
+}
+
+// ValidateArchiveProvider rejects missing required archive fields and
+// unsupported credential kinds before creation. It checks Qoder's type pairing
+// and negative numeric inputs; platform normalization is local to the pairing
+// check.
 func ValidateArchiveProvider(item transfer.DataProvider) error {
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("provider name is required")
@@ -49,7 +73,9 @@ func ValidateArchiveProvider(item transfer.DataProvider) error {
 	return nil
 }
 
-// ArchiveIDToken returns the optional ID token used for OpenAI OAuth import hints.
+// ArchiveIDToken returns the supplied string ID token for OpenAI OAuth archive
+// entries. Platform and type matching ignores surrounding whitespace and case;
+// the token text is returned unchanged when nonblank.
 func ArchiveIDToken(item *transfer.DataProvider) string {
 	if item == nil || item.Credentials == nil || strings.ToLower(strings.TrimSpace(item.Platform)) != PlatformOpenAI || strings.ToLower(strings.TrimSpace(item.Type)) != ProviderTypeOAuth {
 		return ""
@@ -61,7 +87,16 @@ func ArchiveIDToken(item *transfer.DataProvider) string {
 	return token
 }
 
-// FillArchiveIdentity fills missing string fields while retaining nonempty values.
+// FillArchiveIdentity fills empty or non-string imported identity keys from
+// nonempty decoded hints. Nil entries, nil hints, and missing credential maps
+// are skipped. Existing nonempty strings, including whitespace-only strings,
+// retain their supplied values.
+//
+// The caller decodes the ID token before invoking this helper. Each key is
+// decided independently so a token hint cannot replace an explicit
+// administrator identity string while other missing keys are populated. The
+// function mutates the entry's credentials and performs no token
+// authentication.
 func FillArchiveIdentity(item *transfer.DataProvider, hints *ArchiveIdentityHints) {
 	if item == nil || hints == nil || item.Credentials == nil {
 		return

@@ -10,6 +10,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Conversation fixtures cover expiry and accepted-state rollback using explicit
+// versioned snapshots. The concurrent fixture interleaves many commits, while
+// focused rollback cases check deletion, restoration, and rejection of an older
+// accepted snapshot after a later compatible commit.
+
+// TestQoderConversationStoreExpiresState commits history with a short TTL and
+// waits past its expiry. The next plan must replay with system text and its
+// supplied message instead of reusing saved state.
 func TestQoderConversationStoreExpiresState(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Millisecond)
 	messages := []QoderMessage{{Role: "user", Text: "hello"}}
@@ -18,6 +26,9 @@ func TestQoderConversationStoreExpiresState(t *testing.T) {
 	require.NotNil(t, plan)
 	plan.Commit()
 
+	// Wait beyond the short stored TTL so the next planning call exercises
+	// expiration lookup and full replay rather than depending on an unexpired
+	// snapshot.
 	time.Sleep(10 * time.Millisecond)
 
 	next := store.PlanWithOptions("key", "", nil, messages, QoderConversationPlanOptions{})
@@ -26,21 +37,28 @@ func TestQoderConversationStoreExpiresState(t *testing.T) {
 	require.Len(t, next.MessagesToSend, 1)
 }
 
-// TestQoderConversationStoreConcurrent checks state and version after concurrent commits.
+// TestQoderConversationStoreConcurrent interleaves fifty workers committing one
+// conversation's fingerprints. It checks final session identity and positive
+// version; selected rollback calls lack AcceptedState and exercise the early
+// guard.
 func TestQoderConversationStoreConcurrent(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 
 	const numGoroutines = 50
 	const numOpsPerGoroutine = 100
 
-	// All workers share the conversation and commit the same fingerprints.
+	// Every worker uses the same session and fingerprint sequence, making their
+	// publications compatible so version advancement can be observed despite
+	// interleaved map reads.
 	key := "test_conversation_key"
 	sessionID := "test_session_id"
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	// Interleave reads, commits, and rollback calls for one conversation.
+	// Workers capture snapshots and publish compatible history concurrently. The
+	// selected rollback calls have no AcceptedState, exercising guard handling
+	// during commit traffic.
 	for i := range numGoroutines {
 		go func(workerID int) {
 			defer wg.Done()
@@ -64,7 +82,9 @@ func TestQoderConversationStoreConcurrent(t *testing.T) {
 				fingerprints := []string{"msg_1", "msg_2", "msg_3"}
 				plan.CommitFingerprints(fingerprints)
 
-				// Exercise the rollback guard without an accepted state on selected operations.
+				// These plans have no accepted snapshot despite their flag. The early guard
+				// must leave competing publications available instead of restoring a
+				// captured previous state.
 				if workerID%2 == 0 && j%10 == 0 {
 					plan.AcceptedCommitted = true
 					plan.RollbackAccepted()
@@ -91,7 +111,9 @@ func TestQoderConversationStoreConcurrent(t *testing.T) {
 	}
 }
 
-// TestQoderConversationRollbackVersionControl checks that stale rollback cannot overwrite a later commit.
+// TestQoderConversationRollbackVersionControl retains an accepted version-one
+// snapshot before a competing version-two commit. Rollback must leave version
+// two and both committed message fingerprints available.
 func TestQoderConversationRollbackVersionControl(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 	key := "test_key"
@@ -136,8 +158,9 @@ func TestQoderConversationRollbackVersionControl(t *testing.T) {
 		t.Fatalf("expected version=2, got=%v", state2)
 	}
 
-	// plan1 still refers to accepted version 1.
-	// Its rollback must leave version 2 intact.
+	// plan1 still owns an accepted version-one snapshot. The later publication
+	// changes rollback equality, so restoring that older snapshot would discard
+	// completed history.
 	plan1.RollbackAccepted()
 
 	store.Mu.Lock()
@@ -155,6 +178,9 @@ func TestQoderConversationRollbackVersionControl(t *testing.T) {
 	}
 }
 
+// TestQoderConversationRollbackAcceptedDeletesOwnNewState accepts a new
+// conversation with no previous snapshot. Rollback must delete that
+// still-current accepted state after its initial version is observed.
 func TestQoderConversationRollbackAcceptedDeletesOwnNewState(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 	plan := store.PlanWithOptions("rollback_new_state", "system", nil, []QoderMessage{{Role: "user", Text: "hello"}}, QoderConversationPlanOptions{})
@@ -178,6 +204,9 @@ func TestQoderConversationRollbackAcceptedDeletesOwnNewState(t *testing.T) {
 	}
 }
 
+// TestQoderConversationRollbackAcceptedRestoresPreviousState accepts a reused
+// session after history and usage were committed. Rollback must restore a state
+// equal to the previous versioned snapshot, including its usage.
 func TestQoderConversationRollbackAcceptedRestoresPreviousState(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 	key := "rollback_previous_state"
@@ -222,6 +251,9 @@ func TestQoderConversationRollbackAcceptedRestoresPreviousState(t *testing.T) {
 	}
 }
 
+// TestQoderConversationRollbackAcceptedDoesNotClobberConcurrentCommit accepts
+// one plan and then completes a compatible competing plan. Rollback of the older
+// acceptance must retain the complete version-three snapshot.
 func TestQoderConversationRollbackAcceptedDoesNotClobberConcurrentCommit(t *testing.T) {
 	store := NewQoderConversationStore(5 * time.Minute)
 	key := "rollback_concurrent_commit"

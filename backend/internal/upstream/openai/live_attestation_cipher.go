@@ -43,8 +43,15 @@ func NewLiveAttestationCipher(secret string) *LiveAttestationCipher {
 }
 
 // Encrypt returns unpadded standard Base64 containing a fresh nonce, AES-GCM
-// ciphertext, and tag. Callers use a configured nonnil cipher; random-source
-// failure returns an error before any encoded attestation is produced.
+// ciphertext, and tag. Callers use a configured nonnil cipher and retain the
+// complete encoded value for decryption with the same key derived from the
+// secret.
+//
+// The nonce occupies the prefix consumed by Decrypt, while GCM appends the
+// authentication tag to the encrypted bytes. Cipher construction errors are
+// returned before nonce generation. With Go's default rand.Reader, an
+// operating-system random-source failure terminates the process; a replaced
+// reader can return an io.ReadFull error before encoding.
 func (c *LiveAttestationCipher) Encrypt(plaintext string) (string, error) {
 	block, err := aes.NewCipher(c.key[:])
 	if err != nil {
@@ -66,7 +73,14 @@ func (c *LiveAttestationCipher) Encrypt(plaintext string) (string, error) {
 
 // Decrypt authenticates and opens the nonce-prefixed unpadded standard-Base64
 // attestation. A nonnil cipher with the same derived key is required; malformed
-// Base64, a missing nonce, and failed authentication return errors.
+// Base64, a missing nonce, and failed authentication return errors. Cipher
+// construction errors are also returned.
+//
+// The prefix is split using the same GCM nonce size as Encrypt, and the
+// remainder includes the authentication tag consumed by Open. Plaintext is
+// returned after that complete remainder authenticates under the recovered
+// nonce and retained key, so callers receive an error when that association
+// cannot be verified.
 func (c *LiveAttestationCipher) Decrypt(ciphertext string) (string, error) {
 	encrypted, err := base64.RawStdEncoding.DecodeString(ciphertext)
 	if err != nil {
@@ -80,6 +94,8 @@ func (c *LiveAttestationCipher) Decrypt(ciphertext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Reject a missing nonce before slicing. The remaining bytes, including the
+	// tag, are authenticated together by GCM.Open before any plaintext is returned.
 	if len(encrypted) < gcm.NonceSize() {
 		return "", errors.New("encrypted Live attestation is too short")
 	}

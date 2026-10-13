@@ -4,7 +4,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterDashboardRoutes registers dashboard routes after app installs authentication, rate limiting, and audit middleware.
+// Administrator dashboard and usage routes expose statistics, searches and
+// persisted cleanup tasks through separate path groups. The application
+// supplies their authentication, rate limiting and audit middleware on the
+// parent group before these handlers are registered.
+
+// RegisterDashboardRoutes attaches dashboard reports, chart snapshots and
+// batch usage reads beneath admin. The caller supplies a nonnil handler and
+// installs authentication, rate limiting and audit middleware on the parent
+// group first.
 func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler) {
 	dashboard := admin.Group("/dashboard")
 	{
@@ -23,7 +31,10 @@ func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler)
 	}
 }
 
-// RegisterUsageRoutes registers usage routes after app installs authentication, rate limiting, and audit middleware.
+// RegisterUsageRoutes attaches usage records, statistics, searches and
+// cleanup-task commands beneath admin. The caller supplies a nonnil handler
+// and installs authentication, rate limiting and audit middleware on the
+// parent group first.
 func RegisterUsageRoutes(admin *gin.RouterGroup, endpoint *UsageHandler) {
 	usage := admin.Group("/usage")
 	{

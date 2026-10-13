@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage response conversion selects client model names and derives legacy
+// transport flags from effective request categories. These fixtures compare
+// user and administrator field visibility, inspect timing values and retain
+// absent historical image metadata, so mapping expectations stay tied to
+// encoded responses.
+
+// TestUsageLogFromService_IncludesOpenAIWSMode supplies WebSocket and
+// ordinary HTTP legacy flags. It requires user and administrator mappers to
+// expose the corresponding OpenAIWSMode values.
 func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	t.Parallel()
 
@@ -30,6 +39,9 @@ func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	require.False(t, FromUsageAdmin(httpLog).OpenAIWSMode)
 }
 
+// TestUsageLogTimingFromService_MapsStages supplies first-byte offset,
+// attempt count and connection reuse. It requires those observations to
+// appear in the returned timing response.
 func TestUsageLogTimingFromService_MapsStages(t *testing.T) {
 	t.Parallel()
 
@@ -46,6 +58,9 @@ func TestUsageLogTimingFromService_MapsStages(t *testing.T) {
 	require.True(t, got.UpstreamConnectionReused)
 }
 
+// TestUsageLogFromService_PrefersRequestTypeForLegacyFields supplies explicit
+// WS v2 beside false legacy flags. It requires both DTO forms to show ws_v2
+// and true transport booleans.
 func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	t.Parallel()
 
@@ -68,6 +83,9 @@ func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	require.True(t, adminDTO.OpenAIWSMode)
 }
 
+// TestUsageCleanupTaskFromService_RequestTypeMapping supplies a stream
+// cleanup category as a stored integer pointer. It requires a nonnil task
+// response with the stream text filter.
 func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	t.Parallel()
 
@@ -86,11 +104,17 @@ func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	require.Equal(t, "stream", *dtoTask.Filters.RequestType)
 }
 
+// TestRequestTypeStringPtrNil calls the request-type display wrapper with
+// absent input. It requires a nil result so optional cleanup category text
+// can remain absent.
 func TestRequestTypeStringPtrNil(t *testing.T) {
 	t.Parallel()
 	require.Nil(t, requestTypeStringPtr(nil))
 }
 
+// TestUsageLogFromService_IncludesServiceTierForUserAndAdmin supplies
+// priority tier and both endpoints. It checks shared inbound fields and
+// administrator-only outbound endpoint and provider multiplier observations.
 func TestUsageLogFromService_IncludesServiceTierForUserAndAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -121,10 +145,13 @@ func TestUsageLogFromService_IncludesServiceTierForUserAndAdmin(t *testing.T) {
 	require.NotNil(t, adminDTO.UpstreamEndpoint)
 	require.Equal(t, upstreamEndpoint, *adminDTO.UpstreamEndpoint)
 	require.NotNil(t, adminDTO.ProviderRateMultiplier)
+	// Allow floating-point representation differences within this asserted multiplier tolerance.
 	require.InDelta(t, 1.5, *adminDTO.ProviderRateMultiplier, 1e-12)
 }
 
-// TestUsageLogFromService_IncludesRequestedEffort checks separate requested and forwarded effort fields.
+// TestUsageLogFromService_IncludesRequestedEffort supplies distinct client
+// and forwarded effort values. It checks both DTO forms and requires the
+// requested effort field in user JSON.
 func TestUsageLogFromService_IncludesRequestedEffort(t *testing.T) {
 	t.Parallel()
 	requested := "max"
@@ -148,7 +175,9 @@ func TestUsageLogFromService_IncludesRequestedEffort(t *testing.T) {
 	require.Contains(t, string(userJSON), "requested_reasoning_effort")
 }
 
-// TestUsageLogFromService_PreservesEquivalentRequestedEffort checks that an unchanged requested effort remains present.
+// TestUsageLogFromService_PreservesEquivalentRequestedEffort supplies the
+// same effort text in both source fields. It requires the administrator
+// requested-effort pointer and exact supplied spelling.
 func TestUsageLogFromService_PreservesEquivalentRequestedEffort(t *testing.T) {
 	t.Parallel()
 	effort := "x-high"
@@ -158,6 +187,9 @@ func TestUsageLogFromService_PreservesEquivalentRequestedEffort(t *testing.T) {
 	require.Equal(t, effort, *adminDTO.RequestedReasoningEffort)
 }
 
+// TestUsageLogFromService_UsesRequestedModelAndKeepsUpstreamAdminOnly
+// supplies client and outbound model observations. It checks the client
+// display name in both forms and administrator-only encoded diagnostics.
 func TestUsageLogFromService_UsesRequestedModelAndKeepsUpstreamAdminOnly(t *testing.T) {
 	t.Parallel()
 
@@ -192,6 +224,9 @@ func TestUsageLogFromService_UsesRequestedModelAndKeepsUpstreamAdminOnly(t *test
 	require.Contains(t, string(adminJSON), `"upstream_model":"claude-sonnet-4-20250514"`)
 }
 
+// TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields
+// supplies charged costs, IP and provider-cost inputs. It checks user billing
+// values and requires provider cost keys to remain absent.
 func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *testing.T) {
 	t.Parallel()
 
@@ -231,6 +266,9 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	require.NotContains(t, string(userJSON), "provider_cost")
 }
 
+// TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing
+// supplies only the stored model name. It requires both response forms to use
+// that name as their displayed model.
 func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *testing.T) {
 	t.Parallel()
 
@@ -246,6 +284,9 @@ func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *
 	require.Equal(t, "claude-3", adminDTO.Model)
 }
 
+// TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin
+// supplies observed image sizes and a size-count map. It requires both
+// response forms to carry the fixture's image metadata values.
 func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +322,9 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 	}
 }
 
+// TestUsageLogFromService_PreservesHistoricalMissingImageSize supplies a
+// historical image count with absent size observations. It requires nil
+// metadata and encoded image_size null rather than an invented size.
 func TestUsageLogFromService_PreservesHistoricalMissingImageSize(t *testing.T) {
 	t.Parallel()
 
@@ -305,9 +349,14 @@ func TestUsageLogFromService_PreservesHistoricalMissingImageSize(t *testing.T) {
 	require.NotContains(t, string(body), `"image_size":"2K"`)
 }
 
+// f64Ptr returns independent pointer storage for a floating-point mapper
+// fixture.
 func f64Ptr(value float64) *float64 {
 	return &value
 }
 
-// requestTypeStringPtr converts a request-type pointer to its display string.
+// requestTypeStringPtr delegates optional category display conversion to
+// RequestTypeStringPtr. Nil inputs remain nil, while nonnil inputs use the
+// helper's supported lowercase normalization for cleanup filter response
+// tests.
 func requestTypeStringPtr(v *int16) *string { return RequestTypeStringPtr(v) }

@@ -24,8 +24,9 @@ import (
 // deliberately allow suspended context for resume, departure and teardown.
 //
 // Invitation admission is recorded before token/link/storage preparation, and
-// mail delivery follows saved review state. Generation, URL or mail failure
-// therefore has different retained effects rather than one rollback rule.
+// mail delivery follows saved review state. An io.ReadFull error terminates
+// during token generation, while URL or mail errors retain the work completed
+// before their respective stages.
 // Lifecycle repositories own their related transactions and can return
 // post-commit readback errors; optional authentication invalidation is
 // requested only after successful selected results and Key-list failure is
@@ -1071,7 +1072,7 @@ func (s *TeamService) Invite(ctx context.Context, userID int64, email string) (*
 		return nil, err
 	}
 	// Record admission before token generation and review-link/storage work, so
-	// later generation or preparation failure still leaves the accepted
+	// termination during token filling or later preparation errors leave the accepted
 	// recipient/team rate attempt consumed.
 	if err := s.CheckInvitationRate(ctx, teamCtx.Team.ID, email); err != nil {
 		return nil, err
@@ -1174,9 +1175,8 @@ func (s *TeamService) ReissueInvitation(ctx context.Context, userID, invitationI
 // An accepted check is already recorded by the limiter before this service
 // prepares token/link/storage work. Denied duration becomes a whole-second
 // retry hint with a one-second minimum, stored as decimal metadata. Callers keep
-// that
-// admission before downstream invitation work and cannot treat a later
-// generation/storage/mail error as a refunded permit.
+// admission before downstream invitation work; token-generation termination or a
+// later storage/mail error leaves that recorded permit consumed.
 func (s *TeamService) CheckInvitationRate(ctx context.Context, teamID int64, email string) error {
 	if s.inviteLimiter == nil {
 		return ErrTeamInvitationUnavailable
@@ -1717,10 +1717,10 @@ func NormalizeTeamEmail(email string) (string, error) {
 	return identity.NormalizeRegistrationEmailAddress(email), nil
 }
 
-// NewTeamToken returns a fresh 32-random-byte token as hex text and its
-// SHA256 hex digest in that order. Random-source failure returns two empty
-// strings with an error; callers store the digest and expose plaintext
-// through the review link.
+// NewTeamToken returns lowercase hex from thirty-two random bytes and the
+// SHA256 hex digest of that encoded text, in that order, with nil error.
+// crypto/rand.Read terminates the process when io.ReadFull reports an error.
+// Callers store a returned digest and expose plaintext through the review link.
 func NewTeamToken() (string, string, error) {
 	// Use a 256-bit random secret before hexadecimal token encoding.
 	raw := make([]byte, 32)

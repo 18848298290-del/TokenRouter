@@ -209,8 +209,10 @@ func (r BindPendingOAuthLoginRequest) adoptionDecision() OauthAdoptionDecisionRe
 	}
 }
 
-// GenerateOAuthPendingBrowserSession returns random browser proof through the
-// shared PKCE verifier generator.
+// GenerateOAuthPendingBrowserSession returns a forty-three-character unpadded
+// base64url browser proof through the shared PKCE verifier generator. A
+// returned proof has nil error. An io.ReadFull error terminates the process
+// inside crypto/rand.Read during verifier generation.
 func GenerateOAuthPendingBrowserSession() (string, error) {
 	return oauthpkce.Verifier()
 }
@@ -342,7 +344,8 @@ func ReadOAuthPromoCode(c *gin.Context) string {
 }
 
 // PendingOAuthPromoCode delegates reading the trimmed signup promotion from
-// stored local pending state.
+// local pending state. Nil sessions, missing keys, and unsupported value types
+// return empty text; promotion validation remains with the signup service.
 func PendingOAuthPromoCode(session *identity.PendingAuthSession) string {
 	return identity.PendingOAuthPromoCode(session)
 }
@@ -1219,15 +1222,15 @@ func ReadCookieDecoded(c *gin.Context, name string) (string, error) {
 }
 
 // CreateEmailRegistrationSession generates browser proof and stores a
-// verified-email registration draft through the shared pending writer. Missing
-// handler or profile returns service unavailable; proof-generation failure
-// returns before any cookie is emitted.
+// registration draft with verified email through the shared pending writer.
+// Missing handler or profile returns service unavailable. An io.ReadFull error
+// during verifier generation terminates the process before any cookie is emitted.
 //
 // The browser cookie is set before draft preparation and persistence, so a
-// later store failure can leave that value in the response. Invitation
-// settings contribute the draft requirement, and CreateOAuthPendingSession
-// writes the session cookie only after its record is saved. Callers handle
-// failure cleanup for any browser state already emitted.
+// later store failure can leave that value in the response. Invitation settings
+// contribute the draft requirement, and CreateOAuthPendingSession writes the
+// session cookie only after its record is saved. Callers handle failure cleanup
+// for any browser state already emitted.
 func (h *PendingHandler) CreateEmailRegistrationSession(c *gin.Context, provider, frontendCallback, redirectTo string, profile *identity.EmailOAuthProfile, affCode, promoCode string) error {
 	if h == nil || profile == nil {
 		return infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")

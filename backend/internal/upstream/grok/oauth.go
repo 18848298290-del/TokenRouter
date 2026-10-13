@@ -14,87 +14,147 @@ import (
 	wiregrok "github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// OAuth endpoints and API forwarding URLs use different local policies.
+// Authorization and token endpoints normally require trusted x.ai hosts,
+// while general base URLs permit HTTPS destinations after literal-host
+// checks. The unsafe override switch selects format-only validation and can
+// bypass the normal known-path normalization when no custom validator is
+// supplied.
+//
+// Base URL builders append paths only after effective-value selection and
+// validation. Official base hosts use /v1, while custom prefixes remain
+// usable; query, fragment, and userinfo are rejected by known-path
+// normalization. Authorization callback parsing retains whether state must be
+// checked, and random helpers provide state, nonce, session, and PKCE values.
+// Validation and generation here do not consume authorization sessions or
+// persist credentials; the authorization caller owns those steps and
+// redirect/state verification.
+
+// OAuth defaults and environment keys select issuer, client, scopes, callbacks,
+// forwarding hosts, and opt-in policy relaxations before the respective validators run.
 const (
-	OAuthIssuer = "https://auth.x.ai"
+	OAuthIssuer = "https://auth.x.ai" // default OAuth issuer origin
 
-	DefaultAuthorizeURL   = OAuthIssuer + "/oauth2/authorize"
-	DefaultTokenURL       = OAuthIssuer + "/oauth2/token"
-	DefaultBaseURL        = "https://api.x.ai/v1"
-	DefaultCLIBaseURL     = "https://cli-chat-proxy.grok.com/v1"
-	DefaultUSEast1BaseURL = "https://us-east-1.api.x.ai/v1"
-	DefaultUSWest2BaseURL = "https://us-west-2.api.x.ai/v1"
-	DefaultEUWest1BaseURL = "https://eu-west-1.api.x.ai/v1"
-	DefaultClientID       = "b1a00492-073a-47ea-816f-4c329264a828"
-	DefaultScope          = "openid profile email offline_access grok-cli:access api:access"
-	DefaultRedirectURI    = "http://127.0.0.1:56121/callback"
+	DefaultAuthorizeURL   = OAuthIssuer + "/oauth2/authorize"                                // default authorization endpoint URL
+	DefaultTokenURL       = OAuthIssuer + "/oauth2/token"                                    // default token exchange URL
+	DefaultBaseURL        = "https://api.x.ai/v1"                                            // default public API URL
+	DefaultCLIBaseURL     = "https://cli-chat-proxy.grok.com/v1"                             // default CLI proxy URL
+	DefaultUSEast1BaseURL = "https://us-east-1.api.x.ai/v1"                                  // US east regional URL
+	DefaultUSWest2BaseURL = "https://us-west-2.api.x.ai/v1"                                  // US west regional URL
+	DefaultEUWest1BaseURL = "https://eu-west-1.api.x.ai/v1"                                  // EU west regional URL
+	DefaultClientID       = "b1a00492-073a-47ea-816f-4c329264a828"                           // default OAuth client identifier
+	DefaultScope          = "openid profile email offline_access grok-cli:access api:access" // default authorization scope text
+	DefaultRedirectURI    = "http://127.0.0.1:56121/callback"                                // default loopback callback URL
 
-	EnvAuthorizeURL               = "XAI_OAUTH_AUTHORIZE_URL"
-	EnvTokenURL                   = "XAI_OAUTH_TOKEN_URL"
-	EnvClientID                   = "XAI_OAUTH_CLIENT_ID"
-	EnvScope                      = "XAI_OAUTH_SCOPE"
-	EnvRedirectURI                = "XAI_OAUTH_REDIRECT_URI"
-	EnvBaseURL                    = "XAI_BASE_URL"
-	EnvAllowUnsafeURLOverrides    = "XAI_ALLOW_UNSAFE_URL_OVERRIDES"
-	EnvUnsafeAllowHighConcurrency = "XAI_GROK_UNSAFE_ALLOW_CONCURRENCY_GT_ONE"
+	EnvAuthorizeURL               = "XAI_OAUTH_AUTHORIZE_URL"                  // authorization endpoint override key
+	EnvTokenURL                   = "XAI_OAUTH_TOKEN_URL"                      // token endpoint override key
+	EnvClientID                   = "XAI_OAUTH_CLIENT_ID"                      // client identifier override key
+	EnvScope                      = "XAI_OAUTH_SCOPE"                          // authorization scope override key
+	EnvRedirectURI                = "XAI_OAUTH_REDIRECT_URI"                   // callback URI override key
+	EnvBaseURL                    = "XAI_BASE_URL"                             // forwarding URL override key
+	EnvAllowUnsafeURLOverrides    = "XAI_ALLOW_UNSAFE_URL_OVERRIDES"           // unsafe URL relaxation key
+	EnvUnsafeAllowHighConcurrency = "XAI_GROK_UNSAFE_ALLOW_CONCURRENCY_GT_ONE" // unsafe concurrency relaxation key
 )
 
+// These host patterns distinguish OAuth issuer endpoints from recognized API
+// and CLI forwarding hosts; validators and official-host classification use separate lists.
 var (
 	oauthEndpointAllowedHosts = []string{"x.ai", "*.x.ai"}
-	// Regional API hosts allow operators to select another region when an endpoint
-	// is unavailable, including us-east-1, us-west-2, and eu-west-1.
+	// baseURLAllowedHosts includes regional API subdomains alongside the public API
+	// and CLI proxy, defining which hosts receive the official /v1 path rule.
 	baseURLAllowedHosts = []string{"api.x.ai", "*.api.x.ai", "cli-chat-proxy.grok.com"}
 )
 
-// BaseURLValidator applies outbound URL policy before appending an xAI endpoint path.
-// API-key providers inject security.url_allowlist policy; OAuth uses trusted-host validation.
+// BaseURLValidator validates an effective forwarding base URL before endpoint
+// paths are appended. Callers select their provider's host and scheme policy;
+// successful values then pass through known-path normalization in injected
+// validator paths.
 type BaseURLValidator func(string) (string, error)
 
+// RuntimeSanityCheck records one diagnostic value with its validation and
+// default-selection result.
 type RuntimeSanityCheck struct {
-	Value     string `json:"value"`
-	Valid     bool   `json:"valid"`
-	Error     string `json:"error,omitempty"`
-	IsDefault bool   `json:"is_default,omitempty"`
+	// Value, Valid, and Error describe one validation result. On success,
+	// Value contains sanitized normalized text. Failure displays the sanitized
+	// input and keeps the redacted diagnostic in Error.
+	Value string `json:"value"`           // displayed effective URL text
+	Valid bool   `json:"valid"`           // effective value passed validation
+	Error string `json:"error,omitempty"` // redacted URL validation diagnostic
+	// IsDefault reports whether the associated environment key is blank when the
+	// check runs. It does not compare the selected text with a default literal.
+	IsDefault bool `json:"is_default,omitempty"` // environment selection was blank
 }
 
+// RuntimeSanityReport summarizes effective URL checks and runtime diagnostic
+// policy flags for consumers.
 type RuntimeSanityReport struct {
-	BaseURL               RuntimeSanityCheck `json:"base_url"`
-	OAuthAuthorizeURL     RuntimeSanityCheck `json:"oauth_authorize_url"`
-	OAuthTokenURL         RuntimeSanityCheck `json:"oauth_token_url"`
-	OAuthRedirectURI      RuntimeSanityCheck `json:"oauth_redirect_uri"`
-	UnsafeURLOverrides    bool               `json:"unsafe_url_overrides"`
-	UnsafeHighConcurrency bool               `json:"unsafe_high_concurrency"`
-	PublicGatewayScope    string             `json:"public_gateway_scope"`
-	ProxyPolicy           string             `json:"proxy_policy"`
+	BaseURL               RuntimeSanityCheck `json:"base_url"`                // effective forwarding URL check
+	OAuthAuthorizeURL     RuntimeSanityCheck `json:"oauth_authorize_url"`     // effective authorize endpoint check
+	OAuthTokenURL         RuntimeSanityCheck `json:"oauth_token_url"`         // effective token endpoint check
+	OAuthRedirectURI      RuntimeSanityCheck `json:"oauth_redirect_uri"`      // effective redirect format check
+	UnsafeURLOverrides    bool               `json:"unsafe_url_overrides"`    // URL override relaxation enabled
+	UnsafeHighConcurrency bool               `json:"unsafe_high_concurrency"` // concurrency override relaxation enabled
+	PublicGatewayScope    string             `json:"public_gateway_scope"`    // fixed gateway diagnostic label
+	ProxyPolicy           string             `json:"proxy_policy"`            // fixed proxy diagnostic description
 }
 
+// AuthorizationInput aliases parsed authorization code and state information
+// used by provider authorization.
 type AuthorizationInput = wiregrok.AuthorizationInput
 
+// TokenResponse aliases the xAI OAuth token fields used by credential
+// exchange callers.
 type TokenResponse = wiregrok.TokenResponse
 
+// EffectiveAuthorizeURL returns the trimmed authorization endpoint
+// environment override or DefaultAuthorizeURL. This selection performs no URL
+// validation; callers use ValidatedAuthorizeURL before constructing a
+// credential-related authorization request.
 func EffectiveAuthorizeURL() string {
 	return envOrDefault(EnvAuthorizeURL, DefaultAuthorizeURL)
 }
 
+// ValidatedAuthorizeURL validates the currently selected authorization
+// endpoint through OAuth endpoint policy. It returns validation errors rather
+// than replacing invalid environment input; NewOAuthClient's token
+// construction has a separate default-on-error rule.
 func ValidatedAuthorizeURL() (string, error) {
 	return ValidateOAuthEndpointURL(EffectiveAuthorizeURL())
 }
 
+// EffectiveTokenURL returns the trimmed token endpoint environment override
+// or DefaultTokenURL. The selected text is unvalidated; credential exchange
+// construction uses ValidatedTokenURL or its own checked default selection.
 func EffectiveTokenURL() string {
 	return envOrDefault(EnvTokenURL, DefaultTokenURL)
 }
 
+// ValidatedTokenURL checks the selected token endpoint through OAuth policy.
+// An invalid override returns an error, allowing credential exchange callers
+// to choose whether to reject it or use a trusted default.
 func ValidatedTokenURL() (string, error) {
 	return ValidateOAuthEndpointURL(EffectiveTokenURL())
 }
 
+// EffectiveClientID returns the trimmed configured OAuth client identifier,
+// or DefaultClientID when the environment value is blank. The value is
+// selected when called rather than pinned globally at process startup.
 func EffectiveClientID() string {
 	return envOrDefault(EnvClientID, DefaultClientID)
 }
 
+// EffectiveScope returns the trimmed configured OAuth scope or DefaultScope
+// when the environment value is blank. It retains nonblank scope text as
+// supplied after trimming, leaving scope interpretation to authorization
+// requests.
 func EffectiveScope() string {
 	return envOrDefault(EnvScope, DefaultScope)
 }
 
+// EffectiveRedirectURI prefers a nonblank trimmed argument, then the
+// environment value, then DefaultRedirectURI. It does not validate the
+// result; authorization callers validate redirect policy separately before
+// using the selected callback destination.
 func EffectiveRedirectURI(override string) string {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		return trimmed
@@ -102,6 +162,10 @@ func EffectiveRedirectURI(override string) string {
 	return envOrDefault(EnvRedirectURI, DefaultRedirectURI)
 }
 
+// EffectiveBaseURL prefers a nonblank trimmed argument, then configured
+// environment input, then DefaultBaseURL, trimming trailing slashes from the
+// selected text. It performs no destination validation before endpoint
+// builders apply their policy.
 func EffectiveBaseURL(override string) string {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		return strings.TrimRight(trimmed, "/")
@@ -109,10 +173,18 @@ func EffectiveBaseURL(override string) string {
 	return strings.TrimRight(envOrDefault(EnvBaseURL, DefaultBaseURL), "/")
 }
 
+// ValidatedBaseURL selects an effective base URL and applies ValidateBaseURL.
+// It uses the public-base policy, including its unsafe override mode; OAuth
+// callers needing official-host restriction choose ValidateTrustedBaseURL
+// through their provider-specific policy.
 func ValidatedBaseURL(override string) (string, error) {
 	return ValidateBaseURL(EffectiveBaseURL(override))
 }
 
+// validatedBaseURLWithValidator selects the effective base and validates it
+// using the supplied policy. Nil uses ValidatedBaseURL directly. A nonnil
+// validator's successful output passes through normalizeKnownBaseURLPath,
+// even when unsafe environment overrides are enabled.
 func validatedBaseURLWithValidator(override string, validator BaseURLValidator) (string, error) {
 	if validator == nil {
 		return ValidatedBaseURL(override)
@@ -122,9 +194,15 @@ func validatedBaseURLWithValidator(override string, validator BaseURLValidator) 
 	if err != nil {
 		return "", err
 	}
+	// Injected policies can permit custom hosts, but path components still need
+	// normalization before callers append an endpoint, including under the unsafe environment switch.
 	return normalizeKnownBaseURLPath(validated)
 }
 
+// RuntimeSanity assembles effective URL checks and unsafe-switch flags for
+// diagnostics. Values are read from the environment during construction;
+// PublicGatewayScope and ProxyPolicy are fixed diagnostic labels rather than
+// a generated endpoint capability inventory.
 func RuntimeSanity() RuntimeSanityReport {
 	return RuntimeSanityReport{
 		BaseURL: runtimeSanityCheck(EffectiveBaseURL(""), EnvBaseURL, ValidatedBaseURL),
@@ -149,6 +227,10 @@ func RuntimeSanity() RuntimeSanityReport {
 	}
 }
 
+// runtimeSanityCheck validates a selected value and records whether its
+// environment source is blank. Successful normalized URLs are sanitized for
+// display; failures retain a sanitized supplied value and a redacted error.
+// The validate callback is required.
 func runtimeSanityCheck(value string, envKey string, validate func(string) (string, error)) RuntimeSanityCheck {
 	normalized, err := validate(value)
 	check := RuntimeSanityCheck{
@@ -163,10 +245,17 @@ func runtimeSanityCheck(value string, envKey string, validate func(string) (stri
 	return check
 }
 
+// validateRedirectURI checks callback URL format with HTTP allowed. It does
+// not apply a trusted-host list or a callback-state check; authorization
+// callers decide which otherwise valid redirect destinations they permit.
 func validateRedirectURI(raw string) (string, error) {
 	return urlvalidator.ValidateURLFormat(raw, true)
 }
 
+// sanitizeRuntimeURLValue trims text and removes userinfo, query, and
+// fragment from parseable absolute URLs. Empty input stays empty, while
+// unparseable or nonabsolute text is returned trimmed as supplied, so callers
+// cannot treat it as general secret redaction.
 func sanitizeRuntimeURLValue(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -176,12 +265,18 @@ func sanitizeRuntimeURLValue(raw string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return trimmed
 	}
+	// Display parseable URLs without credential-bearing authority, query, or fragment
+	// components; malformed text takes the earlier trimmed-text path and needs separate redaction.
 	parsed.User = nil
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return strings.TrimRight(parsed.String(), "/")
 }
 
+// sanitizeRuntimeError applies logredact text redaction and replaces raw or
+// redacted occurrences of the supplied value with its URL-sanitized form.
+// Blank rawValue needs only text redaction; non-URL values retain the
+// sanitizer's trimmed-text behavior.
 func sanitizeRuntimeError(rawErr string, rawValue string) string {
 	redacted := logredact.RedactText(rawErr)
 	trimmedValue := strings.TrimSpace(rawValue)
@@ -194,7 +289,13 @@ func sanitizeRuntimeError(rawErr string, rawValue string) string {
 	return redacted
 }
 
+// ValidateOAuthEndpointURL normally requires HTTPS and a host in the x.ai
+// allowlist while rejecting blocked literal hosts. Unsafe overrides select
+// format-only HTTP/HTTPS validation. DNS-address checks belong to the
+// caller's transport policy.
 func ValidateOAuthEndpointURL(raw string) (string, error) {
+	// Format-only mode allows operator-controlled HTTP/HTTPS endpoints; trusted
+	// issuer hosts apply below when that relaxation is disabled before authorization use.
 	if AllowUnsafeURLOverrides() {
 		return urlvalidator.ValidateURLFormat(raw, true)
 	}
@@ -205,7 +306,13 @@ func ValidateOAuthEndpointURL(raw string) (string, error) {
 	})
 }
 
+// ValidateBaseURL normally validates HTTPS and literal-host permission, then
+// normalizes known host/path rules. Custom hostnames are permitted here.
+// Unsafe overrides return format-only validation directly, allowing custom
+// paths and skipping normal path-component rejection in this branch.
 func ValidateBaseURL(raw string) (string, error) {
+	// Unsafe mode returns directly after format validation, retaining custom path
+	// components that the normal branch would reject or normalize before endpoint construction.
 	if AllowUnsafeURLOverrides() {
 		return urlvalidator.ValidateURLFormat(raw, true)
 	}
@@ -218,7 +325,13 @@ func ValidateBaseURL(raw string) (string, error) {
 	return normalizeKnownBaseURLPath(normalized)
 }
 
+// ValidateTrustedBaseURL normally requires HTTPS and a recognized API or CLI
+// base hostname before known-path normalization. Unsafe overrides return
+// format-only validation directly, so callers choose that environment switch
+// only when its relaxed destination policy is intended.
 func ValidateTrustedBaseURL(raw string) (string, error) {
+	// This opt-in bypasses official-host and known-path rules for the caller's
+	// development endpoint; disabled mode applies both checks before building any request URL.
 	if AllowUnsafeURLOverrides() {
 		return urlvalidator.ValidateURLFormat(raw, true)
 	}
@@ -233,12 +346,17 @@ func ValidateTrustedBaseURL(raw string) (string, error) {
 	return normalizeKnownBaseURLPath(normalized)
 }
 
-// normalizeKnownBaseURLPath normalizes the base URL path:
-//   - Official hosts require /v1; an empty path becomes /v1 and other paths fail.
-//   - Custom hosts retain configured prefixes such as /xxx/v1.
-//     An empty custom-host path also becomes /v1.
+// normalizeKnownBaseURLPath validates a parsed base URL's components and
+// normalizes its decoded path. Missing scheme/host, userinfo, any query
+// marker, and fragments fail. An empty path becomes /v1; recognized official
+// hosts require that exact path, while custom hosts retain other configured
+// prefixes.
 //
-// All hosts reject userinfo, query, and fragment components and trim trailing slashes.
+// Trailing path slashes are removed and RawPath is cleared before
+// serialization, so encoded spelling can change while the decoded prefix
+// remains. This separates reusable custom gateway prefixes from official
+// endpoint rules before a builder adds its own suffix. Scheme and host
+// permission belong to the validator invoked before this helper.
 func normalizeKnownBaseURLPath(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -267,7 +385,9 @@ func normalizeKnownBaseURLPath(raw string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-// IsOfficialBaseURLHost reports whether host is an xAI API, regional API, or CLI host.
+// IsOfficialBaseURLHost reports whether the trimmed, lowercased hostname
+// matches a configured API or CLI host. Wildcards also match their suffix
+// apex; callers pass a hostname without URL scheme or port.
 func IsOfficialBaseURLHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	for _, allowed := range baseURLAllowedHosts {
@@ -285,9 +405,10 @@ func IsOfficialBaseURLHost(host string) bool {
 	return false
 }
 
-// IsOfficialBaseURL recognizes official hosts, including case variants, explicit
-// ports, and encoded paths found in stored credentials.
-// Empty or unparseable URLs return true so callers select the default endpoint.
+// IsOfficialBaseURL recognizes configured official hostnames through URL
+// parsing. Empty or invalid/hostless input returns true for callers selecting
+// default endpoints; this is a classification helper, so it does not
+// establish scheme, path, or destination permission.
 func IsOfficialBaseURL(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -300,14 +421,24 @@ func IsOfficialBaseURL(raw string) bool {
 	return IsOfficialBaseURLHost(parsed.Hostname())
 }
 
+// AllowUnsafeURLOverrides reports whether the URL override environment switch
+// has a recognized true value. Other values are false; callers apply the
+// resulting relaxation in their own endpoint validation branch.
 func AllowUnsafeURLOverrides() bool {
 	return envBool(EnvAllowUnsafeURLOverrides)
 }
 
+// AllowUnsafeHighConcurrency reports whether the concurrency override
+// environment switch has a recognized true value. This helper reads the flag
+// only; the consuming provider policy decides what concurrency it permits.
 func AllowUnsafeHighConcurrency() bool {
 	return envBool(EnvUnsafeAllowHighConcurrency)
 }
 
+// envOrDefault returns a trimmed nonblank environment value, otherwise
+// fallback as supplied. Selection happens on each call, letting effective
+// OAuth and API configuration readers observe their current environment
+// values.
 func envOrDefault(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
@@ -315,6 +446,9 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// envBool recognizes trimmed case-insensitive 1, true, yes, y, and on values.
+// Every other spelling reports false, so an absent or invalid switch keeps
+// its consuming policy's relaxation disabled.
 func envBool(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
 	case "1", "true", "yes", "y", "on":
@@ -324,10 +458,16 @@ func envBool(key string) bool {
 	}
 }
 
+// GenerateRandomBytes obtains n cryptographic bytes through oauthpkce.
+// Zero returns an empty slice and negative n panics during allocation. The
+// underlying Go crypto/rand.Read fills the slice with nil error or terminates
+// the process when its random reader reports an error.
 func GenerateRandomBytes(n int) ([]byte, error) {
 	return oauthpkce.RandomBytes(n)
 }
 
+// GenerateState returns lowercase hexadecimal text from thirty-two random
+// bytes for OAuth session correlation.
 func GenerateState() (string, error) {
 	bytes, err := GenerateRandomBytes(32)
 	if err != nil {
@@ -336,6 +476,8 @@ func GenerateState() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// GenerateNonce returns lowercase hexadecimal text from sixteen random bytes
+// for OAuth nonce correlation.
 func GenerateNonce() (string, error) {
 	bytes, err := GenerateRandomBytes(16)
 	if err != nil {
@@ -344,6 +486,8 @@ func GenerateNonce() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// GenerateSessionID returns lowercase hexadecimal text from sixteen random
+// bytes for authorization session identification.
 func GenerateSessionID() (string, error) {
 	bytes, err := GenerateRandomBytes(16)
 	if err != nil {
@@ -352,14 +496,31 @@ func GenerateSessionID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// GenerateCodeVerifier returns an unpadded base64url PKCE verifier derived
+// from thirty-two random bytes. Callers retain the verifier with the session
+// for code exchange. The underlying Go crypto/rand.Read finishes with nil
+// error or terminates the process when its random reader reports an error.
 func GenerateCodeVerifier() (string, error) {
 	return oauthpkce.Verifier()
 }
 
+// GenerateCodeChallenge returns the unpadded base64url SHA-256 digest of the
+// supplied PKCE verifier text.
 func GenerateCodeChallenge(verifier string) string {
 	return oauthpkce.Challenge(verifier)
 }
 
+// BuildAuthorizationURL appends encoded grant parameters to the validated
+// effective authorization endpoint, using the current client/scope and
+// selected redirect URI. Supply an endpoint with no existing query or
+// fragment: concatenation adds a literal ? and does not merge URL components.
+// Callers keep state and the verifier for the S256 challenge in their session.
+//
+// The redirect is selected but unvalidated here. plan=generic and
+// referrer=tokenrouter are encoded alongside state, nonce, and challenge.
+// Provider authorization checks callback state and any submitted redirect
+// against the saved session before exchange. Invalid authorize endpoints
+// return an error before URL formatting.
 func BuildAuthorizationURL(state, codeChallenge, redirectURI, nonce string) (string, error) {
 	redirectURI = EffectiveRedirectURI(redirectURI)
 	authorizeURL, err := ValidatedAuthorizeURL()
@@ -382,7 +543,17 @@ func BuildAuthorizationURL(state, codeChallenge, redirectURI, nonce string) (str
 	return fmt.Sprintf("%s?%s", authorizeURL, params.Encode()), nil
 }
 
-// ParseAuthorizationInput accepts a callback URL, query string, or authorization code.
+// ParseAuthorizationInput accepts a callback URL, query string, or bare code
+// and returns trimmed parsed fields. Empty input yields an empty value. A
+// code found through URL/query parsing sets RequiresState even when state is
+// missing, allowing callers to reject incomplete callbacks.
+//
+// The final bare-code path retains the trimmed input with RequiresState
+// false. This source-form distinction survives parsing so authorization
+// callers can apply state verification to callback representations rather
+// than silently treating a missing state as an ordinary bare code. Parsing
+// itself verifies no state, code validity, redirect destination, or session
+// ownership.
 func ParseAuthorizationInput(raw string) AuthorizationInput {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -416,6 +587,10 @@ func ParseAuthorizationInput(raw string) AuthorizationInput {
 	return AuthorizationInput{Code: trimmed}
 }
 
+// BuildResponsesURLWithValidator appends /responses after selecting and
+// validating the base URL. A nil validator uses platform policy; supplied
+// validators own host/scheme permission and are followed by known-path
+// normalization before the endpoint is appended.
 func BuildResponsesURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -424,6 +599,10 @@ func BuildResponsesURLWithValidator(baseURL string, validator BaseURLValidator) 
 	return validatedBaseURL + "/responses", nil
 }
 
+// BuildChatCompletionsURLWithValidator appends /chat/completions after
+// selecting and validating the base URL. A nil validator uses platform
+// policy; supplied validators own host/scheme permission and are followed by
+// known-path normalization before the endpoint is appended.
 func BuildChatCompletionsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -432,6 +611,10 @@ func BuildChatCompletionsURLWithValidator(baseURL string, validator BaseURLValid
 	return validatedBaseURL + "/chat/completions", nil
 }
 
+// BuildImagesGenerationsURLWithValidator appends /images/generations after
+// selecting and validating the base URL. A nil validator uses platform
+// policy; supplied validators own host/scheme permission and are followed by
+// known-path normalization before the endpoint is appended.
 func BuildImagesGenerationsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -440,6 +623,10 @@ func BuildImagesGenerationsURLWithValidator(baseURL string, validator BaseURLVal
 	return validatedBaseURL + "/images/generations", nil
 }
 
+// BuildImagesEditsURLWithValidator appends /images/edits after selecting and
+// validating the base URL. A nil validator uses platform policy; supplied
+// validators own host/scheme permission and are followed by known-path
+// normalization before the endpoint is appended.
 func BuildImagesEditsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -448,6 +635,10 @@ func BuildImagesEditsURLWithValidator(baseURL string, validator BaseURLValidator
 	return validatedBaseURL + "/images/edits", nil
 }
 
+// BuildVideosGenerationsURLWithValidator appends /videos/generations after
+// selecting and validating the base URL. A nil validator uses platform
+// policy; supplied validators own host/scheme permission and are followed by
+// known-path normalization before the endpoint is appended.
 func BuildVideosGenerationsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -456,6 +647,10 @@ func BuildVideosGenerationsURLWithValidator(baseURL string, validator BaseURLVal
 	return validatedBaseURL + "/videos/generations", nil
 }
 
+// BuildVideosEditsURLWithValidator appends /videos/edits after selecting and
+// validating the base URL. A nil validator uses platform policy; supplied
+// validators own host/scheme permission and are followed by known-path
+// normalization before the endpoint is appended.
 func BuildVideosEditsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -464,6 +659,10 @@ func BuildVideosEditsURLWithValidator(baseURL string, validator BaseURLValidator
 	return validatedBaseURL + "/videos/edits", nil
 }
 
+// BuildVideosExtensionsURLWithValidator appends /videos/extensions after
+// selecting and validating the base URL. A nil validator uses platform
+// policy; supplied validators own host/scheme permission and are followed by
+// known-path normalization before the endpoint is appended.
 func BuildVideosExtensionsURLWithValidator(baseURL string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -472,6 +671,10 @@ func BuildVideosExtensionsURLWithValidator(baseURL string, validator BaseURLVali
 	return validatedBaseURL + "/videos/extensions", nil
 }
 
+// BuildVideoURLWithValidator appends a trimmed, escaped video request ID to
+// the validated base. Blank IDs, dot segments, and NUL/CR/LF fail before path
+// construction; the escaping keeps the ID within one suffix segment for task
+// status lookup.
 func BuildVideoURLWithValidator(baseURL, requestID string, validator BaseURLValidator) (string, error) {
 	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
 	if err != nil {
@@ -481,8 +684,8 @@ func BuildVideoURLWithValidator(baseURL, requestID string, validator BaseURLVali
 	if requestID == "" {
 		return "", fmt.Errorf("request id is required")
 	}
-	// requestID becomes one URL path segment. Reject dot segments and NUL/CR/LF
-	// in addition to escaping the value so it cannot redirect path resolution.
+	// Escape the task ID as a segment after rejecting dot segments and control
+	// characters, preventing caller-supplied identifiers from changing endpoint path resolution.
 	if requestID == "." || requestID == ".." || strings.ContainsAny(requestID, "\x00\r\n") {
 		return "", fmt.Errorf("invalid request id")
 	}

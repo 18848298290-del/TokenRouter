@@ -13,12 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ssoDeviceFakeClient models the expected ordered device-flow endpoints and
+// records request cookies.
 type ssoDeviceFakeClient struct {
-	t             *testing.T
-	tokenCalls    int
-	cookieHeaders []string
+	t *testing.T // fixture assertion test context
+	// tokenCalls counts SSOTokenURL exchanges and cookieHeaders records every
+	// request. The fixture's Do method mutates both during the ordered
+	// conversion, so each test uses its client sequentially.
+	tokenCalls    int      // number of token polls
+	cookieHeaders []string // recorded request cookie headers
 }
 
+// Do checks the fixture's method/form expectations and returns the configured
+// device-flow response for each URL. It appends request cookies and
+// increments token polling state; callers use one fixture sequentially and
+// unexpected targets fail the test.
 func (c *ssoDeviceFakeClient) Do(req *http.Request) (*http.Response, error) {
 	c.cookieHeaders = append(c.cookieHeaders, req.Header.Get("Cookie"))
 	switch req.URL.String() {
@@ -65,11 +74,17 @@ func (c *ssoDeviceFakeClient) Do(req *http.Request) (*http.Response, error) {
 	}
 }
 
+// TestConvertSSOToBuildCompletesDeviceFlow uses a deterministic fake client
+// with immediate polling sleep. It asserts decoded OAuth fields, one token
+// poll, initial SSO cookies, and retained session/CSRF cookies through the
+// verification and approval sequence.
 func TestConvertSSOToBuildCompletesDeviceFlow(t *testing.T) {
 	t.Setenv(EnvClientID, "")
 	client := &ssoDeviceFakeClient{t: t}
 	token, err := ConvertSSOToBuild(context.Background(), "sso=sso-token; ignored=1", &SSODeviceOptions{
 		HTTPClient: client,
+		// Skip real polling delay because the fake's first token exchange completes
+		// deterministically; the test verifies flow requests and cookie propagation, not elapsed timing.
 		Sleep: func(context.Context, time.Duration) error {
 			return nil
 		},
@@ -87,6 +102,10 @@ func TestConvertSSOToBuildCompletesDeviceFlow(t *testing.T) {
 	require.Contains(t, client.cookieHeaders[len(client.cookieHeaders)-1], "csrf=csrf-token")
 }
 
+// TestNormalizeSSOTokenAcceptsCookieHeader supplies named cookie headers, raw
+// token text, and oversized input. It asserts first matching SSO selection,
+// raw-token trimming, and empty output when the sanitized token exceeds its
+// cap.
 func TestNormalizeSSOTokenAcceptsCookieHeader(t *testing.T) {
 	require.Equal(t, "token-1", NormalizeSSOToken("Cookie: foo=bar; sso=token-1; sso-rw=token-2"))
 	require.Equal(t, "token-2", NormalizeSSOToken("sso-rw=token-2; foo=bar"))
@@ -94,6 +113,10 @@ func TestNormalizeSSOTokenAcceptsCookieHeader(t *testing.T) {
 	require.Empty(t, NormalizeSSOToken(strings.Repeat("x", ssoMaxTokenLength+1)))
 }
 
+// TestSSODeviceCookieJarHonorsDomainAndPath installs host-only, shared-
+// domain, and narrow-path cookies from accounts. It asserts the auth and
+// account request headers include only the cookies applicable to each tested
+// host/path combination.
 func TestSSODeviceCookieJarHonorsDomainAndPath(t *testing.T) {
 	jar, err := cookiejar.New(nil)
 	require.NoError(t, err)
@@ -120,6 +143,10 @@ func TestSSODeviceCookieJarHonorsDomainAndPath(t *testing.T) {
 	require.NotContains(t, accountsCookies, "narrow=oauth-only")
 }
 
+// ssoDeviceResponse constructs a response with a string-backed readable body.
+// Nil headers receive an empty map; supplied headers remain shared with the
+// response, and callers close the returned body after reading when their path
+// consumes it.
 func ssoDeviceResponse(status int, header http.Header, body string) *http.Response {
 	if header == nil {
 		header = http.Header{}
@@ -131,6 +158,10 @@ func ssoDeviceResponse(status int, header http.Header, body string) *http.Respon
 	}
 }
 
+// readSSODeviceForm reads and parses the fixture request body as form values.
+// Read or parse failures stop the test through require assertions; the helper
+// marks itself for accurate assertion locations and leaves request cleanup to
+// its owner.
 func readSSODeviceForm(t *testing.T, req *http.Request) url.Values {
 	t.Helper()
 	data, err := io.ReadAll(req.Body)

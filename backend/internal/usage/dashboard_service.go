@@ -11,71 +11,147 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// Dashboard statistics can be available from a serialized cache even when
+// their refresh age has exceeded the freshness interval. GetDashboardStats
+// returns that stored snapshot and attempts background replacement, while a
+// missing or malformed snapshot causes a synchronous repository read.
+//
+// Cache age and aggregation lag answer separate questions. Cache age controls
+// refreshing; the aggregation watermark, runtime enablement, interval and
+// lookback determine StatsStale at each read. Queries have optional range and
+// public-counter capabilities discovered during construction. Cache
+// publication and eviction receive independent timeout contexts so a query can
+// still publish its result after the requesting context ends. Background
+// admission is supplied by the application lifecycle owner.
+
+// Dashboard defaults govern snapshot freshness, stored expiration and bounded
+// refresh or cache-operation timeouts.
 const (
-	defaultDashboardStatsFreshTTL       = 15 * time.Second
-	defaultDashboardStatsCacheTTL       = 30 * time.Second
-	defaultDashboardStatsRefreshTimeout = 30 * time.Second
+	defaultDashboardStatsFreshTTL       = 15 * time.Second // cached snapshot freshness lifetime
+	defaultDashboardStatsCacheTTL       = 30 * time.Second // serialized snapshot expiration lifetime
+	defaultDashboardStatsRefreshTimeout = 30 * time.Second // background query and cache timeout
 )
 
-// ErrDashboardStatsCacheMiss indicates that dashboard statistics are absent from cache.
+// ErrDashboardStatsCacheMiss identifies an absent or unusable cached
+// dashboard snapshot for the service's synchronous read path.
 var ErrDashboardStatsCacheMiss = errors.New("仪表盘缓存未命中")
 
-// DashboardStatsCache stores serialized dashboard statistics.
+// DashboardStatsCache reads and updates serialized administrator dashboard
+// statistics for service caching.
 type DashboardStatsCache interface {
+	// GetDashboardStats returns the stored serialized dashboard entry using ctx
+	// for the read. A missing entry reports ErrDashboardStatsCacheMiss so the
+	// service can query storage and create another snapshot.
 	GetDashboardStats(ctx context.Context) (string, error)
+	// SetDashboardStats stores serialized dashboard data for the requested
+	// lifetime using ctx. The service passes its configured cache TTL and
+	// handles write errors as a best-effort cache publication failure.
 	SetDashboardStats(ctx context.Context, data string, ttl time.Duration) error
+	// DeleteDashboardStats removes the stored dashboard snapshot using ctx for
+	// the operation. The service invokes it after malformed payloads or changed
+	// usage settings, and logs deletion errors before subsequent reads proceed.
 	DeleteDashboardStats(ctx context.Context) error
 }
 
+// dashboardStatsRangeFetcher supplies raw dashboard totals within an explicit
+// retained-data query range.
 type dashboardStatsRangeFetcher interface {
+	// GetDashboardStatsWithRange restricts the Total usage fields to the supplied
+	// half-open range. DashboardService uses this capability when aggregation is
+	// disabled; today, current-hour and entity counters retain their repository
+	// windows.
 	GetDashboardStatsWithRange(ctx context.Context, start, end time.Time) (*DashboardStats, error)
 }
 
+// dashboardPublicStatsFetcher supplies homepage counters through a query
+// separate from full administrator statistics.
 type dashboardPublicStatsFetcher interface {
+	// GetDashboardPublicStats returns homepage token and user counters using the
+	// requested data-source choice. DashboardService supplies retention bounds
+	// for raw usage totals; the PostgreSQL reader uses its calendar separately
+	// for today's tokens.
 	GetDashboardPublicStats(ctx context.Context, start, end time.Time, useAggregates bool) (*DashboardPublicStats, error)
 }
 
+// dashboardStatsCacheEntry stores dashboard data and the insertion time used
+// to assess freshness.
 type dashboardStatsCacheEntry struct {
-	Stats     *DashboardStats `json:"stats"`
-	UpdatedAt int64           `json:"updated_at"`
+	// Stats contains the decoded snapshot. getCachedDashboardStats evicts an
+	// entry whose Stats is nil, then returns the cache-miss sentinel to its
+	// caller.
+	Stats     *DashboardStats `json:"stats"`      // serialized dashboard data pointer
+	UpdatedAt int64           `json:"updated_at"` // cache insertion Unix seconds
 }
 
-// DashboardPublicStats contains the homepage's public counters.
+// DashboardPublicStats carries homepage counters returned by the dedicated
+// public reader or dashboard derivation.
 type DashboardPublicStats struct {
-	TodayTokens int64
-	TotalTokens int64
-	TotalUsers  int64
+	TodayTokens int64 // reported today token count
+	TotalTokens int64 // reported total token count
+	TotalUsers  int64 // reported registered user count
 }
 
-// DashboardService provides administrator dashboard statistics.
+// DashboardService supplies administrator reports, cache refreshes and
+// aggregation freshness annotations.
 type DashboardService struct {
-	calendar       timezone.Calendar
-	queryCaches    *dashboardQueryCaches
-	reporter       func(string, string, ...any)
-	readers        DashboardReaders
-	runBackground  func(string, func()) bool
-	usageRepo      UsageLogRepository
-	aggRepo        DashboardAggregationRepository
-	cache          DashboardStatsCache
-	cacheFreshTTL  time.Duration
-	cacheTTL       time.Duration
-	refreshTimeout time.Duration
-	refreshing     int32
-	aggEnabled     bool
-	aggInterval    time.Duration
-	aggLookback    time.Duration
-	aggUsageDays   int
-	preAggregation AggregationSettings
+	calendar    timezone.Calendar            // dashboard batch date calendar
+	queryCaches *dashboardQueryCaches        // chart and batch query caches
+	reporter    func(string, string, ...any) // optional dashboard diagnostic reporter
+	readers     DashboardReaders             // optional repository query capabilities
+	// runBackground is bound before concurrent service use to the application's
+	// task owner. Its return reports admission, though
+	// refreshDashboardStatsAsync currently ignores a rejected dispatch.
+	runBackground func(string, func()) bool      // background refresh admission function
+	usageRepo     UsageLogRepository             // usage report query repository
+	aggRepo       DashboardAggregationRepository // optional aggregation watermark reader
+	// cache holds the full serialized statistics snapshot. NewDashboardService
+	// disables it when Dashboard.Enabled is false; chart and batch caches are
+	// constructed separately in queryCaches.
+	cache DashboardStatsCache // optional serialized dashboard cache
+	// cacheFreshTTL, cacheTTL and refreshTimeout govern refresh age, stored
+	// expiration and independent operation deadlines respectively.
+	// NewDashboardService resolves positive overrides or their per-field
+	// defaults during construction.
+	cacheFreshTTL  time.Duration // cached snapshot freshness lifetime
+	cacheTTL       time.Duration // serialized snapshot expiration lifetime
+	refreshTimeout time.Duration // query and cache operation timeout
+	// refreshing admits one asynchronous refresh callback with compare-and-swap.
+	// That callback clears the flag when it returns; rejected runner admission
+	// leaves the acquired flag set.
+	refreshing int32 // asynchronous refresh admission flag
+	// aggEnabled, aggInterval, aggLookback and aggUsageDays hold
+	// construction-time deployment rules. Runtime settings can disable
+	// aggregation or replace its interval; missing aggRepo disables aggregate
+	// eligibility during construction.
+	aggEnabled   bool          // deployment aggregation availability flag
+	aggInterval  time.Duration // deployment aggregation schedule interval
+	aggLookback  time.Duration // aggregation late record lookback
+	aggUsageDays int           // raw dashboard retention day count
+	// preAggregation is bound during construction before concurrent reads. Its
+	// listeners can dispatch shared snapshot eviction when usage aggregation
+	// settings change.
+	preAggregation AggregationSettings // optional runtime aggregation settings
 }
 
-// DashboardReaders supplies range-limited and public-statistics queries.
+// DashboardReaders holds optional range and public-counter capabilities
+// selected during service construction.
 type DashboardReaders struct {
-	Range  dashboardStatsRangeFetcher
-	Public dashboardPublicStatsFetcher
+	// Range and Public are discovered from usageRepo unless NewDashboardService
+	// receives a reader set. The first supplied set replaces both discovered
+	// capabilities, including nil members.
+	Range  dashboardStatsRangeFetcher  // optional raw range capability
+	Public dashboardPublicStatsFetcher // optional public counter capability
 }
 
+// NewDashboardService constructs an idle dashboard with repository
+// capabilities, caches and query timing. The first supplied reader set
+// replaces discovery completely; disabled dashboard caching clears cache, and
+// missing aggRepo disables aggregate eligibility.
 func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregationRepository, cache DashboardStatsCache, cfg *Options, readers ...DashboardReaders) *DashboardService {
 	calendar := timezone.NewCalendar(time.Local)
+	// Direct construction dispatches callbacks in goroutines. A supplied
+	// RunBackground can reject admission, so asynchronous refresh relies on its
+	// accepted callback running to release the refreshing flag.
 	background := func(_ string, fn func()) bool { go fn(); return true }
 	if cfg != nil && cfg.RunBackground != nil {
 		background = cfg.RunBackground
@@ -139,7 +215,10 @@ func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregat
 	}
 }
 
-// SetPreAggregationSettings binds runtime settings and evicts shared dashboard statistics when usage settings change.
+// SetPreAggregationSettings binds runtime aggregation settings before
+// concurrent dashboard reads. When usage settings change, its listener asks
+// the background runner to evict the shared serialized snapshot; repeated
+// bindings can register additional listeners. Nil services return immediately.
 func (s *DashboardService) SetPreAggregationSettings(settings AggregationSettings) {
 	if s == nil {
 		return
@@ -154,11 +233,23 @@ func (s *DashboardService) SetPreAggregationSettings(settings AggregationSetting
 	}
 }
 
+// GetDashboardStats returns dashboard statistics with aggregation lag
+// evaluated for the current read. A valid cache entry supplies the result
+// even after its freshness interval, while unusable or missing cached data
+// triggers a synchronous repository refresh.
+//
+// Cache freshness uses the entry's insertion time, independently of the
+// aggregation watermark exposed in StatsUpdatedAt. Stale cache data schedules
+// background replacement and remains available immediately. Cache read,
+// eviction and publication failures are logged where applicable; a failed
+// synchronous statistics query returns an error to the caller.
 func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	if s.cache != nil {
 		cached, fresh, err := s.getCachedDashboardStats(ctx)
 		if err == nil && cached != nil {
 			s.refreshAggregationStaleness(cached)
+			// Cache age controls replacement while aggregation lag is annotated separately.
+			// Return this available snapshot now and dispatch refresh work for later callers.
 			if !fresh {
 				s.refreshDashboardStatsAsync()
 			}
@@ -169,6 +260,9 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardSta
 		}
 	}
 
+	// A cache miss or failed read leaves no usable snapshot for this response.
+	// Query synchronously so a valid result can replace the entry and serve the
+	// caller.
 	stats, err := s.refreshDashboardStats(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard stats: %w", err)
@@ -176,7 +270,10 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardSta
 	return stats, nil
 }
 
-// GetPublicDashboardStats uses a dedicated public reader when available, otherwise derives counters from full dashboard statistics.
+// GetPublicDashboardStats returns homepage counters through the optional
+// public reader, supplying a UTC retention range and current aggregation
+// choice. If that capability is absent, it derives the counters from
+// GetDashboardStats.
 func (s *DashboardService) GetPublicDashboardStats(ctx context.Context) (*DashboardPublicStats, error) {
 	if fetcher := s.readers.Public; fetcher != nil {
 		now := time.Now().UTC()
@@ -188,6 +285,8 @@ func (s *DashboardService) GetPublicDashboardStats(ctx context.Context) (*Dashbo
 		return stats, nil
 	}
 
+	// A dedicated public reader is optional. Derive the homepage counters from the
+	// complete dashboard query when that capability was not bound during construction.
 	stats, err := s.GetDashboardStats(ctx)
 	if err != nil {
 		return nil, err
@@ -199,6 +298,8 @@ func (s *DashboardService) GetPublicDashboardStats(ctx context.Context) (*Dashbo
 	}, nil
 }
 
+// GetUsageTrendWithFilters queries the repository for the selected usage
+// trend and wraps failures.
 func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, providerID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]TrendDataPoint, error) {
 	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, providerID, groupID, model, requestType, stream, billingType)
 	if err != nil {
@@ -207,9 +308,17 @@ func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTi
 	return trend, nil
 }
 
-// GetUsageTrendWithUsageFilters passes unified filters, including team scope, to capable repositories.
+// GetUsageTrendWithUsageFilters uses the unified-filter capability when the
+// repository supplies it. Otherwise it calls the reduced signature, which
+// omits team, ownership, personal, request-ID, billing-mode, model-source and
+// compaction selectors.
 func (s *DashboardService) GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) ([]TrendDataPoint, error) {
+	// filteredRepository supplies the unified selectors for this trend query.
 	type filteredRepository interface {
+		// GetUsageTrendWithUsageFilters receives the complete selector set and
+		// supplied context for trend loading. Implementations apply team,
+		// ownership, request identity and compaction conditions before returning
+		// the selected buckets.
 		GetUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, UsageLogFilters) ([]TrendDataPoint, error)
 	}
 	if repo, ok := s.usageRepo.(filteredRepository); ok {
@@ -219,9 +328,14 @@ func (s *DashboardService) GetUsageTrendWithUsageFilters(ctx context.Context, st
 		}
 		return trend, nil
 	}
+	// The reduced repository signature cannot carry the complete selectors. Delegate
+	// its supported fields so older readers remain callable. Full-scope queries
+	// require the optional capability.
 	return s.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType)
 }
 
+// GetModelStatsWithFilters queries the repository for the selected model
+// grouping and wraps failures.
 func (s *DashboardService) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]ModelStat, error) {
 	stats, err := s.usageRepo.GetModelStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, providerID, groupID, requestType, stream, billingType)
 	if err != nil {
@@ -230,13 +344,23 @@ func (s *DashboardService) GetModelStatsWithFilters(ctx context.Context, startTi
 	return stats, nil
 }
 
+// GetModelStatsWithFiltersBySource normalizes the model dimension and uses
+// source-aware storage for nonrequested dimensions. A repository lacking that
+// capability answers through its requested-model grouping, so callers cannot
+// assume source-specific output there.
 func (s *DashboardService) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8, modelSource string) ([]ModelStat, error) {
 	normalizedSource := NormalizeModelSource(modelSource)
 	if normalizedSource == ModelSourceRequested {
 		return s.GetModelStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, providerID, groupID, requestType, stream, billingType)
 	}
 
+	// modelStatsBySourceRepo supplies model grouping for a selected reporting
+	// dimension.
 	type modelStatsBySourceRepo interface {
+		// GetModelStatsWithFiltersBySource groups model statistics by the selected
+		// normalized source using the supplied context. Repositories supporting
+		// this capability can distinguish requested, upstream and mapping output
+		// under the reduced selectors.
 		GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) ([]ModelStat, error)
 	}
 
@@ -248,12 +372,23 @@ func (s *DashboardService) GetModelStatsWithFiltersBySource(ctx context.Context,
 		return stats, nil
 	}
 
+	// A reader lacking source-aware grouping can still answer its requested-model
+	// query. This result follows that grouping even when the caller selected another dimension.
 	return s.GetModelStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, providerID, groupID, requestType, stream, billingType)
 }
 
-// GetModelStatsWithUsageFiltersBySource returns statistics for unified filters and the selected model source.
+// GetModelStatsWithUsageFiltersBySource uses full selectors and normalized
+// grouping when supported. Its reduced-signature path omits team, ownership,
+// personal, model, request-ID, billing-mode and compaction selectors while
+// retaining source-aware dispatch where available.
 func (s *DashboardService) GetModelStatsWithUsageFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, modelSource string) ([]ModelStat, error) {
+	// filteredRepository supplies complete selectors and source-aware model
+	// grouping for dashboard reads.
 	type filteredRepository interface {
+		// GetModelStatsWithUsageFiltersBySource applies the complete selector set
+		// and normalized model dimension to its query. The supplied context
+		// controls loading, and the resulting grouping retains repository-specific
+		// aggregate eligibility.
 		GetModelStatsWithUsageFiltersBySource(context.Context, time.Time, time.Time, UsageLogFilters, string) ([]ModelStat, error)
 	}
 	if repo, ok := s.usageRepo.(filteredRepository); ok {
@@ -263,9 +398,13 @@ func (s *DashboardService) GetModelStatsWithUsageFiltersBySource(ctx context.Con
 		}
 		return stats, nil
 	}
+	// Older repository signatures omit several unified selectors. Pass the supported
+	// fields and selected model source while full-scope callers require the optional capability.
 	return s.GetModelStatsWithFiltersBySource(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.RequestType, filters.Stream, filters.BillingType, modelSource)
 }
 
+// GetGroupStatsWithFilters queries the repository for the selected group
+// grouping and wraps failures.
 func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]GroupStat, error) {
 	stats, err := s.usageRepo.GetGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, providerID, groupID, requestType, stream, billingType)
 	if err != nil {
@@ -274,9 +413,18 @@ func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTi
 	return stats, nil
 }
 
-// GetGroupStatsWithUsageFilters passes shared filters, including team scope, to capable repositories.
+// GetGroupStatsWithUsageFilters uses full selectors when supported by the
+// repository. Its reduced-signature path omits team, ownership, personal,
+// model, request-ID, billing-mode and compaction selectors, so those scopes
+// require the optional capability.
 func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) ([]GroupStat, error) {
+	// filteredRepository supplies complete selectors for a dashboard
+	// group-statistics query.
 	type filteredRepository interface {
+		// GetGroupStatsWithUsageFilters applies the complete selector set with the
+		// supplied context before grouping usage by group. Implementations retain
+		// team, ownership, request identity and compaction conditions required by
+		// these reads.
 		GetGroupStatsWithUsageFilters(context.Context, time.Time, time.Time, UsageLogFilters) ([]GroupStat, error)
 	}
 	if repo, ok := s.usageRepo.(filteredRepository); ok {
@@ -286,10 +434,15 @@ func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, st
 		}
 		return stats, nil
 	}
+	// Older group readers accept a reduced selector set. Delegate the supported fields
+	// here while queries requiring team or other omitted scope use the optional capability.
 	return s.GetGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.RequestType, filters.Stream, filters.BillingType)
 }
 
-// GetGroupUsageSummary returns today's, yesterday's, and retained total costs for all groups.
+// GetGroupUsageSummary returns group charges for today, yesterday and
+// retained total history. The caller supplies the calendar's today midnight;
+// the repository applies its own aggregate eligibility and raw-query
+// handling.
 func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]GroupUsageSummary, error) {
 	results, err := s.usageRepo.GetAllGroupUsageSummary(ctx, todayStart)
 	if err != nil {
@@ -298,6 +451,9 @@ func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart 
 	return results, nil
 }
 
+// getCachedDashboardStats decodes the stored entry and reports freshness from
+// its insertion time. Invalid JSON or nil statistics trigger eviction and a
+// cache miss; cache-read errors are returned for the caller's refresh path.
 func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*DashboardStats, bool, error) {
 	data, err := s.cache.GetDashboardStats(ctx)
 	if err != nil {
@@ -305,10 +461,14 @@ func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*Dashbo
 	}
 
 	var entry dashboardStatsCacheEntry
+	// Malformed serialized data cannot supply a dashboard snapshot. Evict it and
+	// report a miss so GetDashboardStats can replace it through a repository query.
 	if err := json.Unmarshal([]byte(data), &entry); err != nil {
 		s.evictDashboardStatsCache(err)
 		return nil, false, ErrDashboardStatsCacheMiss
 	}
+	// A valid JSON envelope can still lack statistics. Remove that unusable entry
+	// before the caller rebuilds its data through the same cache-miss query path.
 	if entry.Stats == nil {
 		s.evictDashboardStatsCache(errors.New("仪表盘缓存缺少统计数据"))
 		return nil, false, ErrDashboardStatsCacheMiss
@@ -318,6 +478,10 @@ func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*Dashbo
 	return entry.Stats, age <= s.cacheFreshTTL, nil
 }
 
+// refreshDashboardStats queries statistics, annotates aggregation status and
+// attempts serialized cache publication. The caller context controls the
+// query, while cache publication uses its own timeout and leaves the fetched
+// result available on cache failure.
 func (s *DashboardService) refreshDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	stats, err := s.fetchDashboardStats(ctx)
 	if err != nil {
@@ -330,13 +494,27 @@ func (s *DashboardService) refreshDashboardStats(ctx context.Context) (*Dashboar
 	return stats, nil
 }
 
+// refreshDashboardStatsAsync acquires the local refresh flag and dispatches
+// one timeout-bounded refresh when a cache exists. An active callback keeps
+// other stale reads from dispatching another refresh while it queries and
+// publishes replacement data.
+//
+// The callback clears refreshing on exit and uses background contexts for
+// querying and cache publication. Runner admission happens after the flag is
+// acquired, and its boolean result is ignored here. If the lifecycle runner
+// rejects dispatch, the callback cannot release that flag, so later
+// asynchronous refresh attempts remain suppressed.
 func (s *DashboardService) refreshDashboardStatsAsync() {
 	if s.cache == nil {
 		return
 	}
+	// Stale readers can arrive together. Admit one replacement callback so concurrent
+	// requests can reuse the stored snapshot while that callback refreshes its statistics.
 	if !atomic.CompareAndSwapInt32(&s.refreshing, 0, 1) {
 		return
 	}
+	// The callback owns flag release after admission. This call ignores rejected
+	// dispatch, which can leave refreshing set when the application's task owner stops.
 	s.runBackground("service/dashboard_service.go:refreshDashboardStatsAsync", func() {
 		defer atomic.StoreInt32(&s.refreshing, 0)
 
@@ -344,6 +522,9 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 		defer cancel()
 
 		stats, err := s.fetchDashboardStats(ctx)
+		// A failed replacement query leaves the existing serialized snapshot
+		// available until its expiration. Log the refresh failure and end this
+		// admitted callback before attempting cache publication.
 		if err != nil {
 			s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存异步刷新失败: %v", err)
 			return
@@ -355,6 +536,10 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 	})
 }
 
+// fetchDashboardStats selects the raw range capability when aggregation is
+// disabled, using the configured UTC retention start. Other cases call the
+// base dashboard query, whose own repository policy determines its data
+// source.
 func (s *DashboardService) fetchDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	if !s.aggregationEnabled(ctx) {
 		if fetcher := s.readers.Range; fetcher != nil {
@@ -363,9 +548,16 @@ func (s *DashboardService) fetchDashboardStats(ctx context.Context) (*DashboardS
 			return fetcher.GetDashboardStatsWithRange(ctx, start, now)
 		}
 	}
+	// A missing range capability still permits the base dashboard query to
+	// choose its own storage policy. This path keeps older repositories usable
+	// when a reduced raw reader was not bound.
 	return s.usageRepo.GetDashboardStats(ctx)
 }
 
+// saveDashboardStatsCache serializes statistics with the current insertion
+// time and attempts storage for cacheTTL. Missing caches or statistics return
+// immediately; encoding and write failures are logged while the caller
+// retains its result.
 func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *DashboardStats) {
 	if s.cache == nil || stats == nil {
 		return
@@ -376,16 +568,26 @@ func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *D
 		UpdatedAt: time.Now().Unix(),
 	}
 	data, err := json.Marshal(entry)
+	// Serialization failure leaves the fetched statistics available to the
+	// current caller. Log the cache-publication error and keep later reads
+	// eligible to query or use their remaining stored entry.
 	if err != nil {
 		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存序列化失败: %v", err)
 		return
 	}
 
+	// A failed cache write does not change the statistics already fetched for
+	// this response. Record the failure while later readers retain their
+	// ordinary lookup and refresh paths.
 	if err := s.cache.SetDashboardStats(ctx, string(data), s.cacheTTL); err != nil {
 		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存写入失败: %v", err)
 	}
 }
 
+// evictDashboardStatsCache attempts shared snapshot removal with an
+// independent timeout context. A nil cache returns immediately; deletion
+// failures and a supplied reason are logged for later synchronous or
+// background refresh diagnosis.
 func (s *DashboardService) evictDashboardStatsCache(reason error) {
 	if s.cache == nil {
 		return
@@ -393,6 +595,9 @@ func (s *DashboardService) evictDashboardStatsCache(reason error) {
 	cacheCtx, cancel := s.cacheOperationContext()
 	defer cancel()
 
+	// Eviction is best effort after unusable data or changed settings. Log its
+	// failure so a remaining stored entry can be diagnosed while later reads
+	// continue their normal refresh handling.
 	if err := s.cache.DeleteDashboardStats(cacheCtx); err != nil {
 		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存清理失败: %v", err)
 	}
@@ -401,10 +606,17 @@ func (s *DashboardService) evictDashboardStatsCache(reason error) {
 	}
 }
 
+// cacheOperationContext returns an independent background context bounded by
+// refreshTimeout for cache operations. The caller invokes its cancel function
+// after use, even when the cache call returns before that timeout.
 func (s *DashboardService) cacheOperationContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), s.refreshTimeout)
 }
 
+// applyAggregationStatus updates statistics with the reported aggregation
+// watermark and current staleness decision. Nil statistics return
+// immediately; the UTC timestamp and freshness fields are assigned together
+// before cache publication.
 func (s *DashboardService) applyAggregationStatus(ctx context.Context, stats *DashboardStats) {
 	if stats == nil {
 		return
@@ -414,6 +626,9 @@ func (s *DashboardService) applyAggregationStatus(ctx context.Context, stats *Da
 	stats.StatsStale = s.isAggregationStale(updatedAt, time.Now().UTC())
 }
 
+// refreshAggregationStaleness reevaluates the cached snapshot's lag using its
+// stored watermark text. Nil statistics return immediately; invalid or empty
+// watermark text becomes the epoch for the staleness calculation.
 func (s *DashboardService) refreshAggregationStaleness(stats *DashboardStats) {
 	if stats == nil {
 		return
@@ -422,11 +637,16 @@ func (s *DashboardService) refreshAggregationStaleness(stats *DashboardStats) {
 	stats.StatsStale = s.isAggregationStale(updatedAt, time.Now().UTC())
 }
 
+// fetchAggregationUpdatedAt returns the watermark in UTC or the epoch when it
+// is unavailable. Missing repositories, read errors and zero times select
+// that sentinel, which is treated as stale by the dashboard.
 func (s *DashboardService) fetchAggregationUpdatedAt(ctx context.Context) time.Time {
 	if s.aggRepo == nil {
 		return time.Unix(0, 0).UTC()
 	}
 	updatedAt, err := s.aggRepo.GetAggregationWatermark(ctx)
+	// Failed watermark reads leave progress unknown. Return the same epoch marker
+	// used for absent progress so the caller reports stale statistics for this snapshot.
 	if err != nil {
 		s.logMessage("service.dashboard", "[Dashboard] 读取聚合水位失败: %v", err)
 		return time.Unix(0, 0).UTC()
@@ -437,6 +657,16 @@ func (s *DashboardService) fetchAggregationUpdatedAt(ctx context.Context) time.T
 	return updatedAt.UTC()
 }
 
+// isAggregationStale reports whether enabled aggregation has exceeded its
+// expected lag allowance. Disabled aggregation or a watermark at or before
+// the epoch is stale immediately, so unknown progress cannot appear current
+// from its cached timestamp.
+//
+// For observed progress, the threshold combines the aggregation interval with
+// its configured lookback. Runtime settings replace the interval used for
+// this check. The result compares elapsed watermark age with that combined
+// threshold, independently of when the serialized dashboard snapshot was
+// inserted.
 func (s *DashboardService) isAggregationStale(updatedAt, now time.Time) bool {
 	if !s.aggregationEnabled(context.Background()) {
 		return true
@@ -449,10 +679,15 @@ func (s *DashboardService) isAggregationStale(updatedAt, now time.Time) bool {
 	if s.preAggregation != nil {
 		interval = time.Duration(s.preAggregation.Resolve(context.Background()).Usage.IntervalSeconds) * time.Second
 	}
+	// Include the late-record lookback in the expected aggregation delay.
 	threshold := interval + s.aggLookback
 	return now.Sub(updatedAt) > threshold
 }
 
+// aggregationEnabled reports aggregate eligibility after deployment and
+// runtime settings are considered. Nil services or a disabled deployment
+// return false; an eligible service without runtime settings keeps deployment
+// aggregation enabled.
 func (s *DashboardService) aggregationEnabled(ctx context.Context) bool {
 	if s == nil || !s.aggEnabled {
 		return false
@@ -463,17 +698,24 @@ func (s *DashboardService) aggregationEnabled(ctx context.Context) bool {
 	return s.preAggregation.UsageEnabled(ctx)
 }
 
+// parseStatsUpdatedAt returns an RFC3339 watermark in UTC or the epoch
+// sentinel. Empty or invalid text selects the sentinel so cached staleness
+// checks can use one unavailable-progress representation.
 func parseStatsUpdatedAt(raw string) time.Time {
 	if raw == "" {
 		return time.Unix(0, 0).UTC()
 	}
 	parsed, err := time.Parse(time.RFC3339, raw)
+	// Unparseable stored text supplies no usable progress instant. Use the epoch
+	// marker so cached staleness follows the same rule as an absent aggregation watermark.
 	if err != nil {
 		return time.Unix(0, 0).UTC()
 	}
 	return parsed.UTC()
 }
 
+// GetAPIKeyUsageTrend queries the repository for ranked key trends and wraps
+// failures.
 func (s *DashboardService) GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]APIKeyUsageTrendPoint, error) {
 	trend, err := s.usageRepo.GetAPIKeyUsageTrend(ctx, startTime, endTime, granularity, limit)
 	if err != nil {
@@ -482,6 +724,8 @@ func (s *DashboardService) GetAPIKeyUsageTrend(ctx context.Context, startTime, e
 	return trend, nil
 }
 
+// GetUserUsageTrend queries the repository for ranked user trends and wraps
+// failures.
 func (s *DashboardService) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]UserUsageTrendPoint, error) {
 	trend, err := s.usageRepo.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit)
 	if err != nil {
@@ -490,6 +734,8 @@ func (s *DashboardService) GetUserUsageTrend(ctx context.Context, startTime, end
 	return trend, nil
 }
 
+// GetUserSpendingRanking queries the repository for spending rows and range
+// totals, wrapping failures.
 func (s *DashboardService) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*UserSpendingRankingResponse, error) {
 	ranking, err := s.usageRepo.GetUserSpendingRanking(ctx, startTime, endTime, limit)
 	if err != nil {
@@ -498,6 +744,8 @@ func (s *DashboardService) GetUserSpendingRanking(ctx context.Context, startTime
 	return ranking, nil
 }
 
+// GetUserBreakdownStats queries the repository for users within the selected
+// dimensions and wraps failures.
 func (s *DashboardService) GetUserBreakdownStats(ctx context.Context, startTime, endTime time.Time, dim UserBreakdownDimension, limit int) ([]UserBreakdownItem, error) {
 	stats, err := s.usageRepo.GetUserBreakdownStats(ctx, startTime, endTime, dim, limit)
 	if err != nil {
@@ -506,6 +754,9 @@ func (s *DashboardService) GetUserBreakdownStats(ctx context.Context, startTime,
 	return stats, nil
 }
 
+// GetBatchUserUsageStats queries batch user charges using the repository's
+// range defaults. PostgreSQL zero bounds select approximately thirty days
+// through now, while today's charges use the repository calendar separately.
 func (s *DashboardService) GetBatchUserUsageStats(ctx context.Context, userIDs []int64, startTime, endTime time.Time) (map[int64]*BatchUserUsageStats, error) {
 	stats, err := s.usageRepo.GetBatchUserUsageStats(ctx, userIDs, startTime, endTime)
 	if err != nil {
@@ -514,6 +765,9 @@ func (s *DashboardService) GetBatchUserUsageStats(ctx context.Context, userIDs [
 	return stats, nil
 }
 
+// GetBatchAPIKeyUsageStats queries batch key charges using the repository's
+// range defaults. PostgreSQL zero bounds select approximately thirty days
+// through now, while today's charges use the repository calendar separately.
 func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
 	stats, err := s.usageRepo.GetBatchAPIKeyUsageStats(ctx, apiKeyIDs, startTime, endTime)
 	if err != nil {
@@ -522,17 +776,26 @@ func (s *DashboardService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyI
 	return stats, nil
 }
 
-// SetBackgroundRunner binds the background-task owner during construction.
+// SetBackgroundRunner replaces the refresh-task dispatcher when fn is nonnil.
+// Bind it before concurrent dashboard use, because service reads and
+// listeners access the stored callback without synchronization around
+// replacement.
 func (s *DashboardService) SetBackgroundRunner(fn func(string, func()) bool) {
 	if fn != nil {
 		s.runBackground = fn
 	}
 }
 
+// logMessage reports dashboard diagnostics through the configured reporter
+// when present. Nil services or absent reporters use logUsage, keeping cache
+// and query failure messages available for directly constructed service
+// instances.
 func (s *DashboardService) logMessage(component, format string, args ...any) {
 	if s != nil && s.reporter != nil {
 		s.reporter(component, format, args...)
 		return
 	}
+	// Services constructed without the injected reporter still publish cache and
+	// query diagnostics through logUsage, preserving visibility of best-effort cache failures.
 	logUsage(component, format, args...)
 }

@@ -6,7 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAdminCatalogUsesConfiguredIDs checks shared candidate rules across platforms, OAuth, and passthrough.
+// Administrative catalog queries retain configured IDs even when metadata is
+// absent, and platform labels choose response shapes independently of the
+// candidate source. These cases check display metadata, custom IDs, and
+// returned scalar-value isolation across the supplied platform inputs.
+
+// TestAdminCatalogUsesConfiguredIDs queries the same two configured candidates
+// across platform labels with OAuth and passthrough input. It checks returned
+// display metadata and scalar-value isolation for those supplied IDs.
 func TestAdminCatalogUsesConfiguredIDs(t *testing.T) {
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "qoder", "grok", "kimi", "zhipu", "deepseek"} {
 		t.Run(platform, func(t *testing.T) {
@@ -30,7 +37,9 @@ func TestAdminCatalogUsesConfiguredIDs(t *testing.T) {
 	}
 }
 
-// TestAdminCatalogUnknownConfiguredID checks that configured IDs survive an empty metadata catalog.
+// TestAdminCatalogUnknownConfiguredID supplies one configured ID with no
+// metadata lookup callback. It checks that both the returned ID and display
+// name retain that supplied unknown model.
 func TestAdminCatalogUnknownConfiguredID(t *testing.T) {
 	catalog := NewAdminCatalog(AdminCatalogOptions{})
 	result, err := catalog.Available(AdminCatalogInput{Platform: "openai"}, func() []string { return []string{"vendor/new-model"} })

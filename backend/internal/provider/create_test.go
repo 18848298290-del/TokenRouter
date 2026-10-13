@@ -8,28 +8,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// createSnapshotStore records conditional privacy writes for postcreation
+// snapshot tests.
 type createSnapshotStore struct {
-	AdminStore
-	privacyWrites int
+	AdminStore        // unused administrative store methods
+	privacyWrites int // conditional privacy write count
 }
 
-// deprecatedCreateStore records the provider value supplied to creation.
+// deprecatedCreateStore retains the provider value submitted to creation for
+// assertions.
 type deprecatedCreateStore struct {
-	AdminStore
+	AdminStore // unused administrative store methods
+	// createdProvider retains the exact pointer supplied to Create. The test
+	// compares that address and its normalized Extra with the creation result.
 	createdProvider *Record
 }
 
+// Create assigns provider ID one to the supplied record and succeeds. The
+// fixture stores no row, and the captured privacy task uses that assigned
+// identity in its conditional write.
 func (s *createSnapshotStore) Create(_ context.Context, value *Record) error {
 	value.ID = 1
 	return nil
 }
 
+// UpdatePrivacyModeIfUnchanged counts one conditional privacy write and reports
+// its condition matched. It records the attempt rather than persisting Extra,
+// allowing the test to inspect mutation of the separate background record.
 func (s *createSnapshotStore) UpdatePrivacyModeIfUnchanged(context.Context, UsageObservationVersion, string) (bool, error) {
 	s.privacyWrites++
 	return true, nil
 }
 
-// TestCreatePrivacyTaskHasIndependentReturnSnapshot checks that post-create privacy work cannot mutate the returned provider.
+// TestCreatePrivacyTaskHasIndependentReturnSnapshot captures postcreation
+// privacy work before running it. The task performs its conditional privacy
+// write while the returned provider's Extra remains empty and separate from
+// that background mutation.
 func TestCreatePrivacyTaskHasIndependentReturnSnapshot(t *testing.T) {
 	store := &createSnapshotStore{}
 	privacy := NewPrivacyService(store, nil, PrivacyOptions{Antigravity: func(context.Context, string, string, string) string { return AntigravityPrivacySet }})
@@ -48,6 +62,10 @@ func TestCreatePrivacyTaskHasIndependentReturnSnapshot(t *testing.T) {
 	require.Empty(t, result.Extra, "后置任务不能补写返回快照的 map")
 }
 
+// TestAdminServiceCreateProviderDiscardsDeprecatedLongContextBillingExtra
+// creates a provider with an obsolete long-context billing key. Storage
+// receives the returned provider value, the retired key is removed, and
+// unrelated Extra remains available.
 func TestAdminServiceCreateProviderDiscardsDeprecatedLongContextBillingExtra(t *testing.T) {
 	repo := &deprecatedCreateStore{}
 	svc := NewAdmin(repo, AdminOptions{Creation: CreationOptions{Now: time.Now, LoadLocation: time.LoadLocation}, Credentials: CreateCredentialHooks{Validate: func(context.Context, *Record) error { return nil }}})
@@ -66,6 +84,9 @@ func TestAdminServiceCreateProviderDiscardsDeprecatedLongContextBillingExtra(t *
 	require.Equal(t, true, provider.Extra["preserved"])
 }
 
+// Create assigns a provider ID and retains the supplied record pointer. This
+// fixture exposes the value submitted to storage so the test can compare it
+// with the returned provider.
 func (s *deprecatedCreateStore) Create(_ context.Context, value *Record) error {
 	value.ID = 1
 	s.createdProvider = value

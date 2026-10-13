@@ -8,16 +8,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-const (
-	ThinkingUnsupported ThinkingCapability = iota
-	ThinkingToggleOnly
-	ThinkingHighMax
-	ThinkingLowHighMax
+// Model aliases and controls depend on the credential site, with shared route
+// keys sometimes representing different public models. Catalog-derived tables
+// keep route identity, thinking support, and input limits together, and callers
+// obtain copied alias maps for independent enumeration.
+//
+// Eligibility distinguishes a known alias or route belonging to another site
+// from an unregistered raw key. The former is rejected while the latter remains
+// available for administrator-configured upstream use. Thinking and context
+// lookup normalize spelling within a recognized site, with unknown controls
+// unsupported and unresolved context using the execution input default. Local
+// authentication conversion separately selects the token used for manual session
+// import.
 
-	// FallbackMaxInputTokens is the input limit for routes absent from the capability snapshot.
+// Thinking capability values select supported switch or effort mappings;
+// FallbackMaxInputTokens supplies the catalog's input limit for unresolved
+// routes.
+const (
+	ThinkingUnsupported ThinkingCapability = iota // no adjustable thinking controls
+	ThinkingToggleOnly                            // thinking switch without effort
+	ThinkingHighMax                               // high or max effort
+	ThinkingLowHighMax                            // low, high, or max effort
+	// FallbackMaxInputTokens supplies the execution input limit for unresolved
+	// routes. ContextCapabilityForSite returns that limit with runtime selection
+	// disabled when no verified site capability applies.
 	FallbackMaxInputTokens = modelcatalog.QoderFallbackInputLimit
 )
 
+// Global and CN alias, thinking, and context tables are catalog-derived
+// snapshots read by request normalization and site eligibility checks.
 var (
 	globalAliases              = modelcatalog.QoderAliases("global")
 	cnAliases                  = modelcatalog.QoderAliases("cn")
@@ -27,37 +46,47 @@ var (
 	cnContextCapabilities      = qoderContextCapabilities("cn")
 )
 
-// ThinkingCapability describes the thinking controls available to clients.
-// The snapshot follows Qoder Global and CN 1.24.2; model updates require checking both site tables.
+// ThinkingCapability identifies the adjustable controls declared for a Qoder
+// route.
 type ThinkingCapability uint8
 
-// ContextCapability holds a route input limit and whether runtime context selection is supported.
+// ContextCapability holds a route's input-token limit and runtime
+// context-selection flag.
 type ContextCapability struct {
-	MaxInputTokens    int
-	RuntimeSelectable bool
+	// MaxInputTokens supplies the token cap written to model_config.
+	// RuntimeSelectable controls whether the same cap is also written to parameters
+	// and the IDE override during payload preparation.
+	MaxInputTokens    int  // tokens
+	RuntimeSelectable bool // runtime selection support
 }
 
-// AuthInfo holds user data decrypted from local Qoder authentication storage.
+// AuthInfo represents decrypted local Qoder credentials used by the opt-in
+// import path.
 type AuthInfo struct {
-	UID                    string `json:"uid"`
-	Name                   string `json:"name"`
-	AccessToken            string `json:"access_token"`
-	SecurityOauthToken     string `json:"security_oauth_token"`
-	RefreshToken           string `json:"refresh_token"`
-	ExpireTime             int64  `json:"expire_time"`
-	RefreshTokenExpireTime int64  `json:"refresh_token_expire_time"`
-	LoginMethod            string `json:"login_method"`
-	LoginTimestamp         int64  `json:"login_timestamp"`
-	EncryptUserInfo        string `json:"encrypt_user_info"`
-	Key                    string `json:"key"`
-	Email                  string `json:"email"`
-	UserType               string `json:"userType"`
-	MachineID              string `json:"_machine_id"`
-	OrganizationID         string `json:"organization_id"`
-	OrganizationName       string `json:"organization_name"`
+	UID  string `json:"uid"`  // local user identifier
+	Name string `json:"name"` // local display name
+	// AccessToken and SecurityOauthToken name alternate saved access-token fields.
+	// ToAuthIdentity selects SecurityOauthToken when nonempty and otherwise reads
+	// AccessToken, retaining the selected field's spelling.
+	AccessToken            string `json:"access_token"`              // legacy access token
+	SecurityOauthToken     string `json:"security_oauth_token"`      // COSY access token
+	RefreshToken           string `json:"refresh_token"`             // credential refresh token
+	ExpireTime             int64  `json:"expire_time"`               // local token expiry
+	RefreshTokenExpireTime int64  `json:"refresh_token_expire_time"` // local refresh expiry
+	LoginMethod            string `json:"login_method"`              // local login method
+	LoginTimestamp         int64  `json:"login_timestamp"`           // local login timestamp
+	EncryptUserInfo        string `json:"encrypt_user_info"`         // encrypted metadata text
+	Key                    string `json:"key"`                       // local metadata key
+	Email                  string `json:"email"`                     // local contact email
+	UserType               string `json:"userType"`                  // Qoder account classification
+	MachineID              string `json:"_machine_id"`               // local machine identifier
+	OrganizationID         string `json:"organization_id"`           // selected organization identifier
+	OrganizationName       string `json:"organization_name"`         // selected organization name
 }
 
-// NormalizeModelForWhitelist resolves known aliases to route keys for whitelist checks.
+// NormalizeModelForWhitelist resolves aliases from either site into route keys
+// for matching. Empty input stays empty, and unmatched names retain trimmed
+// spelling so provider allowlists can include raw upstream routes.
 func NormalizeModelForWhitelist(model string) string {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
@@ -69,7 +98,9 @@ func NormalizeModelForWhitelist(model string) string {
 	return trimmed
 }
 
-// AliasesForSite returns a copy of the site public-alias-to-route map.
+// AliasesForSite returns an independently editable copy of a site's public alias
+// map. CN selects its table; other values select global, and modifying the
+// returned map leaves the package snapshot unchanged.
 func AliasesForSite(site Site) map[string]string {
 	aliases := globalAliases
 	if site == SiteCN {
@@ -80,7 +111,9 @@ func AliasesForSite(site Site) map[string]string {
 	return out
 }
 
-// AliasForSite resolves a public alias for the site.
+// AliasForSite returns the route mapped to an exact public alias for the site.
+// CN selects its table and other site values select global; callers normalize
+// spelling when they need case-insensitive matching.
 func AliasForSite(site Site, model string) (string, bool) {
 	aliases := globalAliases
 	if site == SiteCN {
@@ -90,9 +123,10 @@ func AliasForSite(site Site, model string) (string, bool) {
 	return route, ok
 }
 
-// ThinkingCapabilityForSite resolves aliases and returns the route thinking controls.
-// Unknown routes and models without adjustable thinking return ThinkingUnsupported.
-// An empty site selects the global table.
+// ThinkingCapabilityForSite returns adjustable thinking controls after
+// normalizing the model and resolving its site alias. Empty site means global.
+// Unknown sites, unknown routes, and routes lacking adjustable controls return
+// ThinkingUnsupported.
 func ThinkingCapabilityForSite(site Site, model string) ThinkingCapability {
 	var capabilities map[string]ThinkingCapability
 	switch site {
@@ -110,8 +144,10 @@ func ThinkingCapabilityForSite(site Site, model string) ThinkingCapability {
 	return capabilities[model]
 }
 
-// ContextCapabilityForSite returns the highest input capability after resolving aliases.
-// An empty site means global. Unknown routes use the 200K limit with no runtime selection.
+// ContextCapabilityForSite returns the route input limit and runtime-selection
+// capability. Model spelling is normalized and aliases resolve within the
+// selected site; empty site selects global, while unknown sites or routes use
+// the execution input default.
 func ContextCapabilityForSite(site Site, model string) ContextCapability {
 	var capabilities map[string]ContextCapability
 	switch site {
@@ -133,8 +169,15 @@ func ContextCapabilityForSite(site Site, model string) ContextCapability {
 	return ContextCapability{MaxInputTokens: FallbackMaxInputTokens}
 }
 
-// ModelCompatibleWithSite reports whether the site accepts a known alias or route key.
-// Unknown raw keys return true for passthrough.
+// ModelCompatibleWithSite reports whether a known public alias or route belongs
+// to the site. Model spelling is normalized before lookup. A public alias known
+// only at the other site is rejected, while an unregistered raw route remains
+// available for configured upstream use.
+//
+// A raw route recognized in either snapshot needs at least one alias target in
+// the selected site. This distinguishes site-incompatible published identity
+// from an unknown administrator-supplied route, while CN selects its own table
+// and other site values select global.
 func ModelCompatibleWithSite(site Site, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if _, ok := AliasForSite(site, model); ok {
@@ -154,12 +197,15 @@ func ModelCompatibleWithSite(site Site, model string) bool {
 	return false
 }
 
+// isKnownPublicAlias reports whether either site snapshot contains the exact
+// alias.
 func isKnownPublicAlias(model string) bool {
 	_, global := globalAliases[model]
 	_, cn := cnAliases[model]
 	return global || cn
 }
 
+// isKnownRouteKey reports whether either site alias map references the route.
 func isKnownRouteKey(model string) bool {
 	for _, aliases := range []map[string]string{globalAliases, cnAliases} {
 		for _, route := range aliases {
@@ -171,7 +217,9 @@ func isKnownRouteKey(model string) bool {
 	return false
 }
 
-// DefaultRequestModelIDsForSite returns the sorted public aliases for the site.
+// DefaultRequestModelIDsForSite returns sorted public aliases from a copied site
+// table. CN selects CN aliases, while other site values select global; the
+// returned slice can be modified by the caller.
 func DefaultRequestModelIDsForSite(site Site) []string {
 	ids := []string{}
 	for alias := range AliasesForSite(site) {
@@ -181,16 +229,22 @@ func DefaultRequestModelIDsForSite(site Site) []string {
 	return ids
 }
 
-// DefaultRequestModelIDs returns the sorted union of both sites public aliases.
+// DefaultRequestModelIDs returns the sorted, deduplicated union of both sites'
+// public aliases.
 func DefaultRequestModelIDs() []string {
 	ids := append(DefaultRequestModelIDsForSite(SiteGlobal), DefaultRequestModelIDsForSite(SiteCN)...)
 	slices.Sort(ids)
 	return slices.Compact(ids)
 }
 
-// ToAuthIdentity converts local authentication data into a session identity.
+// ToAuthIdentity converts nonnil local authentication metadata into a session
+// identity. SecurityOauthToken takes precedence over AccessToken, absent user
+// type selects personal_standard, and the local UID fills both user and account
+// IDs.
 func (info *AuthInfo) ToAuthIdentity() *AuthIdentity {
 	token := info.SecurityOauthToken
+	// Older local exports store the access token under AccessToken. Use that field
+	// when the COSY token is empty so manual import can construct an identity.
 	if token == "" {
 		token = info.AccessToken
 	}
@@ -210,6 +264,8 @@ func (info *AuthInfo) ToAuthIdentity() *AuthIdentity {
 	}
 }
 
+// qoderThinkingCapabilities builds a route-indexed thinking snapshot from
+// catalog aliases and reasoning options.
 func qoderThinkingCapabilities(site string) map[string]ThinkingCapability {
 	result := map[string]ThinkingCapability{}
 	for _, key := range modelcatalog.QoderAliases(site) {
@@ -219,6 +275,10 @@ func qoderThinkingCapabilities(site string) map[string]ThinkingCapability {
 	return result
 }
 
+// thinkingCapabilityFromAttributes derives thinking support from resolved model
+// attributes. An effort option selects low/high/max when low is supported and
+// high/max otherwise; toggle-only attributes select the switch, and absent
+// controls are unsupported.
 func thinkingCapabilityFromAttributes(attributes modelcatalog.Attributes) ThinkingCapability {
 	if attributes.HasReasoningOption("effort") {
 		if supported := attributes.EffortSupport("low"); supported != nil && *supported {
@@ -232,6 +292,8 @@ func thinkingCapabilityFromAttributes(attributes modelcatalog.Attributes) Thinki
 	return ThinkingUnsupported
 }
 
+// qoderContextCapabilities builds route input limits and runtime flags from
+// catalog aliases.
 func qoderContextCapabilities(site string) map[string]ContextCapability {
 	result := map[string]ContextCapability{}
 	for _, key := range modelcatalog.QoderAliases(site) {

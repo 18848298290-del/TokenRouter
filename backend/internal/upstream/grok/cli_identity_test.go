@@ -7,19 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestResolveCLIVersionDefaultsToPinnedClientVersion clears the environment
+// version override. It asserts the bundled client version is selected and
+// both the bundled and minimum versions satisfy the supported-version
+// predicate.
 func TestResolveCLIVersionDefaultsToPinnedClientVersion(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
-	// The advertised default is CLIClientVersion; CLIStableVersion bounds overrides.
+	// The bundled version and minimum accepted override are separate constants.
+	// These assertions protect that distinction when the default release advances beyond the minimum.
 	require.Equal(t, CLIClientVersion, ResolveCLIVersion())
 	require.True(t, IsSupportedCLIVersion(CLIClientVersion))
 	require.True(t, IsSupportedCLIVersion(CLIStableVersion))
 }
 
+// TestResolveCLIVersionAcceptsValidOverride supplies a canonical prerelease
+// version above the configured minimum. It asserts ResolveCLIVersion returns
+// that override unchanged rather than selecting the bundled client version.
 func TestResolveCLIVersionAcceptsValidOverride(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "0.2.95-alpha.1")
 	require.Equal(t, "0.2.95-alpha.1", ResolveCLIVersion())
 }
 
+// TestResolveCLIVersionRejectsUnsafeOrTooOld supplies old, noncanonical,
+// incomplete, and control-character version overrides. It asserts each listed
+// invalid value selects CLIClientVersion, covering validation before identity
+// headers are populated.
 func TestResolveCLIVersionRejectsUnsafeOrTooOld(t *testing.T) {
 	for _, version := range []string{
 		"0.2.92",
@@ -36,6 +48,10 @@ func TestResolveCLIVersionRejectsUnsafeOrTooOld(t *testing.T) {
 	}
 }
 
+// TestApplyCLIProxyHeaders starts with the CLI proxy target and an existing
+// User-Agent. It asserts the resolved version, client identifier, token-auth
+// identity, and workspace User-Agent replace the proxy request's identity
+// values.
 func TestApplyCLIProxyHeaders(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
 
@@ -51,6 +67,9 @@ func TestApplyCLIProxyHeaders(t *testing.T) {
 	require.Equal(t, CLIUserAgent(CLIClientVersion), req.Header.Get("User-Agent"))
 }
 
+// TestApplyCLIProxyHeadersLeavesAPIHostUnchanged targets the public API while
+// a valid version override is present. It asserts no CLI-specific headers are
+// added and the request's existing User-Agent is retained.
 func TestApplyCLIProxyHeadersLeavesAPIHostUnchanged(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "0.2.95")
 

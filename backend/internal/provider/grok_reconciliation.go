@@ -10,28 +10,53 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Grok OAuth reconciliation pages active providers in increasing ID order and
+// separates planned actions from apply outcomes. Missing renewal credentials
+// choose blocking, while incomplete access data or near expiry chooses refresh.
+// Dry-run reports that classification, and apply rereads blocking candidates
+// before conditionally writing their credentials' error state.
+//
+// Accepted blocking publishes failure state only after its comparison write and
+// then attempts cache invalidation. Cleanup failure becomes Partial within the
+// already counted Blocked result. Refresh can also become permanent
+// containment, changing the item's Action while its earlier WouldRefresh count
+// remains planned. Cancellation can discard the partial response while
+// preceding writes stay accepted. The service tracks the actual page operation
+// for shutdown, retaining the first drain result when dependencies ignore
+// cancellation.
+
 const (
+	// Reconciliation page and timing limits bound submitted administrative
+	// inputs before platform skew is applied as an effective window floor.
 	DefaultGrokOAuthReconcilePageSize = 50
 	MaxGrokOAuthReconcilePageSize     = 500
 	MaxGrokOAuthReconcileWindow       = 24 * time.Hour
 
-	GrokOAuthReconcileReasonMissingRefreshToken = "missing_refresh_token"
-	GrokOAuthReconcileReasonMissingAccessToken  = "missing_access_token"
-	GrokOAuthReconcileReasonMissingExpiry       = "missing_expiry"
-	GrokOAuthReconcileReasonInvalidExpiry       = "invalid_expiry"
-	GrokOAuthReconcileReasonNearExpiry          = "near_expiry"
-	GrokOAuthReconcileReasonCredentialRejected  = "credential_rejected"
+	// Reconciliation reasons classify the first actionable credential
+	// deficiency and remain public labels rather than raw upstream diagnostics.
+	GrokOAuthReconcileReasonMissingRefreshToken = "missing_refresh_token" // no renewable token text
+	GrokOAuthReconcileReasonMissingAccessToken  = "missing_access_token"  // no stored access text
+	GrokOAuthReconcileReasonMissingExpiry       = "missing_expiry"        // no stored expiry text
+	GrokOAuthReconcileReasonInvalidExpiry       = "invalid_expiry"        // unparseable stored expiry value
+	GrokOAuthReconcileReasonNearExpiry          = "near_expiry"           // expiry within renewal window
+	GrokOAuthReconcileReasonCredentialRejected  = "credential_rejected"   // renewal committed credential rejection
 
-	GrokOAuthReconcileActionBlock   = "block_provider"
-	GrokOAuthReconcileActionRefresh = "refresh_credentials"
+	// Reconciliation actions distinguish persistent missing-token containment
+	// from renewal execution before the final per-provider outcome is known.
+	GrokOAuthReconcileActionBlock   = "block_provider"      // persist provider error state
+	GrokOAuthReconcileActionRefresh = "refresh_credentials" // execute credential renewal attempt
 
-	GrokOAuthReconcileOutcomePlanned = "planned"
-	GrokOAuthReconcileOutcomeApplied = "applied"
-	GrokOAuthReconcileOutcomeSkipped = "skipped"
-	GrokOAuthReconcileOutcomeFailed  = "failed"
-	GrokOAuthReconcileOutcomePartial = "partial"
+	// Reconciliation outcomes record dry-run planning, applied effects, skipped
+	// comparison, execution failure, or accepted blocking with failed cache cleanup.
+	GrokOAuthReconcileOutcomePlanned = "planned" // dry-run action remains planned
+	GrokOAuthReconcileOutcomeApplied = "applied" // requested effect was accepted
+	GrokOAuthReconcileOutcomeSkipped = "skipped" // comparison or execution skipped
+	GrokOAuthReconcileOutcomeFailed  = "failed"  // apply action reported failure
+	GrokOAuthReconcileOutcomePartial = "partial" // block accepted cleanup incomplete
 )
 
+// Reconciliation input errors reject incompatible apply mode, invalid cursors,
+// unsupported page sizes, and out-of-range submitted refresh windows before paging.
 var (
 	ErrGrokOAuthReconcileMode = infraerrors.BadRequest(
 		"GROK_OAUTH_RECONCILE_MODE_INVALID",
@@ -51,67 +76,135 @@ var (
 	)
 )
 
-// GrokReconciliationOptions supplies storage, refresh execution, invalidation, and timing dependencies.
+// GrokReconciliationOptions supplies paging, conditional containment, refresh
+// execution, and timing.
 type GrokReconciliationOptions struct {
-	Pager            OAuthRefreshCandidatePager
-	Reader           RefreshRepository
-	ConditionalError GrokOAuthConditionalErrorWriter
-	Execution        func() *RefreshProviderExecution
-	PrepareFailure   func(*Record) func(time.Time, string)
-	Invalidate       func(context.Context, *Record) error
-	Now              func() time.Time
-	Skew             time.Duration
+	Pager OAuthRefreshCandidatePager // active Grok OAuth page reader
+	// Reader is reached for apply blocking after page classification. That reread
+	// is reclassified before conditional containment so a newer renewable row can
+	// skip the old planned action.
+	Reader RefreshRepository // blocking candidate reread storage
+	// ConditionalError is required whenever Apply is true, including empty pages.
+	// False write results skip publication and preserve the row that rejected
+	// observed credentials.
+	ConditionalError GrokOAuthConditionalErrorWriter // complete-credential containment comparison writer
+	// Execution is required even for dry-run and empty pages. It supplies the
+	// registered refresher and its per-round state before actionable entries are
+	// processed.
+	Execution func() *RefreshProviderExecution // registered refresh execution supplier
+	// PrepareFailure captures publication inputs before conditional persistence.
+	// The returned callback is invoked after an accepted block so a clean
+	// comparison miss installs no failure notice.
+	PrepareFailure func(*Record) func(time.Time, string) // deferred failure publication preparer
+	// Invalidate runs after accepted blocking and publication. Missing callback or
+	// cleanup error produces Partial, with Blocked still counting the already
+	// accepted persisted effect.
+	Invalidate func(context.Context, *Record) error // optional post-block cache cleanup
+	Now        func() time.Time                     // credential expiry comparison clock
+	// Skew defaults a zero submitted window and also raises a validated nonzero
+	// window. Only Now is defaulted by construction; final skew raising follows
+	// submitted range validation.
+	Skew time.Duration // effective refresh window floor
 }
 
-// GrokReconciliationService classifies paged OAuth records, reports per-provider results, and tracks work for
-// shutdown.
+// GrokReconciliationService tracks administrative page classification and
+// independently accepted provider effects.
 type GrokReconciliationService struct {
-	options  GrokReconciliationOptions
-	activity operationActivity
+	options GrokReconciliationOptions // retained page and execution dependencies
+	// activity tracks paging and every provider action until ReconcileGrokOAuth
+	// actually returns. Stop rejects admission, cancels active contexts, and
+	// retains its first completion or unfinished result.
+	activity operationActivity // page admission and completion owner
 }
 
-// GrokOAuthReconciler exposes OAuth reconciliation to administrative callers.
+// GrokOAuthReconciler exposes administrative dry-run and apply reconciliation
+// with lifecycle ownership.
 type GrokOAuthReconciler interface {
+	// ReconcileGrokOAuth returns one planned or applied provider page. Effective
+	// dry-run is the absence of Apply, and incompatible mode or page inputs fail
+	// before actions. Apply effects are accepted independently per provider, so
+	// cancellation can return no response after earlier writes remain. Callers use
+	// per-item outcomes and separate planned counts to interpret partial cleanup
+	// or permanent refresh rejection; stopping waits for actual admitted page
+	// completion.
 	ReconcileGrokOAuth(ctx context.Context, input GrokOAuthReconcileInput) (*GrokOAuthReconcileResult, error)
 }
 
-// GrokOAuthConditionalErrorWriter conditionally marks an active Grok OAuth provider as errored.
-// The repository must verify that its complete credentials still match the observed values.
+// GrokOAuthConditionalErrorWriter compares observed credentials before
+// accepting active OAuth containment.
 type GrokOAuthConditionalErrorWriter interface {
+	// SetGrokOAuthErrorIfCredentialsUnchanged compares the observed complete
+	// credential map before accepting active Grok OAuth containment. False reports
+	// a rejected comparison or eligibility, and errors are returned; callers keep
+	// expected mutable credential values stable during the write.
 	SetGrokOAuthErrorIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, errorMsg string) (bool, error)
 }
+
+// GrokOAuthReconcileInput selects page continuation, planning or apply, and
+// renewal timing.
 type GrokOAuthReconcileInput struct {
-	DryRun        bool
-	Apply         bool
-	AfterID       int64
-	Limit         int
-	RefreshWindow time.Duration
+	// DryRun and Apply cannot both be true. Effective planning is the absence of
+	// Apply, so a zero-value input still performs dry-run after defaults are
+	// selected.
+	DryRun  bool  // submitted planning mode flag
+	Apply   bool  // request accepted provider writes
+	AfterID int64 // exclusive page starting identity
+	// Limit zero selects fifty, while one through five hundred is accepted. The
+	// pager returns strictly increasing IDs and separate continuation metadata
+	// that the service validates.
+	Limit int // submitted maximum page count
+	// RefreshWindow zero uses Skew. A nonzero value is range-checked before it is
+	// raised to Skew, so the configured floor can exceed the submitted input
+	// limit.
+	RefreshWindow time.Duration // submitted renewal timing duration
 }
 
-// GrokOAuthReconcileItem exposes provider IDs and classified outcomes; credentials, account identity, and raw
-// upstream errors must stay private.
+// GrokOAuthReconcileItem contains public provider identity, classified action,
+// and execution outcome.
 type GrokOAuthReconcileItem struct {
-	ProviderID int64  `json:"provider_id"`
-	Reason     string `json:"reason"`
-	Action     string `json:"action"`
-	Outcome    string `json:"outcome"`
-}
-type GrokOAuthReconcileResult struct {
-	DryRun       bool                     `json:"dry_run"`
-	Scanned      int                      `json:"scanned"`
-	Actionable   int                      `json:"actionable"`
-	WouldBlock   int                      `json:"would_block"`
-	WouldRefresh int                      `json:"would_refresh"`
-	Blocked      int                      `json:"blocked"`
-	Refreshed    int                      `json:"refreshed"`
-	Skipped      int                      `json:"skipped"`
-	Failed       int                      `json:"failed"`
-	Partial      int                      `json:"partial"`
-	Items        []GrokOAuthReconcileItem `json:"items"`
-	NextAfterID  int64                    `json:"next_after_id"`
-	HasMore      bool                     `json:"has_more"`
+	ProviderID int64  `json:"provider_id"` // classified stored provider identity
+	Reason     string `json:"reason"`      // public credential deficiency label
+	// Action begins with classification but can become block_provider after
+	// permanent refresh rejection. Planned WouldRefresh remains unchanged in that
+	// case, while final Blocked and Outcome record the effect.
+	Action  string `json:"action"`  // planned or resulting action
+	Outcome string `json:"outcome"` // public per-provider execution result
 }
 
+// GrokOAuthReconcileResult retains planned counts separately from apply
+// outcomes and page continuation.
+type GrokOAuthReconcileResult struct {
+	DryRun  bool `json:"dry_run"` // effective planning mode flag
+	Scanned int  `json:"scanned"` // loaded provider page count
+	// Actionable, WouldBlock, and WouldRefresh describe initial page
+	// classification. Blocked and Refreshed describe accepted execution, so
+	// permanent renewal rejection can change the final action without rewriting
+	// planned counts.
+	Actionable   int `json:"actionable"`    // initially classified action count
+	WouldBlock   int `json:"would_block"`   // initially planned blocking count
+	WouldRefresh int `json:"would_refresh"` // initially planned renewal count
+	Blocked      int `json:"blocked"`       // accepted persistent containment count
+	Refreshed    int `json:"refreshed"`     // successful refresh execution count
+	Skipped      int `json:"skipped"`       // nonactionable or skipped action count
+	Failed       int `json:"failed"`        // failed apply execution count
+	// Partial is a subset of Blocked because cache cleanup follows accepted
+	// containment. Failed describes other apply errors; Skipped also includes
+	// nonactionable rows omitted from Items.
+	Partial int `json:"partial"` // blocked outcomes with cleanup failure
+	// Items contains actionable entries in page order, including later skipped or
+	// failed actions. Context cancellation inside the loop returns nil result even
+	// when previous apply effects remain committed.
+	Items []GrokOAuthReconcileItem `json:"items"` // actionable entries in page order
+	// NextAfterID is populated only when HasMore is true and the pager supplied a
+	// value beyond the input cursor. It can remain zero on the final page.
+	NextAfterID int64 `json:"next_after_id"` // validated next page starting identity
+	HasMore     bool  `json:"has_more"`      // pager reports another page
+}
+
+// NewGrokReconciliationService retains reconciliation dependencies and supplies
+// time.Now when its clock is absent. Construction begins no page work; callers
+// configure reached storage and execution callbacks before invoking
+// reconciliation.
 func NewGrokReconciliationService(options GrokReconciliationOptions) *GrokReconciliationService {
 	if options.Now == nil {
 		options.Now = time.Now
@@ -119,10 +212,29 @@ func NewGrokReconciliationService(options GrokReconciliationOptions) *GrokReconc
 	return &GrokReconciliationService{options: options}
 }
 
+// StopContext rejects new reconciliation and cancels accepted page operations,
+// waiting within a nonnil caller budget. The first result, including unfinished
+// work after timeout, remains retained for subsequent stops.
 func (s *GrokReconciliationService) StopContext(ctx context.Context) error {
 	return s.activity.stop(ctx, "Grok provider reconciliation")
 }
 
+// ReconcileGrokOAuth returns planned or applied results for one validated
+// active Grok OAuth page. Nil context selects background; effective dry-run is
+// the absence of Apply, while Apply plus DryRun is rejected. Execution is
+// required even for dry-run or empty pages.
+//
+// Blocking candidates are reread and reclassified, then credentials are
+// conditionally written before failure publication and cache cleanup. A clean
+// comparison miss skips the action, while missing/failed cleanup yields Partial
+// within Blocked. Refresh errors can become accepted permanent containment and
+// change item action while preserving initial planned counts.
+//
+// Nonactionable rows increment Skipped but stay outside Items. Cancellation
+// inside iteration returns nil/error and drops the accumulated response even if
+// earlier effects remain. Submitted window validation precedes Skew raising,
+// and callbacks receive lifecycle cancellation while staying tracked until
+// actual return.
 func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, input GrokOAuthReconcileInput) (*GrokOAuthReconcileResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -153,6 +265,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 	if refreshWindow < 0 || refreshWindow > MaxGrokOAuthReconcileWindow {
 		return nil, ErrGrokOAuthReconcileWindow
 	}
+	// Keep the platform's minimum renewal lead time after validating the
+	// submitted range, so this administrative pass does not choose a shorter
+	// window than ordinary background maintenance.
 	if refreshWindow < s.options.Skew {
 		refreshWindow = s.options.Skew
 	}
@@ -171,7 +286,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 
 		ActiveOnly: true,
 
-		// Include OAuth records with missing refresh tokens so reconciliation can detect incomplete credentials.
+		// Missing renewable credentials are the blocking case, so include those
+		// active rows in this page instead of applying normal refresh-token
+		// candidate admission.
 		IncludeSetupToken: false,
 
 		RequireRefreshToken: false,
@@ -247,13 +364,18 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 			}
 			latestReason, latestAction, stillActionable := ClassifyGrokOAuthReconcileProvider(latest, refreshWindow, s.options.Now)
 			if !stillActionable || latestAction != GrokOAuthReconcileActionBlock {
-				// Skip the action when the provider changed after the page was loaded.
+				// A reread can reveal renewed credentials after page selection.
+				// Skip obsolete blocking so that this planned action cannot disable
+				// a now-renewable or otherwise ineligible row.
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
 				break
 			}
 			provider = latest
 			item.Reason = latestReason
+			// Capture publication before comparison, but invoke it only after the
+			// error write accepts these credentials. A rejected or failed write
+			// must leave its pending notice unpublished.
 			publishFailure := s.options.PrepareFailure(provider)
 			applied, err := conditionalErrorRepo.SetGrokOAuthErrorIfCredentialsUnchanged(
 				ctx,
@@ -267,7 +389,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 				break
 			}
 			if !applied {
-				// A concurrent update won the CAS. Install runtime blocks only after a successful write.
+				// A concurrent credential or eligibility update rejected this write.
+				// Keep its row and runtime state intact by skipping the prepared
+				// failure notice.
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
 				break
@@ -275,6 +399,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 			publishFailure(time.Time{}, "grok_oauth_reconcile_invalid")
 			provider.Status = StatusError
 			provider.Schedulable = false
+			// Persistent blocking is already accepted before cache cleanup. Keep
+			// that effect in Blocked even when cleanup is missing or fails, and
+			// report the incomplete follow-up as Partial.
 			cacheInvalidationFailed := s.options.Invalidate == nil
 			if s.options.Invalidate != nil {
 				if err := s.options.Invalidate(ctx, provider); err != nil {
@@ -289,6 +416,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 				item.Outcome = GrokOAuthReconcileOutcomeApplied
 			}
 		case GrokOAuthReconcileActionRefresh:
+			// Per-round failures can stop further refresh attempts. Check the
+			// shared trip state before dispatch so reconciliation follows this
+			// execution round's admission decision.
 			if providerState.IsTripped() {
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
@@ -310,6 +440,9 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 				item.Outcome = GrokOAuthReconcileOutcomeSkipped
 				result.Skipped++
 			case errors.As(refreshErr, &permanentErr) && permanentErr.PersistentlyBlocked:
+				// Renewal has instead committed permanent containment. Change the
+				// final item action and applied count while retaining WouldRefresh
+				// as the earlier planned classification.
 				item.Reason = GrokOAuthReconcileReasonCredentialRejected
 				item.Action = GrokOAuthReconcileActionBlock
 				result.Blocked++
@@ -331,10 +464,23 @@ func (s *GrokReconciliationService) ReconcileGrokOAuth(ctx context.Context, inpu
 	return result, nil
 }
 
+// ClassifyGrokOAuthReconcileProvider returns the first actionable deficiency
+// for an active Grok OAuth row. Nil, other kinds, and inactive status are
+// skipped. Missing renewal text chooses persistent blocking even if access
+// remains valid; missing access, missing/invalid expiry, or expiry at or within
+// refreshWindow chooses renewal.
+//
+// The clock is reached only after usable expiry is obtained. Exact equality
+// qualifies here, while the ordinary refresher applies its separate jittered
+// strict timing comparison. The reason records this classification for planned
+// counts before apply rereads can change the outcome.
 func ClassifyGrokOAuthReconcileProvider(provider *Record, refreshWindow time.Duration, now func() time.Time) (reason, action string, actionable bool) {
 	if provider == nil || !provider.IsGrokOAuth() || provider.Status != StatusActive {
 		return "", "", false
 	}
+	// Renewal admission requires refresh-token text. Give its absence priority
+	// over access and expiry problems, because those later deficiencies can
+	// still be repaired through credential exchange.
 	if strings.TrimSpace(provider.GetGrokRefreshToken()) == "" {
 		return GrokOAuthReconcileReasonMissingRefreshToken, GrokOAuthReconcileActionBlock, true
 	}

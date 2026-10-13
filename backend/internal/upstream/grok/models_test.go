@@ -6,7 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Explicit text, media, and vendor-qualified IDs bypass default model selection.
+// TestExplicitGrokIDsRemainUnchanged supplies explicit aliases, suffixed
+// models, and vendor-qualified IDs to the model helpers. It asserts each
+// listed nonempty ID survives and the optional text default applies to
+// omitted model input.
 func TestExplicitGrokIDsRemainUnchanged(t *testing.T) {
 	for _, model := range []string{"grok", "grok-latest", "grok-4.6-latest", "grok-build-latest", "grok-4.20-multi-agent", "xai/grok-4.6", "grok-imagine-video-1.5-preview"} {
 		require.Equal(t, model, NormalizeModelID(model))
@@ -16,6 +19,9 @@ func TestExplicitGrokIDsRemainUnchanged(t *testing.T) {
 	require.Equal(t, "custom-default", ResolveGrokTextResponsesModelID("", "custom-default"))
 }
 
+// TestCanonicalGrokImagineVideoPriceFamily supplies complete video model IDs
+// spanning versions, previews, and vendor prefixes. It asserts none of these
+// listed IDs is reduced to another pricing family by video normalization.
 func TestCanonicalGrokImagineVideoPriceFamily(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "grok-imagine-video", CanonicalImagineVideoModel("grok-imagine-video"))

@@ -9,8 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestGroupClientProtocolsDoNotRecoverLegacyPolicy checks that an empty set disables all entries regardless of
-// legacy switches.
+// An empty authoritative protocol selection closes entries even when a legacy
+// admission boolean is true. Returned protocol snapshots copy slice storage,
+// while direct membership reads inspect the saved selection; these cases check
+// nil-group handling and the one-entry allocation probe separately.
+
+// TestGroupClientProtocolsDoNotRecoverLegacyPolicy supplies a legacy Messages
+// flag with no selected protocols. It checks a non-nil empty response slice and
+// denial of Messages admission.
 func TestGroupClientProtocolsDoNotRecoverLegacyPolicy(t *testing.T) {
 	group := &routing.Group{
 		AllowMessagesDispatch: true,
@@ -21,7 +27,9 @@ func TestGroupClientProtocolsDoNotRecoverLegacyPolicy(t *testing.T) {
 	require.False(t, group.AllowsClientProtocol(protocol.ProtocolAnthropicMessages))
 }
 
-// TestGroupProtocolMembershipAndSnapshotIsolation checks direct membership and independent response snapshots.
+// TestGroupProtocolMembershipAndSnapshotIsolation checks nil-group denial and
+// membership in a one-entry selection. It mutates the returned snapshot and
+// asserts zero allocations for the repeated one-entry membership probe.
 func TestGroupProtocolMembershipAndSnapshotIsolation(t *testing.T) {
 	var missing *routing.Group
 	require.False(t, missing.AllowsClientProtocol(protocol.ProtocolOpenAIResponses))

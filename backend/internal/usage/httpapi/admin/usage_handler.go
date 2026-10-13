@@ -20,35 +20,63 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
-// UsageHandler handles admin usage-related requests.
+// Administrator usage queries combine record selectors with optional
+// retained-history request identity lookup. List accepts independent time
+// bounds, while Stats uses both explicit dates together or a period default,
+// then removes default bounds for a request-ID query that supplied no dates
+// or period.
+//
+// Cleanup commands create persisted tasks with inclusive end instants and
+// operator attribution. Their date-only end expansion uses a fixed
+// twenty-four hours minus one nanosecond, while report dates use calendar-day
+// exclusive ends. Detailed timing enrichment joins aligned record and
+// response slices by trimmed local identity, including a historical client:
+// prefix, and leaves timing absent when observation lookup fails.
+
+// UsageHandler serves administrator usage reads, searches and persisted
+// cleanup-task commands.
 type UsageHandler struct {
-	idemhttp.Executor
+	idemhttp.Executor // administrator command idempotency helpers
 
-	calendar       timezone.Calendar
-	usageService   *usage.UsageService
-	apiKeyService  ports.KeyReader
-	adminService   ports.UserReader
-	cleanupService *usage.UsageCleanupService
-	opsService     ports.Timings
+	calendar      timezone.Calendar   // usage query parsing calendar
+	usageService  *usage.UsageService // usage record and statistics service
+	apiKeyService ports.KeyReader     // key filter suggestion reader
+	adminService  ports.UserReader    // account filter suggestion reader
+	// cleanupService handles persisted cleanup commands and pages. Nil produces
+	// a service-unavailable response from cleanup routes while ordinary usage
+	// reads can remain configured.
+	cleanupService *usage.UsageCleanupService // optional cleanup task service
+	// opsService supplies persisted request timings for administrator
+	// enrichment. Nil skips enrichment, and lookup failures leave optional
+	// timing fields absent in the returned usage page.
+	opsService ports.Timings // optional request stage timing reader
 }
 
-// CreateUsageCleanupTaskRequest represents cleanup task creation request.
+// CreateUsageCleanupTaskRequest carries administrator deletion dates,
+// optional equality selectors and a parsing timezone.
 type CreateUsageCleanupTaskRequest struct {
-	StartDate   string  `json:"start_date"`
-	EndDate     string  `json:"end_date"`
-	UserID      *int64  `json:"user_id"`
-	APIKeyID    *int64  `json:"api_key_id"`
-	ProviderID  *int64  `json:"provider_id"`
-	GroupID     *int64  `json:"group_id"`
-	TeamID      *int64  `json:"team_id"`
-	Model       *string `json:"model"`
-	RequestType *string `json:"request_type"`
-	Stream      *bool   `json:"stream"`
-	BillingType *int8   `json:"billing_type"`
-	Timezone    string  `json:"timezone"`
+	// StartDate and EndDate are required date-only text parsed in Timezone or
+	// the server calendar. Creation expands EndDate by fixed elapsed-day
+	// arithmetic to an inclusive instant.
+	StartDate  string  `json:"start_date"`  // required cleanup start date
+	EndDate    string  `json:"end_date"`    // required cleanup end date
+	UserID     *int64  `json:"user_id"`     // optional actor user selector
+	APIKeyID   *int64  `json:"api_key_id"`  // optional key equality selector
+	ProviderID *int64  `json:"provider_id"` // optional provider equality selector
+	GroupID    *int64  `json:"group_id"`    // optional group equality selector
+	TeamID     *int64  `json:"team_id"`     // optional team equality selector
+	Model      *string `json:"model"`       // optional stored model selector
+	// RequestType takes precedence when its pointer is supplied. Creation parses
+	// the label and clears Stream before forwarding filters, returning a
+	// bad-request response for invalid category text.
+	RequestType *string `json:"request_type"` // optional request category text
+	Stream      *bool   `json:"stream"`       // optional legacy stream selector
+	BillingType *int8   `json:"billing_type"` // optional funding category selector
+	Timezone    string  `json:"timezone"`     // requested date parsing timezone
 }
 
-// NewUsageHandler creates a new admin usage handler.
+// NewUsageHandler binds administrator usage, search, cleanup and timing
+// readers for HTTP routes.
 func NewUsageHandler(
 	usageService *usage.UsageService,
 	apiKeyService ports.KeyReader,
@@ -67,8 +95,10 @@ func NewUsageHandler(
 	}
 }
 
-// List returns a filtered page of usage records.
-// GET /api/v1/admin/usage
+// List returns an administrator usage page under validated scalar selectors
+// and optional independent time bounds. Request category takes precedence
+// over stream, date-only ends advance by calendar day, and exact_total
+// requests the repository's full count.
 func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	exactTotal := false
@@ -187,7 +217,8 @@ func (h *UsageHandler) List(c *gin.Context) {
 			return
 		}
 		if dateOnly {
-			// Use the next calendar midnight as the exclusive end for a date-only input.
+			// Calendar expansion includes the selected local date even when its DST
+			// transition makes the elapsed day shorter or longer than twenty-four hours.
 			t = t.AddDate(0, 0, 1)
 		}
 		endTime = &t
@@ -232,8 +263,16 @@ func (h *UsageHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// enrichDetailedTimings joins persisted usage records with http.access timings by request ID.
-// Missing observations or lookup failures leave the DTOs without added stage timings.
+// enrichDetailedTimings attaches persisted stage observations to response
+// rows aligned with records. A missing reader, empty input or unequal slice
+// lengths leaves responses as supplied.
+//
+// The helper converts each local request identity with
+// usageLogClientRequestID, reads observations in a batch, then attaches them
+// at the same row position. A historical client: prefix is removed for this
+// join. Lookup failures are logged and leave enrichment absent, allowing the
+// usage page to remain available even when optional observation data cannot
+// be read.
 func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usage.UsageLog, out []dto.AdminUsageLog) {
 	if h == nil || h.opsService == nil || len(records) == 0 || len(records) != len(out) {
 		return
@@ -248,6 +287,8 @@ func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usag
 		return
 	}
 	timings, err := h.opsService.LookupRequestTimings(ctx, clientRequestIDs)
+	// Stage observations enrich an already loaded usage page. Log a failed optional
+	// lookup and return that page's existing fields so observation failure does not reject it.
 	if err != nil {
 		logger.LegacyPrintf("handler.admin.usage", "[UsageTiming] 查询请求阶段耗时失败: err=%v", err)
 		return
@@ -259,6 +300,9 @@ func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usag
 	}
 }
 
+// usageLogClientRequestID trims request text and removes a leading historical
+// client: prefix. Other prefixes remain part of the identifier; the returned
+// text is used as the exact key for timing enrichment.
 func usageLogClientRequestID(requestID string) string {
 	id := strings.TrimSpace(requestID)
 	if !strings.HasPrefix(id, "client:") {
@@ -267,8 +311,16 @@ func usageLogClientRequestID(requestID string) string {
 	return strings.TrimSpace(strings.TrimPrefix(id, "client:"))
 }
 
-// Stats returns filtered usage statistics.
-// GET /api/v1/admin/usage/stats
+// Stats returns filtered administrator totals and endpoint charts, optionally
+// using the statistics cache. Both explicit dates select a parsed range;
+// other cases use the requested today, week or month period through the
+// current instant.
+//
+// A request-ID query supplying neither dates nor period clears the default
+// bounds for retained-history lookup. Endpoint-source validation selects all
+// or one chart, and request category takes precedence over legacy stream.
+// nocache bypasses lookup and insertion for this response; it leaves existing
+// entries available to later cached requests.
 func (h *UsageHandler) Stats(c *gin.Context) {
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
@@ -378,10 +430,13 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 			return
 		}
 		if dateOnly {
-			// Match created_at < end by advancing date-only inputs to the next calendar midnight.
+			// Calendar expansion matches the repository's exclusive bound while covering
+			// the selected local date across DST days with different elapsed durations.
 			endTime = endTime.AddDate(0, 0, 1)
 		}
 	} else {
+		// Explicit dates select a range only as a pair. A missing partner uses the
+		// endpoint's period window, including its default today start, through the current instant.
 		period := c.DefaultQuery("period", "today")
 		switch period {
 		case "today":
@@ -396,7 +451,6 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		endTime = now
 	}
 
-	// An empty source returns all endpoint charts; callers can request one chart explicitly.
 	endpointSource := c.Query("endpoint_source")
 	switch endpointSource {
 	case "all":
@@ -425,13 +479,16 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		EndTime:            &endTime,
 	}
 
+	// Exact request lookup needs all retained history when the caller supplied no
+	// range choice. Remove period defaults while retaining the remaining administrator selectors.
 	if filters.RequestID != "" && startDateStr == "" && endDateStr == "" && c.Query("period") == "" {
 		filters.StartTime = nil
 		filters.EndTime = nil
 	}
 
 	var stats *usage.UsageStats
-	// nocache queries storage for this response and leaves existing cache entries unchanged.
+	// nocache bypasses this response's lookup and insertion. Existing snapshots remain
+	// available for later callers, so this flag is a read choice rather than cache eviction.
 	if parseBoolQueryWithDefault(c.Query("nocache"), false) {
 		s, err := h.usageService.GetStatsWithFilters(c.Request.Context(), filters)
 		if err != nil {
@@ -453,8 +510,9 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
-// SearchUsers searches users for the usage filter dropdown.
-// GET /api/v1/admin/usage/search-users
+// SearchUsers returns up to thirty email-ordered account suggestions for
+// nonempty query text. It includes deleted accounts and exposes their
+// deletion flag, while empty query text returns an empty successful list.
 func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	keyword := c.Query("q")
 	if keyword == "" {
@@ -462,18 +520,20 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 		return
 	}
 
-	// Limit dropdown suggestions to 30 users, including deleted users with historical usage.
+	// Retained usage can belong to deleted accounts. Include those identities in
+	// the bounded suggestion page so administrators can still select their historical records.
 	users, _, err := h.adminService.ListUsers(c.Request.Context(), 1, 30, ports.UserListFilters{Search: keyword, IncludeDeleted: true}, "email", "asc")
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// Expose the identity and deletion status needed by the filter dropdown.
+	// SimpleUser carries the suggestion identity and deletion flag exposed by
+	// administrator search.
 	type SimpleUser struct {
-		ID      int64  `json:"id"`
-		Email   string `json:"email"`
-		Deleted bool   `json:"deleted"`
+		ID      int64  `json:"id"`      // suggested account identifier
+		Email   string `json:"email"`   // suggested account contact email
+		Deleted bool   `json:"deleted"` // stored soft deletion flag
 	}
 
 	result := make([]SimpleUser, len(users))
@@ -488,8 +548,9 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// SearchAPIKeys searches API keys by user and keyword.
-// GET /api/v1/admin/usage/search-api-keys
+// SearchAPIKeys returns up to thirty key suggestions under an optional
+// actor-user filter. Invalid user-ID text returns bad request; each result
+// exposes the key ID, name and owner for filter selection.
 func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 	userIDStr := c.Query("user_id")
 	keyword := c.Query("q")
@@ -510,11 +571,12 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// Expose the key identity needed by the filter dropdown.
+	// SimpleAPIKey carries key identity and actor ownership for administrator
+	// filter suggestions.
 	type SimpleAPIKey struct {
-		ID     int64  `json:"id"`
-		Name   string `json:"name"`
-		UserID int64  `json:"user_id"`
+		ID     int64  `json:"id"`      // suggested key identifier
+		Name   string `json:"name"`    // suggested key display name
+		UserID int64  `json:"user_id"` // key actor owner identifier
 	}
 
 	result := make([]SimpleAPIKey, len(keys))
@@ -529,8 +591,10 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// ListCleanupTasks returns a page of cleanup tasks.
-// GET /api/v1/admin/usage/cleanup-tasks
+// ListCleanupTasks returns the persisted cleanup page formatted through
+// CleanupFromUsage. A missing cleanup service returns unavailable;
+// administrator authentication belongs to the registered parent route, and
+// operator identity is recorded for diagnostics.
 func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	if h.cleanupService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Usage cleanup service unavailable")
@@ -557,8 +621,17 @@ func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// CreateCleanupTask creates a usage cleanup task.
-// POST /api/v1/admin/usage/cleanup-tasks
+// CreateCleanupTask validates date-only bounds and creates a persisted
+// administrator deletion task through the idempotency executor. A positive
+// authenticated operator is required, and the request category takes
+// precedence over its legacy stream selector.
+//
+// The end date becomes an inclusive instant by adding a fixed twenty-four
+// hours minus one nanosecond. The idempotency payload includes the operator
+// and date-trimmed request body, while UsageCleanupService sanitizes stored
+// selectors and dispatches execution after persistence. The response
+// represents accepted task creation, with deletion progress available through
+// later task reads.
 func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	if h.cleanupService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Usage cleanup service unavailable")
@@ -592,6 +665,8 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 		response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
 		return
 	}
+	// Cleanup SQL includes its end instant. This fixed elapsed-day expansion can
+	// cross a local midnight differently on DST dates than calendar next-day construction.
 	endTime = endTime.Add(24*time.Hour - time.Nanosecond)
 
 	var requestType *int16
@@ -655,12 +730,14 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	}
 
 	idempotencyPayload := struct {
-		OperatorID int64                         `json:"operator_id"`
-		Body       CreateUsageCleanupTaskRequest `json:"body"`
+		OperatorID int64                         `json:"operator_id"` // authenticated administrator user identifier
+		Body       CreateUsageCleanupTaskRequest `json:"body"`        // date trimmed cleanup request body
 	}{
 		OperatorID: subject.UserID,
 		Body:       req,
 	}
+	// The persisted task is created inside the idempotent command callback before
+	// the response DTO is returned, allowing command replay to reuse the recorded result.
 	h.ExecuteAdminIdempotentJSON(c, "admin.usage.cleanup_tasks.create", idempotencyPayload, h.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求创建清理任务: operator=%d start=%s end=%s user_id=%v api_key_id=%v provider_id=%v group_id=%v model=%v request_type=%v stream=%v billing_type=%v tz=%q",
 			subject.UserID,
@@ -687,8 +764,10 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	})
 }
 
-// CancelCleanupTask cancels a pending or running cleanup task.
-// POST /api/v1/admin/usage/cleanup-tasks/:id/cancel
+// CancelCleanupTask records cancellation for a positive task ID and
+// authenticated operator. A missing cleanup service returns unavailable; the
+// service checks eligible states and the response reports canceled after its
+// conditional update succeeds.
 func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	if h.cleanupService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Usage cleanup service unavailable")
@@ -715,7 +794,9 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	response.Success(c, gin.H{"id": taskID, "status": usage.UsageCleanupStatusCanceled})
 }
 
-// getStatsCached returns usage statistics and cache-hit status.
+// getStatsCached returns administrator statistics and cache-hit status from
+// UsageService. Callers supply a nonnil context and immutable filter pointers
+// while a matching shared load can continue after one waiter cancels.
 func (h *UsageHandler) getStatsCached(ctx context.Context, f usage.UsageLogFilters) (*usage.UsageStats, bool, error) {
 	return h.usageService.GetStatsCached(ctx, f)
 }

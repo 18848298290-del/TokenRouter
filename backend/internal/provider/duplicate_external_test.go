@@ -18,12 +18,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// duplicateProviderRepoStub records group-aware creation and operation-key
+// recovery for duplicate tests.
 type duplicateProviderRepoStub struct {
-	*sparkShadowRepoStub
+	*sparkShadowRepoStub // underlying shadow record fixture
+	// atomicCreateErr stops group-aware fixture creation before any write. The
+	// failure test uses it to assert that no duplicate record is added.
 	atomicCreateErr  error
-	providerGroupsOf map[int64][]providercore.GroupMembership
+	providerGroupsOf map[int64][]providercore.GroupMembership // saved duplicate membership rows
 }
 
+// newDuplicateProviderRepoStub creates empty provider and membership indexes
+// for duplicate fixtures.
 func newDuplicateProviderRepoStub() *duplicateProviderRepoStub {
 	return &duplicateProviderRepoStub{
 		sparkShadowRepoStub: newSparkShadowRepoStub(),
@@ -31,6 +37,15 @@ func newDuplicateProviderRepoStub() *duplicateProviderRepoStub {
 	}
 }
 
+// CreateWithProviderGroups simulates group-aware fixture creation after its
+// injected failure check. It derives group IDs, creates the provider, then
+// records memberships carrying the assigned provider identity.
+//
+// Membership rows are copied as values before their provider ID is filled. The
+// final stored record is a shallow value copy retaining the created provider's
+// referenced fields, and both fixture record indexes point to that copy. This
+// path supplies controlled bookkeeping for tests and performs no database
+// transaction.
 func (s *duplicateProviderRepoStub) CreateWithProviderGroups(ctx context.Context, provider *providercore.Record, groups []providercore.GroupMembership) error {
 	if s.atomicCreateErr != nil {
 		return s.atomicCreateErr
@@ -43,6 +58,9 @@ func (s *duplicateProviderRepoStub) CreateWithProviderGroups(ctx context.Context
 	if err := s.Create(ctx, provider); err != nil {
 		return err
 	}
+	// Creation has assigned the duplicate ID. Fill it into copied membership
+	// rows before retaining them so fixture group assertions refer to this
+	// duplicate's identity.
 	clonedGroups := make([]providercore.GroupMembership, len(groups))
 	copy(clonedGroups, groups)
 	for i := range clonedGroups {
@@ -53,12 +71,18 @@ func (s *duplicateProviderRepoStub) CreateWithProviderGroups(ctx context.Context
 	if len(groupIDs) > 0 {
 		s.groupsOf[provider.ID] = append([]int64(nil), groupIDs...)
 	}
+	// Install one completed provider value in both fixture indexes after
+	// membership bookkeeping so direct and batch reads observe the same created
+	// duplicate record.
 	stored := *provider
 	s.providers[provider.ID] = &stored
 	s.providersByID[provider.ID] = &stored
 	return nil
 }
 
+// FindByExtraField returns fixture matches for a string-valued Extra key. Other
+// value types produce no match; returned provider values retain referenced
+// fields, and match order follows fixture map iteration.
 func (s *duplicateProviderRepoStub) FindByExtraField(_ context.Context, key string, value any) ([]providercore.Record, error) {
 	wanted, ok := value.(string)
 	if !ok {
@@ -73,6 +97,10 @@ func (s *duplicateProviderRepoStub) FindByExtraField(_ context.Context, key stri
 	return matches, nil
 }
 
+// TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState duplicates
+// static credentials carrying configuration and historical runtime state. The
+// copy retains groups and configured values, starts unschedulable with clean
+// observations, and isolates tested nested JSON containers from the source.
 func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()
@@ -218,6 +246,9 @@ func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T)
 	require.Equal(t, "remote-42", storedSource.Extra["crs_account_id"])
 }
 
+// TestDuplicateProviderRejectsCredentialShadow attempts duplication of a linked
+// Spark shadow. The call returns the shadow-specific bad-request reason and
+// leaves the fixture with its existing record count.
 func TestDuplicateProviderRejectsCredentialShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()
@@ -240,6 +271,9 @@ func TestDuplicateProviderRejectsCredentialShadow(t *testing.T) {
 	require.Len(t, repo.providers, 1)
 }
 
+// TestDuplicateProviderRejectsRotatingOrUnknownCredentialTypes tries OAuth,
+// Setup Token, and an unknown credential kind. Each attempt returns the
+// unsupported-type bad request and creates no additional fixture record.
 func TestDuplicateProviderRejectsRotatingOrUnknownCredentialTypes(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken, "legacy-cookie"} {
 		t.Run(providerType, func(t *testing.T) {
@@ -264,6 +298,9 @@ func TestDuplicateProviderRejectsRotatingOrUnknownCredentialTypes(t *testing.T) 
 	}
 }
 
+// TestDuplicateProviderPreservesUngroupedState copies an ungrouped API Key
+// provider. The returned group selection remains empty, and the fixture
+// receives no membership entry for the duplicate identifier.
 func TestDuplicateProviderPreservesUngroupedState(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()
@@ -284,6 +321,9 @@ func TestDuplicateProviderPreservesUngroupedState(t *testing.T) {
 	require.NotContains(t, repo.groupsOf, duplicate.ID)
 }
 
+// TestDuplicateProviderAtomicCreateFailureLeavesNoOrphan injects failure into
+// group-aware creation before its fixture writes begin. Duplication reports
+// that failure and leaves the source as the only saved provider.
 func TestDuplicateProviderAtomicCreateFailureLeavesNoOrphan(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()
@@ -305,6 +345,10 @@ func TestDuplicateProviderAtomicCreateFailureLeavesNoOrphan(t *testing.T) {
 	require.Len(t, repo.providers, 1)
 }
 
+// TestDuplicateProviderReturnsExistingCopyForSameOperationKey repeats
+// duplication with the same administrator and operation key. Recovery and retry
+// return the same copy, while a different administrator receives a distinct
+// scoped operation identity.
 func TestDuplicateProviderReturnsExistingCopyForSameOperationKey(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()

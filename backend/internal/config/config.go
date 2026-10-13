@@ -4328,9 +4328,9 @@ func isWeakJWTSecret(secret string) bool {
 }
 
 // generateJWTSecret returns lowercase hexadecimal text from byteLength random
-// bytes, selecting thirty-two bytes for nonpositive input. Random-read failures
-// are returned, and encoded text contains twice the selected byte count for
-// config consumers.
+// bytes, selecting thirty-two bytes for nonpositive input. Encoded text
+// contains twice the selected byte count and returns with nil error.
+// crypto/rand.Read terminates the process when io.ReadFull reports an error.
 func generateJWTSecret(byteLength int) (string, error) {
 	if byteLength <= 0 {
 		byteLength = 32

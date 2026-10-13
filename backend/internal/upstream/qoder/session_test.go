@@ -6,6 +6,14 @@ import (
 	"testing"
 )
 
+// Session fixtures inspect encrypted header presence and default temporary-key
+// representation using known identities. Empty-ciphertext rejection and
+// version-bearing base64 headers have separate assertions, so cryptographic
+// setup and client-version selection can fail independently.
+
+// TestNewSession constructs an encrypted global session with a supplied
+// sixteen-byte key. It checks nonempty encrypted key and identity strings plus
+// the retained identity name.
 func TestNewSession(t *testing.T) {
 	identity := &AuthIdentity{
 		Name: "test",
@@ -33,6 +41,9 @@ func TestNewSession(t *testing.T) {
 	}
 }
 
+// TestNewSessionDefaultTempKeyIsASCIIHex constructs a session using the
+// generated temporary key. It requires sixteen bytes and checks every byte
+// belongs to the lowercase ASCII hexadecimal alphabet.
 func TestNewSessionDefaultTempKeyIsASCIIHex(t *testing.T) {
 	identity := &AuthIdentity{
 		Name: "test",
@@ -58,6 +69,9 @@ func TestNewSessionDefaultTempKeyIsASCIIHex(t *testing.T) {
 	}
 }
 
+// TestAESDecryptRejectsEmptyCiphertext passes no encrypted bytes with a valid
+// sixteen-byte key. It checks the exact empty-ciphertext error before any block
+// decryption.
 func TestAESDecryptRejectsEmptyCiphertext(t *testing.T) {
 	_, err := AESDecrypt(nil, []byte("abcdefghijklmnop"))
 	if err == nil {
@@ -68,11 +82,14 @@ func TestAESDecryptRejectsEmptyCiphertext(t *testing.T) {
 	}
 }
 
+// TestBuildPayloadB64 builds global and CN version-bearing authentication
+// headers and decodes them from base64. Each case checks its expected
+// cosyVersion value in the JSON payload.
 func TestBuildPayloadB64(t *testing.T) {
 	tests := []struct {
-		name  string
-		build func() (string, error)
-		want  string
+		name  string                 // fixture case label
+		build func() (string, error) // header construction callback
+		want  string                 // expected client version
 	}{
 		{name: "国际站默认版本", build: func() (string, error) {
 			return BuildPayloadB64WithVersion("test_info", "request123", GlobalClientVersion)

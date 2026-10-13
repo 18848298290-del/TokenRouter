@@ -7,18 +7,32 @@ import (
 	"strings"
 )
 
+// Global and CN credentials select different authorization and Gateway endpoints
+// even when the client versions match. Profile normalization starts from one
+// validated site and fills omitted overrides, letting tests replace endpoints
+// while retaining the site's OAuth client identity and version.
+
+// Site names and refresh modes distinguish credential workflows; endpoint,
+// version, and OAuth constants supply production defaults for each site.
 const (
-	// SiteGlobal is the international site and the default for legacy providers.
+	// SiteGlobal and SiteCN name the supported credential sites. ParseSite selects
+	// the international site for empty legacy values before endpoint and model
+	// lookup.
 	SiteGlobal Site = "global"
 	// SiteCN is the China site.
 	SiteCN Site = "cn"
 
-	// RefreshModeCosy identifies credentials containing a COSY identity.
+	// RefreshModeCosy and RefreshModeQoderCN20 distinguish imported COSY and CN
+	// OpenAPI token workflows. ParseRefreshMode defaults empty credentials to COSY
+	// before refresh exchange selection.
 	RefreshModeCosy = "cosy"
-	// RefreshModeQoderCN20 identifies credentials containing a QoderCN20 refresh token.
+	// RefreshModeQoderCN20 identifies credentials containing a QoderCN20 refresh
+	// token.
 	RefreshModeQoderCN20 = "qodercn20"
 
-	// GlobalDeviceAuthorizationURL is the global browser authorization URL.
+	// Browser, OpenAPI, Center, and Gateway endpoint constants supply each site's
+	// default Profile. CN uses OpenAPI and Gateway while its default Center
+	// endpoint remains empty.
 	GlobalDeviceAuthorizationURL = "https://qoder.com/device/selectAccounts"
 	// CNDeviceAuthorizationURL is the CN browser authorization URL.
 	CNDeviceAuthorizationURL = "https://qoder.com.cn/device/selectAccounts"
@@ -32,36 +46,48 @@ const (
 	GlobalGatewayBaseURL = "https://api1.qoder.sh"
 	// CNGatewayBaseURL is the CN inference gateway URL.
 	CNGatewayBaseURL = "https://gateway.qoder.com.cn"
-	// GlobalClientVersion is the COSY version sent to the global site.
+	// GlobalClientVersion and CNClientVersion supply version text for OpenAPI
+	// User-Agent, machine headers, encrypted payload headers, and business metadata
+	// when no profile override is supplied.
 	GlobalClientVersion = "1.24.2"
 	// CNClientVersion is the COSY version sent to the CN site.
 	CNClientVersion = "1.24.2"
-	// GlobalOAuthClientID is the global public OAuth client ID.
+	// GlobalOAuthClientID and CNOAuthClientID identify public OAuth clients in
+	// their respective browser authorization URLs. Profile normalization retains
+	// that identity alongside the site's token endpoints.
 	GlobalOAuthClientID = "e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb"
 	// CNOAuthClientID is the CN public OAuth client ID.
 	CNOAuthClientID = "f5a7f67c-11a8-491e-8b8e-a07f2d0df4b7"
-	// GlobalOpenAPIProductName is the product name in the global OpenAPI User-Agent.
+	// GlobalOpenAPIProductName and CNOpenAPIProductName distinguish site labels in
+	// OpenAPI User-Agent text. Profile.OpenAPIUserAgent joins the selected product
+	// label with its normalized client version.
 	GlobalOpenAPIProductName = "Qoder"
 	// CNOpenAPIProductName is the product name in the CN OpenAPI User-Agent.
 	CNOpenAPIProductName = "Qoder CN"
 )
 
-// Site identifies a Qoder provider site.
+// Site identifies the credential site used to select Qoder protocol behavior.
 type Site string
 
-// Profile holds the protocol endpoints and client identifiers for a site.
-// Tests may copy the profile and override endpoints; production uses ProfileForSite defaults.
+// Profile holds endpoint overrides and OAuth identifiers for one validated Qoder
+// site.
 type Profile struct {
-	Site                   Site
-	DeviceAuthorizationURL string
-	OpenAPIBaseURL         string
-	CenterBaseURL          string
-	GatewayBaseURL         string
-	ClientVersion          string
-	OAuthClientID          string
+	// Site selects defaults for DeviceAuthorizationURL, OpenAPIBaseURL,
+	// CenterBaseURL, GatewayBaseURL, ClientVersion, and OAuthClientID.
+	// NormalizeProfile fills omitted values from that site and applies nonblank
+	// overrides together so request endpoints retain the selected client identity.
+	Site                   Site   // selected credential site
+	DeviceAuthorizationURL string // browser authorization endpoint
+	OpenAPIBaseURL         string // OpenAPI endpoint base
+	CenterBaseURL          string // Center endpoint base
+	GatewayBaseURL         string // Gateway endpoint base
+	ClientVersion          string // protocol client version
+	OAuthClientID          string // public OAuth identifier
 }
 
-// ParseSite validates the site, treating empty values as global for legacy providers.
+// ParseSite validates a trimmed, case-insensitive credential site and returns
+// its canonical name. An empty value selects global for legacy providers, and an
+// unsupported value returns an error for provider validation.
 func ParseSite(value string) (Site, error) {
 	switch Site(strings.ToLower(strings.TrimSpace(value))) {
 	case "", SiteGlobal:
@@ -73,7 +99,10 @@ func ParseSite(value string) (Site, error) {
 	}
 }
 
-// ParseRefreshMode validates the mode, treating empty values as COSY refresh.
+// ParseRefreshMode validates the trimmed, case-insensitive refresh workflow
+// saved with credentials. An empty value selects COSY for legacy providers;
+// unsupported modes return an error before authorization or refresh
+// construction.
 func ParseRefreshMode(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", RefreshModeCosy:
@@ -85,7 +114,9 @@ func ParseRefreshMode(value string) (string, error) {
 	}
 }
 
-// ProfileForSite returns a copy of the site defaults.
+// ProfileForSite returns a value containing the normalized site's protocol
+// defaults. Empty site selects global and unknown sites return an error; CN has
+// no Center endpoint because its flows use OpenAPI and Gateway.
 func ProfileForSite(site Site) (Profile, error) {
 	parsed, err := ParseSite(string(site))
 	if err != nil {
@@ -114,7 +145,9 @@ func ProfileForSite(site Site) (Profile, error) {
 	}
 }
 
-// MustProfileForSite returns the profile or panics for an invalid site. Use it with known site constants.
+// MustProfileForSite returns a site's profile and panics when site validation
+// fails. Callers use known site constants when initialization or default
+// construction requires a profile and cannot recover from an invalid site.
 func MustProfileForSite(site Site) Profile {
 	profile, err := ProfileForSite(site)
 	if err != nil {
@@ -123,7 +156,10 @@ func MustProfileForSite(site Site) Profile {
 	return profile
 }
 
-// NormalizeProfile validates the site and fills fields omitted from an override profile.
+// NormalizeProfile fills omitted fields from validated site defaults while
+// applying supplied overrides. Nonempty endpoint overrides are trimmed and lose
+// trailing slashes; version and OAuth client ID overrides are trimmed, and
+// invalid sites return errors.
 func NormalizeProfile(profile Profile) (Profile, error) {
 	base, err := ProfileForSite(profile.Site)
 	if err != nil {
@@ -150,9 +186,14 @@ func NormalizeProfile(profile Profile) (Profile, error) {
 	return base, nil
 }
 
-// OpenAPIUserAgent returns the site client User-Agent for OpenAPI requests.
+// OpenAPIUserAgent returns the site product name and normalized client version.
+// An invalid profile selects global defaults, while a CN profile uses the CN
+// product label required by OpenAPI calls.
 func (p Profile) OpenAPIUserAgent() string {
 	normalized, err := NormalizeProfile(p)
+	// User-Agent construction is also used with override profiles. Invalid sites
+	// use global defaults so callers still receive a complete product/version
+	// value.
 	if err != nil {
 		normalized = MustProfileForSite(SiteGlobal)
 	}
@@ -163,12 +204,16 @@ func (p Profile) OpenAPIUserAgent() string {
 	return productName + "/" + normalized.ClientVersion
 }
 
-// MachineOS returns the COSY architecture_system identifier.
+// MachineOS returns the current Go architecture and operating system in COSY
+// form.
 func MachineOS() string {
 	return MachineOSFor(runtime.GOARCH, runtime.GOOS)
 }
 
-// MachineOSFor normalizes Go platform names to Qoder protocol names.
+// MachineOSFor joins normalized architecture and operating-system names for COSY
+// headers. It trims and lowercases both values, maps amd64/x86_64 and
+// arm64/aarch64 to protocol aliases, and passes other architecture strings
+// through.
 func MachineOSFor(arch, goos string) string {
 	arch = strings.ToLower(strings.TrimSpace(arch))
 	goos = strings.ToLower(strings.TrimSpace(goos))
@@ -181,15 +226,23 @@ func MachineOSFor(arch, goos string) string {
 	return arch + "_" + goos
 }
 
-// MachineIP returns the first non-loopback IPv4 address for Cosy-ClientIp, or an empty string.
+// MachineIP returns the first non-loopback IPv4 address for the CN client
+// header. Interface enumeration failure or an address list without an eligible
+// IPv4 returns empty text, allowing header construction to send an absent value.
 func MachineIP() string {
 	addresses, err := net.InterfaceAddrs()
+	// Interface discovery is descriptive metadata. Suppress enumeration failure so
+	// the request can continue with an empty client IP rather than failing
+	// authentication.
 	if err != nil {
 		return ""
 	}
 	return machineIPFromAddresses(addresses)
 }
 
+// machineIPFromAddresses selects the first non-loopback IPv4 among IPNet address
+// entries. Other address representations and IPv6-only entries are skipped; list
+// order determines which eligible local interface becomes the client IP.
 func machineIPFromAddresses(addresses []net.Addr) string {
 	for _, address := range addresses {
 		ipNet, ok := address.(*net.IPNet)

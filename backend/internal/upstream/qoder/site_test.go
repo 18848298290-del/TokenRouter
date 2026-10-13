@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Site fixtures pin endpoints, OAuth identities, and model controls to the
+// integration's verified profile values. They compare shared and site-specific
+// route snapshots, preserving published alias coverage while checking how
+// unknown raw routes and missing legacy credential fields are interpreted.
+
+// TestMachineIPFromAddressesUsesFirstNonLoopbackIPv4 supplies loopback, IPv6,
+// and two eligible IPv4 addresses in order. It checks selection of the first
+// usable IPv4 from that list.
 func TestMachineIPFromAddressesUsesFirstNonLoopbackIPv4(t *testing.T) {
 	addresses := []net.Addr{
 		&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
@@ -19,6 +27,9 @@ func TestMachineIPFromAddressesUsesFirstNonLoopbackIPv4(t *testing.T) {
 	require.Equal(t, "172.18.0.1", machineIPFromAddresses(addresses))
 }
 
+// TestParseSiteAndRefreshModeCompatibility parses empty, recognized, and unknown
+// credential values. It checks global/COSY legacy defaults, CN/QoderCN20
+// recognition, and errors for unsupported site or mode strings.
 func TestParseSiteAndRefreshModeCompatibility(t *testing.T) {
 	site, err := ParseSite("")
 	require.NoError(t, err)
@@ -40,6 +51,9 @@ func TestParseSiteAndRefreshModeCompatibility(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported refresh_mode")
 }
 
+// TestProfileForSiteUsesFrozenProductionValues resolves both site defaults and
+// their User-Agent labels. It checks endpoints, client IDs, version strings, and
+// the absent CN Center endpoint.
 func TestProfileForSiteUsesFrozenProductionValues(t *testing.T) {
 	global, err := ProfileForSite(SiteGlobal)
 	require.NoError(t, err)
@@ -64,6 +78,9 @@ func TestProfileForSiteUsesFrozenProductionValues(t *testing.T) {
 	require.Equal(t, "Qoder CN/1.24.2", cn.OpenAPIUserAgent())
 }
 
+// TestNormalizeProfileAllowsTestEndpointInjection overrides CN OpenAPI and
+// Gateway with local URLs ending in slashes. It checks normalized endpoints and
+// retention of the site client version.
 func TestNormalizeProfileAllowsTestEndpointInjection(t *testing.T) {
 	profile, err := NormalizeProfile(Profile{
 		Site:           SiteCN,
@@ -76,6 +93,9 @@ func TestNormalizeProfileAllowsTestEndpointInjection(t *testing.T) {
 	require.Equal(t, CNClientVersion, profile.ClientVersion)
 }
 
+// TestMachineOSForNormalizesArchitectureAliases supplies ARM and x86
+// architecture spellings with two operating systems. It checks the COSY
+// architecture aliases joined to the supplied OS names.
 func TestMachineOSForNormalizesArchitectureAliases(t *testing.T) {
 	require.Equal(t, "aarch64_darwin", MachineOSFor("arm64", "darwin"))
 	require.Equal(t, "aarch64_linux", MachineOSFor("aarch64", "linux"))
@@ -83,6 +103,9 @@ func TestMachineOSForNormalizesArchitectureAliases(t *testing.T) {
 	require.Equal(t, "x86_64_darwin", MachineOSFor("x86_64", "darwin"))
 }
 
+// TestModelsAndAliasesAreSiteAware compares each site's public list and selected
+// route mappings. It checks CN/global eligibility, removed preview-name
+// passthrough, and acceptance of an unknown raw route.
 func TestModelsAndAliasesAreSiteAware(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"claude-opus-4-6",
@@ -127,7 +150,9 @@ func TestModelsAndAliasesAreSiteAware(t *testing.T) {
 	route, ok = AliasForSite(SiteCN, "minimax-m2.7")
 	require.True(t, ok)
 	require.Equal(t, "mmodel", route)
-	// Removed preview names pass through as raw keys unless a provider maps them.
+	// Removed preview names have no alias-table entry. Check their raw passthrough
+	// eligibility so model normalization cannot silently redirect those configured
+	// request names.
 	_, ok = AliasForSite(SiteGlobal, "qwen3.8-max-preview")
 	require.False(t, ok)
 	_, ok = AliasForSite(SiteCN, "qwen3.8-max-preview")
@@ -143,11 +168,14 @@ func TestModelsAndAliasesAreSiteAware(t *testing.T) {
 	require.True(t, ModelCompatibleWithSite(SiteGlobal, "unknown-raw-key"))
 }
 
+// TestThinkingCapabilityForSiteUsesSiteSnapshot covers known aliases, raw
+// routes, whitespace, empty site, and unknown inputs. It checks effort classes
+// and unsupported controls for the selected site.
 func TestThinkingCapabilityForSiteUsesSiteSnapshot(t *testing.T) {
 	tests := []struct {
-		site  Site
-		model string
-		want  ThinkingCapability
+		site  Site               // selected credential site
+		model string             // model lookup input
+		want  ThinkingCapability // expected capability value
 	}{
 		{site: SiteGlobal, model: "qwen3.8-max", want: ThinkingToggleOnly},
 		{site: SiteGlobal, model: " QMODEL_38MAX ", want: ThinkingToggleOnly},
@@ -180,10 +208,12 @@ func TestThinkingCapabilityForSiteUsesSiteSnapshot(t *testing.T) {
 		})
 	}
 
-	// CN raw routes, case variants, and surrounding whitespace resolve like public aliases.
+	// CN raw routes, case variants, and surrounding whitespace resolve like public
+	// aliases.
 	require.Equal(t, ThinkingToggleOnly, ThinkingCapabilityForSite(SiteCN, " QMODEL_LATEST "))
 	require.Equal(t, ThinkingHighMax, ThinkingCapabilityForSite(SiteCN, "dmodel"))
-	// Shared routes have matching capabilities; global-only and unknown routes remain site-specific.
+	// Shared routes have matching capabilities; global-only and unknown routes
+	// remain site-specific.
 	require.Equal(t, ThinkingToggleOnly, ThinkingCapabilityForSite(SiteGlobal, " QMODEL_LATEST "))
 	require.Equal(t, ThinkingHighMax, ThinkingCapabilityForSite(SiteGlobal, "dmodel"))
 	require.Equal(t, ThinkingUnsupported, ThinkingCapabilityForSite(SiteGlobal, "kmodel_latest"))
@@ -191,12 +221,15 @@ func TestThinkingCapabilityForSiteUsesSiteSnapshot(t *testing.T) {
 	require.Equal(t, ThinkingUnsupported, ThinkingCapabilityForSite(Site("invalid"), "qmodel_38max"))
 }
 
+// TestThinkingCapabilitySnapshotsCoverEveryModel compares published aliases and
+// capability keys for both sites. It requires one route entry for each alias
+// target and matching unique route sets.
 func TestThinkingCapabilitySnapshotsCoverEveryModel(t *testing.T) {
 	tests := []struct {
-		name         string
-		models       []string
-		aliases      map[string]string
-		capabilities map[string]ThinkingCapability
+		name         string                        // fixture case label
+		models       []string                      // published alias list
+		aliases      map[string]string             // alias route snapshot
+		capabilities map[string]ThinkingCapability // thinking capability snapshot
 	}{
 		{name: "国际站", models: DefaultRequestModelIDsForSite(SiteGlobal), aliases: globalAliases, capabilities: globalThinkingCapabilities},
 		{name: "国内站", models: DefaultRequestModelIDsForSite(SiteCN), aliases: cnAliases, capabilities: cnThinkingCapabilities},
@@ -204,7 +237,9 @@ func TestThinkingCapabilitySnapshotsCoverEveryModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Every site route needs a capability entry so added models cannot silently inherit the zero value.
+			// Alias targets define the published route set. Compare that set with
+			// capability keys so a missing entry cannot silently become unsupported
+			// through map zero values.
 			wantRoutes := make(map[string]struct{}, len(tt.aliases))
 			for _, model := range tt.models {
 				route, ok := tt.aliases[model]
@@ -222,8 +257,12 @@ func TestThinkingCapabilitySnapshotsCoverEveryModel(t *testing.T) {
 	}
 }
 
+// TestSharedThinkingCapabilitiesStayInSyncAcrossSites examines routes appearing
+// in both thinking snapshots. It checks equal capabilities for each shared key
+// while leaving site-exclusive routes outside that comparison.
 func TestSharedThinkingCapabilitiesStayInSyncAcrossSites(t *testing.T) {
-	// Shared routes use the same capabilities; site-only routes use their own snapshot.
+	// Shared routes use the same capabilities; site-only routes use their own
+	// snapshot.
 	for route, globalCapability := range globalThinkingCapabilities {
 		cnCapability, shared := cnThinkingCapabilities[route]
 		if !shared {
@@ -233,6 +272,9 @@ func TestSharedThinkingCapabilitiesStayInSyncAcrossSites(t *testing.T) {
 	}
 }
 
+// TestContextCapabilitySnapshotCoversEveryPublishedRoute compares complete
+// expected input-limit maps for both sites. It checks every public alias and
+// normalized uppercase raw route against its corresponding snapshot.
 func TestContextCapabilitySnapshotCoversEveryPublishedRoute(t *testing.T) {
 	globalExpected := map[string]ContextCapability{
 		"ultimate":      {MaxInputTokens: 1000000, RuntimeSelectable: true},
@@ -265,10 +307,10 @@ func TestContextCapabilitySnapshotCoversEveryPublishedRoute(t *testing.T) {
 		"mmodel":        {MaxInputTokens: 200000, RuntimeSelectable: true},
 	}
 	tests := []struct {
-		name     string
-		site     Site
-		actual   map[string]ContextCapability
-		expected map[string]ContextCapability
+		name     string                       // fixture case label
+		site     Site                         // selected credential site
+		actual   map[string]ContextCapability // actual context snapshot
+		expected map[string]ContextCapability // expected context snapshot
 	}{
 		{name: "国际站", site: SiteGlobal, actual: globalContextCapabilities, expected: globalExpected},
 		{name: "国内站", site: SiteCN, actual: cnContextCapabilities, expected: cnExpected},
@@ -288,12 +330,15 @@ func TestContextCapabilitySnapshotCoversEveryPublishedRoute(t *testing.T) {
 	}
 }
 
+// TestContextCapabilityForSiteUsesHighestVerifiedTier selects representative
+// fixed and runtime-capable routes across sites. It checks their expected token
+// limits and flags, including the empty-site global default.
 func TestContextCapabilityForSiteUsesHighestVerifiedTier(t *testing.T) {
 	tests := []struct {
-		name  string
-		site  Site
-		model string
-		want  ContextCapability
+		name  string            // fixture case label
+		site  Site              // selected credential site
+		model string            // model lookup input
+		want  ContextCapability // expected capability value
 	}{
 		{name: "国际站 Ultimate", site: SiteGlobal, model: "ultimate", want: ContextCapability{MaxInputTokens: 1000000, RuntimeSelectable: true}},
 		{name: "国际站 Performance", site: SiteGlobal, model: "performance", want: ContextCapability{MaxInputTokens: 1000000, RuntimeSelectable: true}},
@@ -314,6 +359,9 @@ func TestContextCapabilityForSiteUsesHighestVerifiedTier(t *testing.T) {
 	}
 }
 
+// TestContextCapabilityForSiteFallsBackForUnknownRoutes queries unknown, hidden,
+// removed, and invalid-site route inputs. It checks the execution-default token
+// limit with runtime selection disabled in every case.
 func TestContextCapabilityForSiteFallsBackForUnknownRoutes(t *testing.T) {
 	want := ContextCapability{MaxInputTokens: FallbackMaxInputTokens}
 	for _, site := range []Site{SiteGlobal, SiteCN} {

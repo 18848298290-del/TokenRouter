@@ -13,24 +13,41 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// DashboardHandler handles admin dashboard statistics.
+// Administrator dashboard charts parse optional scopes before using
+// dashboard-owned result caches. A supplied request category takes precedence
+// over legacy stream text for trend, model and group charts, while user
+// breakdown retains both selectors as intersecting conditions.
+//
+// Date-only query ends advance to the next calendar midnight, including short
+// or long DST days. Invalid chart dates select default bounds. The returned
+// date labels subtract a fixed twenty-four hours from the end, so those
+// labels can differ from the final included calendar date. Batch requests
+// normalize IDs before cache lookup, and spending ranking applies its own
+// result-limit cap.
+
+// DashboardHandler serves administrator reports using a bound dashboard and
+// range calendar.
 type DashboardHandler struct {
-	calendar         timezone.Calendar
-	dashboardService *usage.DashboardService
-	startTime        time.Time // Server start time for uptime calculation
+	calendar         timezone.Calendar       // query parsing date calendar
+	dashboardService *usage.DashboardService // dashboard report and cache service
+	startTime        time.Time               // handler construction uptime anchor
 }
 
-// BatchUsersUsageRequest represents the request body for batch user usage stats.
+// BatchUsersUsageRequest carries user identifiers submitted for administrator
+// batch cost summaries.
 type BatchUsersUsageRequest struct {
-	UserIDs []int64 `json:"user_ids" binding:"required"`
+	UserIDs []int64 `json:"user_ids" binding:"required"` // submitted user identifier list
 }
 
-// BatchAPIKeysUsageRequest represents the request body for batch api key usage stats.
+// BatchAPIKeysUsageRequest carries key identifiers submitted for
+// administrator batch cost summaries.
 type BatchAPIKeysUsageRequest struct {
-	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
+	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"` // submitted key identifier list
 }
 
-// parseOptionalBoolDashboardFilter returns nil for an empty filter and rejects invalid booleans.
+// parseOptionalBoolDashboardFilter returns an optional boolean for the
+// trimmed query value at key. Empty values return nil; strconv.ParseBool
+// spellings are accepted, and unsupported text returns a filter error.
 func parseOptionalBoolDashboardFilter(c *gin.Context, key string) (*bool, error) {
 	raw := strings.TrimSpace(c.Query(key))
 	if raw == "" {
@@ -43,7 +60,10 @@ func parseOptionalBoolDashboardFilter(c *gin.Context, key string) (*bool, error)
 	return &value, nil
 }
 
-// NewDashboardHandler creates a new admin dashboard handler.
+// NewDashboardHandler binds report queries and the range calendar, capturing
+// the current instant for uptime. Returned uptime measures elapsed time from
+// this construction call, so callers create the handler during application
+// route wiring.
 func NewDashboardHandler(dashboardService *usage.DashboardService, calendar timezone.Calendar) *DashboardHandler {
 	return &DashboardHandler{
 		calendar:         calendar,
@@ -52,8 +72,16 @@ func NewDashboardHandler(dashboardService *usage.DashboardService, calendar time
 	}
 }
 
-// parseTimeRange parses start_date and end_date, expanding date-only ends by one calendar day.
-// Missing or invalid timezones use the server calendar.
+// parseTimeRange returns chart bounds parsed in a valid user zone or the
+// supplied server calendar. Missing or invalid start text selects midnight
+// seven dates before now; missing or invalid end text selects tomorrow
+// midnight.
+//
+// Date-only ends advance with AddDate, allowing the selected local day to
+// span twenty-three or twenty-five hours. Explicit datetime bounds retain
+// their parsed instant and supplied offset. The helper does not reject
+// reversed bounds, leaving later query handling to the service and
+// repository.
 func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time.Time) {
 	userTZ := c.Query("timezone")
 	now := calendar.NowInUserLocation(userTZ)
@@ -66,6 +94,8 @@ func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time
 		if t, _, err := calendar.ParseDateTimeInUserLocation(startDate, userTZ); err == nil {
 			startTime = t
 		} else {
+			// An unusable supplied date retains the ordinary chart window, allowing the
+			// endpoint to query its seven-date start under the selected calendar location.
 			startTime = calendar.StartOfDayInUserLocation(now.AddDate(0, 0, -7), userTZ)
 		}
 	} else {
@@ -75,10 +105,14 @@ func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time
 	if endDate != "" {
 		if t, dateOnly, err := calendar.ParseDateTimeInUserLocation(endDate, userTZ); err == nil {
 			if dateOnly {
+				// Calendar-date expansion includes the selected local day even when a
+				// DST transition changes its elapsed duration from twenty-four hours.
 				t = t.AddDate(0, 0, 1)
 			}
 			endTime = t
 		} else {
+			// Unparseable end text selects tomorrow midnight so the ordinary chart
+			// window still covers today according to the selected local-date rules.
 			endTime = calendar.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
 		}
 	} else {
@@ -88,8 +122,10 @@ func parseTimeRange(c *gin.Context, calendar timezone.Calendar) (time.Time, time
 	return startTime, endTime
 }
 
-// GetStats returns dashboard statistics and handler uptime.
-// GET /api/v1/admin/dashboard/stats
+// GetStats returns administrator dashboard metrics and whole-second uptime
+// since handler construction. The dashboard service determines cache and
+// aggregation handling; a failed query becomes the handler's generic
+// internal-error response.
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	stats, err := h.dashboardService.GetDashboardStats(c.Request.Context())
 	if err != nil {
@@ -97,6 +133,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		return
 	}
 
+	// Report whole elapsed seconds since this handler was constructed.
 	uptime := int64(time.Since(h.startTime).Seconds())
 
 	response.Success(c, gin.H{
@@ -151,10 +188,11 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	})
 }
 
-// GetRealtimeMetrics returns placeholder zero-valued metrics.
-// GET /api/v1/admin/dashboard/realtime
+// GetRealtimeMetrics returns fixed zero values for the dashboard's
+// placeholder realtime fields. It samples no live activity, so the response
+// describes this endpoint's current placeholder state even while other
+// reports contain measured usage.
 func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
-	// These fields are not connected to live measurements.
 	response.Success(c, gin.H{
 		"active_requests":       0,
 		"requests_per_minute":   0,
@@ -163,10 +201,10 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 	})
 }
 
-// GetUsageTrend returns filtered usage trends.
-// GET /api/v1/admin/dashboard/trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id, model, provider_id,
-// group_id, request_type, stream, billing_type.
+// GetUsageTrend returns cached trend buckets under the parsed dashboard
+// bounds and optional selectors. Request type takes precedence over stream
+// text, invalid ID text leaves selectors unset, and query failures return the
+// generic trend error.
 func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 	granularity := c.DefaultQuery("granularity", "day")
@@ -178,6 +216,8 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	var billingType *int8
 	var nativeCompactionV2 *bool
 
+	// Scalar ID parsing failures leave the corresponding selector at zero. This
+	// chart path then queries the remaining scopes rather than rejecting the request.
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
 			userID = id
@@ -246,16 +286,18 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
 
 	response.Success(c, gin.H{
-		"trend":       trend,
-		"start_date":  startTime.Format("2006-01-02"),
+		"trend":      trend,
+		"start_date": startTime.Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
 }
 
-// GetModelStats returns usage grouped by the selected model source.
-// GET /api/v1/admin/dashboard/models
-// Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, provider_id, group_id, request_type, stream, billing_type.
+// GetModelStats returns cached model grouping under parsed bounds and
+// selectors. It validates the selected requested, upstream or mapping source,
+// gives request type precedence over stream text, and exposes cache-hit
+// status.
 func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 
@@ -266,6 +308,8 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	var billingType *int8
 	var nativeCompactionV2 *bool
 
+	// Scalar ID parsing failures leave the corresponding selector at zero. This
+	// chart path then queries the remaining scopes rather than rejecting the request.
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
 			userID = id
@@ -340,13 +384,14 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	response.Success(c, gin.H{
 		"models":     stats,
 		"start_date": startTime.Format("2006-01-02"),
-		"end_date":   endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
+		"end_date": endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	})
 }
 
-// GetGroupStats returns filtered group usage statistics.
-// GET /api/v1/admin/dashboard/groups
-// Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, provider_id, group_id, request_type, stream, billing_type.
+// GetGroupStats returns cached group grouping under parsed bounds and
+// optional selectors. Request type takes precedence over stream text, invalid
+// ID text leaves selectors unset, and the response exposes cache-hit status.
 func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 
@@ -356,6 +401,8 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	var billingType *int8
 	var nativeCompactionV2 *bool
 
+	// Scalar ID parsing failures leave the corresponding selector at zero. This
+	// chart path then queries the remaining scopes rather than rejecting the request.
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
 			userID = id
@@ -423,18 +470,21 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	response.Success(c, gin.H{
 		"groups":     stats,
 		"start_date": startTime.Format("2006-01-02"),
-		"end_date":   endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
+		"end_date": endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	})
 }
 
-// GetAPIKeyUsageTrend returns trends for the top API keys.
-// GET /api/v1/admin/dashboard/api-keys-trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 5).
+// GetAPIKeyUsageTrend returns cached top-key buckets under the parsed chart
+// bounds. An invalid or nonpositive limit selects five; granularity is passed
+// to the service, and the response includes cache-hit status.
 func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 	granularity := c.DefaultQuery("granularity", "day")
 	limitStr := c.DefaultQuery("limit", "5")
 	limit, err := strconv.Atoi(limitStr)
+	// Invalid or nonpositive row counts use this endpoint's five-row default,
+	// keeping the repository query within the endpoint's ordinary selected ranking size.
 	if err != nil || limit <= 0 {
 		limit = 5
 	}
@@ -447,21 +497,24 @@ func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
 
 	response.Success(c, gin.H{
-		"trend":       trend,
-		"start_date":  startTime.Format("2006-01-02"),
+		"trend":      trend,
+		"start_date": startTime.Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
 }
 
-// GetUserUsageTrend returns trends for the top spending users.
-// GET /api/v1/admin/dashboard/users-trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12).
+// GetUserUsageTrend returns cached top-payer buckets under the parsed chart
+// bounds. An invalid or nonpositive limit selects twelve; granularity is
+// passed to the service, and the response includes cache-hit status.
 func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 	granularity := c.DefaultQuery("granularity", "day")
 	limitStr := c.DefaultQuery("limit", "12")
 	limit, err := strconv.Atoi(limitStr)
+	// Invalid or nonpositive row counts use this endpoint's twelve-row default,
+	// keeping the repository query within the endpoint's ordinary selected ranking size.
 	if err != nil || limit <= 0 {
 		limit = 12
 	}
@@ -474,26 +527,32 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
 
 	response.Success(c, gin.H{
-		"trend":       trend,
-		"start_date":  startTime.Format("2006-01-02"),
+		"trend":      trend,
+		"start_date": startTime.Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
 }
 
+// parseRankingLimit trims ranking-limit text and returns a positive capped
+// row limit. Empty, invalid or nonpositive values select twelve, while values
+// greater than fifty return the cap of fifty.
 func parseRankingLimit(raw string) int {
 	limit, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || limit <= 0 {
 		return 12
 	}
+	// Cap public handler input before it forms ranking cache keys.
 	if limit > 50 {
 		return 50
 	}
 	return limit
 }
 
-// GetUserSpendingRanking returns users ranked by spending.
-// GET /api/v1/admin/dashboard/users-ranking
+// GetUserSpendingRanking returns cached payer spending rows and full-range
+// totals under a capped limit. Display dates use the stored RankingReport
+// range, which can retain the first cache entry's time locations.
 func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 	limit := parseRankingLimit(c.DefaultQuery("limit", "12"))
@@ -512,14 +571,16 @@ func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 		"total_requests":    ranking.TotalRequests,
 		"total_tokens":      ranking.TotalTokens,
 		"start_date":        startTime.Format("2006-01-02"),
-		"end_date":          endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
+		"end_date": endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	}
 	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
 	response.Success(c, payload)
 }
 
-// GetBatchUsersUsage returns usage statistics for multiple users.
-// POST /api/v1/admin/dashboard/users-usage
+// GetBatchUsersUsage normalizes submitted IDs and returns cached batch user
+// charges. An empty normalized set returns an empty stats object; user cache
+// keys include the calendar date for their today totals.
 func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	var req BatchUsersUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -533,7 +594,8 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 		return
 	}
 
-	// The service cache includes today's date so midnight cannot reuse yesterday's today_* totals.
+	// Batch summaries contain today-specific values. Calendar.Today in the service
+	// key separates this normalized ID set from its entry on the preceding date.
 	stats, hit, err := h.dashboardService.GetBatchUsersUsageCached(c.Request.Context(), userIDs)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage stats")
@@ -545,8 +607,9 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchAPIKeysUsage returns usage statistics for multiple API keys.
-// POST /api/v1/admin/dashboard/api-keys-usage
+// GetBatchAPIKeysUsage normalizes submitted IDs and returns cached batch key
+// charges. An empty normalized set returns an empty stats object; key-cache
+// entries can reuse today totals across midnight until expiration.
 func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 	var req BatchAPIKeysUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -571,13 +634,16 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetUserBreakdown returns per-user usage within the selected dimension.
-// GET /api/v1/admin/dashboard/user-breakdown
-// Query params: start_date, end_date, group_id, model, endpoint, endpoint_type, limit.
+// GetUserBreakdown returns payer rows within the requested dimensions and
+// actor selectors. Request type and stream are both retained; limit defaults
+// to fifty unless a supplied value is between one and two hundred.
 func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c, h.calendar)
 
 	dim := usage.UserBreakdownDimension{}
+	// This breakdown parser leaves malformed ID, stream and billing text unset.
+	// Remaining dimensions still reach storage, while category and compaction
+	// errors reject the request.
 	if v := c.Query("group_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			dim.GroupID = id
@@ -635,9 +701,11 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 		}
 	}
 
-	// The repository validates sort_by against an allowlist and defaults invalid values to actual_cost.
+	// The repository chooses ORDER BY from a fixed allowlist. Forward trimmed text
+	// so its actual_cost default also handles unrecognized names for this breakdown.
 	dim.SortBy = strings.TrimSpace(c.Query("sort_by"))
 
+	// Out-of-range or invalid limits use this endpoint's fifty-row default.
 	limit := 50
 	if v := c.Query("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
@@ -656,6 +724,7 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 	response.Success(c, gin.H{
 		"users":      stats,
 		"start_date": startTime.Format("2006-01-02"),
-		"end_date":   endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		// DST shifts can move this label away from the final included calendar date.
+		"end_date": endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	})
 }

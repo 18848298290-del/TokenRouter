@@ -26,12 +26,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// A tool invocation can arrive as structured deltas or as XML, JSON, or DSML
+// text split across SSE events. The text transformer holds unfinished markers,
+// while the call accumulator uses IDs and upstream positions to keep parallel
+// argument fragments attached to their invocation.
+//
+// Protocol writers share normalized observations but produce different client
+// representations: Chat emits visible text and calls, Messages retains thinking
+// blocks, and Responses tracks ordered output items. Downstream write failure
+// stops further delivery while upstream scanning can continue collecting usage.
+// The latest usage observation replaces token counts, with cached input
+// separated from uncached input. Context cancellation, scanner sends, body
+// closure, and keepalive callbacks coordinate the lifetime of each stream.
+
+// Execution defaults and XML/DSML marker strings govern stream lifetime, saved
+// conversations, and recognition of text-encoded invocations before client
+// protocol output.
 const (
+	// QoderDefaultMaxTokens, QoderStreamTimeout, QoderKeepaliveEvery, and
+	// QoderConversationTTL govern output budget, execution lifetime, heartbeat
+	// spacing, and saved-history lifetime used by their respective owners.
 	QoderDefaultMaxTokens = 32768
 	QoderStreamTimeout    = 15 * time.Minute
 	QoderKeepaliveEvery   = 10 * time.Second
 	QoderConversationTTL  = 2 * time.Hour
 
+	// XML marker constants identify text-encoded calls and named argument tags. The
+	// transformer retains possible opening fragments until a complete segment or
+	// final flush resolves them.
 	QoderTextToolCallStart = "<tool_call>"
 	QoderTextToolCallEnd   = "</tool_call>"
 	QoderTextArgKeyStart   = "<arg_key>"
@@ -39,6 +61,9 @@ const (
 	QoderTextArgValueStart = "<arg_value>"
 	QoderTextArgValueEnd   = "</arg_value>"
 
+	// DSML marker constants delimit invocation and parameter wrappers in text
+	// output. The parser entity-decodes named parameters and emits calls with
+	// generated sequence identities.
 	QoderDSMLToolCallsStart = "<｜｜DSML｜｜tool_calls>"
 	QoderDSMLToolCallsEnd   = "</｜｜DSML｜｜tool_calls>"
 	QoderDSMLInvokeStart    = "<｜｜DSML｜｜invoke"
@@ -46,107 +71,199 @@ const (
 	QoderDSMLParameterStart = "<｜｜DSML｜｜parameter"
 	QoderDSMLParameterEnd   = "</｜｜DSML｜｜parameter>"
 
+	// defaultMaxLineSize supplies ScanQoderEvents with the upstream package's
+	// shared SSE line cap in bytes. StreamEvents uses its separate one-megabyte
+	// limit for the standalone helper.
 	defaultMaxLineSize = upstream.DefaultSSELineLimit
 )
 
-// QoderModelInfo holds the upstream route key and its source.
+// QoderModelInfo carries the selected Gateway model key and request source.
 type QoderModelInfo struct {
-	Key    string `json:"key"`
-	Source string `json:"source"`
+	Key    string `json:"key"`    // Gateway model key
+	Source string `json:"source"` // model source label
 }
 
+// QoderMessage retains visible history text and raw call/result identity for
+// request conversion.
 type QoderMessage struct {
-	Role        string
-	Text        string
-	ToolCallID  string
-	Raw         map[string]any
-	TextContent []map[string]any
+	Role string // outgoing history role
+	Text string // visible history text
+	// ToolCallID overrides raw result-ID aliases when nonblank. Payload conversion
+	// mirrors that trimmed identity into both Gateway fields; empty text permits
+	// lookup through Raw.
+	ToolCallID string // tool result identifier
+	// Raw retains mutable caller metadata used by tool enrichment and payload
+	// conversion. Callers coordinate mutation before sharing a request with
+	// conversation planning.
+	Raw map[string]any // raw history metadata
+	// TextContent retains mutable block maps shared with outgoing payloads.
+	// Cache-control insertion can update the last eligible map before request
+	// serialization.
+	TextContent []map[string]any // structured text blocks
 }
 
+// QoderStreamResult records output and latest usage evidence for one stream
+// attempt.
 type QoderStreamResult struct {
-	// HasUsage distinguishes upstream-reported zero usage from absent usage.
-	HasUsage     bool
-	Usage        upstream.TokenUsage
-	UsageDetails UsageDetails
-	TotalTokens  int
-	HasOutput    bool
+	// HasUsage distinguishes a present zero-token payload from no observation.
+	// Usage and UsageDetails retain its latest snapshot. Chat streams additionally
+	// record TotalTokens; the other writers leave that field zero. HasOutput
+	// records a recognized content category before all delivery and placeholder
+	// decisions, so it can be true even when no bytes reach the client.
+	HasUsage     bool                // usage payload observed
+	Usage        upstream.TokenUsage // latest token snapshot
+	UsageDetails UsageDetails        // latest usage breakdown
+	TotalTokens  int                 // latest total tokens
+	HasOutput    bool                // content event observed
 }
 
+// QoderStreamWriteTracker retains the first disconnect observation for one
+// serialized writer.
 type QoderStreamWriteTracker struct {
-	disconnected bool
+	// disconnected records the first missing writer or write failure during
+	// serialized output. Shared writer copies suppress later delivery while
+	// upstream event and usage processing continues.
+	disconnected bool // downstream failure observed
 }
 
+// QoderDisconnectAwareWriter suppresses delivery failures while its stream
+// continues collecting upstream usage.
 type QoderDisconnectAwareWriter struct {
-	writer  io.Writer
-	tracker *QoderStreamWriteTracker
+	writer io.Writer // downstream byte writer
+	// tracker is shared by writer copies during one serialized stream. A recorded
+	// disconnect makes later writes report consumption while suppressing downstream
+	// delivery.
+	tracker *QoderStreamWriteTracker // shared disconnect observation
 }
 
+// QoderToolNameMapper maps an upstream function name into the client's declared
+// spelling.
 type QoderToolNameMapper func(string) string
 
+// QoderOpenAIStreamResponseOption carries optional Chat usage and tool-name
+// output controls.
 type QoderOpenAIStreamResponseOption struct {
-	mapUsage     func(upstream.TokenUsage) upstream.TokenUsage
-	mapToolName  QoderToolNameMapper
-	includeUsage bool
+	// mapUsage transforms observed token usage for protocol output when present.
+	// Nil leaves the writer's observed usage unchanged.
+	mapUsage func(upstream.TokenUsage) upstream.TokenUsage // usage transformation callback
+	// mapToolName maps normalized function names into declared client names when
+	// present. Nil keeps normalized upstream names available.
+	mapToolName  QoderToolNameMapper // declared-name transformation callback
+	includeUsage bool                // emit Chat usage
 }
 
+// QoderAnthropicStreamResponseOption carries optional Messages usage and
+// tool-name output controls.
 type QoderAnthropicStreamResponseOption struct {
-	mapUsage    func(upstream.TokenUsage) upstream.TokenUsage
-	mapToolName QoderToolNameMapper
+	// mapUsage transforms observed token usage for protocol output when present.
+	// Nil leaves the writer's observed usage unchanged.
+	mapUsage func(upstream.TokenUsage) upstream.TokenUsage // usage transformation callback
+	// mapToolName maps normalized function names into declared client names when
+	// present. Nil keeps normalized upstream names available.
+	mapToolName QoderToolNameMapper // declared-name transformation callback
 }
 
+// QoderResponsesStreamResponseOption carries optional Responses callbacks and
+// caller-selected response identity.
 type QoderResponsesStreamResponseOption struct {
-	mapUsage    func(upstream.TokenUsage) upstream.TokenUsage
-	mapToolName QoderToolNameMapper
-	responseID  string
+	// mapUsage transforms observed token usage for protocol output when present.
+	// Nil leaves the writer's observed usage unchanged.
+	mapUsage func(upstream.TokenUsage) upstream.TokenUsage // usage transformation callback
+	// mapToolName maps normalized function names into declared client names when
+	// present. Nil keeps normalized upstream names available.
+	mapToolName QoderToolNameMapper // declared-name transformation callback
+	// responseID supplies the stream identifier verbatim when nonempty. Empty
+	// text asks the writer to generate an ID; option selection does not trim it.
+	responseID string // caller response identifier
 }
 
+// QoderTextToolCallTransformer buffers possible call markup across adjacent text
+// events.
 type QoderTextToolCallTransformer struct {
-	buffer       string
-	nextToolCall int
+	// buffer holds possible opening-tag suffixes and incomplete segments across
+	// adjacent text events. Non-text input and final flush release unfinished text
+	// literally.
+	buffer       string // pending text suffix
+	nextToolCall int    // next invocation position
 }
 
+// QoderOpenAIToolCallAccumulator associates split call fragments with stable
+// output slots.
 type QoderOpenAIToolCallAccumulator struct {
-	calls               []QoderOpenAIToolCallState
-	slotByUpstreamIndex map[int]int
-	mapToolName         QoderToolNameMapper
+	// calls stores output slots while slotByUpstreamIndex follows wire positions
+	// across drift or reuse. AppendDelta resolves identity before updating both
+	// structures for one serialized event sequence.
+	calls               []QoderOpenAIToolCallState // assembled output slots
+	slotByUpstreamIndex map[int]int                // wire-position slot lookup
+	// mapToolName maps normalized function names into declared client names when
+	// present. Nil keeps normalized upstream names available.
+	mapToolName QoderToolNameMapper // declared-name transformation callback
 }
 
+// QoderOpenAIToolCallState retains assembled identity, name, type, and argument
+// text for one slot.
 type QoderOpenAIToolCallState struct {
-	ID        string
-	Type      string
-	Name      string
-	Arguments string
+	ID        string // upstream call identifier
+	Type      string // normalized call type
+	Name      string // declared function name
+	Arguments string // assembled JSON text
 }
 
+// QoderResponsesStreamToolState links an accumulator slot to one Responses
+// output item.
 type QoderResponsesStreamToolState struct {
-	itemID      string
-	callID      string
-	name        string
-	arguments   string
-	outputIndex int
-	added       bool
-	done        bool
+	// itemID and callID identify the response item and tool invocation, while
+	// outputIndex retains presentation order. added and done track frame lifecycle
+	// independently from accumulated arguments.
+	itemID      string // Responses output identifier
+	callID      string // Responses invocation identifier
+	name        string // declared function name
+	arguments   string // assembled argument text
+	outputIndex int    // allocated output position
+	added       bool   // item start attempted
+	done        bool   // item completion recorded
 }
 
+// QoderAnthropicContentWriter emits serialized indexed blocks and buffers split
+// tool arguments.
 type QoderAnthropicContentWriter struct {
-	w                 io.Writer
-	nextIndex         int
-	openTextIndex     *int
-	openThinkingIndex *int
-	pendingToolCalls  *QoderOpenAIToolCallAccumulator
-	mapToolName       QoderToolNameMapper
-	sawToolCall       bool
+	w io.Writer // serialized SSE writer
+	// nextIndex allocates every content position, while openTextIndex and
+	// openThinkingIndex identify active blocks. pendingToolCalls flush before a
+	// different content kind starts, retaining block order.
+	nextIndex         int  // next content position
+	openTextIndex     *int // current text position
+	openThinkingIndex *int // current thinking position
+	// pendingToolCalls retains fragments until a content transition or finalization
+	// flushes them. The flush detaches state before emitting complete tool blocks.
+	pendingToolCalls *QoderOpenAIToolCallAccumulator // unflushed call accumulator
+	// mapToolName maps normalized function names into declared client names when
+	// present. Nil keeps normalized upstream names available.
+	mapToolName QoderToolNameMapper // declared-name transformation callback
+	// sawToolCall becomes true after the accumulator accepts a meaningful delta.
+	// stopReason uses it even when a later argument validation or output write fails.
+	sawToolCall bool // meaningful call observed
 }
 
+// QoderEventResult carries one scanner batch or terminal failure to its
+// consumer.
 type QoderEventResult struct {
-	events []SSEEvent
-	err    error
+	// ScanQoderEvents supplies events for a parsed batch or err for a failure.
+	// StreamQoderEvents checks err before dispatching events, retaining terminal
+	// failure precedence at the consumer.
+	events []SSEEvent // parsed event batch
+	err    error      // scanner or parser failure
 }
 
+// QoderMessageHasToolCalls reports whether raw history contains identifiable
+// named tool calls.
 func QoderMessageHasToolCalls(message QoderMessage) bool {
 	return len(QoderToolCallNamesFromRaw(message.Raw)) > 0
 }
 
+// QoderMessageToolCallID selects explicit message identity before recognized raw
+// result-ID aliases. Candidates are trimmed, and no usable value returns empty
+// text for prompt and result enrichment callers.
 func QoderMessageToolCallID(message QoderMessage) string {
 	return FirstNonEmptyQoder(
 		message.ToolCallID,
@@ -156,6 +273,10 @@ func QoderMessageToolCallID(message QoderMessage) string {
 	)
 }
 
+// QoderToolCallNamesFromRaw indexes named calls from modern history and
+// Anthropic tool-use blocks. Only entries with both ID and name contribute;
+// later matching IDs replace earlier names, and absent raw history returns an
+// empty map.
 func QoderToolCallNamesFromRaw(raw map[string]any) map[string]string {
 	names := map[string]string{}
 	if len(raw) == 0 {
@@ -195,6 +316,10 @@ func QoderToolCallNamesFromRaw(raw map[string]any) map[string]string {
 	return names
 }
 
+// QoderToolArgumentsString returns argument text from strings, raw JSON, or
+// encoded values. Nil returns empty text; values that cannot be JSON marshaled
+// use formatted text so later protocol validation can report their
+// representation.
 func QoderToolArgumentsString(raw any) string {
 	switch v := raw.(type) {
 	case nil:
@@ -206,12 +331,18 @@ func QoderToolArgumentsString(raw any) string {
 	default:
 		body, err := json.Marshal(v)
 		if err != nil {
+			// Unsupported Go arguments cannot be JSON marshaled. Keep their formatted
+			// text so the protocol's tool-input validator can report the resulting
+			// unusable representation.
 			return fmt.Sprint(v)
 		}
 		return string(body)
 	}
 }
 
+// ReadQoderSSEEventsContext collects normalized events while the shared stream
+// reader owns body closure. Absent response bodies return an error. Stream or
+// callback failure discards the collected slice and returns that error.
 func ReadQoderSSEEventsContext(ctx context.Context, resp *http.Response, keepalive func() error) ([]SSEEvent, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("qoder response body is nil")
@@ -226,6 +357,9 @@ func ReadQoderSSEEventsContext(ctx context.Context, resp *http.Response, keepali
 	return events, nil
 }
 
+// WriteQoderStreamKeepalive writes and flushes a comment frame after output has
+// started. Nil context, missing writer, or unstarted output produces no write,
+// so heartbeat callbacks cannot begin a response by themselves.
 func WriteQoderStreamKeepalive(c *upstream.OutputContext, started bool) error {
 	if c == nil || c.Writer == nil || !started {
 		return nil
@@ -237,8 +371,19 @@ func WriteQoderStreamKeepalive(c *upstream.OutputContext, started bool) error {
 	return err
 }
 
+// Write forwards bytes and suppresses downstream write failures so usage
+// collection can continue. A missing writer or error reports full consumption
+// with no error; a successful short write retains its actual count.
+//
+// With a tracker, the first failure records disconnect and subsequent copies
+// stop delivering bytes. A nil tracker still suppresses each failure but
+// retains no disconnect observation between calls, so later writes can attempt
+// the underlying writer again.
 func (w QoderDisconnectAwareWriter) Write(p []byte) (int, error) {
 	if w.tracker != nil && w.tracker.disconnected {
+		// A disconnected output still consumes fragments from the converter. Report
+		// full consumption so upstream parsing can continue to its final usage
+		// observation.
 		return len(p), nil
 	}
 	if w.writer == nil {
@@ -257,6 +402,9 @@ func (w QoderDisconnectAwareWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// Flush delegates to the underlying HTTP flusher while the tracker remains
+// connected. A disconnected tracker suppresses further flushing, and writers
+// without http.Flusher retain their existing buffering behavior.
 func (w QoderDisconnectAwareWriter) Flush() {
 	if w.tracker != nil && w.tracker.disconnected {
 		return
@@ -266,38 +414,57 @@ func (w QoderDisconnectAwareWriter) Flush() {
 	}
 }
 
+// QoderOpenAIStreamUsageMapper returns an option carrying the Chat stream's
+// usage transformation callback.
 func QoderOpenAIStreamUsageMapper(mapper func(upstream.TokenUsage) upstream.TokenUsage) QoderOpenAIStreamResponseOption {
 	return QoderOpenAIStreamResponseOption{mapUsage: mapper}
 }
 
+// QoderOpenAIStreamToolNameMapper returns an option carrying the Chat stream's
+// declared-name callback.
 func QoderOpenAIStreamToolNameMapper(mapper QoderToolNameMapper) QoderOpenAIStreamResponseOption {
 	return QoderOpenAIStreamResponseOption{mapToolName: mapper}
 }
 
+// QoderOpenAIStreamIncludeUsage returns an option controlling Chat stream usage
+// chunk emission.
 func QoderOpenAIStreamIncludeUsage(include bool) QoderOpenAIStreamResponseOption {
 	return QoderOpenAIStreamResponseOption{includeUsage: include}
 }
 
+// QoderAnthropicStreamUsageMapper returns an option carrying the Messages
+// stream's usage transformation callback.
 func QoderAnthropicStreamUsageMapper(mapper func(upstream.TokenUsage) upstream.TokenUsage) QoderAnthropicStreamResponseOption {
 	return QoderAnthropicStreamResponseOption{mapUsage: mapper}
 }
 
+// QoderAnthropicStreamToolNameMapper returns an option carrying the Messages
+// stream's declared-name callback.
 func QoderAnthropicStreamToolNameMapper(mapper QoderToolNameMapper) QoderAnthropicStreamResponseOption {
 	return QoderAnthropicStreamResponseOption{mapToolName: mapper}
 }
 
+// QoderResponsesStreamUsageMapper returns an option carrying the Responses
+// stream's usage transformation callback.
 func QoderResponsesStreamUsageMapper(mapper func(upstream.TokenUsage) upstream.TokenUsage) QoderResponsesStreamResponseOption {
 	return QoderResponsesStreamResponseOption{mapUsage: mapper}
 }
 
+// QoderResponsesStreamToolNameMapper returns an option carrying the Responses
+// stream's declared-name callback.
 func QoderResponsesStreamToolNameMapper(mapper QoderToolNameMapper) QoderResponsesStreamResponseOption {
 	return QoderResponsesStreamResponseOption{mapToolName: mapper}
 }
 
+// QoderResponsesStreamResponseID returns an option retaining the Responses
+// stream's caller-selected response identifier.
 func QoderResponsesStreamResponseID(responseID string) QoderResponsesStreamResponseOption {
 	return QoderResponsesStreamResponseOption{responseID: responseID}
 }
 
+// QoderOpenAIStreamResponseOptions selects the first nonnil usage and tool-name
+// callbacks from options. Usage inclusion is true when any option requests it;
+// empty options keep nil callbacks and suppress usage chunks.
 func QoderOpenAIStreamResponseOptions(options []QoderOpenAIStreamResponseOption) (func(upstream.TokenUsage) upstream.TokenUsage, QoderToolNameMapper, bool) {
 	var usageMapper func(upstream.TokenUsage) upstream.TokenUsage
 	var toolNameMapper QoderToolNameMapper
@@ -314,6 +481,9 @@ func QoderOpenAIStreamResponseOptions(options []QoderOpenAIStreamResponseOption)
 	return usageMapper, toolNameMapper, includeUsage
 }
 
+// QoderAnthropicStreamResponseOptions selects the first nonnil usage and
+// tool-name callbacks. Empty options keep both callbacks nil, leaving the
+// Messages writer's native observations and tool spellings available.
 func QoderAnthropicStreamResponseOptions(options []QoderAnthropicStreamResponseOption) (func(upstream.TokenUsage) upstream.TokenUsage, QoderToolNameMapper) {
 	var usageMapper func(upstream.TokenUsage) upstream.TokenUsage
 	var toolNameMapper QoderToolNameMapper
@@ -328,6 +498,9 @@ func QoderAnthropicStreamResponseOptions(options []QoderAnthropicStreamResponseO
 	return usageMapper, toolNameMapper
 }
 
+// QoderResponsesStreamResponseOptions selects first nonnil callbacks and the
+// first nonempty response ID. Empty options leave the ID blank so the Responses
+// writer can generate one at execution time.
 func QoderResponsesStreamResponseOptions(options []QoderResponsesStreamResponseOption) (func(upstream.TokenUsage) upstream.TokenUsage, QoderToolNameMapper, string) {
 	var usageMapper func(upstream.TokenUsage) upstream.TokenUsage
 	var toolNameMapper QoderToolNameMapper
@@ -346,10 +519,15 @@ func QoderResponsesStreamResponseOptions(options []QoderResponsesStreamResponseO
 	return usageMapper, toolNameMapper, responseID
 }
 
+// NewQoderTextToolCallTransformer creates an empty buffer and invocation counter
+// for one event sequence.
 func NewQoderTextToolCallTransformer() *QoderTextToolCallTransformer {
 	return &QoderTextToolCallTransformer{}
 }
 
+// NormalizeQoderTextToolCallEvents converts text-encoded calls across an ordered
+// event slice and flushes its tail. Empty input is returned as supplied; new
+// output events retain shared usage-detail references from unchanged events.
 func NormalizeQoderTextToolCallEvents(events []SSEEvent) []SSEEvent {
 	if len(events) == 0 {
 		return events
@@ -363,6 +541,14 @@ func NormalizeQoderTextToolCallEvents(events []SSEEvent) []SSEEvent {
 	return out
 }
 
+// Append buffers text deltas and returns complete text or tool-call observations
+// available so far. Nil transformer returns the supplied event, and an empty
+// text delta contributes no output. Nonempty text extends the held suffix before
+// drain examines complete markers.
+//
+// Non-text input first releases buffered text using final handling and then
+// follows it with that event. A reasoning, usage, or structured call event
+// therefore cannot complete a marker begun on the visible text channel.
 func (t *QoderTextToolCallTransformer) Append(event SSEEvent) []SSEEvent {
 	if t == nil {
 		return []SSEEvent{event}
@@ -379,6 +565,9 @@ func (t *QoderTextToolCallTransformer) Append(event SSEEvent) []SSEEvent {
 	return out
 }
 
+// Flush emits any remaining buffered text and complete calls at an
+// event-sequence end. Nil transformer returns nil; an incomplete or unparseable
+// call segment becomes literal text through drain's final handling.
 func (t *QoderTextToolCallTransformer) Flush() []SSEEvent {
 	if t == nil {
 		return nil
@@ -386,6 +575,15 @@ func (t *QoderTextToolCallTransformer) Flush() []SSEEvent {
 	return t.drain(true)
 }
 
+// drain emits safe text and complete tool calls while retaining a possible
+// unfinished marker. A trailing marker prefix stays buffered when final is
+// false, so a later text delta can complete its opening tag. Text before a full
+// marker is emitted immediately.
+//
+// Complete segments are parsed using their marker format. Failed parses remain
+// literal text, and final processing also releases unfinished segments. This
+// keeps visible input available when tool recognition fails while avoiding
+// premature emission of a marker split across adjacent text events.
 func (t *QoderTextToolCallTransformer) drain(final bool) []SSEEvent {
 	out := make([]SSEEvent, 0)
 	for t.buffer != "" {
@@ -396,6 +594,9 @@ func (t *QoderTextToolCallTransformer) drain(final bool) []SSEEvent {
 				t.buffer = ""
 				return out
 			}
+			// A trailing opening-tag prefix can continue in the next text event. Emit the
+			// preceding text now and retain only that suffix to avoid leaking split
+			// markup.
 			suffixLen := QoderToolCallStartSuffixLen(t.buffer)
 			text := t.buffer
 			if suffixLen > 0 {
@@ -426,6 +627,9 @@ func (t *QoderTextToolCallTransformer) drain(final bool) []SSEEvent {
 		}
 		segmentEnd := len(startTag) + end + len(endTag)
 		segment := t.buffer[:segmentEnd]
+		// Recognition failure leaves the complete segment as literal visible text.
+		// This keeps unsupported or malformed markup available instead of silently
+		// discarding user output.
 		if events, ok := t.parseToolCallSegment(segment, marker); ok {
 			out = append(out, events...)
 		} else {
@@ -436,6 +640,9 @@ func (t *QoderTextToolCallTransformer) drain(final bool) []SSEEvent {
 	return out
 }
 
+// QoderTextToolCallMarkerStart returns the earliest XML or DSML call marker
+// position and format. Missing markers report a negative position; XML wins when
+// it occurs before the DSML marker.
 func QoderTextToolCallMarkerStart(text string) (int, string) {
 	xmlStart := strings.Index(text, QoderTextToolCallStart)
 	dsmlStart := strings.Index(text, QoderDSMLToolCallsStart)
@@ -448,6 +655,9 @@ func QoderTextToolCallMarkerStart(text string) (int, string) {
 	return dsmlStart, QoderDSMLToolCallsStart
 }
 
+// QoderTextToolCallMarkerTags returns the matching DSML tag pair for its
+// supported marker. Every other marker selects the XML pair, letting drain use
+// one extraction sequence for either format.
 func QoderTextToolCallMarkerTags(marker string) (string, string) {
 	if marker == QoderDSMLToolCallsStart {
 		return QoderDSMLToolCallsStart, QoderDSMLToolCallsEnd
@@ -455,6 +665,15 @@ func QoderTextToolCallMarkerTags(marker string) (string, string) {
 	return QoderTextToolCallStart, QoderTextToolCallEnd
 }
 
+// QoderToolCallStartSuffixLen returns the longest trailing fragment that
+// prefixes a supported opening marker. It examines XML and DSML markers and
+// excludes complete opening tags, which drain handles as full segments. Zero
+// means no suffix needs to remain buffered.
+//
+// The longest match retains all bytes that could continue into a marker on the
+// next visible-text event. Shorter matches could release part of that opening
+// sequence as ordinary text and prevent later recognition. The caller emits
+// the preceding text and holds this suffix until continuation or final flush.
 func QoderToolCallStartSuffixLen(text string) int {
 	maxSuffix := 0
 	for _, marker := range []string{QoderTextToolCallStart, QoderDSMLToolCallsStart} {
@@ -468,6 +687,9 @@ func QoderToolCallStartSuffixLen(text string) int {
 	return maxSuffix
 }
 
+// parseToolCallSegment dispatches one complete text segment to DSML or XML/JSON
+// recognition. Failed recognition reports false so drain can emit the complete
+// segment as visible text.
 func (t *QoderTextToolCallTransformer) parseToolCallSegment(segment string, marker string) ([]SSEEvent, bool) {
 	if marker == QoderDSMLToolCallsStart {
 		return t.parseDSMLToolCalls(segment)
@@ -479,6 +701,15 @@ func (t *QoderTextToolCallTransformer) parseToolCallSegment(segment string, mark
 	return []SSEEvent{event}, true
 }
 
+// parseToolCall converts one XML-style segment, trying embedded JSON recognition
+// first. If JSON recognition fails, the text before argument tags becomes the
+// candidate name. Blank names and incomplete key/value tags report false so
+// drain can retain the segment as literal output.
+//
+// Argument keys and values are entity-decoded into a JSON object, with later
+// repeated keys replacing earlier values. Successful recognition assigns the
+// next invocation index and a segment-based ID before advancing the counter;
+// failed XML recognition leaves that counter unchanged.
 func (t *QoderTextToolCallTransformer) parseToolCall(segment string) (SSEEvent, bool) {
 	inner := strings.TrimPrefix(segment, QoderTextToolCallStart)
 	inner = strings.TrimSuffix(inner, QoderTextToolCallEnd)
@@ -486,6 +717,8 @@ func (t *QoderTextToolCallTransformer) parseToolCall(segment string) (SSEEvent, 
 	if inner == "" {
 		return SSEEvent{}, false
 	}
+	// Text markers can hold JSON invocations or XML-style names and arguments. Try
+	// JSON first so a valid serialized object cannot become a function name.
 	if event, ok := t.parseJSONToolCall(inner, segment); ok {
 		return event, true
 	}
@@ -549,6 +782,15 @@ func (t *QoderTextToolCallTransformer) parseToolCall(segment string) (SSEEvent, 
 	}, true
 }
 
+// parseJSONToolCall converts a named JSON invocation inside a text-call segment.
+// The inner text is entity-decoded before JSON parsing. Nested function fields
+// precede flat name and argument aliases, while inline command fields can supply
+// otherwise absent arguments.
+//
+// A supplied ID precedes the generated segment-based identity. Name/argument
+// normalization maps supported shell forms before assigning the next invocation
+// index. Only successful named recognition advances the counter, and missing
+// arguments use an empty object representation for later assembly.
 func (t *QoderTextToolCallTransformer) parseJSONToolCall(inner string, segment string) (SSEEvent, bool) {
 	decodedText := strings.TrimSpace(html.UnescapeString(inner))
 	if !strings.HasPrefix(decodedText, "{") {
@@ -595,6 +837,9 @@ func (t *QoderTextToolCallTransformer) parseJSONToolCall(inner string, segment s
 	}, true
 }
 
+// FirstPresentQoderToolArguments returns the first nonblank serialized argument
+// candidate in order. Nil and blank candidates are skipped; no usable input
+// returns an empty JSON object string for call construction.
 func FirstPresentQoderToolArguments(values ...any) string {
 	for _, value := range values {
 		if value == nil {
@@ -608,6 +853,9 @@ func FirstPresentQoderToolArguments(values ...any) string {
 	return "{}"
 }
 
+// QoderInlineToolArguments copies recognized command, cmd, and description
+// fields into an argument object. No matching field returns nil so JSON call
+// parsing can consider that candidate absent.
 func QoderInlineToolArguments(payload map[string]any) any {
 	if len(payload) == 0 {
 		return nil
@@ -624,6 +872,15 @@ func QoderInlineToolArguments(payload map[string]any) any {
 	return args
 }
 
+// NormalizeQoderTextToolCallNameAndArguments normalizes shell names and their
+// argument representation for client output. Shell and execute_bash become Bash;
+// other names retain trimmed spelling and supplied arguments.
+//
+// Bash object arguments rename cmd to command only when command is absent.
+// Non-JSON command text becomes a command object, while malformed
+// object/array-looking text remains available for protocol validation. This
+// avoids treating an incomplete structured argument as a literal shell command
+// while supporting text command variants.
 func NormalizeQoderTextToolCallNameAndArguments(name string, arguments string) (string, string) {
 	originalName := strings.TrimSpace(name)
 	normalizedName := originalName
@@ -634,6 +891,9 @@ func NormalizeQoderTextToolCallNameAndArguments(name string, arguments string) (
 		return normalizedName, arguments
 	}
 	args := map[string]any{}
+	// Shell arguments can be plain command text or structured JSON. A malformed
+	// object-looking fragment stays available for validation, while plain command
+	// text gains a command field.
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		command := strings.TrimSpace(arguments)
 		if command == "" || command == "{}" {
@@ -642,6 +902,9 @@ func NormalizeQoderTextToolCallNameAndArguments(name string, arguments string) (
 		if strings.HasPrefix(command, "{") || strings.HasPrefix(command, "[") {
 			return normalizedName, arguments
 		}
+		// The replacement contains a string-valued command field, which JSON can
+		// encode. Return that object for plain command text after structured parsing
+		// failed.
 		body, _ := json.Marshal(map[string]any{"command": command})
 		return normalizedName, string(body)
 	}
@@ -658,6 +921,16 @@ func NormalizeQoderTextToolCallNameAndArguments(name string, arguments string) (
 	return normalizedName, string(body)
 }
 
+// parseDSMLToolCalls scans a complete DSML wrapper for invocation segments and
+// returns recognized calls. Malformed opening or closing invocation tags report
+// false. Individually unusable invocations are skipped, and at least one
+// recognized call is needed for success.
+//
+// Child recognition assigns sequence indices as it succeeds. A later malformed
+// wrapper fragment can therefore reject the segment after earlier invocations
+// have advanced the counter; drain then emits the segment literally. Callers
+// process a segment once instead of assuming failed wrapper recognition leaves
+// transformer state unchanged.
 func (t *QoderTextToolCallTransformer) parseDSMLToolCalls(segment string) ([]SSEEvent, bool) {
 	inner := strings.TrimPrefix(segment, QoderDSMLToolCallsStart)
 	inner = strings.TrimSuffix(inner, QoderDSMLToolCallsEnd)
@@ -683,6 +956,9 @@ func (t *QoderTextToolCallTransformer) parseDSMLToolCalls(segment string) ([]SSE
 		}
 		openTag := rest[:openEnd+1]
 		body := rest[openEnd+1 : openEnd+1+closeStart]
+		// A framed wrapper can contain invocations lacking names or usable parameters.
+		// Skip those child records so later recognizable calls can still contribute
+		// events from this segment.
 		if event, ok := t.parseDSMLInvoke(openTag, body, segment); ok {
 			events = append(events, event)
 		}
@@ -691,6 +967,15 @@ func (t *QoderTextToolCallTransformer) parseDSMLToolCalls(segment string) ([]SSE
 	return events, len(events) > 0
 }
 
+// parseDSMLInvoke converts a named invocation with named parameter tags into one
+// function event. The invocation needs a double-quoted name and at least one
+// parsed argument. Named parameter values are entity-decoded as strings, and
+// malformed parameter tags reject the invocation.
+//
+// Arguments are marshaled into JSON before shell normalization and sequence
+// assignment. Successful recognition advances the synthetic index and derives
+// its ID from that index plus the wrapper segment, keeping multiple invocations
+// inside the same DSML text distinguishable.
 func (t *QoderTextToolCallTransformer) parseDSMLInvoke(openTag string, body string, segment string) (SSEEvent, bool) {
 	name := QoderTagAttribute(openTag, "name")
 	if name == "" {
@@ -740,6 +1025,9 @@ func (t *QoderTextToolCallTransformer) parseDSMLInvoke(openTag string, body stri
 	}, true
 }
 
+// QoderTagAttribute reads and entity-decodes a double-quoted named attribute
+// from a tag. Missing opening or closing quote returns empty text, which the
+// DSML parser treats as absent identity.
 func QoderTagAttribute(tag string, name string) string {
 	pattern := name + `="`
 	start := strings.Index(tag, pattern)
@@ -754,6 +1042,9 @@ func QoderTagAttribute(tag string, name string) string {
 	return strings.TrimSpace(html.UnescapeString(tag[start : start+end]))
 }
 
+// NormalizeQoderOutboundToolCallEvent applies shell name/argument normalization
+// when a tool name is available. Unnamed fragments remain supplied so the
+// accumulator can associate them using ID, index, or a single existing call.
 func NormalizeQoderOutboundToolCallEvent(event SSEEvent) SSEEvent {
 	if strings.TrimSpace(event.ToolName) == "" {
 		return event
@@ -762,11 +1053,18 @@ func NormalizeQoderOutboundToolCallEvent(event SSEEvent) SSEEvent {
 	return event
 }
 
+// QoderTextToolCallID derives a call identifier from invocation index and
+// segment bytes. The index separates equal segments within one sequence, and the
+// first twelve SHA-1 bytes produce its hexadecimal suffix.
 func QoderTextToolCallID(index int, segment string) string {
 	sum := sha1.Sum([]byte(fmt.Sprintf("%d\n%s", index, segment)))
+	// Twelve digest bytes supply the call identifier's hexadecimal suffix.
 	return fmt.Sprintf("call_%x", sum[:12])
 }
 
+// NewQoderOpenAIToolCallAccumulator creates call state with the first nonnil
+// name mapper. Callers serialize mutations for one event sequence; no mapper
+// leaves incoming normalized tool names available.
 func NewQoderOpenAIToolCallAccumulator(toolNameMappers ...QoderToolNameMapper) *QoderOpenAIToolCallAccumulator {
 	var mapper QoderToolNameMapper
 	for _, candidate := range toolNameMappers {
@@ -778,6 +1076,16 @@ func NewQoderOpenAIToolCallAccumulator(toolNameMappers ...QoderToolNameMapper) *
 	return &QoderOpenAIToolCallAccumulator{mapToolName: mapper}
 }
 
+// AppendDelta merges one normalized tool fragment and returns its outgoing
+// delta. Nil accumulator or empty placeholder produces an empty slice. An
+// argument-only fragment with no ID, index, or name is discarded when multiple
+// calls make its destination ambiguous.
+//
+// resolveIndex prefers existing call identity and tracks upstream positions
+// across drift or reuse. State stores the latest ID/type/name and merged
+// arguments before rebinding the wire index. The outgoing delta keeps its
+// resolved slot, while the default function type remains separate from call
+// identity.
 func (a *QoderOpenAIToolCallAccumulator) AppendDelta(event SSEEvent) []any {
 	if a == nil {
 		return []any{}
@@ -786,10 +1094,15 @@ func (a *QoderOpenAIToolCallAccumulator) AppendDelta(event SSEEvent) []any {
 	if QoderToolCallDeltaIsEmptyPlaceholder(event) {
 		return []any{}
 	}
-	// The parser may supply a default function type, so type cannot identify the call receiving arguments.
+	// The parser can default ToolType to function on an argument-only fragment.
+	// With multiple calls and no ID/index/name, discard it because no invocation
+	// owns those arguments.
 	if event.ToolCallID == "" && !event.HasToolCallIndex && event.ToolName == "" && event.Arguments != "" && len(a.calls) > 1 {
 		return []any{}
 	}
+	// Resolve identity before changing the slot contents, then rebind the wire
+	// position to that slot. Later fragments must follow the chosen invocation
+	// even when its upstream index drifts.
 	index := a.resolveIndex(event)
 	for len(a.calls) <= index {
 		a.calls = append(a.calls, QoderOpenAIToolCallState{Type: "function"})
@@ -813,6 +1126,9 @@ func (a *QoderOpenAIToolCallAccumulator) AppendDelta(event SSEEvent) []any {
 	return []any{QoderOpenAIToolCallDelta(index, a.mapEventToolName(event))}
 }
 
+// toolName applies the optional declared-name mapper to a nonblank tool name.
+// Nil accumulator, absent mapper, blank name, or blank mapper result returns the
+// supplied spelling.
 func (a *QoderOpenAIToolCallAccumulator) toolName(name string) string {
 	if a == nil || a.mapToolName == nil || strings.TrimSpace(name) == "" {
 		return name
@@ -824,6 +1140,8 @@ func (a *QoderOpenAIToolCallAccumulator) toolName(name string) string {
 	return mapped
 }
 
+// mapEventToolName returns an event with its nonempty tool name mapped for
+// output.
 func (a *QoderOpenAIToolCallAccumulator) mapEventToolName(event SSEEvent) SSEEvent {
 	if event.ToolName != "" {
 		event.ToolName = a.toolName(event.ToolName)
@@ -831,6 +1149,9 @@ func (a *QoderOpenAIToolCallAccumulator) mapEventToolName(event SSEEvent) SSEEve
 	return event
 }
 
+// Calls returns new maps for meaningful accumulated calls in slot order. Slots
+// lacking ID, name, and arguments are skipped; a missing type becomes function,
+// and nil or empty accumulators return an empty slice.
 func (a *QoderOpenAIToolCallAccumulator) Calls() []any {
 	if a == nil || len(a.calls) == 0 {
 		return []any{}
@@ -852,11 +1173,27 @@ func (a *QoderOpenAIToolCallAccumulator) Calls() []any {
 	return out
 }
 
+// HasToolCalls reports whether Calls returns a meaningful assembled
+// invocation. A nil or empty accumulator reports false, while placeholder-only
+// state also contributes no call to protocol finish-reason selection.
 func (a *QoderOpenAIToolCallAccumulator) HasToolCalls() bool {
 	return len(a.Calls()) > 0
 }
 
+// resolveIndex selects the output slot for a normalized call fragment before
+// mutation. Explicit call ID matches existing state before upstream position
+// lookup. A bound position can be reused for compatible identity or allocate a
+// new slot for a different named completed call.
+//
+// Unindexed named invocations can start a new implicit slot after a complete
+// call, while otherwise compatible fragments continue the last call. Unresolved
+// explicit positions can create sparse slots. An unbound argument-only position
+// can still continue the last slot; established bindings or other identity are
+// needed to associate parallel fragments. Identity-first matching handles known
+// call IDs when their wire position drifts or is reused.
 func (a *QoderOpenAIToolCallAccumulator) resolveIndex(event SSEEvent) int {
+	// AppendDelta can rebind a wire position after each fragment. Search stored IDs
+	// first so a moved position cannot split an already identified invocation.
 	if event.ToolCallID != "" {
 		for i := range a.calls {
 			if a.calls[i].ID == event.ToolCallID {
@@ -901,6 +1238,10 @@ func (a *QoderOpenAIToolCallAccumulator) resolveIndex(event SSEEvent) int {
 	return len(a.calls)
 }
 
+// shouldStartImplicitToolCall reports whether an unindexed, unidentified event
+// begins a new call after the last slot. Nil/empty state and explicit ID or
+// index return false; the slot predicate owns the name and completed-argument
+// decision.
 func (a *QoderOpenAIToolCallAccumulator) shouldStartImplicitToolCall(event SSEEvent) bool {
 	if a == nil || len(a.calls) == 0 || event.ToolCallID != "" || event.HasToolCallIndex {
 		return false
@@ -908,6 +1249,15 @@ func (a *QoderOpenAIToolCallAccumulator) shouldStartImplicitToolCall(event SSEEv
 	return a.shouldStartNewToolCallInSlot(event, len(a.calls)-1)
 }
 
+// shouldStartNewToolCallInSlot recognizes a named unidentified invocation after
+// meaningful existing state. Explicit IDs remain authoritative and cannot start
+// a new call through this predicate. Missing names, invalid slots, and slots
+// with no ID/name/arguments return false.
+//
+// Complete non-placeholder JSON arguments indicate an earlier call can be
+// followed by another named start in the same wire position. Another
+// named start also qualifies before arguments arrive, while an empty-object
+// marker remains replaceable argument setup rather than proof of completed work.
 func (a *QoderOpenAIToolCallAccumulator) shouldStartNewToolCallInSlot(event SSEEvent, index int) bool {
 	if a == nil || index < 0 || index >= len(a.calls) || event.ToolCallID != "" {
 		return false
@@ -925,6 +1275,8 @@ func (a *QoderOpenAIToolCallAccumulator) shouldStartNewToolCallInSlot(event SSEE
 	return existing.Name != "" && existing.Arguments == "" && event.Arguments == ""
 }
 
+// QoderToolArgumentsAreCompleteJSON reports whether nonblank argument text is a
+// complete JSON value.
 func QoderToolArgumentsAreCompleteJSON(arguments string) bool {
 	trimmed := strings.TrimSpace(arguments)
 	if trimmed == "" {
@@ -933,6 +1285,16 @@ func QoderToolArgumentsAreCompleteJSON(arguments string) bool {
 	return json.Valid([]byte(trimmed))
 }
 
+// MergeQoderToolArguments combines argument fragments while treating an
+// empty-object marker as replaceable. A blank delta retains existing text and a
+// blank existing value accepts the delta. An empty-object delta retains
+// established arguments, while an existing empty object yields to subsequent
+// real argument text.
+//
+// Remaining fragments concatenate in arrival order. This avoids inserting parser
+// placeholder objects into a split argument representation; completeness and
+// call identity are checked by the accumulator and protocol consumer rather than
+// this string merge.
 func MergeQoderToolArguments(existing string, delta string) string {
 	if delta == "" {
 		return existing
@@ -949,10 +1311,16 @@ func MergeQoderToolArguments(existing string, delta string) string {
 	return existing + delta
 }
 
+// QoderToolCallDeltaIsEmptyPlaceholder reports a type-bearing event lacking
+// ID, name, and arguments. An index alone does not change that result, so
+// protocol writers can drop metadata that contributes no invocation content.
 func QoderToolCallDeltaIsEmptyPlaceholder(event SSEEvent) bool {
 	return event.ToolCallID == "" && event.ToolName == "" && event.Arguments == "" && event.ToolType != ""
 }
 
+// bindUpstreamIndex records a valid wire position against its resolved output
+// slot. Missing/negative indices and invalid slots are ignored. The latest
+// binding follows the resolved call when a wire position is reused.
 func (a *QoderOpenAIToolCallAccumulator) bindUpstreamIndex(event SSEEvent, slot int) {
 	if a == nil || !event.HasToolCallIndex || event.ToolCallIndex < 0 || slot < 0 || slot >= len(a.calls) {
 		return
@@ -971,6 +1339,9 @@ func (a *QoderOpenAIToolCallAccumulator) bindUpstreamIndex(event SSEEvent, slot 
 	a.slotByUpstreamIndex[event.ToolCallIndex] = slot
 }
 
+// QoderOpenAIToolCallDelta builds a client delta with the resolved slot and
+// supplied call fields. Empty-object argument placeholders are omitted, and
+// missing type becomes function when an ID or name identifies the invocation.
 func QoderOpenAIToolCallDelta(index int, event SSEEvent) map[string]any {
 	function := map[string]any{}
 	if event.ToolName != "" {
@@ -996,17 +1367,34 @@ func QoderOpenAIToolCallDelta(index int, event SSEEvent) map[string]any {
 	return delta
 }
 
+// QoderToolArgumentDeltaIsEmptyPlaceholder checks the event's arguments for the
+// empty-object marker.
 func QoderToolArgumentDeltaIsEmptyPlaceholder(event SSEEvent) bool {
 	return QoderToolArgumentStringIsEmptyPlaceholder(event.Arguments)
 }
 
+// QoderToolArgumentStringIsEmptyPlaceholder reports trimmed argument text equal
+// to an empty object.
 func QoderToolArgumentStringIsEmptyPlaceholder(arguments string) bool {
 	return strings.TrimSpace(arguments) == "{}"
 }
 
+// WriteQoderOpenAIStreamResponse emits Chat chunks from normalized Qoder
+// observations and returns measured usage. The caller supplies a usable
+// OutputContext and context budget; this writer owns response-body closure. Text
+// and tool events mark output, while Chat reasoning events are omitted. Usage
+// chunks appear only when requested.
+//
+// A disconnect-aware writer suppresses delivery after the first write failure
+// while scanning continues. Completion emits one finish chunk and DONE marker,
+// and keepalives run only after output starts. A stream error returns partial
+// evidence only when both output and usage have been observed, allowing Execute
+// to settle known work while rolling back history.
 func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputContext, model string, resp *http.Response, options ...QoderOpenAIStreamResponseOption) (*QoderStreamResult, error) {
 	usageMapper, toolNameMapper, includeUsage := QoderOpenAIStreamResponseOptions(options)
-	// This writer owns the response body through completion or failure.
+	// Stream processing can stop at completion, parse failure, or context expiry.
+	// Keep body closure with this writer so every exit releases the upstream
+	// response.
 	defer CloseQoderResponse(resp)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -1014,6 +1402,7 @@ func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputConte
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 
+	// Chat completion IDs use twenty-four hyphen-free UUID characters.
 	completionID := "chatcmpl-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
 	started := false
 	writeTracker := &QoderStreamWriteTracker{}
@@ -1035,6 +1424,8 @@ func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputConte
 	result := &QoderStreamResult{}
 	toolCalls := NewQoderOpenAIToolCallAccumulator(toolNameMapper)
 	finalized := false
+	// DONE and EOF can both reach finalization. Mark it once before output so
+	// repeated completion cannot append another finish chunk or terminal marker.
 	finish := func() error {
 		if finalized {
 			return nil
@@ -1111,6 +1502,8 @@ func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputConte
 		if writeTracker.disconnected {
 			return nil
 		}
+		// A heartbeat failure also identifies lost downstream delivery. Record it
+		// here and continue reading so this attempt can still capture trailing usage.
 		if err := WriteQoderStreamKeepalive(c, started); err != nil {
 			writeTracker.disconnected = true
 		}
@@ -1124,9 +1517,22 @@ func WriteQoderOpenAIStreamResponse(ctx context.Context, c *upstream.OutputConte
 	return result, nil
 }
 
+// WriteQoderAnthropicStreamResponse emits Messages blocks from normalized text,
+// thinking, tool, and usage observations. The caller supplies a usable
+// OutputContext and context budget, and the writer owns response-body closure.
+// Block ordering and buffered tool arguments are managed by
+// QoderAnthropicContentWriter.
+//
+// Downstream failure suppresses delivery while usage collection can continue.
+// Finalization closes pending blocks, creates empty text content when needed,
+// and emits one message_delta/message_stop pair with mapped usage. Stream errors
+// return partial evidence only after output and usage are both observed, while
+// keepalives stay within started output.
 func WriteQoderAnthropicStreamResponse(ctx context.Context, c *upstream.OutputContext, model string, resp *http.Response, options ...QoderAnthropicStreamResponseOption) (*QoderStreamResult, error) {
 	usageMapper, toolNameMapper := QoderAnthropicStreamResponseOptions(options)
-	// This writer owns the response body through completion or failure.
+	// This writer owns the response body through completion or failure. Every read,
+	// callback, or context exit can end the stream. Keep response closure with this
+	// writer so completion and failure release the same upstream body.
 	defer CloseQoderResponse(resp)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -1167,6 +1573,9 @@ func WriteQoderAnthropicStreamResponse(ctx context.Context, c *upstream.OutputCo
 	result := &QoderStreamResult{}
 	writer := NewQoderAnthropicContentWriter(streamWriter, toolNameMapper)
 	finalized := false
+	// Completion can arrive as DONE or exhausted scanning. Finalize once before
+	// closing content and writing usage, so cleanup cannot repeat the message
+	// terminal sequence.
 	finish := func() error {
 		if finalized {
 			return nil
@@ -1236,6 +1645,8 @@ func WriteQoderAnthropicStreamResponse(ctx context.Context, c *upstream.OutputCo
 		if writeTracker.disconnected {
 			return nil
 		}
+		// A heartbeat failure also identifies lost downstream delivery. Record it
+		// here and continue reading so this attempt can still capture trailing usage.
 		if err := WriteQoderStreamKeepalive(c, started); err != nil {
 			writeTracker.disconnected = true
 		}
@@ -1249,10 +1660,17 @@ func WriteQoderAnthropicStreamResponse(ctx context.Context, c *upstream.OutputCo
 	return result, nil
 }
 
+// BuildQoderResponsesResponse builds Responses JSON through the shared Messages
+// response converter. The bridge generates response identity; callers needing a
+// specific ID use BuildQoderResponsesResponseWithID and supply that identity.
 func BuildQoderResponsesResponse(model string, events []SSEEvent, toolNameMappers ...QoderToolNameMapper) ([]byte, error) {
 	return BuildQoderResponsesResponseWithID(model, "", events, toolNameMappers...)
 }
 
+// BuildQoderResponsesResponseWithID builds Responses JSON from normalized
+// Messages content and usage. A nonblank response ID overrides the
+// bridge-generated ID and model remains caller-selected; malformed tool input
+// propagates from Messages assembly.
 func BuildQoderResponsesResponseWithID(model, responseID string, events []SSEEvent, toolNameMappers ...QoderToolNameMapper) ([]byte, error) {
 	anthropicBody, err := BuildQoderAnthropicMessage(model, events, toolNameMappers...)
 	if err != nil {
@@ -1270,6 +1688,18 @@ func BuildQoderResponsesResponseWithID(model, responseID string, events []SSEEve
 	return json.Marshal(responsesResp)
 }
 
+// WriteQoderResponsesStreamResponse emits ordered Responses items and final
+// usage from Qoder observations. The caller supplies a usable OutputContext and
+// context budget; this writer owns response-body closure. An empty configured ID
+// generates a Responses ID, and output frames receive increasing sequence
+// numbers.
+//
+// Text, reasoning, and tools retain their allocated output indices through
+// added, delta, done, and completed events. Tool identity resolution precedes
+// accumulator mutation so item state follows the same slot. Downstream failure
+// suppresses later writes while usage scanning continues. Finalization closes
+// open items once, orders completed items by output index, and returns partial
+// evidence on error only after output plus usage were observed.
 func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputContext, model string, resp *http.Response, options ...QoderResponsesStreamResponseOption) (*QoderStreamResult, error) {
 	usageMapper, toolNameMapper, responseID := QoderResponsesStreamResponseOptions(options)
 	defer CloseQoderResponse(resp)
@@ -1284,6 +1714,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 	}
 	sequence := 0
 	clientDisconnected := false
+	// A write failure ends delivery while upstream collection remains active. Track
+	// that failure in this frame writer so later event transitions can still retain
+	// final usage.
 	writeEventFrame := func(evt protocolopenai.ResponsesStreamEvent) error {
 		if clientDisconnected {
 			return nil
@@ -1351,6 +1784,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		return outputs
 	}
 
+	// openReasoning, closeReasoning, openMessage, and closeMessage allocate item
+	// indices in observed content order. Close each prior representation before
+	// starting another so its done frames and final output retain the same ID.
 	var reasoningItemID string
 	reasoningOutputIndex := -1
 	reasoningOpen := false
@@ -1486,6 +1922,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		normalized := NormalizeQoderOutboundToolCallEvent(event)
 		return toolAccumulator.resolveIndex(normalized)
 	}
+	// A tool's output index is allocated before its name may arrive. Keep item ID,
+	// call ID, arguments, and lifecycle together until the named start frame can be
+	// emitted.
 	ensureToolAdded := func(index int) (*QoderResponsesStreamToolState, error) {
 		for len(toolAccumulator.calls) <= index {
 			toolAccumulator.calls = append(toolAccumulator.calls, QoderOpenAIToolCallState{Type: "function"})
@@ -1567,6 +2006,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		}
 		return nil
 	}
+	// Tool starts can precede their final name or arguments. Refresh each item from
+	// its accumulator slot before completion, then guard done frames so repeated
+	// finalization cannot duplicate a named invocation.
 	closeTools := func() error {
 		indexes := make([]int, 0, len(toolStates))
 		for index := range toolStates {
@@ -1615,6 +2057,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		return nil
 	}
 	finalized := false
+	// Completion can be observed before the scanner channel ends. Close open items
+	// and publish ordered completed output once so repeated finalization cannot
+	// duplicate response.completed.
 	finish := func() error {
 		if finalized {
 			return nil
@@ -1699,6 +2144,8 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 		if clientDisconnected {
 			return nil
 		}
+		// A heartbeat failure also identifies lost downstream delivery. Record it
+		// here and continue reading so this attempt can still capture trailing usage.
 		if err := WriteQoderStreamKeepalive(c, started); err != nil {
 			clientDisconnected = true
 		}
@@ -1712,6 +2159,9 @@ func WriteQoderResponsesStreamResponse(ctx context.Context, c *upstream.OutputCo
 	return result, nil
 }
 
+// ToResponsesCallIDForQoder trims an ID and adds the Responses call_ prefix when
+// absent. Blank input stays blank, and already prefixed IDs retain their
+// spelling for continuation pairing.
 func ToResponsesCallIDForQoder(id string) string {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {
@@ -1723,10 +2173,15 @@ func ToResponsesCallIDForQoder(id string) string {
 	return "call_" + trimmed
 }
 
+// QoderResponsesID returns a fresh resp_ identifier derived from a random UUID.
 func QoderResponsesID() string {
 	return "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
+// QoderResponsesUsage assembles Responses totals from uncached, cache-read,
+// cache-created, and output tokens. Input categories are added once and positive
+// cache reads produce input_tokens_details; other usage detail fields remain
+// outside this representation.
 func QoderResponsesUsage(usage upstream.TokenUsage) *protocolopenai.ResponsesUsage {
 	inputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	out := &protocolopenai.ResponsesUsage{
@@ -1740,6 +2195,9 @@ func QoderResponsesUsage(usage upstream.TokenUsage) *protocolopenai.ResponsesUsa
 	return out
 }
 
+// NewQoderAnthropicContentWriter creates ordered block state around the supplied
+// writer. Only the first mapper argument is considered, including nil; callers
+// serialize content operations and own the underlying writer lifetime.
 func NewQoderAnthropicContentWriter(w io.Writer, toolNameMapper ...QoderToolNameMapper) *QoderAnthropicContentWriter {
 	writer := &QoderAnthropicContentWriter{w: w}
 	if len(toolNameMapper) > 0 {
@@ -1748,6 +2206,15 @@ func NewQoderAnthropicContentWriter(w io.Writer, toolNameMapper ...QoderToolName
 	return writer
 }
 
+// writeTextDelta emits visible text after completing pending tool and thinking
+// blocks. Empty text is ignored, including no block allocation. The first
+// nonempty text fragment allocates an index and emits its empty start block
+// before recording that index.
+//
+// Later text fragments reuse the open index until a content transition closes
+// it. Flushing earlier content before that start keeps tool arguments and
+// thinking in separate preceding blocks. Protocol-write failures return to the
+// stream owner, which retains any already observed output and usage.
 func (w *QoderAnthropicContentWriter) writeTextDelta(text string) error {
 	if strings.TrimSpace(text) == "" && text == "" {
 		return nil
@@ -1777,6 +2244,15 @@ func (w *QoderAnthropicContentWriter) writeTextDelta(text string) error {
 	})
 }
 
+// writeThinkingDelta emits reasoning after completing text and pending tool
+// blocks. Empty text is ignored. A first fragment allocates a content index and
+// emits an empty thinking start before recording the open index.
+//
+// Later fragments use the same index until another content kind closes it.
+// Closing visible text and flushing buffered tools first keeps reasoning
+// fragments from extending the preceding block's representation. Protocol-write
+// failures return to finalization instead of silently creating a complete
+// thinking block.
 func (w *QoderAnthropicContentWriter) writeThinkingDelta(text string) error {
 	if text == "" {
 		return nil
@@ -1806,6 +2282,15 @@ func (w *QoderAnthropicContentWriter) writeThinkingDelta(text string) error {
 	})
 }
 
+// writeToolCall buffers a normalized invocation after closing open text and
+// thinking blocks. An empty placeholder contributes no state. Closing those
+// blocks before accepting the call gives later emitted tool-use blocks their own
+// content positions.
+//
+// The pending accumulator keeps split parameters associated with call identity,
+// and a meaningful returned delta records tool-use evidence. Arguments remain
+// buffered until a content transition or finalization flushes them, when
+// assembled JSON is validated before the input delta is emitted.
 func (w *QoderAnthropicContentWriter) writeToolCall(event SSEEvent) error {
 	normalized := NormalizeQoderOutboundToolCallEvent(event)
 	if QoderToolCallDeltaIsEmptyPlaceholder(normalized) {
@@ -1826,6 +2311,10 @@ func (w *QoderAnthropicContentWriter) writeToolCall(event SSEEvent) error {
 	return nil
 }
 
+// closeOpenBlock closes text and thinking blocks before flushing buffered tool
+// calls. It returns the first protocol-write or argument-validation error,
+// allowing finalization to report a failed stream with already observed
+// evidence.
 func (w *QoderAnthropicContentWriter) closeOpenBlock() error {
 	if err := w.closeOpenTextBlock(); err != nil {
 		return err
@@ -1836,29 +2325,50 @@ func (w *QoderAnthropicContentWriter) closeOpenBlock() error {
 	return w.flushPendingToolCalls()
 }
 
+// closeOpenTextBlock emits one stop for the current text block and clears its
+// index. No open block returns nil; clearing happens before writing so
+// subsequent cleanup cannot emit the same stop again.
 func (w *QoderAnthropicContentWriter) closeOpenTextBlock() error {
 	if w.openTextIndex == nil {
 		return nil
 	}
 	index := *w.openTextIndex
+	// Clear the open text index before sending its stop frame. If output fails,
+	// later cleanup then sees the closed state and cannot repeat that frame.
 	w.openTextIndex = nil
 	return WriteAnthropicSSE(w.w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 }
 
+// closeOpenThinkingBlock emits one stop for the current thinking block and
+// clears its index. No open block returns nil; clearing happens before writing
+// so subsequent cleanup cannot emit the same stop again.
 func (w *QoderAnthropicContentWriter) closeOpenThinkingBlock() error {
 	if w.openThinkingIndex == nil {
 		return nil
 	}
 	index := *w.openThinkingIndex
+	// Clear the open thinking index before sending its stop frame. A later cleanup
+	// after write failure then cannot emit another stop for that index.
 	w.openThinkingIndex = nil
 	return WriteAnthropicSSE(w.w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 }
 
+// flushPendingToolCalls emits assembled calls as ordered Messages tool-use
+// blocks. Pending state is detached before output, so a failed flush is not
+// repeated by cleanup. Calls receive new content indices in accumulator order.
+//
+// Each block starts with empty input, then assembled argument text is validated
+// as a JSON object or null before its input_json_delta and stop frame. This waits for
+// split fragments to form one argument representation and reports malformed
+// arguments to the stream owner after any already emitted block start.
 func (w *QoderAnthropicContentWriter) flushPendingToolCalls() error {
 	if w.pendingToolCalls == nil {
 		return nil
 	}
 	calls := w.pendingToolCalls.Calls()
+	// Detach this call batch before emission. A later cleanup after a write or
+	// validation error must not replay the same block starts and partially
+	// delivered arguments.
 	w.pendingToolCalls = nil
 	for _, rawCall := range calls {
 		call, ok := rawCall.(map[string]any)
@@ -1903,6 +2413,9 @@ func (w *QoderAnthropicContentWriter) flushPendingToolCalls() error {
 	return nil
 }
 
+// ensureContentBlock creates an empty text block when no content index has been
+// allocated. Nil writer or prior content is ignored, keeping successful empty
+// responses valid for Messages finalization.
 func (w *QoderAnthropicContentWriter) ensureContentBlock() error {
 	if w == nil || w.nextIndex > 0 {
 		return nil
@@ -1919,6 +2432,9 @@ func (w *QoderAnthropicContentWriter) ensureContentBlock() error {
 	return WriteAnthropicSSE(w.w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 }
 
+// stopReason selects tool_use when this writer recorded a meaningful buffered
+// invocation. Nil writers and other responses use end_turn; allocated text or
+// thinking blocks alone do not select tool use.
 func (w *QoderAnthropicContentWriter) stopReason() string {
 	if w != nil && w.sawToolCall {
 		return "tool_use"
@@ -1926,6 +2442,15 @@ func (w *QoderAnthropicContentWriter) stopReason() string {
 	return "end_turn"
 }
 
+// QoderSendEventResult delivers one scanner result or reports cancellation
+// before delivery. Callers provide a nonnil context and an open result channel.
+// Cancellation permits a blocked producer to stop when its consumer has
+// returned.
+//
+// If send and cancellation are both ready, select can choose either; callers
+// cannot use the return value as proof that cancellation won every race. The
+// boolean tells ScanQoderEvents whether to continue producing results, while the
+// stream owner separately closes the response body to interrupt reads.
 func QoderSendEventResult(ctx context.Context, results chan<- QoderEventResult, result QoderEventResult) bool {
 	select {
 	case results <- result:
@@ -1935,9 +2460,16 @@ func QoderSendEventResult(ctx context.Context, results chan<- QoderEventResult, 
 	}
 }
 
+// ScanQoderEvents parses bounded SSE lines and closes its output channel when
+// scanning ends. The stream owner closes the response body; this scanner
+// observes context cancellation at result sends. Parse errors and scanner errors
+// are delivered through the same channel, and completion events stop further
+// scanning.
 func ScanQoderEvents(ctx context.Context, resp *http.Response, results chan<- QoderEventResult) {
 	defer close(results)
 	scanner := bufio.NewScanner(resp.Body)
+	// Wrapped argument JSON can exceed the initial allocation. Permit growth up to
+	// the shared SSE line cap before reporting an oversized representation.
 	scanner.Buffer(make([]byte, 0, 64*1024), defaultMaxLineSize)
 	for scanner.Scan() {
 		parsed, err := ParseSSELine(scanner.Text())
@@ -1955,7 +2487,9 @@ func ScanQoderEvents(ctx context.Context, resp *http.Response, results chan<- Qo
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Include the configured limit when the SSE line exceeds the scanner buffer.
+		// A line-size failure has no parsed event to diagnose. Report the configured
+		// maximum together with the initial buffer size in the scanner error's
+		// diagnostic text.
 		if errors.Is(err, bufio.ErrTooLong) {
 			QoderSendEventResult(ctx, results, QoderEventResult{
 				err: fmt.Errorf("SSE event exceeds max line size (%d bytes, buffer limit %d): %w", defaultMaxLineSize, 64*1024, err),
@@ -1966,6 +2500,18 @@ func ScanQoderEvents(ctx context.Context, resp *http.Response, results chan<- Qo
 	}
 }
 
+// StreamQoderEvents coordinates scanner results, transformed callbacks,
+// keepalives, and context cancellation. Nil context selects Background; callers
+// supply a usable body and handler, and Close must release blocked reads for
+// prompt scanner cleanup. A child context lets result sends stop when
+// consumption ends. Handlers run serially and need to return; cancellation
+// cannot interrupt a callback already executing.
+//
+// The scanner runs separately so keepalive and cancellation can progress while
+// upstream reads wait. Completion, EOF, cancellation, callback error, or scan
+// error ends consumption; EOF flushes buffered text, while an error returns
+// immediately. Exit stops the ticker, cancels sends, and closes the body,
+// without joining the scanner goroutine.
 func StreamQoderEvents(ctx context.Context, resp *http.Response, handle func(SSEEvent) error, keepalive func() error) error {
 	if resp == nil || resp.Body == nil {
 		return errors.New("qoder response body is nil")
@@ -1973,6 +2519,9 @@ func StreamQoderEvents(ctx context.Context, resp *http.Response, handle func(SSE
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Give result sends their own cancellation signal. Consumption can end before
+	// scanning, so exit cancellation releases a producer blocked behind the
+	// callback owner.
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() { _ = resp.Body.Close() }()
 	defer cancel()
@@ -1981,6 +2530,9 @@ func StreamQoderEvents(ctx context.Context, resp *http.Response, handle func(SSE
 	defer ticker.Stop()
 	results := make(chan QoderEventResult, 1)
 	transformer := NewQoderTextToolCallTransformer()
+	// Upstream reads can wait while cancellation and keepalives need to progress.
+	// Run scanning separately and transfer batches through the bounded result
+	// channel to this owner.
 	go ScanQoderEvents(ctx, resp, results)
 	for {
 		select {
@@ -2018,12 +2570,26 @@ func StreamQoderEvents(ctx context.Context, resp *http.Response, handle func(SSE
 	}
 }
 
+// CloseQoderResponse closes a present response body and ignores its cleanup
+// error. Nil response or body is accepted, allowing protocol writers to use the
+// same deferred cleanup after partial setup.
 func CloseQoderResponse(resp *http.Response) {
 	if resp != nil && resp.Body != nil {
+		// Read or conversion results already determine this attempt's outcome. Ignore
+		// cleanup failure here so a deferred close cannot replace that result.
 		_ = resp.Body.Close()
 	}
 }
 
+// BuildQoderOpenAICompletion assembles normalized visible text, calls, and
+// observed usage into Chat JSON. Text-encoded calls are transformed before
+// content extraction, so recognized markup becomes structured invocations and
+// unrecognized text stays visible. Chat reasoning content is omitted.
+//
+// Meaningful calls select tool_calls finish reason and set scalar content to
+// null when no visible text remains. The latest usage snapshot and selected
+// total are formatted with their detail observations, and the model remains
+// caller-selected rather than inferred from the upstream route.
 func BuildQoderOpenAICompletion(model string, events []SSEEvent, toolNameMappers ...QoderToolNameMapper) ([]byte, error) {
 	events = NormalizeQoderTextToolCallEvents(events)
 	content := QoderTextFromEvents(events)
@@ -2056,6 +2622,10 @@ func BuildQoderOpenAICompletion(model string, events []SSEEvent, toolNameMappers
 	})
 }
 
+// BuildQoderAnthropicMessage assembles normalized ordered content and observed
+// usage into Messages JSON. Malformed tool arguments return an error. Meaningful
+// calls select tool_use stop reason, and empty content becomes one empty text
+// block.
 func BuildQoderAnthropicMessage(model string, events []SSEEvent, toolNameMappers ...QoderToolNameMapper) ([]byte, error) {
 	events = NormalizeQoderTextToolCallEvents(events)
 	contentBlocks, err := QoderAnthropicContentBlocksFromEvents(events, toolNameMappers...)
@@ -2080,6 +2650,9 @@ func BuildQoderAnthropicMessage(model string, events []SSEEvent, toolNameMappers
 	})
 }
 
+// QoderOpenAIToolCallsFromEvents assembles structured call deltas in event order
+// using the shared accumulator. Text-encoded calls need prior normalization, and
+// the first nonnil supplied mapper determines declared names.
 func QoderOpenAIToolCallsFromEvents(events []SSEEvent, toolNameMappers ...QoderToolNameMapper) []any {
 	acc := NewQoderOpenAIToolCallAccumulator(toolNameMappers...)
 	for _, event := range events {
@@ -2090,6 +2663,8 @@ func QoderOpenAIToolCallsFromEvents(events []SSEEvent, toolNameMappers ...QoderT
 	return acc.Calls()
 }
 
+// QoderEventsHaveToolCalls reports meaningful structured calls after accumulator
+// identity and placeholder handling.
 func QoderEventsHaveToolCalls(events []SSEEvent) bool {
 	acc := NewQoderOpenAIToolCallAccumulator()
 	for _, event := range events {
@@ -2100,11 +2675,24 @@ func QoderEventsHaveToolCalls(events []SSEEvent) bool {
 	return acc.HasToolCalls()
 }
 
+// QoderAnthropicContentBlocksFromEvents assembles ordered text, thinking, and
+// tool blocks from normalized observations. Text and reasoning fragments
+// accumulate until a different content kind forces their block to flush. Tool
+// fragments share an accumulator until text, reasoning, or the sequence end
+// flushes them.
+//
+// Assembled tool arguments must decode as an object or null before their block is
+// appended. Empty placeholders contribute no block, and no content produces one
+// empty text block. This keeps content-kind ordering while waiting for split
+// tool arguments to become complete.
 func QoderAnthropicContentBlocksFromEvents(events []SSEEvent, toolNameMappers ...QoderToolNameMapper) ([]any, error) {
 	blocks := make([]any, 0)
 	var text bytes.Buffer
 	var thinking bytes.Buffer
 	var toolAccumulator *QoderOpenAIToolCallAccumulator
+	// Flush each prior content kind before accumulating another. These buffers and
+	// the tool accumulator retain arrival order while split arguments wait for
+	// validation at their block emission.
 	flushText := func() {
 		if text.Len() == 0 {
 			return
@@ -2179,12 +2767,18 @@ func QoderAnthropicContentBlocksFromEvents(events []SSEEvent, toolNameMappers ..
 	if err := flushTools(); err != nil {
 		return nil, err
 	}
+	// The successful empty-response path still supplies a content representation.
+	// Return one empty text block when normalized observations contributed no
+	// visible or tool content.
 	if len(blocks) == 0 {
 		return []any{map[string]any{"type": "text", "text": ""}}, nil
 	}
 	return blocks, nil
 }
 
+// QoderAnthropicToolInput decodes serialized tool arguments as a JSON object or
+// null. Blank argument text returns a new empty object; malformed or non-object
+// JSON returns an error for Messages assembly.
 func QoderAnthropicToolInput(raw any) (map[string]any, error) {
 	args := QoderToolArgumentsString(raw)
 	if strings.TrimSpace(args) == "" {
@@ -2197,6 +2791,10 @@ func QoderAnthropicToolInput(raw any) (map[string]any, error) {
 	return nil, fmt.Errorf("malformed qoder tool arguments: %s", args)
 }
 
+// QoderUsageFromEvents returns the token snapshot supplied by the last observed
+// usage event. Each HasUsage event replaces current counts through
+// MergeQoderUsageEvent, including explicit zero observations; no usage returns
+// zero values.
 func QoderUsageFromEvents(events []SSEEvent) upstream.TokenUsage {
 	usage := upstream.TokenUsage{}
 	for _, event := range events {
@@ -2207,6 +2805,9 @@ func QoderUsageFromEvents(events []SSEEvent) upstream.TokenUsage {
 	return usage
 }
 
+// QoderUsageDetailsFromEvents returns detail pointers from the last HasUsage
+// observation. Missing usage returns an empty value, and the selected pointers
+// remain shared with the event until callers finish protocol serialization.
 func QoderUsageDetailsFromEvents(events []SSEEvent) UsageDetails {
 	for _, event := range slices.Backward(events) {
 		if event.HasUsage {
@@ -2216,12 +2817,26 @@ func QoderUsageDetailsFromEvents(events []SSEEvent) UsageDetails {
 	return UsageDetails{}
 }
 
+// MergeQoderUsageEvent replaces token counts from an observed usage payload and
+// splits cached input. Nil target or an event without HasUsage is ignored.
+// Prompt detail presence selects uncached input as max(prompt minus cached,
+// zero), while cache-read count retains the reported cached value.
+//
+// Cached input can exceed prompt input; the clamp affects uncached input alone.
+// Detail-bearing events clear cache creation. Absent prompt details restore
+// prompt input, clear cache reads, and retain existing cache creation; completion
+// replaces output. Observed
+// prompt/output categories replace prior counts rather than adding repeated
+// upstream observations.
 func MergeQoderUsageEvent(usage *upstream.TokenUsage, event SSEEvent) {
 	if usage == nil || !event.HasUsage {
 		return
 	}
 	cachedTokens := 0
 	if event.UsageDetails.PromptTokensDetails != nil {
+		// Upstream prompt counts include reported cache reads. Split those categories
+		// while clamping uncached input alone; cache-read evidence remains the
+		// upstream observation.
 		cachedTokens = event.UsageDetails.PromptTokensDetails.CachedTokens
 		usage.InputTokens = max(event.PromptTokens-cachedTokens, 0)
 		usage.CacheReadInputTokens = cachedTokens
@@ -2233,6 +2848,15 @@ func MergeQoderUsageEvent(usage *upstream.TokenUsage, event SSEEvent) {
 	usage.OutputTokens = event.CompletionTokens
 }
 
+// QoderEventsWithUsage copies the event slice and fills zero usage counts from a
+// supplied snapshot. Only existing HasUsage events are changed. Zero prompt uses
+// uncached plus cache-read input, zero completion uses supplied output, and zero
+// total derives from the resulting event counts.
+//
+// The operation does not add an observation when usage was absent. Its outer
+// copy leaves the input slice's scalar fields available unchanged, while nested
+// detail pointers remain shared; callers keep those details stable during
+// subsequent protocol serialization.
 func QoderEventsWithUsage(events []SSEEvent, usage upstream.TokenUsage) []SSEEvent {
 	if len(events) == 0 {
 		return events
@@ -2255,6 +2879,15 @@ func QoderEventsWithUsage(events []SSEEvent, usage upstream.TokenUsage) []SSEEve
 	return out
 }
 
+// QoderTotalTokensFromEvents selects the last observed total or derives a token
+// sum. A positive total in the last usage event wins. Otherwise that event's
+// prompt and completion counts supply their full sum when either is positive;
+// earlier totals are not reconsidered.
+//
+// When the last observation has no positive counts or usage is absent, fallback
+// uses the supplied uncached input and output counts. Cache reads enter through
+// the last event's prompt count when available. This selection keeps repeated
+// usage observations from being added together.
 func QoderTotalTokensFromEvents(events []SSEEvent, usage upstream.TokenUsage) int {
 	var lastPromptTokens int
 	var lastCompletionTokens int
@@ -2275,6 +2908,15 @@ func QoderTotalTokensFromEvents(events []SSEEvent, usage upstream.TokenUsage) in
 	return usage.InputTokens + usage.OutputTokens
 }
 
+// QoderOpenAIUsage formats prompt, completion, total, and optional detail fields
+// for Chat output. Prompt starts as uncached plus cache-read input. A positive
+// total at least as large as completion instead derives prompt as total minus
+// completion, and zero total derives from the selected counts.
+//
+// The first supplied UsageDetails value contributes cached/cacheable and
+// reasoning fields. Without prompt details, positive cache reads create a
+// cached-only detail object. Those breakdowns remain observations alongside the
+// outer count selection and are not recomputed from total.
 func QoderOpenAIUsage(usage upstream.TokenUsage, totalTokens int, usageDetails ...UsageDetails) map[string]any {
 	promptTokens := usage.InputTokens + usage.CacheReadInputTokens
 	completionTokens := usage.OutputTokens
@@ -2304,6 +2946,9 @@ func QoderOpenAIUsage(usage upstream.TokenUsage, totalTokens int, usageDetails .
 	return out
 }
 
+// QoderAnthropicUsage returns uncached input/output plus observable cache-read
+// or cache-creation fields. The first detail value can cause an explicit zero
+// cache-read field to be emitted; positive cache creation is emitted separately.
 func QoderAnthropicUsage(usage upstream.TokenUsage, usageDetails ...UsageDetails) map[string]any {
 	out := map[string]any{
 		"input_tokens":  usage.InputTokens,
@@ -2319,6 +2964,9 @@ func QoderAnthropicUsage(usage upstream.TokenUsage, usageDetails ...UsageDetails
 	return out
 }
 
+// QoderFirstUsageDetails selects the first supplied breakdown for protocol
+// output. Empty input returns an empty value; retained nested pointers stay
+// shared with the caller's observation during subsequent serialization.
 func QoderFirstUsageDetails(details []UsageDetails) UsageDetails {
 	if len(details) == 0 {
 		return UsageDetails{}
@@ -2326,6 +2974,9 @@ func QoderFirstUsageDetails(details []UsageDetails) UsageDetails {
 	return details[0]
 }
 
+// WriteSSEData marshals one data object, writes its SSE frame, and flushes when
+// supported. Marshal and write failures return to the protocol writer; callers
+// own writer lifetime and serialize event output.
 func WriteSSEData(w io.Writer, data map[string]any) error {
 	body, err := json.Marshal(data)
 	if err != nil {
@@ -2340,6 +2991,9 @@ func WriteSSEData(w io.Writer, data map[string]any) error {
 	return nil
 }
 
+// WriteAnthropicSSE marshals one named Messages frame and flushes the writer
+// when supported. Marshal and write failures return to the protocol owner;
+// callers serialize output and supply the event label.
 func WriteAnthropicSSE(w io.Writer, event string, data map[string]any) error {
 	body, err := json.Marshal(data)
 	if err != nil {
@@ -2354,6 +3008,9 @@ func WriteAnthropicSSE(w io.Writer, event string, data map[string]any) error {
 	return nil
 }
 
+// OpenAIChunk creates a Chat chunk with the supplied identity, delta, and finish
+// reason. The delta map remains shared and creation time is captured per chunk,
+// so callers keep it stable through serialization.
 func OpenAIChunk(id, model string, delta map[string]any, finishReason any) map[string]any {
 	return map[string]any{
 		"id":      id,
@@ -2370,6 +3027,9 @@ func OpenAIChunk(id, model string, delta map[string]any, finishReason any) map[s
 	}
 }
 
+// OpenAIUsageChunk creates a usage-bearing Chat chunk with empty choices and
+// current creation time. Counts and the first optional detail value are
+// formatted through QoderOpenAIUsage before serialization.
 func OpenAIUsageChunk(id, model string, usage upstream.TokenUsage, totalTokens int, usageDetails ...UsageDetails) map[string]any {
 	return map[string]any{
 		"id":      id,
@@ -2381,6 +3041,9 @@ func OpenAIUsageChunk(id, model string, usage upstream.TokenUsage, totalTokens i
 	}
 }
 
+// ResolveQoderModelForSite resolves a known public alias within the site or
+// retains a trimmed raw model. All returned routes use system source;
+// unregistered names remain available for configured upstream routing.
 func ResolveQoderModelForSite(site Site, model string) QoderModelInfo {
 	if info, ok := LookupQoderModelAliasForSite(site, strings.TrimSpace(model)); ok {
 		return info
@@ -2388,6 +3051,9 @@ func ResolveQoderModelForSite(site Site, model string) QoderModelInfo {
 	return QoderModelInfo{Key: strings.TrimSpace(model), Source: "system"}
 }
 
+// LatestQoderUserText returns the last nonblank user text while retaining its
+// spelling. Roles match user exactly, and an empty history or one lacking
+// usable user text produces empty output.
 func LatestQoderUserText(messages []QoderMessage) string {
 	for _, message := range slices.Backward(messages) {
 		if message.Role == "user" && strings.TrimSpace(message.Text) != "" {
@@ -2397,6 +3063,9 @@ func LatestQoderUserText(messages []QoderMessage) string {
 	return ""
 }
 
+// LatestQoderPromptText returns the last message whose prompt conversion
+// yields usable text. Empty history or entirely blank messages return empty
+// output so payload selection can consider another history source.
 func LatestQoderPromptText(messages []QoderMessage) string {
 	for _, message := range slices.Backward(messages) {
 		if text := QoderPromptTextForMessage(message); text != "" {
@@ -2406,6 +3075,9 @@ func LatestQoderPromptText(messages []QoderMessage) string {
 	return ""
 }
 
+// QoderPromptTextForMessage returns text with a tool-result wrapper when a tool
+// ID is available. Blank text returns empty, ordinary roles retain their text,
+// and the wrapper escapes call identity for markup.
 func QoderPromptTextForMessage(message QoderMessage) string {
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
@@ -2421,6 +3093,10 @@ func QoderPromptTextForMessage(message QoderMessage) string {
 	return fmt.Sprintf("<tool_result id=\"%s\">\n%s\n</tool_result>", html.EscapeString(toolCallID), message.Text)
 }
 
+// LatestQoderPayloadPromptText selects trailing tool continuation, then latest
+// user, then latest usable message text. The includeTools argument is currently
+// unused, so prompt selection follows message history regardless of
+// tool-definition inclusion.
 func LatestQoderPayloadPromptText(messages []QoderMessage, includeTools bool) string {
 	if text := QoderToolContinuationPromptText(messages); text != "" {
 		return text
@@ -2431,6 +3107,15 @@ func LatestQoderPayloadPromptText(messages []QoderMessage, includeTools bool) st
 	return LatestQoderPromptText(messages)
 }
 
+// QoderToolContinuationPromptText joins the trailing run of tool results into
+// a current prompt. A history containing only tools qualifies directly. When
+// earlier history exists, the immediately preceding turn needs identifiable
+// named calls before the tool run can replace ordinary user-text selection.
+//
+// The adjacency check identifies a call-bearing turn; it does not compare each
+// result ID with that turn's call IDs. QoderPromptTextForMessage wraps
+// available result identity and preserves readable result text. The request
+// parser separately owns Responses pairing before this prompt selection runs.
 func QoderToolContinuationPromptText(messages []QoderMessage) string {
 	toolStart := len(messages)
 	for toolStart > 0 && messages[toolStart-1].Role == "tool" {
@@ -2440,9 +3125,10 @@ func QoderToolContinuationPromptText(messages []QoderMessage) string {
 		return ""
 	}
 
-	// Tool-only Responses continuations can refer to assistant calls through previous_response_id.
-	// When replay history precedes the tools, require an adjacent assistant tool-call turn
-	// so historical tool results do not become the current prompt.
+	// A supplied history can consist entirely of tool results. When earlier history
+	// exists, require an adjacent assistant call turn so unrelated old results
+	// cannot replace the current prompt merely because they end the message
+	// sequence.
 	if toolStart > 0 && !QoderMessageHasToolCalls(messages[toolStart-1]) {
 		return ""
 	}
@@ -2456,6 +3142,9 @@ func QoderToolContinuationPromptText(messages []QoderMessage) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// QoderAnySlice returns a supplied []any directly or an empty slice for other
+// values. The returned input slice remains shared; callers copy it before
+// changing elements when they need independent ownership.
 func QoderAnySlice(raw any) []any {
 	if raw == nil {
 		return []any{}
@@ -2466,6 +3155,9 @@ func QoderAnySlice(raw any) []any {
 	return []any{}
 }
 
+// QoderStringField returns trimmed string or formatted text for a present map
+// value. Missing map/key or nil value returns empty text, letting protocol
+// callers apply their own precedence and defaults.
 func QoderStringField(values map[string]any, key string) string {
 	if len(values) == 0 {
 		return ""
@@ -2480,6 +3172,8 @@ func QoderStringField(values map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
+// QoderTextFromEvents concatenates visible text deltas in the supplied event
+// order.
 func QoderTextFromEvents(events []SSEEvent) string {
 	var buf bytes.Buffer
 	for _, event := range events {
@@ -2490,6 +3184,9 @@ func QoderTextFromEvents(events []SSEEvent) string {
 	return buf.String()
 }
 
+// NonEmptyStrings filters exactly empty strings in place and returns the reused
+// slice prefix. Whitespace-only strings remain present, and callers own the
+// input backing array because retained values overwrite its earlier elements.
 func NonEmptyStrings(values []string) []string {
 	out := values[:0]
 	for _, value := range values {
@@ -2500,6 +3197,9 @@ func NonEmptyStrings(values []string) []string {
 	return out
 }
 
+// TruncateRunes limits text by Unicode code-point count and returns empty for
+// nonpositive limits. A short input retains its supplied string; truncation can
+// divide a grapheme that contains multiple runes.
 func TruncateRunes(value string, limit int) string {
 	if limit <= 0 {
 		return ""
@@ -2508,23 +3208,36 @@ func TruncateRunes(value string, limit int) string {
 	if len(runes) <= limit {
 		return value
 	}
+	// Truncation counts Unicode code points, leaving the preceding complete runes.
 	return string(runes[:limit])
 }
 
+// GjsonString reads a top-level string field after decoding the complete JSON
+// object. Malformed JSON, missing key, or a nonstring value returns empty text;
+// path is a literal key rather than a dotted selector.
 func GjsonString(body []byte, path string) string {
 	var decoded map[string]any
 	if err := json.Unmarshal(body, &decoded); err != nil {
+		// Complete JSON decode failure leaves no usable top-level field. The empty
+		// result matches this helper's handling of missing or nonstring optional
+		// values.
 		return ""
 	}
 	value, _ := decoded[path].(string)
 	return value
 }
 
+// GjsonBool reads a selector and applies gjson's boolean conversion to its
+// result. True literals, recognized true strings, and nonzero numbers produce
+// true; missing, null, unsupported, or unrecognized string values produce
+// false.
 func GjsonBool(body []byte, path string) bool {
 	return gjson.GetBytes(body, path).Bool()
 }
 
-// LookupQoderModelAlias resolves public aliases; callers pass unmatched model names through.
+// LookupQoderModelAlias resolves normalized public aliases across global then CN
+// tables. The first match wins and unmatched input reports false; callers decide
+// whether to retain a raw route.
 func LookupQoderModelAlias(model string) (QoderModelInfo, bool) {
 	for _, site := range []Site{SiteGlobal, SiteCN} {
 		if info, ok := LookupQoderModelAliasForSite(site, model); ok {
@@ -2534,16 +3247,23 @@ func LookupQoderModelAlias(model string) (QoderModelInfo, bool) {
 	return QoderModelInfo{}, false
 }
 
-// LookupQoderModelAliasForSite resolves the alias using the site route map.
+// LookupQoderModelAliasForSite resolves a normalized public alias within the
+// selected route map. It returns system source even for an unmatched key, with
+// the boolean determining whether lookup succeeded.
 func LookupQoderModelAliasForSite(site Site, model string) (QoderModelInfo, bool) {
 	key, ok := AliasForSite(site, NormalizeQoderAliasModel(model))
 	return QoderModelInfo{Key: key, Source: "system"}, ok
 }
 
+// NormalizeQoderAliasModel trims and lowercases a client model name for alias
+// lookup.
 func NormalizeQoderAliasModel(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
+// FirstNonEmptyQoder selects the first candidate containing non-whitespace
+// text and returns its trimmed value. No candidates or an entirely blank list
+// produces empty text for the caller's next default.
 func FirstNonEmptyQoder(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -2553,7 +3273,9 @@ func FirstNonEmptyQoder(values ...string) string {
 	return ""
 }
 
-// qoderPartialStreamResult returns failed stream results that contain both output and observed usage.
+// qoderPartialStreamResult returns observed failure evidence only when both
+// output and usage are present. Other results become nil, so Execute cannot
+// account partial stream work from a missing usage observation.
 func qoderPartialStreamResult(result *QoderStreamResult) *QoderStreamResult {
 	if result != nil && result.HasOutput && result.HasUsage {
 		return result

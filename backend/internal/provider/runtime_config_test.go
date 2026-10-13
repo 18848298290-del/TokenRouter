@@ -5,11 +5,20 @@ import (
 	"testing"
 )
 
+// Provider RPM settings combine an observed count with a base limit, sticky
+// reserve, and strategy. These table cases protect parsing and default
+// behavior separately from allowance boundaries, including small-base
+// reserves, explicit overrides, and negative capacity inputs passed through
+// the runtime configuration reader.
+
+// TestGetBaseRPM compares absent, nonpositive, and supported numeric Extra
+// representations. It verifies the reader enables positive bases while
+// returning zero for missing or disabled settings.
 func TestGetBaseRPM(t *testing.T) {
 	tests := []struct {
-		name     string
-		extra    map[string]any
-		expected int
+		name     string         // table case description
+		extra    map[string]any // provider rate settings
+		expected int            // expected effective base
 	}{
 		{"nil extra", nil, 0},
 		{"no key", map[string]any{}, 0},
@@ -31,11 +40,14 @@ func TestGetBaseRPM(t *testing.T) {
 	}
 }
 
+// TestGetRPMStrategy supplies valid, absent, empty, invalid, and nonstring
+// strategy values. It verifies sticky_exempt requires its exact string and
+// all other cases select tiered admission.
 func TestGetRPMStrategy(t *testing.T) {
 	tests := []struct {
-		name     string
-		extra    map[string]any
-		expected string
+		name     string         // table case description
+		extra    map[string]any // provider rate settings
+		expected string         // expected admission strategy
 	}{
 		{"nil extra", nil, "tiered"},
 		{"no key", map[string]any{}, "tiered"},
@@ -55,12 +67,16 @@ func TestGetRPMStrategy(t *testing.T) {
 	}
 }
 
+// TestCheckRPMSchedulability evaluates counts below, at, and above
+// base-plus-reserve boundaries under both strategies. It verifies disabled
+// bases, sticky-only capacity, explicit reserves, small-base floors, and
+// negative observations.
 func TestCheckRPMSchedulability(t *testing.T) {
 	tests := []struct {
-		name       string
-		extra      map[string]any
-		currentRPM int
-		expected   WindowCostSchedulability
+		name       string                   // table case description
+		extra      map[string]any           // provider rate settings
+		currentRPM int                      // observed request count
+		expected   WindowCostSchedulability // expected admission allowance
 	}{
 		{"disabled", map[string]any{}, 100, WindowCostSchedulable},
 		{"green zone", map[string]any{"base_rpm": 15}, 10, WindowCostSchedulable},
@@ -88,44 +104,50 @@ func TestCheckRPMSchedulability(t *testing.T) {
 	}
 }
 
+// TestGetRPMStickyBuffer combines configured concurrency and sessions with
+// explicit reserve inputs. It verifies positive override precedence,
+// base-derived minimums, negative capacity handling, and supported numeric
+// representations through the runtime reader.
 func TestGetRPMStickyBuffer(t *testing.T) {
 	tests := []struct {
-		name        string
-		concurrency int
-		extra       map[string]any
-		expected    int
+		name        string         // table case description
+		concurrency int            // configured provider capacity
+		extra       map[string]any // provider reserve settings
+		expected    int            // expected reserve capacity
 	}{
-		// Missing or disabled base limits.
+		// Missing Extra and disabled bases yield no computed reserve.
 		{"nil extra", 0, nil, 0},
 		{"no keys", 0, map[string]any{}, 0},
 		{"base_rpm=0", 0, map[string]any{"base_rpm": 0}, 0},
 
-		// Computed buffer: concurrency plus sessions, subject to the base/5 floor.
+		// Active request capacity and retained sessions both contribute to the
+		// reserve, so these inputs exercise the combined policy result.
 		{"conc=3 sess=10 → 13", 3, map[string]any{"base_rpm": 15, "max_sessions": 10}, 13},
 		{"conc=2 sess=5 → 7", 2, map[string]any{"base_rpm": 10, "max_sessions": 5}, 7},
 		{"conc=3 sess=15 → 18", 3, map[string]any{"base_rpm": 30, "max_sessions": 15}, 18},
 
-		// The floor applies when concurrency plus sessions is too small.
+		// The base-derived floor keeps a whole-request reserve when capacity inputs
+		// contribute less than one fifth of the configured base.
 		{"conc=0 sess=0 base=15 → floor 3", 0, map[string]any{"base_rpm": 15}, 3},
 		{"conc=0 sess=0 base=10 → floor 2", 0, map[string]any{"base_rpm": 10}, 2},
 		{"conc=0 sess=0 base=1 → floor 1", 0, map[string]any{"base_rpm": 1}, 1},
 		{"conc=0 sess=0 base=4 → floor 1", 0, map[string]any{"base_rpm": 4}, 1},
 		{"conc=1 sess=0 base=15 → floor 3", 1, map[string]any{"base_rpm": 15}, 3},
 
-		// Positive manual overrides take precedence.
+		// A positive manual reserve replaces the computed capacity sum; zero and
+		// negative values leave that combined policy calculation selected.
 		{"custom buffer=5", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": 5, "max_sessions": 10}, 5},
 		{"custom buffer=0 fallback", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": 0, "max_sessions": 10}, 13},
 		{"custom buffer negative fallback", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": -1, "max_sessions": 10}, 13},
 		{"custom buffer with float", 3, map[string]any{"base_rpm": 10, "rpm_sticky_buffer": float64(7)}, 7},
 
-		// Negative inputs are clamped to zero.
+		// Negative capacity inputs contribute zero while the other capacity remains
+		// available, protecting the reserve from an invalid negative sum.
 		{"negative concurrency clamped", -5, map[string]any{"base_rpm": 15, "max_sessions": 10}, 10},
 		{"negative maxSessions clamped", 3, map[string]any{"base_rpm": 15, "max_sessions": -5}, 3},
 
-		// Concurrency can exceed the retained session count.
 		{"conc=10 sess=5 → 15", 10, map[string]any{"base_rpm": 10, "max_sessions": 5}, 15},
 
-		// json.Number
 		{"json.Number base_rpm", 3, map[string]any{"base_rpm": json.Number("10"), "max_sessions": json.Number("5")}, 8},
 	}
 	for _, tt := range tests {

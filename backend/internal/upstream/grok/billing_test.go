@@ -8,12 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildBillingURL exercises the default CLI billing target for both
+// window formats. It asserts the weekly credits query suffix and the separate
+// monthly URL use the expected pinned base path.
 func TestBuildBillingURL(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", BuildBillingURL(true))
 	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/billing", BuildBillingURL(false))
 }
 
+// TestBuildBillingURLWithValidator supplies trusted and public-base policies
+// for billing construction. It asserts the official weekly URL, accepts the
+// custom monthly relay, and rejects that relay under trusted-host validation.
 func TestBuildBillingURLWithValidator(t *testing.T) {
 	t.Parallel()
 	weeklyURL, err := BuildBillingURLWithValidator(DefaultCLIBaseURL, true, ValidateTrustedBaseURL)
@@ -28,6 +34,9 @@ func TestBuildBillingURLWithValidator(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestApplyCLIBillingHeaders starts with a constructed billing request and a
+// whitespace-padded token. It asserts trimmed bearer authentication and the
+// pinned token identity, version header, and pager/shell User-Agent.
 func TestApplyCLIBillingHeaders(t *testing.T) {
 	t.Parallel()
 	req, err := http.NewRequest(http.MethodGet, BuildBillingURL(true), nil)
@@ -41,6 +50,10 @@ func TestApplyCLIBillingHeaders(t *testing.T) {
 	require.Equal(t, "grok-pager/"+CLIClientVersion+" grok-shell/"+CLIClientVersion+" (macos; aarch64)", req.UserAgent())
 }
 
+// TestBuildBillingSummaryWeeklyAndMonthly decodes separate weekly credit and
+// monthly cent payloads before merging them. It asserts weekly
+// product/balance values, monthly percentages and dollar conversions, plan
+// recognition, and their combined window fields.
 func TestBuildBillingSummaryWeeklyAndMonthly(t *testing.T) {
 	t.Parallel()
 
@@ -99,6 +112,9 @@ func TestBuildBillingSummaryWeeklyAndMonthly(t *testing.T) {
 	require.InDelta(t, 0.78, *merged.MonthlyUsed, 1e-9)
 }
 
+// TestParseCentValueBareNumber supplies a bare numeric billing amount rather
+// than a wrapped val object. It asserts parsing returns a present pointer
+// with the same numeric value for later summary calculations.
 func TestParseCentValueBareNumber(t *testing.T) {
 	t.Parallel()
 	raw, _ := json.Marshal(15000)
@@ -107,6 +123,9 @@ func TestParseCentValueBareNumber(t *testing.T) {
 	require.InDelta(t, 15000, *v, 1e-9)
 }
 
+// TestBuildBillingSummaryMonthlyOnlyKeepsWeeklyUsageEmpty supplies monthly
+// included spending with no weekly credits. It asserts a monthly period and
+// its used percentage while the weekly UsagePercent pointer remains absent.
 func TestBuildBillingSummaryMonthlyOnlyKeepsWeeklyUsageEmpty(t *testing.T) {
 	t.Parallel()
 	payload, err := ParseBillingPayload([]byte(`{"config":{"monthlyLimit":{"val":15000},"used":{"val":7500},"billingPeriodStart":"2026-07-01T00:00:00Z","billingPeriodEnd":"2026-08-01T00:00:00Z"}}`))
@@ -119,9 +138,13 @@ func TestBuildBillingSummaryMonthlyOnlyKeepsWeeklyUsageEmpty(t *testing.T) {
 	require.InDelta(t, 50, *summary.UsedPercent, 1e-9)
 }
 
+// TestBuildBillingSummaryWeeklyDoesNotInheritMonthlyPeriodEnd combines weekly
+// progress with monthly dates but omits weekly end time. It asserts the
+// weekly end remains empty and the separate monthly billing end is retained.
 func TestBuildBillingSummaryWeeklyDoesNotInheritMonthlyPeriodEnd(t *testing.T) {
 	t.Parallel()
-	// A missing weekly currentPeriod.end must remain separate from the monthly billingPeriodEnd.
+	// Weekly progress exists but its reset date is absent. Supplying monthly dates
+	// in the same payload models why a monthly end cannot fill the weekly end field.
 	payload, err := ParseBillingPayload([]byte(`{
 		"config": {
 			"creditUsagePercent": 95.0,
@@ -140,6 +163,10 @@ func TestBuildBillingSummaryWeeklyDoesNotInheritMonthlyPeriodEnd(t *testing.T) {
 	require.Equal(t, "2026-08-01T00:00:00Z", summary.BillingPeriodEnd)
 }
 
+// TestMergeBillingProbeResultRetainsFailedWindow refreshes monthly data after
+// a failed weekly probe with a previous summary. It asserts retained weekly
+// values/time, advanced monthly data/time, and a new failure list that leaves
+// the previous list intact.
 func TestMergeBillingProbeResultRetainsFailedWindow(t *testing.T) {
 	t.Parallel()
 	previous := &BillingSummary{
@@ -182,6 +209,8 @@ func TestMergeBillingProbeResultRetainsFailedWindow(t *testing.T) {
 	require.Equal(t, []string{"monthly"}, previous.FailedWindows)
 }
 
+// floatPointer returns a pointer to one floating-point value for billing
+// fixtures.
 func floatPointer(value float64) *float64 {
 	return &value
 }

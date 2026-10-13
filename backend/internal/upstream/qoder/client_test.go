@@ -13,6 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Captured requests verify that Gateway transport URLs and signing paths use
+// different representations. Header fixtures distinguish global and CN machine
+// shapes, and SSE/error fixtures retain identity, usage, completion, and numeric
+// retry codes while checking redaction of credential text.
+
+// testSession returns new identity and machine structs with fixed global header
+// values. Encrypted fields are fixture strings for signing probes; tests can
+// modify the returned machine and identity independently.
 func testSession() *SessionContext {
 	return &SessionContext{
 		CosyKey: "test-cosy-key",
@@ -31,6 +39,10 @@ func testSession() *SessionContext {
 	}
 }
 
+// TestCNClientUsesGatewayEndpointVersionAndCanonicalSignaturePath captures a CN
+// inference request with fixed machine metadata. It checks endpoint and version
+// fields, empty CN machine values, and a signature recomputed from the logical
+// path.
 func TestCNClientUsesGatewayEndpointVersionAndCanonicalSignaturePath(t *testing.T) {
 	profile := MustProfileForSite(SiteCN)
 	profile.GatewayBaseURL = "https://gateway.example"
@@ -79,6 +91,9 @@ func TestCNClientUsesGatewayEndpointVersionAndCanonicalSignaturePath(t *testing.
 	require.Equal(t, expectedSignature, parts[1])
 }
 
+// TestJSONRequestAddsEncodeQueryWithoutSigningIt sends encoded Gateway JSON with
+// an existing region query. It checks the transport Encode marker and recomputes
+// authorization with the path excluding both query parameters.
 func TestJSONRequestAddsEncodeQueryWithoutSigningIt(t *testing.T) {
 	profile := MustProfileForSite(SiteCN)
 	profile.GatewayBaseURL = "https://gateway.example"
@@ -128,6 +143,9 @@ func TestJSONRequestAddsEncodeQueryWithoutSigningIt(t *testing.T) {
 	require.Equal(t, expectedSignature, parts[1])
 }
 
+// TestSignatureJSONRequestUsesAppcodeHeadersWithoutAuthorization sends CN status
+// with no completed identity. It checks Appcode signing and machine metadata
+// while rejecting encrypted-session headers from this pre-login request.
 func TestSignatureJSONRequestUsesAppcodeHeadersWithoutAuthorization(t *testing.T) {
 	profile := MustProfileForSite(SiteCN)
 	profile.GatewayBaseURL = "https://gateway.example"
@@ -173,6 +191,9 @@ func TestSignatureJSONRequestUsesAppcodeHeadersWithoutAuthorization(t *testing.T
 	require.NotContains(t, captured.Header, "Cosy-Organization-Tags")
 }
 
+// TestBearerJSONRequestUsesSecurityOAuthToken captures an imported CN quota
+// request with a security token. It checks the /algo URL and token Bearer value
+// without COSY key/date headers.
 func TestBearerJSONRequestUsesSecurityOAuthToken(t *testing.T) {
 	profile := MustProfileForSite(SiteCN)
 	profile.GatewayBaseURL = "https://gateway.example"
@@ -209,6 +230,9 @@ func TestBearerJSONRequestUsesSecurityOAuthToken(t *testing.T) {
 	require.NotContains(t, captured.Header, "Cosy-Date")
 }
 
+// getHeaders builds global signed headers around the fixed test session and
+// encoded body. It returns the request-owned header map for field assertions,
+// with generated date and signature values left available.
 func getHeaders(t *testing.T) http.Header {
 	t.Helper()
 	c := NewClient("https://test.qoder.sh")
@@ -217,6 +241,9 @@ func getHeaders(t *testing.T) http.Header {
 	return req.Header
 }
 
+// TestHeadersClientIPIsMachineID constructs global headers from a fixed session
+// machine ID. It checks that the client-IP field carries that machine identifier
+// for the global request shape.
 func TestHeadersClientIPIsMachineID(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-clientip") != "mid-abc" {
@@ -224,6 +251,9 @@ func TestHeadersClientIPIsMachineID(t *testing.T) {
 	}
 }
 
+// TestHeadersMachineTypeIs5 constructs global headers with the fixture's saved
+// machine type. The assertion checks that its protocol value five reaches the
+// outgoing machine-type header.
 func TestHeadersMachineTypeIs5(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-machinetype") != "5" {
@@ -231,6 +261,9 @@ func TestHeadersMachineTypeIs5(t *testing.T) {
 	}
 }
 
+// TestHeadersUsePersistedMachineToken constructs global headers with a saved
+// machine-token fixture. It checks that the outgoing token field uses the
+// persisted value available on the session machine.
 func TestHeadersUsePersistedMachineToken(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-machinetoken") != "mytoken" {
@@ -238,6 +271,9 @@ func TestHeadersUsePersistedMachineToken(t *testing.T) {
 	}
 }
 
+// TestHeadersDataPolicyIsDisagree constructs a global signed request with the
+// standard fixture identity. It checks the exact lowercase data-policy value
+// selected for that site's header shape.
 func TestHeadersDataPolicyIsDisagree(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-data-policy") != "disagree" {
@@ -245,6 +281,9 @@ func TestHeadersDataPolicyIsDisagree(t *testing.T) {
 	}
 }
 
+// TestHeadersUseGlobalSiteVersion constructs the default global client and
+// session headers. It checks the exact version string emitted when the request
+// uses the global integration defaults.
 func TestHeadersUseGlobalSiteVersion(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-version") != "1.24.2" {
@@ -252,6 +291,9 @@ func TestHeadersUseGlobalSiteVersion(t *testing.T) {
 	}
 }
 
+// TestHeadersIncludeMachineOSAndLegacyFallbacks removes saved global machine
+// token and type values before signing. It checks ID-based token fallback,
+// client type five, and the injected platform string.
 func TestHeadersIncludeMachineOSAndLegacyFallbacks(t *testing.T) {
 	session := testSession()
 	session.Machine.MachineToken = ""
@@ -265,6 +307,9 @@ func TestHeadersIncludeMachineOSAndLegacyFallbacks(t *testing.T) {
 	require.Equal(t, "aarch64_darwin", req.Header.Get("cosy-machineos"))
 }
 
+// TestCNHeadersIgnoreLegacyRandomMachineFields signs a CN request using a
+// session with legacy random machine fields. It checks cleared fields, CN
+// client/IP/policy values, and absence of global business headers.
 func TestCNHeadersIgnoreLegacyRandomMachineFields(t *testing.T) {
 	session := testSession()
 	session.Site = SiteCN
@@ -287,6 +332,9 @@ func TestCNHeadersIgnoreLegacyRandomMachineFields(t *testing.T) {
 	require.NotContains(t, req.Header, "Cosy-Business-Type")
 }
 
+// TestHeadersOrganizationID constructs global headers from the fixture
+// identity's organization metadata. It checks that the selected organization
+// identifier reaches the outgoing COSY organization-ID header.
 func TestHeadersOrganizationID(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-organization-id") != "org-789" {
@@ -294,6 +342,9 @@ func TestHeadersOrganizationID(t *testing.T) {
 	}
 }
 
+// TestHeadersOrganizationTags constructs global headers with the standard
+// session fixture. It checks the Normal organization-tags value selected by the
+// global request-header builder for this site.
 func TestHeadersOrganizationTags(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-organization-tags") != "Normal" {
@@ -301,6 +352,9 @@ func TestHeadersOrganizationTags(t *testing.T) {
 	}
 }
 
+// TestHeadersScene constructs the global inference header set around fixed
+// session metadata. It checks the assistant scene value used with that site's
+// CLI agent business headers.
 func TestHeadersScene(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-scene") != "assistant" {
@@ -308,6 +362,9 @@ func TestHeadersScene(t *testing.T) {
 	}
 }
 
+// TestHeadersBusinessProduct constructs the global inference header set around
+// fixed session metadata. It checks the cli business product value selected
+// alongside the global scene and business type.
 func TestHeadersBusinessProduct(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-business-product") != "cli" {
@@ -315,6 +372,9 @@ func TestHeadersBusinessProduct(t *testing.T) {
 	}
 }
 
+// TestHeadersBusinessType constructs the global inference header set around
+// fixed session metadata. It checks the agent business type emitted for that
+// site's CLI request representation.
 func TestHeadersBusinessType(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-business-type") != "agent" {
@@ -322,6 +382,9 @@ func TestHeadersBusinessType(t *testing.T) {
 	}
 }
 
+// TestHeadersNoHardcodedIP inspects the global client-IP value from the fixed
+// machine fixture. It rejects the specific 169.254.198.161 value, protecting
+// that request's machine-derived header representation.
 func TestHeadersNoHardcodedIP(t *testing.T) {
 	h := getHeaders(t)
 	if h.Get("cosy-clientip") == "169.254.198.161" {
@@ -329,7 +392,10 @@ func TestHeadersNoHardcodedIP(t *testing.T) {
 	}
 }
 
-// TestQoderGatewayShouldFailoverRetryableUpstreamErrors rejects ordinary errors and HTTP 401 for compatible requests.
+// TestQoderGatewayShouldFailoverRetryableUpstreamErrors passes quota,
+// entitlement, server, authentication, and ordinary failures to compatible retry
+// policy. It accepts retryable vendor/HTTP cases and rejects 401 plus unwrapped
+// errors.
 func TestQoderGatewayShouldFailoverRetryableUpstreamErrors(t *testing.T) {
 	require.True(t, MaySwitchCompatibleAttempt(&APIError{StatusCode: http.StatusTooManyRequests}))
 	require.True(t, MaySwitchCompatibleAttempt(&APIError{StatusCode: http.StatusBadGateway, Code: "115"}))
@@ -340,6 +406,9 @@ func TestQoderGatewayShouldFailoverRetryableUpstreamErrors(t *testing.T) {
 	require.False(t, MaySwitchCompatibleAttempt(fmt.Errorf("plain error")))
 }
 
+// TestParseSSELineTextDelta parses a wrapped choice containing one visible
+// content fragment. It checks exactly one text_delta event with the original
+// Hello text.
 func TestParseSSELineTextDelta(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}"}`
 	events, err := ParseSSELine(line)
@@ -357,6 +426,9 @@ func TestParseSSELineTextDelta(t *testing.T) {
 	}
 }
 
+// TestParseSSELineDone parses the standalone data DONE marker emitted at stream
+// completion. It requires one completion event so consumers stop scanning that
+// representation.
 func TestParseSSELineDone(t *testing.T) {
 	events, err := ParseSSELine(`data: [DONE]`)
 	if err != nil {
@@ -367,6 +439,9 @@ func TestParseSSELineDone(t *testing.T) {
 	}
 }
 
+// TestParseSSELineDoneInBody parses the DONE marker inside a Qoder wrapper body.
+// It requires one completion event, giving wrapped and standalone terminal forms
+// matching observable behavior.
 func TestParseSSELineDoneInBody(t *testing.T) {
 	events, err := ParseSSELine(`data: {"body": "[DONE]"}`)
 	if err != nil {
@@ -377,6 +452,9 @@ func TestParseSSELineDoneInBody(t *testing.T) {
 	}
 }
 
+// TestParseSSELineEmptyBody parses a valid wrapper carrying an empty body
+// string. It requires no error and no events so the scanner can continue to
+// later content.
 func TestParseSSELineEmptyBody(t *testing.T) {
 	events, err := ParseSSELine(`data: {"body": ""}`)
 	if err != nil {
@@ -387,6 +465,9 @@ func TestParseSSELineEmptyBody(t *testing.T) {
 	}
 }
 
+// TestParseSSELineToolCall parses a wrapped nested function call named bash. It
+// checks one tool_call_delta and the retained tool name used by later invocation
+// assembly.
 func TestParseSSELineToolCall(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"tc1\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}]}}]}"}`
 	events, err := ParseSSELine(line)
@@ -404,6 +485,9 @@ func TestParseSSELineToolCall(t *testing.T) {
 	}
 }
 
+// TestParseSSELineToolCallPreservesIndexTypeAndObjectArguments parses index zero
+// with function type and object arguments. It checks explicit index presence,
+// type, and serialized JSON argument text.
 func TestParseSSELineToolCallPreservesIndexTypeAndObjectArguments(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tc1\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":{\"cmd\":\"ls\"}}}]}}]}"}`
 	events, err := ParseSSELine(line)
@@ -425,6 +509,9 @@ func TestParseSSELineToolCallPreservesIndexTypeAndObjectArguments(t *testing.T) 
 	}
 }
 
+// TestParseSSELineToolCallSyntheticIndexSkipsEmptyPlaceholders parses empty
+// entries before three argument-bearing calls without indices. It requires
+// compact positions zero through two and retains each distinct argument object.
 func TestParseSSELineToolCallSyntheticIndexSkipsEmptyPlaceholders(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"tool_calls\":[{}, {\"type\":\"function\"}, {\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}, {\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"command\\\":\\\"printf OPENCODE_PARALLEL_OK\\\"}\"}}, {\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"pattern\\\":\\\"docs/*.md\\\"}\"}}]}}]}"}`
 	events, err := ParseSSELine(line)
@@ -444,6 +531,9 @@ func TestParseSSELineToolCallSyntheticIndexSkipsEmptyPlaceholders(t *testing.T) 
 	}
 }
 
+// TestParseSSELineToolUseEnvelopeEventsSkipTypeOnlyPlaceholder parses a tool-use
+// delta carrying only the default function type. It requires no normalized event
+// so empty metadata cannot invent a call.
 func TestParseSSELineToolUseEnvelopeEventsSkipTypeOnlyPlaceholder(t *testing.T) {
 	line := `data: {"body": "{\"event\":\"tool_use_delta\",\"data\":{\"type\":\"function\"}}"}`
 	events, err := ParseSSELine(line)
@@ -455,6 +545,9 @@ func TestParseSSELineToolUseEnvelopeEventsSkipTypeOnlyPlaceholder(t *testing.T) 
 	}
 }
 
+// TestParseSSELineFlatToolCall parses flat call-ID, name, and object-argument
+// wire fields. It checks normalized function type and the retained identifier,
+// Bash name, and argument JSON.
 func TestParseSSELineFlatToolCall(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"tool_call_id\":\"tc1\",\"name\":\"Bash\",\"arguments\":{\"command\":\"pwd\"}}]}}]}"}`
 	events, err := ParseSSELine(line)
@@ -476,6 +569,9 @@ func TestParseSSELineFlatToolCall(t *testing.T) {
 	}
 }
 
+// TestParseSSELineToolUseEnvelopeEvents parses a tool-use start followed by its
+// argument delta. It checks matching call identity and name plus the
+// continuation's complete argument text.
 func TestParseSSELineToolUseEnvelopeEvents(t *testing.T) {
 	start := `data: {"body": "{\"event\":\"tool_use_start\",\"data\":{\"id\":\"tc1\",\"name\":\"Bash\"}}"}`
 	delta := `data: {"body": "{\"event\":\"tool_use_delta\",\"data\":{\"tool_call_id\":\"tc1\",\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}"}`
@@ -495,6 +591,9 @@ func TestParseSSELineToolUseEnvelopeEvents(t *testing.T) {
 	}
 }
 
+// TestParseSSELineToolUseEnvelopeEventsPreserveIndex parses start and
+// continuation envelopes carrying index two. It checks index presence on both
+// and keeps the named start associated with the argument fragment.
 func TestParseSSELineToolUseEnvelopeEventsPreserveIndex(t *testing.T) {
 	start := `data: {"body": "{\"event\":\"tool_use_start\",\"data\":{\"index\":2,\"id\":\"tc1\",\"name\":\"Bash\"}}"}`
 	delta := `data: {"body": "{\"event\":\"tool_use_delta\",\"data\":{\"index\":2,\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}"}`
@@ -515,6 +614,9 @@ func TestParseSSELineToolUseEnvelopeEventsPreserveIndex(t *testing.T) {
 	}
 }
 
+// TestParseSSELineFinalMessageToolCalls parses final-message calls with a finish
+// reason. It checks the invocation data and completion event order after the
+// retained tool call.
 func TestParseSSELineFinalMessageToolCalls(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"tc1\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":{\"cmd\":\"ls\"}}}]},\"finish_reason\":\"tool_calls\"}]}"}`
 	events, err := ParseSSELine(line)
@@ -536,6 +638,9 @@ func TestParseSSELineFinalMessageToolCalls(t *testing.T) {
 	}
 }
 
+// TestParseSSELineReasoning parses a wrapped reasoning_content fragment from a
+// choice delta. It checks one reasoning_delta with the original text for
+// thinking-capable protocol conversion.
 func TestParseSSELineReasoning(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"reasoning_content\":\"Let me think...\"}}]}"}`
 	events, err := ParseSSELine(line)
@@ -553,6 +658,9 @@ func TestParseSSELineReasoning(t *testing.T) {
 	}
 }
 
+// TestParseSSELineContentAndReasoningAreSeparate parses visible and reasoning
+// content in the same choice. It requires separate text then reasoning events,
+// preserving their distinct downstream roles.
 func TestParseSSELineContentAndReasoningAreSeparate(t *testing.T) {
 	line := `data: {"body": "{\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\",\"content\":\"Answer\"}}]}"}`
 	events, err := ParseSSELine(line)
@@ -570,6 +678,9 @@ func TestParseSSELineContentAndReasoningAreSeparate(t *testing.T) {
 	}
 }
 
+// TestParseSSELineUsage parses primary prompt, completion, and total token
+// counts from wrapped usage. It checks one observed usage event containing all
+// three supplied numeric counts.
 func TestParseSSELineUsage(t *testing.T) {
 	line := `data: {"body": "{\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":34,\"total_tokens\":46}}"}`
 	events, err := ParseSSELine(line)
@@ -593,6 +704,9 @@ func TestParseSSELineUsage(t *testing.T) {
 	}
 }
 
+// TestParseSSELineUsageAcceptsAnthropicNames parses input_tokens and
+// output_tokens without a total field. It checks alias selection and the derived
+// total in the normalized usage observation.
 func TestParseSSELineUsageAcceptsAnthropicNames(t *testing.T) {
 	line := `data: {"body": "{\"usage\":{\"input_tokens\":7,\"output_tokens\":9}}"}`
 	events, err := ParseSSELine(line)
@@ -607,6 +721,9 @@ func TestParseSSELineUsageAcceptsAnthropicNames(t *testing.T) {
 	}
 }
 
+// TestParseSSELineWrappedUsagePreservesDetails parses cache and reasoning detail
+// objects with primary token totals. It checks both detail pointers, including
+// an explicit zero reasoning count.
 func TestParseSSELineWrappedUsagePreservesDetails(t *testing.T) {
 	line := `data: {"body": "{\"usage\":{\"prompt_tokens\":66637,\"completion_tokens\":6,\"total_tokens\":66643,\"prompt_tokens_details\":{\"cached_tokens\":66612,\"cacheable_tokens\":19},\"completion_tokens_details\":{\"reasoning_tokens\":0}}}"}`
 	events, err := ParseSSELine(line)
@@ -637,6 +754,9 @@ func TestParseSSELineWrappedUsagePreservesDetails(t *testing.T) {
 	}
 }
 
+// TestParseSSELineUsageAcceptsNumericStringsAndFloats mixes string and floating
+// token values across totals and details. It checks integer normalization of
+// prompt, completion, cached, cacheable, and reasoning counts.
 func TestParseSSELineUsageAcceptsNumericStringsAndFloats(t *testing.T) {
 	line := `data: {"body": "{\"usage\":{\"prompt_tokens\":\"66637.0\",\"completion_tokens\":6.0,\"total_tokens\":\"66643\",\"prompt_tokens_details\":{\"cached_tokens\":\"66612.0\",\"cacheable_tokens\":19.0},\"completion_tokens_details\":{\"reasoning_tokens\":\"7.0\"}}}"}`
 	events, err := ParseSSELine(line)
@@ -658,6 +778,9 @@ func TestParseSSELineUsageAcceptsNumericStringsAndFloats(t *testing.T) {
 	}
 }
 
+// TestParseSSELineMalformedWrapper passes a data line whose outer payload is
+// invalid JSON. It requires an error before any wrapped body can reach event
+// conversion.
 func TestParseSSELineMalformedWrapper(t *testing.T) {
 	_, err := ParseSSELine("data: not json")
 	if err == nil {
@@ -665,6 +788,9 @@ func TestParseSSELineMalformedWrapper(t *testing.T) {
 	}
 }
 
+// TestParseSSELineMalformedBody supplies a valid outer wrapper containing
+// malformed inner JSON. It requires an error so invalid content cannot be
+// treated as an empty successful event.
 func TestParseSSELineMalformedBody(t *testing.T) {
 	_, err := ParseSSELine(`data: {"body": "not json"}`)
 	if err == nil {
@@ -672,6 +798,9 @@ func TestParseSSELineMalformedBody(t *testing.T) {
 	}
 }
 
+// TestParseSSELineUpstreamErrorWrapper parses HTTP 403 with vendor code 101 in
+// an SSE wrapper. It checks absent events, typed APIError fields, and the
+// formatted vendor message.
 func TestParseSSELineUpstreamErrorWrapper(t *testing.T) {
 	line := `data: {"headers":{"Content-Type":["application/json"]},"body":"{\"code\":\"101\",\"message\":\"Signature invalid\"}","statusCodeValue":403,"statusCode":"FORBIDDEN"}`
 	events, err := ParseSSELine(line)
@@ -699,6 +828,9 @@ func TestParseSSELineUpstreamErrorWrapper(t *testing.T) {
 	}
 }
 
+// TestParseSSELineUpstreamErrorWrapperUsesStatusCodeNameFallback omits numeric
+// wrapper status and supplies FORBIDDEN text. It checks effective HTTP 403 and
+// retained vendor code in the resulting APIError.
 func TestParseSSELineUpstreamErrorWrapperUsesStatusCodeNameFallback(t *testing.T) {
 	line := `data: {"headers":{"Content-Type":["application/json"]},"body":"{\"code\":\"101\",\"message\":\"Signature invalid\"}","statusCode":"FORBIDDEN"}`
 	_, err := ParseSSELine(line)
@@ -717,6 +849,9 @@ func TestParseSSELineUpstreamErrorWrapperUsesStatusCodeNameFallback(t *testing.T
 	}
 }
 
+// TestParseAPIErrorBodyRedactsSensitiveFields supplies nested token and identity
+// secrets inside error JSON and message text. It checks their removal from
+// body/message while retaining vendor code 101.
 func TestParseAPIErrorBodyRedactsSensitiveFields(t *testing.T) {
 	body := `{"code":"101","message":"Authorization: Bearer secret-token securityOauthToken=dt-secret refreshToken=drt-secret cookie=session=abc uid=user-secret aid=provider-secret","data":{"securityOauthToken":"nested-secret","refreshToken":"nested-refresh","uid":"nested-user","aid":"nested-account"}}`
 	apiErr := ParseAPIErrorBody(http.StatusForbidden, body)
@@ -744,11 +879,14 @@ func TestParseAPIErrorBodyRedactsSensitiveFields(t *testing.T) {
 	}
 }
 
+// TestRedactSensitiveTextPreservesQoderNumericErrorCodes covers JSON
+// string/number and plain code representations with a secret token. It checks
+// retained code spelling and removed secret text in every case.
 func TestRedactSensitiveTextPreservesQoderNumericErrorCodes(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		contains string
+		name     string // fixture case label
+		input    string // error text input
+		contains string // expected retained code
 	}{
 		{
 			name:     "json string code",
@@ -785,10 +923,13 @@ func TestRedactSensitiveTextPreservesQoderNumericErrorCodes(t *testing.T) {
 	}
 }
 
+// TestRedactSensitiveTextRedactsCNAccessToken covers JSON and plain CN token
+// fields using different delimiters. It checks that each secret disappears and a
+// redaction marker remains.
 func TestRedactSensitiveTextRedactsCNAccessToken(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
+		name  string // fixture case label
+		input string // error text input
 	}{
 		{
 			name:  "JSON 字段",
@@ -817,6 +958,9 @@ func TestRedactSensitiveTextRedactsCNAccessToken(t *testing.T) {
 	}
 }
 
+// TestParseSSELineAgentLimitError reads a reset timestamp from JSON-valued
+// vendor message text. It checks code 115, typed reset time, and the exact
+// Asia/Shanghai error presentation.
 func TestParseSSELineAgentLimitError(t *testing.T) {
 	line := `data: {"headers":{"Content-Type":["application/json"]},"body":"{\"code\":\"115\",\"message\":\"{\\\"agentLimitResetTime\\\":1783841289162}\"}","statusCodeValue":429,"statusCode":"TOO_MANY_REQUESTS"}`
 	_, err := ParseSSELine(line)
@@ -845,6 +989,9 @@ func TestParseSSELineAgentLimitError(t *testing.T) {
 	}
 }
 
+// TestParseSSELineAgentLimitErrorNumericCode parses numeric code 115 with reset
+// metadata and a secret token. It checks quota classification, retained numeric
+// code text, and redacted body.
 func TestParseSSELineAgentLimitErrorNumericCode(t *testing.T) {
 	line := `data: {"headers":{"Content-Type":["application/json"]},"body":"{\"code\":115,\"message\":\"agent limited\",\"agentLimitResetTime\":1783841289162,\"securityOauthToken\":\"secret\"}","statusCodeValue":429,"statusCode":"TOO_MANY_REQUESTS"}`
 	_, err := ParseSSELine(line)
@@ -872,6 +1019,9 @@ func TestParseSSELineAgentLimitErrorNumericCode(t *testing.T) {
 	}
 }
 
+// TestParseAPIErrorBodyAgentLimitDirectBody supplies a positive reset timestamp
+// without a vendor code. It checks direct metadata extraction into APIError so
+// limit classification can use reset evidence.
 func TestParseAPIErrorBodyAgentLimitDirectBody(t *testing.T) {
 	apiErr := ParseAPIErrorBody(429, `{"agentLimitResetTime":1783841289162}`)
 	if apiErr.AgentLimitResetTime != 1783841289162 {
@@ -879,6 +1029,9 @@ func TestParseAPIErrorBodyAgentLimitDirectBody(t *testing.T) {
 	}
 }
 
+// TestParseAPIErrorBodyAgentLimitNumericCode parses a numeric agent-limit code
+// with credential text in its error body. It checks quota classification,
+// numeric-code preservation, and secret removal.
 func TestParseAPIErrorBodyAgentLimitNumericCode(t *testing.T) {
 	apiErr := ParseAPIErrorBody(429, `{"code":115,"message":"agent limited","securityOauthToken":"secret"}`)
 	if apiErr.Code != "115" {
