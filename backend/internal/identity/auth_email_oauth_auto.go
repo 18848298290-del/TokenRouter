@@ -10,19 +10,50 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// EmailOAuthIdentityInput describes an OAuth identity with an email verified by a provider such as GitHub, Google, or OIDC.
+// A verified provider mailbox does not replace the stable provider subject as
+// account identity. GitHub, Google and OIDC login first resolve that
+// subject's owner, reject an email mismatch and only then consider
+// email-based account lookup or creation.
+//
+// The caller supplies trusted upstream proof through EmailVerified and stable
+// identity/profile observations. Account creation and identity writes finish
+// before login tokens are generated, leaving persistent results when a later
+// step fails. The creation helper can recover an existing account after a
+// uniqueness conflict, but the caller records that helper branch as created;
+// promotion and first-bind selection therefore follow the branch hint rather
+// than a guaranteed new-row result.
+
+// EmailOAuthIdentityInput carries caller-verified provider identity and
+// mailbox observations for local account selection.
 type EmailOAuthIdentityInput struct {
-	ProviderType     string
-	ProviderKey      string
-	ProviderSubject  string
-	Email            string
-	EmailVerified    bool
-	Username         string
-	DisplayName      string
-	AvatarURL        string
+	// ProviderType, ProviderKey and ProviderSubject identify the same upstream
+	// identity. Callers align that tuple with the verified mailbox and profile
+	// hints before local owner resolution or persistence.
+	ProviderType string // GitHub, Google or OIDC provider
+	// ProviderKey scopes the subject within its provider. Verified-email login
+	// trims it and uses ProviderType when blank before owner lookup and
+	// persistence.
+	ProviderKey     string
+	ProviderSubject string // stable provider subject value
+	Email           string // provider-observed account mailbox text
+	// EmailVerified asserts upstream mailbox proof supplied by the caller.
+	// Verified-email login checks this flag but does not reverify the provider
+	// token here.
+	EmailVerified bool
+	Username      string // suggested local account username
+	DisplayName   string // suggested provider display name
+	AvatarURL     string // suggested provider avatar address
+	// UpstreamMetadata supplies additional saved provider observations.
+	// AuthState overlays its entries after email/proof defaults, so those keys
+	// can replace defaults and nested values retain sharing.
 	UpstreamMetadata map[string]any
 }
 
+// LoginOrRegisterVerifiedEmailOAuthWithSignupCodes delegates verified-email
+// provider login with signup invitation, affiliate and promotion text.
+// Callers establish upstream proof in EmailOAuthIdentityInput; the
+// implementation accepts GitHub, Google or OIDC and handles account/identity
+// persistence before token issuance.
 func (s *AuthService) LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(
 	ctx context.Context,
 	input EmailOAuthIdentityInput,
@@ -33,6 +64,20 @@ func (s *AuthService) LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(
 	return s.AuthLoginOrRegisterVerifiedEmailOAuth(ctx, input, invitationCode, affiliateCode, promoCode)
 }
 
+// AuthLoginOrRegisterVerifiedEmailOAuth resolves a verified provider subject
+// to a current account, or uses its normalized email for existing-account
+// lookup and creation. Callers prove the upstream email before setting
+// EmailVerified; this method validates the flag, syntax, reserved addresses
+// and strict suffix policy, then rejects a stored subject owner with a
+// different email.
+//
+// Identity persistence precedes optional username update, grant/promotion
+// selection, login recording and token issuance. The creation-helper branch
+// sets created=true even when that helper returns an account recovered from a
+// uniqueness conflict, so this hint can select promotion and skip the
+// existing-account first-bind request. Later write/token failures can follow
+// completed account or identity updates; this flow performs no general
+// account rollback.
 func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 	ctx context.Context,
 	input EmailOAuthIdentityInput,
@@ -61,6 +106,7 @@ func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 	}
 
 	email := strings.TrimSpace(strings.ToLower(input.Email))
+	// Apply the stored mailbox byte budget before parser and ownership checks.
 	if email == "" || len(email) > 255 {
 		return nil, nil, infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
 	}
@@ -92,6 +138,9 @@ func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 				if err != nil {
 					return nil, nil, err
 				}
+				// Record the creation-helper branch as signup state even when its
+				// uniqueness recovery returned an existing account; later
+				// promotion/first-bind selection follows this flag.
 				created = true
 			} else {
 				s.Observer.Printf("service.auth", "[Auth] Database error during %s oauth login: %v", providerType, err)
@@ -103,6 +152,9 @@ func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 	if !user.IsActive() {
 		return nil, nil, ErrUserNotActive
 	}
+	// Save the stable provider relationship before optional profile/grant work
+	// and login issuance; failures afterward can leave the completed identity
+	// write in place.
 	if err := s.AuthEnsureEmailOAuthIdentity(ctx, user.ID, EmailOAuthIdentityInput{
 		ProviderType:     providerType,
 		ProviderKey:      providerKey,
@@ -119,11 +171,16 @@ func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 
 	if user.Username == "" && strings.TrimSpace(input.Username) != "" {
 		user.Username = strings.TrimSpace(input.Username)
+		// A missing account name accepts the supplied hint, but a save failure is
+		// diagnostic after identity binding and does not stop token issuance.
 		if err := s.Users.Update(ctx, user, UserUpdateFields{Username: true}); err != nil {
 			s.Observer.Printf("service.auth", "[Auth] Failed to update username after %s oauth login: %v", providerType, err)
 		}
 	}
 	if !created {
+		// Existing-account branch requests idempotent first-bind grants; diagnose
+		// grant failure while continuing login after the provider identity has
+		// already been saved.
 		if err := s.ApplyProviderDefaultSettingsOnFirstBind(ctx, user.ID, providerType); err != nil {
 			s.Observer.Printf("service.auth", "[Auth] Failed to apply %s first bind defaults: %v", providerType, err)
 		}
@@ -139,6 +196,18 @@ func (s *AuthService) AuthLoginOrRegisterVerifiedEmailOAuth(
 	return tokenPair, user, nil
 }
 
+// AuthCreateEmailOAuthUser creates an account under the provider's signup
+// defaults and invitation policy. It snapshots RPM and generates a local
+// random-password hash before guarded persistence; callers provide the
+// validated email/provider context used by the surrounding verified-email
+// flow.
+//
+// A uniqueness conflict reloads and returns the current account without a
+// separate created flag. Successful creation alone runs source bootstrap,
+// plan assignment and affiliate attribution. Other persistence failures
+// become service-unavailable except invalid invitation, so callers
+// distinguish a usable returned account from proof that this helper created
+// it when choosing later signup-only effects.
 func (s *AuthService) AuthCreateEmailOAuthUser(ctx context.Context, email, username, providerType, invitationCode, affiliateCode string) (*User, error) {
 	if s.Settings == nil || !s.Settings.IsRegistrationEnabled(ctx) {
 		return nil, ErrRegDisabled
@@ -174,6 +243,9 @@ func (s *AuthService) AuthCreateEmailOAuthUser(ctx context.Context, email, usern
 		SignupSource: providerType,
 	}
 	if err := s.AuthCreateRegisteredUser(ctx, user, artifacts); err != nil {
+		// Another create can occupy this email after lookup; reload its current
+		// account for the caller without rerunning this helper's
+		// successful-creation bootstrap effects.
 		if errors.Is(err, ErrEmailExists) {
 			existing, loadErr := s.Users.GetByEmail(ctx, email)
 			if loadErr != nil {
@@ -186,6 +258,9 @@ func (s *AuthService) AuthCreateEmailOAuthUser(ctx context.Context, email, usern
 		}
 		return nil, ErrServiceUnavailable
 	}
+	// Only successful account creation reaches source bootstrap, plan assignment
+	// and affiliate attribution here; uniqueness recovery returns earlier with
+	// the current account.
 	s.AuthPostAuthUserBootstrap(ctx, user, providerType, false)
 	s.AuthAssignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 	s.AuthBindRegistrationAffiliate(ctx, user.ID, affiliateCode)

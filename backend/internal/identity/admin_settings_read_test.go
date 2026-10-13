@@ -8,14 +8,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/authconfig"
 )
 
-// TestReadAdminSettingsStringFallbacks checks precedence among empty stored values, configuration defaults, and built-in defaults.
+// TestReadAdminSettingsStringFallbacks combines absent, empty, padded and
+// overriding stored strings with startup defaults. It checks trimmed OIDC
+// scope and DingTalk attribute-key selection alongside the
+// default-concurrency callback result.
 func TestReadAdminSettingsStringFallbacks(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		settings     map[string]string
-		fallback     string
-		wantOIDC     string
-		wantDingTalk string
+		name         string            // settings fallback scenario label
+		settings     map[string]string // submitted flat setting values
+		fallback     string            // startup string fallback text
+		wantOIDC     string            // expected OIDC scope value
+		wantDingTalk string            // expected DingTalk destination key
 	}{
 		{name: "missing", fallback: " configured ", wantOIDC: "configured", wantDingTalk: "configured"},
 		{name: "empty", settings: map[string]string{SettingKeyOIDCConnectScopes: "", SettingKeyDingTalkConnectSyncCorpEmailAttrKey: ""}, fallback: " configured ", wantOIDC: "configured", wantDingTalk: "configured"},
@@ -36,7 +39,10 @@ func TestReadAdminSettingsStringFallbacks(t *testing.T) {
 	}
 }
 
-// TestReadAdminSettingsExplicitEmptyValues checks clearable fields and settings that distinguish missing values from zero values.
+// TestReadAdminSettingsExplicitEmptyValues supplies clearable OIDC paths and
+// explicit saved zero/empty values. It checks path clearing, disabled
+// presence, zero skew/concurrency and unchanged padded LinuxDo startup
+// identifier text.
 func TestReadAdminSettingsExplicitEmptyValues(t *testing.T) {
 	source := NewOAuthSettings(nil, &OAuthSettingsDefaults{
 		LinuxDo: authconfig.LinuxDoConnectConfig{ClientID: " padded "},

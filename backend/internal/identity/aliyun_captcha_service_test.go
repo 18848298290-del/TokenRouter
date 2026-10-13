@@ -12,14 +12,20 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// aliyunVerifierSpy records credential dispatch and supplies configured verification outcomes.
 type aliyunVerifierSpy struct {
-	called    int
-	lastCred  identity.AliyunCaptchaCredentials
-	lastParam string
-	result    *identity.AliyunCaptchaVerifyResult
-	err       error
+	called    int                               // verification call count observed
+	lastCred  identity.AliyunCaptchaCredentials // last dispatched credential value
+	lastParam string                            // last serialized browser challenge
+	// err takes precedence over result; when both are unset, verification returns
+	// an accepted challenge. Tests select these outcomes independently of dispatch capture.
+	result *identity.AliyunCaptchaVerifyResult // configured challenge result pointer
+	err    error                               // configured adapter failure result
 }
 
+// VerifyCaptcha records each dispatch before returning its configured outcome.
+// A configured error takes precedence over the result pointer; when neither
+// is supplied, the fixture returns a newly allocated successful challenge result.
 func (s *aliyunVerifierSpy) VerifyCaptcha(_ context.Context, cred identity.AliyunCaptchaCredentials, param string) (*identity.AliyunCaptchaVerifyResult, error) {
 	s.called++
 	s.lastCred = cred
@@ -33,6 +39,7 @@ func (s *aliyunVerifierSpy) VerifyCaptcha(_ context.Context, cred identity.Aliyu
 	return &identity.AliyunCaptchaVerifyResult{VerifyResult: true}, nil
 }
 
+// aliyunEnabledSettings returns complete enabled Aliyun settings for authentication dispatch tests.
 func aliyunEnabledSettings() map[string]string {
 	return map[string]string{
 		identity.SettingKeyAliyunCaptchaEnabled:         "true",
@@ -43,6 +50,7 @@ func aliyunEnabledSettings() map[string]string {
 	}
 }
 
+// aliyunTestConfig returns enabled China-region credentials for direct Aliyun service tests.
 func aliyunTestConfig() identity.AliyunCaptchaConfig {
 	return identity.AliyunCaptchaConfig{
 		Enabled:         true,
@@ -53,6 +61,9 @@ func aliyunTestConfig() identity.AliyunCaptchaConfig {
 	}
 }
 
+// TestAliyunCaptchaServiceVerifyParamDispatch submits a serialized browser challenge
+// with complete Aliyun settings. It checks one verifier call and the forwarded
+// challenge, access identifier, scene and default China endpoint.
 func TestAliyunCaptchaServiceVerifyParamDispatch(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -67,6 +78,9 @@ func TestAliyunCaptchaServiceVerifyParamDispatch(t *testing.T) {
 	require.Equal(t, "captcha.cn-shanghai.aliyuncs.com", spy.lastCred.Endpoint)
 }
 
+// TestAliyunCaptchaServiceSgpEndpoint selects Singapore in an otherwise valid
+// Aliyun configuration. The verifier must receive the Singapore endpoint and
+// the service must accept its successful challenge response.
 func TestAliyunCaptchaServiceSgpEndpoint(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -79,6 +93,9 @@ func TestAliyunCaptchaServiceSgpEndpoint(t *testing.T) {
 	require.Equal(t, "captcha.ap-southeast-1.aliyuncs.com", spy.lastCred.Endpoint)
 }
 
+// TestAliyunCaptchaServiceFailsClosedOnVerifierError injects an external verification
+// failure for complete credentials. The action must return the public Aliyun
+// verification error rather than treating the failed call as acceptance.
 func TestAliyunCaptchaServiceFailsClosedOnVerifierError(t *testing.T) {
 	spy := &aliyunVerifierSpy{err: errors.New("network down")}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -88,6 +105,9 @@ func TestAliyunCaptchaServiceFailsClosedOnVerifierError(t *testing.T) {
 	require.ErrorIs(t, err, identity.ErrAliyunCaptchaVerificationFailed)
 }
 
+// TestAliyunCaptchaServiceRejectsVerifyResultFalse supplies a decoded rejected
+// challenge with a diagnostic code. It requires the public verification error
+// even though the verifier call itself succeeds.
 func TestAliyunCaptchaServiceRejectsVerifyResultFalse(t *testing.T) {
 	spy := &aliyunVerifierSpy{result: &identity.AliyunCaptchaVerifyResult{VerifyResult: false, VerifyCode: "F001"}}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -97,6 +117,9 @@ func TestAliyunCaptchaServiceRejectsVerifyResultFalse(t *testing.T) {
 	require.ErrorIs(t, err, identity.ErrAliyunCaptchaVerificationFailed)
 }
 
+// TestAliyunCaptchaServiceRejectsIncompleteCredentials removes the configured
+// access secret from an enabled provider. It requires a configuration error and
+// zero verifier calls before the challenge can be dispatched.
 func TestAliyunCaptchaServiceRejectsIncompleteCredentials(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -109,6 +132,9 @@ func TestAliyunCaptchaServiceRejectsIncompleteCredentials(t *testing.T) {
 	require.Zero(t, spy.called)
 }
 
+// TestAliyunCaptchaServiceRejectsEmptyParam supplies complete credentials and an
+// empty browser challenge. The service must reject that action locally and leave
+// the external verifier's call count at zero.
 func TestAliyunCaptchaServiceRejectsEmptyParam(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	svc := identity.NewAliyunCaptchaService(nil, spy)
@@ -119,6 +145,9 @@ func TestAliyunCaptchaServiceRejectsEmptyParam(t *testing.T) {
 	require.Zero(t, spy.called)
 }
 
+// TestAliyunCaptchaServiceValidateCredentials probes settings with credential
+// errors, a transport failure and a rejected challenge result. It distinguishes
+// invalid credentials from other failures and accepts a nil verifier error.
 func TestAliyunCaptchaServiceValidateCredentials(t *testing.T) {
 	t.Run("invalid credential code", func(t *testing.T) {
 		spy := &aliyunVerifierSpy{err: &identity.AliyunCaptchaAPIError{Code: "SignatureDoesNotMatch", Message: "bad sk"}}
@@ -147,11 +176,15 @@ func TestAliyunCaptchaServiceValidateCredentials(t *testing.T) {
 	})
 }
 
+// TestAuthServiceVerifyCaptchaDispatchesAliyun enables Aliyun in the shared
+// authentication settings snapshot. It checks that the compatibility request
+// field reaches Aliyun once as the serialized browser challenge.
 func TestAuthServiceVerifyCaptchaDispatchesAliyun(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(&identity.AuthOptions{}, aliyunEnabledSettings(), spy)
 
-	// Aliyun captchaVerifyParam uses the turnstile_token request field.
+	// The shared request shape carries Aliyun's serialized challenge in
+	// TurnstileToken, so provider dispatch forwards it intact to the Aliyun adapter.
 	err := authService.VerifyCaptcha(context.Background(), identity.CaptchaProof{TurnstileToken: "captcha-verify-param"}, "127.0.0.1")
 
 	require.NoError(t, err)
@@ -159,6 +192,9 @@ func TestAuthServiceVerifyCaptchaDispatchesAliyun(t *testing.T) {
 	require.Equal(t, "captcha-verify-param", spy.lastParam)
 }
 
+// TestAuthServiceVerifyCaptchaRejectsProviderConflict enables Turnstile alongside
+// Aliyun in the same settings value. Authentication must report the provider
+// conflict and leave the Aliyun verifier uncalled.
 func TestAuthServiceVerifyCaptchaRejectsProviderConflict(t *testing.T) {
 	settings := aliyunEnabledSettings()
 	settings[identity.SettingKeyTurnstileEnabled] = "true"
@@ -172,18 +208,25 @@ func TestAuthServiceVerifyCaptchaRejectsProviderConflict(t *testing.T) {
 	require.Zero(t, spy.called)
 }
 
+// TestAuthServiceVerifyCaptchaRequiredModeWithAliyun enables required CAPTCHA
+// with complete Aliyun credentials. Authentication must accept the verifier's
+// successful challenge and dispatch exactly one Aliyun verification call.
 func TestAuthServiceVerifyCaptchaRequiredModeWithAliyun(t *testing.T) {
 	cfg := captchaAuthOptions(true)
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(cfg, aliyunEnabledSettings(), spy)
 
-	// Required CAPTCHA mode accepts complete Aliyun credentials and dispatches verification.
+	// Required mode accepts the selected Aliyun provider when its complete
+	// credentials permit a verified challenge, satisfying the authentication proof requirement.
 	err := authService.VerifyCaptcha(context.Background(), identity.CaptchaProof{TurnstileToken: "captcha-verify-param"}, "127.0.0.1")
 
 	require.NoError(t, err)
 	require.Equal(t, 1, spy.called)
 }
 
+// TestAuthServiceVerifyActionCaptchaIfEnabledDispatchesAliyun selects Aliyun for an
+// extended authentication action. It requires one successful dispatch with the
+// submitted serialized challenge unchanged at the external verifier.
 func TestAuthServiceVerifyActionCaptchaIfEnabledDispatchesAliyun(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(&identity.AuthOptions{}, aliyunEnabledSettings(), spy)
@@ -195,6 +238,9 @@ func TestAuthServiceVerifyActionCaptchaIfEnabledDispatchesAliyun(t *testing.T) {
 	require.Equal(t, "captcha-verify-param", spy.lastParam)
 }
 
+// TestAuthServiceVerifyActionCaptchaIfEnabledSkipsWhenOnlyTurnstile enables Turnstile
+// with no extended-action CAPTCHA provider. That action succeeds with an empty
+// proof and leaves the Aliyun verifier's call count at zero.
 func TestAuthServiceVerifyActionCaptchaIfEnabledSkipsWhenOnlyTurnstile(t *testing.T) {
 	spy := &aliyunVerifierSpy{}
 	authService := newAliyunAuthServiceForTest(&identity.AuthOptions{}, map[string]string{
@@ -202,13 +248,17 @@ func TestAuthServiceVerifyActionCaptchaIfEnabledSkipsWhenOnlyTurnstile(t *testin
 		identity.SettingKeyTurnstileSecretKey: "secret",
 	}, spy)
 
-	// Turnstile does not guard the extended action endpoints.
+	// Extended OAuth and Passkey start actions dispatch Tencent or Aliyun; a
+	// Turnstile-only snapshot leaves this check successful with no challenge verification.
 	err := authService.VerifyActionCaptchaIfEnabled(context.Background(), identity.CaptchaProof{}, "127.0.0.1")
 
 	require.NoError(t, err)
 	require.Zero(t, spy.called)
 }
 
+// newAliyunAuthServiceForTest wires authentication to supplied CAPTCHA settings
+// and an Aliyun spy. It also configures a Turnstile fixture and logging so tests
+// can exercise provider selection through the shared AuthService entry points.
 func newAliyunAuthServiceForTest(options *identity.AuthOptions, values map[string]string, verifier *aliyunVerifierSpy) *identity.AuthService {
 	runtime := identity.NewRuntimeSettings(&captchaSettingsStore{values: values}, settingscore.ErrSettingNotFound)
 	turnstile := identity.NewTurnstileService(runtime, &turnstileVerifierSpy{})

@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOIDCSyntheticEmailStableAndDistinct builds identity keys for two subjects
+// under one issuer. It checks repeatable synthetic email generation, distinct
+// results for these subjects and the reserved OIDC domain spelling.
 func TestOIDCSyntheticEmailStableAndDistinct(t *testing.T) {
 	k1 := OIDCIdentityKey("https://issuer.example.com", "subject-a")
 	k2 := OIDCIdentityKey("https://issuer.example.com", "subject-b")

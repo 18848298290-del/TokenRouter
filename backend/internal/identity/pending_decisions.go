@@ -8,6 +8,30 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Pending registration first distinguishes a provider identity owner from an
+// account found by normalized email. Those observations select account
+// creation or existing-account choice, while a mismatched identity email is
+// rejected instead of silently selecting another target.
+//
+// Legacy sessions can already carry a frontend step and need no storage
+// rewrite. Newly imposed email requirements upgrade otherwise completed state
+// and clear its target before asking for choice. Profile-prompt skipping
+// additionally needs usable upstream hints and a current identity association
+// for an issuable login target. These decisions return progression
+// eligibility or saved state; account proof, session consumption and eventual
+// token issuance remain separate phases.
+
+// EmailShouldCreatePendingRegistration decides whether an email OAuth
+// observation lacks both an identity owner and a matching account. An
+// existing identity owner must match the supplied lowercased/trimmed email; a
+// mismatch returns the identity-email conflict instead of account-creation
+// eligibility.
+//
+// Without that identity, only ErrUserNotFound from normalized account lookup
+// returns true. A successful lookup, even nil data without an error, returns
+// false. Other lookup failures remain errors, and this decision does not
+// verify email claims, registration policy or ownership at a later write;
+// callers provide verified input and still complete those separate checks.
 func (f *PendingFlow) EmailShouldCreatePendingRegistration(ctx context.Context, input EmailOAuthIdentityInput) (bool, error) {
 	if !f.Available() {
 		return false, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
@@ -36,7 +60,17 @@ func (f *PendingFlow) EmailShouldCreatePendingRegistration(ctx context.Context, 
 	return false, nil
 }
 
-// LegacyRegistrationStatus returns the session and whether the frontend must complete a pending step.
+// LegacyRegistrationStatus reports whether a legacy pending session still
+// requires frontend progression. A nonblank normalized step returns the
+// original session with required=true without writing, while absence of both
+// email requirements returns it with false.
+//
+// Only an otherwise completed session newly requiring email progression needs
+// database availability and UpdateProgress. That update supplies a nil
+// target, which the PostgreSQL adapter clears, and saves the upgraded choice
+// payload. Readiness is therefore checked only for this transition, and
+// persistence errors remain errors rather than proof that a frontend step was
+// already saved.
 func (f *PendingFlow) LegacyRegistrationStatus(
 	ctx context.Context,
 	session *PendingAuthSession, emailVerificationRequired, forceEmailOnSignup bool,
@@ -58,6 +92,9 @@ func (f *PendingFlow) LegacyRegistrationStatus(
 		return nil, false, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
 	}
 
+	// Persist the newly required choice step with a cleared target so the older
+	// completed observation cannot continue as an already selected account
+	// during this progression.
 	updatedSession, err := f.Database.UpdateProgress(
 		ctx,
 		session,
@@ -72,6 +109,11 @@ func (f *PendingFlow) LegacyRegistrationStatus(
 	return updatedSession, true, nil
 }
 
+// TransitionAccountToChoice saves frontend choice controls and a supplied
+// positive account target for a nonnil session. Nil or nonpositive target
+// data clears the PostgreSQL target; the adapter trims email/intent and
+// replaces completion state from the supplied snapshot. Callers assemble the
+// database and keep those observations aligned.
 func (f *PendingFlow) TransitionAccountToChoice(
 	ctx context.Context,
 	session *PendingAuthSession,
@@ -97,6 +139,17 @@ func (f *PendingFlow) TransitionAccountToChoice(
 	return session, nil
 }
 
+// SkipAdoptionPrompt reports whether an already associated identity can
+// bypass profile choice for an otherwise issuable login completion. Nil
+// sessions, empty payloads or blocked issuance return false; absence of
+// nonblank upstream display/avatar hints also returns false.
+//
+// Once those conditions hold, the supplied database checks identity
+// association for the positive target account. A true result describes that
+// lookup, not session consumption or completed token issuance; query failures
+// remain errors. Callers provide the database before this eligible path and
+// retain current account/lifetime checks at their surrounding exchange entry
+// point.
 func (f *PendingFlow) SkipAdoptionPrompt(
 	ctx context.Context,
 	session *PendingAuthSession,

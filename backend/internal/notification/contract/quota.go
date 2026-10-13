@@ -18,6 +18,9 @@ type QuotaDimension struct {
 	ThresholdType string  // threshold display kind
 	// CurrentUsed and Limit carry observations from the business caller in the
 	// same quota units. AlertDelivery receives its rendered used amount separately
-	// and subtracts that argument from Limit when displaying remaining quota.
-	CurrentUsed, Limit float64 // observed usage and configured quota limit
+	// and subtracts that argument from Limit, clamping negative remaining quota
+	// to zero before display.
+	// CurrentUsed: supplied quota usage.
+	// Limit: configured quota ceiling.
+	CurrentUsed, Limit float64
 }

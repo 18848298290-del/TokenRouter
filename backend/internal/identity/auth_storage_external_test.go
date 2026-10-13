@@ -11,7 +11,10 @@ import (
 	identitytestkit "github.com/TokenFlux/TokenRouter/internal/identity/testkit"
 )
 
-// TestAuthService_CreateRegisteredUser_RechecksDomainQuotaSwitch checks that disabling quotas after preflight restores whitelist enforcement during creation.
+// TestAuthService_CreateRegisteredUser_RechecksDomainQuotaSwitch permits an
+// out-of-whitelist domain during preflight, then disables the quota switch.
+// Creation must recheck that setting, return the suffix rejection and avoid
+// user creation or domain-guard calls.
 func TestAuthService_CreateRegisteredUser_RechecksDomainQuotaSwitch(t *testing.T) {
 	ctx := context.Background()
 	settings := map[string]string{

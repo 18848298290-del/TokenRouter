@@ -6,47 +6,83 @@ import (
 	"strings"
 )
 
+// LinuxDo pending choices distinguish provider email suggestions from the
+// email associated with a compatible local account. A compatibility match can
+// establish a target identifier, while a new account requiring local email
+// verification clears the supplied hints and requests the creation step.
+//
+// The builder selects those controls from caller observations without loading
+// or mutating accounts. It retains upstream claim storage and a supplied
+// compatibility user's ID pointer, so publication requires stable matching
+// data. Token and profile interfaces keep upstream credentials separate from
+// platform sessions, and token-exchange errors expose status/messages while
+// retaining raw response text only in their diagnostic field.
+
+// LinuxDoOAuthOptions supplies provider endpoints, credentials and userinfo
+// extraction hints for authorization.
 type LinuxDoOAuthOptions struct {
-	Enabled             bool   `mapstructure:"enabled"`
-	ClientID            string `mapstructure:"client_id"`
-	ClientSecret        string `mapstructure:"client_secret"`
-	AuthorizeURL        string `mapstructure:"authorize_url"`
-	TokenURL            string `mapstructure:"token_url"`
-	UserInfoURL         string `mapstructure:"userinfo_url"`
-	Scopes              string `mapstructure:"scopes"`
-	RedirectURL         string `mapstructure:"redirect_url"`          // Backend callback URL registered with the provider.
-	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"` // Frontend token callback route; defaults to /auth/linuxdo/callback.
-	TokenAuthMethod     string `mapstructure:"token_auth_method"`     // client_secret_post / client_secret_basic / none
-	UsePKCE             bool   `mapstructure:"use_pkce"`
-
-	// Optional gjson paths for fields in the userinfo response.
-	// Empty paths use a set of common field names.
-	UserInfoEmailPath    string `mapstructure:"userinfo_email_path"`
-	UserInfoIDPath       string `mapstructure:"userinfo_id_path"`
-	UserInfoUsernamePath string `mapstructure:"userinfo_username_path"`
+	Enabled      bool   `mapstructure:"enabled"`       // configured LinuxDo login switch
+	ClientID     string `mapstructure:"client_id"`     // upstream authorization client identifier
+	ClientSecret string `mapstructure:"client_secret"` // upstream authorization client credential
+	AuthorizeURL string `mapstructure:"authorize_url"` // provider browser authorization endpoint
+	TokenURL     string `mapstructure:"token_url"`     // provider token exchange endpoint
+	UserInfoURL  string `mapstructure:"userinfo_url"`  // provider identity lookup endpoint
+	Scopes       string `mapstructure:"scopes"`        // requested provider authorization scopes
+	RedirectURL  string `mapstructure:"redirect_url"`  // registered backend authorization callback
+	// FrontendRedirectURL selects the browser return destination. OAuth settings
+	// can override the built-in /auth/linuxdo/callback route through startup or
+	// stored configuration.
+	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"`
+	TokenAuthMethod     string `mapstructure:"token_auth_method"` // client_secret_post / client_secret_basic / none
+	UsePKCE             bool   `mapstructure:"use_pkce"`          // authorization code proof switch
+	// UserInfoEmailPath, UserInfoIDPath and UserInfoUsernamePath select gjson
+	// lookups for their separate profile values. Empty paths use common provider
+	// field names during profile extraction.
+	UserInfoEmailPath    string `mapstructure:"userinfo_email_path"`    // provider mailbox lookup path
+	UserInfoIDPath       string `mapstructure:"userinfo_id_path"`       // provider subject lookup path
+	UserInfoUsernamePath string `mapstructure:"userinfo_username_path"` // provider username lookup path
 }
 
+// LinuxDoTokenResponse holds provider access credentials and their returned
+// token metadata.
 type LinuxDoTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	Scope        string `json:"scope,omitempty"`
+	AccessToken  string `json:"access_token"`            // upstream bearer access credential
+	TokenType    string `json:"token_type"`              // upstream token type label
+	ExpiresIn    int64  `json:"expires_in"`              // seconds
+	RefreshToken string `json:"refresh_token,omitempty"` // optional upstream renewal credential
+	Scope        string `json:"scope,omitempty"`         // granted upstream authorization scopes
 }
 
+// LinuxDoTokenExchangeError retains failed exchange status, provider messages
+// and diagnostic response text.
 type LinuxDoTokenExchangeError struct {
-	StatusCode          int
-	ProviderError       string
-	ProviderDescription string
-	Body                string
+	StatusCode          int    // token exchange HTTP status
+	ProviderError       string // raw provider error code
+	ProviderDescription string // raw provider error description
+	// Body retains failed response text for diagnostics. Error emits the status
+	// and normalized provider messages, leaving this payload out of its display
+	// result.
+	Body string
 }
 
-// LinuxDoOAuthClient exchanges authorization codes and parses provider profiles.
+// LinuxDoOAuthClient exchanges authorization codes and extracts upstream
+// identity and profile values.
 type LinuxDoOAuthClient interface {
+	// ExchangeCode uses the supplied options, authorization code, callback URI
+	// and PKCE verifier to request upstream credentials. The caller retains
+	// browser state and local account decisions; provider or transport failures
+	// remain errors.
 	ExchangeCode(context.Context, LinuxDoOAuthOptions, string, string, string) (*LinuxDoTokenResponse, error)
+	// FetchUserInfo uses the upstream token and extraction options to return
+	// email, username, subject, display name and avatar URL in that order. The
+	// caller associates those hints with local identity state and handles
+	// provider failures.
 	FetchUserInfo(context.Context, LinuxDoOAuthOptions, *LinuxDoTokenResponse) (string, string, string, string, string, error)
 }
 
+// Error renders the token-exchange status and nonblank trimmed provider
+// messages. A nil error receiver yields empty text, and Body is retained
+// separately rather than included in this display result.
 func (e *LinuxDoTokenExchangeError) Error() string {
 	if e == nil {
 		return ""
@@ -61,6 +97,17 @@ func (e *LinuxDoTokenExchangeError) Error() string {
 	return strings.Join(parts, " ")
 }
 
+// PrepareLinuxDoChoice builds a pending account-choice draft from suggested
+// and resolved email hints. A compatibility user overrides the visible email
+// and can supply a positive target ID; otherwise the suggested email falls
+// back to the resolved hint.
+//
+// When email verification or forced email is required without a compatibility
+// user, the payload switches to account creation and removes both email
+// hints, clearing the draft's resolved email. Verification takes precedence
+// in the displayed reason. Caller-owned upstream claims and any compatibility
+// user ID pointer remain shared, while the completion map is newly
+// constructed.
 func PrepareLinuxDoChoice(
 	identity PendingAuthIdentityKey,
 	suggestedEmail string,
@@ -75,6 +122,8 @@ func PrepareLinuxDoChoice(
 ) OAuthPendingDraft {
 	suggestionEmail := strings.TrimSpace(suggestedEmail)
 	canonicalEmail := strings.TrimSpace(resolvedEmail)
+	// A missing suggestion uses the resolved hint for display; a compatibility
+	// match or required local-email step can later replace or clear that choice.
 	if suggestionEmail == "" {
 		suggestionEmail = canonicalEmail
 	}
@@ -105,6 +154,9 @@ func PrepareLinuxDoChoice(
 	if forceEmailOnSignup && compatEmailUser == nil {
 		completionResponse["choice_reason"] = "force_email_on_signup"
 	}
+	// Without a compatible account, required local email proof discards upstream
+	// email hints from both response and draft state so completion requests a
+	// locally verified address.
 	if (emailVerificationRequired || forceEmailOnSignup) && compatEmailUser == nil {
 		completionResponse["step"] = "create_account_required"
 		completionResponse["email_binding_required"] = true

@@ -12,6 +12,23 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Pending provider signup can verify a local mailbox code or use a mailbox
+// proof already established upstream. Both paths create an account before its
+// provider identity and browser session finish, and preserve the account ID
+// for later finalization or compensation.
+//
+// Invitation admission initially reads eligibility without consuming it.
+// FinalizeOAuthEmailAccount rechecks and claims the invitation, then applies
+// current plan/affiliate effects; balance and concurrency came from the
+// earlier creation snapshot. Token generation can fail after creation and
+// attempts best-effort account cleanup. General rollback restores an
+// invitation before deleting the account, so those separately completed
+// effects and their returned failures matter to the surrounding pending flow.
+
+// AuthNormalizeOAuthSignupSource returns a recognized lowercased/trimmed
+// signup provider label. Blank, email and unknown text become email; callers
+// use the result for stored source and grant selection rather than
+// provider-token verification.
 func AuthNormalizeOAuthSignupSource(signupSource string) string {
 	signupSource = strings.TrimSpace(strings.ToLower(signupSource))
 	switch signupSource {
@@ -24,8 +41,11 @@ func AuthNormalizeOAuthSignupSource(signupSource string) string {
 	}
 }
 
-// SendPendingOAuthVerifyCode sends a local verification code for pending OAuth
-// account-creation flows without relying on the public registration gate.
+// SendPendingOAuthVerifyCode sends a local challenge after mailbox syntax,
+// reserved-address and registration-domain quota checks. It requires the
+// email service but does not require the public registration switch; the
+// returned cooldown describes challenge request timing rather than
+// account-creation admission.
 func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
@@ -52,10 +72,16 @@ func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email stri
 		return nil, err
 	}
 	return &SendVerifyCodeResult{
+		// Expose the challenge request cooldown in whole seconds for frontend timing.
 		Countdown: int(VerifyCodeCooldown / time.Second),
 	}, nil
 }
 
+// AuthValidateOAuthRegistrationInvitation returns a usable invitation
+// snapshot when current policy requires it. Missing service/settings or
+// disabled policy returns nil; active policy trims the code and maps lookup
+// or unusable-state failure to invitation rejection without claiming the code
+// yet.
 func (s *AuthService) AuthValidateOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
 	if s == nil || s.Settings == nil || !s.Settings.IsInvitationCodeEnabled(ctx) {
 		return nil, nil
@@ -69,6 +95,9 @@ func (s *AuthService) AuthValidateOAuthRegistrationInvitation(ctx context.Contex
 		return nil, ErrInvitationCodeRequired
 	}
 
+	// Read invitation eligibility for this pending creation without claiming it
+	// yet; finalization repeats the check and performs conditional redemption
+	// for the created account.
 	redeemCode, err := s.AuthLoadOAuthRegistrationInvitation(ctx, invitationCode)
 	if err != nil {
 		return nil, ErrInvitationCodeInvalid
@@ -79,9 +108,10 @@ func (s *AuthService) AuthValidateOAuthRegistrationInvitation(ctx context.Contex
 	return redeemCode, nil
 }
 
-// VerifyOAuthEmailCode verifies the locally entered email verification code for
-// third-party signup and binding flows, regardless of
-// the global registration email verification toggle.
+// VerifyOAuthEmailCode verifies trimmed mailbox/code text through the local
+// challenge service. Empty input is required-proof failure and missing
+// service is unavailable; this proof is requested for pending signup/binding
+// independently of the global ordinary-registration verification switch.
 func (s *AuthService) VerifyOAuthEmailCode(ctx context.Context, email, verifyCode string) error {
 	email = strings.TrimSpace(strings.ToLower(email))
 	verifyCode = strings.TrimSpace(verifyCode)
@@ -98,8 +128,19 @@ func (s *AuthService) VerifyOAuthEmailCode(ctx context.Context, email, verifyCod
 	return s.Email.VerifyCode(ctx, email, verifyCode)
 }
 
-// RegisterOAuthEmailAccount creates a local account from a third-party first
-// login after the user has verified a local email address.
+// RegisterOAuthEmailAccount creates a local account after a submitted mailbox
+// challenge and current registration/invitation/domain policy checks. The
+// DingTalk bypass predicate uses the supplied source before later
+// normalization; account grants snapshot balance/concurrency while this
+// code-verification path leaves RPM at its zero value.
+//
+// Creation uses domain and optional normalized-address guards but defers
+// invitation consumption and later plan/affiliate effects to
+// FinalizeOAuthEmailAccount. Token-pair generation follows account creation;
+// failure attempts account deletion with no invitation code and suppresses
+// cleanup failure. Callers continue pending identity finalization after a
+// usable account result and compensate later failures using the matching
+// account/invitation information.
 func (s *AuthService) RegisterOAuthEmailAccount(
 	ctx context.Context,
 	email string,
@@ -173,13 +214,27 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 
 	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
 	if err != nil {
+		// Token generation failed after account creation; attempt deleting that
+		// account and suppress cleanup failure so the wrapped token-generation
+		// error remains the response cause.
 		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
 		return nil, nil, fmt.Errorf("generate token pair: %w", err)
 	}
 	return tokenPair, user, nil
 }
 
-// RegisterVerifiedOAuthEmailAccount creates a local account using a provider-verified email address.
+// RegisterVerifiedOAuthEmailAccount creates a local account from
+// caller-established provider mailbox proof. It validates normalized syntax
+// within 255 bytes, rejects blank password/reserved mailboxes and checks
+// current registration, invitation and domain policy; this path snapshots
+// default RPM in addition to signup balance/concurrency.
+//
+// It does not request a local mailbox code. Guarded creation precedes
+// token-pair generation and defers invitation consumption/plan/affiliate
+// completion to the later finalization step. Token failure attempts account
+// deletion and suppresses cleanup failure, so callers retain their upstream
+// proof and pending context when completing or compensating the created
+// account.
 func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	ctx context.Context,
 	email string,
@@ -195,6 +250,7 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
+	// Apply the stored mailbox byte budget before accepting provider-proven text.
 	if email == "" || len(email) > 255 {
 		return nil, nil, ErrEmailVerifyRequired
 	}
@@ -256,27 +312,56 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 
 	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
 	if err != nil {
+		// Token generation failed after account creation; attempt deleting that
+		// account and suppress cleanup failure so the wrapped token-generation
+		// error remains the response cause.
 		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
 		return nil, nil, fmt.Errorf("generate token pair: %w", err)
 	}
 	return tokenPair, user, nil
 }
 
+// AuthCreateOAuthEmailAccountUser delegates guarded account creation with
+// domain quota enforcement and no invitation-consumption artifact. Callers
+// pass the planned account; nil service/user is unavailable, and a failed
+// create with an assigned positive ID attempts cleanup except for
+// email-conflict failure.
+//
+// Cleanup failure is suppressed and the creation error is returned.
+// Successful creation leaves invitation finalization for a later operation,
+// so callers retain the account ID for compensation if pending binding or
+// token preparation fails. The helper does not establish completion of
+// subscriptions, affiliation or browser-session consumption.
 func (s *AuthService) AuthCreateOAuthEmailAccountUser(ctx context.Context, user *User) error {
 	if s == nil || user == nil {
 		return ErrServiceUnavailable
 	}
 
-	// Create the account with normalized email checks; consume the invitation during finalization.
+	// Create with address/domain guards now, leaving invitation redemption for
+	// finalization after the pending identity sequence can associate this
+	// account with its provider.
 	err := s.AuthCreateRegisteredUser(ctx, user, &AuthRegistrationArtifacts{EnforceEmailDomainQuota: true})
 	if err != nil && user.ID > 0 && !errors.Is(err, ErrEmailExists) {
+		// A failed create assigned an account ID; attempt removing that partial
+		// account, except email conflicts, and suppress cleanup failure while
+		// retaining the creation error.
 		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
 	}
 	return err
 }
 
-// FinalizeOAuthEmailAccount consumes the invitation and applies signup grants and affiliate binding.
-// Call it after the pending OAuth flow has completed its reversible steps.
+// FinalizeOAuthEmailAccount completes signup effects for a created positive
+// account. It normalizes the source, revalidates the invitation under current
+// policy and consumes a required invitation before source update, current
+// grant-plan resolution, plan assignment and affiliate attribution.
+//
+// The current plan is resolved again, but this operation applies its
+// subscription selections while balance/concurrency keep their earlier
+// creation values. Optional source, plan and affiliate helpers diagnose
+// errors while proceeding; invitation-claim failure returns before those
+// effects. PendingFlow supplies its binding transaction where applicable and
+// owns account compensation after later phase failure, so callers keep the
+// account/source/invitation observations aligned.
 func (s *AuthService) FinalizeOAuthEmailAccount(
 	ctx context.Context,
 	user *User,
@@ -293,6 +378,9 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	if err != nil {
 		return err
 	}
+	// Claim the revalidated invitation before signup source/plan/affiliate
+	// effects; a failed conditional claim returns here so those later effects
+	// are not attempted.
 	if InvitationRedeemCode != nil {
 		if err := s.AuthUseOAuthRegistrationInvitation(ctx, InvitationRedeemCode.ID, user.ID); err != nil {
 			return ErrInvitationCodeInvalid
@@ -306,12 +394,24 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 	return nil
 }
 
-// RollbackOAuthEmailAccountCreation removes a partially-created local account
-// and restores any invitation code already consumed by that account.
+// RollbackOAuthEmailAccountCreation restores an invitation used by the
+// identified account before deleting that created account. It requires a
+// configured user store and positive account ID; invitation restoration
+// failure returns before deletion is attempted.
+//
+// The operations participate according to their own storage/context rules.
+// When restoration performs its own completed write, a later delete failure
+// can leave that write in place and returns a wrapped deletion error. Callers
+// retain this recovery error where their flow reports compensation failures,
+// while selected token-generation paths suppress it in favor of the original
+// failure.
 func (s *AuthService) RollbackOAuthEmailAccountCreation(ctx context.Context, userID int64, invitationCode string) error {
 	if s == nil || s.Users == nil || userID <= 0 {
 		return ErrServiceUnavailable
 	}
+	// Restore this account's invitation before deletion; failed restoration
+	// stops cleanup, while a later delete error can follow a successfully
+	// restored invitation record.
 	if err := s.AuthRestoreOAuthRegistrationInvitation(ctx, invitationCode, userID); err != nil {
 		return err
 	}
@@ -321,9 +421,11 @@ func (s *AuthService) RollbackOAuthEmailAccountCreation(ctx context.Context, use
 	return nil
 }
 
-// ValidatePasswordCredentials checks the local password without completing the
-// login flow. This is used by pending third-party account adoption flows before
-// the external identity has been bound.
+// ValidatePasswordCredentials checks an active account's local password for
+// pending identity adoption without issuing platform tokens. Missing account
+// or wrong password becomes invalid-credentials; other lookup failures become
+// service-unavailable, and the returned account still needs the surrounding
+// pending/browser checks.
 func (s *AuthService) ValidatePasswordCredentials(ctx context.Context, email, password string) (*User, error) {
 	if s == nil {
 		return nil, ErrServiceUnavailable
@@ -345,11 +447,17 @@ func (s *AuthService) ValidatePasswordCredentials(ctx context.Context, email, pa
 	return user, nil
 }
 
-// RecordSuccessfulLogin backfills the local email identity when applicable and records
-// login activity after a custom login flow succeeds.
+// RecordSuccessfulLogin attempts local-email backfill from a readable
+// nonreserved current account before requesting login activity recording.
+// Account read failure skips backfill but still reaches AuthTouchUserLogin;
+// callers supply assembled storage and a positive target, and backfill
+// failure handling belongs to its delegated helper.
 func (s *AuthService) RecordSuccessfulLogin(ctx context.Context, userID int64) {
 	if s != nil && s.Users != nil && userID > 0 {
 		user, err := s.Users.GetByID(ctx, userID)
+		// Unreadable account data supplies no mailbox to backfill; skip that
+		// observation while leaving the following activity write to the configured
+		// storage helper.
 		if err == nil && user != nil && !IsReservedEmail(user.Email) {
 			s.AuthBackfillEmailIdentityOnSuccessfulLogin(ctx, user)
 		}

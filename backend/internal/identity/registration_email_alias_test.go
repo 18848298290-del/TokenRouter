@@ -8,11 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// TestNormalizeEmailForAliasDedup supplies addresses with case, spaces, plus
+// tags, Gmail dots and reserved edge spellings. It checks the exact comparison
+// key for each case, including invalid text retained as normalized input.
 func TestNormalizeEmailForAliasDedup(t *testing.T) {
 	cases := []struct {
-		name  string
-		email string
-		want  string
+		name  string // case description label
+		email string // supplied mailbox address
+		want  string // expected alias identity
 	}{
 		{name: "plain", email: "user@example.com", want: "user@example.com"},
 		{name: "case and spaces", email: "  User@Example.COM ", want: "user@example.com"},
@@ -31,6 +34,9 @@ func TestNormalizeEmailForAliasDedup(t *testing.T) {
 	}
 }
 
+// TestEmailAliasDedupProbes checks broad lookup components for Gmail-family and
+// non-Gmail addresses. It requires both Gmail domain probes, dot removal for
+// SQL lookup and no probes after invalid or empty local input.
 func TestEmailAliasDedupProbes(t *testing.T) {
 	require.ElementsMatch(t,
 		[]identity.EmailAliasProbe{

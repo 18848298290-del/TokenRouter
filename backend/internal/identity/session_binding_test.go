@@ -4,6 +4,9 @@ import (
 	"testing"
 )
 
+// TestSessionBindingHash compares identical fingerprints and changes each input
+// independently. It requires a nonempty digest for supplied client data and an
+// empty digest for both an empty binding and a nil pointer.
 func TestSessionBindingHash(t *testing.T) {
 	a := &SessionBinding{IP: "1.2.3.4", UserAgent: "Mozilla/5.0"}
 	b := &SessionBinding{IP: "1.2.3.4", UserAgent: "Mozilla/5.0"}

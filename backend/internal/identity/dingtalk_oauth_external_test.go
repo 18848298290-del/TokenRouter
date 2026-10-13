@@ -12,7 +12,9 @@ import (
 	identityprovider "github.com/TokenFlux/TokenRouter/internal/identity/provider"
 )
 
-// TestBuildDingTalkSyntheticEmail_UsesUnionID checks that the synthetic address is derived from unionID.
+// TestBuildDingTalkSyntheticEmail_UsesUnionID supplies a mixed-case global
+// subject to the compatibility-address formatter. It checks lowercase text,
+// the expected local prefix and the reserved domain together.
 func TestBuildDingTalkSyntheticEmail_UsesUnionID(t *testing.T) {
 	unionID := "union_AbCdEf123"
 	email := identitycore.DingTalkSyntheticEmail(unionID)
@@ -27,14 +29,19 @@ func TestBuildDingTalkSyntheticEmail_UsesUnionID(t *testing.T) {
 	require.True(t, strings.HasSuffix(email, "@dingtalk-connect.invalid"), "should have reserved domain suffix")
 }
 
-// TestBuildDingTalkSyntheticEmail_TrimsSpace checks trimming before address construction.
+// TestBuildDingTalkSyntheticEmail_TrimsSpace supplies a padded mixed-case
+// subject. It checks that address construction trims the surrounding
+// whitespace and lowercases the retained identity text before adding its
+// reserved domain.
 func TestBuildDingTalkSyntheticEmail_TrimsSpace(t *testing.T) {
 	email := identitycore.DingTalkSyntheticEmail("  UID_XYZ  ")
 	require.Equal(t, "dingtalk-uid_xyz@dingtalk-connect.invalid", email)
 }
 
-// TestBuildDingTalkUpstreamClaims_EmptyStaff checks the profile-unavailable path.
-// The global unionID remains the subject when organization-specific fields are empty.
+// TestBuildDingTalkUpstreamClaims_EmptyStaff provides an allocated snapshot
+// without directory fields. It checks that missing email/name/staff ID remain
+// empty while the supplied global unionID and organization hint survive in
+// claims.
 func TestBuildDingTalkUpstreamClaims_EmptyStaff(t *testing.T) {
 	staff := &identityprovider.DingTalkStaffInfo{}
 	claims := identitycore.DingTalkUpstreamClaims(staff, "UNION_AAA", "CORP_X")
@@ -43,12 +50,15 @@ func TestBuildDingTalkUpstreamClaims_EmptyStaff(t *testing.T) {
 	require.Equal(t, "", claims["username"])
 
 	require.Equal(t, "UNION_AAA", claims["subject"])
-	require.Equal(t, "", claims["corp_user_id"]) // Unavailable for cross-organization users.
+	require.Equal(t, "", claims["corp_user_id"]) // empty in this unavailable-directory snapshot
 	require.Equal(t, "UNION_AAA", claims["union_id"])
 	require.Equal(t, "CORP_X", claims["corp_id"])
 }
 
-// TestCheckDingTalkCorpAllowed_CrossOrgPolicy checks that none permits any organization.
+// TestCheckDingTalkCorpAllowed_CrossOrgPolicy evaluates the none policy with
+// matching, foreign and absent organization text. It checks policy acceptance
+// without claiming that this predicate performs a directory membership
+// lookup.
 func TestCheckDingTalkCorpAllowed_CrossOrgPolicy(t *testing.T) {
 	cfg := identitycore.DingTalkOAuthOptions{CorpRestrictionPolicy: "none"}
 
@@ -57,9 +67,10 @@ func TestCheckDingTalkCorpAllowed_CrossOrgPolicy(t *testing.T) {
 	assert.True(t, identitycore.DingTalkCorpAllowed(cfg, "foreign_corp"), "policy=none should allow foreign corp")
 }
 
-// TestCheckDingTalkCorpAllowed_InternalOnly checks that missing or different corpID values are accepted.
-// Membership is checked separately by GetUserIdByUnionId.
-// Membership errors 60011/60121 map to corp_rejected.
+// TestCheckDingTalkCorpAllowed_InternalOnly varies configured and supplied
+// organization hints under internal_only. It checks that the policy predicate
+// accepts absent or different text, leaving actual membership enforcement
+// outside this test.
 func TestCheckDingTalkCorpAllowed_InternalOnly(t *testing.T) {
 	cfgWithCorpID := identitycore.DingTalkOAuthOptions{
 		CorpRestrictionPolicy: "internal_only",
@@ -77,15 +88,17 @@ func TestCheckDingTalkCorpAllowed_InternalOnly(t *testing.T) {
 	assert.True(t, identitycore.DingTalkCorpAllowed(cfgNoCorpID, ""), "internal_only + no InternalCorpID: 空 corpID 也通过")
 }
 
-// TestCompleteDingTalkRegistration_UsernameFromEmailLocalPart checks using the email local part
-// when the username is empty.
+// TestCompleteDingTalkRegistration_UsernameFromEmailLocalPart models the
+// callback name-default formula in table cases. It checks existing names,
+// mailbox-local fallback, unsplit email text and empty-input eligibility
+// without invoking account registration.
 func TestCompleteDingTalkRegistration_UsernameFromEmailLocalPart(t *testing.T) {
 	tests := []struct {
-		name      string
-		email     string
-		username  string
-		wantUser  string
-		wantValid bool
+		name      string // case display label
+		email     string // modeled stored email
+		username  string // starting display name
+		wantUser  string // expected modeled username
+		wantValid bool   // expected modeled input eligibility
 	}{
 		{
 			name:      "username empty, normal email → local part",
@@ -122,7 +135,9 @@ func TestCompleteDingTalkRegistration_UsernameFromEmailLocalPart(t *testing.T) {
 			username := tc.username
 			email := tc.email
 
-			// Model the username default used by CompleteDingTalkOAuthRegistration.
+			// When the proposed name is blank, model the callback's local-part or
+			// whole-email fallback; these cases isolate name construction without a
+			// registration transaction or upstream authorization call.
 			if username == "" {
 				if at := strings.Index(email, "@"); at > 0 {
 					username = email[:at]
@@ -138,8 +153,10 @@ func TestCompleteDingTalkRegistration_UsernameFromEmailLocalPart(t *testing.T) {
 	}
 }
 
-// TestBuildDingTalkUpstreamClaims_SubjectEqualsUnionID checks that claims use the global
-// unionID as the identity subject.
+// TestBuildDingTalkUpstreamClaims_SubjectEqualsUnionID supplies distinct
+// global and organization-local identifiers with staff profile text. It
+// checks canonical subject/union duplication, separate staff/corporation
+// values and copied name/email fields.
 func TestBuildDingTalkUpstreamClaims_SubjectEqualsUnionID(t *testing.T) {
 	staff := &identityprovider.DingTalkStaffInfo{UserID: "user123", Name: "张三", Email: "zhangsan@corp.com"}
 	claims := identitycore.DingTalkUpstreamClaims(staff, "union456", "dingcorp789")
@@ -154,8 +171,9 @@ func TestBuildDingTalkUpstreamClaims_SubjectEqualsUnionID(t *testing.T) {
 	require.Equal(t, "zhangsan@corp.com", claims["email"])
 }
 
-// TestBuildDingTalkUpstreamClaims_CrossOrgEmptyCorpUserID checks that missing organization data
-// leaves corp_user_id empty while retaining unionID as subject.
+// TestBuildDingTalkUpstreamClaims_CrossOrgEmptyCorpUserID constructs an empty
+// directory snapshot with a global subject. It checks that missing
+// staff/email/name fields do not erase that subject from the returned claims.
 func TestBuildDingTalkUpstreamClaims_CrossOrgEmptyCorpUserID(t *testing.T) {
 	// A cross-organization profile lookup can yield no staff fields.
 	staff := &identityprovider.DingTalkStaffInfo{}
@@ -167,7 +185,10 @@ func TestBuildDingTalkUpstreamClaims_CrossOrgEmptyCorpUserID(t *testing.T) {
 	require.Equal(t, "", claims["username"])
 }
 
-// TestBuildDingTalkUpstreamClaims_PrimaryDeptIDInClaims checks that claims contain the first department ID.
+// TestBuildDingTalkUpstreamClaims_PrimaryDeptIDInClaims supplies two
+// department IDs in one staff snapshot. It checks the first supplied ID in
+// claims, without asserting the later profile synchronization path-selection
+// algorithm.
 func TestBuildDingTalkUpstreamClaims_PrimaryDeptIDInClaims(t *testing.T) {
 	staff := &identityprovider.DingTalkStaffInfo{UserID: "u1", Name: "张三", Email: "a@b.com", DeptIDs: []int64{42, 99}}
 	claims := identitycore.DingTalkUpstreamClaims(staff, "uid1", "corpX")
@@ -175,7 +196,9 @@ func TestBuildDingTalkUpstreamClaims_PrimaryDeptIDInClaims(t *testing.T) {
 	require.Equal(t, int64(42), claims["primary_dept_id"], "primary_dept_id should be the first dept_id")
 }
 
-// TestBuildDingTalkUpstreamClaims_NoDeptIDs checks that a missing department produces zero.
+// TestBuildDingTalkUpstreamClaims_NoDeptIDs supplies staff data without any
+// department IDs. It checks the zero-valued department observation so callers
+// can distinguish unavailable directory placement from a supplied identifier.
 func TestBuildDingTalkUpstreamClaims_NoDeptIDs(t *testing.T) {
 	staff := &identityprovider.DingTalkStaffInfo{UserID: "u2", Name: "李四"}
 	claims := identitycore.DingTalkUpstreamClaims(staff, "uid2", "corpY")

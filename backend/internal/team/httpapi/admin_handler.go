@@ -10,15 +10,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// AdminHandler handles platform-admin team operations.
+// Administrator team requests use a route team identifier rather than the
+// current user's membership. Handlers bind optional update pointers so
+// omission remains distinguishable from zero, then let the service validate
+// all selected fields before its repository write and readback.
+
+// AdminHandler translates platform-authorized requests into administrator
+// team service operations and response envelopes.
 type AdminHandler struct {
+	// service is retained for administrator team requests. Route assembly
+	// authenticates administrators before invocation, and the supplied service
+	// must remain usable for the handler lifetime.
 	service *team.TeamService
 }
 
+// NewAdminHandler retains the supplied team service for platform
+// administration. Route assembly installs administrator authentication before
+// these handlers; the constructor creates no storage/client resources and
+// expects a usable service.
 func NewAdminHandler(teamService *team.TeamService) *AdminHandler {
 	return &AdminHandler{service: teamService}
 }
 
+// List returns the administrator team list in the shared response envelope.
+// It uses request context and maps service failure before publishing a
+// result; administrator authentication belongs to route assembly.
 func (h *AdminHandler) List(c *gin.Context) {
 	items, err := h.service.AdminList(c.Request.Context())
 	if err != nil {
@@ -28,6 +44,9 @@ func (h *AdminHandler) List(c *gin.Context) {
 	response.Success(c, items)
 }
 
+// Get parses the route team ID and returns its administrator context. Parse
+// failure writes bad-request, while missing or unreadable service results use
+// shared application-error mapping before any success envelope.
 func (h *AdminHandler) Get(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
@@ -41,6 +60,9 @@ func (h *AdminHandler) Get(c *gin.Context) {
 	response.Success(c, teamCtx)
 }
 
+// ListMembers parses the team ID and requests its administrator membership
+// listing. The service checks team availability first; parameter or service
+// failure sends an error envelope instead of the list.
 func (h *AdminHandler) ListMembers(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
@@ -54,13 +76,19 @@ func (h *AdminHandler) ListMembers(c *gin.Context) {
 	response.Success(c, items)
 }
 
+// GetUsage returns an administrator team summary with an optional positive
+// member filter. It parses no time range or Key filter here, so service
+// normalization supplies its default range; invalid supplied member IDs are
+// rejected.
 func (h *AdminHandler) GetUsage(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
 		return
 	}
 	query := team.TeamUsageQuery{}
-	// An omitted member_id aggregates the whole team; a supplied ID selects one member.
+	// A supplied positive member_id narrows the administrator report; absence
+	// keeps team aggregation, while unparsed dates remain zero for the service's
+	// default reporting range.
 	if rawMemberID := strings.TrimSpace(c.Query("member_id")); rawMemberID != "" {
 		memberID, err := strconv.ParseInt(rawMemberID, 10, 64)
 		if err != nil || memberID <= 0 {
@@ -77,11 +105,20 @@ func (h *AdminHandler) GetUsage(c *gin.Context) {
 	response.Success(c, item)
 }
 
+// Create binds required owner/name and an optional member ceiling before
+// administrator creation. A nil ceiling selects service defaults, zero
+// remains supplied, and binding/service errors precede the created response;
+// routes authorize the administrator.
 func (h *AdminHandler) Create(c *gin.Context) {
 	var req struct {
-		OwnerUserID int64  `json:"owner_user_id" binding:"required"`
-		Name        string `json:"name" binding:"required"`
-		MemberLimit *int   `json:"member_limit"`
+		OwnerUserID int64 `json:"owner_user_id" binding:"required"` // requested team owner identity
+		// Name supplies required creation text. The service trims and validates the
+		// team name before creating the requested owner's team.
+		Name string `json:"name" binding:"required"`
+		// MemberLimit supplies the requested creation ceiling when present. Nil
+		// selects the service's configured or built-in default; zero admits no
+		// ordinary members and negatives fail service validation.
+		MemberLimit *int `json:"member_limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -95,15 +132,28 @@ func (h *AdminHandler) Create(c *gin.Context) {
 	response.Created(c, teamCtx)
 }
 
+// Update binds optional name/status/member-ceiling pointers and delegates
+// their joint validation/update. Omission or JSON null leaves a pointer nil;
+// service success returns readback, while a readback failure can follow a
+// completed write.
 func (h *AdminHandler) Update(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
 		return
 	}
 	var req struct {
-		Name        *string `json:"name"`
-		Status      *string `json:"status"`
-		MemberLimit *int    `json:"member_limit"`
+		// Name supplies replacement text when present. Nil leaves the team name
+		// unchanged, while the service validates and trims a selected value before
+		// writing.
+		Name *string `json:"name"`
+		// Status selects a replacement team status when nonnil. Omission or JSON
+		// null leaves it nil, and service validation admits active or suspended
+		// text.
+		Status *string `json:"status"`
+		// MemberLimit replaces the stored ceiling when present. Nil leaves the
+		// existing ceiling unchanged; zero admits no ordinary members and negatives
+		// fail service validation.
+		MemberLimit *int `json:"member_limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -119,13 +169,17 @@ func (h *AdminHandler) Update(c *gin.Context) {
 	response.Success(c, teamCtx)
 }
 
+// ForceTransfer binds a required target identity and delegates administrator
+// ownership transfer for the route team. The service/repository enforce
+// participant validity; parameter, binding or operation failure maps to an
+// error response.
 func (h *AdminHandler) ForceTransfer(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
 		return
 	}
 	var req struct {
-		TargetUserID int64 `json:"target_user_id" binding:"required"`
+		TargetUserID int64 `json:"target_user_id" binding:"required"` // requested successor account identity
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -139,6 +193,10 @@ func (h *AdminHandler) ForceTransfer(c *gin.Context) {
 	response.Success(c, teamCtx)
 }
 
+// Dissolve parses the team ID and delegates administrator teardown. Success
+// returns a dissolved acknowledgement after the service completes; shared
+// application-error mapping handles failures and route assembly owns
+// administrator authorization.
 func (h *AdminHandler) Dissolve(c *gin.Context) {
 	teamID, ok := adminTeamID(c)
 	if !ok {
@@ -151,6 +209,10 @@ func (h *AdminHandler) Dissolve(c *gin.Context) {
 	response.Success(c, gin.H{"dissolved": true})
 }
 
+// adminTeamID parses signed decimal route text as int64 and writes
+// bad-request on parse failure. Parsed zero and negative values are returned
+// successfully; downstream lookup determines whether that team identity
+// exists.
 func adminTeamID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

@@ -23,7 +23,9 @@ type blockingExpiryRepository struct {
 	AnnouncementRepository // unused repository method set
 	// entered reports that archiving began, while release lets the test complete
 	// that call. The repository context can also terminate the held scan.
-	entered, release chan struct{} // scan entry and completion signals
+	// entered: archive start notification.
+	// release: archive completion permission.
+	entered, release chan struct{}
 }
 
 // ArchiveExpired counts a scan and publishes its timestamp when observation has capacity.

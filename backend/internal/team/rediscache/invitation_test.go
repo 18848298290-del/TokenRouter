@@ -11,9 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTeamInvitationLimiterRecipientCooldown submits the same team mailbox
+// with case and surrounding-space differences. The first request is allowed
+// and the normalized repeat is denied with a positive recipient-window retry
+// hint.
 func TestTeamInvitationLimiterRecipientCooldown(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Release the Redis client after assertions and let RunT close its server;
+	// client cleanup errors are discarded so they do not replace admission
+	// observations.
 	t.Cleanup(func() { _ = client.Close() })
 	limiter := NewTeamInvitationLimiter(client)
 
@@ -29,9 +36,15 @@ func TestTeamInvitationLimiterRecipientCooldown(t *testing.T) {
 	require.LessOrEqual(t, retryAfter, TeamInvitationRecipientCooldown)
 }
 
+// TestTeamInvitationLimiterHourlyLimit admits distinct mailboxes until one
+// team reaches its hourly ceiling. An additional mailbox is denied with a
+// positive retry duration bounded by the hourly window.
 func TestTeamInvitationLimiterHourlyLimit(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Release the Redis client after assertions and let RunT close its server;
+	// client cleanup errors are discarded so they do not replace admission
+	// observations.
 	t.Cleanup(func() { _ = client.Close() })
 	limiter := NewTeamInvitationLimiter(client)
 	ctx := context.Background()

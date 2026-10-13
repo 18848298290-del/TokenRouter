@@ -19,8 +19,11 @@ type localeDelivery struct {
 	// language, subject, and body record the last selected context and rendered
 	// message, while count records successful fixture invocations. Tests read these
 	// values after each synchronous service call returns.
-	language, subject, body string // selected language, captured subject, and captured HTML body
-	count                   int    // recorded send count
+	// language: selected context locale.
+	// subject: captured message subject.
+	// body: captured HTML message body.
+	language, subject, body string
+	count                   int // recorded send count
 }
 
 // TestBuildVerifyCodeEmailBody_EscapesSiteName supplies script, entity, and ordinary branding values to the verification template.
@@ -235,8 +238,8 @@ func TestNotificationEmailTemplateOverrideAndRestore(t *testing.T) {
 }
 
 // TestNotificationEmailTemplateRejectsUnsupportedPlaceholder submits a subscription-purchase subject containing an undeclared variable.
-// It verifies the template update returns an error naming the unsupported
-// placeholder in the subject; the test observes that validation result directly.
+// It checks that template updating returns an error containing the unsupported
+// placeholder category text for that submitted template.
 func TestNotificationEmailTemplateRejectsUnsupportedPlaceholder(t *testing.T) {
 	ctx := context.Background()
 	svc := NewNotificationEmailService(mailtest.NewMemorySettings(), nil)
@@ -297,8 +300,9 @@ func TestNotificationEmailAuthTemplatesAreListedAndPreviewable(t *testing.T) {
 }
 
 // TestNotificationEmailEventOrderAndCopies reads event metadata, mutates one returned value and placeholder, then lists templates.
-// It verifies declared event order, independent returned metadata, and event-major
-// language ordering across the complete template listing.
+// It checks declared event order and that the sampled event/placeholder changes
+// do not appear in the next read. It also checks event-major language ordering
+// across the complete template listing.
 func TestNotificationEmailEventOrderAndCopies(t *testing.T) {
 	svc := NewNotificationEmailService(mailtest.NewMemorySettings(), nil)
 	want := []string{

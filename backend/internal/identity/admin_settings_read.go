@@ -7,27 +7,69 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/authconfig"
 )
 
-// AdminReadSettings contains administrator settings and credential-presence flags.
-// Public endpoints use PublicAuthSettings.
+// Administrator settings can display a secret and its presence flag together,
+// so this view belongs to privileged settings readback. Raw CAPTCHA presence
+// differs from provider credential fallback, and a displayed enabled flag
+// does not establish that effective provider validation will accept every
+// required endpoint or credential.
+//
+// ReadAdminSettings combines supplied flat values with retained startup
+// defaults and provider helpers. Missing, empty and explicit zero have
+// different consequences for concurrency, OIDC skew and userinfo paths, while
+// password reset is displayed only with mailbox verification enabled. The
+// conversion performs no persistence or provider discovery; callers retain
+// the current settings observation and use the dedicated effective readers
+// before starting authentication.
+
+// AdminReadSettings carries privileged authentication values and observed
+// credential-presence flags for administration.
 type AdminReadSettings struct {
+	// AdminSettings contains the privileged effective values returned by this
+	// conversion, including secret text. Public authentication views use their
+	// separately selected fields.
 	AdminSettings
-	AliyunCaptchaAccessKeySecretConfigured bool
-	DingTalkConnectClientSecretConfigured  bool
-	GitHubOAuthClientSecretConfigured      bool
-	GoogleOAuthClientSecretConfigured      bool
-	LinuxDoConnectClientSecretConfigured   bool
-	OIDCConnectClientSecretConfigured      bool
-	TencentCaptchaAppSecretKeyConfigured   bool
-	TencentCaptchaCloudSecretIDConfigured  bool
-	TencentCaptchaCloudSecretKeyConfigured bool
-	TurnstileSecretKeyConfigured           bool
-	WeChatConnectAppSecretConfigured       bool
-	WeChatConnectMPAppSecretConfigured     bool
-	WeChatConnectMobileAppSecretConfigured bool
-	WeChatConnectOpenAppSecretConfigured   bool
+	// AliyunCaptchaAccessKeySecretConfigured,
+	// TencentCaptchaAppSecretKeyConfigured,
+	// TencentCaptchaCloudSecretIDConfigured,
+	// TencentCaptchaCloudSecretKeyConfigured and TurnstileSecretKeyConfigured
+	// test raw nonempty stored text. DingTalkConnectClientSecretConfigured,
+	// GitHubOAuthClientSecretConfigured, GoogleOAuthClientSecretConfigured,
+	// LinuxDoConnectClientSecretConfigured, OIDCConnectClientSecretConfigured,
+	// WeChatConnectAppSecretConfigured, WeChatConnectMPAppSecretConfigured,
+	// WeChatConnectMobileAppSecretConfigured and
+	// WeChatConnectOpenAppSecretConfigured test their effective secrets after
+	// trimmed/startup fallback. These presence observations do not establish
+	// complete provider configuration readiness.
+	AliyunCaptchaAccessKeySecretConfigured bool // raw Aliyun secret presence
+	DingTalkConnectClientSecretConfigured  bool // effective DingTalk secret presence
+	GitHubOAuthClientSecretConfigured      bool // effective GitHub secret presence
+	GoogleOAuthClientSecretConfigured      bool // effective Google secret presence
+	LinuxDoConnectClientSecretConfigured   bool // effective LinuxDo secret presence
+	OIDCConnectClientSecretConfigured      bool // effective OIDC secret presence
+	TencentCaptchaAppSecretKeyConfigured   bool // raw Tencent application-secret presence
+	TencentCaptchaCloudSecretIDConfigured  bool // raw Tencent cloud-identifier presence
+	TencentCaptchaCloudSecretKeyConfigured bool // raw Tencent cloud-secret presence
+	TurnstileSecretKeyConfigured           bool // raw Cloudflare secret presence
+	WeChatConnectAppSecretConfigured       bool // effective legacy WeChat secret presence
+	WeChatConnectMPAppSecretConfigured     bool // effective official-account secret presence
+	WeChatConnectMobileAppSecretConfigured bool // effective mobile WeChat secret presence
+	WeChatConnectOpenAppSecretConfigured   bool // effective open-platform secret presence
 }
 
-// ReadAdminSettings parses settings with provider-specific defaults and empty-value rules.
+// ReadAdminSettings builds an administrator view from a supplied flat
+// settings observation and retained startup defaults. The receiver is
+// required and defaultConcurrency must be callable when its stored text
+// cannot parse; parsed zero/negative concurrency remains visible here even
+// though signup reading has its own positive-value rule.
+//
+// The view contains credential text and separate presence flags. CAPTCHA
+// presence checks raw nonempty strings, while provider secret fields use
+// effective trimmed/startup fallback; flags do not establish complete
+// provider readiness. OIDC keeps a parsed stored skew zero, but
+// absent/unusable storage with startup zero displays 120. Present userinfo
+// path keys can clear defaults, and LinuxDo/DingTalk startup string fallback
+// can retain its raw representation. No store query, provider discovery or
+// persistence occurs in this conversion.
 func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultConcurrency func() int) *AdminReadSettings {
 	emailVerifyEnabled := settings[SettingKeyEmailVerifyEnabled] == "true"
 	result := &AdminReadSettings{}
@@ -57,14 +99,23 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	result.AliyunCaptchaPrefix = settings[SettingKeyAliyunCaptchaPrefix]
 	result.AliyunCaptchaRegion = NormalizeAliyunCaptchaRegion(settings[SettingKeyAliyunCaptchaRegion])
 	result.DefaultUserAPIKeyLimit = DefaultUserAPIKeyLimit
+	// Unparseable concurrency selects the supplied default callback; a
+	// successful zero or negative parse remains an administrator observation
+	// rather than being replaced by signup admission defaults.
 	if concurrency, err := strconv.Atoi(settings[SettingKeyDefaultConcurrency]); err == nil {
 		result.DefaultConcurrency = concurrency
 	} else {
 		result.DefaultConcurrency = defaultConcurrency()
 	}
+	// Unusable or negative RPM text leaves the initialized unlimited value; this
+	// administrator view does not replace it with the separate concurrency
+	// callback default.
 	if rpm, err := strconv.Atoi(settings[SettingKeyDefaultUserRPMLimit]); err == nil && rpm >= 0 {
 		result.DefaultUserRPMLimit = rpm
 	}
+	// Missing, malformed or out-of-range Key allowance retains the built-in
+	// default; a valid zero remains present and preserves the configured
+	// unlimited representation.
 	if limit, err := strconv.Atoi(settings[SettingKeyDefaultUserAPIKeyLimit]); err == nil && IsValidUserAPIKeyLimit(limit) {
 		result.DefaultUserAPIKeyLimit = limit
 	}
@@ -93,6 +144,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 		result.LinuxDoConnectRedirectURL = linuxDoBase.RedirectURL
 	}
 	result.LinuxDoConnectClientSecret = strings.TrimSpace(settings[SettingKeyLinuxDoConnectClientSecret])
+	// Blank stored LinuxDo secret uses trimmed startup text for privileged
+	// readback and its presence flag, while the identifier/callback fallback
+	// keeps its own raw startup representation.
 	if result.LinuxDoConnectClientSecret == "" {
 		result.LinuxDoConnectClientSecret = strings.TrimSpace(linuxDoBase.ClientSecret)
 	}
@@ -117,6 +171,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 		result.DingTalkConnectRedirectURL = dingTalkBase.RedirectURL
 	}
 	result.DingTalkConnectClientSecret = strings.TrimSpace(settings[SettingKeyDingTalkConnectClientSecret])
+	// Blank stored DingTalk secret uses trimmed startup text before computing
+	// its presence flag, keeping effective readback independent of the raw
+	// CAPTCHA presence checks.
 	if result.DingTalkConnectClientSecret == "" {
 		result.DingTalkConnectClientSecret = strings.TrimSpace(dingTalkBase.ClientSecret)
 	}
@@ -126,6 +183,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	} else {
 		result.DingTalkConnectCorpRestrictionPolicy = dingTalkBase.CorpRestrictionPolicy
 	}
+	// A deprecated exact whitelist policy is displayed as none with a diagnostic
+	// warning; later bypass/synchronization selection therefore uses the current
+	// accepted organization-policy label.
 	result.DingTalkConnectCorpRestrictionPolicy = SettingsCoerceDeprecatedDingTalkCorpPolicy(result.DingTalkConnectCorpRestrictionPolicy)
 	if v, ok := settings[SettingKeyDingTalkConnectInternalCorpID]; ok && strings.TrimSpace(v) != "" {
 		result.DingTalkConnectInternalCorpID = strings.TrimSpace(v)
@@ -137,6 +197,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	} else {
 		result.DingTalkConnectBypassRegistration = dingTalkBase.BypassRegistration
 	}
+	// Organization policy governs the displayed bypass flag; clear it outside
+	// internal_only so readback does not advertise an exception that the
+	// authentication predicate cannot use.
 	if result.DingTalkConnectCorpRestrictionPolicy != "internal_only" {
 		result.DingTalkConnectBypassRegistration = false
 	}
@@ -155,11 +218,17 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	} else {
 		result.DingTalkConnectSyncDept = dingTalkBase.SyncDept
 	}
+	// Disable enterprise-email, display-name and department synchronization
+	// outside internal_only policy while retaining their destination key/label
+	// values for administrator display and later configuration.
 	if result.DingTalkConnectCorpRestrictionPolicy != "internal_only" {
 		result.DingTalkConnectSyncCorpEmail = false
 		result.DingTalkConnectSyncDisplayName = false
 		result.DingTalkConnectSyncDept = false
 	}
+	// Choose each synchronization destination key and label from readable
+	// stored, startup and built-in candidates; absent/blank text cannot clear
+	// these administrator destination defaults.
 	result.DingTalkConnectSyncCorpEmailAttrKey = oauthSettingsFirstNonEmpty(
 		settings[SettingKeyDingTalkConnectSyncCorpEmailAttrKey],
 		dingTalkBase.SyncCorpEmailAttrKey,
@@ -221,6 +290,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	} else {
 		result.OIDCConnectTokenAuthMethod = strings.ToLower(strings.TrimSpace(oidcBase.TokenAuthMethod))
 	}
+	// Stored presence decides PKCE and ID-token validation switches even for
+	// empty text; omission uses startup presence-aware compatibility defaults
+	// for the two independent security controls.
 	if raw, ok := settings[SettingKeyOIDCConnectUsePKCE]; ok {
 		result.OIDCConnectUsePKCE = raw == "true"
 	} else {
@@ -235,6 +307,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 		settings[SettingKeyOIDCConnectAllowedSigningAlgs],
 		oidcBase.AllowedSigningAlgs,
 	)
+	// Remember successful stored skew parsing so explicit zero stays visible;
+	// only missing/unusable storage selects startup skew and its zero-to-120
+	// administrator display fallback.
 	clockSkewSet := false
 	if raw, ok := settings[SettingKeyOIDCConnectClockSkewSeconds]; ok && strings.TrimSpace(raw) != "" {
 		if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
@@ -253,6 +328,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 	} else {
 		result.OIDCConnectRequireEmailVerified = oidcBase.RequireEmailVerified
 	}
+	// Userinfo path presence allows intentional clearing, so a stored empty path
+	// overrides startup text while omitted email/subject/username paths retain
+	// their selected startup candidates.
 	if v, ok := settings[SettingKeyOIDCConnectUserInfoEmailPath]; ok {
 		result.OIDCConnectUserInfoEmailPath = strings.TrimSpace(v)
 	} else {
@@ -269,6 +347,9 @@ func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultCon
 		result.OIDCConnectUserInfoUsernamePath = strings.TrimSpace(oidcBase.UserInfoUsernamePath)
 	}
 	result.OIDCConnectClientSecret = strings.TrimSpace(settings[SettingKeyOIDCConnectClientSecret])
+	// Blank stored OIDC secret uses trimmed startup credentials before the
+	// presence flag, keeping administrator readback separate from
+	// endpoint/discovery and token-validation readiness checks.
 	if result.OIDCConnectClientSecret == "" {
 		result.OIDCConnectClientSecret = strings.TrimSpace(oidcBase.ClientSecret)
 	}

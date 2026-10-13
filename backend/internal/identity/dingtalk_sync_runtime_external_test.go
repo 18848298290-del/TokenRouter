@@ -10,7 +10,10 @@ import (
 	identityprovider "github.com/TokenFlux/TokenRouter/internal/identity/provider"
 )
 
-// TestSyncDingTalkIdentity_UsesCfgAttrKeys_NoopWithNilService checks custom keys with an unavailable attribute service.
+// TestSyncDingTalkIdentity_UsesCfgAttrKeys_NoopWithNilService enables all
+// profile switches with custom keys and an unavailable attribute service. It
+// requires Sync to return without panic before the nil directory client can be
+// used.
 func TestSyncDingTalkIdentity_UsesCfgAttrKeys_NoopWithNilService(t *testing.T) {
 	syncer := &identitycore.DingTalkSyncRuntime{Profiles: &identitycore.DingTalkProfileSync{}}
 
@@ -30,13 +33,18 @@ func TestSyncDingTalkIdentity_UsesCfgAttrKeys_NoopWithNilService(t *testing.T) {
 		Email: "zhangsan@example.com",
 	}
 
-	// An unavailable attribute service is logged and skipped.
+	// This fixture has no attribute service or observer, so the skip path must
+	// finish before department synchronization could use its unconfigured
+	// directory client.
 	require.NotPanics(t, func() {
 		syncer.Sync(context.Background(), cfg, nil, 42, staff, false)
 	})
 }
 
-// TestSyncDingTalkIdentity_DefaultAttrKeys_NoopWithNilService checks default keys with an unavailable attribute service.
+// TestSyncDingTalkIdentity_DefaultAttrKeys_NoopWithNilService supplies
+// canonical attribute keys and an unavailable attribute service. It checks that
+// enabled name and email options still skip safely through the synchronous
+// runtime entry.
 func TestSyncDingTalkIdentity_DefaultAttrKeys_NoopWithNilService(t *testing.T) {
 	syncer := &identitycore.DingTalkSyncRuntime{Profiles: &identitycore.DingTalkProfileSync{}}
 
@@ -45,7 +53,7 @@ func TestSyncDingTalkIdentity_DefaultAttrKeys_NoopWithNilService(t *testing.T) {
 		SyncCorpEmail:         true,
 		SyncDisplayName:       true,
 		SyncDept:              false,
-		// Default keys supplied by the settings reader.
+		// Canonical attribute key strings used in this fixture.
 		SyncCorpEmailAttrKey:   "dingtalk_email",
 		SyncDisplayNameAttrKey: "dingtalk_name",
 		SyncDeptAttrKey:        "dingtalk_department",

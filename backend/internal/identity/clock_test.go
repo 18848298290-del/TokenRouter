@@ -9,12 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// clockEmailCache captures notification challenge timestamps written by clock tests.
 type clockEmailCache struct {
-	EmailCache
+	EmailCache // unimplemented cache method surface
+	// value retains the supplied record pointer so the test can inspect both
+	// timestamps after ProfileSaveNotifyVerifyCodeWithClock completes its writes.
 	value *VerificationCodeData
 }
 
-// TestSessionClockControlsSigningAndValidation checks that JWT signing, expiry, and validation share the injected clock.
+// TestSessionClockControlsSigningAndValidation signs and validates a JWT using a
+// mutable injected clock. It checks both stored timestamps, then advances beyond
+// expiry and requires ErrTokenExpired from validation.
 func TestSessionClockControlsSigningAndValidation(t *testing.T) {
 	now := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	svc := NewSessionService(SessionOptions{Secret: "test-clock-fixture", ExpireHour: 1, Now: func() time.Time { return now }}, nil, nil, nil, nil)
@@ -29,6 +34,9 @@ func TestSessionClockControlsSigningAndValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrTokenExpired)
 }
 
+// TestTotpClockUsesOriginalValidationWindow generates a TOTP code at a fixed
+// injected time. One later period remains valid under the configured skew,
+// while moving three periods from generation rejects that code.
 func TestTotpClockUsesOriginalValidationWindow(t *testing.T) {
 	now := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	secret := "JBSWY3DPEHPK3PXP"
@@ -42,12 +50,17 @@ func TestTotpClockUsesOriginalValidationWindow(t *testing.T) {
 	require.False(t, svc.validateCode(code, secret))
 }
 
+// SetNotifyVerifyCode retains the notification record for timestamp assertions.
+// The fixture ignores the address and TTL because this test observes the
+// service's clock reads through the supplied record pointer.
 func (c *clockEmailCache) SetNotifyVerifyCode(_ context.Context, _ string, data *VerificationCodeData, _ time.Duration) error {
 	c.value = data
 	return nil
 }
 
-// TestNotifyClockKeepsSeparateReadPoints checks that CreatedAt and ExpiresAt read the clock separately.
+// TestNotifyClockKeepsSeparateReadPoints advances the injected clock by one
+// second on every read. It requires two reads and verifies that the expiry
+// includes the second read's extra second plus VerifyCodeTTL.
 func TestNotifyClockKeepsSeparateReadPoints(t *testing.T) {
 	base := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	calls := 0

@@ -16,43 +16,97 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// Team service tests keep the acting membership separate from the fixed owner
+// record, so reports and management decisions can be observed under either
+// role. Fixture result pointers/slices are retained, including Key items that
+// the service masks and clears in place.
+//
+// Repository overrides record selected inputs while unimplemented methods
+// come from an embedded interface. The invitation limiter selects represented
+// admission outcomes without Redis storage, and the mail scenario uses the
+// notification renderer with a test SMTP server. Assertions cover delegated
+// scope, validation-before-write, URL selection and selected delivery output;
+// they leave persistence transaction behavior to repository tests.
+
+// fakeTeamInvitationLimiter supplies selected admission outcomes to
+// team-service invitation tests.
 type fakeTeamInvitationLimiter struct {
-	allowed    bool
+	allowed bool // configured invitation admission result
+	// retryAfter supplies the delay returned with the configured flag.
+	// TeamService rounds denied delays upward to at least one retry second.
 	retryAfter time.Duration
-	err        error
+	// err is returned with the configured admission observations. TeamService
+	// treats any limiter error as unavailable before considering the allowed
+	// flag.
+	err error
 }
 
-// fakeTeamRepository records team management inputs and returns configured results.
+// fakeTeamRepository records selected team operations and retains configured
+// result data for sequential service tests.
 type fakeTeamRepository struct {
+	// TeamRepository supplies methods outside this fixture's selected overrides.
+	// A nil embedded interface cannot handle an unexpected service operation
+	// introduced into a test flow.
 	TeamRepository
 
-	teamContext       *TeamContext
-	members           []TeamMembership
-	usageSummary      *TeamUsageSummary
-	usageQuery        TeamUsageQuery
-	teamKeys          []TeamAPIKeyItem
+	// teamContext is returned as a shared pointer for any identity. Mutation
+	// helpers require its Team and change that retained object directly.
+	teamContext *TeamContext
+	// members is the retained slice returned by ListMembers. Owner responses
+	// share its storage; ordinary-member filtering copies selected outer records
+	// into a new slice.
+	members []TeamMembership
+	// usageSummary is returned by retained pointer after recording the usage
+	// query. Nil is a permitted fixture result, leaving result interpretation to
+	// the test caller.
+	usageSummary *TeamUsageSummary
+	// usageQuery captures the submitted value after service normalization/scope
+	// selection. ActorUserID and APIKeyID pointers remain shared with the passed
+	// query.
+	usageQuery TeamUsageQuery
+	// teamKeys is returned with its existing backing storage. TeamService masks
+	// and clears each item, so those changes also affect retained fixture data.
+	teamKeys []TeamAPIKeyItem
+	// teamKeyActor receives a fresh copied ID for nonnil filters. A later
+	// nil-filter call leaves this prior pointer unchanged while updating
+	// teamKeyActorIsNil.
 	teamKeyActor      *int64
-	teamKeyActorIsNil bool
-	status            string
-	name              string
-	defaultLimits     [3]float64
-	defaultLimitsSet  bool
+	teamKeyActorIsNil bool       // observed absent creator filter
+	status            string     // most recent submitted team status
+	name              string     // most recent submitted team name
+	defaultLimits     [3]float64 // daily weekly monthly USD defaults
+	defaultLimitsSet  bool       // observed default triple write
+	// adminUpdate captures the submitted administrator value and its retained
+	// pointers. Tests keep pointed inputs stable while reading this recorded
+	// request.
 	adminUpdate       TeamAdminUpdate
-	adminUpdateCount  int
-	invitationCreates int
+	adminUpdateCount  int // observed administrator update count
+	invitationCreates int // observed invitation creation count
+	// invitationPreview is returned by shared pointer after delegated preview
+	// inputs are recorded. Tests supply it directly rather than storing
+	// invitation rows.
 	invitationPreview *TeamInvitationPreview
-	previewTokenHash  string
-	previewEmail      string
-	previewAt         time.Time
+	previewTokenHash  string    // most recent hashed review token
+	previewEmail      string    // most recent normalized current mailbox
+	previewAt         time.Time // most recent preview evaluation time
 }
 
-// fakeTeamUserRepository supplies the signed-in user's email for invitation previews.
+// fakeTeamUserRepository supplies a retained account mailbox for team
+// invitation preview tests.
 type fakeTeamUserRepository struct {
+	// UserReader supplies account operations outside the overridden GetByID
+	// method. A nil embedded interface cannot service another lookup reached by
+	// changed test flow.
 	UserReader
 
+	// user is returned by shared pointer for any account ID. Preview callers
+	// supply a nonnil account before the service reads its mailbox.
 	user *UserSnapshot
 }
 
+// TestTeamServiceListMembersMemberOnlySeesOwnerAndSelf lists three
+// represented memberships as an ordinary member. It checks that the first two
+// returned records carry the owner ID followed by the acting member ID.
 func TestTeamServiceListMembersMemberOnlySeesOwnerAndSelf(t *testing.T) {
 	repo := &fakeTeamRepository{
 		teamContext: teamServiceTestContext(2, TeamRoleMember),
@@ -69,6 +123,9 @@ func TestTeamServiceListMembersMemberOnlySeesOwnerAndSelf(t *testing.T) {
 	require.Equal(t, []int64{1, 2}, []int64{members[0].UserID, members[1].UserID})
 }
 
+// TestTeamServiceUsageScopeCannotBeExpandedByMember submits another actor
+// filter as an ordinary member. The repository receives the current member ID
+// instead, protecting service scope narrowing before usage reporting.
 func TestTeamServiceUsageScopeCannotBeExpandedByMember(t *testing.T) {
 	otherUserID := int64(99)
 	repo := &fakeTeamRepository{
@@ -83,6 +140,9 @@ func TestTeamServiceUsageScopeCannotBeExpandedByMember(t *testing.T) {
 	require.Equal(t, int64(2), *repo.usageQuery.ActorUserID)
 }
 
+// TestTeamServiceUsageScopeOwnerKeepsMemberFilter submits a target member
+// filter as the owner. The repository receives that positive target
+// unchanged, allowing owner reports to select one represented member.
 func TestTeamServiceUsageScopeOwnerKeepsMemberFilter(t *testing.T) {
 	targetUserID := int64(3)
 	repo := &fakeTeamRepository{
@@ -97,6 +157,9 @@ func TestTeamServiceUsageScopeOwnerKeepsMemberFilter(t *testing.T) {
 	require.Equal(t, targetUserID, *repo.usageQuery.ActorUserID)
 }
 
+// TestTeamServiceAdminUsageKeepsMemberFilter submits a member filter through
+// administrator usage reporting. After the configured team context is
+// accepted, the repository receives the same selected member ID.
 func TestTeamServiceAdminUsageKeepsMemberFilter(t *testing.T) {
 	targetUserID := int64(3)
 	repo := &fakeTeamRepository{
@@ -111,6 +174,9 @@ func TestTeamServiceAdminUsageKeepsMemberFilter(t *testing.T) {
 	require.Equal(t, targetUserID, *repo.usageQuery.ActorUserID)
 }
 
+// TestTeamServiceAdminUpdatesName requests an administrator rename with
+// surrounding spaces. The recorded repository value contains the trimmed
+// Unicode team name and the operation returns success.
 func TestTeamServiceAdminUpdatesName(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
@@ -120,6 +186,9 @@ func TestTeamServiceAdminUpdatesName(t *testing.T) {
 	require.Equal(t, "新团队名称", repo.name)
 }
 
+// TestTeamServiceAdminUpdateValidatesBeforeWriting combines a usable name
+// with a negative member ceiling. Validation returns an error and the
+// repository records no administrator update or name mutation.
 func TestTeamServiceAdminUpdateValidatesBeforeWriting(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
@@ -132,6 +201,9 @@ func TestTeamServiceAdminUpdateValidatesBeforeWriting(t *testing.T) {
 	require.Empty(t, repo.name)
 }
 
+// TestTeamServiceAdminUpdateWritesAllFieldsOnce submits name, status and
+// member ceiling together. One recorded repository update contains trimmed
+// name and the returned shared context reflects selected status and ceiling.
 func TestTeamServiceAdminUpdateWritesAllFieldsOnce(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
@@ -148,13 +220,20 @@ func TestTeamServiceAdminUpdateWritesAllFieldsOnce(t *testing.T) {
 	require.Equal(t, 12, teamCtx.Team.MemberLimit)
 }
 
+// TestTeamServiceListTeamKeysMasksSecretsAndAppliesRoleFilter lists one
+// plaintext fixture credential as owner and ordinary member. Returned data
+// clears that credential, exposes its mask and passes nil or self creator
+// filtering according to role.
 func TestTeamServiceListTeamKeysMasksSecretsAndAppliesRoleFilter(t *testing.T) {
 	tests := []struct {
-		name            string
-		userID          int64
-		role            string
-		wantActorIsNil  bool
-		wantActorUserID int64
+		name   string // descriptive role filtering case
+		userID int64  // acting account identity value
+		role   string // represented acting membership role
+		// wantActorIsNil and wantActorUserID describe the selected creator filter.
+		// A true nil expectation checks owner-wide access and skips the ID
+		// assertion; false checks the represented member ID.
+		wantActorIsNil  bool  // expected absent creator filter
+		wantActorUserID int64 // expected selected creator identity
 	}{
 		{name: "owner", userID: 1, role: TeamRoleOwner, wantActorIsNil: true},
 		{name: "member", userID: 2, role: TeamRoleMember, wantActorUserID: 2},
@@ -182,6 +261,9 @@ func TestTeamServiceListTeamKeysMasksSecretsAndAppliesRoleFilter(t *testing.T) {
 	}
 }
 
+// TestTeamServiceSuspendedOwnerCanResume sets a represented owner's team to
+// suspended before requesting active status. The recorded status and returned
+// team context become active through the owner-inclusive suspended path.
 func TestTeamServiceSuspendedOwnerCanResume(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	repo.teamContext.Team.Status = TeamStatusSuspended
@@ -193,6 +275,10 @@ func TestTeamServiceSuspendedOwnerCanResume(t *testing.T) {
 	require.Equal(t, TeamStatusActive, teamCtx.Team.Status)
 }
 
+// TestTeamServiceSuspendedMemberCannotChangeStatus requests resume as an
+// ordinary member of a suspended team. Owner-required rejection protects
+// status mutation even though the membership lookup permits suspended
+// context.
 func TestTeamServiceSuspendedMemberCannotChangeStatus(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(2, TeamRoleMember)}
 	repo.teamContext.Team.Status = TeamStatusSuspended
@@ -202,6 +288,9 @@ func TestTeamServiceSuspendedMemberCannotChangeStatus(t *testing.T) {
 	require.ErrorIs(t, err, ErrTeamOwnerRequired)
 }
 
+// TestTeamServiceOwnerUpdatesDefaultMemberLimits submits nonnegative
+// daily/weekly/monthly defaults as the owner. The fixture records the
+// complete USD triple and the returned context reflects its daily default.
 func TestTeamServiceOwnerUpdatesDefaultMemberLimits(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
@@ -213,6 +302,9 @@ func TestTeamServiceOwnerUpdatesDefaultMemberLimits(t *testing.T) {
 	require.Equal(t, 1.5, teamCtx.Team.DefaultDailyLimitUSD)
 }
 
+// TestTeamServiceRejectsNegativeDefaultMemberLimits supplies a negative daily
+// default beside usable weekly/monthly amounts. The service returns an error
+// and the fixture records no default-limit write.
 func TestTeamServiceRejectsNegativeDefaultMemberLimits(t *testing.T) {
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
 	svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
@@ -222,6 +314,10 @@ func TestTeamServiceRejectsNegativeDefaultMemberLimits(t *testing.T) {
 	require.False(t, repo.defaultLimitsSet)
 }
 
+// TestTeamServiceInvitationEmailUsesCustomNotificationTemplate sends an
+// invitation through the configured notification template and test SMTP
+// server. One message uses the custom English template, saved frontend URL
+// and formatted expiry instead of configured URL/built-in text.
 func TestTeamServiceInvitationEmailUsesCustomNotificationTemplate(t *testing.T) {
 	ctx := context.Background()
 	settingRepo := mailtest.NewMemorySettings()
@@ -260,6 +356,10 @@ func TestTeamServiceInvitationEmailUsesCustomNotificationTemplate(t *testing.T) 
 	require.False(t, strings.Contains(messageBody, "你被邀请加入团队"))
 }
 
+// TestTeamServiceFrontendLinkFallsBackToConfig uses a display-settings reader
+// with no stored frontend URL and an injected startup callback. The resulting
+// review link uses that reader's startup value with its trailing slash
+// removed.
 func TestTeamServiceFrontendLinkFallsBackToConfig(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Options{FrontendURL: "https://config.example/"}
@@ -272,6 +372,10 @@ func TestTeamServiceFrontendLinkFallsBackToConfig(t *testing.T) {
 	require.Equal(t, "https://config.example/team?invitation=test-token", link)
 }
 
+// TestTeamServiceFrontendLinkRejectsMissingBaseURL supplies a
+// display-settings reader whose saved/startup URL choices are empty.
+// FrontendLink returns unavailable and empty link, protecting review-link
+// rejection before configured invitation delivery.
 func TestTeamServiceFrontendLinkRejectsMissingBaseURL(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Options{}
@@ -284,6 +388,10 @@ func TestTeamServiceFrontendLinkRejectsMissingBaseURL(t *testing.T) {
 	require.Empty(t, link)
 }
 
+// TestTeamServiceInviteRejectsMissingBaseURLBeforeCreatingInvitation admits
+// invitation rate checking but leaves frontend URL empty with a configured
+// mail sender. The service returns unavailable and nil invitation before the
+// repository records creation.
 func TestTeamServiceInviteRejectsMissingBaseURLBeforeCreatingInvitation(t *testing.T) {
 	ctx := context.Background()
 	repo := &fakeTeamRepository{teamContext: teamServiceTestContext(1, TeamRoleOwner)}
@@ -300,6 +408,10 @@ func TestTeamServiceInviteRejectsMissingBaseURLBeforeCreatingInvitation(t *testi
 	require.Zero(t, repo.invitationCreates)
 }
 
+// TestTeamServicePreviewInvitationUsesTokenHashAndCurrentUserEmail previews a
+// spaced token for an account with mixed-case padded email. The repository
+// receives the trimmed-token hash, normalized current mailbox and a nonzero
+// time, returning its shared preview.
 func TestTeamServicePreviewInvitationUsesTokenHashAndCurrentUserEmail(t *testing.T) {
 	preview := &TeamInvitationPreview{
 		TeamName:     "平台团队",
@@ -320,6 +432,9 @@ func TestTeamServicePreviewInvitationUsesTokenHashAndCurrentUserEmail(t *testing
 	require.False(t, repo.previewAt.IsZero())
 }
 
+// TestTeamServiceInvitationLimitReturnsRetryAfter denies admission with a
+// 1.5-second configured delay. The returned rate-limit error includes two
+// retry seconds, protecting upward rounding for the caller-facing hint.
 func TestTeamServiceInvitationLimitReturnsRetryAfter(t *testing.T) {
 	svc := NewTeamService(nil, nil, nil, nil, &fakeTeamInvitationLimiter{retryAfter: 1500 * time.Millisecond}, nil, nil)
 
@@ -330,6 +445,10 @@ func TestTeamServiceInvitationLimitReturnsRetryAfter(t *testing.T) {
 	require.Equal(t, "2", appErr.Metadata["retry_after"])
 }
 
+// TestTeamServiceInvitationLimitFailsClosedWhenRedisUnavailable makes the
+// configured invitation limiter fail. The service returns
+// invitation-unavailable, protecting rejection of admission when its shared
+// limiter cannot produce a usable result.
 func TestTeamServiceInvitationLimitFailsClosedWhenRedisUnavailable(t *testing.T) {
 	svc := NewTeamService(nil, nil, nil, nil, &fakeTeamInvitationLimiter{err: errors.New("redis unavailable")}, nil, nil)
 
@@ -337,27 +456,45 @@ func TestTeamServiceInvitationLimitFailsClosedWhenRedisUnavailable(t *testing.T)
 	require.ErrorIs(t, err, ErrTeamInvitationUnavailable)
 }
 
+// CheckAndRecord returns the configured admission flag, delay and error for
+// every input. It records no permit or mailbox history, so tests use it to
+// select service branches rather than reproduce Redis behavior.
 func (l *fakeTeamInvitationLimiter) CheckAndRecord(context.Context, int64, string) (bool, time.Duration, error) {
 	return l.allowed, l.retryAfter, l.err
 }
 
+// GetContextByUserID returns the configured shared team context for every
+// requested account. It ignores the identity and can return nil with nil
+// error, letting service validation inspect the represented context.
 func (r *fakeTeamRepository) GetContextByUserID(context.Context, int64) (*TeamContext, error) {
 	return r.teamContext, nil
 }
 
+// GetContextByTeamID returns the configured shared team context for every
+// requested team. The fixture models no missing-row error, so administrator
+// tests establish availability by supplying the context directly.
 func (r *fakeTeamRepository) GetContextByTeamID(context.Context, int64) (*TeamContext, error) {
 	return r.teamContext, nil
 }
 
+// ListMembers returns the configured membership slice with its backing
+// storage retained. Requested team IDs are ignored; ordinary-member service
+// filtering can allocate a subset while owner results share this slice.
 func (r *fakeTeamRepository) ListMembers(context.Context, int64) ([]TeamMembership, error) {
 	return r.members, nil
 }
 
+// GetUsageSummary records the supplied query value and returns the configured
+// shared summary. Pointer filters inside the captured query remain shared, so
+// tests keep their selected identities stable while inspecting scope.
 func (r *fakeTeamRepository) GetUsageSummary(_ context.Context, _ int64, query TeamUsageQuery) (*TeamUsageSummary, error) {
 	r.usageQuery = query
 	return r.usageSummary, nil
 }
 
+// ListTeamKeys records nil creator filtering or copies the supplied creator
+// ID into fixture-owned storage. It returns the shared Key slice, allowing
+// service masking and plaintext clearing to mutate retained items.
 func (r *fakeTeamRepository) ListTeamKeys(_ context.Context, _ int64, actorUserID *int64) ([]TeamAPIKeyItem, error) {
 	r.teamKeyActorIsNil = actorUserID == nil
 	if actorUserID != nil {
@@ -367,18 +504,27 @@ func (r *fakeTeamRepository) ListTeamKeys(_ context.Context, _ int64, actorUserI
 	return r.teamKeys, nil
 }
 
+// SetStatus records status and changes the shared team context. A nonnil
+// context/team is required; no database constraints or authentication-cache
+// publication are implemented by this fixture.
 func (r *fakeTeamRepository) SetStatus(_ context.Context, _ int64, status string) error {
 	r.status = status
 	r.teamContext.Team.Status = status
 	return nil
 }
 
+// UpdateName records name and changes the shared team context. A nonnil
+// context/team is required, and service tests inspect the received normalized
+// text rather than database validation.
 func (r *fakeTeamRepository) UpdateName(_ context.Context, _ int64, name string) error {
 	r.name = name
 	r.teamContext.Team.Name = name
 	return nil
 }
 
+// SetDefaultMemberLimits records the complete USD triple and sets its
+// observation flag before updating shared team defaults. A nonnil
+// context/team is required; existing membership limits remain untouched.
 func (r *fakeTeamRepository) SetDefaultMemberLimits(_ context.Context, _ int64, daily, weekly, monthly float64) error {
 	r.defaultLimits = [3]float64{daily, weekly, monthly}
 	r.defaultLimitsSet = true
@@ -388,11 +534,17 @@ func (r *fakeTeamRepository) SetDefaultMemberLimits(_ context.Context, _ int64, 
 	return nil
 }
 
+// CreateInvitation counts creation and returns a fresh invitation containing
+// submitted identity/email/expiry fields. It ignores token hash, stores no
+// invitation and leaves status/record ID zero for service-order assertions.
 func (r *fakeTeamRepository) CreateInvitation(_ context.Context, teamID, inviterUserID int64, email, _ string, expiresAt time.Time) (*TeamInvitation, error) {
 	r.invitationCreates++
 	return &TeamInvitation{TeamID: teamID, InviterUserID: inviterUserID, Email: email, ExpiresAt: expiresAt}, nil
 }
 
+// PreviewInvitation records token hash, normalized mailbox and evaluation
+// time before returning the configured preview pointer. No token-state
+// validation occurs here; service tests inspect its delegated inputs.
 func (r *fakeTeamRepository) PreviewInvitation(_ context.Context, tokenHash, normalizedEmail string, now time.Time) (*TeamInvitationPreview, error) {
 	r.previewTokenHash = tokenHash
 	r.previewEmail = normalizedEmail
@@ -400,10 +552,17 @@ func (r *fakeTeamRepository) PreviewInvitation(_ context.Context, tokenHash, nor
 	return r.invitationPreview, nil
 }
 
+// GetByID returns the configured recipient account pointer for every
+// requested identity. It can return nil with nil error; callers using it for
+// preview supply a nonnil account in setup.
 func (r *fakeTeamUserRepository) GetByID(context.Context, int64) (*UserSnapshot, error) {
 	return r.user, nil
 }
 
+// UpdateAdmin records the supplied update value and increments its call count
+// before applying each nonnil field to shared team context. Pointer fields in
+// the recorded update remain shared; service validation is tested before this
+// fixture call.
 func (r *fakeTeamRepository) UpdateAdmin(_ context.Context, _ int64, update TeamAdminUpdate) error {
 	r.adminUpdate = update
 	r.adminUpdateCount++
@@ -419,6 +578,10 @@ func (r *fakeTeamRepository) UpdateAdmin(_ context.Context, _ int64, update Team
 	return nil
 }
 
+// teamServiceTestContext creates fresh active team, actor membership and
+// owner records for service tests. The supplied role/actor ID is retained
+// independently from the fixed owner identity, so ownership permissions
+// follow the represented actor role.
 func teamServiceTestContext(userID int64, role string) *TeamContext {
 	return &TeamContext{
 		Team:       &Team{ID: 11, Name: "测试团队", Status: TeamStatusActive},

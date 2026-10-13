@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// TestSettingService_GetAuthSourceDefaultSettings_ParsesValuesAndDefaults
+// reads a mixture of saved provider values and missing keys. It checks
+// numeric/plan parsing, absent-provider defaults, independent action switches
+// and the exact third-party email-policy flag.
 func TestSettingService_GetAuthSourceDefaultSettings_ParsesValuesAndDefaults(t *testing.T) {
 	repo := &authSourceDefaultsRepoStub{
 		values: map[string]string{
@@ -42,6 +46,10 @@ func TestSettingService_GetAuthSourceDefaultSettings_ParsesValuesAndDefaults(t *
 	require.True(t, got.ForceEmailOnThirdPartySignup)
 }
 
+// TestSettingService_UpdateAuthSourceDefaultSettings_PersistsAllKeys submits
+// several provider grant configurations to the settings writer. It checks
+// selected flat values, eight-decimal balance encoding, action flags and the
+// preserved WeChat plan list in stored JSON.
 func TestSettingService_UpdateAuthSourceDefaultSettings_PersistsAllKeys(t *testing.T) {
 	repo := &authSourceDefaultsRepoStub{}
 	svc := identity.NewGrantSettings(repo, identity.GrantSettingsOptions{})
