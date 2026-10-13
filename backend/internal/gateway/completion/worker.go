@@ -62,10 +62,11 @@ const (
 // success even when funds or analysis persistence failed.
 type UsageRecordTask func(ctx context.Context)
 
-// UsageRecordSubmitMode reports how a submission was handled.
+// UsageRecordSubmitMode reports the admission or execution outcome of one submission.
 type UsageRecordSubmitMode string
 
-// UsageRecordWorkerPoolOptions configures queueing, overflow, and worker scaling.
+// UsageRecordWorkerPoolOptions configures capacity, task budgets, queueing, overflow,
+// and worker scaling.
 type UsageRecordWorkerPoolOptions struct {
 	// Observe receives synchronous queue, panic, and scale diagnostics; nil skips
 	// emission. Shared pools can call it concurrently, so the callback supports

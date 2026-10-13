@@ -10,7 +10,9 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// TestCursorMixedShapeDetection checks input and extension fields after rewriting a Responses model.
+// TestCursorMixedShapeDetection patches the model in a Responses-shaped Chat
+// fixture using sjson. The resulting bytes must retain input roles, content,
+// extensions, stream choice, service tier, and effort.
 func TestCursorMixedShapeDetection(t *testing.T) {
 	cursorBody := []byte(`{
 		"user": "85df22e7463ab6c2",
@@ -58,7 +60,9 @@ func TestCursorMixedShapeDetection(t *testing.T) {
 		"rewritten body must not collapse input to null")
 }
 
-// TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected checks dispatch for bodies with messages.
+// TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected evaluates the
+// shape predicate on ordinary Chat messages. A body containing messages must
+// remain outside the Responses-input shortcut used by request preparation.
 func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
@@ -74,7 +78,9 @@ func TestCursorMixedShapeDetection_NormalChatCompletionsUnaffected(t *testing.T)
 		"standard Chat Completions body must NOT be detected as Responses-shape")
 }
 
-// TestCursorMixedShapeDetection_BothFieldsPrefersMessages checks that messages wins when input also exists.
+// TestCursorMixedShapeDetection_BothFieldsPrefersMessages evaluates a body with
+// both messages and input. The presence of messages must prevent selection of
+// the Responses-shaped input shortcut.
 func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
@@ -90,7 +96,9 @@ func TestCursorMixedShapeDetection_BothFieldsPrefersMessages(t *testing.T) {
 		"when both messages and input are present, must not take the Cursor shortcut")
 }
 
-// TestCursorMixedShapeDetection_EmptyBody checks shape detection for an empty body.
+// TestCursorMixedShapeDetection_EmptyBody evaluates a body with model and
+// stream but no history fields. It must fail the Responses-shaped predicate
+// because input is absent.
 func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":true}`)
 
@@ -102,7 +110,9 @@ func TestCursorMixedShapeDetection_EmptyBody(t *testing.T) {
 		"body with neither messages nor input must not be taken as Cursor shape")
 }
 
-// TestCursorMixedShape_JSONRoundtrip checks Responses fields through a JSON round trip.
+// TestCursorMixedShape_JSONRoundtrip decodes the bytes after a raw Responses
+// model patch. The decoded map must retain the replacement model, stream flag,
+// and one array input item.
 func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
 	cursorBody := []byte(`{"model":"gpt-5.4","stream":true,"input":[{"role":"user","content":"hi"}]}`)
 
@@ -120,7 +130,9 @@ func TestCursorMixedShape_JSONRoundtrip(t *testing.T) {
 	require.Len(t, inputArr, 1)
 }
 
-// TestCursorMixedShape_StripsUnsupportedFields checks removal of unsupported Cursor request fields.
+// TestCursorMixedShape_StripsUnsupportedFields removes every listed extension
+// from a complete raw fixture. The required model, stream choice, and user
+// input must remain while the incompatible fields disappear.
 func TestCursorMixedShape_StripsUnsupportedFields(t *testing.T) {
 	cursorBody := []byte(`{
 		"model": "gpt-5.4",
@@ -138,6 +150,9 @@ func TestCursorMixedShape_StripsUnsupportedFields(t *testing.T) {
 	}
 
 	result := cursorBody
+	// Optional deletion failures retain the prior bytes, matching the production
+	// removal loop; final assertions detect any fixture extension that remained
+	// present.
 	for _, field := range CursorResponsesUnsupportedFields {
 		if stripped, err := sjson.DeleteBytes(result, field); err == nil {
 			result = stripped

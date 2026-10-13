@@ -7,7 +7,9 @@ import (
 	"testing"
 )
 
-// TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging checks capture gating and credential redaction.
+// TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging disables both capture
+// switches before enabling retention on the same Trace. The retained line must
+// redact the Bearer secret while the disabled call returns an empty string.
 func TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://example.test/v1/messages", nil)
 	request.Header.Set("Authorization", "Bearer fixture-secret")
@@ -21,6 +23,9 @@ func TestCaptureOnlyForRetainedDiagnosticOrEnabledLogging(t *testing.T) {
 	}
 }
 
+// TestParseDebugEnvBool supplies empty, true-like, and false-like debug
+// settings. It protects case-insensitive recognition of enabled values and
+// rejection of unrelated strings used as possible debug paths.
 func TestParseDebugEnvBool(t *testing.T) {
 	t.Run("empty is false", func(t *testing.T) {
 		if parseDebugEnvBool("") {

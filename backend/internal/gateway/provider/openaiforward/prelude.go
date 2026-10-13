@@ -11,88 +11,228 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Responses preparation can lower tool declarations and historical calls
+// differently according to provider protocol, Compact mode, and passthrough
+// policy. Admission runs against the request after any group image blocking,
+// while canonical image-intent bytes are retained before later compatibility
+// normalization can remove evidence used by image policy. Request-local
+// restoration mappings are cleared before a new provider attempt.
+//
+// The prepared body, its decoded view, and protocol route advance together
+// through provider-specific checks. Grok, Anthropic, and raw Chat can return
+// before the remaining OpenAI replay and transport policy steps. OpenAI paths
+// rebuild the view after reasoning replay or item-ID repairs; passthrough image
+// stripping marks intent invalidation so later processing knows to reconsider
+// the retained canonical evidence.
+
+// Dispatch values select one provider-attempt executor after common preparation;
+// the zero value continues through the ordinary Responses execution path.
 const (
-	DispatchResponses Dispatch = iota
-	DispatchRawChat
-	DispatchGrok
-	DispatchAnthropic
-	DispatchPassthrough
+	DispatchResponses   Dispatch = iota // ordinary Responses execution
+	DispatchRawChat                     // raw Chat execution
+	DispatchGrok                        // Grok Responses execution
+	DispatchAnthropic                   // Anthropic protocol conversion
+	DispatchPassthrough                 // Responses passthrough execution
 )
 
+// Dispatch identifies the selected executor for one prepared provider attempt.
 type Dispatch uint8
 
-type TransportDecision struct{ Transport, Reason string }
+// TransportDecision records the chosen upstream transport and its diagnostic reason.
+type TransportDecision struct {
+	// Transport is the selected transport mode; Reason is the selection explanation.
+	Transport, Reason string
+}
 
 // Profile contains the selected provider's resolved protocol capabilities.
 type Profile struct {
-	Platform, Name, Type                                                    string
-	UsesCodex                                                               bool
-	OpenAI, OAuth, OAuthLike, APIKey                                        bool
+	// Platform is the upstream platform; Name is the configured provider name;
+	// Type is the credential type.
+	Platform, Name, Type string
+	UsesCodex            bool // Codex protocol selection flag
+	// OpenAI identifies the platform; OAuth identifies OAuth credentials;
+	// OAuthLike includes compatible credential types; APIKey identifies API Key
+	// credentials.
+	OpenAI, OAuth, OAuthLike, APIKey bool
+	// Grok identifies the xAI platform; DeepSeek identifies its platform; NativeCN
+	// selects CN Responses policy; Anthropic selects Anthropic conversion; RawChat
+	// selects raw Chat forwarding; ResolvedChat identifies the resolved Chat
+	// route; Passthrough enables body passthrough.
 	Grok, DeepSeek, NativeCN, Anthropic, RawChat, ResolvedChat, Passthrough bool
 }
+
+// Rejection describes the client response and diagnostic markers for local denial.
 type Rejection struct {
-	Status                                       int
-	Type, Message, Param                         string
+	Status int // client HTTP status
+	// Type is the protocol error category; Message is the client explanation;
+	// Param is the offending parameter.
+	Type, Message, Param string
+	// PolicyDenied records policy rejection; FeatureDenied records feature
+	// rejection; ObserveUpstream records upstream-facing error diagnostics.
 	PolicyDenied, FeatureDenied, ObserveUpstream bool
 }
+
+// Prelude retains prepared bytes, routing observations, and the selected execution path.
 type Prelude struct {
-	Body, OriginalBody, CanonicalImageIntentBody              []byte
-	StartedAt                                                 time.Time
-	TLS                                                       egress.TLSFingerprintRouterMatchResult
-	Transport                                                 TransportDecision
+	// Body and OriginalBody retain adopted prepared bytes;
+	// CanonicalImageIntentBody retains the post-group-blocking payload before tool
+	// and replay normalization so later image checks can revisit intent.
+	Body, OriginalBody, CanonicalImageIntentBody []byte                                 // Body is prepared bytes; OriginalBody is adopted attempt bytes; CanonicalImageIntentBody is image-intent input
+	StartedAt                                    time.Time                              // attempt preparation start
+	TLS                                          egress.TLSFingerprintRouterMatchResult // selected TLS routing match
+	Transport                                    TransportDecision                      // resolved upstream transport decision
+	// Compact selects the Compact path; MessagesBridge identifies converted
+	// Messages input; CodexCLI identifies the client; ImageIntentInvalidated marks
+	// later image-declaration stripping.
 	Compact, MessagesBridge, CodexCLI, ImageIntentInvalidated bool
-	ImageToolPolicy                                           string
-	ReasoningEffort                                           *string
-	View                                                      requeststate.OpenAIRequestView
-	Route                                                     Dispatch
+	ImageToolPolicy                                           string  // Codex image tool policy
+	ReasoningEffort                                           *string // passthrough effective reasoning effort
+	// View caches model and stream metadata after adopted replay and item-ID
+	// repairs; final passthrough image stripping retains that already-decoded
+	// view.
+	View  requeststate.OpenAIRequestView
+	Route Dispatch // selected provider-attempt executor
 }
 
 // PreludePorts supplies policy reads, body conversions, and observations during request preparation.
 type PreludePorts interface {
+	// BlockGroupImages reports whether the admitted Responses group blocks image
+	// generation.
 	BlockGroupImages() bool
+	// StripImages removes image-generation declarations from the supplied
+	// Responses bytes. Its change result identifies adopted bytes; parsing or
+	// patch errors stop preparation before another compatibility step uses the
+	// body.
 	StripImages([]byte) ([]byte, bool, error)
+	// Begin resets model and endpoint observations for the selected provider
+	// attempt.
 	Begin()
+	// ClearMappings clears response restoration mappings before another provider
+	// attempt is prepared.
 	ClearMappings()
+	// PrepareIdentity prepares the selected provider's Codex identity before
+	// request conversion.
 	PrepareIdentity(context.Context) error
+	// MatchTLS returns the TLS routing match for the current provider request.
 	MatchTLS() egress.TLSFingerprintRouterMatchResult
+	// ClientAllowed reports client admission using TLS observations and request
+	// bytes.
 	ClientAllowed(context.Context, egress.TLSFingerprintRouterMatchResult, []byte) (bool, string)
+	// Reject publishes requested diagnostics and writes the local protocol error
+	// response.
 	Reject(Rejection)
+	// ToolSchemas returns platform-compatible tool declarations and reports
+	// whether bytes changed. PreparePrelude adopts changed output, and any parsing
+	// or patch error stops the request before transport selection.
 	ToolSchemas([]byte) ([]byte, bool, error)
+	// LiteHeader reports whether the incoming header requests Responses Lite
+	// execution.
 	LiteHeader() bool
+	// LitePayload normalizes Responses Lite bytes and returns a rejection
+	// parameter on error. The changed result identifies adopted bytes; preparation
+	// writes the supplied parameter when rejecting invalid Lite input.
 	LitePayload([]byte) ([]byte, bool, string, error)
+	// Transport returns the upstream transport choice and its diagnostic selection
+	// reason.
 	Transport() TransportDecision
+	// CompactPath reports whether the incoming request targets legacy Responses
+	// Compact.
 	CompactPath() bool
+	// CompactBody applies the Compact field whitelist and compatibility
+	// normalization. Changed bytes replace the current body before API Key replay
+	// preparation; errors stop preparation before namespace policy is evaluated.
 	CompactBody([]byte) ([]byte, bool, error)
+	// CompactAPIKeyReplay repairs API Key reasoning replay for an active Compact
+	// request. The changed result identifies the bytes to adopt, and errors stop
+	// preparation before tool namespace handling.
 	CompactAPIKeyReplay([]byte) ([]byte, bool, error)
+	// FlattenRequired reports whether declarations need lowering for the resolved
+	// transport policy.
 	FlattenRequired(TransportDecision, bool, bool) bool
+	// Flatten lowers namespace declarations and binds their response restoration
+	// names. Call it after ClearMappings so another provider's names are absent;
+	// errors produce the tools rejection before forwarding.
 	Flatten([]byte) ([]byte, error)
+	// StripNamespacesRequired reports whether historical calls need namespace
+	// cleanup for this route.
 	StripNamespacesRequired(TransportDecision, bool) bool
+	// KeepNamespaces reports whether current declarations permit retaining
+	// historical tool-call namespaces.
 	KeepNamespaces(TransportDecision, bool, bool, []byte) bool
+	// StripNamespaces cleans historical call namespaces according to the supplied
+	// retention decision. It returns prepared bytes or a parsing error, which the
+	// prelude presents as an input rejection before dispatch.
 	StripNamespaces([]byte, bool) ([]byte, error)
+	// NeedsClientTools reports whether the request declares client tool
+	// representations needing conversion.
 	NeedsClientTools([]byte) bool
+	// AdaptClientTools lowers client tools and installs their response restoration
+	// mapping on success. Call after clearing attempt mappings; an error stops
+	// preparation before the body and view are published.
 	AdaptClientTools([]byte) ([]byte, error)
+	// ValidateEffort checks reasoning effort against the supplied request model
+	// identity.
 	ValidateEffort([]byte, string) error
+	// ReasoningReplay normalizes reasoning history for the selected OpenAI API Key
+	// or OAuth-like request. A changed result rebuilds the prepared view, and
+	// errors stop transport observation before execution.
 	ReasoningReplay([]byte) ([]byte, bool, error)
+	// InputItemIDs sanitizes item identifiers in prepared OpenAI input bytes.
+	// Changed bytes rebuild the cached view before bridge and client detection;
+	// failures stop dispatch with the repair error.
 	InputItemIDs([]byte) ([]byte, bool, error)
+	// MessagesBridge reports whether the request body represents converted
+	// Anthropic Messages input.
 	MessagesBridge([]byte) bool
+	// BindMessagesBridge records the attempt's bridge classification for later
+	// request construction.
 	BindMessagesBridge(bool)
+	// CodexClient reports whether the inbound client uses the Codex CLI identity.
 	CodexClient() bool
+	// ImageToolPolicy returns the Codex client's configured image-generation tool
+	// handling rule.
 	ImageToolPolicy() string
+	// ObserveTransport records the resolved mode, model, and stream choice for
+	// diagnostics.
 	ObserveTransport(TransportDecision, string, bool)
+	// MappedModel resolves the selected provider's upstream identity for a caller
+	// model.
 	MappedModel(string) string
+	// PassthroughEffort resolves effective effort from prepared bytes and the
+	// mapped model.
 	PassthroughEffort([]byte, string) *string
+	// Log writes the preparation diagnostic message with its supplied formatting
+	// arguments.
 	Log(string, ...any)
 }
 
-// PreparePrelude prepares the request and selects Grok, Anthropic, raw Chat, passthrough, or Responses execution.
+// PreparePrelude applies admission and compatibility preparation before
+// selecting the provider-attempt executor. It clears previous restoration
+// mappings and prepares identity before inspecting client policy, then records
+// canonical image-intent bytes before later transformations. Rejected client
+// policy and protocol fields produce their local error response before
+// returning.
+//
+// Grok, Anthropic, and raw Chat dispatch return at their respective preparation
+// stages. Remaining OpenAI requests refresh the body and decoded view after
+// reasoning and item-ID repairs, then bind bridge and client observations
+// before transport validation. Passthrough can strip image declarations and
+// mark intent invalidation while retaining the canonical bytes needed by later
+// image policy. A zero Route selects ordinary Responses execution.
 func PreparePrelude(ctx context.Context, body []byte, profile Profile, p PreludePorts) (*Prelude, error) {
 	var err error
+	// Apply admitted group image blocking before capturing canonical intent so
+	// later provider transforms cannot reintroduce declarations the group policy
+	// removed.
 	if p.BlockGroupImages() {
 		body, _, err = p.StripImages(body)
 		if err != nil {
 			return nil, err
 		}
 	}
+	// Reset attempt observations and tool restoration state before identity
+	// preparation so a new provider cannot interpret responses using an earlier
+	// attempt's mappings.
 	p.Begin()
 	p.ClearMappings()
 	if err = p.PrepareIdentity(ctx); err != nil {
@@ -105,11 +245,17 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 		return nil, errors.New("openai oauth client policy restriction: client is not allowed")
 	}
 
+	// Adopt platform-compatible tool schemas before route selection; later tool
+	// adaptation and namespace policy must inspect the same declarations being
+	// forwarded.
 	if updated, changed, err := p.ToolSchemas(body); err != nil {
 		return nil, err
 	} else if changed {
 		body = updated
 	}
+	// OAuth Responses accepts the platform reasoning-mode normalization here
+	// before Lite and Compact policy inspect the body for their own compatibility
+	// requirements.
 	if profile.OpenAI && profile.OAuth {
 		if updated, changed, err := openai.NormalizeOpenAIResponsesReasoningMode(body); err != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning.mode: %w", err)
@@ -117,6 +263,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 			body = updated
 		}
 	}
+	// Lite headers require credential-specific payload cleanup; report the
+	// validator's offending parameter before any transport preparation can treat
+	// the request as accepted.
 	if profile.OpenAI && p.LiteHeader() {
 		updated, changed, param, err := p.LitePayload(body)
 		if err != nil {
@@ -129,6 +278,8 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 	}
 	value.Transport = p.Transport()
 	value.Compact = p.CompactPath()
+	// Compact preparation applies its field whitelist first, then repairs API Key
+	// replay state; namespace handling uses the adopted result of both steps.
 	if value.Compact {
 		if updated, changed, err := p.CompactBody(body); err != nil {
 			return nil, err
@@ -143,6 +294,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 			}
 		}
 	}
+	// Lower declarations when the selected transport requires it, binding
+	// restoration state before historical tool calls are cleaned for that same
+	// route.
 	if p.FlattenRequired(value.Transport, profile.Passthrough, value.Compact) {
 		body, err = p.Flatten(body)
 		if err != nil {
@@ -150,6 +304,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 			return nil, err
 		}
 	}
+	// Historical namespace retention depends on the declarations that survived
+	// lowering, so determine keep policy from the current body before removing
+	// call metadata.
 	if p.StripNamespacesRequired(value.Transport, profile.Passthrough) {
 		keep := p.KeepNamespaces(value.Transport, profile.Passthrough, value.Compact, body)
 		body, err = p.StripNamespaces(body, keep)
@@ -158,6 +315,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 			return nil, err
 		}
 	}
+	// Native DeepSeek API Key Responses lowers client-tool shapes after namespace
+	// preparation, allowing the response adapter to restore those tools for the
+	// caller.
 	if profile.DeepSeek && profile.NativeCN && profile.APIKey && !value.Compact && p.NeedsClientTools(body) {
 		body, err = p.AdaptClientTools(body)
 		if err != nil {
@@ -186,6 +346,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 		value.Route = DispatchRawChat
 		return value, nil
 	}
+	// Normalize replay content and sanitize item identifiers for eligible OpenAI
+	// credentials; every adopted repair refreshes both byte snapshots and the
+	// decoded request view.
 	if profile.OpenAI && (profile.APIKey || profile.OAuthLike) {
 		if updated, changed, err := p.ReasoningReplay(body); err != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", err)
@@ -216,6 +379,9 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 		return nil, errors.New("openai ws v1 is temporarily unsupported; use ws v2")
 	}
 	if profile.Passthrough {
+		// Provider image stripping changes passthrough intent after canonical
+		// capture; mark that invalidation so later image policy reevaluates the
+		// appropriate request evidence.
 		if value.ImageToolPolicy == "strip" {
 			if updated, changed, err := p.StripImages(body); err != nil {
 				return nil, err

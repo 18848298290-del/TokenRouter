@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// TestAnthropicNativeLinePump_TimesOutWithoutData leaves a pipe reader open
+// with no producer data. Next must return the idle-timeout error within the
+// test's broad elapsed-time bound.
 func TestAnthropicNativeLinePump_TimesOutWithoutData(t *testing.T) {
 	pr, _ := io.Pipe()
 	scanner := bufio.NewScanner(pr)
@@ -26,15 +29,22 @@ func TestAnthropicNativeLinePump_TimesOutWithoutData(t *testing.T) {
 	}
 }
 
+// TestAnthropicNativeLinePump_DataResetsTimer supplies one line then pauses the
+// producer while keeping the pipe open. The first Next returns that line and
+// the next wait must report idle timeout.
 func TestAnthropicNativeLinePump_DataResetsTimer(t *testing.T) {
 	pr, pw := io.Pipe()
 	scanner := bufio.NewScanner(pr)
 	pump := NewAnthropicLinePump(scanner, 1*time.Second)
 	defer pump.Stop()
 
+	// Send one line before withholding further data; keeping the writer open
+	// distinguishes interval expiry from ordinary scanner EOF during the next
+	// wait.
 	go func() {
 		_, _ = pw.Write([]byte("event: ping\n"))
-		// Keep the stream open without more data so the second Next call times out.
+		// Delay beyond the configured interval so the second consumer wait expires
+		// before the producer closes the pipe and publishes EOF.
 		time.Sleep(3 * time.Second)
 		_ = pw.Close()
 	}()

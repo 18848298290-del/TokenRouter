@@ -14,14 +14,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// trackedBody counts network-body closes performed by the HTTP recovery runner.
 type trackedBody struct {
-	io.Reader
-	closes int
+	io.Reader     // supplied failure payload
+	closes    int // recorded close attempts
 }
 
+// Close records one cleanup attempt and succeeds for this body fixture.
 func (b *trackedBody) Close() error { b.closes++; return nil }
 
-// TestRunHTTPRecoveryBoundaries checks recovery counts and response-body cleanup with fixed upstream errors.
+// TestRunHTTPRecoveryBoundaries returns repeated HTTP rejection fixtures for
+// agent, ciphertext, and ordinary failures. It protects one recovery per
+// applicable budget, ciphertext lineage marking, terminal errors, and closure
+// of each network body before retry.
 func TestRunHTTPRecoveryBoundaries(t *testing.T) {
 	for _, kind := range []string{"agent", "encrypted", "plain"} {
 		t.Run(kind, func(t *testing.T) {
@@ -42,6 +47,9 @@ func TestRunHTTPRecoveryBoundaries(t *testing.T) {
 						return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: b}, nil
 					},
 				},
+				// Fixture bodies wrap strings.Reader, whose reads have no transport
+				// failures; recovery assertions therefore inspect bytes and close
+				// counts.
 				ReadErrorBody:    func(resp *http.Response) []byte { b, _ := io.ReadAll(resp.Body); return b },
 				IsAgentIdentity:  func(context.Context) bool { return kind == "agent" },
 				InvalidAgentTask: func(int, []byte) bool { return true },
@@ -88,6 +96,9 @@ func TestRunHTTPRecoveryBoundaries(t *testing.T) {
 	}
 }
 
+// TestRunHTTPTransportFailureDoesNotRecover makes request construction fail
+// before a response exists. The runner must return that same failure and a nil
+// result before HTTP recovery callbacks are needed.
 func TestRunHTTPTransportFailureDoesNotRecover(t *testing.T) {
 	failure := errors.New("transport canceled")
 	options := HTTPOptions{Exchange: openai.HTTPExchangeOptions{

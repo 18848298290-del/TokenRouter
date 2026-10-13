@@ -10,6 +10,10 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// TestMergeAnthropicUsageNormalizesKimiStreamForOpenAIBilling merges start and
+// terminal usage from a Kimi stream fixture. Normalized uncached and cache-read
+// buckets must reconstruct the inclusive OpenAI input total while retaining
+// output tokens.
 func TestMergeAnthropicUsageNormalizesKimiStreamForOpenAIBilling(t *testing.T) {
 	var start protocolanthropic.AnthropicStreamEvent
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"message_start","message":{"usage":{"input_tokens":173306,"prompt_tokens":173306,"cached_tokens":0}}}`), &start))
@@ -28,10 +32,14 @@ func TestMergeAnthropicUsageNormalizesKimiStreamForOpenAIBilling(t *testing.T) {
 	require.Equal(t, 166, openAIUsage.OutputTokens)
 }
 
+// TestMergeAnthropicUsageNormalizesGLMAndDeepSeekAliases parses provider cache
+// aliases from buffered usage fixtures. Both encodings must yield separate
+// uncached and cache-read buckets whose conversion recovers the inclusive input
+// count.
 func TestMergeAnthropicUsageNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	tests := []struct {
-		name string
-		raw  string
+		name string // provider fixture name
+		raw  string // encoded usage response
 	}{
 		{
 			name: "GLM",
@@ -60,12 +68,16 @@ func TestMergeAnthropicUsageNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	}
 }
 
+// TestClaudeUsageToOpenAIUsagePreservesCNProviderNativeAnthropicBuckets
+// converts already-normalized Anthropic token buckets for two CN fixtures.
+// Cache creation and reads must remain separate while their sum with uncached
+// input forms the OpenAI total.
 func TestClaudeUsageToOpenAIUsagePreservesCNProviderNativeAnthropicBuckets(t *testing.T) {
 	tests := []struct {
-		name         string
-		usage        protocol.TokenUsage
-		wantTotal    int
-		wantUncached int
+		name         string              // provider fixture name
+		usage        protocol.TokenUsage // normalized token buckets
+		wantTotal    int                 // expected inclusive input
+		wantUncached int                 // expected uncached input
 	}{
 		{
 			name: "GLM",

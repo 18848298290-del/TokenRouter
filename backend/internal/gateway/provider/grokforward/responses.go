@@ -16,7 +16,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Forward prepares a Grok request and processes output, using ResponsesExecutor for transport recovery.
+// Grok Responses requests can carry client tools and cache metadata that need
+// different vendor representations. Preparation keeps the caller model for
+// output, maps a billing model to the upstream model, and records client-tool
+// mappings so response readers can reconstruct tool shapes after the vendor
+// exchange. Compact requests become summary turns before cache routing and
+// credential resolution.
+//
+// Cache identity normally comes from the patched tool payload, but Claude Code
+// session metadata requires the supplied body. Exchange recovery may replace
+// the effective payload; error handling and final effort observation use those
+// resulting bytes. Health policy decides generic presentation or provider-loop
+// failover before any successful result is assembled.
+
+// Forward executes a selected Grok Responses attempt and returns its completion
+// data after successful reading. OAuth and API Key providers are accepted,
+// while image models are rejected for this endpoint before transport. Client-
+// tool mapping and Compact adaptation run before cache preparation and
+// credential resolution.
+//
+// Cache identity uses the effective tool payload unless Claude Code session
+// metadata requires the supplied input. ResponsesExecutor may replay decoding
+// failures within this provider and returns the resulting body to the response
+// hook. That hook preserves error bytes for presentation, records health
+// decisions, and returns typed failures to the outer provider loop; the
+// successful result keeps caller, billing, and vendor model identities
+// separate.
 func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.OpenAIResult, error) {
 	body, originalModel, reqStream, startTime := in.Body, in.OriginalModel, in.Stream, in.StartedAt
 
@@ -83,6 +108,9 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		return nil, err
 	}
 	upstreamCtx, releaseUpstreamCtx := p.Detach(ctx)
+	// Keep the detached context available throughout provider-local exchange
+	// recovery and response reading; release its handle after all attempt
+	// processing finishes.
 	defer releaseUpstreamCtx()
 	p.ResolveProxy()
 	upstreamStart := time.Now()
@@ -117,6 +145,9 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 			if resp.StatusCode >= 400 {
 				handled = true
 				respBody := p.ReadError(resp)
+				// Replay captured bytes for shared error presentation. The executor's
+				// deferred close now applies to this replacement; earlier body closure
+				// depends on the exchange probe, because this hook does not close it.
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
 				upstreamMsg := p.ErrorMessage(respBody)
 				if upstreamMsg == "" {
@@ -140,10 +171,14 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 					handledResult, handleErr = p.HandleError(ctx, resp, patchedBody, upstreamModel)
 					return true, handleErr
 				}
-				// Quota and rate limits affect the team-model overlay; capacity pressure does not hide healthy providers.
+				// Quota and rate-limit evidence marks the selected team model, while the
+				// predicate leaves capacity-only failures available for ordinary provider
+				// selection.
 				if p.ShouldMarkTeam(resp.StatusCode, respBody) {
 					p.MarkTeam(upstreamModel)
 				}
+				// Return response-derived retry limits with the typed failover error so the
+				// outer loop can decide provider reuse before switching targets.
 				if kind == "failover" {
 					retry := p.RetryMetadata(resp.StatusCode, respBody)
 					return true, p.Failure(Failure{

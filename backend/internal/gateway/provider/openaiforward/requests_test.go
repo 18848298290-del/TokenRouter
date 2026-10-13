@@ -10,7 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestBuildOpenAIResponsesURLForPlatform checks DeepSeek's /responses path without a /v1 prefix.
+// TestBuildOpenAIResponsesURLForPlatform compares official and relay base URLs
+// across DeepSeek, OpenAI, Zhipu, and Kimi. Each endpoint must retain the
+// appropriate base prefix and Responses suffix without duplicating version
+// paths.
 func TestBuildOpenAIResponsesURLForPlatform(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "https://api.deepseek.com/responses", ResponsesEndpoint(capability.PlatformDeepseek, "https://api.deepseek.com"))
@@ -22,8 +25,10 @@ func TestBuildOpenAIResponsesURLForPlatform(t *testing.T) {
 	require.Equal(t, "https://api.kimi.com/coding/v1/responses", ResponsesEndpoint(capability.PlatformKimi, "https://api.kimi.com/coding/v1"))
 }
 
-// TestNormalizeDeepSeekResponsesRequestBody checks store=false and removal of previous_response_id.
-// Requests outside native CN Responses remain unchanged.
+// TestNormalizeDeepSeekResponsesRequestBody selects explicit and adaptive
+// native CN targets alongside Chat and OpenAI controls. Native requests must
+// disable storage and remove continuation IDs, while the control routes retain
+// their supplied bytes.
 func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	t.Parallel()
 
@@ -45,7 +50,8 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.False(t, gjson.GetBytes(adaptiveNormalized, "store").Bool())
 	require.False(t, gjson.GetBytes(adaptiveNormalized, "previous_response_id").Exists())
 
-	// A DeepSeek Chat provider skips native Responses normalization.
+	// A Chat-resolved provider supplies no native-CN marker, so its continuation
+	// and storage fields stay available for that route's separate preparation.
 	deepseekCC := &providercore.Record{Platform: capability.PlatformDeepseek, Type: capability.ProviderTypeAPIKey}
 	require.Equal(t, string(body), string(NormalizeCNResponsesBody((providercore.ProtocolTarget{Record: deepseekCC}).UsesNativeCNResponses(), body)))
 
@@ -65,7 +71,8 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.False(t, gjson.GetBytes(kimiCodingNormalized, "store").Bool())
 	require.False(t, gjson.GetBytes(kimiCodingNormalized, "previous_response_id").Exists())
 
-	// An OpenAI provider skips CN normalization.
+	// OpenAI retains server-side Responses state because this normalization is
+	// scoped to native CN targets rather than all Responses-compatible providers.
 	openai := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	require.Equal(t, string(body), string(NormalizeCNResponsesBody((providercore.ProtocolTarget{Record: openai}).UsesNativeCNResponses(), body)))
 }

@@ -15,9 +15,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Native Chat request bodies still need mapped models, platform controls, and
+// streaming usage flags before exchange. Grok Composer image descriptions can
+// add an auxiliary usage amount, while the main response stays in Chat format
+// and supplies the observed vendor model and completion evidence.
+//
+// Grok cache identity is derived before image bridging changes the client
+// payload. Health processing classifies Grok failures separately from ordinary
+// OpenAI-compatible failures, then raw response readers restore output and
+// return observations beside errors. Auxiliary usage joins the result whenever
+// a result exists, so failed reading with partial data retains the description
+// usage in that returned observation.
+
 // RawChatEndpoint identifies the upstream endpoint in results from all three compatible entry points.
 const RawChatEndpoint = "/v1/chat/completions"
 
+// RunRawChat sends a selected provider's native Chat request and returns its
+// response observations. A missing model or blank resolved credential stops
+// preparation, and successful responses remain owned by the runner through
+// reading and error presentation. Streaming clients request usage in the
+// outgoing Chat body.
+//
+// For Grok, cache identity is captured before image bridging, and adopted
+// Composer descriptions contribute auxiliary usage. Parameter and fast-tier
+// preparation precede the final effort observation. Grok health can return
+// generic output or typed provider-loop retry evidence; otherwise the raw
+// reader determines the result and error, and auxiliary usage is added whenever
+// that result is nonnil.
 func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p RawChatPorts) (*Result, error) {
 	profile := p.Profile()
 	startTime := time.Now()
@@ -29,7 +53,9 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
-	// Resolve billing and upstream models using the Chat entry point's rules.
+	// Resolve billing and vendor identities before Grok cache preparation so its
+	// session seed follows the outgoing model while the caller model remains
+	// available for response restoration.
 	billingModel := p.BillingModel(originalModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
 	p.ObserveModel(upstreamModel)
@@ -52,8 +78,13 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		return nil, policyErr
 	}
 	upstreamBody = updatedBody
-	// Keep outgoing and observed tiers separate; billing selects between them by credential type.
+	// Capture the tier after fast policy has changed the outgoing bytes; the
+	// response reader can separately observe the vendor tier for completion
+	// resolution.
 	serviceTier := p.ServiceTier(upstreamBody)
+	// Remove redundant view_image declarations before Composer description
+	// handling so the native Chat payload uses the platform's selected image
+	// representation.
 	if profile.Grok {
 		strippedBody, stripErr := p.StripViewImage(upstreamBody)
 		if stripErr != nil {
@@ -72,6 +103,9 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	}
 
 	var bridgeUsage protocolopenai.ForwardUsage
+	// Composer description exchange precedes the main request; adopt both repaired
+	// bytes and auxiliary usage together so only successful preparation changes
+	// main-request accounting.
 	if profile.Grok {
 		bridgedBody, usage, bridged, bridgeErr := p.BridgeImages(ctx, upstreamBody, token)
 		if bridgeErr != nil {
@@ -83,6 +117,8 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		}
 	}
 
+	// Streaming Chat usage arrives through stream_options, so request it before
+	// exchange and reject patch failures before any upstream response is read.
 	if clientStream {
 		var usageErr error
 		upstreamBody, usageErr = protocolopenai.EnsureOpenAIChatStreamUsage(upstreamBody)
@@ -90,6 +126,9 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 			return nil, fmt.Errorf("enable stream usage: %w", usageErr)
 		}
 	}
+	// Grok Chat accepts different cache and effort fields from Responses, so
+	// remove the Responses key and apply model-specific effort normalization
+	// before exchange.
 	if profile.Grok {
 		upstreamBody, err = p.StripGrokCacheKey(upstreamBody)
 		if err != nil {
@@ -100,6 +139,9 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 			return nil, fmt.Errorf("normalize Grok chat reasoning effort: %w", err)
 		}
 	}
+	// Recognized Ollama Cloud targets receive their compatibility repair after
+	// platform controls, letting the final effort observation describe the
+	// outgoing native Chat payload.
 	upstreamBody = p.OllamaBody(upstreamBody)
 
 	// Record effort after applying platform parameter conversions.
@@ -142,6 +184,8 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 			if decision.Generic {
 				return p.ChatErrorResponse(resp, billingModel)
 			}
+			// Translate the Grok health choice and response-derived retry limits
+			// together into the typed error consumed by the outer provider loop.
 			if kind == "failover" {
 				return nil, p.GrokFailover(resp, respBody, p.GrokRetry(resp.StatusCode, respBody), decision.RetrySame)
 			}

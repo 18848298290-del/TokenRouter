@@ -1,4 +1,9 @@
-// Package openaiforward forwards OpenAI-compatible requests and converts Anthropic protocols.
+// Package openaiforward executes a selected provider attempt for Responses,
+// Chat Completions, passthrough, and Anthropic-compatible requests. Preparation
+// keeps request identities, client-tool restoration data, and provider-local
+// recovery budgets with that attempt; synchronous output readers expose usage
+// and timing to the caller before the outer gateway decides completion or
+// another provider attempt.
 //
 // Reading entry points:
 //   - prelude.go: request preparation and protocol and transport selection.

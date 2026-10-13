@@ -18,6 +18,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Messages conversion needs a cache identity that can survive tool and
+// instruction rewriting across turns. The selected provider and downstream key
+// scope digest-prefix reuse and saved Responses continuation, while Grok can
+// use Claude session metadata as its seed before platform cache normalization.
+// Codex retains full replay history for its session and turn-state cache
+// behavior.
+//
+// The upstream request streams regardless of the client's output preference,
+// and response conversion chooses incremental Messages or buffered JSON.
+// Provider-local recovery separately handles Grok ciphertext, invalid agent
+// tasks, unavailable continuation, and client thinking signatures. Opaque turn-
+// state headers can be saved before body reading; response IDs and digest
+// relations are bound after successful output. Reader observations remain
+// available beside errors, and cyber-policy observations can prevent returning
+// completion data.
+
+// RunMessages dispatches a selected Messages attempt or converts it to a
+// streaming Responses exchange. It validates incoming effort, keeps caller,
+// billing, and vendor models distinct, and derives missing cache identity
+// before conversion rewrites prompt history. The client stream choice controls
+// Messages output, while the upstream request always streams.
+//
+// Saved continuation trims input to the latest turn, and unavailable
+// continuation changes shared session state before rebuilding from the client
+// body. Grok ciphertext replay keeps the prepared credential and cache
+// identity; request-context guards separately bound agent-task and client-
+// signature recovery. Returned turn-state headers are cached before reading,
+// while response IDs and digest relations require successful output. The runner
+// closes response bodies through its own cleanup and error-reader callbacks,
+// returning converted observations beside reader failures.
 func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMappedModel string, p MessagesPorts) (*Result, error) {
 	profile, route, err := p.Prepare(ctx)
 	if err != nil {
@@ -39,7 +69,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	anthropicDigestReq := p.CloneDigest(&anthropicReq)
 	originalModel := anthropicReq.Model
 	normalizedModel := anthropicReq.Model
-	clientStream := anthropicReq.Stream // client's original stream preference
+	clientStream := anthropicReq.Stream // client output stream choice
 
 	billingModel := p.BillingModel(normalizedModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
@@ -61,6 +91,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			compatPromptCacheInjected = true
 		}
 	}
+	// When compatibility injection is allowed, prefer metadata then cache-control
+	// identity; digest-prefix lookup can reuse the established key before a new
+	// chain seed is derived.
 	if promptCacheKey == "" && p.AutoCacheKey(upstreamModel) {
 		promptCacheKey = p.MetadataSession(&anthropicReq)
 		if promptCacheKey == "" {
@@ -93,7 +126,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		compatReplayTrimmed = p.ReplayGuard(&anthropicReq)
 	}
 
-	// Convert after applying the compatibility replay guard.
+	// Apply replay trimming before Messages-to-Responses conversion so the
+	// outgoing history and tool continuation are generated from the adopted
+	// compatible Messages request.
 	responsesReq, err := p.Convert(&anthropicReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
@@ -103,7 +138,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	responsesReq.Stream = true
 	isStream := true
 
-	// Map the Anthropic fast-mode beta to the Responses priority tier.
+	// Translate the Anthropic fast-mode beta into a Responses tier before fast-
+	// policy processing, letting that later policy filter or force the outgoing
+	// priority request.
 	if p.BetaFast() {
 		responsesReq.ServiceTier = "priority"
 	}
@@ -112,10 +149,15 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	if responsesReq.Reasoning != nil {
 		responsesReq.Reasoning.Effort = p.MessagesEffort(&anthropicReq, upstreamModel, responsesReq.Reasoning.Effort)
 	}
+	// A saved response supplies prior turn context, so attach its ID before
+	// trimming the outgoing history to the latest continuation turn.
 	if previousResponseID != "" {
 		responsesReq.PreviousResponseID = previousResponseID
 		p.TrimLatestTurn(responsesReq)
 	}
+	// Non-Codex replay policy inserts developer guard guidance before
+	// serialization, keeping its position beside initial developer instructions
+	// as later request preparation adopts the converted history.
 	if compatReplayGuardEnabled && !profile.UsesCodex {
 		p.TodoGuard(responsesReq)
 	}
@@ -157,6 +199,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
 
+	// Codex conversion retains tool-call identities and supplied instructions for
+	// Messages replay; save reverse names and normalize the model before forced
+	// template rendering and session metadata.
 	if profile.UsesCodex && profile.Platform != "grok" {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
@@ -177,6 +222,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			templateUpstreamModel = codexResult.NormalizedModel
 		}
 		existingInstructions, _ := reqBody["instructions"].(string)
+		// A missing usable instruction string falls back to prompt-like input
+		// text so forced template rendering can receive the converted request's
+		// available instruction evidence.
 		if strings.TrimSpace(existingInstructions) == "" {
 			existingInstructions = openai.ExtractPromptLikeInstructionsFromInput(reqBody)
 		}
@@ -199,6 +247,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
+		// Provider namespace metadata is applied before removing the body cache key;
+		// Codex session and turn-state handling use the separately retained prompt
+		// seed.
 		p.ProviderIdentity(reqBody, apiKeyID)
 		delete(reqBody, "prompt_cache_key")
 		if p.AutoCacheKey(upstreamModel) {
@@ -230,7 +281,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			}
 		}
 	}
-	// Apply the policy bound to client output_config.effort after model and prompt rewriting.
+	// Apply admitted group effort policy after model and prompt rewriting so
+	// converted effort observations follow the same adopted body that will be
+	// sent upstream.
 	if profile.Platform == "openai" {
 		policyBody, changed, policyErr := p.ApplyEffort(ctx, responsesBody)
 		if policyErr != nil {
@@ -244,7 +297,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 
-	// Apply fast-mode policy to the outgoing tier, including the Claude beta filter.
+	// Apply provider fast-mode policy after effort preparation, including the
+	// Claude beta-derived tier, so the final response hint follows the outgoing
+	// request body.
 	updatedBody, policyErr := p.ApplyFast(ctx, upstreamModel, responsesBody)
 	if policyErr != nil {
 		return nil, policyErr
@@ -256,6 +311,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		responsesReq.ServiceTier = ""
 	}
 	grokCacheIdentity := ""
+	// Capture converted Grok intent before cache mutation so model/tool
+	// preparation, cache identity, and Free OAuth routing all refer to the same
+	// incoming converted request.
 	if profile.Platform == "grok" {
 		grokIntentBody := responsesBody
 		grokCacheIdentity = p.GrokCacheIdentity(grokIntentBody, promptCacheKey, upstreamModel)
@@ -291,7 +349,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	// Derive a deterministic session UUID from the isolated key to separate API key sessions.
+	// Derive the session UUID using key and provider namespace so the same
+	// prompt seed under another authenticated key receives a separate upstream
+	// session identity.
 	if profile.Platform != "grok" && promptCacheKey != "" {
 		isolatedSessionID := p.IsolatedSessionID(apiKeyID, promptCacheKey)
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
@@ -300,8 +360,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		}
 	}
 	if profile.UsesCodex && profile.Platform != "grok" {
-		// Bridge construction removes identity headers. Restore originator and OpenAI-Beta
-		// before sending; the Codex upstream can return 404 when they are missing (issue #3901).
+		// After bridge construction, restore missing Codex defaults and the
+		// Responses beta header, then enforce the outgoing User-Agent/originator
+		// pair before sending.
 		p.RestoreIdentity(upstreamReq.Header)
 		p.Debug("openai messages: upstream identity restored",
 			zap.Int64("provider_id", profile.ID),
@@ -309,6 +370,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			zap.Bool("compat_identity_restored", true),
 		)
 	}
+	// Keep generated session_id for cache identity, but remove conversation_id
+	// when the client supplied no conversation header so synthesized session
+	// metadata does not create a client conversation declaration.
 	if profile.UsesCodex && promptCacheKey != "" && strings.TrimSpace(p.Header("conversation_id")) == "" {
 		upstreamReq.Header.Del("conversation_id")
 	}
@@ -316,7 +380,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
 	}
 
-	// Prepare transport once before the send loop.
+	// Resolve proxy state once for the selected provider; the Grok ciphertext
+	// replay rebuilds its request while retaining this transport preparation and
+	// credential.
 	p.PrepareTransport()
 	// Grok can reject encrypted reasoning replayed under another OAuth provider or cache identity.
 	// Remove that ciphertext and retry once before treating the 400 as terminal or requesting failover.
@@ -340,12 +406,16 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if profile.Platform != "grok" || attempt > 0 || resp.StatusCode != http.StatusBadRequest {
 			break
 		}
+		// Capture the first Grok rejection before closing its network body; retain
+		// those bytes in a replay reader when ciphertext repair is unavailable or
+		// unchanged.
 		respBody := p.ReadErrorBody(resp)
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		// Recognize decryption errors first. An opaque 400 also permits one repair attempt
-		// when the outbound body still contains encrypted reasoning.
+		// On the first Grok 400, ciphertext presence permits removal even when error
+		// text is opaque; changed bytes enable one replay before final health
+		// handling.
 		shouldStrip := p.GrokInvalidEncrypted(resp.StatusCode, respBody) ||
 			p.GrokHasEncrypted(responsesBody)
 		if !shouldStrip {
@@ -371,6 +441,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := p.ReadUpstreamError(resp)
+		// Record agent recovery in the request context before rebuilding from client
+		// bytes, preventing repeated task rejection from recursively spending another
+		// recovery opportunity.
 		if !p.AgentRecoveryTried(ctx) && p.IsAgentIdentity(ctx) && p.InvalidAgentTask(resp.StatusCode, respBody) {
 			if err := p.RecoverAgentTask(ctx); err != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
@@ -378,8 +451,14 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 			return RunMessages(p.MarkAgentRecovery(ctx), body, promptCacheKey, defaultMappedModel, p)
 		}
 		respBody = p.RedactErrorBody(ctx, respBody)
+		// The installed error reader already closed the network body; replace replay
+		// storage with redacted bytes before continuation classification and final
+		// failure presentation.
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := p.ErrorMessage(respBody)
+		// Unavailable continuation requires changing its provider/key/prompt binding
+		// before recursion; capability rejection disables reuse, while a missing
+		// response removes the saved ID for the rebuilt request.
 		if previousResponseID != "" && (p.PreviousMissing(resp.StatusCode, upstreamMsg, respBody) || p.PreviousUnsupported(resp.StatusCode, upstreamMsg, respBody)) {
 			if p.PreviousUnsupported(resp.StatusCode, upstreamMsg, respBody) {
 				p.DisableContinuation(ctx, promptCacheKey)
@@ -409,20 +488,27 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		if foErr := p.FailoverHTTP(ctx, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
-		// Format errors that remain after failover checks as Anthropic errors.
+		// Failures surviving provider health decisions use the shared Anthropic
+		// presenter, retaining its client error shape and request observations after
+		// recovery opportunities are exhausted.
 		return p.ErrorResponse(resp, billingModel)
 	}
 	if profile.Platform == "grok" && profile.Type == "oauth" && !profile.Shadow {
 		p.UpdateGrokUsage(ctx, upstreamModel, resp.Header, resp.StatusCode)
 	}
 
+	// Successful HTTP headers can refresh opaque turn-state before output reading;
+	// this publication is distinct from response-ID and digest binding that wait
+	// for successful conversion.
 	if profile.UsesCodex && promptCacheKey != "" {
 		if turnState := strings.TrimSpace(resp.Header.Get("x-codex-turn-state")); turnState != "" {
 			p.BindTurnState(ctx, promptCacheKey, turnState)
 		}
 	}
 
-	// Read the upstream stream and format output according to the client's preference.
+	// The upstream streams for either client mode; choose the Messages converter
+	// by saved client preference so buffered callers receive one assembled
+	// response.
 	var result *Result
 	var handleErr error
 	var nativeResult *openai.CompatResponseResult
@@ -434,6 +520,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		nativeResult, handleErr = openai.ReadMessagesBuffered(resp, output, responseOptions, originalModel, upstreamModel, startTime)
 	}
 	result = FromCompatResult(nativeResult, billingModel)
+	// A cyber-policy observation prevents returning completion data even when
+	// reading produced a result; retain a reader failure or return the warning-
+	// specific error.
 	if p.CyberPolicy() {
 		if handleErr == nil {
 			handleErr = p.CyberError()
@@ -441,7 +530,9 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 		return nil, handleErr
 	}
 
-	// Save continuation state and the final billing controls after successful output.
+	// Bind response continuation and digest-prefix reuse only after successful
+	// output, so a failed reader cannot publish its response identity as the next
+	// turn's context.
 	if handleErr == nil && result != nil {
 		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			p.BindResponseID(ctx, promptCacheKey, result.ResponseID)

@@ -18,6 +18,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Messages and Responses clients can use a Chat-only upstream through different
+// conversion routes. Responses conversion saves client-tool names, tool-search
+// presence, and namespace mappings before lowering them to function tools,
+// allowing output readers to reconstruct the caller's tool representation after
+// the Chat exchange.
+//
+// Messages conversion carries its converted effort and optionally applies group
+// policy; Responses conversion refreshes plaintext reasoning history before
+// resolving encrypted-only copies. Both paths retain a supplied service tier
+// before fast-policy preparation and consult the final body only when that tier
+// was absent. The exchange and error presenter share the selected provider,
+// while client output and any partial observations use the corresponding
+// conversion reader.
+
+// MessagesViaRawChat converts Messages input to one Chat exchange and restores
+// Messages output. It requires a model, validates incoming effort, maps billing
+// and vendor identities, and requests stream usage when the client streams. The
+// runner closes the response after reading or final failure presentation.
+//
+// Converted effort is retained as a pointer, including empty text; adopted
+// nonempty group-policy effort can replace it. A present input service tier
+// remains the reader's tier hint, while an absent one is derived after fast
+// preparation. Reader observations are converted back to Result even when
+// accompanied by an error, leaving completion eligibility to the caller.
 func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel string, p RawFallbackPorts) (*Result, error) {
 	profile := p.Profile()
 	startTime := time.Now()
@@ -41,7 +65,9 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	upstreamModel := p.UpstreamModel(billingModel)
 	anthropicReq.Model = upstreamModel
 
-	// Convert Messages directly to Chat Completions.
+	// Convert Messages directly to Chat so the selected Chat-only endpoint
+	// receives its expected history and tool-call representation before model and
+	// effort controls are applied.
 	chatReq, err := p.AnthropicToChat(&anthropicReq)
 	if err != nil {
 		p.Error(http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -51,6 +77,8 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	chatReq.Model = upstreamModel
 	chatReq.ReasoningEffort = p.MessagesEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	chatReq.Stream = clientStream
+	// Request Chat stream usage for streaming clients so conversion readers can
+	// retain final token evidence while restoring the caller's output format.
 	if clientStream {
 		chatReq.StreamOptions = &protocolopenai.ChatStreamOptions{IncludeUsage: true}
 	}
@@ -68,7 +96,9 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	if err != nil {
 		return nil, err
 	}
-	// The Messages bridge applies group effort limits to client-specified reasoning controls.
+	// Apply admitted Messages effort policy after conversion, and replace the
+	// recorded effort only when an adopted body supplies a nonempty effective
+	// control.
 	if profile.OpenAI {
 		policyBody, changed, policyErr := p.ApplyEffort(ctx, chatBody)
 		if policyErr != nil {
@@ -130,6 +160,17 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	return FromCompatResult(result, billingModel), err
 }
 
+// ResponsesViaRawChat converts Responses input to one Chat exchange and
+// restores Responses output. It saves custom, function, tool-search, and
+// namespace identities before lowering tools, then refreshes plaintext
+// reasoning history for conversion lookups. Missing models and conversion
+// errors are rejected before exchange.
+//
+// Client streaming requests upstream usage and selects the matching response
+// converter. Recorded effort comes from the final outgoing body, while a
+// supplied service tier remains the reader's hint unless it was absent. The
+// runner closes the response after processing and returns any converted
+// observations beside their reader error.
 func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (*Result, error) {
 	profile := p.Profile()
 	startTime := time.Now()
@@ -160,7 +201,9 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 	toolSearch := bridge.HasToolSearchTool(effectiveTools)
 	namespaceTools := bridge.NamespaceToolNames(effectiveTools)
 
-	// Refresh cached reasoning from plaintext summaries so later encrypted-only copies can be resolved.
+	// Cache plaintext summaries before resolving the converted history so
+	// encrypted-only copies with the same item identity can obtain the
+	// corresponding reasoning content.
 	p.RecacheInput(responsesReq.Input)
 	chatReq, err := bridge.ResponsesToChatCompletionsRequestWithOptions(&responsesReq, &bridge.ResponsesToChatOptions{
 		ReasoningContentByID: p.ReasoningContent,
@@ -173,6 +216,8 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 	billingModel := p.BillingModel(originalModel, "")
 	upstreamModel := p.UpstreamModel(billingModel)
 	chatReq.Model = upstreamModel
+	// Request Chat stream usage for streaming clients so conversion readers can
+	// retain final token evidence while restoring the caller's output format.
 	if clientStream {
 		chatReq.StreamOptions = &protocolopenai.ChatStreamOptions{IncludeUsage: true}
 	}

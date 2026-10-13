@@ -19,8 +19,15 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Upstream requests carry platform transport profiles alongside provider,
+// proxy, and optional TLS identity. Client translates those values into pool
+// options, checks destinations before exchange, and derives request-specific
+// redirect behavior while egress owns proxy HTTP/2 recovery state and the
+// technical pool owns connection reuse.
+
 const (
-	// Defaults used when transport options are absent or outside their accepted ranges.
+	// Pool defaults govern cached clients and connection limits when supplied
+	// settings are absent or fall outside each option's accepted range.
 	// defaultMaxIdleConns limits idle connections across hosts.
 	defaultMaxIdleConns = 240
 	// defaultMaxIdleConnsPerHost limits idle connections to one host.
@@ -29,33 +36,38 @@ const (
 	defaultMaxConnsPerHost = 240
 	// defaultIdleConnTimeout bounds how long unused connections remain open.
 	defaultIdleConnTimeout = 90 * time.Second
-	// defaultResponseHeaderTimeout allows for upstream generation queues.
+	// defaultResponseHeaderTimeout bounds the generic wait for upstream response headers.
 	defaultResponseHeaderTimeout = 300 * time.Second
 	// defaultMaxUpstreamClients limits the cached upstream clients.
 	defaultMaxUpstreamClients = 5000
 	// defaultClientIdleTTLSeconds is the client eviction idle threshold in seconds.
 	defaultClientIdleTTLSeconds = 900
-	// Defaults for switching an incompatible OpenAI proxy to HTTP/1.1.
+	// HTTP/2 recovery defaults bound failure accumulation and the lifetime of
+	// proxy-specific HTTP/1 selection maintained by the egress transport policy.
 	defaultOpenAIHTTP2FallbackErrorThreshold = 2
 	defaultOpenAIHTTP2FallbackWindow         = 60 * time.Second
 	defaultOpenAIHTTP2FallbackTTL            = 10 * time.Minute
 
-	// Hosts used by the Grok CLI access-denied retry path.
+	// Grok endpoint hosts identify the CLI request and official API replay target
+	// asserted by the transport compatibility tests.
 	grokCLIProxyHost    = "cli-chat-proxy.grok.com"
 	grokOfficialAPIHost = "api.x.ai"
 
+	// Protocol mode labels separate pool cache variants so later HTTP/1 recovery
+	// does not reuse the transport selected for an HTTP/2 request.
 	upstreamProtocolModeDefault          = "default"
 	upstreamProtocolModeOpenAIH1         = "openai_h1"
 	upstreamProtocolModeOpenAIH2         = "openai_h2"
 	upstreamProtocolModeOpenAIH1Fallback = "openai_h1_fallback"
 )
 
+// openAIHTTP2Settings is the normalized policy sent to egress transport planning.
 type openAIHTTP2Settings struct {
-	enabled                   bool
-	allowProxyFallbackToHTTP1 bool
-	fallbackErrorThreshold    int
-	fallbackWindow            time.Duration
-	fallbackTTL               time.Duration
+	enabled                   bool          // enable OpenAI HTTP/2
+	allowProxyFallbackToHTTP1 bool          // permit proxy HTTP/1 recovery
+	fallbackErrorThreshold    int           // failures before recovery
+	fallbackWindow            time.Duration // failure counting interval
+	fallbackTTL               time.Duration // recovery mode lifetime
 }
 
 // poolSettings contains connection pool settings supplied by the application.
@@ -63,17 +75,25 @@ type poolSettings = httpclient.UpstreamSettings
 
 // upstreamPool lets tests substitute the transport used for upstream requests.
 type upstreamPool interface {
+	// Do executes a request using resolved technical transport options. A
+	// successful response transfers body closure to the caller; closing it
+	// releases any in-flight accounting held by the pool.
 	Do(*http.Request, httpclient.UpstreamRequestOptions) (*http.Response, error)
 }
 
 // Client applies provider transport policies and reuses an upstream connection pool.
 type Client struct {
+	// source is consulted during preparation; callers keep returned options
+	// stable while each synchronous read resolves request transport settings.
 	source          func() *Options
-	pool            upstreamPool
-	transportPolicy egress.TransportPolicy
+	pool            upstreamPool           // shared connection pool
+	transportPolicy egress.TransportPolicy // proxy protocol recovery state
 }
 
-// httpClientForEgressPolicy clones the client when a request needs redirect restrictions.
+// httpClientForEgressPolicy supplies request-specific redirect checks through a
+// shallow client copy. Disabled redirects return the last response; public-host
+// requests validate every hop before the existing callback, while ordinary
+// policy returns the supplied client and a nil client stays nil.
 func httpClientForEgressPolicy(s *Client, client *http.Client, policy egress.EgressPolicy) *http.Client {
 	if client == nil {
 		return nil
@@ -88,8 +108,9 @@ func httpClientForEgressPolicy(s *Client, client *http.Client, policy egress.Egr
 	case policy.PublicHostsOnly && s != nil:
 		clone := *client
 		clone.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-			// Apply the public-host check at every hop before the client
-			// runs its existing redirect policy.
+			// Redirect requests inherit the public-host marker before validation, so a
+			// private next hop is rejected before the preexisting redirect callback can
+			// approve it.
 			next = next.WithContext(upstream.WithHTTPUpstreamPublicHostsOnly(next.Context()))
 			if err := s.redirectChecker(next, via); err != nil {
 				return err
@@ -105,12 +126,19 @@ func httpClientForEgressPolicy(s *Client, client *http.Client, policy egress.Egr
 	}
 }
 
+// httpClientWithGrokAccessDeniedFallback delegates Grok compatibility replay
+// wrapping to the platform implementation.
 func httpClientWithGrokAccessDeniedFallback(client *http.Client) *http.Client {
 	return xai.ClientWithAccessDeniedFallback(client)
 }
 
+// applyGrokCLIProxyHeaders adds platform identity headers for eligible Grok CLI
+// requests.
 func applyGrokCLIProxyHeaders(req *http.Request) { xai.ApplyTransportCLIHeaders(req) }
 
+// shouldValidateResolvedIP reports whether the options source enables resolved-
+// IP validation. Missing options disable that global check; per-request public-
+// host restrictions are applied separately by requestPolicy during preparation.
 func (s *Client) shouldValidateResolvedIP() bool {
 	if s.options() == nil {
 		return false
@@ -118,6 +146,9 @@ func (s *Client) shouldValidateResolvedIP() bool {
 	return s.options().ValidateResolvedIP
 }
 
+// validateRequestHost checks the resolved destination when the request policy
+// requires it. Otherwise it succeeds immediately; required checks reject nil
+// URLs and blank hosts before the technical validator resolves addresses.
 func (s *Client) validateRequestHost(req *http.Request) error {
 	if !s.requestPolicy(req).RequiresHostValidation() {
 		return nil
@@ -132,15 +163,20 @@ func (s *Client) validateRequestHost(req *http.Request) error {
 	return httpclient.ValidateResolvedIP(host)
 }
 
+// redirectChecker validates each destination while limiting the redirect chain
+// to ten requests. It returns an error before host validation when the
+// previous-request list reaches that limit.
 func (s *Client) redirectChecker(req *http.Request, via []*http.Request) error {
+	// Cap redirect following even for valid public destinations.
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
 	return s.validateRequestHost(req)
 }
 
-// getIsolationMode returns proxy, provider, or provider_proxy.
-// Missing or invalid settings use provider_proxy.
+// getIsolationMode selects proxy, provider, or provider_proxy after trimming
+// and lowercasing the setting. Missing, blank, or unrecognized options select
+// provider_proxy, which combines provider and proxy identity in pool selection.
 func (s *Client) getIsolationMode() string {
 	if s.options() == nil {
 		return "provider_proxy"
@@ -157,7 +193,9 @@ func (s *Client) getIsolationMode() string {
 	}
 }
 
-// maxUpstreamClients returns the configured cache limit or the default for nonpositive values.
+// maxUpstreamClients returns the configured positive client-cache limit or the
+// built-in default. Missing options and nonpositive limits use the same default
+// when preparing the technical pool request.
 func (s *Client) maxUpstreamClients() int {
 	if s.options() == nil {
 		return defaultMaxUpstreamClients
@@ -168,7 +206,9 @@ func (s *Client) maxUpstreamClients() int {
 	return defaultMaxUpstreamClients
 }
 
-// clientIdleTTL returns the configured idle lifetime or the default for nonpositive values.
+// clientIdleTTL returns cached-client idle lifetime as a duration for the
+// technical pool. Missing options and nonpositive configured seconds use the
+// default eviction threshold; positive seconds are converted directly.
 func (s *Client) clientIdleTTL() time.Duration {
 	if s.options() == nil {
 		return time.Duration(defaultClientIdleTTLSeconds) * time.Second
@@ -179,8 +219,10 @@ func (s *Client) clientIdleTTL() time.Duration {
 	return time.Duration(defaultClientIdleTTLSeconds) * time.Second
 }
 
-// resolvePoolSettings sizes provider-isolated pools to a positive provider concurrency limit.
-// Other pools use the configured global limits.
+// resolvePoolSettings derives generic limits and applies a positive provider
+// concurrency to provider-isolated pools. Both provider and provider_proxy
+// modes replace all three connection counts; proxy isolation keeps the
+// configured global counts.
 func (s *Client) resolvePoolSettings(isolation string, providerConcurrency int) poolSettings {
 	settings := defaultPoolSettings(s.options())
 	if (isolation == "provider" || isolation == "provider_proxy") && providerConcurrency > 0 {
@@ -191,6 +233,10 @@ func (s *Client) resolvePoolSettings(isolation string, providerConcurrency int) 
 	return settings
 }
 
+// applyProfilePoolSettings overrides the generic response-header wait for
+// OpenAI and Grok requests. OpenAI uses positive platform seconds or zero; Grok
+// uses 120 seconds without options and the supplied platform seconds whenever
+// options exist.
 func (s *Client) applyProfilePoolSettings(settings poolSettings, profile upstream.HTTPUpstreamProfile) poolSettings {
 	switch profile {
 	case upstream.HTTPUpstreamProfileOpenAI:
@@ -199,7 +245,8 @@ func (s *Client) applyProfilePoolSettings(settings poolSettings, profile upstrea
 			settings.ResponseHeaderTimeout = time.Duration(s.options().OpenAIResponseHeaderTimeout) * time.Second
 		}
 	case upstream.HTTPUpstreamProfileGrok:
-		// Bound the Grok response-header wait separately from the stream after headers arrive.
+		// The Grok profile replaces the generic header wait because stream idle
+		// timing begins after headers and is managed by response readers.
 		settings.ResponseHeaderTimeout = 120 * time.Second
 		if s != nil && s.options() != nil {
 			settings.ResponseHeaderTimeout = time.Duration(s.options().GrokResponseHeaderTimeout) * time.Second
@@ -208,6 +255,10 @@ func (s *Client) applyProfilePoolSettings(settings poolSettings, profile upstrea
 	return settings
 }
 
+// resolveOpenAIHTTP2Settings returns platform policy with defaults for
+// nonpositive recovery thresholds and durations. Missing options disable HTTP/2
+// and permit proxy recovery; present options directly set both booleans before
+// positive numeric overrides.
 func (s *Client) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
 	settings := openAIHTTP2Settings{
 		enabled:                   false,
@@ -234,17 +285,29 @@ func (s *Client) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
 	return settings
 }
 
+// resolveTLSFingerprintTransportProfile retains the profile in OpenAI HTTP/2
+// mode and delegates other modes to HTTP1OnlyProfile. The latter removes h2
+// ALPN from a clone when necessary, leaving the supplied profile available to
+// its owner.
 func resolveTLSFingerprintTransportProfile(profile *tlsfingerprint.Profile, protocolMode string) *tlsfingerprint.Profile {
+	// Remove h2 advertisement outside the selected OpenAI HTTP/2 mode so TLS
+	// negotiation agrees with the technical transport chosen by pool planning.
 	if protocolMode != upstreamProtocolModeOpenAIH2 {
 		return tlsfingerprint.HTTP1OnlyProfile(profile)
 	}
 	return profile
 }
 
+// isOpenAIHTTP2CompatibilityError recognizes textual ALPN, stream, frame, and
+// protocol failures for recovery observation. Timeout classification takes
+// precedence, so an error mentioning HTTP/2 plus a recognized timeout does not
+// count as incompatibility.
 func isOpenAIHTTP2CompatibilityError(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Timeouts can mention HTTP/2 while the upstream simply waits for headers;
+	// exclude that evidence before protocol markers can activate proxy recovery.
 	if isUpstreamTimeoutError(err) {
 		return false
 	}
@@ -269,6 +332,9 @@ func isOpenAIHTTP2CompatibilityError(err error) bool {
 	return false
 }
 
+// isUpstreamTimeoutError recognizes deadline, net.Error timeout, and known
+// textual timeout evidence. It checks wrapped typed errors first, then scans
+// the lowercase message; nil or unrecognized failures return false.
 func isUpstreamTimeoutError(err error) bool {
 	if err == nil {
 		return false
@@ -299,6 +365,9 @@ func isUpstreamTimeoutError(err error) bool {
 	return false
 }
 
+// recordOpenAIHTTP2Failure passes compatibility classification and current
+// settings to egress recovery state. Egress decides whether the profile, mode,
+// and proxy participate; activation logs the proxy key and expiry.
 func (s *Client) recordOpenAIHTTP2Failure(profile upstream.HTTPUpstreamProfile, protocolMode, proxyKey string, err error) {
 	activated, until := s.transportPolicy.ObserveFailure(string(profile), protocolMode, proxyKey, isOpenAIHTTP2CompatibilityError(err), s.http2Options(), time.Now())
 	if activated {
@@ -306,19 +375,23 @@ func (s *Client) recordOpenAIHTTP2Failure(profile upstream.HTTPUpstreamProfile, 
 	}
 }
 
+// recordOpenAIHTTP2Success lets egress clear eligible proxy HTTP/2 failure
+// observations.
 func (s *Client) recordOpenAIHTTP2Success(profile upstream.HTTPUpstreamProfile, protocolMode, proxyKey string) {
 	s.transportPolicy.ObserveSuccess(string(profile), protocolMode, proxyKey)
 }
 
-// normalizeProxyURL returns a canonical cache key and parsed proxy URL.
-// Empty input returns "direct" and nil; invalid nonempty input returns an error.
+// normalizeProxyURL returns the proxy pool key and parsed URL from the
+// technical normalizer. Empty input selects direct transport, and malformed
+// nonempty input returns an error before pool options are created.
 func normalizeProxyURL(raw string) (string, *url.URL, error) {
 	return proxyinfra.NormalizePoolKey(raw)
 }
 
-// defaultPoolSettings applies valid options over the defaults.
-// Zero MaxConnsPerHost removes the connection cap; zero ResponseHeaderTimeout
-// disables the header timeout. Other numeric options require positive values.
+// defaultPoolSettings applies each generic numeric option over built-in pool
+// limits. Positive values override idle limits and idle lifetime; zero
+// connection cap and zero header wait disable those constraints, while their
+// negative values retain defaults.
 func defaultPoolSettings(cfg *Options) poolSettings {
 	maxIdleConns := defaultMaxIdleConns
 	maxIdleConnsPerHost := defaultMaxIdleConnsPerHost
@@ -353,11 +426,16 @@ func defaultPoolSettings(cfg *Options) poolSettings {
 	}
 }
 
-// New creates a client with its own upstream pool and reads options through source.
+// New creates a Client with a shared technical upstream pool and an options
+// source. The source is read when preparing requests; nil selects built-in
+// settings, and callers release successful response bodies.
 func New(source func() *Options) *Client {
 	return &Client{source: source, pool: httpclient.NewUpstreamPool()}
 }
 
+// options reads the application options source or returns nil for a missing
+// receiver or source. The returned pointer is borrowed for synchronous
+// preparation, so its owner keeps the values stable during reads.
 func (s *Client) options() *Options {
 	if s == nil || s.source == nil {
 		return nil
@@ -365,7 +443,13 @@ func (s *Client) options() *Options {
 	return s.source()
 }
 
-// transportOptions resolves pool, TLS, redirect, and HTTP/2 settings for one request.
+// transportOptions translates request policy, platform profile, proxy identity,
+// and optional TLS fingerprint into technical pool options. Invalid proxy input
+// stops preparation, provider concurrency applies according to isolation, and
+// platform header waits override generic settings. Egress selects the protocol
+// cache variant and any recovery-adjusted fingerprint. The returned callbacks
+// apply per-request client wrappers and report exchange success or failure back
+// to egress using the resolved mode and proxy key.
 func (s *Client) transportOptions(req *http.Request, proxyURL string, providerID int64, concurrency int, tlsProfile *tlsfingerprint.Profile) (httpclient.UpstreamRequestOptions, error) {
 	proxyKey, parsedProxy, err := normalizeProxyURL(proxyURL)
 	if err != nil {
@@ -419,7 +503,10 @@ func (s *Client) transportOptions(req *http.Request, proxyURL string, providerID
 	return opts, nil
 }
 
-// Do applies Grok headers, validates the destination, and sends through the selected pool.
+// Do applies Grok identity headers, validates the destination, and exchanges
+// through the resolved pool. Successful responses remain open for the caller;
+// closing their bodies releases pool accounting after the caller finishes
+// reading.
 func (s *Client) Do(req *http.Request, proxyURL string, providerID int64, concurrency int) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
@@ -432,9 +519,13 @@ func (s *Client) Do(req *http.Request, proxyURL string, providerID int64, concur
 	return s.pool.Do(req, opts)
 }
 
-// DoWithTLS sends using the selected TLS fingerprint. A nil profile or a plain
-// HTTP URL uses Do, including its configured proxy.
+// DoWithTLS sends through the technical pool with a selected TLS fingerprint
+// after destination validation. A nil profile or plain HTTP target delegates to
+// Do with the configured proxy; callers close successful response bodies after
+// reading.
 func (s *Client) DoWithTLS(req *http.Request, proxyURL string, providerID int64, concurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	// Plain HTTP has no TLS handshake to fingerprint, so retain proxy routing and
+	// ordinary validation by delegating the same request to Do.
 	if profile == nil || (req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http")) {
 		return s.Do(req, proxyURL, providerID, concurrency)
 	}
@@ -449,20 +540,29 @@ func (s *Client) DoWithTLS(req *http.Request, proxyURL string, providerID int64,
 	return s.pool.Do(req, opts)
 }
 
-// CloseIdleConnections closes idle pooled connections when the pool supports it.
+// CloseIdleConnections asks a capable pool to release its idle transports. A
+// test substitute without that method is left usable, and active responses
+// retain their caller-owned body lifetime.
 func (s *Client) CloseIdleConnections() {
-	if closer, ok := s.pool.(interface{ CloseIdleConnections() }); ok {
+	if closer, ok := s.pool.(interface {
+		// CloseIdleConnections releases idle connections retained by the substituted pool.
+		CloseIdleConnections()
+	}); ok {
 		closer.CloseIdleConnections()
 	}
 }
 
-// http2Options converts the configured HTTP/2 policy to egress options.
+// http2Options converts normalized OpenAI HTTP/2 settings into egress policy
+// options.
 func (s *Client) http2Options() egress.HTTP2Options {
 	v := s.resolveOpenAIHTTP2Settings()
 	return egress.HTTP2Options{Enabled: v.enabled, AllowProxyFallbackToHTTP1: v.allowProxyFallbackToHTTP1, FallbackErrorThreshold: v.fallbackErrorThreshold, FallbackWindow: v.fallbackWindow, FallbackTTL: v.fallbackTTL}
 }
 
-// requestPolicy combines transport settings with per-request egress restrictions.
+// requestPolicy combines global validation with the request's public-host and
+// redirect markers. A nil receiver or request contributes no corresponding
+// settings, while marked requests retain their restrictions regardless of the
+// global validation flag.
 func (s *Client) requestPolicy(req *http.Request) egress.EgressPolicy {
 	input := egress.RequestPolicyInput{}
 	if s != nil {

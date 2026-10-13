@@ -67,7 +67,7 @@ type Compatible struct {
 	newFreeQuotaGate   func() *provider.FreeQuotaGate // advanced gate factory
 	runtime            *provider.RuntimeBlockState    // credential failure state
 	modelTransient     *provider.ModelTransientState  // provider-model transient blocks
-	proxyCircuit       *egress.ProxyStreamCircuit     // stream-quarantine observations
+	proxyCircuit       *egress.ProxyStreamCircuit     // proxy stream-quarantine observations
 	proxyFailOpenLogAt atomic.Int64                   // warning time in Unix nanoseconds
 	responseState      session.OpenAIWSStateStore     // response affinity store
 	stickyMetrics      *schedulercore.StickyStats     // hash-migration observation counters

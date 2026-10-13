@@ -124,7 +124,7 @@ type PayerSnapshot struct {
 	Notification *billing.UserSummary // captured balance notification settings
 }
 
-// ProviderSnapshot captures provider billing and notification data.
+// ProviderSnapshot captures provider classification, billing policy, and quota-notification data.
 type ProviderSnapshot struct {
 	// CacheTTLOverrideEnabled and CacheTTLOverrideTarget describe provider cache
 	// category policy read after Input.CacheOverrideTarget. An enabled provider

@@ -18,23 +18,56 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Native Anthropic output can forward body bytes while independently collecting
+// model and usage evidence for completion. Buffered output validates the
+// response as JSON before optional cache classification and tool restoration.
+// Streaming output preserves SSE lines, records terminal evidence, and
+// continues collecting usage after client writes fail.
+//
+// A scanner goroutine owns the pooled buffer until input ends, while the
+// consumer separately monitors last upstream reads and downstream keepalive
+// spacing. Heartbeats are emitted only between complete SSE events, preventing
+// a ping from splitting a vendor frame. Return signals stop channel
+// publication, and the execution caller closes the body to release a scanner
+// blocked on upstream input; partial usage remains available beside incomplete-
+// stream errors.
+
+// NativeAnthropicOptions binds direct Messages output to request observations and HTTP effects.
 type NativeAnthropicOptions struct {
-	ProviderID                        int64
-	UpdateWindow                      func(context.Context, http.Header)
-	ReadBody                          func(io.Reader) ([]byte, error)
-	InvalidJSON                       func(context.Context, *http.Response, []byte, error, string) error
-	ForceCache                        func(context.Context) bool
-	ClassifyCache                     func([]byte, *upstream.TokenUsage) ([]byte, error)
-	CopyHeaders                       func(http.Header, http.Header)
-	ReverseTools                      func([]byte) []byte
-	MaxLineSize                       func() int
-	StreamInterval, KeepaliveInterval func() time.Duration
-	ExtractData                       func(string) (string, bool)
-	IsTerminal                        func(string, string) bool
-	Log                               func(string, ...any)
-	HandleTimeout                     func(context.Context, string)
+	ProviderID int64 // selected provider diagnostic identifier
+	// response-header session-window observer
+	UpdateWindow func(context.Context, http.Header)
+	// bounded response-body byte reader
+	ReadBody func(io.Reader) ([]byte, error)
+	// non-JSON upstream failure presenter
+	InvalidJSON func(context.Context, *http.Response, []byte, error, string) error
+	// buffered cache-classification policy reader
+	ForceCache func(context.Context) bool
+	// ClassifyCache prepares buffered response usage for client output when
+	// ForceCache permits it. The installed adapter rewrites body counts while
+	// retaining the parsed usage pointer unchanged.
+	ClassifyCache func([]byte, *upstream.TokenUsage) ([]byte, error)
+	CopyHeaders   func(http.Header, http.Header) // filtered response header copier
+	ReverseTools  func([]byte) []byte            // request-bound tool name restorer
+	MaxLineSize   func() int                     // configured scanner growth limit
+	// StreamInterval governs upstream idle checks from the last scanner read;
+	// KeepaliveInterval governs client pings between complete events. Nonpositive
+	// durations disable their corresponding timer paths.
+	StreamInterval, KeepaliveInterval func() time.Duration        // StreamInterval is upstream read spacing; KeepaliveInterval is downstream ping spacing
+	ExtractData                       func(string) (string, bool) // SSE data value extractor
+	IsTerminal                        func(string, string) bool   // SSE terminal evidence classifier
+	Log                               func(string, ...any)        // native output diagnostic writer
+	// provider stream-timeout policy observer
+	HandleTimeout func(context.Context, string)
 }
 
+// NativeAnthropicBuffered reads and validates a native Messages body before
+// forwarding its tool-restored bytes. The execution caller owns response
+// closure, and installed header/body callbacks provide bounded reading and
+// session-window observation. JSON validation accepts a complete raw JSON value
+// before usage parsing. The standard forced-cache callback changes client
+// response counts while the returned result retains parsed token buckets, and
+// vendor model observation occurs before output restoration.
 func NativeAnthropicBuffered(ctx context.Context, resp *http.Response, c *upstream.OutputContext, o NativeAnthropicOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -56,6 +89,9 @@ func NativeAnthropicBuffered(ctx context.Context, resp *http.Response, c *upstre
 	}
 
 	usage := protocolanthropic.ParseClaudeUsageFromResponseBody(body)
+	// Forced cache classification rewrites buffered client-visible usage after
+	// parsing; the installed classifier keeps the parsed observation available for
+	// the returned completion result.
 	if o.ForceCache(ctx) && usage.InputTokens > 0 {
 		body, err = o.ClassifyCache(body, usage)
 		if err != nil {
@@ -85,6 +121,18 @@ func NativeAnthropicBuffered(ctx context.Context, resp *http.Response, c *upstre
 	}, nil
 }
 
+// NativeAnthropicStreaming forwards native SSE lines while collecting vendor
+// model, token usage, and terminal evidence. It requires an output writer with
+// Flush; the execution caller closes the response body on every return so an
+// abandoned scanner can finish and release pooled storage. FirstTokenMs records
+// the first nonblank data value other than [DONE], including protocol metadata.
+//
+// The scanner publishes lines independently and atomically records the latest
+// read time. Consumer idle checks use that read time, while keepalives use
+// completed output events and wait whenever a frame is partial. Client write
+// failure stops output but continues usage collection. EOF or scanner failure
+// succeeds after terminal evidence; incomplete input and idle expiry return the
+// accumulated result beside an error.
 func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, o NativeAnthropicOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -126,11 +174,15 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := o.MaxLineSize()
 	scanBuf := httpclient.GetSSEScannerBuf64K()
+	// The 64 KiB starting capacity remains usable when the configured maximum
+	// is smaller; that maximum bounds subsequent scanner growth for this
+	// native stream.
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 
+	// scanEvent carries a scanned native SSE line or scanner failure to the consumer.
 	type scanEvent struct {
-		line string
-		err  error
+		line string // scanned native SSE line
+		err  error  // scanner failure evidence
 	}
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
@@ -144,6 +196,9 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 	}
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	// Keep pooled scanner storage with the reader goroutine until Scan ends; a
+	// returning consumer may still need the caller's body closure to unblock that
+	// reader.
 	go func(scanBuf *httpclient.SSEScannerBuf64K) {
 		defer httpclient.PutSSEScannerBuf64K(scanBuf)
 		defer close(events)
@@ -157,6 +212,8 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 			_ = sendEvent(scanEvent{err: err})
 		}
 	}(scanBuf)
+	// Signal abandoned channel publication on return; this releases sends but not
+	// a blocked Scan, which remains tied to the execution caller's body cleanup.
 	defer close(done)
 
 	streamInterval := o.StreamInterval()
@@ -185,6 +242,9 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 		if keepaliveTimer == nil {
 			return
 		}
+		// Drain an available expired notification before resetting keepalive spacing
+		// so an earlier idle period does not trigger a ping immediately after fresh
+		// output.
 		if !keepaliveTimer.Stop() {
 			select {
 			case <-keepaliveTimer.C:
@@ -209,6 +269,9 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
 			}
 			if ev.err != nil {
+				// Terminal evidence makes a later scanner failure a completed stream;
+				// return the collected observation before incomplete-usage handling can
+				// replace that conclusion.
 				if sawTerminalEvent {
 					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
 				}
@@ -247,6 +310,9 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				}
 			}
 
+			// Output failure changes the client-disconnect flag while the scanner
+			// continues publishing; later data still updates usage and terminal evidence
+			// for completion handling.
 			if !clientDisconnected {
 				restored := string(o.ReverseTools([]byte(line)))
 				if _, err := io.WriteString(w, restored); err != nil {
@@ -256,7 +322,8 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 					clientDisconnected = true
 					o.Log("[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
 				} else if line == "" {
-					// Flush at SSE event boundaries to avoid a syscall for every line.
+					// A blank line completes the SSE frame; flush then refresh keepalive
+					// spacing so heartbeats are measured from completed client output.
 					flusher.Flush()
 					lastDataAt = time.Now()
 					resetKeepaliveTimer()
@@ -266,6 +333,9 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				}
 			}
 
+		// Check elapsed upstream silence from the atomically published scanner
+		// timestamp; queued consumer work alone does not reset the vendor read
+		// interval.
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {
@@ -284,6 +354,8 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 			if clientDisconnected {
 				continue
 			}
+			// Wait while a vendor frame is partial, because inserting a ping between its
+			// lines would combine two event payloads into an invalid SSE frame.
 			if inPartialEvent {
 				resetKeepaliveTimer()
 				continue
@@ -304,6 +376,10 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 	}
 }
 
+// NativeAnthropicStreamResult assembles the current native stream observation
+// for success or failure. Nil usage selects empty token buckets; headers and
+// pointer fields retain supplied storage, while duration is measured from the
+// supplied start time.
 func NativeAnthropicStreamResult(resp *http.Response, usage *upstream.TokenUsage, firstTokenMs *int, clientDisconnect bool, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) *Result {
 	if usage == nil {
 		usage = &upstream.TokenUsage{}

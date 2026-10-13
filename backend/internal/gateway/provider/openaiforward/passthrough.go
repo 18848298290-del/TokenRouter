@@ -18,23 +18,65 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-type PassthroughInput struct {
-	Body, CanonicalImageIntentBody []byte
-	Model                          string
-	ImageIntentInvalidated         bool
-	ReasoningEffort                *string
-	Stream                         bool
-	StartedAt                      time.Time
-}
-type ImageBilling struct{ Model, SizeTier, InputSize string }
+// Responses passthrough can retain unknown payload fields while still applying
+// selected-provider model, OAuth identity, client-tool, and image policy.
+// Initial model replacement changes the image-intent evidence, and the retained
+// canonical body lets later image checks distinguish prelude intent from the
+// prepared request. Codex preparation rereads stream mode after its OAuth
+// normalization.
+//
+// HTTP failures are captured and closed before provider-local rejected-field,
+// agent-task, or Compact recovery selects another exchange. Reader Compact
+// signals delegate adopted-body cleanup to their recovery callback; other read
+// failures close the response before final presentation. Successful headers can
+// publish turn-state provenance before client delivery, while response
+// ownership and usage snapshots follow completed reading. Image observations
+// attach image billing identity to the final result.
 
+// PassthroughInput carries prepared bytes, retained image intent, and response observations for one attempt.
+type PassthroughInput struct {
+	// Body is the prepared exchange payload; CanonicalImageIntentBody retains
+	// prelude image-intent evidence. ImageIntentInvalidated tells ImageIntent
+	// whether later edits require consulting prepared bytes again.
+	Body, CanonicalImageIntentBody []byte
+	Model                          string // incoming response model identity
+	// ImageIntentInvalidated records prior image evidence changes; the runner also
+	// sets it when initial provider model replacement changes the prepared
+	// request.
+	ImageIntentInvalidated bool
+	ReasoningEffort        *string   // previously recorded effective effort
+	Stream                 bool      // incoming streaming mode choice
+	StartedAt              time.Time // request arrival timestamp
+}
+
+// ImageBilling carries the image charge identity and its output/input size tiers.
+type ImageBilling struct {
+	// Model is the image charge model; SizeTier is the output size tier;
+	// InputSize is the input-image tier.
+	Model, SizeTier, InputSize string
+}
+
+// RunPassthrough prepares raw Responses bytes and reads the selected provider's
+// passthrough output. Provider model mapping uses a byte patch, Codex input
+// follows identity and instruction rules, and client-tool lowering retains
+// response restoration state. For Codex preparation, stream mode is reread
+// after OAuth normalization.
+//
+// Rejected-field, agent-task, and Compact recovery use separate state after
+// captured HTTP bodies are closed. An adopted reader Compact repair closes its
+// rejected response through the installed callback before replay. Turn-state
+// provenance is observed at successful headers, while ownership and usage
+// snapshots follow successful reading. The result keeps the incoming response
+// model; UpstreamModel records initial mapping or Compact replacement and can
+// remain empty, and observed images supply the image billing fields.
 func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts) (*Result, error) {
 	profile := p.Profile()
 	body, canonicalImageIntentBody, reqModel := in.Body, in.CanonicalImageIntentBody, in.Model
 	attemptImageIntentInvalidated, reasoningEffort, reqStream, startTime := in.ImageIntentInvalidated, in.ReasoningEffort, in.Stream, in.StartedAt
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
-	// Patch the model in place so large bodies and unknown extension fields retain their representation.
+	// Patch the model field in raw bytes so large bodies and unknown extension
+	// fields retain their existing JSON representation through provider mapping.
 	policyInputModel := p.ForwardModel(reqModel, p.CompactPath())
 	if policyInputModel == "" {
 		policyInputModel = reqModel
@@ -57,7 +99,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			p.Reject(403, "forbidden_error", rejectMsg, "")
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		// Codex passthrough permits omitted instructions; invalid supplied values were rejected above.
+		// Synthesize omitted Codex instructions before OAuth preparation; invalid
+		// supplied values have already been rejected, so explicit text keeps its
+		// caller-provided instruction content.
 		if p.CodexModel(policyInputModel) && !gjson.GetBytes(body, "instructions").Exists() {
 			nextBody, setErr := sjson.SetBytes(body, "instructions", openai.DefaultCodexSynthInstructions(policyInputModel))
 			if setErr != nil {
@@ -66,6 +110,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			body = nextBody
 		}
 
+		// Apply Codex body compatibility before reading its stream flag and scoping
+		// metadata, so subsequent request identity handling uses the adopted OAuth
+		// representation.
 		normalizedBody, normalized, err := p.OAuthBody(body, p.CompactPath())
 		if err != nil {
 			return nil, err
@@ -75,6 +122,8 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
 
+		// Namespace raw metadata before deriving the fingerprint; header construction
+		// later consumes the staged IDs for the same selected provider attempt.
 		providerScopedBody, providerScoped, scopeErr := p.ProviderIdentityRaw(body)
 		if scopeErr != nil {
 			return nil, scopeErr
@@ -83,6 +132,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			body = providerScopedBody
 		}
 
+		// Clear an earlier attempt's staged fingerprint before this provider derives
+		// its own IDs; Compact leaves the cleared value because it skips metadata
+		// fingerprint preparation.
 		p.StageFingerprint(nil)
 		// Use the shared fingerprint rules with a local client_metadata patch to limit parsing of large bodies.
 		if !p.CompactPath() {
@@ -96,10 +148,14 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 					body = updatedBody
 				}
 			}
-			// A nil result clears the previous provider's fingerprint IDs.
+			// Stage the current derivation even when it is nil, so request construction
+			// cannot use header IDs retained from a previous provider attempt.
 			p.StageFingerprint(fingerprintIDs)
 		}
 	}
+	// Responses compatibility runs after credential-specific identity preparation;
+	// reserved names are then aliased for OAuth-like credentials with reverse
+	// names retained for output restoration.
 	if profile.OpenAI {
 		responsesLite := false
 		if p.HasContext() {
@@ -125,6 +181,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 	}
 
+	// Lower client tools for non-Compact API Key passthrough before exchange,
+	// retaining request-local mappings so response wrappers can restore the
+	// caller's tool representation.
 	if profile.OpenAI && profile.APIKey &&
 		!p.CompactPath() && p.NeedsClientTools(body) {
 		adaptedBody, adaptErr := p.AdaptClientTools(body)
@@ -134,6 +193,8 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		body = adaptedBody
 	}
 
+	// Clean empty base64 image placeholders after client-tool preparation so late
+	// byte cleanup does not bypass model mapping or response restoration state.
 	sanitizedBody, sanitized, err := openai.SanitizeEmptyBase64InputImagesInOpenAIBody(body)
 	if err != nil {
 		return nil, err
@@ -163,7 +224,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	}
 	body = updatedBody
 
-	// Broad image intent controls state and billing; explicit image intent controls permission checks.
+	// Broad intent includes retained image evidence for state and billing;
+	// explicit intent checks the prepared request and selected model before the
+	// group permission decision.
 	imageIntent := p.ImageIntent(reqModel, canonicalImageIntentBody, policyModel, body, attemptImageIntentInvalidated)
 	explicitImageIntent := p.ExplicitImageIntent(policyModel, body)
 	if explicitImageIntent && !p.ImageAllowed() {
@@ -237,10 +300,15 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			return nil, p.TransportErrorPass(ctx, err)
 		}
 		if resp.StatusCode >= 400 {
-			// Read the error for recovery checks, then restore the body for subsequent error handling.
+			// Capture failure evidence and close its network body before recovery; a
+			// replay reader keeps the same bytes available for later policy and final
+			// error presentation.
 			probeBody := p.ReadErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+			// Remember adopted rejected-field payloads before another exchange,
+			// preventing repeated normalization from replaying bytes already seen by
+			// this attempt's recovery state.
 			if retryBody, reason, changed, retryErr := openai.NormalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
@@ -248,6 +316,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 				p.Log("[OpenAI] Retrying passthrough request after %s (provider: %s)", reason, profile.Name)
 				continue
 			}
+			// Spend the separate agent-task budget before replay so repeated task
+			// rejection can proceed to Compact or final failure handling on a later
+			// response.
 			if !agentTaskRecoveryTried && p.IsAgentIdentity(ctx) && p.InvalidAgentTask(resp.StatusCode, probeBody) {
 				agentTaskRecoveryTried = true
 				if recoveryErr := p.RecoverAgentTask(ctx); recoveryErr != nil {
@@ -256,6 +327,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 				continue
 			}
 			upstreamMsg := p.ErrorMessage(probeBody)
+			// A captured Compact HTTP failure can replace the body and vendor model
+			// once; record the adopted model before restarting exchange with the spent-
+			// budget flag.
 			if retryBody, fallbackModel, retry := p.CompactRetry(requestedModel, body, resp.StatusCode, upstreamMsg, probeBody, compactModelFallbackRetried); retry {
 				p.CompactObserved(resp, probeBody, upstreamMsg)
 				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
@@ -280,17 +354,26 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 
 		p.WrapResponseBody(resp)
+		// Publish turn-state source from successful response headers before body
+		// reading; this header observation is separate from confirmed client delivery
+		// and final response-owner binding.
 		p.ObserveProvenance(resp.Header)
 
 		if reqStream {
 			result, handleErr := openai.ReadPassthroughStreaming(ctx, resp, upstream.NewOutputContext(p.Sink()), p.ResponseOptions(ctx), startTime, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				// The installed Compact signal helper closes a rejected response when it
+				// adopts recovery, releasing its body before this loop constructs the
+				// replacement exchange.
 				if retryBody, fallbackModel, retry := p.CompactFromSignal(requestedModel, body, handleErr, compactModelFallbackRetried, resp); retry {
 					body = retryBody
 					upstreamPassthroughModel = fallbackModel
 					compactModelFallbackRetried = true
 					continue
 				}
+				// An unrecovered Compact reader failure becomes HTTP-like evidence after
+				// closing the original body, allowing ordinary passthrough failover
+				// classification or final error presentation.
 				if signal, ok := p.CompactSignal(handleErr); ok {
 					_ = resp.Body.Close()
 					compactResp, compactBody := p.CompactErrorResponse(resp, signal)
@@ -310,12 +393,18 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		} else {
 			result, handleErr := openai.ReadPassthroughNonStreaming(ctx, resp, p.Sink(), p.ResponseOptions(ctx), reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				// The installed Compact signal helper closes a rejected response when it
+				// adopts recovery, releasing its body before this loop constructs the
+				// replacement exchange.
 				if retryBody, fallbackModel, retry := p.CompactFromSignal(requestedModel, body, handleErr, compactModelFallbackRetried, resp); retry {
 					body = retryBody
 					upstreamPassthroughModel = fallbackModel
 					compactModelFallbackRetried = true
 					continue
 				}
+				// An unrecovered Compact reader failure becomes HTTP-like evidence after
+				// closing the original body, allowing ordinary passthrough failover
+				// classification or final error presentation.
 				if signal, ok := p.CompactSignal(handleErr); ok {
 					_ = resp.Body.Close()
 					compactResp, compactBody := p.CompactErrorResponse(resp, signal)
@@ -342,6 +431,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		p.UpdateCodexUsage(ctx, resp.Header)
 	}
 
+	// Successful reading can leave token usage absent; return empty quantities
+	// with response identity and timing so completion receives a consistent
+	// observation shape.
 	if usage == nil {
 		usage = &wire.ForwardUsage{}
 	}
@@ -361,6 +453,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                firstTokenMs,
 	}
+	// Observed image output supplies the image billing identity and size evidence,
+	// allowing completion to use media pricing for the returned generated-image
+	// count.
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
 		forwardResult.ImageSize = imageSizeTier

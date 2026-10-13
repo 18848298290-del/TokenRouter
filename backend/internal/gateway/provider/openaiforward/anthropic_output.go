@@ -21,17 +21,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// Anthropic stream events carry content fragments and separate uncached, cache-
+// creation, and cache-read usage buckets. Converted Responses and Chat output
+// reconstruct those fragments while retaining the vendor model declaration
+// before restoring the caller model, and their OpenAI completion input count
+// includes every input bucket.
+//
+// Buffered conversion waits for a message_start before producing JSON, while
+// streaming conversion commits SSE headers and records the first decoded event
+// as its timing observation. An idle pump closes the upstream body; buffered
+// output reports a failure with no result, and streaming output returns
+// collected usage beside that error. Responses streaming continues conversion
+// state after client disconnection, while Chat streaming continues usage
+// collection and stops its ordinary event conversion. The execution caller
+// retains final body cleanup.
+
+// AnthropicOutputOptions supplies request-bound conversion, header, and diagnostic operations for Anthropic events.
 type AnthropicOutputOptions struct {
-	Runtime        bridge.Runtime
-	MaxLineSize    func() int
-	StreamInterval func() time.Duration
-	CopyHeaders    func(http.Header, http.Header)
-	ReverseTools   func([]byte) []byte
-	Error          func(int, string, string)
-	Warn           func(string, ...zap.Field)
+	Runtime        bridge.Runtime                 // conversion clock and entropy
+	MaxLineSize    func() int                     // configured scanner growth limit
+	StreamInterval func() time.Duration           // line-consumer idle interval reader
+	CopyHeaders    func(http.Header, http.Header) // filtered response header copier
+	ReverseTools   func([]byte) []byte            // request-bound tool name restorer
+	Error          func(int, string, string)      // client conversion error presenter
+	Warn           func(string, ...zap.Field)     // structured read diagnostic writer
 }
 
-// AnthropicUsageToOpenAI includes cache creation and cache reads in the OpenAI input total.
+// AnthropicUsageToOpenAI builds inclusive OpenAI input usage from normalized
+// Anthropic token buckets. Callers supply uncached InputTokens plus separate
+// cache-creation and cache-read quantities, such as those produced by
+// MergeAnthropicUsage; nil input returns empty usage.
+//
+// The input total includes all three buckets, while the two cache quantities
+// also remain available separately for pricing. For example, 250 uncached
+// tokens and 173056 cache-read tokens produce 173306 input tokens with 173056
+// still reported in CacheReadInputTokens. Output tokens are copied from the
+// same observation.
 func AnthropicUsageToOpenAI(u *upstream.TokenUsage) protocolopenai.ForwardUsage {
 	if u == nil {
 		return protocolopenai.ForwardUsage{}
@@ -39,6 +64,18 @@ func AnthropicUsageToOpenAI(u *upstream.TokenUsage) protocolopenai.ForwardUsage 
 	return protocolopenai.ForwardUsage{InputTokens: u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens, OutputTokens: u.OutputTokens, CacheCreationInputTokens: u.CacheCreationInputTokens, CacheReadInputTokens: u.CacheReadInputTokens}
 }
 
+// ResponsesFromAnthropicBuffered reconstructs Responses JSON and completion
+// usage from paired Anthropic event/data lines. The caller closes the response
+// body after reading; a missing message_start or idle expiry returns no result
+// and writes the applicable client failure. Non-idle scanner failures end
+// accumulation after diagnostic handling.
+//
+// Content deltas append to the matching reconstructed block, including split
+// tool arguments, and vendor model evidence is captured before caller-model
+// restoration. Client-tool mapping is applied after ordinary reverse names on
+// successful marshaling. When a message exists, the accumulated usage becomes
+// the completion result even if scanning ended early, so callers use this
+// reader's actual return rules when determining completion.
 func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o AnthropicOutputOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time, clientToolMapping bridge.ResponsesClientToolMapping) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -50,12 +87,17 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := o.MaxLineSize()
+	// The 64 KiB starting capacity remains usable when the configured maximum
+	// is smaller; that maximum bounds subsequent scanner growth while this
+	// converter reads Anthropic lines.
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	var finalResp *protocolanthropic.AnthropicResponse
 	var usage upstream.TokenUsage
 
-	// Bound idle reads so a stalled upstream can return 502 before buffered output is committed.
+	// The line-consumer interval bounds buffered waiting before JSON output;
+	// expiry closes the body so the scanner can finish and the client receives a
+	// conversion failure.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -69,6 +111,8 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		}
 	}
 	onIdle := func() (*Result, error) {
+		// Close the idle upstream body to unblock scanner input before returning; the
+		// pump stop deferred by this reader then releases pending publication.
 		_ = resp.Body.Close()
 		o.Warn("openai responses via native anthropic buffered: data interval timeout",
 			zap.String("request_id", requestID),
@@ -87,7 +131,9 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 			logReadErr(rerr)
 			break
 		}
-		// SSE permits event:xxx without a space, as emitted by compatible upstreams such as Kimi.
+		// Accept compact event:xxx framing so the immediately following data
+		// line still enters paired message reconstruction for compatible
+		// upstream streams.
 		if _, ok := protocolopenai.ExtractSSEEventLine(line); !ok {
 			continue
 		}
@@ -100,6 +146,9 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 			logReadErr(rerr)
 			break
 		}
+		// Consume the data line immediately following an accepted event line; other
+		// line shapes are skipped so only that paired payload enters message
+		// reconstruction.
 		payload, ok := protocolopenai.ExtractSSEDataLine(dataLine)
 		if !ok {
 			continue
@@ -107,6 +156,8 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 
 		modelObserver.ObserveAnthropic([]byte(payload))
 		var event protocolanthropic.AnthropicStreamEvent
+		// Skip payloads that cannot decode as an Anthropic event, allowing later
+		// valid events to continue supplying message state and usage observations.
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
@@ -128,12 +179,18 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
+			// Deltas address blocks in append order. The upper-bound check skips
+			// later blocks, but a negative upstream index passes it and panics
+			// when the selected delta accesses Content.
 			if idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
 				case "thinking_delta":
 					finalResp.Content[idx].Thinking += event.Delta.Thinking
+				// Tool arguments arrive as partial JSON fragments; concatenate them into
+				// the retained content block before whole-response conversion serializes
+				// its completed tool input.
 				case "input_json_delta":
 					finalResp.Content[idx].Input = forwardcore.AppendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
@@ -146,6 +203,9 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
+	// Replace message usage when accumulated uncached input or output is
+	// positive; cache-only observations still reach completion through the
+	// separate accumulator while client conversion retains message_start usage.
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		finalResp.Usage = protocolanthropic.AnthropicUsage{
 			InputTokens:              usage.InputTokens,
@@ -159,7 +219,8 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 	responsesResp.Model = originalModel
 
 	o.CopyHeaders(c.Writer.Header(), resp.Header)
-	// The client receives JSON even though the upstream Content-Type describes an SSE stream.
+	// Override the upstream SSE content type after reconstruction so buffered
+	// callers parse the converted Responses or Chat body as JSON.
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if respBytes, err := json.Marshal(responsesResp); err == nil {
 		respBytes = o.ReverseTools(respBytes)
@@ -169,6 +230,9 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", respBytes)
 	} else {
+		// If preparatory marshaling fails, delegate encoding of the reconstructed
+		// object to the output context; that path bypasses the byte-level tool
+		// restoration applied above.
 		c.JSON(http.StatusOK, responsesResp)
 	}
 
@@ -186,6 +250,18 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 	}, nil
 }
 
+// ResponsesFromAnthropicStreaming converts paired Anthropic event/data lines
+// into Responses SSE with request-local tool restoration. It commits streaming
+// headers before reading, and FirstTokenMs records the first decoded event even
+// when that event emits no visible content. The caller retains final response-
+// body cleanup.
+//
+// A failed client write stops further output while conversion state and
+// trailing usage continue advancing. Idle expiry closes the body and returns
+// collected observations beside an error; other scanner endings finalize
+// conversion and return its accumulated result. Encoding or restoration
+// failures skip the affected event, and terminal conversion output is written
+// only while the client remains connected.
 func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, o AnthropicOutputOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time, clientToolMapping bridge.ResponsesClientToolMapping) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -213,6 +289,9 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := o.MaxLineSize()
+	// The 64 KiB starting capacity remains usable when the configured maximum
+	// is smaller; that maximum bounds subsequent scanner growth while this
+	// converter reads Anthropic lines.
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	resultWithUsage := func() *Result {
@@ -247,6 +326,8 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		}
 	}
 	onIdle := func() (*Result, error) {
+		// Close the idle upstream body to unblock scanner input before returning; the
+		// pump stop deferred by this reader then releases pending publication.
 		_ = resp.Body.Close()
 		o.Warn("openai responses via native anthropic stream: data interval timeout",
 			zap.String("request_id", requestID),
@@ -258,6 +339,9 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 	// After client disconnection, keep advancing conversion state and draining usage.
 	// The final output token count arrives in a trailing message_delta event.
 	processAnthropicEvent := func(event *protocolanthropic.AnthropicStreamEvent) {
+		// Measure the first decoded vendor event, including metadata-only events,
+		// from request start; this observation can precede the first client-visible
+		// converted chunk.
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -275,6 +359,9 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		if clientDisconnected {
 			return
 		}
+		// Prepare each converted event before writing: failed JSON encoding or
+		// client-tool restoration drops that event while later events can still
+		// update output and usage.
 		for _, evt := range events {
 			payload, err := json.Marshal(evt)
 			if err != nil {
@@ -319,6 +406,9 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 			logReadErr(rerr)
 			break
 		}
+		// Consume the data line immediately following an accepted event line; other
+		// line shapes are skipped so only that paired payload enters message
+		// reconstruction.
 		payload, ok := protocolopenai.ExtractSSEDataLine(dataLine)
 		if !ok {
 			continue
@@ -326,6 +416,8 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 
 		modelObserver.ObserveAnthropic([]byte(payload))
 		var event protocolanthropic.AnthropicStreamEvent
+		// Skip payloads that cannot decode as an Anthropic event, allowing later
+		// valid events to continue supplying message state and usage observations.
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
@@ -333,9 +425,14 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		processAnthropicEvent(&event)
 	}
 
-	// Finalize after disconnection too; write restored terminal events only while the client remains connected.
+	// Finalize Responses conversion after scanner completion even if client output
+	// failed; emit restored terminal events only while writes remain available for
+	// that client.
 	if finalEvents := bridge.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 && !clientDisconnected {
 		wrote := false
+		// Terminal events use the same encoding and restoration path; skip an
+		// unusable event and continue until client writing fails or available final
+		// events finish.
 		for _, evt := range finalEvents {
 			payload, err := json.Marshal(evt)
 			if err != nil {
@@ -366,6 +463,17 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 	return resultWithUsage(), nil
 }
 
+// ChatFromAnthropicBuffered reconstructs Chat JSON and completion usage from
+// paired Anthropic event/data lines. The caller retains response-body cleanup;
+// idle expiry and an absent message_start produce client failure with no
+// result, while other scanner endings allow reconstruction from available
+// content.
+//
+// Vendor model evidence is captured before converting through Responses into
+// the caller's Chat model. Content and tool-argument fragments accumulate in
+// the Anthropic message before conversion. Successful preparatory marshaling
+// applies reverse-tool names, and the returned result carries normalized
+// inclusive input usage independently of that client output representation.
 func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o AnthropicOutputOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -377,12 +485,17 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := o.MaxLineSize()
+	// The 64 KiB starting capacity remains usable when the configured maximum
+	// is smaller; that maximum bounds subsequent scanner growth while this
+	// converter reads Anthropic lines.
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	var finalResp *protocolanthropic.AnthropicResponse
 	var usage upstream.TokenUsage
 
-	// Bound idle reads so a stalled upstream can return 502 before buffered output is committed.
+	// The line-consumer interval bounds buffered waiting before JSON output;
+	// expiry closes the body so the scanner can finish and the client receives a
+	// conversion failure.
 	streamInterval := o.StreamInterval()
 	pump := NewAnthropicLinePump(scanner, streamInterval)
 	defer pump.Stop()
@@ -396,6 +509,8 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		}
 	}
 	onIdle := func() (*Result, error) {
+		// Close the idle upstream body to unblock scanner input before returning; the
+		// pump stop deferred by this reader then releases pending publication.
 		_ = resp.Body.Close()
 		o.Warn("openai cc via native anthropic buffered: data interval timeout",
 			zap.String("request_id", requestID),
@@ -414,8 +529,9 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 			logReadErr(rerr)
 			break
 		}
-		// SSE permits event:xxx without a space. Requiring "event: " would drop compact
-		// events from compatible upstreams such as Kimi (issue #4653).
+		// Accept compact event:xxx framing so the immediately following data
+		// line still enters paired message reconstruction for compatible
+		// upstream streams.
 		if _, ok := protocolopenai.ExtractSSEEventLine(line); !ok {
 			continue
 		}
@@ -428,6 +544,9 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 			logReadErr(rerr)
 			break
 		}
+		// Consume the data line immediately following an accepted event line; other
+		// line shapes are skipped so only that paired payload enters message
+		// reconstruction.
 		payload, ok := protocolopenai.ExtractSSEDataLine(dataLine)
 		if !ok {
 			continue
@@ -435,6 +554,8 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 
 		modelObserver.ObserveAnthropic([]byte(payload))
 		var event protocolanthropic.AnthropicStreamEvent
+		// Skip payloads that cannot decode as an Anthropic event, allowing later
+		// valid events to continue supplying message state and usage observations.
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
@@ -456,12 +577,18 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
+			// Deltas address blocks in append order. The upper-bound check skips
+			// later blocks, but a negative upstream index passes it and panics
+			// when the selected delta accesses Content.
 			if idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
 				case "thinking_delta":
 					finalResp.Content[idx].Thinking += event.Delta.Thinking
+				// Tool arguments arrive as partial JSON fragments; concatenate them into
+				// the retained content block before whole-response conversion serializes
+				// its completed tool input.
 				case "input_json_delta":
 					finalResp.Content[idx].Input = forwardcore.AppendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
@@ -474,6 +601,9 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
+	// Replace message usage when accumulated uncached input or output is
+	// positive; cache-only observations still reach completion through the
+	// separate accumulator while client conversion retains message_start usage.
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		finalResp.Usage = protocolanthropic.AnthropicUsage{
 			InputTokens:              usage.InputTokens,
@@ -487,12 +617,16 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 	ccResp := bridge.ResponsesToChatCompletions(o.Runtime, responsesResp, originalModel)
 
 	o.CopyHeaders(c.Writer.Header(), resp.Header)
-	// The client receives JSON even though the upstream Content-Type describes an SSE stream.
+	// Override the upstream SSE content type after reconstruction so buffered
+	// callers parse the converted Responses or Chat body as JSON.
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if respBytes, err := json.Marshal(ccResp); err == nil {
 		respBytes = o.ReverseTools(respBytes)
 		c.Data(http.StatusOK, "application/json; charset=utf-8", respBytes)
 	} else {
+		// If preparatory marshaling fails, delegate encoding of the reconstructed
+		// object to the output context; that path bypasses the byte-level tool
+		// restoration applied above.
 		c.JSON(http.StatusOK, ccResp)
 	}
 
@@ -510,6 +644,17 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 	}, nil
 }
 
+// ChatFromAnthropicStreaming converts Anthropic events through Responses state
+// into Chat SSE and optional usage output. It commits streaming headers before
+// reading and records the first decoded event as FirstTokenMs. The caller
+// closes the borrowed response body after processing.
+//
+// Client write failure stops ordinary event conversion and output while
+// message_start and message_delta continue contributing usage. Idle expiry
+// closes the body and returns the collected result beside an error; other
+// scanner endings finalize both converters. Serialization failures skip
+// affected chunks, and client-disconnect evidence comes from chunk writes; the
+// final [DONE] write is attempted without recording its error.
 func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, o AnthropicOutputOptions, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time, includeUsage bool) (out *Result, failure error) {
 	var modelObserver protocol.ResponseModelObserver
 	defer func() {
@@ -539,6 +684,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := o.MaxLineSize()
+	// The 64 KiB starting capacity remains usable when the configured maximum
+	// is smaller; that maximum bounds subsequent scanner growth while this
+	// converter reads Anthropic lines.
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	resultWithUsage := func() *Result {
@@ -572,8 +720,12 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			)
 		}
 	}
-	// Close the body to unblock the reader, and return the usage collected before the timeout.
+	// Close the body on idle expiry so its blocked scanner can finish; keep
+	// accumulated usage and disconnect state in the observation returned beside
+	// the timeout.
 	onIdle := func() (*Result, error) {
+		// Close the idle upstream body to unblock scanner input before returning; the
+		// pump stop deferred by this reader then releases pending publication.
 		_ = resp.Body.Close()
 		if !clientDisconnected {
 			o.Warn("openai cc via native anthropic stream: data interval timeout",
@@ -588,6 +740,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		if clientDisconnected {
 			return false // Continue draining usage after writes stop.
 		}
+		// A chunk that cannot encode is skipped before writing, leaving earlier
+		// output and accumulated usage available while later convertible chunks can
+		// still be sent.
 		sse, err := bridge.ChatChunkToSSE(chunk)
 		if err != nil {
 			return false
@@ -601,13 +756,17 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 	}
 
 	processAnthropicEvent := func(event *protocolanthropic.AnthropicStreamEvent) bool {
+		// Measure the first decoded vendor event, including metadata-only events,
+		// from request start; this observation can precede the first client-visible
+		// converted chunk.
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
 
-		// Keep collecting billable upstream usage after the client disconnects.
+		// Update usage before the disconnect guard so trailing message_delta tokens
+		// remain available even after conversion output has stopped for that client.
 		if event.Type == "message_delta" && event.Usage != nil {
 			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
 		}
@@ -615,7 +774,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 
-		// After disconnection, skip conversion and output while the outer loop drains usage.
+		// After output failure, skip ordinary event conversion while the outer reader
+		// continues consuming lines; accumulated usage still reaches the returned
+		// partial observation.
 		if clientDisconnected {
 			return false
 		}
@@ -655,6 +816,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			logReadErr(rerr)
 			break
 		}
+		// Consume the data line immediately following an accepted event line; other
+		// line shapes are skipped so only that paired payload enters message
+		// reconstruction.
 		payload, ok := protocolopenai.ExtractSSEDataLine(dataLine)
 		if !ok {
 			continue
@@ -662,6 +826,8 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 
 		modelObserver.ObserveAnthropic([]byte(payload))
 		var event protocolanthropic.AnthropicStreamEvent
+		// Skip payloads that cannot decode as an Anthropic event, allowing later
+		// valid events to continue supplying message state and usage observations.
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
@@ -671,7 +837,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		}
 	}
 
-	// Finalize both converters; writeChunk suppresses output after disconnection.
+	// Finalize Anthropic-to-Responses state before Responses-to-Chat state so
+	// final message events can produce their Chat finish chunks; writeChunk
+	// continues suppressing disconnected-client output.
 	finalResEvents := bridge.FinalizeAnthropicResponsesStream(anthState)
 	for _, resEvt := range finalResEvents {
 		ccChunks := bridge.ResponsesEventToChatChunks(&resEvt, ccState)
@@ -684,6 +852,8 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		writeChunk(chunk)
 	}
 
+	// Attempt the final marker after converter finalization; its write error is
+	// discarded, so the returned disconnect flag reflects earlier chunk writes.
 	if !clientDisconnected {
 		fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 		c.Writer.Flush()
