@@ -13,13 +13,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// Alipay desktop fixtures distinguish precreate QR payloads from PagePay
+// browser URLs, including recovery after precreate rejection and direct
+// redirect mode. Mobile fixtures select WAP or explicitly requested precreate
+// through injected SDK operations. Synchronous cases restore those global
+// operation functions with Cleanup, while parallel constructor and parser
+// cases use immutable data and placeholder private-key text for presence
+// checks.
+
+// TestIsTradeNotExist compares nil, complete missing-trade marker, other
+// errors and a partial marker. It expects the substring classifier to
+// recognize only the listed complete-code diagnostics.
 func TestIsTradeNotExist(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name string // named error classification case
+		err  error  // supplied channel error observation
+		want bool   // expected missing-trade classification
 	}{
 		{
 			name: "nil error returns false",
@@ -59,6 +70,10 @@ func TestIsTradeNotExist(t *testing.T) {
 	}
 }
 
+// TestNewAlipay supplies placeholder private-key text and varies required app
+// and key presence in parallel cases. It checks constructor errors and
+// instance identity; SDK key parsing remains lazy and unexercised by this
+// fixture.
 func TestNewAlipay(t *testing.T) {
 	t.Parallel()
 
@@ -67,7 +82,8 @@ func TestNewAlipay(t *testing.T) {
 		"privateKey": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...",
 	}
 
-	// helper to clone and override config fields
+	// Copy the fixture strings before overriding a field, leaving the shared
+	// validConfig map immutable for parallel constructor cases.
 	withOverride := func(overrides map[string]string) map[string]string {
 		cfg := make(map[string]string, len(validConfig))
 		maps.Copy(cfg, validConfig)
@@ -76,10 +92,12 @@ func TestNewAlipay(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		config    map[string]string
-		wantErr   bool
-		errSubstr string
+		name    string            // named constructor input case
+		config  map[string]string // immutable constructor setting map
+		wantErr bool              // expected construction failure flag
+		// errSubstr is checked only for expected failures when nonempty, letting
+		// presence fixtures require the matching field diagnostic.
+		errSubstr string // expected constructor diagnostic fragment
 	}{
 		{
 			name:    "valid config succeeds",
@@ -132,7 +150,12 @@ func TestNewAlipay(t *testing.T) {
 	}
 }
 
+// TestCreateTradeUsesPagePayForDesktop injects a precreate rejection and a
+// successful PagePay URL builder. It expects one call to each, no WAP call and
+// a browser URL with empty QR payload.
 func TestCreateTradeUsesPagePayForDesktop(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origPreCreate := alipayTradePreCreate
 	origPagePay := alipayTradePagePay
 	origWapPay := alipayTradeWapPay
@@ -185,14 +208,19 @@ func TestCreateTradeUsesPagePayForDesktop(t *testing.T) {
 	if resp.PayURL == "" {
 		t.Fatal("expected pay_url for desktop page pay")
 	}
-	// page.pay returns a browser checkout URL, so QRCode must remain empty.
+	// The injected PagePay result is a browser launch URL; preserving an empty QR
+	// field keeps the asserted response format distinct from precreate.
 	if resp.QRCode != "" {
 		t.Fatalf("qr_code = %q, want empty for page pay", resp.QRCode)
 	}
 }
 
-// TestCreateTradeRedirectModeSkipsPrecreate checks that desktop redirect mode calls page.pay directly.
+// TestCreateTradeRedirectModeSkipsPrecreate injects desktop operations with
+// redirect mode configured. It expects PagePay to run directly with its
+// product code, leaving precreate count and QR payload empty.
 func TestCreateTradeRedirectModeSkipsPrecreate(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origPreCreate := alipayTradePreCreate
 	origPagePay := alipayTradePagePay
 	t.Cleanup(func() {
@@ -242,7 +270,12 @@ func TestCreateTradeRedirectModeSkipsPrecreate(t *testing.T) {
 	}
 }
 
+// TestCreateTradeUsesWapPayForMobile injects a WAP URL builder and supplies
+// its return destination. It checks one invocation and a nonempty browser
+// launch URL from that mobile helper.
 func TestCreateTradeUsesWapPayForMobile(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origWapPay := alipayTradeWapPay
 	t.Cleanup(func() {
 		alipayTradeWapPay = origWapPay
@@ -275,7 +308,12 @@ func TestCreateTradeUsesWapPayForMobile(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentUsesPrecreateForMobileWhenEnabled combines mobile input
+// with the precreate opt-in and an initialized fixture client. It expects one
+// precreate request and a QR-only response with no WAP invocation.
 func TestCreatePaymentUsesPrecreateForMobileWhenEnabled(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origPreCreate := alipayTradePreCreate
 	origWapPay := alipayTradeWapPay
 	t.Cleanup(func() {
@@ -322,7 +360,12 @@ func TestCreatePaymentUsesPrecreateForMobileWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentKeepsWapPayForMobileWhenPrecreateDisabled supplies mobile
+// input with no precreate opt-in. It expects one WAP URL call, no precreate
+// call and an empty QR payload.
 func TestCreatePaymentKeepsWapPayForMobileWhenPrecreateDisabled(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origPreCreate := alipayTradePreCreate
 	origWapPay := alipayTradeWapPay
 	t.Cleanup(func() {
@@ -359,7 +402,12 @@ func TestCreatePaymentKeepsWapPayForMobileWhenPrecreateDisabled(t *testing.T) {
 	}
 }
 
+// TestCreateTradeUsesPrecreateForDesktopWhenAvailable injects successful
+// precreate output for the desktop helper. It expects its product code and QR
+// payload, with no PagePay call and no browser URL.
 func TestCreateTradeUsesPrecreateForDesktopWhenAvailable(t *testing.T) {
+	// Save replaced SDK operations before installing shims and register Cleanup
+	// restoration; this case runs synchronously around its global substitutions.
 	origPreCreate := alipayTradePreCreate
 	origPagePay := alipayTradePagePay
 	t.Cleanup(func() {
@@ -407,6 +455,9 @@ func TestCreateTradeUsesPrecreateForDesktopWhenAvailable(t *testing.T) {
 	}
 }
 
+// TestAlipayMerchantIdentityMetadata supplies one configured merchant app
+// identity on a direct adapter fixture. It expects that appId under the
+// callback comparison metadata key app_id.
 func TestAlipayMerchantIdentityMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -422,6 +473,9 @@ func TestAlipayMerchantIdentityMetadata(t *testing.T) {
 	}
 }
 
+// TestParseAlipayAmount supplies an empty primary and two parseable
+// alternatives, then unusable text. It expects the first alternative amount
+// and an error when none of the listed fields parses.
 func TestParseAlipayAmount(t *testing.T) {
 	t.Parallel()
 

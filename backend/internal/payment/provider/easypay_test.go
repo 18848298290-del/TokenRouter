@@ -12,7 +12,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// TestEasyPayNotificationRejectsCheckoutParameters checks that checkout fields cannot authenticate as a notification.
+// EasyPay callback fixtures sign form values locally and distinguish accepted
+// notification keys from checkout parameters, duplicate values and
+// delimiter-bearing structured fields. Query fixtures exercise status
+// precedence across JSON layouts and keep requested merchant labels when
+// upstream references are absent.
+//
+// Loopback refund fixtures capture alternative identifier forms in order,
+// returning missing-order text before a successful trade-reference attempt.
+// URL fixtures separate slash-prefixed resolution from absolute links or
+// opaque QR text, including protocol-relative references that change host.
+// Signing tests cover parameter order and excluded fields independently of
+// callback structure, while bounded diagnostic fixtures assert valid UTF-8 at
+// the truncated prefix.
+
+// TestEasyPayNotificationRejectsCheckoutParameters generates a signed
+// hosted-checkout query and submits it as callback form text. It expects
+// rejection because checkout parameter names do not constitute an accepted
+// notification payload.
 func TestEasyPayNotificationRejectsCheckoutParameters(t *testing.T) {
 	t.Parallel()
 
@@ -39,18 +56,28 @@ func TestEasyPayNotificationRejectsCheckoutParameters(t *testing.T) {
 	}
 }
 
-// TestEasyPayNotificationParameters covers valid, extra, and duplicate notification fields.
+// TestEasyPayNotificationParameters assembles standard, custom-type and
+// free-text forms with optional extras before signing, then adds any duplicate
+// values. It checks accepted observations, rejects extra or duplicated keys
+// and rejects amount changes after signing.
 func TestEasyPayNotificationParameters(t *testing.T) {
 	t.Parallel()
 
 	e := &EasyPay{config: map[string]string{"pid": "1000", "pkey": "test-merchant-secret"}}
 	tests := []struct {
-		name      string
-		payType   string
-		extraKey  string
-		extra     string
-		duplicate string
-		wantError bool
+		name string // named callback structure case
+		// payType replaces the base Alipay form value when nonempty; empty uses the
+		// standard fixture type before signing.
+		payType string // optional visible method override
+		// extraKey and extra add one form pair before signing when extraKey is
+		// nonempty. An empty extra value still produces that accepted-or-rejected
+		// parameter name.
+		extraKey string // optional added parameter name
+		extra    string // added parameter value text
+		// duplicate adds a second value after signing when nonempty, testing
+		// structural rejection before signature comparison can accept the callback.
+		duplicate string // post-signing duplicate field name
+		wantError bool   // expected callback rejection flag
 	}{
 		{name: "standard notification"},
 		{name: "wechat notification", payType: "wxpay"},
@@ -82,6 +109,8 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 			if tt.extraKey != "" {
 				params[tt.extraKey] = tt.extra
 			}
+			// Fix the digest before adding wire signature labels and duplicate values,
+			// separating accepted signed pairs from later callback structure mutations.
 			params["sign"] = easyPaySign(params, e.config["pkey"])
 			params["sign_type"] = signTypeMD5
 			values := url.Values{}
@@ -89,6 +118,9 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 				values.Set(key, value)
 			}
 			if tt.duplicate != "" {
+				// Retain both values in encoded form through url.Values.Add, exposing
+				// duplicate callback content before the verifier can choose a signed
+				// value.
 				values.Add(tt.duplicate, "different-value")
 			}
 			raw := values.Encode()
@@ -107,7 +139,8 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 				notification.Metadata["pid"] != "1000" || notification.RawData != raw {
 				t.Fatalf("unexpected notification: %+v", notification)
 			}
-			// Changing the amount after signing invalidates the notification.
+			// Change money after its signature has been fixed, so the otherwise valid
+			// callback structure reaches the signature-mismatch assertion.
 			values.Set("money", "651.00")
 			if _, err := e.VerifyNotification(context.Background(), values.Encode(), nil); err == nil || !strings.Contains(err.Error(), "invalid signature") {
 				t.Fatalf("tampered notification: %v", err)
@@ -116,7 +149,10 @@ func TestEasyPayNotificationParameters(t *testing.T) {
 	}
 }
 
-// TestEasyPayNotificationRejectsInvalidFields checks rejection of invalid fields before signature verification.
+// TestEasyPayNotificationRejectsInvalidFields mutates unsigned structured
+// fields with missing, delimiter, control-byte or whitespace values and
+// invalid merchant/type/money observations. It expects exact field-validation
+// errors before signature presence can determine the result.
 func TestEasyPayNotificationRejectsInvalidFields(t *testing.T) {
 	t.Parallel()
 
@@ -139,9 +175,9 @@ func TestEasyPayNotificationRejectsInvalidFields(t *testing.T) {
 		}
 	}
 	for _, tt := range []struct {
-		key   string
-		value string
-		want  string
+		key   string // mutated structured field name
+		value string // supplied invalid field text
+		want  string // expected validation diagnostic text
 	}{
 		{key: "pid", value: "2000", want: "easypay notify pid mismatch"},
 		{key: "type", value: "alipay/demo", want: "invalid notify param: type"},
@@ -165,16 +201,20 @@ func TestEasyPayNotificationRejectsInvalidFields(t *testing.T) {
 	}
 }
 
+// TestEasyPayQueryOrderStatusMapping serves top-level, nested, numeric and
+// absent query fields from loopback endpoints. It checks textual-state
+// precedence, requested-reference retention, money and merchant query form
+// values for each fixture.
 func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 	t.Parallel()
 
 	const orderID = "order-123"
 	tests := []struct {
-		name        string
-		body        string
-		wantStatus  string
-		wantTradeNo string
-		wantAmount  float64
+		name        string  // named query layout case
+		body        string  // served channel JSON response
+		wantStatus  string  // expected core query state
+		wantTradeNo string  // expected selected trade reference
+		wantAmount  float64 // expected reported numeric money
 	}{
 		{
 			name:        "top level trade success is paid",
@@ -238,15 +278,23 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 
 			var gotForm url.Values
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Serve the fixed response for client parser assertions; handler Write
+				// errors are discarded while callers check channel results or diagnostics.
 				if r.Method != http.MethodPost {
 					t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
 				}
 				if r.URL.Path != "/api.php" {
 					t.Errorf("path = %q, want /api.php", r.URL.Path)
 				}
+				// Report handler form parsing failure without returning, so the client
+				// still receives a fixture body and recorded form assertions can expose
+				// missing data.
 				if err := r.ParseForm(); err != nil {
 					t.Errorf("ParseForm: %v", err)
 				}
+				// Copy parsed form slices before retaining the request observation, so
+				// later assertions inspect captured values independently of the handler
+				// form map.
 				gotForm = make(url.Values, len(r.PostForm))
 				for key, values := range r.PostForm {
 					gotForm[key] = append([]string(nil), values...)
@@ -254,6 +302,8 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(tt.body))
 			}))
+			// Close the loopback listener when the fixture returns, releasing its HTTP
+			// resources after the request and response assertions finish.
 			defer server.Close()
 
 			provider := newTestEasyPay(t, server.URL)
@@ -284,14 +334,18 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 	}
 }
 
+// TestEasyPayQueryOrderRejectsUnsafeResponses serves HTTP failure, HTML, plain
+// text and empty query replies. It expects operation-specific parser
+// diagnostics and checks that the supplied HTML secret text stays out of the
+// error.
 func TestEasyPayQueryOrderRejectsUnsafeResponses(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		wantErr    string
+		name       string // named query rejection case
+		statusCode int    // served HTTP status code
+		body       string // served response body text
+		wantErr    string // expected parser diagnostic fragment
 	}{
 		{
 			name:       "non success status",
@@ -323,9 +377,13 @@ func TestEasyPayQueryOrderRejectsUnsafeResponses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Serve the fixed response for client parser assertions; handler Write
+				// errors are discarded while callers check channel results or diagnostics.
 				w.WriteHeader(tt.statusCode)
 				_, _ = w.Write([]byte(tt.body))
 			}))
+			// Close the loopback listener when the fixture returns, releasing its HTTP
+			// resources after the request and response assertions finish.
 			defer server.Close()
 
 			provider := newTestEasyPay(t, server.URL)
@@ -340,12 +398,15 @@ func TestEasyPayQueryOrderRejectsUnsafeResponses(t *testing.T) {
 	}
 }
 
+// TestNormalizeEasyPayAPIBase supplies trailing slashes and recognized
+// operation suffixes, including an operation query. It expects the same
+// normalized origin text for the listed complete URL fixtures.
 func TestNormalizeEasyPayAPIBase(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		input string
-		want  string
+		input string // supplied endpoint URL text
+		want  string // expected normalized service base
 	}{
 		{input: "https://zpayz.cn", want: "https://zpayz.cn"},
 		{input: "https://zpayz.cn/", want: "https://zpayz.cn"},
@@ -365,6 +426,9 @@ func TestNormalizeEasyPayAPIBase(t *testing.T) {
 	}
 }
 
+// TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly supplies merchant
+// and trade labels to a successful loopback refund. It expects a normalized
+// endpoint and merchant-only first form with credentials and amount.
 func TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly(t *testing.T) {
 	t.Parallel()
 
@@ -372,8 +436,13 @@ func TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly(t *testing.T) {
 	var gotQuery url.Values
 	var gotForm url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve the fixed response for client parser assertions; handler Write
+		// errors are discarded while callers check channel results or diagnostics.
 		gotPath = r.URL.Path
 		gotQuery = r.URL.Query()
+		// Report handler form parsing failure without returning, so the client still
+		// receives a fixture body and recorded form assertions can expose missing
+		// data.
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("ParseForm: %v", err)
 		}
@@ -381,6 +450,8 @@ func TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":1,"msg":"ok"}`))
 	}))
+	// Close the loopback listener when the fixture returns, releasing its HTTP
+	// resources after the request and response assertions finish.
 	defer server.Close()
 
 	provider := newTestEasyPay(t, server.URL+"/mapi.php")
@@ -416,28 +487,42 @@ func TestEasyPayRefundNormalizesAPIBaseAndSendsOutTradeNoOnly(t *testing.T) {
 	}
 }
 
+// TestEasyPayRefundRetriesWithTradeNoWhenOutTradeNoNotFound serves a
+// missing-order diagnostic for the first merchant form and success for the
+// next trade form. It checks two separate requests and the successful trade
+// label returned as RefundID.
 func TestEasyPayRefundRetriesWithTradeNoWhenOutTradeNoNotFound(t *testing.T) {
 	t.Parallel()
 
 	var gotForms []url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve the fixed response for client parser assertions; handler Write
+		// errors are discarded while callers check channel results or diagnostics.
 		if r.URL.Path != "/api.php" {
 			t.Errorf("refund path = %q, want /api.php", r.URL.Path)
 		}
 		if r.URL.Query().Get("act") != "refund" {
 			t.Errorf("refund act query = %q, want refund", r.URL.Query().Get("act"))
 		}
+		// Report handler form parsing failure without returning, so the client still
+		// receives a fixture body and recorded form assertions can expose missing
+		// data.
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("ParseForm: %v", err)
 		}
 		gotForms = append(gotForms, r.PostForm)
 		w.Header().Set("Content-Type", "application/json")
+		// Reject the first merchant-label form with the recognized missing-order
+		// text, permitting Refund to submit its separate trade-label alternative
+		// next.
 		if len(gotForms) == 1 {
 			_, _ = w.Write([]byte(`{"code":0,"msg":"订单编号不存在！"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"code":1,"msg":"ok"}`))
 	}))
+	// Close the loopback listener when the fixture returns, releasing its HTTP
+	// resources after the request and response assertions finish.
 	defer server.Close()
 
 	provider := newTestEasyPay(t, server.URL+"/mapi.php")
@@ -469,14 +554,17 @@ func TestEasyPayRefundRetriesWithTradeNoWhenOutTradeNoNotFound(t *testing.T) {
 	}
 }
 
+// TestEasyPayRefundResponseErrors serves HTML, invalid JSON, HTTP failure and
+// empty refund responses. It expects diagnostics containing the corresponding
+// status and bounded response summary for those short supplied bodies.
 func TestEasyPayRefundResponseErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		want       string
+		name       string // named refund rejection case
+		statusCode int    // served HTTP status code
+		body       string // served response body text
+		want       string // expected refund diagnostic fragment
 	}{
 		{name: "html response", statusCode: http.StatusOK, body: "<html>bad config</html>", want: "non-JSON response (HTTP 200): <html>bad config</html>"},
 		{name: "non json response", statusCode: http.StatusOK, body: "not json", want: "non-JSON response (HTTP 200): not json"},
@@ -488,9 +576,13 @@ func TestEasyPayRefundResponseErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Serve the fixed response for client parser assertions; handler Write
+				// errors are discarded while callers check channel results or diagnostics.
 				w.WriteHeader(tt.statusCode)
 				_, _ = w.Write([]byte(tt.body))
 			}))
+			// Close the loopback listener when the fixture returns, releasing its HTTP
+			// resources after the request and response assertions finish.
 			defer server.Close()
 
 			provider := newTestEasyPay(t, server.URL)
@@ -508,9 +600,13 @@ func TestEasyPayRefundResponseErrors(t *testing.T) {
 	}
 }
 
+// TestSummarizeEasyPayResponsePreservesUTF8 supplies 171 three-byte Chinese
+// characters to cross the summary byte limit. It expects valid UTF-8 output
+// and the ellipsis marking the truncated fixture.
 func TestSummarizeEasyPayResponsePreservesUTF8(t *testing.T) {
 	t.Parallel()
 
+	// Use 513 UTF-8 bytes to cross the 512-byte summary threshold.
 	summary := summarizeEasyPayResponse([]byte(strings.Repeat("错", 171)))
 	if !utf8.ValidString(summary) {
 		t.Fatalf("summarizeEasyPayResponse returned invalid UTF-8: %q", summary)
@@ -520,6 +616,9 @@ func TestSummarizeEasyPayResponsePreservesUTF8(t *testing.T) {
 	}
 }
 
+// TestEasyPayCustomMethodsUseConfiguredUpstreamType configures two custom
+// mappings and creates a hosted checkout for the USDT visible label. It
+// expects the mapped upstream type in the signed browser query.
 func TestEasyPayCustomMethodsUseConfiguredUpstreamType(t *testing.T) {
 	t.Parallel()
 
@@ -554,6 +653,10 @@ func TestEasyPayCustomMethodsUseConfiguredUpstreamType(t *testing.T) {
 	}
 }
 
+// TestEasyPayCustomMethodsResolveCIDFromConfiguredUpstreamType maps a custom
+// local label to upstream Alipay while configuring both channel overrides. It
+// expects upstream Alipay text and the Alipay-specific CID in the hosted
+// query.
 func TestEasyPayCustomMethodsResolveCIDFromConfiguredUpstreamType(t *testing.T) {
 	t.Parallel()
 
@@ -593,6 +696,9 @@ func TestEasyPayCustomMethodsResolveCIDFromConfiguredUpstreamType(t *testing.T) 
 	}
 }
 
+// TestEasyPaySupportedTypesIncludeCustomMethods configures two complete custom
+// mappings alongside built-in support. It checks that the advertised method
+// list contains Alipay, WeChat and both supplied custom visible codes.
 func TestEasyPaySupportedTypesIncludeCustomMethods(t *testing.T) {
 	t.Parallel()
 
@@ -616,6 +722,9 @@ func TestEasyPaySupportedTypesIncludeCustomMethods(t *testing.T) {
 	}
 }
 
+// TestEasyPaySignConsistentOutput signs the same nonempty parameter map twice
+// with one secret. It expects equal signature text and the
+// thirty-two-character length of the emitted MD5 hexadecimal representation.
 func TestEasyPaySignConsistentOutput(t *testing.T) {
 	t.Parallel()
 
@@ -638,6 +747,9 @@ func TestEasyPaySignConsistentOutput(t *testing.T) {
 	}
 }
 
+// TestEasyPaySignExcludesSignAndSignType compares a base form with one
+// containing signature and algorithm-label fields. It expects equal computed
+// signatures because those two fields are excluded from signing input.
 func TestEasyPaySignExcludesSignAndSignType(t *testing.T) {
 	t.Parallel()
 
@@ -661,6 +773,9 @@ func TestEasyPaySignExcludesSignAndSignType(t *testing.T) {
 	}
 }
 
+// TestEasyPaySignExcludesEmptyValues compares a base form with empty device
+// and clientip values added. It expects identical signatures because
+// empty-valued parameters contribute no pair text to the digest.
 func TestEasyPaySignExcludesEmptyValues(t *testing.T) {
 	t.Parallel()
 
@@ -684,6 +799,9 @@ func TestEasyPaySignExcludesEmptyValues(t *testing.T) {
 	}
 }
 
+// TestEasyPayVerifySignValid computes a signature and then adds signature and
+// algorithm labels to the parameter map. It expects verification to succeed
+// with that same secret and digest text.
 func TestEasyPayVerifySignValid(t *testing.T) {
 	t.Parallel()
 
@@ -697,7 +815,8 @@ func TestEasyPayVerifySignValid(t *testing.T) {
 
 	sign := easyPaySign(params, pkey)
 
-	// Notifications carry both the signature and signature type.
+	// Add wire signature fields after computing the digest; the verification
+	// helper excludes both fields when rebuilding its signed pair text.
 	params["sign"] = sign
 	params["sign_type"] = "MD5"
 
@@ -706,6 +825,9 @@ func TestEasyPayVerifySignValid(t *testing.T) {
 	}
 }
 
+// TestEasyPayVerifySignTampered signs original money and then replaces the
+// amount in the form. It expects verification failure because the unchanged
+// signature describes the earlier parameter value.
 func TestEasyPayVerifySignTampered(t *testing.T) {
 	t.Parallel()
 
@@ -719,7 +841,8 @@ func TestEasyPayVerifySignTampered(t *testing.T) {
 
 	sign := easyPaySign(params, pkey)
 
-	// Change the amount after computing the signature.
+	// Keep the earlier digest while changing money, reproducing a mismatch
+	// between authenticated parameter text and the current verification input.
 	params["money"] = "99.99"
 
 	if easyPayVerifySign(params, pkey, sign) {
@@ -727,6 +850,9 @@ func TestEasyPayVerifySignTampered(t *testing.T) {
 	}
 }
 
+// TestEasyPayVerifySignWrongKey signs a WeChat form with one secret and
+// verifies using another. It expects failure for this mismatched-key fixture
+// even though parameter values remain unchanged.
 func TestEasyPayVerifySignWrongKey(t *testing.T) {
 	t.Parallel()
 
@@ -742,6 +868,9 @@ func TestEasyPayVerifySignWrongKey(t *testing.T) {
 	}
 }
 
+// TestEasyPaySignEmptyParams signs an empty parameter map with a nonempty
+// secret. It expects a nonempty thirty-two-character digest, since the secret
+// still supplies the signing input for that case.
 func TestEasyPaySignEmptyParams(t *testing.T) {
 	t.Parallel()
 
@@ -754,6 +883,9 @@ func TestEasyPaySignEmptyParams(t *testing.T) {
 	}
 }
 
+// TestEasyPaySignSortOrder supplies maps with identical pairs written in
+// different literal orders. It expects equal signatures, protecting sorted
+// pair construction against map iteration order in these fixtures.
 func TestEasyPaySignSortOrder(t *testing.T) {
 	t.Parallel()
 
@@ -777,6 +909,9 @@ func TestEasyPaySignSortOrder(t *testing.T) {
 	}
 }
 
+// TestEasyPayVerifySignWrongSignValue supplies the accepted-length all-zero
+// signature with a nonempty form and secret. It expects verification to reject
+// that incorrect digest for the fixture values.
 func TestEasyPayVerifySignWrongSignValue(t *testing.T) {
 	t.Parallel()
 
@@ -791,6 +926,9 @@ func TestEasyPayVerifySignWrongSignValue(t *testing.T) {
 	}
 }
 
+// TestEasyPayMerchantIdentityMetadata supplies one configured merchant pid on
+// a direct adapter fixture. It expects that label under pid in the map used by
+// core merchant comparison.
 func TestEasyPayMerchantIdentityMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -806,18 +944,20 @@ func TestEasyPayMerchantIdentityMetadata(t *testing.T) {
 	}
 }
 
-// TestResolveEasyPayReturnedRef checks payment URL resolution rules (issue #6292).
-// Unresolved paths become bare QR payloads or open on the gateway origin.
+// TestResolveEasyPayReturnedRef compares root and protocol-relative paths,
+// whitespace, absolute URLs, application links and opaque payload text (issue
+// #6292). It checks resolved destinations or retained text, including unusable
+// bases leaving slash references unchanged.
 func TestResolveEasyPayReturnedRef(t *testing.T) {
 	t.Parallel()
 
 	const apiBase = "https://pay.example.com/xpay/epay"
 
 	tests := []struct {
-		name    string
-		apiBase string
-		ref     string
-		want    string
+		name    string // named reference resolution case
+		apiBase string // supplied service URL prefix
+		ref     string // returned payment reference text
+		want    string // expected launch or QR text
 	}{
 		{
 			// Resolve root-relative paths with the apiBase scheme and host.
@@ -918,6 +1058,9 @@ func TestResolveEasyPayReturnedRef(t *testing.T) {
 	}
 }
 
+// TestEasyPayCreatePaymentResolvesRelativeQRCode serves a root-relative QR
+// reference with no launch URL from the local mapi stub. It expects an
+// origin-qualified QR value, empty PayURL and the reported trade label.
 func TestEasyPayCreatePaymentResolvesRelativeQRCode(t *testing.T) {
 	t.Parallel()
 
@@ -944,6 +1087,9 @@ func TestEasyPayCreatePaymentResolvesRelativeQRCode(t *testing.T) {
 	}
 }
 
+// TestEasyPayCreatePaymentResolvesRelativeMobilePayURL2 serves desktop and
+// mobile root-relative launch references to a mobile request. It expects the
+// mobile alternative resolved against the loopback origin.
 func TestEasyPayCreatePaymentResolvesRelativeMobilePayURL2(t *testing.T) {
 	t.Parallel()
 
@@ -960,12 +1106,16 @@ func TestEasyPayCreatePaymentResolvesRelativeMobilePayURL2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
-	// Mobile checkout prefers payurl2 and resolves relative references.
+	// The supplied mobile alternative wins before relative resolution; the
+	// asserted destination therefore uses the H5 path and loopback origin.
 	if want := origin + "/h5/pay/ORDER_ID"; resp.PayURL != want {
 		t.Fatalf("PayURL = %q, want %q", resp.PayURL, want)
 	}
 }
 
+// TestEasyPayCreatePaymentKeepsUpstreamAbsoluteAndOpaqueValues serves an
+// absolute browser URL and a WeChat QR application link. It expects both
+// upstream strings retained exactly despite a nested instance base path.
 func TestEasyPayCreatePaymentKeepsUpstreamAbsoluteAndOpaqueValues(t *testing.T) {
 	t.Parallel()
 
@@ -993,7 +1143,10 @@ func TestEasyPayCreatePaymentKeepsUpstreamAbsoluteAndOpaqueValues(t *testing.T) 
 	}
 }
 
-// easyPayTestNotificationValues returns unsigned standard notification fields for validation tests.
+// easyPayTestNotificationValues returns fresh unsigned standard callback
+// values with free-text name and structured identifiers. Validation cases
+// mutate their own map before submitting it, so earlier field failures can be
+// asserted before signature checking.
 func easyPayTestNotificationValues() url.Values {
 	return url.Values{
 		"pid": {"1000"}, "trade_no": {"UPSTREAM123"}, "out_trade_no": {"ORDER123"},
@@ -1002,7 +1155,10 @@ func easyPayTestNotificationValues() url.Values {
 	}
 }
 
-// newTestEasyPay creates a provider with test merchant credentials.
+// newTestEasyPay constructs an adapter with fixed merchant credentials and
+// caller-supplied base text, failing the test on configuration error. Endpoint
+// normalization remains active, and HTTP callers supply a loopback URL for
+// their fixture.
 func newTestEasyPay(t *testing.T, apiBase string) *EasyPay {
 	t.Helper()
 
@@ -1019,15 +1175,26 @@ func newTestEasyPay(t *testing.T, apiBase string) *EasyPay {
 	return provider
 }
 
-// newEasyPayMapiStub returns a provider with a fixed mapi.php response and its test server URL.
-// basePath exercises root-relative URL resolution.
+// newEasyPayMapiStub returns a provider using a fixed local JSON response and
+// the listener origin. It registers listener cleanup with the test and
+// combines basePath with that origin to exercise installation paths.
+//
+// The returned provider uses normal base normalization and default API
+// checkout, while creation-response fields come from the supplied body string.
+// Callers can compare root-relative resolution with the origin independently
+// of the nested base, and malformed provider setup fails the test after
+// cleanup is already registered.
 func newEasyPayMapiStub(t *testing.T, basePath, body string) (*EasyPay, string) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Serve the fixed response for client parser assertions; handler Write
+		// errors are discarded while callers check channel results or diagnostics.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
+	// Register listener cleanup before provider construction can fail, keeping
+	// the helper-owned loopback resource tied to the test lifetime.
 	t.Cleanup(server.Close)
 
 	apiBase := server.URL + basePath

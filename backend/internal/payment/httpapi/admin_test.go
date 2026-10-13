@@ -16,10 +16,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// missingRefundRecovery returns a manual-recovery error for HTTP response tests.
-type missingRefundRecovery struct{ payment.RefundStore }
+// Administrator displays must preserve selected invoice/billing values while
+// withholding internal merchant snapshot data. These tests also use the
+// injected calendar across a daylight-saving date and verify that missing
+// refund recovery evidence reaches HTTP as a conflict requiring manual
+// verification.
 
-// TestPaymentDashboardRangeInjectedCalendar checks date ranges in the injected server time zone.
+// missingRefundRecovery implements only the order and preparation reads
+// exercised by the HTTP recovery test.
+type missingRefundRecovery struct {
+	// RefundStore is a nil embedded fixture dependency for unused methods.
+	// Calling an unimplemented promoted operation would panic, keeping this fake
+	// limited to its tested recovery path.
+	payment.RefundStore
+}
+
+// TestPaymentDashboardRangeInjectedCalendar parses the spring-transition date
+// using New York's injected calendar. It requires adjacent midnights to span
+// twenty-three hours and checks bad-request responses for the listed
+// incomplete/invalid/reversed ranges.
 func TestPaymentDashboardRangeInjectedCalendar(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -48,6 +63,10 @@ func TestPaymentDashboardRangeInjectedCalendar(t *testing.T) {
 	}
 }
 
+// TestSanitizeAdminPaymentOrderForResponseAddsCurrencyAndKeepsForkFields
+// supplies fee, invoice and billing data with a USD merchant snapshot. The
+// result must expose tested display values while serialized output omits the
+// provider snapshot and its test secret.
 func TestSanitizeAdminPaymentOrderForResponseAddsCurrencyAndKeepsForkFields(t *testing.T) {
 	now := time.Now()
 	invoiceID := "in_202606250001"
@@ -108,6 +127,10 @@ func TestSanitizeAdminPaymentOrderForResponseAddsCurrencyAndKeepsForkFields(t *t
 	}
 }
 
+// TestRefundRecoveryErrorIsVisibleToAdministrator routes a refund query into a
+// fake missing-preparation result. It requires HTTP 409 with
+// REFUND_RECOVERY_REQUIRED and manual-verification wording, protecting the
+// administrator-visible recovery decision.
 func TestRefundRecoveryErrorIsVisibleToAdministrator(t *testing.T) {
 	runtime := &payment.Runtime{RefundWorkflow: payment.NewRefundWorkflow(missingRefundRecovery{}, payment.RefundRuntime{})}
 	handler := NewAdminHandler(runtime, nil, nil, timezone.NewCalendar(time.Local))
@@ -122,10 +145,14 @@ func TestRefundRecoveryErrorIsVisibleToAdministrator(t *testing.T) {
 	require.Contains(t, body["message"], "manual verification")
 }
 
+// Order returns a fixed REFUNDING observation for the administrator HTTP
+// recovery fixture.
 func (missingRefundRecovery) Order(context.Context, int64) (*payment.Order, error) {
 	return &payment.Order{ID: 1, Status: payment.OrderStatusRefunding}, nil
 }
 
+// RefundRecovery returns missing-preparation manual recovery for the fixed
+// HTTP test order.
 func (missingRefundRecovery) RefundRecovery(context.Context, *payment.Order) (*payment.RefundReceipt, error) {
 	return nil, payment.RefundRecoveryRequired("preparation record unavailable")
 }

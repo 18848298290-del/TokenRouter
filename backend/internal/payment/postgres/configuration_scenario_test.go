@@ -1,7 +1,5 @@
 package postgres_test
 
-// These scenarios cover payment configuration, limits, providers, visible methods, and types, with persistence through instances.go and management.go.
-
 import (
 	"context"
 	"crypto/rand"
@@ -26,17 +24,41 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// Displayed payment limits combine compatible instance observations into their
+// widest allowed range, with missing limits or zero components representing
+// an unlimited displayed bound. Pure fixtures distinguish those aggregate
+// decisions from exact-key limit lookup, currency consistency and provider-specific method
+// grouping. Stored enabled-method text is also tested separately from source
+// availability.
+//
+// SQLite provider fixtures exercise presence and syntax validation, partial
+// configuration updates and identity fields protected by pending orders. A
+// force-expired audit keeps an instance needed for recovery until the order
+// reaches completed state. Draft connectivity uses a loopback order query and
+// retained stored secret, while constructor helpers supply placeholder
+// credentials or locally generated WeChat keys. Captured setting maps expose
+// omitted versus explicit empty/false updates; they do not establish
+// PostgreSQL concurrency or remote credential acceptance.
+
+// TestUnionFloat compares first observations, minimum and maximum selection,
+// zero components and an already unlimited flag. It expects the combined
+// numeric value and limited-state flag for each supplied aggregate step.
 func TestUnionFloat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		agg         float64
-		limited     bool
-		val         float64
-		wantMin     bool
-		wantAgg     float64
-		wantLimited bool
+		name string // named numeric union case
+		// agg and limited hold the current bound observation, while val supplies
+		// another component. A zero val clears limited without requiring agg to
+		// become zero.
+		agg     float64 // current aggregate numeric value
+		limited bool    // current aggregate limit flag
+		val     float64 // next observed numeric bound
+		// wantMin chooses the lowest observed bound when true and the highest when
+		// false, after the helper checks unlimited observations.
+		wantMin     bool    // minimum or maximum selection
+		wantAgg     float64 // expected aggregate numeric value
+		wantLimited bool    // expected aggregate limit flag
 	}{
 		{"first non-zero value", 0, true, 5, true, 5, true},
 		{"lower min replaces", 10, true, 3, true, 3, true},
@@ -61,6 +83,9 @@ func TestUnionFloat(t *testing.T) {
 	}
 }
 
+// TestPcAggregateMethodLimits combines one or several instance limits, missing
+// entries and malformed JSON in parallel cases. It expects the widest range,
+// independently unlimited components and maximum observed daily cap.
 func TestPcAggregateMethodLimits(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +180,10 @@ func TestPcAggregateMethodLimits(t *testing.T) {
 	})
 }
 
+// TestPcGroupByPaymentType supplies Stripe and EasyPay support labels,
+// including empty Stripe support. It expects Stripe-only grouping for that
+// provider and shared visible-method groups for the EasyPay instance
+// observations.
 func TestPcGroupByPaymentType(t *testing.T) {
 	t.Parallel()
 
@@ -206,6 +235,9 @@ func TestPcGroupByPaymentType(t *testing.T) {
 	})
 }
 
+// TestPcAggregateMethodCurrency compares normalized HKD, mixed HKD/USD and
+// default EasyPay currency observations. It expects one consistent currency or
+// a rejected empty result for the mixed set.
 func TestPcAggregateMethodCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -228,6 +260,9 @@ func TestPcAggregateMethodCurrency(t *testing.T) {
 	require.Equal(t, payment.DefaultPaymentCurrency, currency)
 }
 
+// TestGetAvailableMethodLimitsOmitsMixedCurrencyMethod stores two enabled
+// Stripe instances with different currencies on SQLite. It expects display
+// omission and the structured currency-conflict reason from method validation.
 func TestGetAvailableMethodLimitsOmitsMixedCurrencyMethod(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -263,6 +298,9 @@ func TestGetAvailableMethodLimitsOmitsMixedCurrencyMethod(t *testing.T) {
 	require.Equal(t, "PAYMENT_METHOD_CURRENCY_CONFLICT", appErr.Reason)
 }
 
+// TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName stores an
+// enabled EasyPay instance with a custom code and display label. It expects
+// that visible method and configured label in the limits response.
 func TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -287,6 +325,9 @@ func TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testi
 	require.Equal(t, "LDC Pay", limits.DisplayName)
 }
 
+// TestPcComputeGlobalRange compares fully limited, partly unlimited and empty
+// method maps. It expects the widest global bounds, with zero components
+// independently making the corresponding aggregate side unlimited.
 func TestPcComputeGlobalRange(t *testing.T) {
 	t.Parallel()
 
@@ -345,6 +386,9 @@ func TestPcComputeGlobalRange(t *testing.T) {
 	})
 }
 
+// TestPcInstanceTypeLimits compares an exact Alipay entry with empty,
+// missing-key and malformed limit text. It expects the decoded values only for
+// the matching entry and false for absent observations.
 func TestPcInstanceTypeLimits(t *testing.T) {
 	t.Parallel()
 
@@ -390,14 +434,18 @@ func TestPcInstanceTypeLimits(t *testing.T) {
 	})
 }
 
+// TestGetAvailableMethodLimitsUsesConfiguredVisibleMethodSource stores
+// official and EasyPay Alipay plus official WeChat limits and varies the
+// Alipay source. It checks source-selected Alipay bounds, retained WeChat
+// bounds and their global range.
 func TestGetAvailableMethodLimitsUsesConfiguredVisibleMethodSource(t *testing.T) {
 	tests := []struct {
-		name                string
-		sourceSetting       string
-		wantAlipaySingleMin float64
-		wantAlipaySingleMax float64
-		wantGlobalMin       float64
-		wantGlobalMax       float64
+		name                string  // named limit source case
+		sourceSetting       string  // supplied Alipay source choice
+		wantAlipaySingleMin float64 // expected Alipay minimum amount
+		wantAlipaySingleMax float64 // expected Alipay maximum amount
+		wantGlobalMin       float64 // expected global minimum amount
+		wantGlobalMax       float64 // expected global maximum amount
 	}{
 		{
 			name:                "official source",
@@ -490,6 +538,9 @@ func TestGetAvailableMethodLimitsUsesConfiguredVisibleMethodSource(t *testing.T)
 	}
 }
 
+// TestGetAvailableMethodLimitsPreservesLegacyCrossProviderBehaviorWhenVisibleMethodSourceMissing
+// stores both provider kinds for each visible method with no source choice. It
+// expects their combined widest method ranges and the resulting global range.
 func TestGetAvailableMethodLimitsPreservesLegacyCrossProviderBehaviorWhenVisibleMethodSourceMissing(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -544,16 +595,20 @@ func TestGetAvailableMethodLimitsPreservesLegacyCrossProviderBehaviorWhenVisible
 	require.Equal(t, 400.0, resp.GlobalMax)
 }
 
+// TestValidateProviderRequest compares accepted provider identities and
+// invalid key or blank-name inputs. It expects successful shape validation or
+// the matching diagnostic, without validating upstream credentials in these
+// cases.
 func TestValidateProviderRequest(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		providerKey    string
-		providerName   string
-		supportedTypes string
-		wantErr        bool
-		errContains    string
+		name           string // named provider shape case
+		providerKey    string // supplied adapter identity key
+		providerName   string // supplied instance display name
+		supportedTypes string // supplied supported method text
+		wantErr        bool   // expected shape rejection flag
+		errContains    string // expected validation diagnostic fragment
 	}{
 		{
 			name:           "valid easypay with types",
@@ -639,14 +694,20 @@ func TestValidateProviderRequest(t *testing.T) {
 	}
 }
 
+// TestValidateEasyPayCustomMethods supplies complete, malformed, duplicate,
+// missing, uppercase and reserved-prefix mappings plus supported custom
+// labels. It checks syntax and mapping-coverage diagnostics for each
+// configuration fixture.
 func TestValidateEasyPayCustomMethods(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		config         map[string]string
-		supportedTypes string
-		wantErr        string
+		name           string            // named custom mapping case
+		config         map[string]string // supplied custom mapping settings
+		supportedTypes string            // supplied supported method text
+		// wantErr selects success when empty; nonempty text requires a validation
+		// error containing the supplied diagnostic fragment for this case.
+		wantErr string // expected mapping diagnostic fragment
 	}{
 		{
 			name:           "valid custom methods",
@@ -724,13 +785,16 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 	}
 }
 
+// TestIsSensitiveProviderConfigField compares credential and ordinary field
+// names across supported and unknown providers, including a case variant. It
+// expects masking classification for the listed provider/field identities.
 func TestIsSensitiveProviderConfigField(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		providerKey string
-		field       string
-		wantSen     bool
+		providerKey string // supplied provider identity key
+		field       string // supplied configuration field name
+		wantSen     bool   // expected credential masking classification
 	}{
 		// Stripe publishableKey is public; secretKey and webhookSecret are masked.
 		{"stripe", "secretKey", true},
@@ -782,13 +846,16 @@ func TestIsSensitiveProviderConfigField(t *testing.T) {
 	}
 }
 
+// TestJoinTypes compares populated, empty and nil method slices plus
+// whitespace-bearing labels. It expects comma joining in supplied order and
+// unchanged whitespace, separating encoding from normalization.
 func TestJoinTypes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		input []string
-		want  string
+		name  string   // named method encoding case
+		input []string // supplied method label sequence
+		want  string   // expected comma-separated method text
 	}{
 		{
 			name:  "multiple types",
@@ -832,6 +899,10 @@ func TestJoinTypes(t *testing.T) {
 	}
 }
 
+// TestCreateProviderInstanceAllowsVisibleMethodProvidersFromDifferentSources
+// creates enabled EasyPay and official Alipay rows for one visible method on
+// SQLite. It expects both management calls to succeed despite the shared
+// method label.
 func TestCreateProviderInstanceAllowsVisibleMethodProvidersFromDifferentSources(t *testing.T) {
 	t.Parallel()
 
@@ -864,6 +935,10 @@ func TestCreateProviderInstanceAllowsVisibleMethodProvidersFromDifferentSources(
 	require.NoError(t, err)
 }
 
+// TestUpdateProviderInstanceAllowsEnablingVisibleMethodProviderFromDifferentSource
+// creates enabled EasyPay WeChat and disabled official WeChat, then enables
+// the latter. It expects that update to succeed with both source kinds
+// available.
 func TestUpdateProviderInstanceAllowsEnablingVisibleMethodProviderFromDifferentSource(t *testing.T) {
 	t.Parallel()
 
@@ -902,6 +977,9 @@ func TestUpdateProviderInstanceAllowsEnablingVisibleMethodProviderFromDifferentS
 	require.NoError(t, err)
 }
 
+// TestUpdateProviderInstancePersistsEnabledAndSupportedTypes creates a
+// disabled EasyPay row and patches enabled state with two supported methods.
+// It rereads SQLite storage and expects true plus the joined method labels.
 func TestUpdateProviderInstancePersistsEnabledAndSupportedTypes(t *testing.T) {
 	t.Parallel()
 
@@ -936,17 +1014,23 @@ func TestUpdateProviderInstancePersistsEnabledAndSupportedTypes(t *testing.T) {
 	require.Equal(t, "alipay,wxpay", saved.SupportedTypes)
 }
 
+// TestUpdateProviderInstanceRejectsProtectedConfigChangesWhilePendingOrders
+// supplies provider-specific identity or currency changes after creating a
+// bound pending order. It expects PENDING_ORDERS and the retained stored field
+// value in every fixture.
 func TestUpdateProviderInstanceRejectsProtectedConfigChangesWhilePendingOrders(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		providerKey   string
+		name        string // named protected field case
+		providerKey string // supplied adapter identity key
+		// initial credential fixture factory.
 		createConfig  func(*testing.T) map[string]string
-		supportedType []string
-		updateConfig  map[string]string
-		fieldName     string
-		wantValue     string
+		supportedType []string // initial supported method labels
+		// requested partial configuration fields.
+		updateConfig map[string]string
+		fieldName    string // stored field comparison name
+		wantValue    string // expected retained stored text
 	}{
 		{
 			name:          "wxpay appId",
@@ -1083,17 +1167,23 @@ func TestUpdateProviderInstanceRejectsProtectedConfigChangesWhilePendingOrders(t
 	}
 }
 
+// TestUpdateProviderInstanceAllowsSafeConfigChangesWhilePendingOrders supplies
+// a WeChat callback URL change or identical Alipay app identity after a bound
+// pending order exists. It expects successful management updates and the
+// requested stored values.
 func TestUpdateProviderInstanceAllowsSafeConfigChangesWhilePendingOrders(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		providerKey   string
+		name        string // named allowed field case
+		providerKey string // supplied adapter identity key
+		// initial credential fixture factory.
 		createConfig  func(*testing.T) map[string]string
-		supportedType []string
-		updateConfig  map[string]string
-		fieldName     string
-		wantValue     string
+		supportedType []string // initial supported method labels
+		// requested partial configuration fields.
+		updateConfig map[string]string
+		fieldName    string // stored field comparison name
+		wantValue    string // expected updated stored text
 	}{
 		{
 			name:          "wxpay notifyUrl",
@@ -1148,6 +1238,9 @@ func TestUpdateProviderInstanceAllowsSafeConfigChangesWhilePendingOrders(t *test
 	}
 }
 
+// TestUpdateProviderInstanceClearsAirwallexAccountID creates an Airwallex row
+// and submits an empty account ID patch. It expects that ordinary identity
+// field cleared while the stored client ID remains.
 func TestUpdateProviderInstanceClearsAirwallexAccountID(t *testing.T) {
 	t.Parallel()
 
@@ -1177,6 +1270,10 @@ func TestUpdateProviderInstanceClearsAirwallexAccountID(t *testing.T) {
 	require.Equal(t, "client-id-test", cfg["clientId"])
 }
 
+// TestProviderDraftTestUsesStoredSensitiveConfigWithoutPersistingDraft
+// supplies a blank signing secret while probing an existing EasyPay instance
+// through loopback. It checks retained stored credentials in the query, a
+// probe label and unchanged saved secret afterward.
 func TestProviderDraftTestUsesStoredSensitiveConfigWithoutPersistingDraft(t *testing.T) {
 	ctx := context.Background()
 	var receivedProbe string
@@ -1186,8 +1283,14 @@ func TestProviderDraftTestUsesStoredSensitiveConfigWithoutPersistingDraft(t *tes
 		require.Equal(t, "pkey-test", r.PostForm.Get("key"))
 		receivedProbe = r.PostForm.Get("out_trade_no")
 		w.Header().Set("Content-Type", "application/json")
+		// Return a valid missing-order JSON observation for reachability
+		// classification; response Write errors are discarded while the client query
+		// result is asserted.
 		_, _ = w.Write([]byte(`{"code":0,"msg":"not found"}`))
 	}))
+	// Close the draft-probe loopback listener when assertions finish, releasing
+	// the test-owned HTTP resource even after later configuration or probe
+	// failure.
 	defer server.Close()
 
 	client := sqlitetest.NewClient(t)
@@ -1222,6 +1325,10 @@ func TestProviderDraftTestUsesStoredSensitiveConfigWithoutPersistingDraft(t *tes
 	require.Equal(t, "pkey-test", savedConfig["pkey"])
 }
 
+// TestDeleteProviderInstanceRetainsUnrecoveredForceExpiredOrder seeds an
+// expired bound order with a force-expired audit and disables its instance. It
+// expects deletion refusal until the order becomes completed, then successful
+// deletion.
 func TestDeleteProviderInstanceRetainsUnrecoveredForceExpiredOrder(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -1240,6 +1347,8 @@ func TestDeleteProviderInstanceRetainsUnrecoveredForceExpiredOrder(t *testing.T)
 		Where(paymentorder.ProviderInstanceIDEQ(strconv.FormatInt(instance.ID, 10))).
 		Only(ctx)
 	require.NoError(t, err)
+	// Record expired state followed by its force-expired audit before deletion,
+	// reproducing the pair counted by instance recovery protection.
 	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetStatus(payment.OrderStatusExpired).Save(ctx)
 	require.NoError(t, err)
 	_, err = client.PaymentAuditLog.Create().
@@ -1262,14 +1371,20 @@ func TestDeleteProviderInstanceRetainsUnrecoveredForceExpiredOrder(t *testing.T)
 	require.NoError(t, svc.DeleteProviderInstance(ctx, instance.ID))
 }
 
+// TestPcParseFloat compares empty, parseable, invalid, zero, negative and
+// large finite setting text with supplied defaults. It expects defaults for
+// missing or invalid syntax and retained successfully parsed numeric values.
 func TestPcParseFloat(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		input      string
-		defaultVal float64
-		expected   float64
+		name  string // named numeric parser case
+		input string // supplied floating setting text
+		// defaultVal is selected for empty or unsuccessfully parsed text;
+		// successfully parsed zero and negative fixture values retain their supplied
+		// numeric results.
+		defaultVal float64 // provided missing/invalid numeric default
+		expected   float64 // expected parsed numeric value
 	}{
 		{"empty string returns default", "", 1.0, 1.0},
 		{"valid float", "3.14", 0, 3.14},
@@ -1291,14 +1406,20 @@ func TestPcParseFloat(t *testing.T) {
 	}
 }
 
+// TestPcParseInt compares empty, integer, invalid, fractional, zero and
+// negative text with supplied defaults. It expects integer parsing or the
+// selected default for the listed unusable representations.
 func TestPcParseInt(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		input      string
-		defaultVal int
-		expected   int
+		name  string // named integer parser case
+		input string // supplied integer setting text
+		// defaultVal is selected for empty or unsuccessfully parsed text;
+		// successfully parsed zero and negative fixture values retain their supplied
+		// numeric results.
+		defaultVal int // provided missing/invalid integer default
+		expected   int // expected parsed integer value
 	}{
 		{"empty string returns default", "", 30, 30},
 		{"valid int", "10", 0, 10},
@@ -1319,9 +1440,15 @@ func TestPcParseInt(t *testing.T) {
 	}
 }
 
+// TestAlipayMobilePrecreateEnvironmentOverride changes the process setting
+// synchronously to true and false while stored text says the opposite. It
+// expects the environment value to determine this parsed mobile preference.
 func TestAlipayMobilePrecreateEnvironmentOverride(t *testing.T) {
 	svc := paymenttestkit.Configuration(nil, nil, nil)
 
+	// Use Setenv restoration and keep this case synchronous while toggling the
+	// process override, so later parallel parser fixtures read restored
+	// environment state.
 	t.Setenv(payment.SettingAlipayMobilePrecreateDeepLink, "true")
 	if !svc.ConfigParsePaymentConfig(map[string]string{payment.SettingAlipayMobilePrecreateDeepLink: "false"}).AlipayMobilePrecreateDeepLink {
 		t.Fatal("expected environment variable to enable mobile Alipay precreate")
@@ -1333,6 +1460,10 @@ func TestAlipayMobilePrecreateEnvironmentOverride(t *testing.T) {
 	}
 }
 
+// TestParsePaymentConfig inspects default and populated settings, method
+// normalization, custom labels and method-specific fee choices. It checks raw
+// strategy text retention separately from selector behavior, including the
+// supplied least_amount spelling.
 func TestParsePaymentConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1370,14 +1501,16 @@ func TestParsePaymentConfig(t *testing.T) {
 	t.Run("all values populated", func(t *testing.T) {
 		t.Parallel()
 		vals := map[string]string{
-			payment.SettingPaymentEnabled:                "true",
-			payment.SettingMinRechargeAmount:             "5.00",
-			payment.SettingMaxRechargeAmount:             "1000.00",
-			payment.SettingDailyRechargeLimit:            "5000.00",
-			payment.SettingOrderTimeoutMinutes:           "15",
-			payment.SettingMaxPendingOrders:              "5",
-			payment.SettingEnabledPaymentTypes:           "alipay,wxpay,stripe",
-			payment.SettingBalancePayDisabled:            "true",
+			payment.SettingPaymentEnabled:      "true",
+			payment.SettingMinRechargeAmount:   "5.00",
+			payment.SettingMaxRechargeAmount:   "1000.00",
+			payment.SettingDailyRechargeLimit:  "5000.00",
+			payment.SettingOrderTimeoutMinutes: "15",
+			payment.SettingMaxPendingOrders:    "5",
+			payment.SettingEnabledPaymentTypes: "alipay,wxpay,stripe",
+			payment.SettingBalancePayDisabled:  "true",
+			// Retain raw strategy text in this parser fixture; instance selection
+			// separately recognizes its own hyphenated least-amount label.
 			payment.SettingLoadBalanceStrategy:           "least_amount",
 			payment.SettingProductNamePrefix:             "PRE",
 			payment.SettingProductNameSuffix:             "SUF",
@@ -1504,13 +1637,16 @@ func TestParsePaymentConfig(t *testing.T) {
 	})
 }
 
+// TestValidateMethodFeeSettings compares valid fees with negative fixed money,
+// excessive percentage, precision and unsupported method fixtures. It expects
+// accepted settings or errors for the listed invalid configurations.
 func TestValidateMethodFeeSettings(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		fees    payment.MethodFeeSettings
-		wantErr bool
+		name    string                    // named method fee case
+		fees    payment.MethodFeeSettings // supplied method fee settings
+		wantErr bool                      // expected fee rejection flag
 	}{
 		{
 			name: "valid method fees",
@@ -1552,12 +1688,15 @@ func TestValidateMethodFeeSettings(t *testing.T) {
 	}
 }
 
+// TestGetBasePaymentType supplies adapter labels, Stripe aliases, official
+// direct aliases, unknown text and empty text. It expects the listed canonical
+// provider identities while retaining unknown and empty inputs.
 func TestGetBasePaymentType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		input    string
-		expected string
+		input    string // supplied method label text
+		expected string // expected base provider identity
 	}{
 		{payment.TypeEasyPay, payment.TypeEasyPay},
 		{payment.TypeStripe, payment.TypeStripe},
@@ -1582,6 +1721,10 @@ func TestGetBasePaymentType(t *testing.T) {
 	}
 }
 
+// TestApplyVisibleMethodRoutingToEnabledTypes supplies visible-method settings
+// and unequal source availability for an existing method list. It retains
+// available Alipay and Stripe while removing unavailable official WeChat in
+// the asserted output.
 func TestApplyVisibleMethodRoutingToEnabledTypes(t *testing.T) {
 	t.Parallel()
 
@@ -1609,6 +1752,9 @@ func TestApplyVisibleMethodRoutingToEnabledTypes(t *testing.T) {
 	}
 }
 
+// TestApplyVisibleMethodRoutingAddsConfiguredVisibleMethod starts with Stripe
+// and configures an available EasyPay Alipay source. It expects Alipay
+// appended to that base list by the isolated routing helper.
 func TestApplyVisibleMethodRoutingAddsConfiguredVisibleMethod(t *testing.T) {
 	t.Parallel()
 
@@ -1633,6 +1779,10 @@ func TestApplyVisibleMethodRoutingAddsConfiguredVisibleMethod(t *testing.T) {
 	}
 }
 
+// TestBuildVisibleMethodSourceAvailability supplies official and EasyPay
+// support observations with default false Enabled fields. It expects all four
+// source labels, exercising the helper caller-supplied eligibility assumption
+// rather than enabled filtering.
 func TestBuildVisibleMethodSourceAvailability(t *testing.T) {
 	t.Parallel()
 
@@ -1657,6 +1807,10 @@ func TestBuildVisibleMethodSourceAvailability(t *testing.T) {
 	}
 }
 
+// TestGetPaymentConfigKeepsStoredEnabledTypes stores one EasyPay Alipay
+// instance but lists three enabled methods in settings. It expects
+// GetPaymentConfig to retain the parsed stored method sequence for that
+// fixture.
 func TestGetPaymentConfigKeepsStoredEnabledTypes(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -1695,6 +1849,10 @@ func TestGetPaymentConfigKeepsStoredEnabledTypes(t *testing.T) {
 	}
 }
 
+// TestUpdatePaymentConfig_PersistsVisibleMethodRouting patches both
+// visible-method enabled flags and source choices into a capture repository.
+// It expects all four supplied boolean/source values in the stored settings
+// map.
 func TestUpdatePaymentConfig_PersistsVisibleMethodRouting(t *testing.T) {
 	repo := &paymentConfigSettingRepoStub{values: map[string]string{
 		payment.SettingPaymentVisibleMethodAlipayEnabled: "false",
@@ -1730,6 +1888,10 @@ func TestUpdatePaymentConfig_PersistsVisibleMethodRouting(t *testing.T) {
 	}
 }
 
+// TestUpdatePaymentConfig_OmittedVisibleMethodRoutingIsPreserved changes
+// global enabled state while omitting the four visible-method inputs. It
+// expects no captured writes for those fields and retained stored values
+// alongside the enabled update.
 func TestUpdatePaymentConfig_OmittedVisibleMethodRoutingIsPreserved(t *testing.T) {
 	wantVisibleMethods := map[string]string{
 		payment.SettingPaymentVisibleMethodAlipayEnabled: "true",
@@ -1737,6 +1899,8 @@ func TestUpdatePaymentConfig_OmittedVisibleMethodRoutingIsPreserved(t *testing.T
 		payment.SettingPaymentVisibleMethodWxpayEnabled:  "false",
 		payment.SettingPaymentVisibleMethodWxpaySource:   payment.VisibleMethodSourceOfficialWechat,
 	}
+	// Copy initial settings before the repository mutates stored values, leaving
+	// the expected map independent for the omission assertions.
 	initial := make(map[string]string, len(wantVisibleMethods))
 	maps.Copy(initial, wantVisibleMethods)
 	repo := &paymentConfigSettingRepoStub{values: initial}
@@ -1767,6 +1931,10 @@ func TestUpdatePaymentConfig_OmittedVisibleMethodRoutingIsPreserved(t *testing.T
 	}
 }
 
+// TestUpdatePaymentConfig_PersistsExplicitEmptyAndFalseValues supplies empty
+// method slice, false balance flag and empty product prefix to a populated
+// repository. It expects exactly those three captured writes and stored
+// values.
 func TestUpdatePaymentConfig_PersistsExplicitEmptyAndFalseValues(t *testing.T) {
 	repo := &paymentConfigSettingRepoStub{values: map[string]string{
 		payment.SettingEnabledPaymentTypes: "alipay,wxpay",
@@ -1804,6 +1972,10 @@ func TestUpdatePaymentConfig_PersistsExplicitEmptyAndFalseValues(t *testing.T) {
 	}
 }
 
+// TestUpdatePaymentConfig_MethodFeesFollowPatchSemantics first omits method
+// fees while changing another field, then supplies an empty fee map. It
+// expects retained fee text after omission and a sole empty-object write
+// afterward.
 func TestUpdatePaymentConfig_MethodFeesFollowPatchSemantics(t *testing.T) {
 	const original = `{"alipay":{"enabled":true,"fixed_fee":1,"fee_rate":2}}`
 	repo := &paymentConfigSettingRepoStub{values: map[string]string{
@@ -1832,6 +2004,10 @@ func TestUpdatePaymentConfig_MethodFeesFollowPatchSemantics(t *testing.T) {
 	}
 }
 
+// makeInstance returns a fresh enabled instance fixture with the supplied
+// provider, support labels and limit text. It leaves configuration and other
+// fields at zero, letting pure aggregate cases control only those
+// observations.
 func makeInstance(id int64, providerKey, supportedTypes, limits string) *payment.ProviderInstance {
 	return &payment.ProviderInstance{
 		ID:             id,
@@ -1842,9 +2018,21 @@ func makeInstance(id int64, providerKey, supportedTypes, limits string) *payment
 	}
 }
 
+// createPendingProviderConfigOrder saves a fixed buyer followed by one pending
+// balance order bound to the supplied instance. Each save is independent, and
+// fixture labels incorporate decimal instance identity for later management
+// count checks.
+//
+// The visible method follows providerPendingOrderPaymentType, including Alipay
+// for EasyPay or unknown provider keys. Expiry is one hour from creation and
+// channel trade reference is empty. Callers use a fresh SQLite client or
+// otherwise avoid the fixed buyer identity collision; any save failure fails
+// the test before configuration management proceeds.
 func createPendingProviderConfigOrder(t *testing.T, ctx context.Context, client *dbent.Client, instance *payment.ProviderInstance) {
 	t.Helper()
 
+	// Save the prerequisite buyer before its bound order; these fixture writes
+	// remain separate if the second save later fails.
 	user, err := client.User.Create().
 		SetEmail("provider-config-pending@example.com").
 		SetPasswordHash("hash").
@@ -1852,6 +2040,8 @@ func createPendingProviderConfigOrder(t *testing.T, ctx context.Context, client 
 		Save(ctx)
 	require.NoError(t, err)
 
+	// Encode instance identity as decimal text shared by fixture labels and the
+	// persisted order pin for management lookup.
 	instanceID := strconv.FormatInt(instance.ID, 10)
 	_, err = client.PaymentOrder.Create().
 		SetUserID(user.ID).
@@ -1875,6 +2065,9 @@ func createPendingProviderConfigOrder(t *testing.T, ctx context.Context, client 
 	require.NoError(t, err)
 }
 
+// providerPendingOrderPaymentType returns the matching method for official
+// WeChat, Alipay, Airwallex or Stripe. Other keys use Alipay for the pending
+// fixture, including EasyPay instances created by these management tests.
 func providerPendingOrderPaymentType(providerKey string) string {
 	switch providerKey {
 	case payment.TypeWxpay:
@@ -1885,11 +2078,17 @@ func providerPendingOrderPaymentType(providerKey string) string {
 		return payment.TypeAirwallex
 	case payment.TypeStripe:
 		return payment.TypeStripe
+	// Use Alipay as the pending-order method for EasyPay or other keys, matching
+	// the generic balance purchase constructed by this management helper.
 	default:
 		return payment.TypeAlipay
 	}
 }
 
+// validStripeProviderConfig returns fresh CNY Stripe presence-test settings
+// with placeholder public, secret and webhook labels. These strings permit
+// constructor shape checks; the helper performs no credential authentication
+// or channel request.
 func validStripeProviderConfig(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -1901,10 +2100,16 @@ func validStripeProviderConfig(t *testing.T) map[string]string {
 	}
 }
 
+// boolPtrValue returns a pointer to a fresh boolean for partial-write
+// fixtures.
 func boolPtrValue(v bool) *bool {
 	return &v
 }
 
+// validAlipayProviderConfig returns fresh merchant app and callback settings
+// with placeholder private-key text. Alipay construction checks key presence
+// here, while lazy SDK key parsing remains outside these configuration fixture
+// calls.
 func validAlipayProviderConfig(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -1916,6 +2121,9 @@ func validAlipayProviderConfig(t *testing.T) map[string]string {
 	}
 }
 
+// validEasyPayProviderConfig returns fresh merchant, secret, service and
+// callback strings satisfying EasyPay required-setting checks. Callers replace
+// apiBase with a loopback origin when a fixture exercises draft connectivity.
 func validEasyPayProviderConfig(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -1928,6 +2136,10 @@ func validEasyPayProviderConfig(t *testing.T) map[string]string {
 	}
 }
 
+// validAirwallexProviderConfig returns fresh demo endpoint, account, CNY and
+// credential-label settings for configuration construction. It supplies
+// required shape and presence values while leaving any actual login to
+// operation callers.
 func validAirwallexProviderConfig(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -1941,9 +2153,15 @@ func validAirwallexProviderConfig(t *testing.T) map[string]string {
 	}
 }
 
+// validWxpayProviderConfig returns fresh WeChat settings with generated
+// 2048-bit RSA keys encoded as PKCS8 private and PKIX public PEM. It fails on
+// generation or encoding error, and supplies a thirty-two-byte APIv3 key for
+// eager constructor parsing.
 func validWxpayProviderConfig(t *testing.T) map[string]string {
 	t.Helper()
 
+	// Generate parseable 2048-bit fixture keys for eager WeChat credential
+	// validation.
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -1953,9 +2171,10 @@ func validWxpayProviderConfig(t *testing.T) map[string]string {
 	require.NoError(t, err)
 
 	return map[string]string{
-		"appId":       "wx-app-test",
-		"mchId":       "mch-test",
-		"privateKey":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})),
+		"appId":      "wx-app-test",
+		"mchId":      "mch-test",
+		"privateKey": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})),
+		// Supply thirty-two ASCII bytes to satisfy the APIv3 key length predicate.
 		"apiV3Key":    "12345678901234567890123456789012",
 		"publicKey":   string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})),
 		"publicKeyId": "public-key-id-test",
@@ -1963,6 +2182,9 @@ func validWxpayProviderConfig(t *testing.T) map[string]string {
 	}
 }
 
+// validWxpayProviderConfigWithJSAPIAppID adds a dedicated mpAppId to the fresh
+// generated-key WeChat settings. Pending-order tests use that distinct field
+// to verify identity-change protection alongside the merchant app setting.
 func validWxpayProviderConfigWithJSAPIAppID(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -1971,6 +2193,8 @@ func validWxpayProviderConfigWithJSAPIAppID(t *testing.T) map[string]string {
 	return cfg
 }
 
+// paymentConfigStrPtr returns a pointer to a fresh string for partial setting
+// requests.
 func paymentConfigStrPtr(value string) *string {
 	return &value
 }

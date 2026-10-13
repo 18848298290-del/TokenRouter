@@ -11,6 +11,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Visible Alipay and WeChat methods can be supplied by official adapters or
+// EasyPay instances, so an enabled method alone does not determine its
+// provider key. Official adapters infer their own method from blank
+// supportedTypes, while EasyPay uses its explicit supported-method list.
+//
+// Resolution first groups eligible instances by provider key. A single
+// distinct key wins directly; multiple keys consult the saved source setting
+// and verify that it names a matching instance. An absent source with multiple
+// matches produces an empty-key marker that selection interprets across
+// providers. Instance filters check enabled state, but source normalization
+// and direct key selection have their own caller preconditions; they do not
+// independently prove that every input row is enabled.
+
+// ConfigEnabledVisibleMethodsForProvider returns normalized supported visible
+// methods for official Alipay/WeChat or EasyPay. Official blank support
+// implies its own method; EasyPay expands the supplied list, and unsupported
+// provider keys yield an empty result.
+//
+// A set collapses aliases and duplicates, then output places Alipay and WeChat
+// first and follows remaining support order. The function reads configuration
+// labels without an instance enabled flag. Callers that expose enabled methods
+// check that flag separately through ConfigProviderSupportsVisibleMethod.
 func ConfigEnabledVisibleMethodsForProvider(providerKey, supportedTypes string) []string {
 	methodSet := make(map[string]struct{}, 2)
 	addMethod := func(method string) {
@@ -66,6 +88,10 @@ func ConfigEnabledVisibleMethodsForProvider(providerKey, supportedTypes string) 
 	return methods
 }
 
+// ConfigProviderSupportsVisibleMethod reports whether a nonnil enabled
+// instance exposes the normalized visible method through its provider-specific
+// support rules. It rejects disabled rows before method expansion, so
+// filtering callers can retain only eligible instances.
 func ConfigProviderSupportsVisibleMethod(inst *ProviderInstance, method string) bool {
 	if inst == nil || !inst.Enabled {
 		return false
@@ -74,6 +100,9 @@ func ConfigProviderSupportsVisibleMethod(inst *ProviderInstance, method string) 
 	return slices.Contains(ConfigEnabledVisibleMethodsForProvider(inst.ProviderKey, inst.SupportedTypes), method)
 }
 
+// ConfigFilterEnabledVisibleMethodInstances returns enabled instances
+// supporting the visible method in input order. The returned slice is new,
+// while its instance pointers remain shared with the supplied collection.
 func ConfigFilterEnabledVisibleMethodInstances(instances []*ProviderInstance, method string) []*ProviderInstance {
 	filtered := make([]*ProviderInstance, 0, len(instances))
 	for _, inst := range instances {
@@ -84,6 +113,10 @@ func ConfigFilterEnabledVisibleMethodInstances(instances []*ProviderInstance, me
 	return filtered
 }
 
+// ConfigFilterVisibleMethodInstancesByProviderKey returns enabled method
+// matches whose trimmed keys match case-insensitively. It keeps input order
+// and shared instance pointers while constructing a new filtered slice for
+// availability calculations.
 func ConfigFilterVisibleMethodInstancesByProviderKey(instances []*ProviderInstance, method string, providerKey string) []*ProviderInstance {
 	filtered := make([]*ProviderInstance, 0, len(instances))
 	for _, inst := range instances {
@@ -98,6 +131,9 @@ func ConfigFilterVisibleMethodInstancesByProviderKey(instances []*ProviderInstan
 	return filtered
 }
 
+// ConfigDistinctVisibleMethodProviderKeys returns first-seen trimmed nonempty
+// keys, collapsing case-insensitive duplicates. It skips nil rows but does not
+// inspect enabled or support flags; callers supply the matching instance set.
 func ConfigDistinctVisibleMethodProviderKeys(instances []*ProviderInstance) []string {
 	seen := make(map[string]struct{}, len(instances))
 	keys := make([]string, 0, len(instances))
@@ -119,6 +155,10 @@ func ConfigDistinctVisibleMethodProviderKeys(instances []*ProviderInstance) []st
 	return keys
 }
 
+// ConfigSelectVisibleMethodInstanceByProviderKey returns the first
+// case-insensitive trimmed key match or nil for an empty/missing key. Inputs
+// are nonnil selected instances; this helper relies on prior enabled/support
+// filtering.
 func ConfigSelectVisibleMethodInstanceByProviderKey(instances []*ProviderInstance, providerKey string) *ProviderInstance {
 	providerKey = strings.TrimSpace(providerKey)
 	if providerKey == "" {
@@ -132,6 +172,10 @@ func ConfigSelectVisibleMethodInstanceByProviderKey(instances []*ProviderInstanc
 	return nil
 }
 
+// ConfigValidateVisibleMethodEnablementConflicts accepts overlapping visible
+// method claims and returns nil for every supplied combination. Source
+// resolution chooses official/EasyPay routing later, so this compatibility
+// validation does not reject multiple enabled claimants.
 func (s *ConfigService) ConfigValidateVisibleMethodEnablementConflicts(
 	ctx context.Context,
 	excludeID int64,
@@ -139,13 +183,15 @@ func (s *ConfigService) ConfigValidateVisibleMethodEnablementConflicts(
 	supportedTypes string,
 	enabled bool,
 ) error {
-	// Visible methods are selected by configured source (official/easypay),
-	// so multiple enabled providers can intentionally claim the same user-facing
-	// method. Order creation and limits will route through the configured source.
 	_, _, _, _, _ = ctx, excludeID, providerKey, supportedTypes, enabled
 	return nil
 }
 
+// ConfigResolveVisibleMethodSourceProviderKey reads and normalizes the saved
+// source for the requested visible method. Missing settings or dependencies
+// act as an absent source; other read errors are returned. A normalized empty
+// source returns an empty key, while unsupported configured source yields
+// INVALID_PAYMENT_VISIBLE_METHOD_SOURCE.
 func (s *ConfigService) ConfigResolveVisibleMethodSourceProviderKey(ctx context.Context, method string) (string, error) {
 	method = NormalizeVisibleMethod(method)
 	sourceKey := ResumeVisibleMethodSourceSettingKey(method)
@@ -153,6 +199,9 @@ func (s *ConfigService) ConfigResolveVisibleMethodSourceProviderKey(ctx context.
 	if s != nil && s.settingRepo != nil && sourceKey != "" {
 		value, err := s.settingRepo.GetValue(ctx, sourceKey)
 		if err != nil {
+			// An absent setting leaves source selection undecided so matching providers
+			// can still be used. Retain other repository errors rather than
+			// interpreting them as an absent choice.
 			if !errors.Is(err, settings.ErrSettingNotFound) {
 				return "", fmt.Errorf("get %s: %w", sourceKey, err)
 			}
@@ -178,6 +227,15 @@ func (s *ConfigService) ConfigResolveVisibleMethodSourceProviderKey(ctx context.
 	return providerKey, nil
 }
 
+// ConfigResolveVisibleMethodProviderKey resolves a provider key from the
+// supplied matching instance set and, when needed, the saved visible source.
+// Callers select enabled method matches before invoking it.
+//
+// Zero distinct keys returns empty, while one key wins without reading a
+// potentially conflicting setting. Multiple keys require source resolution:
+// absent source remains empty for cross-provider selection, and a configured
+// source must match one supplied instance or return a bad-request error. The
+// returned key is taken from that first matching row and trimmed.
 func (s *ConfigService) ConfigResolveVisibleMethodProviderKey(
 	ctx context.Context,
 	method string,
@@ -207,6 +265,17 @@ func (s *ConfigService) ConfigResolveVisibleMethodProviderKey(
 	}
 }
 
+// ConfigResolveEnabledVisibleMethodInstance reads enabled, sort-ordered
+// instances and resolves their visible method source. Nil service/store,
+// invalid method or no matches returns nil,nil; read and source-validation
+// errors remain visible.
+//
+// A resolved key selects the first matching instance. When eligible matches
+// exist but source resolution returns no key, the result is an empty-key
+// ProviderInstance marker rather than an actual row. That marker tells
+// VisibleMethodLoadBalancer to request cross-provider selection, while
+// configuration availability can union eligible instances. Actual returned row
+// pointers remain owned by the store result.
 func (s *ConfigService) ConfigResolveEnabledVisibleMethodInstance(
 	ctx context.Context,
 	method string,
@@ -234,13 +303,18 @@ func (s *ConfigService) ConfigResolveEnabledVisibleMethodInstance(
 		if len(matching) == 0 {
 			return nil, nil
 		}
+		// Keep the distinction between no matching instance and matches with no
+		// selected source. The empty-key marker lets the load balancer choose across
+		// eligible providers.
 		return &ProviderInstance{ProviderKey: ""}, nil
 	}
 	return ConfigSelectVisibleMethodInstanceByProviderKey(matching, providerKey), nil
 }
 
-// UsesOfficialAlipayVisibleMethod reports whether the visible Alipay method resolves to an enabled official
-// Alipay instance.
+// UsesOfficialAlipayVisibleMethod reports whether enabled Alipay source
+// resolution returns the official provider key. It returns resolution errors
+// and reports false for absent or cross-provider marker results, allowing
+// checkout configuration to choose its applicable policy.
 func (s *ConfigService) UsesOfficialAlipayVisibleMethod(ctx context.Context) (bool, error) {
 	instance, err := s.ConfigResolveEnabledVisibleMethodInstance(ctx, TypeAlipay)
 	if err != nil {
@@ -249,6 +323,8 @@ func (s *ConfigService) UsesOfficialAlipayVisibleMethod(ctx context.Context) (bo
 	return ConfigIsOfficialAlipayProviderInstance(instance), nil
 }
 
+// ConfigIsOfficialAlipayProviderInstance reports a nonnil instance's trimmed
+// official Alipay key, case-insensitively.
 func ConfigIsOfficialAlipayProviderInstance(instance *ProviderInstance) bool {
 	return instance != nil && strings.EqualFold(strings.TrimSpace(instance.ProviderKey), TypeAlipay)
 }

@@ -14,18 +14,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-const (
-	// Alipay product codes.
-	alipayProductCodePreCreate = "FACE_TO_FACE_PAYMENT"
-	alipayProductCodeWapPay    = "QUICK_WAP_WAY"
-	alipayProductCodePagePay   = "FAST_INSTANT_TRADE_PAY"
+// Official Alipay checkout chooses signed browser URLs or a precreate QR
+// according to request device flags and instance mode. WAP/page operations
+// build URLs through the pinned SDK, while precreate/query/refund/close
+// perform its context-bound requests. Desktop precreate failure can therefore
+// produce a later browser URL, and that URL stays in PayURL rather than the QR
+// field.
+//
+// Adapter construction initially checks only app/private-key presence and
+// retains the supplied config map. A mutex lazily constructs a production SDK
+// client and loads public verification key before publishing it; callers keep
+// config immutable because other adapter reads occur outside that mutex.
+// Notification verification uses SDK signature decoding with no additional
+// adapter replay-time check, then returns configured or reported app identity
+// for saved snapshot comparison. Refund request identity is freshly
+// timestamped per call and is distinct from its returned trade/fallback
+// reference.
 
-	// Alipay response constants.
-	alipayFundChangeYes    = "Y"
+// Alipay product codes identify precreate, WAP and page checkout forms.
+// Response markers classify fund changes/missing trades, and the refund suffix
+// supplies a local response reference when trade identity is absent.
+const (
+	// precreate QR product code.
+	alipayProductCodePreCreate = "FACE_TO_FACE_PAYMENT"
+	// mobile WAP product code.
+	alipayProductCodeWapPay = "QUICK_WAP_WAY"
+	// browser page product code.
+	alipayProductCodePagePay = "FAST_INSTANT_TRADE_PAY"
+
+	// successful fund change marker.
+	alipayFundChangeYes = "Y"
+	// missing trade diagnostic marker.
 	alipayErrTradeNotExist = "ACQ.TRADE_NOT_EXIST"
-	alipayRefundSuffix     = "-refund"
+	// fallback refund reference suffix.
+	alipayRefundSuffix = "-refund"
 )
 
+// Alipay operation variables delegate to pinned SDK calls and let package
+// tests substitute WAP, precreate or page behavior while restoring those
+// shared functions afterward.
 var (
 	alipayTradeWapPay = func(client *alipay.Client, param alipay.TradeWapPay) (*url.URL, error) {
 		return client.TradeWapPay(param)
@@ -37,21 +64,37 @@ var (
 		return client.TradePagePay(param)
 	}
 
+	// These assertions check Alipay's provider, cancellation and
+	// merchant-metadata method sets at compile time. Runtime construction still
+	// performs its separate configuration presence and lazy-client checks.
 	_ payment.Provider                 = (*Alipay)(nil)
 	_ payment.CancelableProvider       = (*Alipay)(nil)
 	_ payment.MerchantIdentityProvider = (*Alipay)(nil)
 )
 
-// Alipay implements payment.Provider and payment.CancelableProvider using the smartwalle/alipay SDK.
+// Alipay supplies official trade creation/query, signed notification decoding,
+// refunds and cancellation through the SDK.
 type Alipay struct {
-	instanceID string
-	config     map[string]string // appId, privateKey, publicKey (or alipayPublicKey), notifyUrl, returnUrl
+	instanceID string // configured local instance identity
+	// config retains the caller's map without copying it. Callers keep
+	// app/key/URL/mode values immutable throughout adapter use; method reads
+	// outside getClient are not guarded by mu.
+	config map[string]string
 
-	mu     sync.Mutex
+	// mu coordinates only lazy SDK client initialization and publication. It does
+	// not synchronize external writes to the retained config map or every SDK
+	// operation.
+	mu sync.Mutex
+	// client is published after production SDK creation and public-key loading
+	// succeed. Failure leaves it nil for another getClient attempt, while later
+	// calls reuse the same pointer.
 	client *alipay.Client
 }
 
-// NewAlipay creates a new Alipay provider instance.
+// NewAlipay checks nonempty appId/privateKey and retains instance identity
+// plus the supplied config map. It does not eagerly parse keys or require the
+// verification key; getClient performs those checks later, and callers keep
+// the shared map immutable.
 func NewAlipay(instanceID string, config map[string]string) (*Alipay, error) {
 	required := []string{"appId", "privateKey"}
 	for _, k := range required {
@@ -65,7 +108,20 @@ func NewAlipay(instanceID string, config map[string]string) (*Alipay, error) {
 	}, nil
 }
 
+// getClient initializes and returns one production SDK client under mu,
+// reusing the published pointer on later calls. The adapter's config map
+// remains caller-owned immutable input throughout that initialization.
+//
+// Private/client creation runs before loading publicKey, with alipayPublicKey
+// used only when publicKey is empty. Missing or unusable verification key
+// returns an error before assignment, leaving initialization retryable.
+// Publication occurs only after both stages succeed. The lock protects this
+// lazy pointer; operation methods use the shared SDK client outside that
+// initialization lock and retain their separate immutable config reads.
 func (a *Alipay) getClient() (*alipay.Client, error) {
+	// Hold initialization through SDK creation and public-key loading, then
+	// publish one client pointer. Failure leaves the pointer unset so another
+	// call can retry using the retained immutable config.
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.client != nil {
@@ -76,6 +132,9 @@ func (a *Alipay) getClient() (*alipay.Client, error) {
 		return nil, fmt.Errorf("alipay init client: %w", err)
 	}
 	pubKey := a.config["publicKey"]
+	// The alternate alipayPublicKey spelling is compatibility input only when
+	// publicKey is empty. A supplied publicKey wins even if loading it later
+	// returns an error.
 	if pubKey == "" {
 		pubKey = a.config["alipayPublicKey"]
 	}
@@ -89,12 +148,24 @@ func (a *Alipay) getClient() (*alipay.Client, error) {
 	return a.client, nil
 }
 
-func (a *Alipay) Name() string        { return "Alipay" }
+// Name returns the display label for the official Alipay adapter.
+func (a *Alipay) Name() string { return "Alipay" }
+
+// ProviderKey returns the official Alipay key used by merchant binding
+// callers.
 func (a *Alipay) ProviderKey() string { return payment.TypeAlipay }
+
+// SupportedTypes returns a new slice containing the visible Alipay method for
+// registry binding. Callers can change that returned slice without changing
+// later results or the retained provider configuration.
 func (a *Alipay) SupportedTypes() []payment.PaymentType {
 	return []payment.PaymentType{payment.TypeAlipay}
 }
 
+// MerchantIdentityMetadata returns a new app_id map from trimmed configured
+// appId for saved-merchant comparison. Nil receiver or blank app identity
+// returns nil, leaving the consuming snapshot validator's metadata rules
+// applicable.
 func (a *Alipay) MerchantIdentityMetadata() map[string]string {
 	if a == nil {
 		return nil
@@ -106,13 +177,16 @@ func (a *Alipay) MerchantIdentityMetadata() map[string]string {
 	return map[string]string{"app_id": appID}
 }
 
-// CreatePayment routes Alipay checkout by client and configured mode:
-//   - Mobile uses alipay.trade.wap.pay by default.
-//   - Mobile with AlipayMobilePrecreate uses alipay.trade.precreate for an app-launch QR payload.
-//   - Desktop first tries alipay.trade.precreate, then alipay.trade.page.pay if precreate fails.
-//   - Desktop paymentMode "redirect" calls alipay.trade.page.pay directly.
+// CreatePayment chooses mobile WAP, requested mobile precreate or desktop mode
+// after lazy client setup. Nonempty request notify/return URLs override
+// configured values; the shared map remains immutable caller input.
 //
-// page.pay returns a browser checkout URL, which must not be stored as a scannable QRCode.
+// Mobile precreate uses ctx for the API call and returns QR payload. WAP and
+// page operations build signed URLs without receiving ctx in the pinned SDK
+// wrappers. Desktop redirect mode directly uses page, while other modes
+// attempt precreate then page on failure. Response field choice preserves
+// browser versus QR presentation, and this adapter performs no local order
+// persistence around those results.
 func (a *Alipay) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	client, err := a.getClient()
 	if err != nil {
@@ -137,6 +211,10 @@ func (a *Alipay) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 	return a.createDesktopTrade(ctx, client, req, notifyURL, returnURL)
 }
 
+// createWapTrade builds the mobile signed checkout URL from the supplied
+// usable SDK client, merchant number, amount, subject and callbacks. The
+// pinned WAP operation constructs a URL locally and has no ctx argument;
+// success reports the merchant reference in TradeNo and the URL in PayURL.
 func (a *Alipay) createWapTrade(client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
 	param := alipay.TradeWapPay{}
 	param.OutTradeNo = req.OrderID
@@ -156,8 +234,19 @@ func (a *Alipay) createWapTrade(client *alipay.Client, req payment.CreatePayment
 	}, nil
 }
 
+// createDesktopTrade returns page checkout directly for trimmed
+// case-insensitive redirect mode, otherwise attempts precreate before page.
+// Supply the usable SDK client and callback URLs chosen by CreatePayment.
+//
+// Any precreate error, including nil/failure/empty QR handling, permits the
+// signed browser page attempt. A usable QR returns immediately; a successful
+// page result replaces the failed precreate result. When both fail, the error
+// includes precreate text and wraps the page error. Only precreate receives
+// ctx here; URL building remains the pinned SDK's local operation.
 func (a *Alipay) createDesktopTrade(ctx context.Context, client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
-	// Redirect mode requests browser checkout directly, so precreate is unnecessary.
+	// Redirect mode chooses a signed browser URL before QR creation. Other
+	// desktop modes keep the precreate attempt so response fields can select
+	// their intended frontend launch path.
 	if strings.EqualFold(strings.TrimSpace(a.config["paymentMode"]), "redirect") {
 		return a.createPagePayTrade(client, req, notifyURL, returnURL)
 	}
@@ -167,6 +256,9 @@ func (a *Alipay) createDesktopTrade(ctx context.Context, client *alipay.Client, 
 		return resp, nil
 	}
 
+	// A failed precreate can still obtain browser checkout from local page URL
+	// construction. Try that separate presentation path and retain both
+	// diagnostics only when neither result is usable.
 	resp, pagePayErr := a.createPagePayTrade(client, req, notifyURL, returnURL)
 	if pagePayErr == nil {
 		return resp, nil
@@ -175,6 +267,10 @@ func (a *Alipay) createDesktopTrade(ctx context.Context, client *alipay.Client, 
 	return nil, fmt.Errorf("alipay desktop payment failed: precreate=%v; pagepay=%w", precreateErr, pagePayErr)
 }
 
+// createPrecreateTrade submits a context-bound QR precreate for the supplied
+// merchant/amount/subject and notify URL. Nil response, API failure or
+// trimmed-empty QR returns an error; success retains returned QR text and uses
+// the merchant number as the initial trade reference.
 func (a *Alipay) createPrecreateTrade(ctx context.Context, client *alipay.Client, req payment.CreatePaymentRequest, notifyURL string) (*payment.CreatePaymentResponse, error) {
 	param := alipay.TradePreCreate{}
 	param.OutTradeNo = req.OrderID
@@ -203,6 +299,10 @@ func (a *Alipay) createPrecreateTrade(ctx context.Context, client *alipay.Client
 	}, nil
 }
 
+// createPagePayTrade builds a signed browser checkout URL from the supplied
+// usable client and request fields. It has no ctx-bound API call in the pinned
+// page wrapper; success populates PayURL while QRCode stays empty for frontend
+// launch selection.
 func (a *Alipay) createPagePayTrade(client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
 	param := alipay.TradePagePay{}
 	param.OutTradeNo = req.OrderID
@@ -216,14 +316,25 @@ func (a *Alipay) createPagePayTrade(client *alipay.Client, req payment.CreatePay
 	if err != nil {
 		return nil, fmt.Errorf("alipay TradePagePay: %w", err)
 	}
-	// Keep the browser checkout URL in PayURL; encoding it as QRCode would produce an unusable payment QR.
+	// Put the signed page address in PayURL so frontend launch can use browser
+	// checkout. QRCode is reserved for the precreate payload and remains empty on
+	// this presentation path.
 	return &payment.CreatePaymentResponse{
 		TradeNo: req.OrderID,
 		PayURL:  payURL.String(),
 	}, nil
 }
 
-// QueryOrder queries the trade status via Alipay.
+// QueryOrder queries the supplied merchant OutTradeNo through the lazy SDK
+// client using ctx. A diagnostic containing the missing-trade marker returns
+// pending with that reference; other query errors return with context.
+//
+// Success/finished statuses map to paid, closed maps to failed and other
+// statuses stay pending. TotalAmount is parsed first, then the listed
+// alternative amount fields are tried after parse failure. Parsing alone can
+// accept nonfinite/sign values, which fulfillment validates separately before
+// confirmation. The returned PaidAt is provider text and metadata comes from
+// current configured app identity.
 func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	client, err := a.getClient()
 	if err != nil {
@@ -232,6 +343,9 @@ func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 
 	result, err := client.TradeQuery(ctx, alipay.TradeQuery{OutTradeNo: tradeNo})
 	if err != nil {
+		// A missing-trade diagnostic is a pending observation for merchant lookup
+		// rather than a confirmed failure. Lifecycle can then apply its
+		// cancel/requery policy without losing this requested reference.
 		if isTradeNotExist(err) {
 			return &payment.QueryOrderResponse{
 				TradeNo: tradeNo,
@@ -250,6 +364,9 @@ func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 	}
 
 	amount, err := strconv.ParseFloat(result.TotalAmount, 64)
+	// The primary amount text failed parsing. Try trimmed total, receipt, buyer
+	// and invoice fields in that order, preserving the first parseable gateway
+	// quantity for later fulfillment validation.
 	if err != nil {
 		amount, err = parseAlipayAmount(
 			result.TotalAmount,
@@ -271,7 +388,18 @@ func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 	}, nil
 }
 
-// VerifyNotification decodes and verifies an Alipay async notification.
+// VerifyNotification parses form text and delegates signature
+// validation/notification decoding to the pinned SDK client. Headers are
+// unused, and the adapter adds no separate notification-time replay window or
+// NotifyVerify request.
+//
+// Success/finished maps to success while other trade states return failed,
+// which core callback handling ignores for non-Stripe providers. Amount
+// parsing can use receipt/buyer fallback fields and leaves finite-positive
+// confirmation to fulfillment. Configured app metadata is produced first; a
+// nonblank reported AppId replaces its app_id value for saved snapshot
+// comparison. Raw body and merchant/trade identifiers remain available in the
+// returned observation.
 func (a *Alipay) VerifyNotification(ctx context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
 	client, err := a.getClient()
 	if err != nil {
@@ -294,6 +422,9 @@ func (a *Alipay) VerifyNotification(ctx context.Context, rawBody string, _ map[s
 	}
 
 	amount, err := strconv.ParseFloat(notification.TotalAmount, 64)
+	// The signed notification's primary total failed parsing. Try its trimmed
+	// total, receipt and buyer fields in order while preserving merchant/trade
+	// data for later amount and snapshot validation.
 	if err != nil {
 		amount, err = parseAlipayAmount(
 			notification.TotalAmount,
@@ -323,7 +454,17 @@ func (a *Alipay) VerifyNotification(ctx context.Context, rawBody string, _ map[s
 	}, nil
 }
 
-// Refund requests a refund through Alipay.
+// Refund submits a context-bound merchant refund with requested amount/reason
+// and an OutRequestNo built from current Unix nanoseconds on each call. The
+// workflow's preparation OperationID is not sent here, so this construction is
+// not its stable retry key.
+//
+// FundChange Y maps to success and other returned markers map to pending.
+// RefundID uses response TradeNo, falling back to merchant number plus the
+// local suffix when absent; this reference differs from OutRequestNo. The
+// adapter does not implement RefundQueryProvider, so unresolved refund recovery
+// follows the workflow's unsupported-query/manual-review behavior. Local
+// entitlement and order persistence remain outside this API operation.
 func (a *Alipay) Refund(ctx context.Context, req payment.RefundRequest) (*payment.RefundResponse, error) {
 	client, err := a.getClient()
 	if err != nil {
@@ -334,6 +475,9 @@ func (a *Alipay) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 		OutTradeNo:   req.OrderID,
 		RefundAmount: req.Amount,
 		RefundReason: req.Reason,
+		// Construct the request label from merchant number and the current Unix
+		// nanoseconds on each call. Its spelling does not carry the workflow
+		// preparation ID for replay association.
 		OutRequestNo: fmt.Sprintf("%s-refund-%d", req.OrderID, time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -346,6 +490,9 @@ func (a *Alipay) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 	}
 
 	refundID := result.TradeNo
+	// An absent returned trade reference uses a merchant-derived local suffix for
+	// the workflow response. This does not reproduce the timestamped OutRequestNo
+	// submitted to Alipay or establish query support.
 	if refundID == "" {
 		refundID = req.OrderID + alipayRefundSuffix
 	}
@@ -356,7 +503,10 @@ func (a *Alipay) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 	}, nil
 }
 
-// CancelPayment closes a pending trade on Alipay.
+// CancelPayment closes the supplied merchant OutTradeNo using the
+// context-bound SDK operation. A missing-trade diagnostic is accepted as no
+// remaining trade, while other errors return with context for lifecycle's
+// requery and pending-preservation decision.
 func (a *Alipay) CancelPayment(ctx context.Context, tradeNo string) error {
 	client, err := a.getClient()
 	if err != nil {
@@ -365,6 +515,9 @@ func (a *Alipay) CancelPayment(ctx context.Context, tradeNo string) error {
 
 	_, err = client.TradeClose(ctx, alipay.TradeClose{OutTradeNo: tradeNo})
 	if err != nil {
+		// A missing upstream trade leaves nothing for this close request to cancel.
+		// Return nil for that classified diagnostic so lifecycle can proceed to its
+		// conditional local close.
 		if isTradeNotExist(err) {
 			return nil
 		}
@@ -373,6 +526,10 @@ func (a *Alipay) CancelPayment(ctx context.Context, tradeNo string) error {
 	return nil
 }
 
+// isTradeNotExist reports the missing-trade marker appearing anywhere in a
+// nonnil error string. It is substring classification rather than a structured
+// response-code check, and query/close callers choose their distinct
+// pending/nil recovery results.
 func isTradeNotExist(err error) bool {
 	if err == nil {
 		return false
@@ -380,7 +537,14 @@ func isTradeNotExist(err error) bool {
 	return strings.Contains(err.Error(), alipayErrTradeNotExist)
 }
 
+// parseAlipayAmount returns the first nonblank trimmed value accepted by
+// ParseFloat in supplied order. Unreadable fields are skipped; exhaustion
+// returns an error. It adds no finite-positive check, so callers validate the
+// resulting gateway quantity before payment confirmation.
 func parseAlipayAmount(values ...string) (float64, error) {
+	// Query and notification callers supply ordered alternatives after the
+	// primary total failed. Skip blank/unparseable fields individually so a later
+	// usable quantity can still reach fulfillment amount validation.
 	for _, raw := range values {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {

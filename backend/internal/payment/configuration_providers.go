@@ -12,14 +12,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// Provider configuration changes retain omitted secrets while protecting
+// recorded merchant identity for unfinished orders. Administrator listing
+// removes only the known sensitive keys for an exact provider key, and new
+// saves serialize plaintext JSON even when the previous record used historical
+// ciphertext. Enabled saves also run adapter construction, whose eager
+// validation differs by provider.
+//
+// Update first observes the instance, then can reread configuration for
+// merging and memoize one in-progress count for several checks. Only a
+// supplied Config adds an expected persisted-config comparison at the final
+// store update; other counts and deletion checks remain separate observations.
+// EasyPay method names carry prior localization content by stable IDs before
+// mapping validation. Refund flags have a conditional cascade, and
+// force-expired audit counts retain instances needed for late payment
+// recovery. Registry refresh belongs to the HTTP/settings caller after
+// persistence.
+
+// Provider configuration tables define recognized secret fields, in-progress
+// protected identity fields, accepted provider keys and EasyPay custom code
+// syntax for administrator configuration operations.
 var (
-	// ConfigProviderSensitiveConfigFields is the authoritative list of config keys that
-	// are treated as secrets per provider. Must stay in sync with the frontend
-	// definition at frontend/src/components/payment/providerConfig.ts
-	// (PROVIDER_CONFIG_FIELDS, fields with sensitive: true).
-	//
-	// Key matching is case-insensitive. Non-listed keys (e.g. appId, notifyUrl,
-	// stripe publishableKey) are returned in plaintext by the admin GET API.
+	// ConfigProviderSensitiveConfigFields lists fields omitted from administrator
+	// GET responses and retained when blank secret updates arrive. Provider keys
+	// are exact, while field names are lowercased for lookup; unlisted fields
+	// remain visible. Keep its recognized secret names aligned with frontend
+	// providerConfig.ts sensitive metadata when changing the schema.
 	ConfigProviderSensitiveConfigFields = map[string]map[string]struct{}{
 		TypeEasyPay:   {"pkey": {}},
 		TypeAlipay:    {"privatekey": {}, "publickey": {}, "alipaypublickey": {}},
@@ -28,10 +46,11 @@ var (
 		TypeAirwallex: {"apikey": {}, "webhooksecret": {}},
 	}
 
-	// ConfigProviderPendingOrderProtectedConfigFields lists config keys that cannot be
-	// changed while the instance has in-progress orders. This includes secrets plus
-	// all provider identity fields that are snapshotted into orders or used by
-	// webhook/refund verification.
+	// ConfigProviderPendingOrderProtectedConfigFields lists credentials and
+	// merchant/currency identity compared before configuration updates with
+	// in-progress orders. Comparison uses case-insensitive field lookup; the
+	// separate count includes pending, processing, paid and recharging in the
+	// PostgreSQL adapter.
 	ConfigProviderPendingOrderProtectedConfigFields = map[string]map[string]struct{}{
 		TypeEasyPay:   {"pkey": {}, "pid": {}},
 		TypeAlipay:    {"privatekey": {}, "publickey": {}, "alipaypublickey": {}, "appid": {}},
@@ -40,49 +59,82 @@ var (
 		TypeAirwallex: {"clientid": {}, "apikey": {}, "webhooksecret": {}, "apibase": {}, "accountid": {}, "currency": {}},
 	}
 
+	// ConfigValidProviderKeys contains exact provider labels accepted by creation
+	// request validation and the configured adapter factory choices.
 	ConfigValidProviderKeys = map[string]bool{
 		TypeEasyPay: true, TypeAlipay: true, TypeWxpay: true, TypeStripe: true, TypeAirwallex: true,
 	}
 
+	// ConfigEasyPayCustomMethodCodePattern accepts nonempty lowercase ASCII
+	// letters, digits, underscores and hyphens for method and upstream mapping
+	// codes.
 	ConfigEasyPayCustomMethodCodePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 )
 
-// ProviderInstanceResponse is the API response for a provider instance.
+// ProviderInstanceResponse carries administrator instance fields with
+// recognized secret keys omitted from configuration.
 type ProviderInstanceResponse struct {
-	ID              int64             `json:"id"`
-	ProviderKey     string            `json:"provider_key"`
-	Name            string            `json:"name"`
-	Config          map[string]string `json:"config"`
-	SupportedTypes  []string          `json:"supported_types"`
-	Limits          string            `json:"limits"`
-	Enabled         bool              `json:"enabled"`
-	RefundEnabled   bool              `json:"refund_enabled"`
-	AllowUserRefund bool              `json:"allow_user_refund"`
-	SortOrder       int               `json:"sort_order"`
-	PaymentMode     string            `json:"payment_mode"`
+	ID int64 `json:"id"` // local provider instance identity.
+	// stored payment adapter key.
+	ProviderKey string `json:"provider_key"`
+	// administrator instance display name.
+	Name string `json:"name"`
+	// Config is a newly decoded and filtered string map for administrator
+	// display. Recoverable unreadable configuration yields nil, and only keys
+	// recognized for this exact provider are omitted.
+	Config map[string]string `json:"config"`
+	// SupportedTypes is a newly split and trimmed method slice for administrator
+	// display. Empty stored text yields an allocated empty slice; visible alias
+	// normalization occurs in other consumers.
+	SupportedTypes []string `json:"supported_types"`
+	Limits         string   `json:"limits"` // stored channel limit JSON
+	// stored checkout eligibility flag.
+	Enabled bool `json:"enabled"`
+	// stored administrator refund flag.
+	RefundEnabled bool `json:"refund_enabled"`
+	// stored buyer request eligibility.
+	AllowUserRefund bool `json:"allow_user_refund"`
+	// configured instance display order.
+	SortOrder int `json:"sort_order"`
+	// stored payment presentation mode.
+	PaymentMode string `json:"payment_mode"`
 }
 
+// ConfigEasyPayCustomMethodConfig carries custom method mapping and stable
+// localized display-name input.
 type ConfigEasyPayCustomMethodConfig struct {
-	ID                      string                 `json:"id,omitempty"`
+	// ID identifies prior display-name content during prepareMethodNames. Omitted
+	// IDs are replaced by Type before duplicate-ID checks and localization
+	// revision preparation.
+	ID string `json:"id,omitempty"`
+	// DisplayNameLocalization supplies versioned display content when present.
+	// prepareMethodNames compares its prior ID content and writes the prepared
+	// source into DisplayName before saving customMethods.
 	DisplayNameLocalization *locale.Update[string] `json:"displayNameLocalization,omitempty"`
-	Type                    string                 `json:"type"`
-	UpstreamType            string                 `json:"upstreamType"`
-	DisplayName             string                 `json:"displayName"`
+	// visible custom method code.
+	Type string `json:"type"`
+	// upstream EasyPay method code.
+	UpstreamType string `json:"upstreamType"`
+	// DisplayName is the plain custom label or prepared localization source.
+	// Display lookup uses it only when localization is absent, while mapping
+	// validation here does not independently require a plain name.
+	DisplayName string `json:"displayName"`
 }
 
-// ConfigValidateProviderConfig runs the provider's constructor to surface config-level
-// errors at save time (e.g. wxpay missing certSerial), instead of only failing
-// when an order is created. Returns the structured ApplicationError from the
-// constructor so the frontend i18n layer can localize it.
-//
-// Only validates enabled instances — a disabled instance may be a half-filled
-// draft the admin will complete later.
+// ConfigValidateProviderConfig invokes the runtime constructor with a
+// validation instance label and returns its error. This helper always
+// constructs; CreateProviderInstance and UpdateProviderInstance decide whether
+// the final enabled state requires the call, and adapter constructors differ
+// in eager credential parsing.
 func (s *ConfigService) ConfigValidateProviderConfig(providerKey string, config map[string]string) error {
 	_, err := s.runtime.CreateProvider(providerKey, "_validate_", config)
 	return err
 }
 
-// ListProviderInstancesWithConfig returns provider instances with decrypted config.
+// ListProviderInstancesWithConfig returns sort-ordered administrator rows with
+// split support and recognized secret fields omitted. Initial list errors
+// abort; configuration interpretation can log recoverable failure and yield
+// nil Config while other instance fields remain available.
 func (s *ConfigService) ListProviderInstancesWithConfig(ctx context.Context) ([]ProviderInstanceResponse, error) {
 	instances, err := s.store.ListInstances(ctx, InstanceFilter{SortByOrder: true})
 	if err != nil {
@@ -102,13 +154,19 @@ func (s *ConfigService) ListProviderInstancesWithConfig(ctx context.Context) ([]
 	return result, nil
 }
 
-// ConfigDecryptAndMaskConfig reads configuration for the admin API and removes provider secrets.
+// ConfigDecryptAndMaskConfig decodes stored configuration and returns a new
+// scalar map omitting known secrets for the exact provider key.
+// Nil/recoverably unreadable config returns nil; unrecognized provider/field
+// keys remain in plaintext under the lookup rule.
 func (s *ConfigService) ConfigDecryptAndMaskConfig(providerKey, stored string) map[string]string {
 	cfg := s.ConfigDecryptConfig(stored)
 	if cfg == nil {
 		return nil
 	}
 	masked := make(map[string]string, len(cfg))
+	// Filter only fields recognized by the exact provider's secret table.
+	// Retained key spelling and values remain unchanged, so unknown fields are
+	// still exposed in the administrator map.
 	for k, v := range cfg {
 		if ConfigIsSensitiveProviderConfigField(providerKey, k) {
 			continue
@@ -118,6 +176,10 @@ func (s *ConfigService) ConfigDecryptAndMaskConfig(providerKey, stored string) m
 	return masked
 }
 
+// ConfigIsSensitiveProviderConfigField reports membership in the exact
+// provider's secret-field set using a lowercased field name. It does not trim
+// names or normalize provider spelling, so unknown keys are not treated as
+// recognized secrets.
 func ConfigIsSensitiveProviderConfigField(providerKey, fieldName string) bool {
 	fields, ok := ConfigProviderSensitiveConfigFields[providerKey]
 	if !ok {
@@ -127,6 +189,10 @@ func ConfigIsSensitiveProviderConfigField(providerKey, fieldName string) bool {
 	return found
 }
 
+// ConfigHasPendingOrderProtectedConfigChange reports whether any listed
+// credential/identity field differs between the two maps. Provider lookup is
+// exact and field reads are case-insensitive; missing fields read as empty and
+// unknown providers report false.
 func ConfigHasPendingOrderProtectedConfigChange(providerKey string, currentConfig, nextConfig map[string]string) bool {
 	fields, ok := ConfigProviderPendingOrderProtectedConfigFields[providerKey]
 	if !ok {
@@ -140,6 +206,10 @@ func ConfigHasPendingOrderProtectedConfigChange(providerKey string, currentConfi
 	return false
 }
 
+// ConfigProviderConfigFieldValue returns the first case-insensitive matching
+// field value from the supplied map or empty text. Multiple case variants
+// follow map iteration order; this helper does not trim or resolve
+// duplicate-key ambiguity.
 func ConfigProviderConfigFieldValue(config map[string]string, fieldName string) string {
 	for key, value := range config {
 		if strings.EqualFold(key, fieldName) {
@@ -149,16 +219,33 @@ func ConfigProviderConfigFieldValue(config map[string]string, fieldName string) 
 	return ""
 }
 
+// ConfigCountPendingOrders delegates the instance's in-progress order count
+// for update and deletion checks. The PostgreSQL adapter includes pending,
+// processing, paid and recharging, and this observation is separate from later
+// instance persistence.
 func (s *ConfigService) ConfigCountPendingOrders(ctx context.Context, providerInstanceID int64) (int, error) {
 	return s.store.CountInProgressByProvider(ctx, providerInstanceID)
 }
 
+// CreateProviderInstance validates an administrator draft and persists its
+// instance fields with plaintext JSON configuration. Exact provider key and
+// nonblank name are required; disabled drafts skip provider construction.
+//
+// EasyPay name preparation mutates the supplied config map before custom
+// mapping validation. Enabled requests construct an adapter, which can defer
+// some credential parsing to later calls. AllowUserRefund is stored only when
+// requested together with RefundEnabled. Store creation follows validation,
+// while registry refresh belongs to the outer caller; limits/mode/support text
+// retain the validation scope actually applied here.
 func (s *ConfigService) CreateProviderInstance(ctx context.Context, req CreateProviderInstanceRequest) (*ProviderInstance, error) {
 	typesStr := ConfigJoinTypes(req.SupportedTypes)
 	if err := ConfigValidateProviderRequest(req.ProviderKey, req.Name, typesStr); err != nil {
 		return nil, err
 	}
 	if req.ProviderKey == TypeEasyPay {
+		// Prepare stable display identities and localization revisions before custom
+		// mapping checks and serialization. The supplied map can already be changed
+		// if a later validation step rejects this draft.
 		if err := prepareMethodNames(req.Config, nil); err != nil {
 			return nil, err
 		}
@@ -193,8 +280,17 @@ func (s *ConfigService) CreateProviderInstance(ctx context.Context, req CreatePr
 	})
 }
 
-// TestProviderDraft probes EasyPay with an unsaved configuration using a read-only order query.
-// The probe order number is not persisted and cannot initiate a charge.
+// TestProviderDraft constructs an unsaved exact EasyPay draft and calls
+// QueryOrder with a newly supplied merchant candidate to report connectivity.
+// Other provider keys are rejected; optional saved instance identity must have
+// the same key.
+//
+// Saved-instance testing rereads and merges config so omitted/blank recognized
+// secrets can be reused, while unsaved input remains supplied data.
+// Constructor errors become invalid-config and query errors become test-failed
+// with causes retained. The query candidate is not persisted and this
+// operation does not submit payment/refund, but it performs the external read
+// through the adapter when invoked.
 func (s *ConfigService) TestProviderDraft(ctx context.Context, req TestProviderDraftRequest) (*ProviderDraftTestResult, error) {
 	providerKey := strings.TrimSpace(req.ProviderKey)
 	if providerKey != TypeEasyPay {
@@ -233,6 +329,10 @@ func (s *ConfigService) TestProviderDraft(ctx context.Context, req TestProviderD
 	return &ProviderDraftTestResult{Reachable: true}, nil
 }
 
+// ConfigValidateProviderRequest requires a trimmed nonblank display name and
+// exact key in ConfigValidProviderKeys. The supportedTypes argument is not
+// validated here, so empty support and provider-specific support validation
+// remain separate calling behavior.
 func ConfigValidateProviderRequest(providerKey, name, supportedTypes string) error {
 	if strings.TrimSpace(name) == "" {
 		return infraerrors.BadRequest("VALIDATION_ERROR", "provider name is required")
@@ -240,10 +340,20 @@ func ConfigValidateProviderRequest(providerKey, name, supportedTypes string) err
 	if !ConfigValidProviderKeys[providerKey] {
 		return infraerrors.BadRequest("VALIDATION_ERROR", fmt.Sprintf("invalid provider key: %s", providerKey))
 	}
-	// Supported types may be empty.
 	return nil
 }
 
+// ConfigValidateEasyPayCustomMethods validates custom JSON mappings against
+// the trimmed supported-method list. Nil/blank configuration supplies no
+// custom mappings, while malformed JSON returns a validation error.
+//
+// Custom Type and UpstreamType need nonblank lowercase code syntax; Type
+// cannot begin with Alipay/WeChat prefixes and duplicate custom types are
+// rejected. Supported built-in Alipay/WeChat need no custom mapping, while
+// each other support label needs a matching custom Type. Display
+// names/localization and stable IDs are handled by prepareMethodNames
+// separately, so this validator does not independently validate those fields
+// or mutate the supplied JSON.
 func ConfigValidateEasyPayCustomMethods(config map[string]string, supportedTypes string) error {
 	if config == nil {
 		config = map[string]string{}
@@ -293,11 +403,26 @@ func ConfigValidateEasyPayCustomMethods(config map[string]string, supportedTypes
 	return nil
 }
 
+// ConfigEasyPayCustomMethodTypeConflictsWithBuiltin reports Alipay/WeChat
+// prefix conflicts for the supplied code text.
 func ConfigEasyPayCustomMethodTypeConflictsWithBuiltin(methodType string) bool {
 	return strings.HasPrefix(methodType, TypeAlipay) || strings.HasPrefix(methodType, TypeWxpay)
 }
 
-// UpdateProviderInstance updates a provider instance by ID (patch semantics).
+// UpdateProviderInstance applies supplied fields after current-instance,
+// merged-config and in-progress observations. Omitted pointers/maps/slices
+// retain stored fields, while a supplied empty collection participates in its
+// corresponding update rules.
+//
+// One successful in-progress count is memoized for protected credential
+// changes, disabling and support removal checks. Config merging rereads the
+// instance and can prepare EasyPay localization against the initial current
+// config. Final enabled state runs construction. Only supplied Config adds
+// ExpectedConfig from the initial stored text, rejecting a changed config
+// during final persistence; count observations do not share that update
+// transaction. Refund-disabled stages buyer-refund false, while requested true
+// is staged only when final refund permission is true. Caller refresh follows
+// the persisted result.
 func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, req UpdateProviderInstanceRequest) (*ProviderInstance, error) {
 	current, err := s.store.Instance(ctx, id)
 	if err != nil {
@@ -312,6 +437,9 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 		if err != nil {
 			return 0, fmt.Errorf("check pending orders: %w", err)
 		}
+		// Reuse this successful count for the remaining checks in this request. It
+		// remains an observation rather than a lock spanning the later store update,
+		// and failures are not memoized.
 		pendingOrderCount = &count
 		return count, nil
 	}
@@ -334,6 +462,10 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 			return nil, err
 		}
 		if current.ProviderKey == TypeEasyPay {
+			// Recover display-name revisions from the initial config while editing the
+			// separately merged map. The expected persisted-config comparison later
+			// rejects an intervening stored text change before accepting this prepared
+			// update.
 			if err := prepareMethodNames(mergedConfig, currentConfig); err != nil {
 				return nil, err
 			}
@@ -368,9 +500,9 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 			return nil, err
 		}
 	}
-	// Validate merged config when the instance will end up enabled.
-	// This surfaces provider-level errors (e.g. wxpay missing certSerial) at save time,
-	// so admins see them in the dialog instead of only when an order is created.
+	// Construct the adapter only for the final enabled state, after merging the
+	// actual configuration used by the save. Disabled drafts can retain
+	// incomplete constructor requirements for later editing.
 	finalEnabled := current.Enabled
 	if req.Enabled != nil {
 		finalEnabled = *req.Enabled
@@ -382,6 +514,9 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 	}
 	u := InstancePatch{}
 	if req.Config != nil {
+		// Carry the initial persisted config text into the conditional update only
+		// for supplied config input. This rejects a changed config after merging
+		// while other requested fields keep their separate patch rules.
 		u.ExpectedConfig = &current.Config
 	}
 	if req.Name != nil {
@@ -395,13 +530,17 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 		u.Config = configPointer(enc)
 	}
 	if req.SupportedTypes != nil {
-		// Check pending orders before removing payment types
+		// An in-progress order can still need its stored payment method. Check the
+		// memoized count before accepting removal, while added or retained exact
+		// trimmed labels remain eligible.
 		count, err := getPendingOrderCount()
 		if err != nil {
 			return nil, err
 		}
 		if count > 0 {
-			// Load current instance to compare types
+			// Compare requested support against the initial current row's comma labels.
+			// This is not another row read, and trimming alone does not normalize
+			// direct/visible aliases as equivalent.
 			oldTypes := strings.Split(current.SupportedTypes, ",")
 			newTypes := req.SupportedTypes
 			for _, ot := range oldTypes {
@@ -435,13 +574,17 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 	}
 	if req.RefundEnabled != nil {
 		u.RefundEnabled = configPointer(*req.RefundEnabled)
-		// Cascade: turning off refund_enabled also disables allow_user_refund
+		// Disabling administrator refunds stages buyer-refund false in the same
+		// patch. A later requested true is only staged when the final administrator
+		// refund flag permits it.
 		if !*req.RefundEnabled {
 			u.AllowUserRefund = configPointer(false)
 		}
 	}
 	if req.AllowUserRefund != nil {
-		// Only allow enabling when refund_enabled is (or will be) true
+		// A requested buyer-refund true depends on the supplied or current
+		// administrator refund flag. If that flag is false, this request adds no
+		// true patch; an explicit false still writes false.
 		if *req.AllowUserRefund {
 			refundEnabled := false
 			if req.RefundEnabled != nil {
@@ -462,19 +605,32 @@ func (s *ConfigService) UpdateProviderInstance(ctx context.Context, id int64, re
 	return s.store.UpdateInstance(ctx, id, u)
 }
 
-// GetUserRefundEligibleInstanceIDs returns provider instance IDs that allow user refund.
+// GetUserRefundEligibleInstanceIDs returns decimal instance IDs from the
+// store's user-refund-eligible query. The PostgreSQL predicate requires both
+// AllowUserRefund and RefundEnabled, independently of Enabled; callers still
+// validate an individual order's historical binding and refund eligibility.
 func (s *ConfigService) GetUserRefundEligibleInstanceIDs(ctx context.Context) ([]string, error) {
 	instances, err := s.store.ListInstances(ctx, InstanceFilter{UserRefundEligible: true})
 	if err != nil {
 		return nil, err
 	}
 	ids := make([]string, 0, len(instances))
+	// Use decimal text to match saved provider-instance order bindings.
 	for _, inst := range instances {
 		ids = append(ids, strconv.FormatInt(inst.ID, 10))
 	}
 	return ids, nil
 }
 
+// ConfigMergeConfig rereads one instance, decodes its config and merges
+// supplied scalar updates into newly decoded storage. Recoverable
+// unreadable/empty config starts with a writable empty map.
+//
+// A blank recognized secret keeps its existing value, while blank unrecognized
+// fields replace theirs. Sensitivity uses exact provider and lowercased field
+// name; duplicate case spellings can remain separate map keys. This method
+// does not persist or lock the instance, and UpdateProviderInstance separately
+// compares its initial ExpectedConfig when config input is present.
 func (s *ConfigService) ConfigMergeConfig(ctx context.Context, id int64, newConfig map[string]string) (map[string]string, error) {
 	inst, err := s.store.Instance(ctx, id)
 	if err != nil {
@@ -485,8 +641,9 @@ func (s *ConfigService) ConfigMergeConfig(ctx context.Context, id int64, newConf
 		existing = map[string]string{}
 	}
 	for k, v := range newConfig {
-		// Preserve existing secrets when the client submits an empty value
-		// (admin UI omits the value to indicate "leave unchanged").
+		// Blank recognized secret input means retain its current credential because
+		// administrator listing omitted that value. Other submitted text, including
+		// blank unrecognized fields, replaces its exact map key.
 		if v == "" && ConfigIsSensitiveProviderConfigField(inst.ProviderKey, k) {
 			continue
 		}
@@ -495,9 +652,15 @@ func (s *ConfigService) ConfigMergeConfig(ctx context.Context, id int64, newConf
 	return existing, nil
 }
 
-// ConfigDecryptConfig reads provider configuration, logging and returning nil on parse failure.
+// ConfigDecryptConfig reads plaintext or historical encrypted text and logs
+// unreadable results as nil for configuration callers. Empty/JSON-null values
+// can also return nil as readable; Decrypt's decoded-nonce precondition still
+// applies to the historical format.
 func (s *ConfigService) ConfigDecryptConfig(stored string) map[string]string {
 	config, ok := parseProviderConfig(stored, s.encryptionKey)
+	// Expose recoverable unreadable config as nil with a length-only parse
+	// warning. Merge/list callers choose their empty or omitted representation
+	// while valid old ciphertext still uses the historical key.
 	if !ok {
 		s.warn("payment provider config unreadable, treating as empty for re-entry",
 			"stored_len", len(stored))
@@ -505,6 +668,16 @@ func (s *ConfigService) ConfigDecryptConfig(stored string) map[string]string {
 	return config
 }
 
+// DeleteProviderInstance rejects deletion when in-progress orders or
+// force-expired audit observations require the instance. Count errors return
+// before deletion, with distinct conflicts for the two retained order classes.
+//
+// The two counts and final delete are separate store calls rather than one
+// locked transaction. Force-expired counting joins initially expired
+// instance-bound IDs to mandatory action history so credentials can remain for
+// late payment. A later concurrent state change can alter those observations;
+// this method adds no reservation. Registry refresh remains the outer caller's
+// post-persistence operation.
 func (s *ConfigService) DeleteProviderInstance(ctx context.Context, id int64) error {
 	count, err := s.ConfigCountPendingOrders(ctx, id)
 	if err != nil {
@@ -526,12 +699,18 @@ func (s *ConfigService) DeleteProviderInstance(ctx context.Context, id int64) er
 	return s.store.DeleteInstance(ctx, id)
 }
 
+// ConfigCountForcedExpiredOrders delegates the instance retention count used
+// before provider deletion. The PostgreSQL adapter selects expired order IDs
+// then counts their force-expiration audits in a second observation, returning
+// any storage error.
 func (s *ConfigService) ConfigCountForcedExpiredOrders(ctx context.Context, providerInstanceID int64) (int, error) {
 	return s.store.CountForcedExpiredByProvider(ctx, providerInstanceID)
 }
 
-// ConfigEncryptConfig serializes provider configuration as plaintext JSON.
-// ConfigDecryptConfig also accepts legacy AES-GCM ciphertext.
+// ConfigEncryptConfig serializes the supplied scalar config map as plaintext
+// JSON for persistence. Nil input becomes JSON null, and marshal errors return
+// with context; historical encrypted reads remain supported by
+// ConfigDecryptConfig separately.
 func (s *ConfigService) ConfigEncryptConfig(cfg map[string]string) (string, error) {
 	data, err := json.Marshal(cfg)
 	if err != nil {

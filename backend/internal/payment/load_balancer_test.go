@@ -6,14 +6,23 @@ import (
 	"time"
 )
 
+// Payment instance support and limits use visible aliases, positive numeric
+// bounds and observed daily usage before strategy selection. These pure tests
+// exercise exact limit edges, first-seen minimum-usage ties, timezone midnight
+// and plaintext/historical configuration parsing; equality helpers treat nil
+// and empty collections as equivalent for their assertions.
+
+// TestInstanceSupportsType supplies comma lists, whitespace, direct aliases,
+// missing matches and blank support. Each listed method decision must match
+// its expected result, protecting compatibility and empty-support acceptance.
 func TestInstanceSupportsType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		supportedTypes string
-		target         PaymentType
-		expected       bool
+		name           string      // parallel support case name
+		supportedTypes string      // supplied comma support text
+		target         PaymentType // requested payment method label
+		expected       bool        // expected method support result
 	}{
 		{
 			name:           "exact match single type",
@@ -94,6 +103,9 @@ func TestInstanceSupportsType(t *testing.T) {
 	}
 }
 
+// TestGetInstanceChannelLimitsFallsBackToLegacyDirectAliases stores bounds
+// under historical Alipay/WeChat direct keys. Visible-method reads must retain
+// their tested max/min values, protecting missing-exact-key alias lookup.
 func TestGetInstanceChannelLimitsFallsBackToLegacyDirectAliases(t *testing.T) {
 	t.Parallel()
 
@@ -110,6 +122,9 @@ func TestGetInstanceChannelLimitsFallsBackToLegacyDirectAliases(t *testing.T) {
 	}
 }
 
+// testInstance returns a fresh enabled instance fixture with the supplied
+// numeric ID, provider key and limit text. Other fields retain zero values so
+// pure limit/strategy helpers consume just those scenario observations.
 func testInstance(id int64, providerKey, limits string) *ProviderInstance {
 	return &ProviderInstance{
 		ID:          id,
@@ -119,22 +134,34 @@ func testInstance(id int64, providerKey, limits string) *ProviderInstance {
 	}
 }
 
-// makeLimitsJSON builds a limits JSON string for a single payment type.
+// makeLimitsJSON encodes one method's channel limits for fixture construction.
+// Callers supply encodable finite bounds; JSON marshal errors are discarded
+// and yield the returned encoded text, which can be empty on failure.
 func makeLimitsJSON(paymentType string, cl ChannelLimits) string {
 	m := map[string]ChannelLimits{paymentType: cl}
+	// Fixture encoding discards marshal errors because these cases supply finite
+	// JSON bounds. If another caller supplies an unencodable value, empty text
+	// can become an unlimited parsing input.
 	b, _ := json.Marshal(m)
 	return string(b)
 }
 
+// TestFilterByLimits compares expected surviving IDs for below/at/above single
+// bounds and daily usage totals. It also checks unlimited and empty
+// candidates, protecting strict excess rejection and input-order retention by
+// the filter itself.
 func TestFilterByLimits(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
+		name string // parallel limit scenario name
+		// candidates retains the supplied instance pointers and observed usage for
+		// one case. Parallel subtests read those fixture objects without changing
+		// their limit configuration.
 		candidates  []instanceCandidate
-		paymentType PaymentType
-		orderAmount float64
-		wantIDs     []int64 // expected surviving instance IDs
+		paymentType PaymentType // requested channel method label
+		orderAmount float64     // new order numeric amount
+		wantIDs     []int64     // expected ordered surviving IDs
 	}{
 		{
 			name: "order below SingleMin is filtered out",
@@ -275,6 +302,9 @@ func TestFilterByLimits(t *testing.T) {
 	}
 }
 
+// TestPickLeastAmount supplies different, equal, single and zero-usage
+// candidates to the pure minimum helper. Each case must select the expected
+// ID, including the first candidate when lowest usage ties.
 func TestPickLeastAmount(t *testing.T) {
 	t.Parallel()
 
@@ -329,14 +359,21 @@ func TestPickLeastAmount(t *testing.T) {
 	})
 }
 
+// TestGetInstanceChannelLimits supplies absent/malformed/partial JSON and
+// provider-specific channel keys. It checks expected bound values, including
+// Stripe key precedence over the requested method label and zero results for
+// missing entries.
 func TestGetInstanceChannelLimits(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
+		name string // parallel lookup scenario name
+		// inst is a shared read-only instance fixture for this case. Its limit text
+		// and provider key remain unchanged while the parallel lookup helper decodes
+		// them.
 		inst        *ProviderInstance
-		paymentType PaymentType
-		want        ChannelLimits
+		paymentType PaymentType   // requested channel method label
+		want        ChannelLimits // expected decoded channel bounds
 	}{
 		{
 			name:        "empty limits string returns zero ChannelLimits",
@@ -405,13 +442,18 @@ func TestGetInstanceChannelLimits(t *testing.T) {
 	}
 }
 
+// TestStartOfDay supplies midday, midnight, final-second and fixed-timezone
+// values. The returned time must equal the expected date midnight and retain
+// the tested location name, protecting calendar rather than elapsed-time
+// truncation.
 func TestStartOfDay(t *testing.T) {
 	t.Parallel()
 
+	// Use a fixed eight-hour offset expressed in seconds for the location case.
 	tests := []struct {
-		name string
-		in   time.Time
-		want time.Time
+		name string    // parallel calendar scenario name
+		in   time.Time // supplied location time value
+		want time.Time // expected date midnight value
 	}{
 		{
 			name: "midday returns midnight of same day",
@@ -442,7 +484,9 @@ func TestStartOfDay(t *testing.T) {
 			if !got.Equal(tt.want) {
 				t.Fatalf("startOfDay(%v) = %v, want %v", tt.in, got, tt.want)
 			}
-			// Also verify location is preserved.
+			// Instant equality alone can accept a time represented in another location.
+			// Check the location name too so this fixture protects the calendar context
+			// used by later daily bounds.
 			if got.Location().String() != tt.want.Location().String() {
 				t.Fatalf("startOfDay() location = %v, want %v", got.Location(), tt.want.Location())
 			}
@@ -450,6 +494,10 @@ func TestStartOfDay(t *testing.T) {
 	}
 }
 
+// TestDecryptConfig_PlaintextAndLegacyCompat supplies plaintext, encrypted,
+// wrong-key, missing-key and garbage configurations. The decoded map must be
+// equal under the fixture helper, whose nil/empty equivalence protects
+// readable values and empty-equivalent recovery results for these cases.
 func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 	t.Parallel()
 
@@ -470,10 +518,16 @@ func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		stored string
-		key    []byte
-		want   map[string]string
+		name   string // parallel decoding scenario name
+		stored string // supplied persisted configuration text
+		// key retains the fixture byte slice read by historical decryption. Parallel
+		// cases keep those bytes immutable while each constructs its own balancer
+		// and decoded result.
+		key []byte
+		// want is the expected read-only scalar config map. stringMapEqual treats
+		// nil and empty as equivalent, so these assertions do not require a
+		// particular empty-map allocation.
+		want map[string]string
 	}{
 		{
 			name:   "empty stored returns nil map",
@@ -531,7 +585,9 @@ func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 	}
 }
 
-// stringMapEqual compares two map[string]string values; nil and empty are equal.
+// stringMapEqual reports equal scalar key/value entries with nil and empty
+// maps considered equivalent. Equal lengths alone do not suffice; every key
+// must exist with matching text in the other map.
 func stringMapEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -544,8 +600,9 @@ func stringMapEqual(a, b map[string]string) bool {
 	return true
 }
 
-// int64SliceEqual compares two int64 slices for equality.
-// Both nil and empty slices are treated as equal.
+// int64SliceEqual compares ordered ID entries with nil and empty slices
+// considered equivalent. Nonempty length/order differences return false,
+// letting filter tests assert both membership and retained input sequence.
 func int64SliceEqual(a, b []int64) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true

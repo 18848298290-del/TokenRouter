@@ -4,13 +4,17 @@ import (
 	"testing"
 )
 
+// TestIsOfficialAlipayProviderInstance supplies nil, official, normalized
+// official, and EasyPay instance identities. Recognition follows the trimmed
+// case-insensitive provider key, while an EasyPay route remains a different
+// implementation.
 func TestIsOfficialAlipayProviderInstance(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		instance *ProviderInstance
-		want     bool
+		name     string            // case diagnostic name
+		instance *ProviderInstance // supplied provider instance
+		want     bool              // expected official identity result
 	}{
 		{name: "nil instance", instance: nil, want: false},
 		{name: "official alipay", instance: &ProviderInstance{ProviderKey: TypeAlipay}, want: true},

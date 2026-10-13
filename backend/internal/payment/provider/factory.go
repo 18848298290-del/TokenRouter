@@ -6,7 +6,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// CreateProvider creates a Provider from a provider key, instance ID and decrypted config.
+// Persisted payment instances identify one of five provider adapters by an
+// exact key. Construction delegates credential validation and configuration
+// ownership to that adapter, so callers receive its concrete provider or the
+// error from its initialization checks.
+
+// CreateProvider dispatches an exact provider key to its payment adapter
+// constructor. It passes the instance ID and configuration through;
+// configuration validation and copying depend on that constructor, and an
+// unknown key returns an error.
 func CreateProvider(providerKey string, instanceID string, config map[string]string) (payment.Provider, error) {
 	switch providerKey {
 	case payment.TypeEasyPay:

@@ -12,12 +12,33 @@ import (
 	"strings"
 )
 
-// AES256KeySize is the required key length (in bytes) for AES-256-GCM.
+// Persisted provider configuration can be plaintext JSON or the historical
+// three-part AES-GCM representation. JSON parsing is attempted first, so an
+// empty value or JSON null can be readable while producing a nil map for
+// callers to default. Only a supplied 32-byte key enables the ciphertext
+// attempt.
+//
+// Legacy ciphertext stores base64 nonce, authentication tag and encrypted
+// bytes in that order, whereas Go GCM seals encrypted bytes followed by the
+// tag. Encrypt splits that result and Decrypt rejoins it before
+// authentication. Decrypt checks key and field decoding but delegates
+// nonce-length handling to GCM.Open, which can panic for a decoded nonce of
+// the wrong size. Configuration callers therefore do not receive an error for
+// every malformed legacy value.
+
+// AES256KeySize is the byte length required for historical AES-256-GCM
+// configuration and signing key material.
 const AES256KeySize = 32
 
-// Encrypt encrypts plaintext using AES-256-GCM with the given 32-byte key.
-// The output format is "iv:authTag:ciphertext" where each component is base64-encoded,
-// matching the Node.js crypto.ts format for cross-compatibility.
+// Encrypt produces the historical base64 iv:authTag:ciphertext representation
+// from plaintext and an exact 32-byte key. It uses a fresh cryptographic nonce
+// and no additional authenticated data; nonce generation or cipher
+// construction failure returns an error.
+//
+// Go GCM seals encrypted bytes followed by its authentication tag, so the
+// result is split before serialization to match the three-part stored format.
+// Plaintext bytes are supplied from the Go string, and each binary component
+// uses standard base64. The supplied key is read during the call.
 //
 // Deprecated: provider configuration is stored as plaintext JSON.
 // Encrypt remains available to create legacy ciphertext fixtures.
@@ -36,20 +57,27 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 		return "", fmt.Errorf("create GCM: %w", err)
 	}
 
-	nonce := make([]byte, gcm.NonceSize()) // 12 bytes for GCM
+	// Use GCM's nonce size for the serialized IV.
+	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("generate nonce: %w", err)
 	}
 
-	// Seal appends the ciphertext + auth tag
+	// GCM appends its tag to encrypted bytes with no additional authenticated
+	// data. The stored legacy format needs that tag separated before its base64
+	// serialization.
 	sealed := gcm.Seal(nil, nonce, []byte(plaintext), nil)
 
-	// Split sealed into ciphertext and auth tag (last 16 bytes)
+	// Use GCM's reported overhead to separate the trailing authentication tag.
+	// Keeping encrypted bytes and tag distinct preserves the historical
+	// iv:tag:ciphertext field order.
 	tagSize := gcm.Overhead()
 	ciphertext := sealed[:len(sealed)-tagSize]
 	authTag := sealed[len(sealed)-tagSize:]
 
-	// Format: iv:authTag:ciphertext (all base64)
+	// Serialize each binary component separately using standard base64 before
+	// colon joining. Decrypt relies on nonce, tag and ciphertext occupying those
+	// three positions.
 	return fmt.Sprintf("%s:%s:%s",
 		base64.StdEncoding.EncodeToString(nonce),
 		base64.StdEncoding.EncodeToString(authTag),
@@ -57,8 +85,16 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 	), nil
 }
 
-// Decrypt decrypts a ciphertext string produced by Encrypt.
-// The input format is "iv:authTag:ciphertext" where each component is base64-encoded.
+// Decrypt authenticates the historical base64 iv:authTag:ciphertext
+// representation using an exact 32-byte key. It decodes the three fields and
+// rejoins encrypted bytes with the tag for Go GCM.Open, returning plaintext
+// after authentication.
+//
+// Key length, field count, base64 decoding and ordinary authentication
+// failures return errors. The decoded nonce must have GCM's required size:
+// this implementation does not check its length before Open, and the pinned Go
+// implementation panics for a wrong-size nonce. Callers must account for that
+// precondition when admitting legacy values.
 //
 // Deprecated: provider configuration is stored as plaintext JSON.
 // Decrypt reads legacy ciphertext until those records are saved again as JSON.
@@ -97,7 +133,9 @@ func Decrypt(ciphertext string, key []byte) (string, error) {
 		return "", fmt.Errorf("create GCM: %w", err)
 	}
 
-	// Reconstruct the sealed data: ciphertext + authTag
+	// Restore Go's encrypted-bytes-then-tag input after decoding the stored
+	// separate fields. GCM authentication then covers their association before
+	// the plaintext is returned.
 	sealed := append(encrypted, authTag...)
 
 	plaintext, err := gcm.Open(nil, nonce, sealed, nil)
@@ -108,7 +146,10 @@ func Decrypt(ciphertext string, key []byte) (string, error) {
 	return string(plaintext), nil
 }
 
-// ConfiguredEncryptionKey validates the hexadecimal AES-256 key and warns when it is unavailable.
+// ConfiguredEncryptionKey reads a trimmed hexadecimal 32-byte deployment key
+// when configured is true. Blank or implicit configuration returns no key with
+// warning text and nil error; explicit malformed hex or wrong decoded length
+// returns an error before payment signing/configuration use.
 func ConfiguredEncryptionKey(raw string, configured bool) (EncryptionKey, string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -127,7 +168,16 @@ func ConfiguredEncryptionKey(raw string, configured bool) (EncryptionKey, string
 	return EncryptionKey(key), "", nil
 }
 
-// parseProviderConfig reads JSON or AES-256-GCM ciphertext and reports whether it was readable.
+// parseProviderConfig interprets plaintext JSON before attempting the legacy
+// encrypted representation and reports whether decoding succeeded. Empty text
+// and JSON null are readable with a nil map; callers can replace that map with
+// writable empty configuration.
+//
+// A JSON decode failure permits a ciphertext attempt only with a 32-byte key.
+// Recoverable decrypt or JSON errors become nil,false for caller diagnostics,
+// while Decrypt's nonce precondition still applies. The successful result is a
+// newly decoded string map, and new provider writes use JSON through
+// ConfigService.
 func parseProviderConfig(stored string, encryptionKey []byte) (map[string]string, bool) {
 	if stored == "" {
 		return nil, true
@@ -136,7 +186,9 @@ func parseProviderConfig(stored string, encryptionKey []byte) (map[string]string
 	if err := json.Unmarshal([]byte(stored), &config); err == nil {
 		return config, true
 	}
-	// Legacy instances can contain ciphertext encrypted with the deployment key.
+	// A failed plaintext parse can still describe a historical encrypted
+	// instance. Try that format only with a complete deployment key, retaining
+	// errors as an unreadable result.
 	if len(encryptionKey) == AES256KeySize {
 		if plaintext, err := Decrypt(stored, encryptionKey); err == nil {
 			if err := json.Unmarshal([]byte(plaintext), &config); err == nil {

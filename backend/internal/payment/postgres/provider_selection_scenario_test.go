@@ -1,7 +1,5 @@
 package postgres_test
 
-// These scenarios cover provider bindings, visible methods and selection, resume, and checkout, using instance queries in instances.go and management.go.
-
 import (
 	"context"
 	_ "embed"
@@ -19,11 +17,34 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// Historical orders can identify an instance through a saved pin, snapshot or
+// a unique compatible provider observation. SQLite fixtures retain disabled
+// rows in ambiguity checks and reject missing explicit pins, while webhook
+// selection permits multiple WeChat candidates but rejects ambiguous
+// non-WeChat selection.
+//
+// Visible-method fixtures distinguish the customer label from its official or
+// EasyPay provider source. CaptureLoadBalancer records the resolved provider
+// key, including the empty key used when no source is configured across
+// several eligible provider kinds. The registry double supplies identity and
+// methods while panicking on channel operations, so these fixtures inspect
+// binding and selection rather than execute payment, notification or refund
+// requests. SQLite observations do not establish PostgreSQL locking or
+// concurrent selection guarantees.
+
+// webhookProviderTestDouble advertises callback registry identity while
+// rejecting unexpected channel operation calls.
 type webhookProviderTestDouble struct {
-	key   string
+	key string // fixture provider registry identity
+	// types is returned as the supplied slice without copying; fixture callers
+	// keep its contents unchanged while the registry reads advertised methods.
 	types []payment.PaymentType
 }
 
+// TestUsesOfficialWxpayVisibleMethodDerivesFromEnabledProviderInstance stores
+// one enabled official WeChat instance on SQLite. It expects checkout source
+// detection to identify that official provider from the available instance
+// observation.
 func TestUsesOfficialWxpayVisibleMethodDerivesFromEnabledProviderInstance(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -47,11 +68,14 @@ func TestUsesOfficialWxpayVisibleMethodDerivesFromEnabledProviderInstance(t *tes
 	}
 }
 
+// TestUsesOfficialWxpayVisibleMethodRespectsConfiguredSourceWhenMultipleProvidersEnabled
+// stores official and EasyPay WeChat instances and varies the source setting.
+// It expects official detection to match the selected source for each fixture.
 func TestUsesOfficialWxpayVisibleMethodRespectsConfiguredSourceWhenMultipleProvidersEnabled(t *testing.T) {
 	tests := []struct {
-		name         string
-		source       string
-		wantOfficial bool
+		name         string // named configured source case
+		source       string // supplied WeChat source setting
+		wantOfficial bool   // expected official source detection
 	}{
 		{
 			name:         "official source selected",
@@ -107,6 +131,9 @@ func TestUsesOfficialWxpayVisibleMethodRespectsConfiguredSourceWhenMultipleProvi
 	}
 }
 
+// TestGetOrderProviderInstanceResolvesUniqueLegacyProviderKey supplies an
+// unpinned Stripe order with saved provider key and one stored matching
+// instance. It expects historical resolution to return that instance identity.
 func TestGetOrderProviderInstanceResolvesUniqueLegacyProviderKey(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -133,6 +160,9 @@ func TestGetOrderProviderInstanceResolvesUniqueLegacyProviderKey(t *testing.T) {
 	require.Equal(t, inst.ID, got.ID)
 }
 
+// TestGetOrderProviderInstanceResolvesUniqueLegacyPaymentType supplies an
+// unpinned historical WeChat-direct method with one compatible instance. It
+// expects method compatibility to resolve that stored provider row.
 func TestGetOrderProviderInstanceResolvesUniqueLegacyPaymentType(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -157,6 +187,10 @@ func TestGetOrderProviderInstanceResolvesUniqueLegacyPaymentType(t *testing.T) {
 	require.Equal(t, inst.ID, got.ID)
 }
 
+// TestGetOrderProviderInstanceLeavesAmbiguousLegacyOrderUnresolved stores
+// official and EasyPay instances supporting the same unpinned WeChat method.
+// It expects nil resolution without an error for the ambiguous historical
+// observation.
 func TestGetOrderProviderInstanceLeavesAmbiguousLegacyOrderUnresolved(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -188,6 +222,10 @@ func TestGetOrderProviderInstanceLeavesAmbiguousLegacyOrderUnresolved(t *testing
 	require.Nil(t, got)
 }
 
+// TestGetOrderProviderInstanceLeavesLegacyProviderKeyUnresolvedWhenHistoricalInstancesConflict
+// stores enabled and disabled Stripe instances for one unpinned order key. It
+// expects nil resolution because the disabled historical row still
+// participates in uniqueness.
 func TestGetOrderProviderInstanceLeavesLegacyProviderKeyUnresolvedWhenHistoricalInstancesConflict(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -221,6 +259,10 @@ func TestGetOrderProviderInstanceLeavesLegacyProviderKeyUnresolvedWhenHistorical
 	require.Nil(t, got)
 }
 
+// TestGetOrderProviderInstanceLeavesProviderKeyMatchUnresolvedWhenTypeNotSupported
+// supplies a WeChat provider key alongside historical Alipay-direct method. It
+// expects nil resolution when the stored provider cannot support that order
+// method.
 func TestGetOrderProviderInstanceLeavesProviderKeyMatchUnresolvedWhenTypeNotSupported(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -246,6 +288,10 @@ func TestGetOrderProviderInstanceLeavesProviderKeyMatchUnresolvedWhenTypeNotSupp
 	require.Nil(t, got)
 }
 
+// TestGetOrderProviderInstanceUsesProviderSnapshotWhenPinnedColumnMissing
+// supplies snapshot instance identity but omits the dedicated pin column. It
+// expects the saved snapshot pin to select the corresponding stored Stripe
+// instance.
 func TestGetOrderProviderInstanceUsesProviderSnapshotWhenPinnedColumnMissing(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -262,7 +308,9 @@ func TestGetOrderProviderInstanceUsesProviderSnapshotWhenPinnedColumnMissing(t *
 		ID:          42,
 		PaymentType: payment.TypeStripe,
 		ProviderSnapshot: map[string]any{
-			"schema_version":       1,
+			"schema_version": 1,
+			// Encode instance identity as decimal text used by snapshot pins, keeping
+			// the association attached to the corresponding stored row.
 			"provider_instance_id": strconv.FormatInt(inst.ID, 10),
 			"provider_key":         payment.TypeStripe,
 		},
@@ -276,6 +324,10 @@ func TestGetOrderProviderInstanceUsesProviderSnapshotWhenPinnedColumnMissing(t *
 	require.Equal(t, inst.ID, got.ID)
 }
 
+// TestGetOrderProviderInstanceRejectsMissingSnapshotInstanceWithoutLegacyFallback
+// supplies a missing explicit snapshot pin while another Stripe instance
+// exists. It expects the missing-pin diagnostic instead of guessing the
+// compatible row.
 func TestGetOrderProviderInstanceRejectsMissingSnapshotInstanceWithoutLegacyFallback(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -306,6 +358,10 @@ func TestGetOrderProviderInstanceRejectsMissingSnapshotInstanceWithoutLegacyFall
 	require.Contains(t, err.Error(), "provider snapshot instance 999999 is missing")
 }
 
+// TestGetWebhookProviderRejectsAmbiguousRegistryFallback stores two enabled
+// WeChat instances with no order hint and requests callback candidates. It
+// expects two providers without error, exercising the WeChat multi-candidate
+// verification path.
 func TestGetWebhookProviderRejectsAmbiguousRegistryFallback(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -335,6 +391,9 @@ func TestGetWebhookProviderRejectsAmbiguousRegistryFallback(t *testing.T) {
 	require.Len(t, providers, 2)
 }
 
+// TestGetWebhookProvidersRejectAmbiguousFallbackForNonWxpay stores two enabled
+// Alipay instances and supplies no order hint. It expects ambiguity rejection
+// when selecting non-WeChat callback providers for that observation.
 func TestGetWebhookProvidersRejectAmbiguousFallbackForNonWxpay(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -362,6 +421,9 @@ func TestGetWebhookProvidersRejectAmbiguousFallbackForNonWxpay(t *testing.T) {
 	require.Contains(t, err.Error(), "ambiguous")
 }
 
+// TestGetWebhookProviderAllowsSingleInstanceRegistryFallback stores one Stripe
+// instance with unusable empty configuration and registers the identity
+// double. It expects the registered provider as the sole callback candidate.
 func TestGetWebhookProviderAllowsSingleInstanceRegistryFallback(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -389,6 +451,9 @@ func TestGetWebhookProviderAllowsSingleInstanceRegistryFallback(t *testing.T) {
 	require.Equal(t, payment.TypeStripe, prov.ProviderKey())
 }
 
+// TestGetWebhookProviderRejectsRegistryFallbackForPinnedOrder persists a
+// pending order with a missing instance pin and a registered WeChat double. It
+// expects a provider-instance error despite that available registry mapping.
 func TestGetWebhookProviderRejectsRegistryFallbackForPinnedOrder(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -433,6 +498,10 @@ func TestGetWebhookProviderRejectsRegistryFallbackForPinnedOrder(t *testing.T) {
 	require.Contains(t, err.Error(), "provider instance")
 }
 
+// TestGetWebhookProviderUsesProviderSnapshotBeforeWxpayFallback stores two
+// WeChat instances and a pending order pinned through snapshot metadata. It
+// requires one callback candidate with the official WeChat provider key; the
+// assertions do not distinguish the two concrete instance identities.
 func TestGetWebhookProviderUsesProviderSnapshotBeforeWxpayFallback(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -479,7 +548,9 @@ func TestGetWebhookProviderUsesProviderSnapshotBeforeWxpayFallback(t *testing.T)
 		SetClientIP("127.0.0.1").
 		SetSrcHost("api.example.com").
 		SetProviderSnapshot(map[string]any{
-			"schema_version":       1,
+			"schema_version": 1,
+			// Encode instance identity as decimal text used by snapshot pins, keeping
+			// the association attached to the corresponding stored row.
 			"provider_instance_id": strconv.FormatInt(instA.ID, 10),
 			"provider_key":         payment.TypeWxpay,
 			"payment_mode":         "native",
@@ -495,6 +566,9 @@ func TestGetWebhookProviderUsesProviderSnapshotBeforeWxpayFallback(t *testing.T)
 	require.Equal(t, payment.TypeWxpay, providers[0].ProviderKey())
 }
 
+// TestNormalizeVisibleMethods supplies direct aliases, canonical duplicates,
+// whitespace and a custom method. It expects canonical deduplicated Alipay and
+// WeChat followed by Stripe and retained custom text in input order.
 func TestNormalizeVisibleMethods(t *testing.T) {
 	t.Parallel()
 
@@ -518,6 +592,10 @@ func TestNormalizeVisibleMethods(t *testing.T) {
 	}
 }
 
+// TestEnabledVisibleMethodsForEasyPayIncludesCustomSupportedTypes supplies
+// built-in and two custom support labels to the EasyPay helper. It expects the
+// same visible method sequence after the helper interprets those supported
+// types.
 func TestEnabledVisibleMethodsForEasyPayIncludesCustomSupportedTypes(t *testing.T) {
 	t.Parallel()
 
@@ -533,14 +611,17 @@ func TestEnabledVisibleMethodsForEasyPayIncludesCustomSupportedTypes(t *testing.
 	}
 }
 
+// TestNormalizeVisibleMethodSource compares official and EasyPay aliases for
+// Alipay and WeChat plus an unsupported source. It expects canonical source
+// labels for matching fixtures and empty output for the unsupported choice.
 func TestNormalizeVisibleMethodSource(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		method string
-		input  string
-		want   string
+		name   string // named source normalization case
+		method string // supplied visible payment method
+		input  string // supplied provider source alias
+		want   string // expected canonical source label
 	}{
 		{name: "alipay official alias", method: payment.TypeAlipay, input: "alipay", want: payment.VisibleMethodSourceOfficialAlipay},
 		{name: "alipay easypay alias", method: payment.TypeAlipay, input: "easypay", want: payment.VisibleMethodSourceEasyPayAlipay},
@@ -559,15 +640,18 @@ func TestNormalizeVisibleMethodSource(t *testing.T) {
 	}
 }
 
+// TestVisibleMethodProviderKeyForSource compares matching official or EasyPay
+// method/source pairs and a mismatched pair. It checks provider identity with
+// a recognition flag, including empty identity and false for mismatch.
 func TestVisibleMethodProviderKeyForSource(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		method string
-		source string
-		want   string
-		ok     bool
+		name   string // named method-source association case
+		method string // supplied visible payment method
+		source string // supplied canonical source label
+		want   string // expected provider implementation key
+		ok     bool   // expected source recognition result
 	}{
 		{name: "official alipay", method: payment.TypeAlipay, source: payment.VisibleMethodSourceOfficialAlipay, want: payment.TypeAlipay, ok: true},
 		{name: "easypay alipay", method: payment.TypeAlipay, source: payment.VisibleMethodSourceEasyPayAlipay, want: payment.TypeEasyPay, ok: true},
@@ -587,6 +671,9 @@ func TestVisibleMethodProviderKeyForSource(t *testing.T) {
 	}
 }
 
+// TestVisibleMethodLoadBalancerUsesEnabledProviderInstance stores one official
+// Alipay instance and wraps a capture balancer. It expects the wrapper to pass
+// the resolved official provider key to inner selection.
 func TestVisibleMethodLoadBalancerUsesEnabledProviderInstance(t *testing.T) {
 	t.Parallel()
 
@@ -617,18 +704,22 @@ func TestVisibleMethodLoadBalancerUsesEnabledProviderInstance(t *testing.T) {
 	}
 }
 
+// TestVisibleMethodLoadBalancerUsesConfiguredSourceWhenMultipleProvidersEnabled
+// supplies official and EasyPay instances for each visible method with a
+// configured source. It checks the provider key passed to the capture balancer
+// for every source choice.
 func TestVisibleMethodLoadBalancerUsesConfiguredSourceWhenMultipleProvidersEnabled(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		method        payment.PaymentType
-		officialName  string
-		officialTypes string
-		easyPayName   string
-		easyPayTypes  string
-		sourceSetting string
-		wantProvider  string
+		name          string              // named balancer source case
+		method        payment.PaymentType // selected visible payment method
+		officialName  string              // official fixture display name
+		officialTypes string              // official supported method labels
+		easyPayName   string              // EasyPay fixture display name
+		easyPayTypes  string              // EasyPay supported method labels
+		sourceSetting string              // supplied provider source setting
+		wantProvider  string              // expected inner provider key
 	}{
 		{
 			name:          "alipay uses official source",
@@ -727,6 +818,9 @@ func TestVisibleMethodLoadBalancerUsesConfiguredSourceWhenMultipleProvidersEnabl
 	}
 }
 
+// TestVisibleMethodLoadBalancerPreservesLegacyCrossProviderRoutingWhenSourceMissing
+// stores two provider kinds supporting Alipay with no source choice. It
+// expects empty provider key and retained Alipay method at the inner balancer.
 func TestVisibleMethodLoadBalancerPreservesLegacyCrossProviderRoutingWhenSourceMissing(t *testing.T) {
 	t.Parallel()
 
@@ -777,14 +871,18 @@ func TestVisibleMethodLoadBalancerPreservesLegacyCrossProviderRoutingWhenSourceM
 	}
 }
 
+// TestVisibleMethodLoadBalancerRejectsInvalidSourceWhenMultipleProvidersEnabled
+// supplies Stripe as an invalid source for two WeChat provider kinds. It
+// expects the structured invalid-source reason and the fixture-specific
+// validation message.
 func TestVisibleMethodLoadBalancerRejectsInvalidSourceWhenMultipleProvidersEnabled(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		method      payment.PaymentType
-		sourceValue string
-		wantMessage string
+		name        string              // named invalid source case
+		method      payment.PaymentType // selected visible payment method
+		sourceValue string              // supplied invalid source text
+		wantMessage string              // expected structured diagnostic text
 	}{
 		{
 			name:        "invalid wxpay source",
@@ -860,6 +958,10 @@ func TestVisibleMethodLoadBalancerRejectsInvalidSourceWhenMultipleProvidersEnabl
 	}
 }
 
+// TestVisibleMethodLoadBalancerRejectsMissingEnabledVisibleMethodProvider
+// supplies an empty SQLite instance store and a capture balancer. It expects
+// visible WeChat selection to fail when no eligible provider observation
+// exists.
 func TestVisibleMethodLoadBalancerRejectsMissingEnabledVisibleMethodProvider(t *testing.T) {
 	t.Parallel()
 
@@ -872,24 +974,37 @@ func TestVisibleMethodLoadBalancerRejectsMissingEnabledVisibleMethodProvider(t *
 	}
 }
 
+// Name returns the fixture registry key as its provider display label.
 func (p webhookProviderTestDouble) Name() string { return p.key }
 
+// ProviderKey returns the fixture identity used by callback registry lookup.
 func (p webhookProviderTestDouble) ProviderKey() string { return p.key }
 
+// SupportedTypes returns the supplied method slice directly for registry
+// advertisement. Fixture owners keep that slice unchanged while it is read,
+// and this double performs no method discovery or filtering.
 func (p webhookProviderTestDouble) SupportedTypes() []payment.PaymentType { return p.types }
 
+// CreatePayment panics if checkout initiation reaches this registry identity
+// fixture unexpectedly.
 func (p webhookProviderTestDouble) CreatePayment(context.Context, payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	panic("unexpected call")
 }
 
+// QueryOrder panics if channel order querying reaches this registry identity
+// fixture unexpectedly.
 func (p webhookProviderTestDouble) QueryOrder(context.Context, string) (*payment.QueryOrderResponse, error) {
 	panic("unexpected call")
 }
 
+// VerifyNotification panics if callback verification reaches this registry
+// identity fixture unexpectedly.
 func (p webhookProviderTestDouble) VerifyNotification(context.Context, string, map[string]string) (*payment.PaymentNotification, error) {
 	panic("unexpected call")
 }
 
+// Refund panics if refund submission reaches this registry identity fixture
+// unexpectedly.
 func (p webhookProviderTestDouble) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
 	panic("unexpected call")
 }

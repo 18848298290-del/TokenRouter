@@ -19,6 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// Airwallex request fixtures replace a validated service base with a private
+// TLS loopback endpoint and its trusted client before operations run. They
+// inspect submitted decimal money, account headers and returned intent or
+// refund observations using fixed JSON responses. Callback fixtures construct
+// HMAC headers locally and check parsed identity, money and timestamp-age
+// rejection; they do not call a vendor service.
+
+// TestNewAirwallexValidatesConfig rejects an unapproved host and a country
+// label containing a digit. A valid demo fixture then reports the adapter
+// method and default currency and country settings.
 func TestNewAirwallexValidatesConfig(t *testing.T) {
 	t.Parallel()
 
@@ -52,11 +62,17 @@ func TestNewAirwallexValidatesConfig(t *testing.T) {
 	require.Equal(t, airwallexDefaultCountry, prov.config["countryCode"])
 }
 
+// TestAirwallexCreatePaymentUsesServerAmountAndStableRequestID captures one
+// loopback intent creation with numeric JSON money and authorization. It
+// checks returned checkout data and the request label calculated from that
+// single supplied order, amount and currency.
 func TestAirwallexCreatePaymentUsesServerAmountAndStableRequestID(t *testing.T) {
 	t.Parallel()
 
 	var createRequests []airwallexCreatePaymentIntentRequest
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve fixed JSON for the client parser; response Write errors are
+		// discarded and the client result supplies the asserted observation.
 		switch r.URL.Path {
 		case "/api/v1/authentication/login":
 			require.Equal(t, "cid", r.Header.Get("x-client-id"))
@@ -75,6 +91,8 @@ func TestAirwallexCreatePaymentUsesServerAmountAndStableRequestID(t *testing.T) 
 			http.NotFound(w, r)
 		}
 	}))
+	// Close the loopback listener when its fixture returns, releasing test-owned
+	// HTTP resources after the channel response assertions finish.
 	defer server.Close()
 
 	prov := mustTestAirwallexProvider(t, server)
@@ -97,11 +115,17 @@ func TestAirwallexCreatePaymentUsesServerAmountAndStableRequestID(t *testing.T) 
 	require.Equal(t, airwallexDeterministicRequestID("payment-intent", "sub2_order", "12.34", "CNY"), createRequests[0].RequestID)
 }
 
+// TestAirwallexCreatePaymentUsesConfiguredCurrency submits a lowercase HKD
+// configuration through a loopback intent fixture. It expects normalized HKD
+// in the request, response and merchant metadata, together with configured HK
+// country.
 func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 	t.Parallel()
 
 	var createRequest airwallexCreatePaymentIntentRequest
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve fixed JSON for the client parser; response Write errors are
+		// discarded and the client result supplies the asserted observation.
 		switch r.URL.Path {
 		case "/api/v1/authentication/login":
 			_, _ = w.Write([]byte(`{"token":"token-1","expires_at":"2099-01-01T00:00:00Z"}`))
@@ -114,6 +138,8 @@ func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
+	// Close the loopback listener when its fixture returns, releasing test-owned
+	// HTTP resources after the channel response assertions finish.
 	defer server.Close()
 
 	prov, err := NewAirwallex("1", map[string]string{
@@ -125,6 +151,8 @@ func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 		"countryCode":   "HK",
 	})
 	require.NoError(t, err)
+	// Replace validated endpoint and HTTP client together before requests,
+	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
 
@@ -140,11 +168,17 @@ func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 	require.Equal(t, "HKD", prov.MerchantIdentityMetadata()["currency"])
 }
 
+// TestAirwallexRequestsUseConfiguredAccountID invokes create, query, refund
+// and cancellation against one loopback service. The handlers check login and
+// operation account headers, and the test counts four operation requests and
+// account-bearing cache identity.
 func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 	t.Parallel()
 
 	paRequestCount := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve fixed JSON for the client parser; response Write errors are
+		// discarded and the client result supplies the asserted observation.
 		switch r.URL.Path {
 		case "/api/v1/authentication/login":
 			require.Equal(t, "acct_123", r.Header.Get("x-login-as"))
@@ -169,6 +203,8 @@ func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
+	// Close the loopback listener when its fixture returns, releasing test-owned
+	// HTTP resources after the channel response assertions finish.
 	defer server.Close()
 
 	prov, err := NewAirwallex("1", map[string]string{
@@ -179,6 +215,8 @@ func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 		"accountId":     "acct_123",
 	})
 	require.NoError(t, err)
+	// Replace validated endpoint and HTTP client together before requests,
+	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
 
@@ -200,6 +238,10 @@ func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 	require.Equal(t, 4, paRequestCount)
 }
 
+// TestAirwallexRefundRejectsUnsettledStatus returns received, accepted and
+// failed refund states from separate loopback fixtures. Each call returns an
+// error with a retained refund reference and the corresponding pending or
+// failed observation.
 func TestAirwallexRefundRejectsUnsettledStatus(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +250,8 @@ func TestAirwallexRefundRejectsUnsettledStatus(t *testing.T) {
 			t.Parallel()
 
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Serve fixed JSON for the client parser; response Write errors are
+				// discarded and the client result supplies the asserted observation.
 				switch r.URL.Path {
 				case "/api/v1/authentication/login":
 					_, _ = w.Write([]byte(`{"token":"token-1","expires_at":"2099-01-01T00:00:00Z"}`))
@@ -217,6 +261,8 @@ func TestAirwallexRefundRejectsUnsettledStatus(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			}))
+			// Close the loopback listener when its fixture returns, releasing
+			// test-owned HTTP resources after the channel response assertions finish.
 			defer server.Close()
 
 			prov := mustTestAirwallexProvider(t, server)
@@ -238,14 +284,22 @@ func TestAirwallexRefundRejectsUnsettledStatus(t *testing.T) {
 	}
 }
 
+// TestAirwallexAuthErrorIncludesCredentialGuidance supplies an unauthorized
+// loopback login response before checkout creation. It expects the channel
+// diagnostic plus fixed environment endpoints and account-setting guidance in
+// the returned error.
 func TestAirwallexAuthErrorIncludesCredentialGuidance(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve fixed JSON for the client parser; response Write errors are
+		// discarded and the client result supplies the asserted observation.
 		require.Equal(t, "/api/v1/authentication/login", r.URL.Path)
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"code":"credentials_invalid","details":["Access Denied"],"message":"UNAUTHORIZED","source":""}`))
 	}))
+	// Close the loopback listener when its fixture returns, releasing test-owned
+	// HTTP resources after the channel response assertions finish.
 	defer server.Close()
 
 	prov := mustTestAirwallexProvider(t, server)
@@ -261,6 +315,10 @@ func TestAirwallexAuthErrorIncludesCredentialGuidance(t *testing.T) {
 	require.ErrorContains(t, err, "Account ID")
 }
 
+// TestAirwallexVerifyNotificationRequiresValidSignatureAndCurrency signs a
+// success event containing CNY and matching account metadata. It checks
+// reported identity and money, then rejects a replaced signature; currency
+// mismatch validation is not exercised here.
 func TestAirwallexVerifyNotificationRequiresValidSignatureAndCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -274,6 +332,8 @@ func TestAirwallexVerifyNotificationRequiresValidSignatureAndCurrency(t *testing
 	require.NoError(t, err)
 
 	raw := `{"id":"evt_1","name":"payment_intent.succeeded","accountId":"acct_123","data":{"object":{"id":"int_123","merchant_order_id":"sub2_abc","amount":88.66,"currency":"CNY","status":"SUCCEEDED"}}}`
+	// Use current Unix millisecond text in both header and HMAC, so verification
+	// parses the same authenticated timestamp representation.
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	headers := signedAirwallexHeaders(raw, timestamp, "whsec")
 
@@ -292,6 +352,10 @@ func TestAirwallexVerifyNotificationRequiresValidSignatureAndCurrency(t *testing
 	require.ErrorContains(t, err, "invalid signature")
 }
 
+// TestVerifyAirwallexWebhookSignatureRejectsReplay signs fixed timestamp text
+// and evaluates it just beyond the five-minute tolerance. It asserts age
+// rejection, exercising the timestamp window rather than an event-ID replay
+// store.
 func TestVerifyAirwallexWebhookSignatureRejectsReplay(t *testing.T) {
 	t.Parallel()
 
@@ -302,10 +366,15 @@ func TestVerifyAirwallexWebhookSignatureRejectsReplay(t *testing.T) {
 	require.ErrorContains(t, err, "outside tolerance")
 }
 
+// TestAirwallexQueryOrderMapsSucceeded returns a succeeded intent from a
+// loopback query endpoint. It expects paid core status, approximate money and
+// the reported currency and channel-state metadata.
 func TestAirwallexQueryOrderMapsSucceeded(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve fixed JSON for the client parser; response Write errors are
+		// discarded and the client result supplies the asserted observation.
 		switch r.URL.Path {
 		case "/api/v1/authentication/login":
 			_, _ = w.Write([]byte(`{"token":"token-1","expires_at":"2099-01-01T00:00:00Z"}`))
@@ -315,6 +384,8 @@ func TestAirwallexQueryOrderMapsSucceeded(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
+	// Close the loopback listener when its fixture returns, releasing test-owned
+	// HTTP resources after the channel response assertions finish.
 	defer server.Close()
 
 	prov := mustTestAirwallexProvider(t, server)
@@ -326,6 +397,10 @@ func TestAirwallexQueryOrderMapsSucceeded(t *testing.T) {
 	require.Equal(t, "SUCCEEDED", resp.Metadata["status"])
 }
 
+// mustTestAirwallexProvider constructs valid demo settings, then replaces the
+// private endpoint and client with the supplied TLS fixture. It fails on
+// construction error; callers own the server lifetime and use the adapter
+// after this fixture-only replacement.
 func mustTestAirwallexProvider(t *testing.T, server *httptest.Server) *Airwallex {
 	t.Helper()
 	prov, err := NewAirwallex("1", map[string]string{
@@ -335,13 +410,21 @@ func mustTestAirwallexProvider(t *testing.T, server *httptest.Server) *Airwallex
 		"apiBase":       airwallexDemoAPIBase,
 	})
 	require.NoError(t, err)
+	// Replace validated endpoint and HTTP client together before requests,
+	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
 	return prov
 }
 
+// signedAirwallexHeaders returns a fresh timestamp/signature map using HMAC
+// over supplied timestamp text followed by raw body. It uses the secret as
+// supplied and emits lowercase hex for fixtures with already normalized
+// inputs.
 func signedAirwallexHeaders(rawBody, timestamp, secret string) map[string]string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	// Use timestamp text before body exactly as the verifier expects; the fixed
+	// HMAC Write methods have no operational errors to retain.
 	_, _ = mac.Write([]byte(timestamp))
 	_, _ = mac.Write([]byte(rawBody))
 	return map[string]string{

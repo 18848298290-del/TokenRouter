@@ -16,31 +16,61 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// A callback's merchant number can narrow candidate accounts before its
+// signature is verified, but it remains an unsigned hint. The handler passes
+// the received text and first header values to each candidate until one
+// returns no error, including a nil notification for an irrelevant verified
+// event.
+//
+// POST reading is capped at one MiB by truncation rather than an explicit
+// oversize rejection; GET query text bypasses that body reader. Verification
+// failures return 400, while provider/order processing failures generally
+// return 500. Missing provider lookup is acknowledged for non-WeChat, and a
+// missing local order is acknowledged after verification. Provider-specific
+// success bodies retain their protocol shape, and failed-verification body
+// logging truncates by bytes, which can split UTF-8.
+
+// WebhookMaxWebhookBodySize and WebhookWebhookLogTruncateLen bound received
+// POST bytes and failure diagnostics. WebhookWxpaySuccessCode and
+// WebhookWxpaySuccessMessage form the official WeChat acknowledgement payload.
 const (
-	// WebhookMaxWebhookBodySize is the maximum allowed webhook request body size (1 MB).
+	// WebhookMaxWebhookBodySize caps bytes read from POST callbacks through
+	// LimitReader; an overlong request is truncated at one MiB before provider
+	// verification.
 	WebhookMaxWebhookBodySize = 1 << 20
 
-	// WebhookWebhookLogTruncateLen is the maximum length of raw body logged on verify failure.
+	// WebhookWebhookLogTruncateLen caps raw failure-body diagnostics by byte
+	// prefix before the truncation suffix is appended.
 	WebhookWebhookLogTruncateLen = 200
 
-	// WeChat Pay webhook success response constants.
-	WebhookWxpaySuccessCode    = "SUCCESS"
-	WebhookWxpaySuccessMessage = "成功"
+	// WebhookWxpaySuccessCode and WebhookWxpaySuccessMessage are the literal
+	// code/message written by the official WeChat success response. Each belongs
+	// to that acknowledgement rather than order status.
+	WebhookWxpaySuccessCode    = "SUCCESS" // protocol success code
+	WebhookWxpaySuccessMessage = "成功"      // protocol success message
 )
 
-// PaymentWebhookHandler handles payment provider webhook callbacks.
+// PaymentWebhookHandler adapts public provider callbacks into verified payment
+// notification handling.
 type PaymentWebhookHandler struct {
-	paymentService *payment.Runtime
-	registry       *payment.Registry
+	paymentService *payment.Runtime // candidate and fulfillment runtime
+	// registry retains the constructor's provider table reference. Callback
+	// candidate resolution currently uses paymentService.GetWebhookProviders and
+	// its ProviderBindings registry instead of reading this field.
+	registry *payment.Registry
 }
 
-// WebhookWxpaySuccessResponse is the JSON response expected by WeChat Pay webhook.
+// WebhookWxpaySuccessResponse is the official WeChat callback success
+// acknowledgement JSON shape.
 type WebhookWxpaySuccessResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string `json:"code"`    // protocol acknowledgement code
+	Message string `json:"message"` // protocol acknowledgement message
 }
 
-// NewPaymentWebhookHandler creates a new PaymentWebhookHandler.
+// NewPaymentWebhookHandler binds the payment runtime and retains the supplied
+// registry reference for the HTTP adapter. Candidate and notification
+// operations require the runtime; callback handlers delegate account selection
+// to its ProviderBindings.
 func NewPaymentWebhookHandler(paymentService *payment.Runtime, registry *payment.Registry) *PaymentWebhookHandler {
 	return &PaymentWebhookHandler{
 		paymentService: paymentService,
@@ -48,43 +78,68 @@ func NewPaymentWebhookHandler(paymentService *payment.Runtime, registry *payment
 	}
 }
 
-// EasyPayNotify handles EasyPay payment notifications.
-// POST /api/v1/payment/webhook/easypay
+// EasyPayNotify passes EasyPay GET query or POST form text to common callback
+// handling. The selected provider verifies its signed notification before
+// order processing, and success uses the plain-text acknowledgement.
 func (h *PaymentWebhookHandler) EasyPayNotify(c *gin.Context) {
 	h.handleNotify(c, payment.TypeEasyPay)
 }
 
-// AlipayNotify handles Alipay payment notifications.
-// POST /api/v1/payment/webhook/alipay
+// AlipayNotify delegates the official Alipay callback to common body reading
+// and candidate verification. Verified notification handling follows before
+// its plain-text success acknowledgement; errors retain the shared status
+// policy.
 func (h *PaymentWebhookHandler) AlipayNotify(c *gin.Context) {
 	h.handleNotify(c, payment.TypeAlipay)
 }
 
-// WxpayNotify handles WeChat Pay payment notifications.
-// POST /api/v1/payment/webhook/wxpay
+// WxpayNotify delegates official WeChat signed/encrypted callbacks to common
+// candidate verification. Account candidates perform verification/decryption
+// before notification handling, and accepted callbacks receive the protocol
+// code/message acknowledgement.
 func (h *PaymentWebhookHandler) WxpayNotify(c *gin.Context) {
 	h.handleNotify(c, payment.TypeWxpay)
 }
 
-// StripeWebhook handles Stripe webhook events.
-// POST /api/v1/payment/webhook/stripe
+// StripeWebhook delegates Stripe events to common candidate verification and
+// notification handling. A verified irrelevant event can yield nil
+// notification and still receive an empty successful response without order
+// processing.
 func (h *PaymentWebhookHandler) StripeWebhook(c *gin.Context) {
 	h.handleNotify(c, payment.TypeStripe)
 }
 
-// AirwallexWebhook handles Airwallex webhook events.
-// POST /api/v1/payment/webhook/airwallex
+// AirwallexWebhook delegates Airwallex signed events to common callback
+// handling. Candidate verification precedes order processing, and accepted or
+// irrelevant events receive an empty successful response under the shared
+// policy.
 func (h *PaymentWebhookHandler) AirwallexWebhook(c *gin.Context) {
 	h.handleNotify(c, payment.TypeAirwallex)
 }
 
-// handleNotify is the shared logic for all provider webhook handlers.
+// handleNotify reads callback text, resolves candidate providers, and
+// processes the first accepted notification before its provider-specific
+// acknowledgement. POST uses a one-MiB LimitReader and GET uses raw query
+// text; a read error returns bad request.
+//
+// Merchant extraction is an unsigned account hint. Candidate verification
+// receives lowercased header names with each first value, and the first nil
+// error wins even for an irrelevant nil notification. A missing provider is
+// acknowledged except official WeChat; other lookup failures return 500.
+// Failed verification returns 400 after bounded diagnostics. Verified missing
+// orders are acknowledged, while other notification-processing failures return
+// 500 for provider retry.
 func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string) {
 	var rawBody string
 	if c.Request.Method == http.MethodGet {
-		// GET callbacks (e.g. EasyPay) pass params as URL query string
+		// EasyPay GET compatibility carries its signed form fields in the raw query.
+		// Keep that received encoding for verification; this path does not use the
+		// POST byte cap.
 		rawBody = c.Request.URL.RawQuery
 	} else {
+		// Read at most the configured POST bytes before verification. LimitReader
+		// truncates an overlong body rather than reporting overflow, so the provider
+		// validates the resulting received prefix.
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, WebhookMaxWebhookBodySize))
 		if err != nil {
 			slog.Error("[Payment Webhook] failed to read body", "provider", providerKey, "error", err)
@@ -94,13 +149,17 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 		rawBody = string(body)
 	}
 
-	// Extract out_trade_no to look up the order's specific provider instance.
-	// This is needed when multiple instances of the same provider exist (e.g. multiple EasyPay accounts).
+	// Use the unsigned merchant hint to narrow candidate account configuration
+	// before verification. The provider's accepted notification still determines
+	// order identity and saved-merchant validation during handling.
 	outTradeNo := WebhookExtractOutTradeNo(rawBody, providerKey)
 
 	providers, err := h.paymentService.GetWebhookProviders(c.Request.Context(), providerKey, outTradeNo)
 	if err != nil {
 		slog.Warn("[Payment Webhook] provider not found", "provider", providerKey, "outTradeNo", outTradeNo, "error", err)
+		// Only classified missing-provider lookup reaches acknowledgement handling.
+		// Other lookup failures stay retryable server errors; official WeChat
+		// missing-account handling still returns verification failure.
 		if !WebhookShouldAcknowledgeWebhookProviderLookupError(err) {
 			c.String(http.StatusInternalServerError, "provider lookup failed")
 			return
@@ -113,6 +172,9 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 		return
 	}
 
+	// Normalize header names for adapter lookups while retaining each first HTTP
+	// value. Provider signature checks receive this shared map together with the
+	// exact received body text.
 	headers := make(map[string]string)
 	for k := range c.Request.Header {
 		headers[strings.ToLower(k)] = c.GetHeader(k)
@@ -121,6 +183,9 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 	resolvedProviderKey, notification, err := WebhookVerifyNotificationWithProviders(c.Request.Context(), providers, rawBody, headers)
 	if err != nil {
 		truncatedBody := rawBody
+		// Limit failure diagnostics to a byte prefix plus suffix. This bounds logged
+		// payload length but can split a UTF-8 character and does not redact signed
+		// field values.
 		if len(truncatedBody) > WebhookWebhookLogTruncateLen {
 			truncatedBody = truncatedBody[:WebhookWebhookLogTruncateLen] + "...(truncated)"
 		}
@@ -130,14 +195,18 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 		return
 	}
 
-	// nil notification means irrelevant event (e.g. Stripe non-payment event); return success.
+	// The accepted candidate can classify the event as irrelevant. Acknowledge
+	// that nil notification immediately so it does not enter order handling or
+	// cause later account trials.
 	if notification == nil {
 		WebhookWriteSuccessResponse(c, resolvedProviderKey)
 		return
 	}
 
 	if err := h.paymentService.HandlePaymentNotification(c.Request.Context(), notification, resolvedProviderKey); err != nil {
-		// Acknowledge missing local orders to stop retries for callbacks that cannot be fulfilled.
+		// A verified notification can name no local order. Acknowledge that
+		// classified absence so retries do not repeatedly request fulfillment for an
+		// order this runtime cannot read.
 		if errors.Is(err, payment.ErrOrderNotFound) {
 			slog.Warn("[Payment Webhook] unknown order, acking to stop retries",
 				"provider", resolvedProviderKey,
@@ -155,12 +224,24 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 	WebhookWriteSuccessResponse(c, resolvedProviderKey)
 }
 
+// WebhookShouldAcknowledgeWebhookProviderLookupError reports whether the
+// lookup error wraps ErrProviderNotFound. Shared callback handling uses that
+// classification before its provider-specific missing-account acknowledgement
+// policy; other errors remain server failures.
 func WebhookShouldAcknowledgeWebhookProviderLookupError(err error) bool {
 	return errors.Is(err, payment.ErrProviderNotFound)
 }
 
-// WebhookExtractOutTradeNo parses the webhook body to find the out_trade_no.
-// This allows looking up the correct provider instance before verification.
+// WebhookExtractOutTradeNo extracts an unsigned merchant hint from supported
+// form or JSON representations. Parse failure and providers such as encrypted
+// official WeChat return empty text, so candidate verification must establish
+// the notification's identity.
+//
+// EasyPay/Alipay read out_trade_no, Stripe reads object metadata orderId, and
+// Airwallex reads its nested merchant_order_id. These representations select
+// candidate accounts before authentication; no returned value authorizes
+// fulfillment on its own. Trimming is applied to the JSON hints, while form
+// extraction returns the parsed first value.
 func WebhookExtractOutTradeNo(rawBody, providerKey string) string {
 	switch providerKey {
 	case payment.TypeEasyPay, payment.TypeAlipay:
@@ -174,32 +255,57 @@ func WebhookExtractOutTradeNo(rawBody, providerKey string) string {
 		var payload struct {
 			Data struct {
 				Object struct {
+					// MerchantOrderID is an unsigned nested order hint for selecting
+					// candidate accounts. Signature verification remains required before this
+					// event can affect a persisted order.
 					MerchantOrderID string `json:"merchant_order_id"`
-				} `json:"object"`
-			} `json:"data"`
+				} `json:"object"` // unsigned Airwallex object
+			} `json:"data"` // unsigned Airwallex envelope
 		}
 		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
 			return strings.TrimSpace(payload.Data.Object.MerchantOrderID)
 		}
 	}
-	// Other direct providers require candidate verification because the order number cannot be reliably extracted here.
+	// Absent or unreadable supported hints leave candidate verification
+	// responsible for account selection. Encrypted official WeChat callbacks
+	// reveal their order number only through an accepted provider decryptor.
 	return ""
 }
 
+// WebhookExtractStripeOutTradeNo reads trimmed orderId metadata from an
+// unsigned Stripe event object. Malformed JSON or absent metadata returns
+// empty, leaving provider candidate discovery to continue before signature
+// verification.
 func WebhookExtractStripeOutTradeNo(rawBody string) string {
 	var payload struct {
 		Data struct {
 			Object struct {
+				// Metadata holds unsigned Stripe object fields used only as candidate
+				// hints here. The provider verifier authenticates the event before its
+				// notification metadata reaches payment handling.
 				Metadata map[string]string `json:"metadata"`
-			} `json:"object"`
-		} `json:"data"`
+			} `json:"object"` // unsigned Stripe object
+		} `json:"data"` // unsigned Stripe envelope
 	}
+	// Unreadable unsigned event JSON supplies no merchant hint. Return empty so
+	// candidate discovery continues; signature verification remains the authority
+	// for accepting a later parsed notification.
 	if err := json.Unmarshal([]byte(rawBody), &payload); err != nil {
 		return ""
 	}
 	return strings.TrimSpace(payload.Data.Object.Metadata["orderId"])
 }
 
+// WebhookVerifyNotificationWithProviders tries nonnil candidates in supplied
+// order and returns the first nil-error result with that provider key. It does
+// not require a nonnil notification: an accepted irrelevant event stops later
+// candidate trials.
+//
+// Each candidate receives the same raw text and headers, and failed attempts
+// retain their last error for an all-failed result. An empty/all-nil candidate
+// list returns a separate verification error. HTTP handling then uses the
+// resolved key for acknowledgement and notification validation, so ordering
+// can determine which merchant accepts an event.
 func WebhookVerifyNotificationWithProviders(ctx context.Context, providers []payment.Provider, rawBody string, headers map[string]string) (string, *payment.PaymentNotification, error) {
 	var lastErr error
 	for _, provider := range providers {
@@ -207,6 +313,9 @@ func WebhookVerifyNotificationWithProviders(ctx context.Context, providers []pay
 			continue
 		}
 		notification, err := provider.VerifyNotification(ctx, rawBody, headers)
+		// A failed account verification can leave another candidate usable. Continue
+		// in supplied order and retain the last error only if no later candidate
+		// accepts the event.
 		if err != nil {
 			lastErr = err
 			continue
@@ -219,10 +328,14 @@ func WebhookVerifyNotificationWithProviders(ctx context.Context, providers []pay
 	return "", nil, fmt.Errorf("no webhook provider could verify notification")
 }
 
-// WebhookWriteSuccessResponse writes the acknowledgement required by each provider.
-// WeChat Pay expects WebhookWxpaySuccessResponse with its protocol success message.
-// Stripe and Airwallex accept an empty 200 response; other providers accept plain-text "success".
+// WebhookWriteSuccessResponse writes the accepted callback acknowledgement for
+// the resolved provider key. Official WeChat receives code/message JSON;
+// Stripe/Airwallex receive empty 200 text, and other providers receive
+// plain-text success according to their callback protocol.
 func WebhookWriteSuccessResponse(c *gin.Context, providerKey string) {
+	// Write the resolved adapter's expected acknowledgement shape after
+	// acceptance so its retry policy sees protocol success. WeChat uses
+	// code/message JSON while hosted/form adapters use their response text.
 	switch providerKey {
 	case payment.TypeWxpay:
 		c.JSON(http.StatusOK, WebhookWxpaySuccessResponse{Code: WebhookWxpaySuccessCode, Message: WebhookWxpaySuccessMessage})

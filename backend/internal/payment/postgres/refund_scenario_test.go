@@ -1,7 +1,5 @@
 package postgres_test
 
-// These scenarios cover refund preparation, workflow, helpers, amount rules, and provider bindings, with persistence through refund.go, instances.go, and management.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,22 +21,61 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
-// refundBalanceFixture supplies deduction and compensation callbacks; RefundStore owns orders and transactions.
+// Refund recovery combines stored order state with prepared or pending audit
+// data before channel observations can finalize local results. SQLite
+// scenarios exercise identity refusal, recorded deduction quantities, pending
+// compensation, success/failure classification and rejection of a stale second
+// finalization.
+//
+// Balance fixtures normally report quantities through callbacks, so those
+// counters and receipt fields do not prove a wallet mutation. One failure
+// fixture instead updates the user through the transaction in context and then
+// returns an error, allowing persisted balance and order rollback to be
+// asserted. Preparation helpers write row metadata and audit records
+// separately and apply no rights themselves. Provider doubles return local
+// observations or empty no-op results, keeping the scenarios limited to
+// workflow and SQLite persistence rather than PostgreSQL locking or remote
+// refund execution.
+
+// refundBalanceFixture supplies selected balance callbacks while RefundStore
+// owns order and audit transactions.
 type refundBalanceFixture struct {
+	// RefundRights supplies unoverridden methods; balance-only fixtures leave
+	// this embedded interface unset, and invoking one of its promoted methods
+	// would panic.
 	payment.RefundRights
-	user                  *payment.RefundUser
-	updateBalanceFn       func(context.Context, int64, float64) error
-	deductBalanceFn       func(context.Context, int64, float64) error
+	// user is returned directly by the runtime lookup; a nil field yields a fresh
+	// zero-valued user when the fixture itself exists.
+	user *payment.RefundUser
+	// updateBalanceFn handles compensation when supplied; an absent callback
+	// reports success without changing wallet storage in this fixture.
+	updateBalanceFn func(context.Context, int64, float64) error
+	// deductBalanceFn runs only when deductBalanceResultFn is absent and reports
+	// zero deducted quantity with its returned error.
+	deductBalanceFn func(context.Context, int64, float64) error
+	// deductBalanceResultFn has first deduction precedence and returns its
+	// supplied quantity and error, including callbacks that use TxFromContext for
+	// actual SQLite mutation.
 	deductBalanceResultFn func(context.Context, int64, float64) (float64, error)
 }
 
+// refundProviderTestDouble advertises Stripe while returning empty successful
+// no-op results for base channel operations.
 type refundProviderTestDouble struct{}
 
+// refundQueryProviderTestDouble adds a supplied refund-status observation to
+// the no-op Stripe fixture.
 type refundQueryProviderTestDouble struct {
-	refundProviderTestDouble
+	refundProviderTestDouble // embedded base channel fixture
+	// refundResponse is returned directly by QueryRefund; callers retain the
+	// supplied pointer and keep it stable during synchronous workflow reads.
 	refundResponse *payment.RefundResponse
 }
 
+// TestValidateRefundRequestRejectsLegacyGuessedProviderInstance stores a
+// completed unpinned Alipay order and an otherwise refund-enabled instance. It
+// expects USER_REFUND_DISABLED because user refund validation requires
+// historical binding rather than a guessed compatible row.
 func TestValidateRefundRequestRejectsLegacyGuessedProviderInstance(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -88,6 +125,10 @@ func TestValidateRefundRequestRejectsLegacyGuessedProviderInstance(t *testing.T)
 	require.Equal(t, "USER_REFUND_DISABLED", apperror.Reason(err))
 }
 
+// TestPrepareRefundRejectsLegacyGuessedProviderInstance stores a completed
+// unpinned order with a compatible refund-enabled Alipay instance. It expects
+// administrator preparation to return no plan or result and the
+// REFUND_DISABLED reason.
 func TestPrepareRefundRejectsLegacyGuessedProviderInstance(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -139,13 +180,17 @@ func TestPrepareRefundRejectsLegacyGuessedProviderInstance(t *testing.T) {
 	require.Equal(t, "REFUND_DISABLED", apperror.Reason(err))
 }
 
+// TestPrepDeductBalanceRequiresForceWhenBalanceIsInsufficient compares
+// insufficient, forced, negative and exactly sufficient user balances. It
+// checks the force warning or planned available deduction, without performing
+// a wallet write in these planning cases.
 func TestPrepDeductBalanceRequiresForceWhenBalanceIsInsufficient(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		balance     float64
-		force       bool
-		wantDeduct  float64
-		wantWarning bool
+		name        string  // named balance planning case
+		balance     float64 // supplied available balance points
+		force       bool    // supplied force deduction choice
+		wantDeduct  float64 // expected planned deduction points
+		wantWarning bool    // expected force warning flag
 	}{
 		{name: "insufficient balance", balance: 40, wantWarning: true},
 		{name: "forced insufficient balance", balance: 40, force: true, wantDeduct: 40},
@@ -176,6 +221,10 @@ func TestPrepDeductBalanceRequiresForceWhenBalanceIsInsufficient(t *testing.T) {
 	}
 }
 
+// TestExecuteRefundUsesActualAvailableBalanceDeduction supplies a callback
+// reporting twenty-five from a planned hundred-point deduction and an order
+// with empty channel reference. It expects that reported quantity in plan,
+// result and success audit for local-only refund completion.
 func TestExecuteRefundUsesActualAvailableBalanceDeduction(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -227,6 +276,10 @@ func TestExecuteRefundUsesActualAvailableBalanceDeduction(t *testing.T) {
 	require.Contains(t, audit.Detail, `"balanceDeducted":25`)
 }
 
+// TestGwRefundRejectsAlipayMerchantIdentitySnapshotMismatch binds an Alipay
+// instance whose current app identity differs from the saved snapshot. It
+// expects identity validation to fail before refund submission can use those
+// credentials.
 func TestGwRefundRejectsAlipayMerchantIdentitySnapshotMismatch(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -248,6 +301,8 @@ func TestGwRefundRejectsAlipayMerchantIdentitySnapshotMismatch(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
+	// Encode the numeric instance identity as the decimal text shared by the
+	// order pin and its merchant snapshot.
 	instID := strconv.FormatInt(inst.ID, 10)
 	order, err := client.PaymentOrder.Create().
 		SetUserID(user.ID).
@@ -289,12 +344,21 @@ func TestGwRefundRejectsAlipayMerchantIdentitySnapshotMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "alipay app_id mismatch")
 }
 
+// TestCalculateGatewayRefundAmountUsesCurrencyPrecision supplies proportional
+// and full KWD refunds plus a JPY proportional amount. It expects
+// three-decimal KWD and whole-unit JPY rounding within the stated numeric
+// tolerance.
 func TestCalculateGatewayRefundAmountUsesCurrencyPrecision(t *testing.T) {
+	// Use a tight floating tolerance for currency-rounded gateway amount
+	// assertions.
 	require.InDelta(t, 6.173, payment.CalculateGatewayRefundAmount(100, 12.345, 50, "KWD"), 1e-12)
 	require.InDelta(t, 12.345, payment.CalculateGatewayRefundAmount(100, 12.345, 100, "KWD"), 1e-12)
 	require.InDelta(t, 52, payment.CalculateGatewayRefundAmount(100, 103, 50, "JPY"), 1e-12)
 }
 
+// TestFormatGatewayRefundAmountUsesOrderCurrency supplies KWD in the saved
+// order provider snapshot and a three-decimal amount. It expects formatted
+// gateway money to retain that currency-specific precision.
 func TestFormatGatewayRefundAmountUsesOrderCurrency(t *testing.T) {
 	order := &payment.Order{
 		ProviderSnapshot: map[string]any{
@@ -305,6 +369,9 @@ func TestFormatGatewayRefundAmountUsesOrderCurrency(t *testing.T) {
 	require.Equal(t, "12.345", payment.FormatGatewayRefundAmount(12.345, order))
 }
 
+// TestValidateRefundProviderResponseAcceptsPending compares pending, success,
+// failure and nil channel responses. It accepts progress or success and
+// rejects the failed or absent observations before workflow finalization.
 func TestValidateRefundProviderResponseAcceptsPending(t *testing.T) {
 	require.NoError(t, payment.ValidateRefundProviderResponse(&payment.RefundResponse{Status: payment.ProviderStatusPending}))
 	require.NoError(t, payment.ValidateRefundProviderResponse(&payment.RefundResponse{Status: payment.ProviderStatusSuccess}))
@@ -312,6 +379,10 @@ func TestValidateRefundProviderResponseAcceptsPending(t *testing.T) {
 	require.Error(t, payment.ValidateRefundProviderResponse(nil))
 }
 
+// TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction seeds
+// preparation and supplies a pending channel response with a compensation
+// counter. It expects recorded compensation, cleared plan quantity, pending
+// local state and one pending audit with no success audit.
 func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -392,6 +463,10 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 	require.Zero(t, successAudits)
 }
 
+// TestFinishRefundSuccessStatusesFinalize seeds prepared receipt quantities
+// and supplies success or refunded channel status. It expects refunded order
+// state, completion time, the recorded deduction result and one success audit
+// for each fixture.
 func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 	for _, status := range []string{payment.ProviderStatusSuccess, payment.ProviderStatusRefunded} {
 		t.Run(status, func(t *testing.T) {
@@ -463,15 +538,19 @@ func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 	}
 }
 
+// TestQueryAndFinalizeRefundFinalizesProviderStatuses supplies success, failed
+// or pending query observations with callback-reported available balance. It
+// checks resulting local state and deduction counters, including reduced
+// successful quantity retained in the result and audit.
 func TestQueryAndFinalizeRefundFinalizesProviderStatuses(t *testing.T) {
 	var selectedProvider payment.Provider
 
 	for _, tc := range []struct {
-		name       string
-		status     string
-		wantStatus string
-		wantDeduct float64
-		available  float64
+		name       string  // named queried refund case
+		status     string  // supplied channel refund status
+		wantStatus string  // expected persisted order state
+		wantDeduct float64 // expected recorded deduction points
+		available  float64 // callback-reported available balance points
 	}{
 		{name: "success", status: payment.ProviderStatusSuccess, wantStatus: payment.OrderStatusRefunded, wantDeduct: 100, available: 100},
 		{name: "success clamps current balance", status: payment.ProviderStatusSuccess, wantStatus: payment.OrderStatusRefunded, wantDeduct: 35, available: 35},
@@ -513,6 +592,10 @@ func TestQueryAndFinalizeRefundFinalizesProviderStatuses(t *testing.T) {
 	}
 }
 
+// TestFinalizePendingRefundSuccessRejectsStaleCallerBeforeSecondDeduction
+// submits the same saved pending observations twice sequentially. It expects
+// the first success, second conflict and one deduction callback and success
+// audit, with transaction context present during deduction.
 func TestFinalizePendingRefundSuccessRejectsStaleCallerBeforeSecondDeduction(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -543,6 +626,10 @@ func TestFinalizePendingRefundSuccessRejectsStaleCallerBeforeSecondDeduction(t *
 	require.Equal(t, 1, successAudits)
 }
 
+// TestFinalizePendingRefundSuccessRollsBackPostDeductionFailure updates SQLite
+// wallet balance through TxFromContext and then injects a callback error. It
+// expects the original persisted balance, pending order state and absence of a
+// success audit after rollback.
 func TestFinalizePendingRefundSuccessRollsBackPostDeductionFailure(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -554,6 +641,8 @@ func TestFinalizePendingRefundSuccessRollsBackPostDeductionFailure(t *testing.T)
 	svc := newRefundWorkflowFixture(client, &refundBalanceFixture{deductBalanceResultFn: func(ctx context.Context, id int64, amount float64) (float64, error) {
 		tx := dbent.TxFromContext(ctx)
 		require.NotNil(t, tx)
+		// Mutate balance through the same transaction carried by finalization, then
+		// fail the callback so persisted rollback can be observed.
 		if _, updateErr := tx.Client().User.UpdateOneID(id).AddBalance(-amount).Save(ctx); updateErr != nil {
 			return 0, updateErr
 		}
@@ -577,6 +666,10 @@ func TestFinalizePendingRefundSuccessRollsBackPostDeductionFailure(t *testing.T)
 	require.Zero(t, successAudits)
 }
 
+// TestQueryAndFinalizeRefundPreservesNoDeductionChoice seeds pending audit
+// data with explicit false deduction intent and returns channel success. It
+// expects refunded state and zero amount accumulated by the deduction
+// callback.
 func TestQueryAndFinalizeRefundPreservesNoDeductionChoice(t *testing.T) {
 	var selectedProvider payment.Provider
 
@@ -602,6 +695,9 @@ func TestQueryAndFinalizeRefundPreservesNoDeductionChoice(t *testing.T) {
 	require.Equal(t, payment.OrderStatusRefunded, reloaded.Status)
 }
 
+// TestQueryAndFinalizeRefundUnsupportedProviderReturnsClearError supplies a
+// base provider double without refund-query capability for a pending order. It
+// expects no result and the structured REFUND_QUERY_UNSUPPORTED reason.
 func TestQueryAndFinalizeRefundUnsupportedProviderReturnsClearError(t *testing.T) {
 	var selectedProvider payment.Provider
 
@@ -617,6 +713,10 @@ func TestQueryAndFinalizeRefundUnsupportedProviderReturnsClearError(t *testing.T
 	require.Equal(t, "REFUND_QUERY_UNSUPPORTED", apperror.Reason(err))
 }
 
+// DeductBalance prefers the quantity-returning callback, then the error-only
+// callback with zero quantity, then reports the requested amount. Callers
+// receive these fixture observations as supplied; wallet mutation occurs only
+// when the selected callback implements it.
 func (f *refundBalanceFixture) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	if f.deductBalanceResultFn != nil {
 		return f.deductBalanceResultFn(ctx, id, amount)
@@ -627,6 +727,10 @@ func (f *refundBalanceFixture) DeductBalance(ctx context.Context, id int64, amou
 	return amount, nil
 }
 
+// CompensateBalance invokes the supplied balance-update callback or reports
+// nil when it is absent. The default records no wallet change, so compensation
+// tests install a counter or transaction-aware implementation when that
+// observation matters.
 func (f *refundBalanceFixture) CompensateBalance(ctx context.Context, id int64, amount float64) error {
 	if f.updateBalanceFn != nil {
 		return f.updateBalanceFn(ctx, id, amount)
@@ -634,6 +738,16 @@ func (f *refundBalanceFixture) CompensateBalance(ctx context.Context, id int64, 
 	return nil
 }
 
+// newRefundWorkflowFixture assembles SQLite order/audit storage, historical
+// bindings and the supplied balance callbacks for workflow tests. An absent
+// provider factory uses the adapter constructor, while the rights factory
+// returns the same balances object for each transaction.
+//
+// Callbacks participate in the order transaction when they use its
+// TxFromContext; assembly itself does not attach arbitrary callback writes to
+// Ent transactions. User lookup returns its supplied pointer or a zero user. A
+// nil balances pointer is suitable only for paths that never invoke user
+// lookup or balance rights, because those methods dereference it.
 func newRefundWorkflowFixture(client *dbent.Client, balances *refundBalanceFixture, balancer payment.LoadBalancer, factory func(string, string, map[string]string) (payment.Provider, error)) *payment.RefundWorkflow {
 	if factory == nil {
 		factory = paymentadapter.CreateProvider
@@ -652,7 +766,10 @@ func newRefundWorkflowFixture(client *dbent.Client, balances *refundBalanceFixtu
 	})
 }
 
-// preparedReceiptForTest reads committed preparation through RefundRecovery.
+// preparedReceiptForTest reads an order and its preparation receipt through
+// RefundRecovery, failing the test on either read error. Fixtures call it
+// after preparation metadata and audit are saved to use the persisted
+// operation version.
 func preparedReceiptForTest(t *testing.T, ctx context.Context, client *dbent.Client, id int64) *payment.RefundReceipt {
 	t.Helper()
 	store := paymentpostgres.NewRefundStore(client, nil)
@@ -663,6 +780,10 @@ func preparedReceiptForTest(t *testing.T, ctx context.Context, client *dbent.Cli
 	return receipt
 }
 
+// pendingDetailForTest reads the stored pending audit description through
+// RefundStore and fails the test on retrieval error. Finalization cases use
+// that observation with the saved order snapshot to construct their expected
+// operation.
 func pendingDetailForTest(t *testing.T, ctx context.Context, client *dbent.Client, id int64) payment.RefundPendingDetail {
 	t.Helper()
 	detail, err := paymentpostgres.NewRefundStore(client, nil).PendingDetail(ctx, id)
@@ -670,9 +791,22 @@ func pendingDetailForTest(t *testing.T, ctx context.Context, client *dbent.Clien
 	return detail
 }
 
+// createPendingRefundOrderForTest saves a user, Stripe instance, pending order
+// and legacy pending audit as separate SQLite fixture writes. The suffix
+// supplies their identity labels, and deductBalance is serialized even when
+// false so recovery can retain that choice.
+//
+// The audit records a hundred-point reported deduction with its rollback flag
+// set true, while this helper performs no wallet deduction. Its stored refund
+// reference drives local query fixtures. Every save failure fails the test,
+// and the completed fixture can then be read by recovery; setup does not
+// establish a single transaction spanning these independent writes.
 func createPendingRefundOrderForTest(t *testing.T, ctx context.Context, client *dbent.Client, suffix string, deductBalance bool) *dbent.PaymentOrder {
 	t.Helper()
 
+	// Save prerequisite user and instance before the pending order and audit;
+	// these fixture writes remain individually committed if a later setup step
+	// fails.
 	user, err := client.User.Create().
 		SetEmail(suffix + "@example.com").
 		SetPasswordHash("hash").
@@ -723,39 +857,70 @@ func createPendingRefundOrderForTest(t *testing.T, ctx context.Context, client *
 	return order
 }
 
+// Name returns the fixed display label for this refund fixture provider.
 func (refundProviderTestDouble) Name() string { return "refund-test" }
 
+// ProviderKey returns Stripe identity for the refund binding fixture.
 func (refundProviderTestDouble) ProviderKey() string {
 	return payment.TypeStripe
 }
 
+// SupportedTypes returns a fresh single-method list for this Stripe fixture
+// provider.
 func (refundProviderTestDouble) SupportedTypes() []payment.PaymentType {
 	return []payment.PaymentType{payment.TypeStripe}
 }
 
+// CreatePayment returns nil result and nil error as an unused checkout
+// interface stub. Its success-shaped return performs no channel work, and
+// these fixtures inspect refund-query capability separately.
 func (refundProviderTestDouble) CreatePayment(context.Context, payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	return nil, nil
 }
 
+// QueryOrder returns nil result and nil error as an unused order query
+// interface stub. Its success-shaped return performs no channel work, and
+// these fixtures inspect refund-query capability separately.
 func (refundProviderTestDouble) QueryOrder(context.Context, string) (*payment.QueryOrderResponse, error) {
 	return nil, nil
 }
 
+// VerifyNotification returns nil result and nil error as an unused
+// notification interface stub. Its success-shaped return performs no channel
+// work, and these fixtures inspect refund-query capability separately.
 func (refundProviderTestDouble) VerifyNotification(context.Context, string, map[string]string) (*payment.PaymentNotification, error) {
 	return nil, nil
 }
 
+// Refund returns nil result and nil error as an unused refund interface stub.
+// Its success-shaped return performs no channel work, and these fixtures
+// inspect refund-query capability separately.
 func (refundProviderTestDouble) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
 	return nil, nil
 }
 
+// QueryRefund returns the configured response pointer and nil error for
+// synchronous workflow recovery. The caller retains ownership of that fixture
+// response, and the double adds no copying or channel lookup.
 func (p *refundQueryProviderTestDouble) QueryRefund(context.Context, payment.RefundQueryRequest) (*payment.RefundResponse, error) {
 	return p.refundResponse, nil
 }
 
-// recordPreparedRefundForTest commits preparation for refund completion and compensation tests.
+// recordPreparedRefundForTest writes refund amount, reason and force fields,
+// rereads UpdatedAt and saves a version-one preparation receipt audit. These
+// are separate SQLite writes rather than the production preparation
+// transaction, and the helper fails the test on write, read or JSON errors.
+//
+// The receipt copies the supplied plan quantities and uses the saved row
+// timestamp as OperationVersion for FinishRefund association. It declares
+// completed as PreviousStatus and a fixed fixture OperationID. No entitlement
+// deduction runs here, so quantities assert later receipt handling without
+// proving that the fixture already changed a wallet or subscription.
 func recordPreparedRefundForTest(t *testing.T, ctx context.Context, client *dbent.Client, p *payment.RefundPlan) {
 	t.Helper()
+	// Save refund fields before rereading the operation timestamp and serializing
+	// its receipt, so later completion compares against this persisted row
+	// observation.
 	_, err := client.PaymentOrder.UpdateOneID(p.OrderID).SetRefundAmount(p.RefundAmount).SetRefundReason(p.Reason).SetForceRefund(p.Force).Save(ctx)
 	require.NoError(t, err)
 	o, err := client.PaymentOrder.Get(ctx, p.OrderID)
@@ -763,6 +928,8 @@ func recordPreparedRefundForTest(t *testing.T, ctx context.Context, client *dben
 	receipt := payment.RefundReceipt{Version: 1, OperationID: "fixture-prepared", OrderID: p.OrderID, OperationVersion: o.UpdatedAt, PreviousStatus: payment.OrderStatusCompleted, RefundAmount: p.RefundAmount, GatewayAmount: p.GatewayAmount, Reason: p.Reason, Force: p.Force, RefundPendingDetail: payment.RefundPendingDetail{DeductBalance: p.DeductBalance, DeductionType: p.DeductionType, BalanceDeducted: p.BalanceToDeduct, SubDaysDeducted: p.SubDaysToDeduct, SubscriptionID: p.SubscriptionID}}
 	data, err := json.Marshal(receipt)
 	require.NoError(t, err)
+	// Save the receipt after the separate order write; this fixture records
+	// preparation metadata but has not executed any entitlement deduction.
 	_, err = client.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(p.OrderID, 10)).SetAction("REFUND_PREPARED").SetOperator("admin").SetDetail(string(data)).Save(ctx)
 	require.NoError(t, err)
 }

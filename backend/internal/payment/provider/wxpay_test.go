@@ -21,10 +21,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// generateTestKeyPair returns a fresh RSA 2048 key pair as PEM strings.
-// The wechatpay-go SDK expects PKCS8 private keys and PKIX public keys.
+// WeChat prepay selection uses OpenID before mobile H5 or desktop native mode,
+// and H5 authorization failure propagates without selecting native prepay.
+// Synchronous injected SDK operations inspect those choices and the returned
+// browser or invocation payload, restoring globals through Cleanup. Parallel
+// pure fixtures check state mapping, metadata, PEM text, app identity and
+// eager constructor parsing using generated local RSA keys.
+
+// generateTestKeyPair returns freshly generated 2048-bit RSA keys encoded as
+// PKCS8 private and PKIX public PEM strings. It fails the test on generation
+// or encoding errors; constructor fixtures use these parseable key formats
+// locally.
 func generateTestKeyPair(t *testing.T) (privPEM, pubPEM string) {
 	t.Helper()
+	// Generate parseable 2048-bit fixture keys for eager SDK credential parsing.
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate rsa key: %v", err)
@@ -41,13 +51,16 @@ func generateTestKeyPair(t *testing.T) (privPEM, pubPEM string) {
 		string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
 }
 
+// TestMapWxState compares success, refund, close, pay-error and unknown
+// channel labels in parallel cases. It expects the corresponding paid,
+// refunded, failed or pending core query states.
 func TestMapWxState(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name  string // named channel state case
+		input string // supplied channel state text
+		want  string // expected core query state
 	}{
 		{
 			name:  "SUCCESS maps to paid",
@@ -92,13 +105,16 @@ func TestMapWxState(t *testing.T) {
 	}
 }
 
+// TestWxSV supplies nil, nonempty and empty string pointers to the SDK value
+// helper. It expects empty output for nil or empty fixtures and the supplied
+// text for a populated pointer.
 func TestWxSV(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		input *string
-		want  string
+		name  string  // named SDK pointer case
+		input *string // supplied optional string pointer
+		want  string  // expected extracted string text
 	}{
 		{
 			name:  "nil pointer returns empty string",
@@ -128,6 +144,9 @@ func TestWxSV(t *testing.T) {
 	}
 }
 
+// TestBuildWxpayTransactionMetadata supplies transaction app, merchant,
+// successful state and CNY fields through SDK pointers. It checks their
+// reported values under the metadata keys used for core confirmation.
 func TestBuildWxpayTransactionMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -155,18 +174,22 @@ func TestBuildWxpayTransactionMetadata(t *testing.T) {
 	}
 }
 
+// strPtr returns a pointer to a fresh string value for SDK fixtures.
 func strPtr(s string) *string {
 	return &s
 }
 
+// TestFormatPEM supplies raw, wrapped and whitespace-decorated key text with
+// different block labels. It expects the selected PEM wrapper or trimmed
+// existing text, exercising formatting without parsing those placeholder keys.
 func TestFormatPEM(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		key     string
-		keyType string
-		want    string
+		name    string // named PEM formatting case
+		key     string // supplied key text representation
+		keyType string // requested PEM block label
+		want    string // expected formatted key text
 	}{
 		{
 			name:    "raw key gets wrapped with headers",
@@ -205,21 +228,26 @@ func TestFormatPEM(t *testing.T) {
 	}
 }
 
+// TestNewWxpay uses generated parseable RSA keys and varies required fields,
+// malformed PEM and APIv3 key byte length. It expects matching constructor
+// diagnostics or retained instance identity for the valid fixture.
 func TestNewWxpay(t *testing.T) {
 	t.Parallel()
 
 	privPEM, pubPEM := generateTestKeyPair(t)
 	validConfig := map[string]string{
-		"appId":       "wx1234567890",
-		"mchId":       "1234567890",
-		"privateKey":  privPEM,
-		"apiV3Key":    "12345678901234567890123456789012", // exactly 32 bytes
+		"appId":      "wx1234567890",
+		"mchId":      "1234567890",
+		"privateKey": privPEM,
+		// Supply thirty-two ASCII bytes for the APIv3 key length predicate.
+		"apiV3Key":    "12345678901234567890123456789012",
 		"publicKey":   pubPEM,
 		"publicKeyId": "PUB_KEY_ID_TEST",
 		"certSerial":  "SERIAL001",
 	}
 
-	// helper to clone and override config fields
+	// Copy the valid fixture strings before applying overrides, leaving the
+	// shared base configuration unchanged for parallel constructor cases.
 	withOverride := func(overrides map[string]string) map[string]string {
 		cfg := make(map[string]string, len(validConfig))
 		maps.Copy(cfg, validConfig)
@@ -228,10 +256,12 @@ func TestNewWxpay(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		config    map[string]string
-		wantErr   bool
-		errSubstr string
+		name    string            // named constructor input case
+		config  map[string]string // immutable constructor setting map
+		wantErr bool              // expected constructor failure flag
+		// errSubstr is tested only when failure is expected and the fragment is
+		// nonempty, identifying the rejected constructor field or encoding.
+		errSubstr string // expected constructor diagnostic fragment
 	}{
 		{
 			name:    "valid config succeeds",
@@ -299,8 +329,9 @@ func TestNewWxpay(t *testing.T) {
 			errSubstr: "WXPAY_CONFIG_INVALID_KEY_LENGTH",
 		},
 		{
-			name:      "apiV3Key too long",
-			config:    withOverride(map[string]string{"apiV3Key": "123456789012345678901234567890123"}), // 33 bytes
+			name: "apiV3Key too long",
+			// Use thirty-three ASCII bytes to cross the constructor length limit.
+			config:    withOverride(map[string]string{"apiV3Key": "123456789012345678901234567890123"}),
 			wantErr:   true,
 			errSubstr: "WXPAY_CONFIG_INVALID_KEY_LENGTH",
 		},
@@ -332,6 +363,10 @@ func TestNewWxpay(t *testing.T) {
 	}
 }
 
+// TestBuildWxpayResultURLPreservesResumeToken supplies a return URL carrying
+// numeric order and resume parameters plus a merchant order label. It expects
+// the fixed result path with those associations retained and out_trade_no
+// added.
 func TestBuildWxpayResultURLPreservesResumeToken(t *testing.T) {
 	t.Parallel()
 
@@ -362,13 +397,16 @@ func TestBuildWxpayResultURLPreservesResumeToken(t *testing.T) {
 	}
 }
 
+// TestResolveWxpayJSAPIAppID supplies dedicated mpAppId, merchant-only appId
+// and absent app settings. It expects dedicated identity first, merchant
+// identity as the alternative and empty text when both are absent.
 func TestResolveWxpayJSAPIAppID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		config map[string]string
-		want   string
+		name   string            // named app identity case
+		config map[string]string // supplied app identity settings
+		want   string            // expected selected app identity
 	}{
 		{
 			name: "prefers dedicated mp app id",
@@ -402,14 +440,20 @@ func TestResolveWxpayJSAPIAppID(t *testing.T) {
 	}
 }
 
+// TestResolveWxpayCreateMode compares desktop, mobile with IP, mobile without
+// IP and OpenID inputs. It expects native, H5, missing-IP error and JSAPI
+// respectively from those request observations.
 func TestResolveWxpayCreateMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
+		name string // named prepay mode case
+		// req supplies mode observations, wantMode records successful selection, and
+		// nonempty wantErr instead selects the failure assertions for missing input.
+		// supplied prepay request observations.
 		req      payment.CreatePaymentRequest
-		wantMode string
-		wantErr  string
+		wantMode string // expected selected prepay mode
+		wantErr  string // expected mode error fragment
 	}{
 		{
 			name:     "desktop uses native",
@@ -463,7 +507,14 @@ func TestResolveWxpayCreateMode(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentWithOpenIDReturnsJSAPIResult injects all three prepay
+// operations and supplies OpenID plus client IP. It expects only JSAPI
+// invocation and the complete ready-result payload from that fixed SDK
+// response.
 func TestCreatePaymentWithOpenIDReturnsJSAPIResult(t *testing.T) {
+	// Save JSAPI, native and H5 operations before replacing them, and register
+	// Cleanup restoration; this scenario remains synchronous around global SDK
+	// shims.
 	origJSAPIPrepay := wxpayJSAPIPrepayWithRequestPayment
 	origNativePrepay := wxpayNativePrepay
 	origH5Prepay := wxpayH5Prepay
@@ -556,7 +607,14 @@ func TestCreatePaymentWithOpenIDReturnsJSAPIResult(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentMobileH5IncludesConfiguredSceneInfo injects prepay
+// operations for mobile input with client IP and H5 app settings. It checks
+// one H5 call, supplied scene fields and a redirect_url in the returned
+// browser URL.
 func TestCreatePaymentMobileH5IncludesConfiguredSceneInfo(t *testing.T) {
+	// Save JSAPI, native and H5 operations before replacing them, and register
+	// Cleanup restoration; this scenario remains synchronous around global SDK
+	// shims.
 	origJSAPIPrepay := wxpayJSAPIPrepayWithRequestPayment
 	origNativePrepay := wxpayNativePrepay
 	origH5Prepay := wxpayH5Prepay
@@ -639,7 +697,13 @@ func TestCreatePaymentMobileH5IncludesConfiguredSceneInfo(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentMobileH5ReturnsNoAuthErrorWithoutNativeFallback injects an
+// H5 NO_AUTH error alongside an available native response. It expects the H5
+// error, nil response and zero JSAPI or native invocations.
 func TestCreatePaymentMobileH5ReturnsNoAuthErrorWithoutNativeFallback(t *testing.T) {
+	// Save JSAPI, native and H5 operations before replacing them, and register
+	// Cleanup restoration; this scenario remains synchronous around global SDK
+	// shims.
 	origJSAPIPrepay := wxpayJSAPIPrepayWithRequestPayment
 	origNativePrepay := wxpayNativePrepay
 	origH5Prepay := wxpayH5Prepay

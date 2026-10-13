@@ -4,27 +4,62 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PlanEndpoints contains the billing handlers used by payment pages.
+// Payment routes expose authenticated buyer operations, anonymous recovery and
+// provider callbacks under separate groups. RegisterRoutes applies the
+// supplied buyer and administrator guard sequences, while public recovery
+// reads and webhook signature verification are handled by their endpoints;
+// payment OAuth is attached separately to the identity route group.
+
+// PlanEndpoints supplies plan browsing and administrator mutations mounted by
+// payment route registration.
 type PlanEndpoints interface {
+	// GetPlans writes the available purchase plans for the buyer payment page.
 	GetPlans(*gin.Context)
+	// ListPlans writes the administrator listing of persisted subscription plans.
 	ListPlans(*gin.Context)
+	// CreatePlan validates and persists a subscription plan from the
+	// administrator request.
 	CreatePlan(*gin.Context)
+	// UpdatePlan applies the administrator request to its addressed subscription
+	// plan.
 	UpdatePlan(*gin.Context)
+	// DeletePlan removes the addressed subscription plan according to billing
+	// rules.
 	DeletePlan(*gin.Context)
 }
 
-// RouteMiddleware supplies authentication, rate limiting, and audit handlers for payment routes.
+// RouteMiddleware contains the supplied guards applied to buyer and
+// administrator payment route groups.
 type RouteMiddleware struct {
+	// JWT, BackendMode and Panel run in that order for buyer payment routes.
+	// Admin, Panel and Audit run in that order for administrator payment routes.
+	// Public/callback groups add none of these guards here.
+	//
+	// JWT: buyer authentication handler. BackendMode: buyer backend access
+	// policy. Panel: panel request limiter. Admin: administrator access guard.
+	// Audit: administrator request audit handler.
 	JWT, BackendMode, Panel, Admin, Audit gin.HandlerFunc
 }
 
-// WeChatAuthEndpoints starts and completes payment OAuth.
+// WeChatAuthEndpoints supplies payment-specific OAuth redirects mounted on the
+// identity route group.
 type WeChatAuthEndpoints interface {
+	// WeChatPaymentOAuthStart stores payment OAuth context and redirects to
+	// WeChat authorization. It uses the request's payment method/order context;
+	// account login authentication remains separate from this route operation.
 	WeChatPaymentOAuthStart(*gin.Context)
+	// WeChatPaymentOAuthCallback validates payment OAuth callback context and
+	// returns a signed payment continuation to the result page. The endpoint owns
+	// its cookie cleanup and redirects; registration supplies no additional
+	// middleware here.
 	WeChatPaymentOAuthCallback(*gin.Context)
 }
 
-// RegisterRoutes registers user payments, public lookups, provider callbacks, and admin endpoints.
+// RegisterRoutes mounts buyer payment, public recovery, provider callback and
+// administrator handlers beneath v1. Supply nonnil handlers, plan endpoints
+// and usable guards; any middleware already on v1 also applies. Buyer routes
+// receive JWT/BackendMode/Panel, administrator routes receive
+// Admin/Panel/Audit, and public/callback groups rely on their endpoint rules.
 func RegisterRoutes(
 	v1 *gin.RouterGroup,
 	paymentHandler *PaymentHandler,
@@ -36,7 +71,6 @@ func RegisterRoutes(
 	authenticated := v1.Group("/payment")
 	authenticated.Use(guards.JWT)
 	authenticated.Use(guards.BackendMode)
-	// Apply the panel-wide per-user rate limit.
 	authenticated.Use(guards.Panel)
 	{
 		authenticated.GET("/config", paymentHandler.GetPaymentConfig)
@@ -57,17 +91,20 @@ func RegisterRoutes(
 		}
 	}
 
-	// Public recovery uses signed resume tokens; anonymous order-number lookup returns saved state for older clients.
+	// Public token resolution and legacy merchant-number verification bypass
+	// buyer guards in this registration. Their handlers return selected saved
+	// fields according to each recovery input's validation.
 	public := v1.Group("/payment/public")
 	{
 		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
 		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
 	}
 
-	// Provider signatures authenticate callbacks.
+	// Callback groups are public here because provider verification authenticates
+	// their payloads. EasyPay retains GET compatibility while the other listed
+	// provider callbacks read POST bodies.
 	webhook := v1.Group("/payment/webhook")
 	{
-		// EasyPay GET callbacks carry notification fields in the query string.
 		webhook.GET("/easypay", webhookHandler.EasyPayNotify)
 		webhook.POST("/easypay", webhookHandler.EasyPayNotify)
 		webhook.POST("/alipay", webhookHandler.AlipayNotify)
@@ -78,18 +115,14 @@ func RegisterRoutes(
 
 	adminGroup := v1.Group("/admin/payment")
 	adminGroup.Use(guards.Admin)
-	// Payment admin routes are registered separately and need their own panel rate-limit middleware.
 	adminGroup.Use(guards.Panel)
 	adminGroup.Use(guards.Audit)
 	{
-		// Dashboard
 		adminGroup.GET("/dashboard", adminPaymentHandler.GetDashboard)
 
-		// Config
 		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
 		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
 
-		// Orders
 		adminOrders := adminGroup.Group("/orders")
 		{
 			adminOrders.GET("", adminPaymentHandler.ListOrders)
@@ -102,7 +135,6 @@ func RegisterRoutes(
 			adminOrders.POST("/:id/refund/query", adminPaymentHandler.QueryAndFinalizeRefund)
 		}
 
-		// Subscription Plans
 		plans := adminGroup.Group("/plans")
 		{
 			plans.GET("", planHandler.ListPlans)
@@ -111,7 +143,6 @@ func RegisterRoutes(
 			plans.DELETE("/:id", planHandler.DeletePlan)
 		}
 
-		// Provider Instances
 		providers := adminGroup.Group("/providers")
 		{
 			providers.GET("", adminPaymentHandler.ListProviders)
@@ -123,7 +154,9 @@ func RegisterRoutes(
 	}
 }
 
-// RegisterWeChatAuthRoutes registers payment OAuth endpoints on the identity route group.
+// RegisterWeChatAuthRoutes mounts payment OAuth start/callback on the supplied
+// identity group. Supply a usable endpoint; registration inherits existing
+// group middleware and adds no guard handlers of its own.
 func RegisterWeChatAuthRoutes(auth *gin.RouterGroup, endpoint WeChatAuthEndpoints) {
 	auth.GET("/oauth/wechat/payment/start", endpoint.WeChatPaymentOAuthStart)
 	auth.GET("/oauth/wechat/payment/callback", endpoint.WeChatPaymentOAuthCallback)

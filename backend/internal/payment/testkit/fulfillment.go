@@ -12,12 +12,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
-// Fulfillment builds payment fulfillment with database storage, entitlements, and audit logging.
+// Ordinary payment audits are recorded through an errorless callback, so
+// failed observation writes are logged while the state operation retains its
+// result. Recovery scenarios combine this audit policy with supplied grant
+// services and a prepared registry, and process configuration determines
+// resume-token signing.
+
+// Fulfillment constructs the shared test helper with Ent order/audit
+// persistence and the supplied entitlement services. Optional rebates enable
+// their gate; notification callbacks and several provider resolution
+// dependencies are omitted, so tests choose paths supported by this setup.
 func Fulfillment(client *dbent.Client, redeem payment.FulfillmentRedeemer, subscriptions payment.FulfillmentSubscriptions, rebates *promotion.AffiliateService) *payment.Fulfillment {
 	return fulfillment(client, redeem, subscriptions, rebates, nil, false)
 }
 
-// Lifecycle builds order lifecycle handling with fulfillment and payment resume services.
+// Lifecycle binds the fixture fulfillment service, prepared registry, and
+// resume service to order recovery. Nil resume uses process signing
+// configuration, and loaded controls lazy registry lookup; these helpers do
+// not start expiry work.
 func Lifecycle(client *dbent.Client, registry *payment.Registry, redeem payment.FulfillmentRedeemer, subscriptions payment.FulfillmentSubscriptions, resume *payment.PaymentResumeService, loaded bool) *payment.OrderLifecycle {
 	if resume == nil {
 		resume = Resume(nil)
@@ -25,9 +37,16 @@ func Lifecycle(client *dbent.Client, registry *payment.Registry, redeem payment.
 	return payment.NewOrderLifecycle(fulfillment(client, redeem, subscriptions, nil, registry, loaded), resume, nil)
 }
 
+// fulfillment binds test order storage, audit logging, supplied entitlement
+// operations, and optional rebate handling. Audit failures are logged through
+// an errorless callback. Its provider bindings omit a configuration balancer
+// and RegistryFactory, so database-backed adapter construction and lazy
+// registry population require a different setup.
 func fulfillment(client *dbent.Client, redeem payment.FulfillmentRedeemer, subscriptions payment.FulfillmentSubscriptions, rebates *promotion.AffiliateService, registry *payment.Registry, loaded bool) *payment.Fulfillment {
 	auditStore := paymentpostgres.NewRefundStore(client, nil)
 	audit := func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
+		// Include orderID and action when audit persistence fails, because callers
+		// receive no callback error to correlate with the missing observation.
 		if err := auditStore.AppendObservation(ctx, id, action, operator, detail); err != nil {
 			slog.Error("audit log failed", "orderID", id, "action", action, "error", err)
 		}
@@ -46,7 +65,9 @@ func fulfillment(client *dbent.Client, redeem payment.FulfillmentRedeemer, subsc
 	return payment.NewFulfillment(store, bindings, registry, redeem, subscriptions, runtime)
 }
 
-// Resume selects the signing key from the environment and accepts tokens signed with the supplied legacy key.
+// Resume constructs a signing service from PAYMENT_RESUME_SIGNING_KEY and the
+// supplied legacy key. A configured key wins signing and can retain distinct
+// legacy verification bytes; NewPaymentResumeService copies the chosen keys.
 func Resume(legacyKey []byte) *payment.PaymentResumeService {
 	key, fallbacks := payment.ResolvePaymentResumeSigningKeys(os.Getenv("PAYMENT_RESUME_SIGNING_KEY"), legacyKey)
 	return payment.NewPaymentResumeService(key, fallbacks...)

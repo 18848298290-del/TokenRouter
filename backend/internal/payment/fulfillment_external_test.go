@@ -13,16 +13,29 @@ import (
 	paymenttestkit "github.com/TokenFlux/TokenRouter/internal/payment/testkit"
 )
 
-// TestParseLegacyPaymentOrderID checks which legacy callback identifiers may resolve to local orders.
+// Callback association uses merchant-order lookup outcome, saved provider
+// identity and reported merchant metadata before paid money can enter
+// fulfillment. These pure external-package tests exercise those decision
+// helpers with immutable parallel fixtures. Redeem-action cases distinguish
+// lookup failure, previously used code and existing unused code, while rebate
+// cases use credited balance or configured subscription quotas as their
+// asserted base.
+
+// TestParseLegacyPaymentOrderID supplies early numeric, current and malformed
+// callback labels with true and false notFound flags. It permits positive
+// sub2_ identities when that flag is true and rejects the other listed forms
+// or a false lookup-absence flag.
 func TestParseLegacyPaymentOrderID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		orderID  string
-		notFound bool
-		wantID   int64
-		wantOK   bool
+		name    string // named identifier case
+		orderID string // incoming callback order label
+		// notFound permits legacy parsing only for the classified exact-lookup
+		// absence; generic lookup failures leave fallback disabled.
+		notFound bool  // exact lookup absence flag
+		wantID   int64 // expected local numeric identity
+		wantOK   bool  // expected legacy recognition result
 	}{
 		{name: "早期订单", orderID: "sub2_42", notFound: true, wantID: 42, wantOK: true},
 		{name: "早期订单带空白", orderID: " sub2_42 ", notFound: true, wantID: 42, wantOK: true},
@@ -46,26 +59,39 @@ func TestParseLegacyPaymentOrderID(t *testing.T) {
 	}
 }
 
+// TestResolveRedeemAction_CodeNotFound supplies no code and no lookup error to
+// model an absent prior grant. It expects the creation decision from the
+// classifier before any redemption is performed.
 func TestResolveRedeemAction_CodeNotFound(t *testing.T) {
 	t.Parallel()
 	action := payment.ResolveRedeemAction(nil, nil)
 	assert.Equal(t, payment.RedeemActionCreate, action, "nil code with nil error should create")
 }
 
+// TestResolveRedeemAction_LookupError supplies a database lookup error with no
+// code. It expects the creation decision, documenting that this classifier
+// treats the lookup failure as requiring a create attempt.
 func TestResolveRedeemAction_LookupError(t *testing.T) {
 	t.Parallel()
 	action := payment.ResolveRedeemAction(nil, errors.New("db connection lost"))
 	assert.Equal(t, payment.RedeemActionCreate, action, "lookup error should fall back to create")
 }
 
+// TestResolveRedeemAction_LookupErrorWithNonNilCode supplies an unused code
+// together with a lookup error. It expects creation because the error takes
+// precedence over the simultaneously returned code observation.
 func TestResolveRedeemAction_LookupErrorWithNonNilCode(t *testing.T) {
 	t.Parallel()
-	// A lookup error takes precedence even when a code is returned.
+	// Supply both a code and an error to expose precedence; returning a code
+	// alongside failure still selects another creation attempt.
 	code := &billing.RedeemCode{Status: billing.StatusUnused}
 	action := payment.ResolveRedeemAction(code, errors.New("partial error"))
 	assert.Equal(t, payment.RedeemActionCreate, action, "non-nil error should always result in create regardless of code")
 }
 
+// TestResolveRedeemAction_CodeExistsAndUsed supplies a used balance code with
+// its sole redemption consumed. It expects completion skipping from the action
+// classifier based on this prior-use fixture.
 func TestResolveRedeemAction_CodeExistsAndUsed(t *testing.T) {
 	t.Parallel()
 	code := &billing.RedeemCode{
@@ -80,6 +106,9 @@ func TestResolveRedeemAction_CodeExistsAndUsed(t *testing.T) {
 	assert.Equal(t, payment.RedeemActionSkipCompleted, action, "used code should skip to completed")
 }
 
+// TestResolveRedeemAction_CodeExistsAndUnused supplies an existing unused
+// balance code after a successful lookup. It expects redemption of that code
+// as the next action, bypassing another creation decision.
 func TestResolveRedeemAction_CodeExistsAndUnused(t *testing.T) {
 	t.Parallel()
 	code := &billing.RedeemCode{
@@ -92,9 +121,13 @@ func TestResolveRedeemAction_CodeExistsAndUnused(t *testing.T) {
 	assert.Equal(t, payment.RedeemActionRedeem, action, "unused code should skip creation and proceed to redeem")
 }
 
+// TestResolveRedeemAction_CodeExistsWithExpiredStatus supplies an existing
+// expired code to the action selector. It still expects redemption selection,
+// leaving actual status rejection to the later redemption implementation.
 func TestResolveRedeemAction_CodeExistsWithExpiredStatus(t *testing.T) {
 	t.Parallel()
-	// Expired codes enter redemption, where the redeem rules validate their status.
+	// Use expired status as a non-used code observation; the action selector
+	// delegates actual status acceptance to the redemption rules.
 	code := &billing.RedeemCode{
 		Code:   "expired-code",
 		Status: billing.StatusExpired,
@@ -103,14 +136,22 @@ func TestResolveRedeemAction_CodeExistsWithExpiredStatus(t *testing.T) {
 	assert.Equal(t, payment.RedeemActionRedeem, action, "expired-status code is not IsUsed(), should redeem")
 }
 
+// TestResolveRedeemAction_Table compares absent, used and unused codes with
+// successful or failed lookups. Each immutable parallel case asserts the
+// action, including error precedence over an otherwise used code.
 func TestResolveRedeemAction_Table(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		code     *billing.RedeemCode
-		err      error
-		expected payment.RedeemAction
+		// name identifies each case, while code and err jointly supply the lookup
+		// observation; expected records the next action selected from their
+		// combination.
+		name string              // named redemption action case
+		code *billing.RedeemCode // supplied prior code observation
+		// err takes precedence over a returned code whenever nonnil, including a
+		// code whose status would otherwise skip completion.
+		err      error                // supplied code lookup error
+		expected payment.RedeemAction // expected next redemption action
 	}{
 		{
 			name:     "nil code, nil error — first run",
@@ -159,6 +200,9 @@ func TestResolveRedeemAction_Table(t *testing.T) {
 	}
 }
 
+// TestRedeemAction_DistinctValues compares all three action constants pairwise
+// to protect their separate observable values. A caller can distinguish
+// creation, redemption and completion skipping in the asserted enumeration.
 func TestRedeemAction_DistinctValues(t *testing.T) {
 	t.Parallel()
 	assert.NotEqual(t, payment.RedeemActionCreate, payment.RedeemActionRedeem)
@@ -166,6 +210,9 @@ func TestRedeemAction_DistinctValues(t *testing.T) {
 	assert.NotEqual(t, payment.RedeemActionRedeem, payment.RedeemActionSkipCompleted)
 }
 
+// TestResolveRedeemAction_IsUsedCanUseConsistency supplies fully consumed used
+// and available unused codes. It checks IsUsed and CanUse alongside the
+// selected skip or redeem actions for those two fixture states.
 func TestResolveRedeemAction_IsUsedCanUseConsistency(t *testing.T) {
 	t.Parallel()
 
@@ -181,6 +228,10 @@ func TestResolveRedeemAction_IsUsedCanUseConsistency(t *testing.T) {
 	assert.Equal(t, payment.RedeemActionRedeem, payment.ResolveRedeemAction(unusedCode, nil))
 }
 
+// TestExpectedNotificationProviderKeyPrefersOrderInstanceProvider registers
+// official Alipay but supplies an EasyPay instance binding for the order. It
+// expects that binding to determine callback provider identity for the visible
+// Alipay method.
 func TestExpectedNotificationProviderKeyPrefersOrderInstanceProvider(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +247,10 @@ func TestExpectedNotificationProviderKeyPrefersOrderInstanceProvider(t *testing.
 	)
 }
 
+// TestExpectedNotificationProviderKeyUsesRegistryMappingForLegacyOrders
+// supplies no saved provider identity and registers EasyPay for visible
+// Alipay. It expects the legacy callback identity to follow that registry
+// mapping.
 func TestExpectedNotificationProviderKeyUsesRegistryMappingForLegacyOrders(t *testing.T) {
 	t.Parallel()
 
@@ -211,6 +266,9 @@ func TestExpectedNotificationProviderKeyUsesRegistryMappingForLegacyOrders(t *te
 	)
 }
 
+// TestExpectedNotificationProviderKeyFallsBackToPaymentType supplies no
+// registry or saved provider identity for a WeChat order. It expects the
+// visible payment type to become the callback provider key.
 func TestExpectedNotificationProviderKeyFallsBackToPaymentType(t *testing.T) {
 	t.Parallel()
 
@@ -220,6 +278,10 @@ func TestExpectedNotificationProviderKeyFallsBackToPaymentType(t *testing.T) {
 	)
 }
 
+// TestExpectedNotificationProviderKeyPrefersOrderSnapshotProviderKey registers
+// official Alipay and supplies EasyPay as the order-provider key argument. It
+// requires that supplied key to win when the instance key is absent; this
+// helper call does not exercise extraction from an order snapshot.
 func TestExpectedNotificationProviderKeyPrefersOrderSnapshotProviderKey(t *testing.T) {
 	t.Parallel()
 
@@ -235,6 +297,10 @@ func TestExpectedNotificationProviderKeyPrefersOrderSnapshotProviderKey(t *testi
 	)
 }
 
+// TestValidateProviderNotificationMetadataRejectsWxpaySnapshotMismatch
+// supplies a saved WeChat app identity and a different reported appid. It
+// expects the app mismatch diagnostic while merchant and currency fixture
+// values match.
 func TestValidateProviderNotificationMetadataRejectsWxpaySnapshotMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -257,6 +323,10 @@ func TestValidateProviderNotificationMetadataRejectsWxpaySnapshotMismatch(t *tes
 	assert.ErrorContains(t, err, "wxpay appid mismatch")
 }
 
+// TestValidateProviderNotificationMetadataAllowsLegacyOrdersWithoutSnapshotFields
+// supplies a legacy WeChat snapshot containing provider labels but no merchant
+// identity. It accepts reported app, merchant and currency values for that
+// incomplete historical snapshot.
 func TestValidateProviderNotificationMetadataAllowsLegacyOrdersWithoutSnapshotFields(t *testing.T) {
 	t.Parallel()
 
@@ -278,6 +348,9 @@ func TestValidateProviderNotificationMetadataAllowsLegacyOrdersWithoutSnapshotFi
 	assert.NoError(t, err)
 }
 
+// TestIsValidProviderAmount compares positive money against zero, negative,
+// NaN and positive infinity. It accepts the positive finite fixture and
+// rejects the other listed observations before core paid confirmation.
 func TestIsValidProviderAmount(t *testing.T) {
 	t.Parallel()
 
@@ -288,6 +361,10 @@ func TestIsValidProviderAmount(t *testing.T) {
 	assert.False(t, payment.IsValidProviderAmount(math.Inf(1)))
 }
 
+// TestValidateProviderNotificationMetadataRejectsAlipaySnapshotMismatch
+// supplies a version-two Alipay snapshot and different reported app_id. It
+// expects an identity mismatch diagnostic from validation of the saved
+// merchant app.
 func TestValidateProviderNotificationMetadataRejectsAlipaySnapshotMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -305,6 +382,9 @@ func TestValidateProviderNotificationMetadataRejectsAlipaySnapshotMismatch(t *te
 	assert.ErrorContains(t, err, "alipay app_id mismatch")
 }
 
+// TestValidateProviderNotificationMetadataRejectsEasyPaySnapshotMismatch
+// models visible Alipay routed through EasyPay with a saved pid. It rejects a
+// different reported merchant pid using the provider-specific validation rule.
 func TestValidateProviderNotificationMetadataRejectsEasyPaySnapshotMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -322,6 +402,10 @@ func TestValidateProviderNotificationMetadataRejectsEasyPaySnapshotMismatch(t *t
 	assert.ErrorContains(t, err, "easypay pid mismatch")
 }
 
+// TestValidateProviderNotificationMetadataRejectsAirwallexSnapshotMismatch
+// first changes the reported account, then changes currency with the account
+// matching. It expects the corresponding account and currency diagnostics for
+// both observations.
 func TestValidateProviderNotificationMetadataRejectsAirwallexSnapshotMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -349,6 +433,10 @@ func TestValidateProviderNotificationMetadataRejectsAirwallexSnapshotMismatch(t 
 	assert.ErrorContains(t, err, "airwallex currency mismatch")
 }
 
+// TestValidateProviderNotificationMetadataRejectsStripeCurrencyMismatch
+// supplies saved HKD currency and a reported USD payment observation. It
+// expects the Stripe currency mismatch diagnostic before that observation can
+// be accepted locally.
 func TestValidateProviderNotificationMetadataRejectsStripeCurrencyMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -366,7 +454,10 @@ func TestValidateProviderNotificationMetadataRejectsStripeCurrencyMismatch(t *te
 	assert.ErrorContains(t, err, "stripe currency mismatch")
 }
 
-// TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase checks balance and subscription rebate bases.
+// TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase compares
+// credited balance with subscription monthly, weekly and daily quota
+// observations. It asserts quota precedence, invalid-quota skipping and zero
+// base for missing quotas or order.
 func TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase(t *testing.T) {
 	t.Parallel()
 	monthlyPoints := 1000.0
@@ -375,9 +466,9 @@ func TestAffiliateRebateBasePointsUsesConfiguredReasoningPointBase(t *testing.T)
 	zeroPoints := 0.0
 
 	tests := []struct {
-		name  string
-		order *payment.Order
-		want  float64
+		name  string         // named rebate base case
+		order *payment.Order // supplied immutable order observation
+		want  float64        // expected base in points
 	}{
 		{
 			name: "余额订单使用实际到账积分",

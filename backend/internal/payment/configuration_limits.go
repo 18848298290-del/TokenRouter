@@ -11,15 +11,46 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// Visible payment limits describe the widest configured purchase range across
+// eligible merchant instances. A missing/unreadable channel limit entry
+// removes every bound for that method, while a zero value in a present entry
+// removes only its corresponding bound; the retained limited flag
+// distinguishes those states from an initial aggregate value.
+//
+// Official/EasyPay visible source resolution narrows or unions eligible
+// Alipay/WeChat instances before aggregation. Mixed currencies omit a limits
+// display or return a checkout error rather than combining their money values.
+// Stripe groups by its provider key, while other initial groups use stored
+// support labels. Custom EasyPay names choose the first usable instance
+// display and its localization precedence. Instance, source and configuration
+// reads remain separate observations, and these display unions do not reserve
+// channel capacity.
+
+// ConfigEasyPayCustomMethodDisplayConfig decodes the custom method identity
+// and display choices in EasyPay configuration.
 type ConfigEasyPayCustomMethodDisplayConfig struct {
+	// DisplayNameLocalization takes precedence whenever nonnil, including an
+	// empty resolved string. Its resolution error is discarded here; plain
+	// DisplayName is used only when this object is absent.
 	DisplayNameLocalization *locale.Update[string] `json:"displayNameLocalization,omitempty"`
-	Type                    string                 `json:"type"`
-	DisplayName             string                 `json:"displayName"`
+	Type                    string                 `json:"type"` // custom payment method label
+	// DisplayName is trimmed and returned for a matching custom method only when
+	// DisplayNameLocalization is nil. The caller can then select the first
+	// nonempty instance display.
+	DisplayName string `json:"displayName"`
 }
 
-// GetAvailableMethodLimits collects all payment types from enabled provider
-// instances and returns limits for each, plus the global widest range.
-// Stripe instances share the "stripe" group, including legacy card/link subtype configurations.
+// GetAvailableMethodLimits returns method displays, currency-consistent bounds
+// and their global widest range from current enabled instances.
+// Instance/configuration reads can fail independently and abort the response;
+// source-resolution errors omit their canonical visible method group.
+//
+// Stripe uses its provider group while other initial groups retain support
+// labels. Alipay/WeChat source selection can narrow instances or retain
+// cross-provider matches. A mixed-currency group is skipped, then limits,
+// effective fees and the first custom display are assembled for each remaining
+// key. The returned maps are newly built, and their unions describe configured
+// availability without reserving an amount against daily usage.
 func (s *ConfigService) GetAvailableMethodLimits(ctx context.Context) (*MethodLimitsResponse, error) {
 	instances, err := s.store.ListInstances(ctx, InstanceFilter{EnabledOnly: true})
 	if err != nil {
@@ -36,6 +67,9 @@ func (s *ConfigService) GetAvailableMethodLimits(ctx context.Context) (*MethodLi
 	}
 	for pt, insts := range typeInstances {
 		currency, ok := s.ConfigPcAggregateMethodCurrency(insts)
+		// A method group with mixed interpreted currencies cannot supply one numeric
+		// display range. Omit that group here; checkout uses the separate
+		// error-returning consistency operation for its request.
 		if !ok {
 			continue
 		}
@@ -49,6 +83,16 @@ func (s *ConfigService) GetAvailableMethodLimits(ctx context.Context) (*MethodLi
 	return resp, nil
 }
 
+// ConfigPcApplyEnabledVisibleMethodInstances returns a shallow group-map copy
+// with canonical Alipay/WeChat groups resolved from enabled support matches.
+// Empty group input returns its original map; other group slices and instance
+// pointers remain shared.
+//
+// A source-resolution error removes that canonical group and is discarded. An
+// absent source with matching instances keeps their union, while a selected
+// key retains only its enabled support matches. Empty matches remove the
+// group. Initial unrelated/raw support-label groups remain copied, so this
+// operation does not normalize or remove every legacy label in the input.
 func (s *ConfigService) ConfigPcApplyEnabledVisibleMethodInstances(ctx context.Context, typeInstances map[string][]*ProviderInstance, instances []*ProviderInstance) map[string][]*ProviderInstance {
 	if len(typeInstances) == 0 {
 		return typeInstances
@@ -60,6 +104,9 @@ func (s *ConfigService) ConfigPcApplyEnabledVisibleMethodInstances(ctx context.C
 	for _, method := range []string{TypeAlipay, TypeWxpay} {
 		matching := ConfigFilterEnabledVisibleMethodInstances(instances, method)
 		providerKey, err := s.ConfigResolveVisibleMethodProviderKey(ctx, method, matching)
+		// A source-selection failure leaves this canonical method unavailable in the
+		// limits display. Remove its group and continue other methods rather than
+		// exposing an error from this filtering helper.
 		if err != nil {
 			delete(filtered, method)
 			continue
@@ -82,6 +129,10 @@ func (s *ConfigService) ConfigPcApplyEnabledVisibleMethodInstances(ctx context.C
 	return filtered
 }
 
+// ConfigPcApplyEffectiveMethodFee returns a value copy of method limits with
+// its effective fixed/percentage fees. PaymentConfig.EffectiveMethodFee
+// accepts nil configuration and selects enabled override or legacy rate
+// according to the normalized method.
 func ConfigPcApplyEffectiveMethodFee(cfg *PaymentConfig, ml MethodLimits) MethodLimits {
 	fee := cfg.EffectiveMethodFee(ml.PaymentType)
 	ml.FixedFee = fee.FixedFee
@@ -89,6 +140,18 @@ func ConfigPcApplyEffectiveMethodFee(cfg *PaymentConfig, ml MethodLimits) Method
 	return ml
 }
 
+// ValidateMethodCurrencyConsistency returns one currency for the requested
+// normalized method's selected enabled instance group. Blank method, nil
+// dependencies or absent matching group returns default CNY; initial instance
+// errors remain visible.
+//
+// Visible source handling can discard resolution errors by removing its
+// canonical group, which then uses that absent-group default. A nonempty group
+// with differing configured currencies returns
+// PAYMENT_METHOD_CURRENCY_CONFLICT with method metadata. These observations
+// precede checkout's actual instance selection and selected-currency recheck,
+// so the result is a method-level observation rather than a persisted merchant
+// binding.
 func (s *ConfigService) ValidateMethodCurrencyConsistency(ctx context.Context, paymentType string) (string, error) {
 	method := NormalizeVisibleMethod(paymentType)
 	if method == "" || s == nil || s.store == nil {
@@ -117,6 +180,17 @@ func (s *ConfigService) ValidateMethodCurrencyConsistency(ctx context.Context, p
 	return currency, nil
 }
 
+// ConfigPcAggregateMethodCurrency reports one shared instance currency or
+// false for a detected mismatch. Each row is interpreted through
+// ConfigPcInstancePaymentCurrency, and an otherwise empty set uses default
+// CNY.
+//
+// The first nonempty interpreted currency establishes the comparison value,
+// and later differing values reject the group. Configuration absence or
+// recoverable decoding failure can use ProviderConfigCurrency's defaults
+// instead of removing the row. GetAvailableMethodLimits omits conflicting
+// groups, while ValidateMethodCurrencyConsistency turns that same result into
+// a checkout error.
 func (s *ConfigService) ConfigPcAggregateMethodCurrency(instances []*ProviderInstance) (string, bool) {
 	currency := ""
 	for _, inst := range instances {
@@ -138,6 +212,10 @@ func (s *ConfigService) ConfigPcAggregateMethodCurrency(instances []*ProviderIns
 	return currency, true
 }
 
+// ConfigPcInstancePaymentCurrency resolves one instance's provider currency
+// using current stored config interpretation. Nil instance returns CNY; nil
+// service or recoverable config-decode absence supplies an empty map to
+// ProviderConfigCurrency and its defaults.
 func (s *ConfigService) ConfigPcInstancePaymentCurrency(inst *ProviderInstance) string {
 	if inst == nil {
 		return DefaultPaymentCurrency
@@ -152,6 +230,10 @@ func (s *ConfigService) ConfigPcInstancePaymentCurrency(inst *ProviderInstance) 
 	return ProviderConfigCurrency(inst.ProviderKey, cfg)
 }
 
+// ConfigPcAggregateMethodDisplayName returns the first nonempty custom display
+// found in the supplied instance order. Blank requested label returns empty;
+// it does not sort instances or prefer a later localization once a nonempty
+// earlier value wins.
 func (s *ConfigService) ConfigPcAggregateMethodDisplayName(pt string, instances []*ProviderInstance, language string) string {
 	pt = strings.TrimSpace(pt)
 	if pt == "" {
@@ -166,6 +248,17 @@ func (s *ConfigService) ConfigPcAggregateMethodDisplayName(pt string, instances 
 	return ""
 }
 
+// ConfigPcInstanceEasyPayCustomMethodDisplayName reads one exact EasyPay
+// instance's custom method JSON and returns its matching display for pt.
+// Missing/non-EasyPay input or unreadable configuration/method JSON yields
+// empty.
+//
+// The first trimmed method Type equal to pt wins. A nonnil localization object
+// takes precedence and returns its resolved value with resolution error
+// discarded, including empty text; only its absence permits plain trimmed
+// DisplayName. The outer aggregate may try another instance after an empty
+// result, but this helper does not try a later duplicate custom method or
+// plain-name fallback for that matched object.
 func (s *ConfigService) ConfigPcInstanceEasyPayCustomMethodDisplayName(inst *ProviderInstance, pt string, language string) string {
 	if inst == nil || inst.ProviderKey != TypeEasyPay {
 		return ""
@@ -183,12 +276,18 @@ func (s *ConfigService) ConfigPcInstanceEasyPayCustomMethodDisplayName(inst *Pro
 	}
 
 	var methods []ConfigEasyPayCustomMethodDisplayConfig
+	// Unreadable custom-method JSON supplies no display label for this instance.
+	// Return empty so the outer ordered aggregate can still try a different
+	// instance's usable custom name.
 	if err := json.Unmarshal([]byte(raw), &methods); err != nil {
 		return ""
 	}
 	for _, method := range methods {
 		if strings.TrimSpace(method.Type) == pt {
 			if method.DisplayNameLocalization != nil {
+				// Presence of localization selects its resolved text even when resolution
+				// reports an error or empty value. Keep that precedence over plain display
+				// text for this matched object.
 				value, _ := method.DisplayNameLocalization.Resolve(language)
 				return value
 			}
@@ -198,9 +297,17 @@ func (s *ConfigService) ConfigPcInstanceEasyPayCustomMethodDisplayName(inst *Pro
 	return ""
 }
 
-// ConfigPcGroupByPaymentType groups provider instances by visible payment method.
-// Stripe has one Checkout entry; its Dashboard controls the methods shown inside Checkout.
-// Each instance is counted once per group.
+// ConfigPcGroupByPaymentType groups nonnil instance rows in input order,
+// deduplicating numeric instance IDs within each group. Callers supply already
+// eligible rows; enabled state is not inspected here.
+//
+// Exact Stripe provider identity contributes one Stripe checkout group
+// independently of its supported subtype list. Other providers expand trimmed
+// ConfigSplitTypes labels without visible alias normalization, preserving
+// those raw group keys for later handling. Two rows with the same ID/key group
+// contribute only the first pointer, while the same ID can appear under
+// different keys. Source-resolution code separately updates the canonical
+// Alipay/WeChat groups.
 func ConfigPcGroupByPaymentType(instances []*ProviderInstance) map[string][]*ProviderInstance {
 	typeInstances := make(map[string][]*ProviderInstance)
 	seen := make(map[string]map[int64]bool)
@@ -214,6 +321,9 @@ func ConfigPcGroupByPaymentType(instances []*ProviderInstance) map[string][]*Pro
 		}
 	}
 	for _, inst := range instances {
+		// Stripe hosted subtype lists describe methods inside one checkout provider.
+		// Group its instance once under stripe so limit lookup uses that persisted
+		// provider-level entry.
 		if inst.ProviderKey == TypeStripe {
 			add(TypeStripe, inst)
 			continue
@@ -225,14 +335,19 @@ func ConfigPcGroupByPaymentType(instances []*ProviderInstance) map[string][]*Pro
 	return typeInstances
 }
 
-// ConfigPcInstanceTypeLimits extracts per-type limits from a provider instance.
-// Returns (limits, true) if configured; (zero, false) if unlimited.
-// For Stripe instances, limits are stored under "stripe" key regardless of sub-types.
+// ConfigPcInstanceTypeLimits reads the exact supplied key from a nonnil
+// instance's JSON limit map and reports whether it exists.
+// Missing/empty/malformed JSON yields zero,false; a present all-zero entry
+// returns true. Stripe grouping supplies stripe as pt rather than this helper
+// substituting a key.
 func ConfigPcInstanceTypeLimits(inst *ProviderInstance, pt string) (ChannelLimits, bool) {
 	if inst.Limits == "" {
 		return ChannelLimits{}, false
 	}
 	var limits InstanceLimits
+	// Treat unreadable limit JSON as an absent exact entry for this display
+	// calculation. ConfigPcAggregateMethodLimits removes all bounds because one
+	// eligible instance contributes no usable configured limits.
 	if err := json.Unmarshal([]byte(inst.Limits), &limits); err != nil {
 		return ChannelLimits{}, false
 	}
@@ -240,12 +355,16 @@ func ConfigPcInstanceTypeLimits(inst *ProviderInstance, pt string) (ChannelLimit
 	return cl, ok
 }
 
-// ConfigUnionFloat merges a single limit value into the aggregate using UNION semantics.
-//   - For "min" fields (wantMin=true): keeps the lowest non-zero value
-//   - For "max"/"cap" fields (wantMin=false): keeps the highest non-zero value
-//   - If any value is 0 (unlimited), the result is unlimited.
+// ConfigUnionFloat merges one numeric bound with a separate limited flag,
+// choosing lower minima or higher caps while zero disables that bound. Once
+// limited is false, later nonzero values keep that disabled state and the
+// intermediate aggregate value.
 //
-// Returns (aggregated value, still limited).
+// An initial zero aggregate can therefore mean not yet seeded, whereas an
+// incoming zero means unlimited. Callers clear the exposed value after
+// observing false, so they do not publish a stale intermediate bound. Nonzero
+// negative values are compared as supplied; this helper performs no validation
+// of whether the configured bound is meaningful for purchases.
 func ConfigUnionFloat(agg float64, limited bool, val float64, wantMin bool) (float64, bool) {
 	if val == 0 {
 		return agg, false
@@ -265,22 +384,28 @@ func ConfigUnionFloat(agg float64, limited bool, val float64, wantMin bool) (flo
 	return agg, true
 }
 
-// ConfigPcAggregateMethodLimits computes the UNION (least restrictive) of limits
-// across all provider instances for a given payment type.
+// ConfigPcAggregateMethodLimits computes the widest bound values for one exact
+// group label and its nonnil instance rows. A missing/unreadable entry on any
+// row returns all-zero bounds immediately, while present zero components
+// disable only their corresponding aggregate.
 //
-// Since the load balancer can route an order to any available instance,
-// the user should see the widest possible range:
-//   - SingleMin: lowest floor across instances; 0 if any is unlimited
-//   - SingleMax: highest ceiling across instances; 0 if any is unlimited
-//   - DailyLimit: highest cap across instances; 0 if any is unlimited
+// Lowest nonzero single minimum and highest nonzero single maximum/daily cap
+// are accumulated with separate limited flags. Disabled components are set to
+// zero after the loop, retaining unlimited state through later bounded rows.
+// Empty input leaves zero values. This describes configured range, not
+// currently remaining daily capacity, and exact limit lookup does not inherit
+// an alias entry.
 func ConfigPcAggregateMethodLimits(pt string, instances []*ProviderInstance) MethodLimits {
 	ml := MethodLimits{PaymentType: pt}
 	minLimited, maxLimited, dailyLimited := true, true, true
 
 	for _, inst := range instances {
 		cl, hasLimits := ConfigPcInstanceTypeLimits(inst, pt)
+		// One instance with no usable exact limit entry broadens the method to
+		// all-zero display bounds. Return before other instances can reintroduce a
+		// restrictive configured range.
 		if !hasLimits {
-			return MethodLimits{PaymentType: pt} // any unlimited instance → all zeros
+			return MethodLimits{PaymentType: pt}
 		}
 		ml.SingleMin, minLimited = ConfigUnionFloat(ml.SingleMin, minLimited, cl.SingleMin, true)
 		ml.SingleMax, maxLimited = ConfigUnionFloat(ml.SingleMax, maxLimited, cl.SingleMax, false)
@@ -299,8 +424,15 @@ func ConfigPcAggregateMethodLimits(pt string, instances []*ProviderInstance) Met
 	return ml
 }
 
-// ConfigPcComputeGlobalRange computes the widest [min, max] across all methods.
-// Uses the same union logic: lowest min, highest max, 0 if any is unlimited.
+// ConfigPcComputeGlobalRange returns the lowest single minimum and highest
+// single maximum across displayed methods with zero meaning unlimited. Empty
+// input returns zero values.
+//
+// Each side has its own limited flag, so a method unlimited only on one side
+// does not disable the other side. Once a side is unlimited, later bounded
+// methods leave that state intact and the final exposed value is cleared to
+// zero. Currency groups are not converted here; callers already decide which
+// individual methods can be displayed.
 func ConfigPcComputeGlobalRange(methods map[string]MethodLimits) (globalMin, globalMax float64) {
 	minLimited, maxLimited := true, true
 	for _, ml := range methods {

@@ -8,9 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// routePlansStub supplies plan handlers for route-registration tests.
+// Payment route registration exposes purchase/recovery endpoints while
+// omitting an AI-channel listing. The fixture supplies empty handlers and
+// pass-through guards, then inspects Gin's registered route table; it checks
+// endpoint presence rather than invoking authentication or payment operations.
+
+// routePlansStub supplies no-op billing plan endpoints used solely while
+// registering payment routes.
 type routePlansStub struct{}
 
+// TestPaymentRoutesDoNotExposeAIChannels registers payment handlers with
+// pass-through guards and inspects Gin's route table. It requires
+// checkout-info, force-expire and draft-provider test routes while the payment
+// channels route remains absent.
 func TestPaymentRoutesDoNotExposeAIChannels(t *testing.T) {
 	router := gin.New()
 	passThrough := func(c *gin.Context) { c.Next() }
@@ -35,8 +45,22 @@ func TestPaymentRoutesDoNotExposeAIChannels(t *testing.T) {
 	require.True(t, registered[http.MethodPost+" /api/v1/admin/payment/providers/test"])
 }
 
-func (*routePlansStub) GetPlans(*gin.Context)   {}
-func (*routePlansStub) ListPlans(*gin.Context)  {}
+// GetPlans supplies the no-op buyer sale listing handler for route
+// registration.
+func (*routePlansStub) GetPlans(*gin.Context) {}
+
+// ListPlans supplies the no-op administrator plan listing handler for route
+// registration.
+func (*routePlansStub) ListPlans(*gin.Context) {}
+
+// CreatePlan supplies the no-op administrator plan creation handler for route
+// registration.
 func (*routePlansStub) CreatePlan(*gin.Context) {}
+
+// UpdatePlan supplies the no-op administrator plan update handler for route
+// registration.
 func (*routePlansStub) UpdatePlan(*gin.Context) {}
+
+// DeletePlan supplies the no-op administrator plan deletion handler for route
+// registration.
 func (*routePlansStub) DeletePlan(*gin.Context) {}

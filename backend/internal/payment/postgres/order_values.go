@@ -5,6 +5,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// Ent order rows contain optional scalar pointers and snapshot maps that
+// payment callers can retain beyond the query. Domain conversion maps their
+// persisted observations, then uses Order.Clone to detach its recognized
+// mutable data while keeping the original numeric and nil/empty
+// representation.
+
+// OrderFromEntity returns nil for nil input or a copied payment-domain value
+// for the Ent row. It maps stored fields first, then delegates pointer and
+// recognized snapshot collection detachment to Order.Clone; unsupported
+// mutable snapshot values retain that helper's sharing rules.
 func OrderFromEntity(v *dbent.PaymentOrder) *payment.Order {
 	if v == nil {
 		return nil

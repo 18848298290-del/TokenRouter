@@ -9,6 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Checkout helper tests keep credited/display fields distinct from gateway
+// money and provider initiation details. They compare explicit response result
+// types, JSAPI pointer aliases, PostgreSQL text cleanup and currency-specific
+// fee results, using pure local fixtures without an external payment request.
+
+// TestShouldUseAlipayMobilePrecreate varies device flag, preference and
+// provider identity. It requires the listed official mobile case to enable
+// precreate while desktop, disabled and other-provider cases return false.
 func TestShouldUseAlipayMobilePrecreate(t *testing.T) {
 	t.Parallel()
 
@@ -16,11 +24,14 @@ func TestShouldUseAlipayMobilePrecreate(t *testing.T) {
 	officialAlipay := &InstanceSelection{ProviderKey: TypeAlipay}
 
 	tests := []struct {
-		name string
-		req  CreateOrderRequest
-		cfg  *PaymentConfig
-		sel  *InstanceSelection
-		want bool
+		name string // parallel scenario display name
+		// req, cfg and sel jointly supply the precreate decision. The parallel cases
+		// read these request values and shared configuration/selection pointers
+		// without mutating their fixture objects.
+		req  CreateOrderRequest // supplied checkout device flags
+		cfg  *PaymentConfig     // shared precreate preference fixture
+		sel  *InstanceSelection // shared selected provider fixture
+		want bool               // expected precreate predicate result
 	}{
 		{name: "mobile official alipay with switch", req: CreateOrderRequest{IsMobile: true}, cfg: enabled, sel: officialAlipay, want: true},
 		{name: "desktop remains unchanged", req: CreateOrderRequest{IsMobile: false}, cfg: enabled, sel: officialAlipay, want: false},
@@ -38,6 +49,10 @@ func TestShouldUseAlipayMobilePrecreate(t *testing.T) {
 	}
 }
 
+// TestBuildCreateOrderResponseDefaultsToOrderCreated supplies order_created as
+// the result type while assembling a QR response. It checks that explicit
+// type, merchant number, QR, expiration and absent JSAPI aliases; default
+// selection occurs in InvokeProvider separately.
 func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +92,10 @@ func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
 	}
 }
 
+// TestBuildCreateOrderResponseCopiesJSAPIPayload assembles a ready JSAPI
+// response from one payload pointer. Both exposed aliases must equal that
+// original pointer, protecting shared identity rather than a deep-copy
+// guarantee.
 func TestBuildCreateOrderResponseCopiesJSAPIPayload(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +137,10 @@ func TestBuildCreateOrderResponseCopiesJSAPIPayload(t *testing.T) {
 	}
 }
 
+// TestBuildCreateOrderResponseCopiesStripeInvoiceFields supplies
+// client/customer/invoice values in a provider result. The constructed
+// response must expose each tested string, protecting invoice display transfer
+// through checkout response assembly.
 func TestBuildCreateOrderResponseCopiesStripeInvoiceFields(t *testing.T) {
 	t.Parallel()
 
@@ -164,6 +187,10 @@ func TestBuildCreateOrderResponseCopiesStripeInvoiceFields(t *testing.T) {
 	}
 }
 
+// TestBuildProviderCreatePaymentRequestCopiesExpiresAt supplies a fixed
+// expiration and Stripe subtype text. The adapter request must retain both
+// values, protecting local expiry/subtype transfer into provider initiation
+// input.
 func TestBuildProviderCreatePaymentRequestCopiesExpiresAt(t *testing.T) {
 	t.Parallel()
 
@@ -188,6 +215,10 @@ func TestBuildProviderCreatePaymentRequestCopiesExpiresAt(t *testing.T) {
 	}
 }
 
+// TestSanitizeCreatePaymentResponseDetailsRemovesNULBytes supplies NULs in
+// persisted provider text and in a transient client secret. It requires the
+// eight stored-detail values to be cleaned while the client secret remains
+// exactly as supplied.
 func TestSanitizeCreatePaymentResponseDetailsRemovesNULBytes(t *testing.T) {
 	t.Parallel()
 
@@ -237,6 +268,10 @@ func TestSanitizeCreatePaymentResponseDetailsRemovesNULBytes(t *testing.T) {
 	}
 }
 
+// TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal
+// supplies fractional JPY text on a Stripe selection. Validation must fail
+// with INVALID_AMOUNT, protecting selected-currency precision checking before
+// gateway use.
 func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t *testing.T) {
 	t.Parallel()
 
@@ -252,6 +287,9 @@ func TestValidateSelectedCreateOrderAmountCurrencyRejectsFractionalZeroDecimal(t
 	}
 }
 
+// TestCalculateCreateOrderPayAmountUsesCurrencyPrecision calculates percentage
+// fees for JPY and KWD fixtures. It requires exact expected formatted and
+// float totals, protecting whole-unit and three-decimal charge behavior.
 func TestCalculateCreateOrderPayAmountUsesCurrencyPrecision(t *testing.T) {
 	t.Parallel()
 
@@ -272,6 +310,10 @@ func TestCalculateCreateOrderPayAmountUsesCurrencyPrecision(t *testing.T) {
 	}
 }
 
+// TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWithFixedFee
+// calls the base fee helper with a CNY price and fixed fee. It requires their
+// formatted sum and numeric result, without invoking subscription conversion
+// in this test.
 func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWithFixedFee(t *testing.T) {
 	t.Parallel()
 
@@ -284,6 +326,10 @@ func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWithFixedFe
 	}
 }
 
+// TestCalculateCreateOrderPayAmountForSubscriptionConvertsCNYPriceWhenRateConfigured
+// applies a positive USD-to-CNY rate to the subscription fixture. The
+// formatted and numeric result must equal the expected currency-rounded
+// converted amount.
 func TestCalculateCreateOrderPayAmountForSubscriptionConvertsCNYPriceWhenRateConfigured(t *testing.T) {
 	t.Parallel()
 
@@ -296,6 +342,10 @@ func TestCalculateCreateOrderPayAmountForSubscriptionConvertsCNYPriceWhenRateCon
 	}
 }
 
+// TestCalculateCreateOrderPayAmountForSubscriptionAppliesFeeAfterCNYConversion
+// combines the conversion fixture with percentage fees. It requires the
+// expected converted-then-fee total in string and float forms, protecting
+// their calculation order.
 func TestCalculateCreateOrderPayAmountForSubscriptionAppliesFeeAfterCNYConversion(t *testing.T) {
 	t.Parallel()
 
@@ -308,6 +358,9 @@ func TestCalculateCreateOrderPayAmountForSubscriptionAppliesFeeAfterCNYConversio
 	}
 }
 
+// TestCalculateCreateOrderPayAmountForSubscriptionKeepsNonCNYPrice supplies a
+// positive conversion rate for a USD subscription. The result must keep its
+// direct price in both forms, protecting conversion's CNY condition.
 func TestCalculateCreateOrderPayAmountForSubscriptionKeepsNonCNYPrice(t *testing.T) {
 	t.Parallel()
 
@@ -320,7 +373,9 @@ func TestCalculateCreateOrderPayAmountForSubscriptionKeepsNonCNYPrice(t *testing
 	}
 }
 
-// A zero conversion rate charges CNY subscriptions at the plan price.
+// TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDisabled
+// supplies zero conversion rate for a CNY subscription. The result must retain
+// the direct price, protecting the explicitly disabled conversion case.
 func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -333,7 +388,10 @@ func TestCalculateCreateOrderPayAmountForSubscriptionKeepsDirectPriceWhenRateDis
 	}
 }
 
-// The subscription conversion rate does not affect balance recharge amounts.
+// TestCalculateCreateOrderPayAmountForBalanceIgnoresSubscriptionRate supplies
+// balance order type with a positive subscription rate. The gateway result
+// must retain the balance principal, protecting the order-type conversion
+// condition.
 func TestCalculateCreateOrderPayAmountForBalanceIgnoresSubscriptionRate(t *testing.T) {
 	t.Parallel()
 
@@ -346,6 +404,10 @@ func TestCalculateCreateOrderPayAmountForBalanceIgnoresSubscriptionRate(t *testi
 	}
 }
 
+// TestCalculateCreateOrderPayAmountKeepsCurrencyPrecisionWithoutRechargeMultiplier
+// passes JPY principal and percentage fee directly to the fee helper. It
+// requires the whole-unit result; no recharge multiplier is supplied by this
+// helper call.
 func TestCalculateCreateOrderPayAmountKeepsCurrencyPrecisionWithoutRechargeMultiplier(t *testing.T) {
 	t.Parallel()
 
@@ -358,6 +420,10 @@ func TestCalculateCreateOrderPayAmountKeepsCurrencyPrecisionWithoutRechargeMulti
 	}
 }
 
+// TestCalculateCreateOrderPayAmountRejectsFractionalZeroDecimal supplies
+// fractional JPY base money before fees. It requires INVALID_AMOUNT,
+// protecting precision rejection before the fee helper could round that
+// invalid base.
 func TestCalculateCreateOrderPayAmountRejectsFractionalZeroDecimal(t *testing.T) {
 	t.Parallel()
 
@@ -370,6 +436,9 @@ func TestCalculateCreateOrderPayAmountRejectsFractionalZeroDecimal(t *testing.T)
 	}
 }
 
+// TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanProductName supplies a
+// custom plan product name and two affixes. The returned subject must wrap
+// that name exactly, protecting configured title precedence.
 func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanProductName(t *testing.T) {
 	t.Parallel()
 
@@ -389,6 +458,10 @@ func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanProductName(t *testing
 	}
 }
 
+// TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName supplies a
+// plan without an explicit product name. The returned subject must combine the
+// default subscription label/name with both affixes, protecting that fallback
+// display.
 func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName(t *testing.T) {
 	t.Parallel()
 

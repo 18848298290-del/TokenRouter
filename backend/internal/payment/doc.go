@@ -1,7 +1,7 @@
 // Package payment manages payment settings, orders, provider selection, confirmation, fulfillment, and refunds.
 //
 // Entry points:
-//   - runtime.go assembles checkout, queries, refunds, order lifecycle, and provider bindings.
+//   - runtime.go exposes the checkout, query, refund, lifecycle, and binding instances assembled by app.
 //   - checkout.go validates requests, calls providers, and builds checkout responses.
 //   - fulfillment.go validates notifications, confirms payment, and grants balance or subscriptions.
 //

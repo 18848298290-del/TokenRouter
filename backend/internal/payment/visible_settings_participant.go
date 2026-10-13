@@ -11,23 +11,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// VisibleMethodSettings contains admin settings for payment method visibility and sources.
+// Alipay and WeChat source labels are normalized independently of their stored
+// visibility flags. Source validation currently ignores the enabled argument,
+// while administrator reads interpret exact true strings and normalize
+// supported aliases for display.
+//
+// The visible participant prepares a fresh decoded value and retains writes by
+// request key presence. It removes absent keys after normalization rather than
+// reading prior settings, so partial requests keep their omitted fields
+// outside persistence. A supplied null can retain a decoded zero value as a
+// requested key. Standalone preparation mutates source strings in order and
+// can leave the earlier normalization visible if a later source fails; the
+// coordinator owns persistence of the returned values.
+
+// VisibleMethodSettings retains supplied Alipay/WeChat source labels and
+// visibility flags.
 type VisibleMethodSettings struct {
-	PaymentVisibleMethodAlipaySource  string `json:"payment_visible_method_alipay_source"`
-	PaymentVisibleMethodWxpaySource   string `json:"payment_visible_method_wxpay_source"`
-	PaymentVisibleMethodAlipayEnabled bool   `json:"payment_visible_method_alipay_enabled"`
-	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
+	// saved Alipay source label
+	PaymentVisibleMethodAlipaySource string `json:"payment_visible_method_alipay_source"`
+	// saved WeChat source label
+	PaymentVisibleMethodWxpaySource string `json:"payment_visible_method_wxpay_source"`
+	// saved Alipay visibility flag
+	PaymentVisibleMethodAlipayEnabled bool `json:"payment_visible_method_alipay_enabled"`
+	// saved WeChat visibility flag
+	PaymentVisibleMethodWxpayEnabled bool `json:"payment_visible_method_wxpay_enabled"`
 }
 
-// AdminReadSettings contains payment method visibility flags and sources.
+// AdminReadSettings carries normalized saved Alipay/WeChat settings for
+// administrator display.
 type AdminReadSettings struct {
-	PaymentVisibleMethodAlipayEnabled bool
-	PaymentVisibleMethodAlipaySource  string
-	PaymentVisibleMethodWxpayEnabled  bool
-	PaymentVisibleMethodWxpaySource   string
+	PaymentVisibleMethodAlipayEnabled bool   // saved Alipay visibility flag
+	PaymentVisibleMethodAlipaySource  string // saved Alipay source label
+	PaymentVisibleMethodWxpayEnabled  bool   // saved WeChat visibility flag
+	PaymentVisibleMethodWxpaySource   string // saved WeChat source label
 }
 
-// PrepareVisibleMethodSettings normalizes sources in place and returns settings values for persistence.
+// PrepareVisibleMethodSettings normalizes a nonnil value's source strings in
+// place and returns all four setting values. Alipay normalization occurs
+// first, so a later WeChat error can leave its earlier mutation; the source
+// validator currently ignores enabled flags.
 func PrepareVisibleMethodSettings(value *VisibleMethodSettings) (map[string]string, error) {
 	var err error
 	value.PaymentVisibleMethodAlipaySource, err = NormalizeVisibleMethodSettingSource("alipay", value.PaymentVisibleMethodAlipaySource, value.PaymentVisibleMethodAlipayEnabled)
@@ -46,7 +68,16 @@ func PrepareVisibleMethodSettings(value *VisibleMethodSettings) (map[string]stri
 	}, nil
 }
 
-// VisibleSettingsParticipant prepares the payment method display fields present in the input.
+// VisibleSettingsParticipant registers the four visible-method keys and
+// prepares only those present in its input. It decodes a fresh value,
+// normalizes both source fields, then removes each absent key from the
+// returned values.
+//
+// The supplied prior-settings map is unused, so absence is preserved through
+// key membership rather than merging old state into validation. A present null
+// can decode to a zero value and remain a requested key. Empty input returns
+// no change, and this participant returns no runtime Apply callback;
+// persistence belongs to the combined settings coordinator.
 func VisibleSettingsParticipant() settings.Participant {
 	keys := []string{SettingPaymentVisibleMethodAlipaySource, SettingPaymentVisibleMethodWxpaySource, SettingPaymentVisibleMethodAlipayEnabled, SettingPaymentVisibleMethodWxpayEnabled}
 	return settings.Participant{Module: "payment-visible-methods", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {
@@ -65,6 +96,9 @@ func VisibleSettingsParticipant() settings.Participant {
 		if err != nil {
 			return settings.PreparedChange{}, err
 		}
+		// Normalization produced all four values from a fresh struct. Remove keys
+		// absent from the request so omitted sources or flags do not become writes
+		// of their zero values.
 		for key := range values {
 			if _, ok := input[key]; !ok {
 				delete(values, key)
@@ -74,7 +108,9 @@ func VisibleSettingsParticipant() settings.Participant {
 	}}
 }
 
-// ReadAdminSettings parses payment method visibility and sources from stored values.
+// ReadAdminSettings returns a new display value parsed from saved string
+// settings. Sources use alias normalization and invalid text becomes empty,
+// while enabled flags are true only for the exact stored text true.
 func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	result := &AdminReadSettings{}
 
@@ -85,7 +121,10 @@ func ReadAdminSettings(settings map[string]string) *AdminReadSettings {
 	return result
 }
 
-// NormalizeVisibleMethodSettingSource validates the source; an empty value requests automatic selection.
+// NormalizeVisibleMethodSettingSource returns the accepted canonical source or
+// empty for trimmed empty text. It rejects unsupported nonempty sources for
+// the method; enabled is currently ignored, so disabling a flag does not
+// bypass source validation.
 func NormalizeVisibleMethodSettingSource(method, source string, enabled bool) (string, error) {
 	_ = enabled
 	source = strings.TrimSpace(source)

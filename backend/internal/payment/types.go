@@ -5,267 +5,409 @@ import (
 	"time"
 )
 
+// Checkout, confirmation, and refund adapters exchange merchant references
+// separately from provider transaction, invoice, and refund identities. Their
+// request and response values retain gateway currency quantities, optional
+// frontend payloads, and merchant metadata used by the later order comparison.
+//
+// Adapter interfaces leave protocol-specific verification, reference
+// resolution, and configuration copying with each implementation. A nil
+// verified notification can be acknowledged as irrelevant, and some refund
+// adapters return pending progress alongside an error for local recovery.
+// Compatibility method mapping collapses known Stripe labels and Alipay/WeChat
+// prefixes while retaining unrelated custom method text. Local uppercase order
+// states and lowercase provider progress labels therefore describe separate
+// stages rather than one interchangeable status value.
+
 const (
-	// Supported payment type constants.
-	TypeAlipay       PaymentType = "alipay"
-	TypeWxpay        PaymentType = "wxpay"
+	// Payment method labels include canonical visible methods, historical
+	// aliases, and adapter identities interpreted by configuration and dispatch.
+	TypeAlipay PaymentType = "alipay" // visible Alipay method
+	TypeWxpay  PaymentType = "wxpay"  // visible WeChat method
+	// historical official Alipay alias.
 	TypeAlipayDirect PaymentType = "alipay_direct"
-	TypeWxpayDirect  PaymentType = "wxpay_direct"
-	TypeStripe       PaymentType = "stripe"
-	TypeCard         PaymentType = "card"
-	TypeLink         PaymentType = "link"
-	TypeEasyPay      PaymentType = "easypay"
-	TypeAirwallex    PaymentType = "airwallex"
+	// historical official WeChat alias.
+	TypeWxpayDirect PaymentType = "wxpay_direct"
+	TypeStripe      PaymentType = "stripe"  // hosted Stripe checkout method
+	TypeCard        PaymentType = "card"    // historical Stripe card alias
+	TypeLink        PaymentType = "link"    // historical Stripe Link alias
+	TypeEasyPay     PaymentType = "easypay" // EasyPay adapter identity
+	// Airwallex checkout adapter identity.
+	TypeAirwallex PaymentType = "airwallex"
 
-	// Order status constants shared across payment and service layers.
-	OrderStatusPending           = "PENDING"
-	OrderStatusProcessing        = "PROCESSING"
-	OrderStatusPaid              = "PAID"
-	OrderStatusRecharging        = "RECHARGING"
-	OrderStatusCompleted         = "COMPLETED"
-	OrderStatusExpired           = "EXPIRED"
-	OrderStatusCancelled         = "CANCELLED"
-	OrderStatusFailed            = "FAILED"
-	OrderStatusRefundRequested   = "REFUND_REQUESTED"
-	OrderStatusRefunding         = "REFUNDING"
-	OrderStatusRefundPending     = "REFUND_PENDING"
+	// Order states distinguish external payment progress, entitlement delivery,
+	// closing, and refund recovery; persisted orders and conditional updates use these labels.
+	OrderStatusPending = "PENDING" // awaiting payment confirmation
+	// provider payment is processing.
+	OrderStatusProcessing = "PROCESSING"
+	// payment confirmed before grant completion.
+	OrderStatusPaid       = "PAID"
+	OrderStatusRecharging = "RECHARGING" // entitlement claim or recovery state
+	// local entitlement delivery completed.
+	OrderStatusCompleted = "COMPLETED"
+	OrderStatusExpired   = "EXPIRED" // locally expired payment order
+	// locally cancelled pending order.
+	OrderStatusCancelled = "CANCELLED"
+	// entitlement or checkout work failed.
+	OrderStatusFailed = "FAILED"
+	// user requested administrative refund.
+	OrderStatusRefundRequested = "REFUND_REQUESTED"
+	// prepared refund recovery in progress.
+	OrderStatusRefunding = "REFUNDING"
+	// provider refund awaits confirmation.
+	OrderStatusRefundPending = "REFUND_PENDING"
+	// accepted partial local refund.
 	OrderStatusPartiallyRefunded = "PARTIALLY_REFUNDED"
-	OrderStatusRefunded          = "REFUNDED"
-	OrderStatusRefundFailed      = "REFUND_FAILED"
+	OrderStatusRefunded          = "REFUNDED" // accepted full local refund
+	// pending provider refund reported failure.
+	OrderStatusRefundFailed = "REFUND_FAILED"
 
-	// Order types distinguish balance recharges from subscription purchases.
-	OrderTypeBalance      = "balance"
-	OrderTypeSubscription = "subscription"
+	// Order types select balance-code fulfillment or source-order subscription
+	// issuance and determine which recorded quantities refund planning interprets.
+	OrderTypeBalance      = "balance"      // balance entitlement purchase
+	OrderTypeSubscription = "subscription" // subscription plan purchase
 
-	// Entity statuses shared across users, groups, etc.
-	EntityStatusActive = "active"
+	// EntityStatusActive is the account state accepted by checkout after its
+	// buyer-profile read; other observed account states reject creation.
+	EntityStatusActive = "active" // checkout-eligible account state
 
-	// Deduction types for refund flow.
-	DeductionTypeBalance      = "balance"
+	// Deduction kinds choose wallet recovery, subscription day/grant operations,
+	// or no entitlement mutation while the gateway refund still progresses.
+	DeductionTypeBalance = "balance" // wallet quantity recovery
+	// subscription duration or revocation.
 	DeductionTypeSubscription = "subscription"
-	DeductionTypeNone         = "none"
+	DeductionTypeNone         = "none" // no local entitlement recovery
 
-	// Payment notification status values.
-	NotificationStatusSuccess = "success"
-	NotificationStatusPaid    = "paid"
+	// Notification success labels select confirmation after provider binding
+	// and amount checks; adapters also use the lowercase provider progress labels.
+	NotificationStatusSuccess = "success" // adapter-reported successful payment
+	NotificationStatusPaid    = "paid"    // adapter-reported paid observation
 
-	// Provider-level status constants returned by provider implementations
-	// to the service layer (lowercase, distinct from OrderStatus uppercase constants).
-	ProviderStatusPending    = "pending"
-	ProviderStatusProcessing = "processing"
-	ProviderStatusPaid       = "paid"
-	ProviderStatusSuccess    = "success"
-	ProviderStatusFailed     = "failed"
-	ProviderStatusRefunded   = "refunded"
+	// Provider status labels normalize adapter observations for confirmation,
+	// reconciliation, and refund handling before local uppercase order transitions.
+	ProviderStatusPending    = "pending"    // unconfirmed provider progress
+	ProviderStatusProcessing = "processing" // unfinished provider payment
+	ProviderStatusPaid       = "paid"       // provider query confirmed payment
+	ProviderStatusSuccess    = "success"    // provider operation succeeded
+	ProviderStatusFailed     = "failed"     // provider operation reported failure
+	ProviderStatusRefunded   = "refunded"   // provider reports refunded progress
 
-	// DefaultLoadBalanceStrategy is the default load-balancing strategy
-	// used when no strategy is configured.
+	// DefaultLoadBalanceStrategy selects the configured round-robin label when
+	// payment settings omit their strategy; the selector owns actual candidate ordering.
 	DefaultLoadBalanceStrategy = "round-robin"
 
-	// ConfigKeyPublishableKey is the config map key for Stripe's publishable key.
+	// ConfigKeyPublishableKey names the Stripe public credential read from a
+	// selected enabled instance for checkout configuration responses.
 	ConfigKeyPublishableKey = "publishableKey"
 
-	CreatePaymentResultOrderCreated  CreatePaymentResultType = "order_created"
+	// Create-payment result variants direct the frontend to a stored order, OAuth
+	// authorization, or the supplied WeChat invocation payload.
+	// ordinary created-order result.
+	CreatePaymentResultOrderCreated CreatePaymentResultType = "order_created"
+	// WeChat authorization is required.
 	CreatePaymentResultOAuthRequired CreatePaymentResultType = "oauth_required"
-	CreatePaymentResultJSAPIReady    CreatePaymentResultType = "jsapi_ready"
+	// WeChat invocation payload is ready.
+	CreatePaymentResultJSAPIReady CreatePaymentResultType = "jsapi_ready"
 )
 
-// PaymentType represents a supported payment method.
+// PaymentType is the string method label used by payment adapter interfaces.
 type PaymentType = string
 
-// CreatePaymentRequest contains the parameters sent to a payment provider.
+// CreatePaymentRequest carries the stored order and payer inputs sent to one
+// adapter.
 type CreatePaymentRequest struct {
-	OrderID               string    // Merchant order number
-	Amount                string    // Amount paid in the provider instance's configured currency
-	PaymentType           string    // Payment method, such as "alipay", "wxpay", "stripe", or "airwallex"
-	Subject               string    // Product or order description
-	NotifyURL             string    // Provider notification URL
-	ReturnURL             string    // Browser return URL after payment
-	OpenID                string    // Payer OpenID for WeChat JSAPI
-	ClientIP              string    // Payer IP address
-	IsMobile              bool      // Whether the request comes from a mobile device
-	AlipayMobilePrecreate bool      // Use Alipay face-to-face precreate for mobile checkout
-	InstanceSubMethods    string    // Sub-methods from the instance's supported_types
-	ExpiresAt             time.Time // Local order expiration used to set the provider invoice expiration
-	UserEmail             string    // Payer email copied from the local user profile
-	BillingInfo           *BillingInfo
+	OrderID               string // stored merchant order number
+	Amount                string // formatted gateway currency amount
+	PaymentType           string // selected visible payment method
+	Subject               string // recorded checkout product description
+	NotifyURL             string // request notification URL override
+	ReturnURL             string // request browser return URL
+	OpenID                string // WeChat payer OpenID
+	ClientIP              string // payer client IP address
+	IsMobile              bool   // payer mobile-client indication
+	AlipayMobilePrecreate bool   // mobile Alipay precreate selection
+	// instance comma-separated supported methods
+	InstanceSubMethods string
+	ExpiresAt          time.Time // local requested expiration time
+	UserEmail          string    // checkout buyer email address
+	// BillingInfo retains the supplied invoice identity pointer. Stripe
+	// normalization can mutate its shared Address fields, so direct adapter
+	// callers account for that input sharing.
+	BillingInfo *BillingInfo
 }
 
-// BillingAddress contains the optional billing address supplied by the payer.
+// BillingAddress retains optional invoice address fields supplied by the
+// payer.
 type BillingAddress struct {
-	Country    string `json:"country,omitempty"`
-	Line1      string `json:"line1,omitempty"`
-	Line2      string `json:"line2,omitempty"`
-	City       string `json:"city,omitempty"`
-	State      string `json:"state,omitempty"`
-	PostalCode string `json:"postal_code,omitempty"`
+	Country    string `json:"country,omitempty"`     // billing country code text
+	Line1      string `json:"line1,omitempty"`       // first billing address line
+	Line2      string `json:"line2,omitempty"`       // second billing address line
+	City       string `json:"city,omitempty"`        // billing city name
+	State      string `json:"state,omitempty"`       // billing region or state
+	PostalCode string `json:"postal_code,omitempty"` // billing postal code text
 }
 
-// BillingInfo contains the invoice identity and contact details sent to the provider.
+// BillingInfo retains invoice contact, address, and optional tax identity
+// input.
 type BillingInfo struct {
-	Name      string          `json:"name,omitempty"`
-	Email     string          `json:"email,omitempty"`
-	Address   *BillingAddress `json:"address,omitempty"`
-	TaxIDType string          `json:"tax_id_type,omitempty"`
-	TaxID     string          `json:"tax_id,omitempty"`
+	Name  string `json:"name,omitempty"`  // payer invoice display name
+	Email string `json:"email,omitempty"` // payer invoice email address
+	// Address is optional invoice input retained by reference. Stripe
+	// normalization updates its fields in place, while checkout's earlier
+	// trimming stage supplies its own prepared input.
+	Address *BillingAddress `json:"address,omitempty"`
+	// provider tax identifier kind
+	// TaxIDType and TaxID identify one optional provider tax record. Stripe
+	// customer construction writes that pair when both normalized values are
+	// nonempty; checkout validation checks their supplied pairing before
+	// initiation.
+	TaxIDType string `json:"tax_id_type,omitempty"`
+	// payer tax identifier text
+	TaxID string `json:"tax_id,omitempty"`
 }
 
-// CreatePaymentResultType describes the shape of the create-payment result.
+// CreatePaymentResultType is the frontend variant label returned by payment
+// initiation.
 type CreatePaymentResultType = string
 
-// WechatOAuthInfo describes the next step when WeChat OAuth is required before payment.
+// WechatOAuthInfo carries the authorization step needed before an official
+// WeChat payment.
 type WechatOAuthInfo struct {
+	// browser authorization redirect URL
 	AuthorizeURL string `json:"authorize_url,omitempty"`
-	AppID        string `json:"appid,omitempty"`
-	OpenID       string `json:"openid,omitempty"`
-	Scope        string `json:"scope,omitempty"`
-	State        string `json:"state,omitempty"`
-	RedirectURL  string `json:"redirect_url,omitempty"`
+	// WeChat authorization application ID
+	AppID  string `json:"appid,omitempty"`
+	OpenID string `json:"openid,omitempty"` // resolved payer OpenID
+	// requested authorization scope text
+	Scope string `json:"scope,omitempty"`
+	State string `json:"state,omitempty"` // authorization state token text
+	// frontend authorization callback path
+	RedirectURL string `json:"redirect_url,omitempty"`
 }
 
-// WechatJSAPIPayload contains the fields the frontend needs to invoke WeChat JSAPI payment.
+// WechatJSAPIPayload retains the SDK-generated strings used for browser WeChat
+// invocation.
 type WechatJSAPIPayload struct {
+	// WeChat invocation application ID
 	AppID     string `json:"appId,omitempty"`
-	TimeStamp string `json:"timeStamp,omitempty"`
-	NonceStr  string `json:"nonceStr,omitempty"`
-	Package   string `json:"package,omitempty"`
-	SignType  string `json:"signType,omitempty"`
-	PaySign   string `json:"paySign,omitempty"`
+	TimeStamp string `json:"timeStamp,omitempty"` // invocation timestamp text
+	NonceStr  string `json:"nonceStr,omitempty"`  // invocation random nonce text
+	Package   string `json:"package,omitempty"`   // prepay package parameter text
+	// invocation signature algorithm name
+	SignType string `json:"signType,omitempty"`
+	// invocation signature value text
+	PaySign string `json:"paySign,omitempty"`
 }
 
-// CreatePaymentResponse is returned after successfully initiating a payment.
+// CreatePaymentResponse retains provider references and frontend initiation
+// data for checkout.
 type CreatePaymentResponse struct {
-	TradeNo       string                  // Third-party transaction ID
-	PayURL        string                  // H5 payment URL (alipay/wxpay)
-	QRCode        string                  // QR code content for scanning
-	ClientSecret  string                  // Stripe PaymentIntent client secret
-	CustomerID    string                  // Customer ID at an invoice-based provider
-	InvoiceID     string                  // Provider invoice ID
-	InvoiceURL    string                  // Hosted invoice page URL
-	InvoicePDF    string                  // Invoice PDF URL
-	InvoiceStatus string                  // Provider invoice status
-	IntentID      string                  // Provider payment intent ID required by the frontend SDK
-	Currency      string                  // Provider payment currency
-	CountryCode   string                  // Country or region code for the provider checkout
-	PaymentEnv    string                  // Provider frontend environment identifier
-	ExpiresAt     time.Time               // Order expiration returned by the provider
-	ResultType    CreatePaymentResultType // Result variant for the frontend payment flow
-	OAuth         *WechatOAuthInfo        // WeChat OAuth bootstrap payload when required
-	JSAPI         *WechatJSAPIPayload     // WeChat JSAPI invocation payload when ready
+	TradeNo       string // provider payment query reference
+	PayURL        string // provider checkout browser URL
+	QRCode        string // provider scannable QR payload
+	ClientSecret  string // provider frontend client secret
+	CustomerID    string // provider customer account identity
+	InvoiceID     string // provider invoice object identity
+	InvoiceURL    string // hosted provider invoice URL
+	InvoicePDF    string // provider invoice PDF URL
+	InvoiceStatus string // reported provider invoice state
+	IntentID      string // provider SDK intent identity
+	Currency      string // configured provider currency code
+	CountryCode   string // provider frontend country setting
+	PaymentEnv    string // provider frontend environment label
+	// ExpiresAt replaces the locally stored expiration when nonzero during
+	// response persistence. A zero value keeps the draft expiration, and Stripe
+	// supplies its accepted session expiration here.
+	ExpiresAt  time.Time
+	ResultType CreatePaymentResultType // frontend initiation variant label
+	// OAuth is copied into the checkout response when present. The selected
+	// result variant determines whether the frontend follows its authorization
+	// URL before payment can continue.
+	OAuth *WechatOAuthInfo
+	// JSAPI is copied into both checkout invocation aliases when present. Those
+	// aliases retain the same payload pointer, and the result variant determines
+	// the frontend invocation path.
+	JSAPI *WechatJSAPIPayload
 }
 
-// QueryOrderResponse describes the payment status from the upstream provider.
+// QueryOrderResponse carries one adapter's normalized payment observation and
+// metadata.
 type QueryOrderResponse struct {
-	TradeNo  string
-	Status   string  // "pending", "processing", "paid", "failed", "refunded"
-	Amount   float64 // Amount in the currency returned by the provider
-	PaidAt   string  // RFC3339 timestamp or empty
+	TradeNo string  // reported provider transaction reference
+	Status  string  // normalized provider payment progress
+	Amount  float64 // observed gateway currency amount
+	PaidAt  string  // provider-reported payment time text
+	// Metadata carries reported merchant and currency strings into order snapshot
+	// checks. Reconciliation forwards this mutable map into PaymentNotification
+	// as supplied by the adapter.
 	Metadata map[string]string
 }
 
-// PaymentNotification is the parsed result of a webhook/notify callback.
+// PaymentNotification retains a verified adapter observation for local payment
+// processing.
 type PaymentNotification struct {
-	TradeNo  string
-	OrderID  string
-	Amount   float64
-	Status   string // "success", "paid", "processing", or "failed"
-	RawData  string // Raw notification body for audit
+	TradeNo string  // reported provider transaction identity
+	OrderID string  // reported merchant order number
+	Amount  float64 // reported gateway payment amount
+	Status  string  // normalized provider notification progress
+	RawData string  // original notification text
+	// Metadata is compared with recorded snapshot attributes after provider
+	// binding. Empty metadata selects the validator's legacy skip path; callers
+	// establish the appropriate adapter observation before processing.
 	Metadata map[string]string
 }
 
-// PaymentDocumentResponse contains invoice or receipt links that the user can open.
+// PaymentDocumentResponse exposes the available provider invoice or receipt
+// references.
 type PaymentDocumentResponse struct {
-	Type             string `json:"type"`
-	URL              string `json:"url,omitempty"`
+	Type string `json:"type"`          // invoice or receipt document kind
+	URL  string `json:"url,omitempty"` // preferred openable document URL
+	// hosted provider invoice URL
 	HostedInvoiceURL string `json:"hosted_invoice_url,omitempty"`
-	InvoicePDF       string `json:"invoice_pdf,omitempty"`
-	ReceiptURL       string `json:"receipt_url,omitempty"`
-	InvoiceID        string `json:"invoice_id,omitempty"`
-	InvoiceStatus    string `json:"invoice_status,omitempty"`
+	// provider invoice PDF URL
+	InvoicePDF string `json:"invoice_pdf,omitempty"`
+	// provider payment receipt URL
+	ReceiptURL string `json:"receipt_url,omitempty"`
+	// provider invoice object identity
+	InvoiceID string `json:"invoice_id,omitempty"`
+	// reported provider invoice state
+	InvoiceStatus string `json:"invoice_status,omitempty"`
 }
 
-// RefundRequest contains the parameters for requesting a refund.
+// RefundRequest carries stored order references and formatted gateway refund
+// money.
 type RefundRequest struct {
-	TradeNo string
-	OrderID string
-	Amount  string // Refund amount formatted to 2 decimal places
-	Reason  string
+	TradeNo string // stored upstream payment reference
+	OrderID string // stored merchant order number
+	Amount  string // formatted gateway refund amount
+	Reason  string // supplied provider refund explanation
 }
 
-// RefundQueryRequest contains provider identifiers for querying an existing refund.
+// RefundQueryRequest identifies an existing provider refund and its query
+// amount text.
 type RefundQueryRequest struct {
-	TradeNo  string
-	OrderID  string
-	RefundID string
-	Amount   string
+	TradeNo  string // stored upstream payment reference
+	OrderID  string // stored merchant order number
+	RefundID string // known provider refund identity
+	Amount   string // supplied formatted query amount
 }
 
-// RefundResponse is returned after a refund request.
+// RefundResponse carries the provider refund identity and normalized
+// settlement progress.
 type RefundResponse struct {
-	RefundID string
-	Status   string // "success", "pending", "failed"
+	RefundID string // provider refund operation identity
+	Status   string // normalized provider refund progress
 }
 
-// InstanceSelection holds the selected provider instance and its decrypted config.
+// InstanceSelection retains the chosen instance, decrypted configuration, and
+// checkout mode.
 type InstanceSelection struct {
-	InstanceID     string
-	ProviderKey    string // Provider key of the selected instance (e.g. "alipay", "easypay")
+	InstanceID  string // decimal provider instance identity
+	ProviderKey string // selected adapter implementation key
+	// Config is the selected instance's decrypted string map passed to the
+	// adapter constructor. Provider copying varies by adapter, so the selected
+	// configuration stays stable while that adapter uses it.
 	Config         map[string]string
-	SupportedTypes string // Comma-separated list of supported payment types from the instance
-	PaymentMode    string // Payment display mode: "qrcode", "redirect", "popup"
+	SupportedTypes string // comma-separated enabled payment methods
+	PaymentMode    string // configured checkout display mode
 }
 
-// Provider defines the interface that all payment providers must implement.
+// Provider defines adapter identity and external payment operations used by
+// checkout and recovery.
 type Provider interface {
-	// Name returns a human-readable name for this provider.
+	// Name returns the adapter's human-readable display name for identity
+	// consumers.
 	Name() string
-	// ProviderKey returns the unique key identifying this provider type (e.g. "easypay").
+	// ProviderKey returns the adapter implementation key used by binding and
+	// dispatch.
 	ProviderKey() string
-	// SupportedTypes returns the list of payment types this provider handles.
+	// SupportedTypes returns the method labels registered for this provider.
+	// Registry.Register calls it while holding its write lock, so implementations
+	// return their data without reentering that registry; copying varies by
+	// adapter.
 	SupportedTypes() []PaymentType
-	// CreatePayment initiates a payment and returns the upstream response.
+	// CreatePayment initiates the selected adapter's payment flow and returns
+	// provider/frontend references. Browser-URL construction or external calls
+	// depend on the adapter, and checkout persists a local order before invoking
+	// this operation.
 	CreatePayment(ctx context.Context, req CreatePaymentRequest) (*CreatePaymentResponse, error)
-	// QueryOrder queries the payment status of the given trade number.
+	// QueryOrder reads payment progress using the adapter's required reference
+	// kind. Callers choose merchant, Checkout, invoice, or intent references
+	// through PaymentOrderQueryReference and confirm actionable paid money
+	// against the stored order.
 	QueryOrder(ctx context.Context, tradeNo string) (*QueryOrderResponse, error)
-	// VerifyNotification parses and verifies a webhook callback.
-	// Returns nil for unrecognized or irrelevant events (caller should return 200).
+	// VerifyNotification validates and interprets the original callback
+	// body/query and required headers under adapter rules. A nil result with nil
+	// error is an irrelevant event acknowledged by HTTP handlers; verification
+	// errors request retry.
 	VerifyNotification(ctx context.Context, rawBody string, headers map[string]string) (*PaymentNotification, error)
-	// Refund requests a refund from the upstream provider.
+	// Refund submits the formatted gateway amount using the adapter's stored
+	// payment references. A pending response can accompany an error for some
+	// adapters, and the workflow preserves that progress for compensation and
+	// later query.
 	Refund(ctx context.Context, req RefundRequest) (*RefundResponse, error)
 }
 
-// RefundQueryProvider supports querying refund status.
+// RefundQueryProvider adds observation of an already submitted refund to a
+// payment adapter.
 type RefundQueryProvider interface {
-	Provider
+	Provider // base payment and identity operations
+	// QueryRefund observes an already submitted refund using the supplied or
+	// adapter-derived identity. It returns settlement progress for local
+	// recovery; provider-specific missing identity behavior is described by that
+	// adapter.
 	QueryRefund(ctx context.Context, req RefundQueryRequest) (*RefundResponse, error)
 }
 
-// CancelableProvider extends Provider with the ability to cancel pending payments.
+// CancelableProvider adds provider-side closing for a still-pending payment
+// reference.
 type CancelableProvider interface {
-	Provider
-	// CancelPayment cancels/expires a pending payment on the upstream platform.
+	Provider // base payment and identity operations
+	// CancelPayment closes a pending provider reference using its adapter's
+	// operation. Lifecycle queries before closing and requeries a cancellation
+	// error so a concurrently completed payment can determine the local outcome.
 	CancelPayment(ctx context.Context, tradeNo string) error
 }
 
-// DocumentProvider exposes invoice and receipt links for completed or historical orders.
+// DocumentProvider reads available invoice or receipt links for an order's
+// provider reference.
 type DocumentProvider interface {
-	Provider
-	// GetPaymentDocument prefers an invoice and falls back to a provider receipt.
+	Provider // base payment and identity operations
+	// GetPaymentDocument returns a provider invoice or receipt using the supplied
+	// stored references. Stripe prefers invoice links and follows its receipt
+	// lookup rules when appropriate; callers inspect whether a usable URL was
+	// returned.
 	GetPaymentDocument(ctx context.Context, invoiceID string, tradeNo string) (*PaymentDocumentResponse, error)
 }
 
-// MerchantIdentityProvider exposes the current non-sensitive merchant identity
-// derived from provider configuration for snapshot consistency checks.
+// MerchantIdentityProvider exposes current configured merchant attributes for
+// order-snapshot comparisons.
 type MerchantIdentityProvider interface {
+	// MerchantIdentityMetadata returns current non-secret merchant or currency
+	// attributes for snapshot comparisons. Refund callers compare its supplied
+	// map under ValidateProviderSnapshotMetadata; empty metadata selects that
+	// validator's legacy skip path.
 	MerchantIdentityMetadata() map[string]string
 }
 
-// EncryptionKey distinguishes the wiring parameter; app decodes and validates its configuration.
+// EncryptionKey distinguishes the application's decoded legacy payment key
+// during dependency assembly.
 type EncryptionKey []byte
 
-// GetBasePaymentType extracts the base payment method from a composite key.
-// For example, "alipay_direct" -> "alipay".
+// GetBasePaymentType maps canonical and compatibility method text to its base
+// identity. Exact stripe, card, and link become stripe; text beginning with
+// alipay or wxpay becomes that method, while exact easypay and airwallex
+// retain their names.
+//
+// Other input, including an empty value or a custom method name, is returned
+// as supplied. The helper performs no trimming, case conversion, or
+// supported-method validation, so callers such as NormalizeVisibleMethod apply
+// their own normalization before this mapping. Prefix matching covers every
+// suffix, not just the historical direct alias.
 func GetBasePaymentType(t string) string {
+	// Map legacy method representations before provider selection while retaining
+	// unrelated custom method identities. Validation of supported custom prefixes
+	// belongs to their configuration callers.
 	switch {
 	case t == TypeEasyPay:
 		return TypeEasyPay

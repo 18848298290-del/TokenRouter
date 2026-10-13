@@ -1,7 +1,5 @@
 package postgres
 
-// These scenarios cover order snapshot construction and persistence in payment/checkout.go, payment/checkout_draft.go, and this package's checkout.go.
-
 import (
 	"context"
 	"strconv"
@@ -14,6 +12,17 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// Order snapshots retain channel association, merchant identity and currency
+// while leaving credential configuration on the provider instance. Pure
+// snapshot cases inspect that whitelist, and SQLite-backed checkout cases
+// inspect stored snapshot, subscription currency and fee amounts. These
+// fixtures exercise the Ent-backed implementation without establishing
+// PostgreSQL lock or concurrent checkout behavior.
+
+// TestBuildPaymentOrderProviderSnapshot_ExcludesSensitiveConfig supplies
+// WeChat configuration containing merchant app and secret fields. It asserts
+// the complete selected snapshot and excludes config, secrets, support labels
+// and instance display name.
 func TestBuildPaymentOrderProviderSnapshot_ExcludesSensitiveConfig(t *testing.T) {
 	t.Parallel()
 
@@ -46,6 +55,9 @@ func TestBuildPaymentOrderProviderSnapshot_ExcludesSensitiveConfig(t *testing.T)
 	require.NotContains(t, snapshot, "merchant_id")
 }
 
+// TestCreateOrderInTx_WritesProviderSnapshot creates a local Alipay instance
+// and balance checkout on SQLite. It asserts persisted binding and snapshot
+// labels and checks that credential and display configuration is excluded.
 func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -113,7 +125,9 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	require.NotContains(t, order.ProviderSnapshot, "instance_name")
 }
 
-// TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot checks that the order retains the plan price currency.
+// TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot creates a
+// USD-priced subscription plan and persists a checkout with a separate CNY fee
+// breakdown. It asserts that the plan snapshot still retains USD currency.
 func TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -154,6 +168,9 @@ func TestCreateOrderInTx_WritesSubscriptionPlanCurrencySnapshot(t *testing.T) {
 	require.Equal(t, "USD", order.PlanSnapshot.Currency)
 }
 
+// TestCreateOrderInTx_WritesFeeBreakdown calculates fixed and percentage fees
+// before creating a SQLite balance order. It checks the persisted pay, rate,
+// fixed, rate-amount and total-fee values from that breakdown.
 func TestCreateOrderInTx_WritesFeeBreakdown(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -196,6 +213,9 @@ func TestCreateOrderInTx_WritesFeeBreakdown(t *testing.T) {
 	require.Equal(t, 4.7, order.FeeAmount)
 }
 
+// TestBuildPaymentOrderProviderSnapshot_UsesWxpayJSAPIAppIDForOpenIDOrders
+// supplies both WeChat app identities with an OpenID request. It expects
+// mpAppId, merchant ID and CNY in the snapshot for that JSAPI association.
 func TestBuildPaymentOrderProviderSnapshot_UsesWxpayJSAPIAppIDForOpenIDOrders(t *testing.T) {
 	t.Parallel()
 
@@ -215,6 +235,10 @@ func TestBuildPaymentOrderProviderSnapshot_UsesWxpayJSAPIAppIDForOpenIDOrders(t 
 	require.Equal(t, "CNY", snapshot["currency"])
 }
 
+// TestBuildPaymentOrderProviderSnapshot_IncludesAlipayMerchantIdentity
+// supplies an Alipay app ID and private key to snapshot construction. It
+// retains the merchant app identity and excludes the private key from saved
+// metadata.
 func TestBuildPaymentOrderProviderSnapshot_IncludesAlipayMerchantIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -232,6 +256,10 @@ func TestBuildPaymentOrderProviderSnapshot_IncludesAlipayMerchantIdentity(t *tes
 	require.NotContains(t, snapshot, "privateKey")
 }
 
+// TestBuildPaymentOrderProviderSnapshot_IncludesEasyPayMerchantIdentity
+// supplies an EasyPay merchant pid and signing secret for visible Alipay. It
+// retains merchant identity and excludes pkey from the resulting provider
+// snapshot.
 func TestBuildPaymentOrderProviderSnapshot_IncludesEasyPayMerchantIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -249,6 +277,10 @@ func TestBuildPaymentOrderProviderSnapshot_IncludesEasyPayMerchantIdentity(t *te
 	require.NotContains(t, snapshot, "pkey")
 }
 
+// TestBuildPaymentOrderProviderSnapshot_IncludesProviderCurrency supplies
+// lowercase Stripe HKD and Airwallex USD configuration. It expects normalized
+// snapshot currencies and the Airwallex account label in saved merchant
+// identity.
 func TestBuildPaymentOrderProviderSnapshot_IncludesProviderCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -273,6 +305,9 @@ func TestBuildPaymentOrderProviderSnapshot_IncludesProviderCurrency(t *testing.T
 	require.Equal(t, "acct-78", airwallexSnapshot["merchant_id"])
 }
 
+// valueOrEmpty dereferences an optional saved string, returning empty for nil.
+// Snapshot assertions use it to compare nullable provider labels with their
+// expected concrete values from the fixture.
 func valueOrEmpty(v *string) string {
 	if v == nil {
 		return ""

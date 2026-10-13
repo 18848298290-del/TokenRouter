@@ -1,7 +1,5 @@
 package postgres
 
-// These scenarios exercise payment/statistics.go and this package's orders.go to verify order queries and payment aggregates.
-
 import (
 	"context"
 	"testing"
@@ -15,23 +13,49 @@ import (
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
 
+// Payment statistics keep amounts grouped by currency and classify paid-status
+// orders within a half-open paid-time range. SQLite fixtures distinguish
+// credited points, payable money and subscription quota when deriving purchase
+// unit price, and pure fixtures inspect per-currency totals, daily grouping,
+// method breakdown and user ranking. Saved plan names provide display data
+// when a current plan is absent.
+
+// paymentStatsOrderSeed supplies explicit stored order observations for SQLite
+// aggregate scenario fixtures.
 type paymentStatsOrderSeed struct {
-	userID       int64
-	userEmail    string
-	userName     string
-	paymentType  string
-	orderType    string
-	status       string
-	amount       float64
-	payAmount    float64
-	feeAmount    float64
-	paidAt       time.Time
-	tradeNo      string
-	planID       *int64
-	planName     string
+	userID      int64  // stored buyer numeric identity
+	userEmail   string // stored buyer email snapshot
+	userName    string // stored buyer name snapshot
+	paymentType string // stored visible payment method
+	orderType   string // stored purchase classification label
+	status      string // stored order lifecycle state
+	// amount supplies the order value and snapshot price; its fixture meaning
+	// follows balance points or subscription purchase price.
+	amount float64
+	// payAmount supplies payable money; zero selects amount in
+	// createPaidPaymentStatsOrder, so that helper cannot seed an explicit zero
+	// override.
+	payAmount float64
+	feeAmount float64 // stored payable fee money
+	// paidAt is written even for a pending fixture and also determines expiry one
+	// hour later for statistics row construction.
+	paidAt  time.Time
+	tradeNo string // merchant fixture reference label
+	// planID is stored when nonnil and also requests plan snapshot construction,
+	// even when orderType is not subscription.
+	planID *int64
+	// planName becomes saved plan display text and independently requests a
+	// snapshot whenever its string is nonempty.
+	planName string
+	// monthlyLimit supplies snapshot monthly points and requests a snapshot
+	// whenever its pointer exists, including a pointed-to zero value.
 	monthlyLimit *float64
 }
 
+// TestPaymentDashboardStatsWithRangeBuildsPurchaseDistribution seeds
+// completed, paid, recharging, pending and out-of-range SQLite orders. It
+// counts the three qualifying purchases, combines the two subscription entries
+// and prefers the current plan display name.
 func TestPaymentDashboardStatsWithRangeBuildsPurchaseDistribution(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -134,6 +158,9 @@ func TestPaymentDashboardStatsWithRangeBuildsPurchaseDistribution(t *testing.T) 
 	require.Equal(t, 2, subscriptionStat.Count)
 }
 
+// TestPaymentDashboardStatsWithRangeFallsBackToPlanSnapshotWhenPlanDeleted
+// seeds an order referring to a plan absent from the database. It expects
+// saved plan name, identity, amount and count in the distribution.
 func TestPaymentDashboardStatsWithRangeFallsBackToPlanSnapshotWhenPlanDeleted(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -176,6 +203,10 @@ func TestPaymentDashboardStatsWithRangeFallsBackToPlanSnapshotWhenPlanDeleted(t 
 	require.Equal(t, 1, stats.PurchaseDistribution[0].Count)
 }
 
+// TestPaymentDashboardStatsWithRangeComputesReasoningPointPurchaseUnitPrice
+// combines a fee-bearing balance purchase with a quota-bearing subscription
+// and excluded fixtures. It expects two contributing orders and aggregate
+// price 0.5 from their eligible money and points.
 func TestPaymentDashboardStatsWithRangeComputesReasoningPointPurchaseUnitPrice(t *testing.T) {
 	ctx := context.Background()
 	client := sqlitetest.NewClient(t)
@@ -262,6 +293,9 @@ func TestPaymentDashboardStatsWithRangeComputesReasoningPointPurchaseUnitPrice(t
 	require.Equal(t, 0.5, stats.AvgReasoningPointPurchaseUnitPrice)
 }
 
+// TestComputeBasicStatsGroupsAmountsByCurrency supplies CNY and USD pure order
+// observations across the today cutoff. It checks separate totals, today
+// amounts, per-currency averages and overall counts.
 func TestComputeBasicStatsGroupsAmountsByCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -284,6 +318,10 @@ func TestComputeBasicStatsGroupsAmountsByCurrency(t *testing.T) {
 	require.Equal(t, 2, stats.TodayCount)
 }
 
+// TestPaymentDashboardBreakdownsGroupAmountsAndRankingsByCurrency supplies two
+// currencies, days, users and payment methods with fractional CNY money. It
+// checks rounding, daily and method grouping, and independently ordered user
+// rankings per currency.
 func TestPaymentDashboardBreakdownsGroupAmountsAndRankingsByCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -326,6 +364,9 @@ func TestPaymentDashboardBreakdownsGroupAmountsAndRankingsByCurrency(t *testing.
 	}, users)
 }
 
+// paymentStatsTestOrder returns a minimal pure statistics order with a fresh
+// currency snapshot map. PaidAt retains the supplied pointer, so callers keep
+// that time unchanged while statistics read it.
 func paymentStatsTestOrder(userID int64, email, currency string, amount float64, paidAt *time.Time) *payment.Order {
 	return &payment.Order{
 		UserID:           userID,
@@ -337,6 +378,9 @@ func paymentStatsTestOrder(userID int64, email, currency string, amount float64,
 	}
 }
 
+// findPurchaseDistributionStat returns the first distribution item matching
+// the requested type and fails the test when none exists. Scenario assertions
+// use the returned value to inspect grouping and plan display decisions.
 func findPurchaseDistributionStat(t *testing.T, items []payment.PurchaseDistributionStat, itemType string) payment.PurchaseDistributionStat {
 	t.Helper()
 	for _, item := range items {
@@ -348,6 +392,10 @@ func findPurchaseDistributionStat(t *testing.T, items []payment.PurchaseDistribu
 	return payment.PurchaseDistributionStat{}
 }
 
+// createPaidPaymentStatsOrder persists the supplied fixture status and paid
+// time on SQLite and fails the test on save error. Zero payAmount uses amount;
+// optional plan observations request a thirty-day snapshot, while merchant,
+// channel and recharge labels derive from tradeNo.
 func createPaidPaymentStatsOrder(t *testing.T, ctx context.Context, client *dbent.Client, seed paymentStatsOrderSeed) {
 	t.Helper()
 	payAmount := seed.payAmount

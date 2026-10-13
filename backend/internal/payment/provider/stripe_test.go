@@ -15,11 +15,26 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// stripeRefundBackend captures Stripe SDK refund parameters and serves local test responses.
+// Stripe refund fixtures capture SDK parameter pointers and synthesize a
+// successful response for each call. Three submissions verify amount-specific
+// request keys while retaining three observations, so those assertions
+// describe encoded requests rather than remote deduplication. Pure checkout,
+// invoice and event fixtures inspect state selection, identifier translation
+// and document metadata after bypassing webhook signature verification.
+
+// stripeRefundBackend captures typed refund requests and fills synthetic SDK
+// success responses for local assertions.
 type stripeRefundBackend struct {
+	// params retains the original request pointers in call order; the synchronous
+	// fixture inspects them afterward and provides no concurrent-access
+	// synchronization.
 	params []*stripe.RefundCreateParams
 }
 
+// Call retains the supplied RefundCreateParams pointer and writes a fixed
+// succeeded Refund result. Type assertions require those exact SDK fixture
+// objects, and the sequential test invokes this backend for each submission
+// without simulating upstream deduplication.
 func (b *stripeRefundBackend) Call(_ string, _ string, _ string, params stripe.ParamsContainer, v stripe.LastResponseSetter) error {
 	b.params = append(b.params, testassert.MustType[*stripe.RefundCreateParams](params))
 	refund := testassert.MustType[*stripe.Refund](v)
@@ -28,20 +43,35 @@ func (b *stripeRefundBackend) Call(_ string, _ string, _ string, params stripe.P
 	return nil
 }
 
+// CallStreaming returns nil to satisfy the SDK backend interface and leaves
+// result objects untouched. The refund parameter test uses Call, so invoking
+// this unused operation would provide no synthetic response data.
 func (*stripeRefundBackend) CallStreaming(string, string, string, stripe.ParamsContainer, stripe.StreamingLastResponseSetter) error {
 	return nil
 }
 
+// CallRaw returns nil to satisfy the SDK backend interface and leaves result
+// objects untouched. The refund parameter test uses Call, so invoking this
+// unused operation would provide no synthetic response data.
 func (*stripeRefundBackend) CallRaw(string, string, string, []byte, *stripe.Params, stripe.LastResponseSetter) error {
 	return nil
 }
 
+// CallMultipart returns nil to satisfy the SDK backend interface and leaves
+// result objects untouched. The refund parameter test uses Call, so invoking
+// this unused operation would provide no synthetic response data.
 func (*stripeRefundBackend) CallMultipart(string, string, string, string, *bytes.Buffer, *stripe.Params, stripe.LastResponseSetter) error {
 	return nil
 }
 
+// SetMaxNetworkRetries ignores SDK retry configuration because this backend
+// responds from synchronous in-memory fixture calls.
 func (*stripeRefundBackend) SetMaxNetworkRetries(int64) {}
 
+// TestStripeRefundUsesStableAmountSpecificIdempotencyKey submits two equal
+// amounts and one different amount to the capture backend. It checks three
+// recorded minor-unit amounts and corresponding equal or different
+// order-derived request keys.
 func TestStripeRefundUsesStableAmountSpecificIdempotencyKey(t *testing.T) {
 	backend := &stripeRefundBackend{}
 	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend}))
@@ -73,9 +103,15 @@ func TestStripeRefundUsesStableAmountSpecificIdempotencyKey(t *testing.T) {
 	require.NotEqual(t, *backend.params[0].IdempotencyKey, *backend.params[2].IdempotencyKey)
 }
 
+// TestBuildStripeCheckoutSessionCreateParamsUsesDashboardPaymentMethods builds
+// a hosted session with local customer, email, order and expiry data. It
+// checks absent method and customer-update instructions plus invoice, intent,
+// URL, line-item and expansion parameters.
 func TestBuildStripeCheckoutSessionCreateParamsUsesDashboardPaymentMethods(t *testing.T) {
 	t.Parallel()
 
+	// Use whole-second fixture precision to match the Unix-second session
+	// parameter.
 	expiresAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	params := buildStripeCheckoutSessionCreateParams("cus_123", payment.CreatePaymentRequest{
 		OrderID:   "sub2_order_123",
@@ -145,14 +181,20 @@ func TestBuildStripeCheckoutSessionCreateParamsUsesDashboardPaymentMethods(t *te
 	}
 }
 
+// TestStripeCheckoutExpiresAtClampsSupportedWindow uses a fixed now and
+// requests zero, thirty minutes, boundary times and an oversized expiry. It
+// expects the adapter thirty-one-minute minimum and twenty-four-hour cap in
+// Unix seconds.
 func TestStripeCheckoutExpiresAtClampsSupportedWindow(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name      string
-		requested time.Time
-		want      time.Time
+		name string // named expiry boundary case
+		// requested can be zero to exercise the lower-bound default; want is
+		// compared after conversion to Unix seconds against the fixed now fixture.
+		requested time.Time // supplied expiry time instant
+		want      time.Time // expected bounded expiry instant
 	}{
 		{name: "zero uses safe minimum", want: now.Add(31 * time.Minute)},
 		{name: "thirty minutes uses safe minimum", requested: now.Add(30 * time.Minute), want: now.Add(31 * time.Minute)},
@@ -171,14 +213,22 @@ func TestStripeCheckoutExpiresAtClampsSupportedWindow(t *testing.T) {
 	}
 }
 
+// TestStripeCheckoutProviderStatus combines session and payment status
+// observations in parallel cases. It checks pending, processing and failed
+// outputs plus paid payment status winning over an expired session.
 func TestStripeCheckoutProviderStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		status        stripe.CheckoutSessionStatus
+		name string // named combined status case
+		// status and paymentStatus supply separate channel observations; want
+		// records their combined classification, including payment paid taking
+		// precedence over the session expiry label.
+		// observed session lifecycle state.
+		status stripe.CheckoutSessionStatus
+		// observed session payment state.
 		paymentStatus stripe.CheckoutSessionPaymentStatus
-		want          string
+		want          string // expected core query status
 	}{
 		{name: "open unpaid", status: stripe.CheckoutSessionStatusOpen, paymentStatus: stripe.CheckoutSessionPaymentStatusUnpaid, want: payment.ProviderStatusPending},
 		{name: "complete unpaid", status: stripe.CheckoutSessionStatusComplete, paymentStatus: stripe.CheckoutSessionPaymentStatusUnpaid, want: payment.ProviderStatusProcessing},
@@ -198,13 +248,17 @@ func TestStripeCheckoutProviderStatus(t *testing.T) {
 	}
 }
 
+// TestStripeCheckoutProviderStatusUsesExpandedTerminalState supplies intent or
+// invoice expansions for completed and open unpaid sessions. It checks
+// terminal failures, an open-session retry condition and succeeded expanded
+// intent overriding unpaid status.
 func TestStripeCheckoutProviderStatusUsesExpandedTerminalState(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		session *stripe.CheckoutSession
-		want    string
+		name    string                  // named expanded status case
+		session *stripe.CheckoutSession // immutable expanded session observation
+		want    string                  // expected core query status
 	}{
 		{
 			name: "completed payment intent requires new method",
@@ -263,6 +317,9 @@ func TestStripeCheckoutProviderStatusUsesExpandedTerminalState(t *testing.T) {
 	}
 }
 
+// TestStripeCheckoutSessionExpiresAtUsesProviderValue supplies a positive
+// channel Unix-second expiry and a nil session. It expects the matching time
+// instant and an unavailable zero time for the nil observation.
 func TestStripeCheckoutSessionExpiresAtUsesProviderValue(t *testing.T) {
 	t.Parallel()
 
@@ -275,6 +332,10 @@ func TestStripeCheckoutSessionExpiresAtUsesProviderValue(t *testing.T) {
 	}
 }
 
+// TestBuildStripeCustomerCreateParamsPreservesApplicationBillingDetails
+// normalizes supplied company contact and address text before parameter
+// construction. It checks trimmed name, billing email and address plus absence
+// of the empty optional fields.
 func TestBuildStripeCustomerCreateParamsPreservesApplicationBillingDetails(t *testing.T) {
 	t.Parallel()
 
@@ -318,6 +379,9 @@ func TestBuildStripeCustomerCreateParamsPreservesApplicationBillingDetails(t *te
 	}
 }
 
+// TestStripeCheckoutReturnURLRequiresBaseURL tests empty destination, empty
+// status and replacing an existing status query value. It expects those
+// decoration results while retaining the supplied order query parameter.
 func TestStripeCheckoutReturnURLRequiresBaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -332,13 +396,17 @@ func TestStripeCheckoutReturnURLRequiresBaseURL(t *testing.T) {
 	}
 }
 
+// TestStripePaymentIntentIDFromClientSecret compares valid,
+// whitespace-decorated, non-intent and missing-separator secret text. It
+// expects extracted pi_ prefixes for usable fixtures and empty results for the
+// other supplied formats.
 func TestStripePaymentIntentIDFromClientSecret(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		secret string
-		want   string
+		name   string // named secret extraction case
+		secret string // supplied client secret text
+		want   string // expected payment intent label
 	}{
 		{
 			name:   "extracts payment intent id",
@@ -373,6 +441,10 @@ func TestStripePaymentIntentIDFromClientSecret(t *testing.T) {
 	}
 }
 
+// TestParseStripeInvoiceUsesInvoicePaymentIntent supplies a decoded paid
+// invoice with an expanded intent and document metadata. It expects intent
+// trade identity, order association, converted amount and retained raw
+// event/document fields.
 func TestParseStripeInvoiceUsesInvoicePaymentIntent(t *testing.T) {
 	t.Parallel()
 
@@ -442,6 +514,10 @@ func TestParseStripeInvoiceUsesInvoicePaymentIntent(t *testing.T) {
 	}
 }
 
+// TestParseStripeCheckoutSessionUsesPaymentIntentAndInvoiceMetadata supplies
+// paid session JSON with expanded intent and invoice objects directly to the
+// parser. It checks primary intent identity plus separate session, invoice,
+// currency and raw-body metadata.
 func TestParseStripeCheckoutSessionUsesPaymentIntentAndInvoiceMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -501,6 +577,10 @@ func TestParseStripeCheckoutSessionUsesPaymentIntentAndInvoiceMetadata(t *testin
 	}
 }
 
+// TestParseStripeCheckoutSessionIgnoresUnpaidCompletedSession supplies unpaid
+// session JSON with a requested success observation. It expects nil
+// notification, protecting the session parser paid-status condition before
+// local success handling.
 func TestParseStripeCheckoutSessionIgnoresUnpaidCompletedSession(t *testing.T) {
 	t.Parallel()
 
@@ -526,6 +606,10 @@ func TestParseStripeCheckoutSessionIgnoresUnpaidCompletedSession(t *testing.T) {
 	}
 }
 
+// TestParseStripeCheckoutSessionMarksUnpaidCompletedSessionProcessing supplies
+// a complete unpaid session with processing as the input observation. It
+// expects a retained processing notification so later asynchronous channel
+// progress can be observed.
 func TestParseStripeCheckoutSessionMarksUnpaidCompletedSessionProcessing(t *testing.T) {
 	t.Parallel()
 
@@ -552,6 +636,10 @@ func TestParseStripeCheckoutSessionMarksUnpaidCompletedSessionProcessing(t *test
 	}
 }
 
+// TestParseStripeCheckoutSessionIgnoresCompletedWithoutExplicitPaymentStatus
+// supplies complete state and no_payment_required under the processing input
+// path. It expects no notification because that payment status is outside the
+// actionable paid/unpaid cases.
 func TestParseStripeCheckoutSessionIgnoresCompletedWithoutExplicitPaymentStatus(t *testing.T) {
 	t.Parallel()
 
@@ -572,6 +660,9 @@ func TestParseStripeCheckoutSessionIgnoresCompletedWithoutExplicitPaymentStatus(
 	}
 }
 
+// TestParseStripeCheckoutSessionKeepsAsyncFailureNotification supplies unpaid
+// session JSON with a failure input observation. It expects a retained failed
+// notification using the session ID when no expanded intent is present.
 func TestParseStripeCheckoutSessionKeepsAsyncFailureNotification(t *testing.T) {
 	t.Parallel()
 
@@ -603,6 +694,10 @@ func TestParseStripeCheckoutSessionKeepsAsyncFailureNotification(t *testing.T) {
 	}
 }
 
+// TestParseStripeEventOnlyTreatsTerminalCheckoutFailuresAsFailed supplies
+// retryable intent and invoice failures, then an asynchronous checkout
+// failure. It expects ignored attempt events and a failed notification for the
+// closing checkout event.
 func TestParseStripeEventOnlyTreatsTerminalCheckoutFailuresAsFailed(t *testing.T) {
 	t.Parallel()
 
@@ -641,6 +736,9 @@ func TestParseStripeEventOnlyTreatsTerminalCheckoutFailuresAsFailed(t *testing.T
 	}
 }
 
+// TestStripeCheckoutInvoiceDocument supplies a session with paid expanded
+// invoice and both links. It expects invoice document type, hosted destination
+// and retained invoice identity and status from that expansion.
 func TestStripeCheckoutInvoiceDocument(t *testing.T) {
 	t.Parallel()
 
@@ -665,6 +763,10 @@ func TestStripeCheckoutInvoiceDocument(t *testing.T) {
 	}
 }
 
+// TestParseStripeInvoiceFallsBackToInvoiceIDAndAmountDue supplies an invoice
+// with zero paid amount and no expanded intent. It expects due-money
+// conversion, invoice trade identity and the failure observation passed into
+// the parser.
 func TestParseStripeInvoiceFallsBackToInvoiceIDAndAmountDue(t *testing.T) {
 	t.Parallel()
 
@@ -697,6 +799,9 @@ func TestParseStripeInvoiceFallsBackToInvoiceIDAndAmountDue(t *testing.T) {
 	}
 }
 
+// TestStripeInvoiceDocumentResponse compares hosted-plus-PDF, PDF-only and nil
+// invoice fixtures. It checks trimmed selected destinations, raw individual
+// link text, saved identity/status and the nil invoice response shape.
 func TestStripeInvoiceDocumentResponse(t *testing.T) {
 	t.Parallel()
 
@@ -739,6 +844,9 @@ func TestStripeInvoiceDocumentResponse(t *testing.T) {
 	}
 }
 
+// stripeInvoiceEventRaw marshals the supplied invoice object into fresh JSON
+// fixture bytes and fails the test on encoding error. Parser cases provide
+// these bytes directly and bypass signature verification.
 func stripeInvoiceEventRaw(t *testing.T, invoice map[string]any) json.RawMessage {
 	t.Helper()
 
@@ -749,6 +857,9 @@ func stripeInvoiceEventRaw(t *testing.T, invoice map[string]any) json.RawMessage
 	return raw
 }
 
+// stripeCheckoutSessionEventRaw marshals the supplied session object into
+// fresh JSON fixture bytes and fails the test on encoding error. Parser cases
+// provide these bytes directly and bypass signature verification.
 func stripeCheckoutSessionEventRaw(t *testing.T, session map[string]any) json.RawMessage {
 	t.Helper()
 
@@ -759,6 +870,9 @@ func stripeCheckoutSessionEventRaw(t *testing.T, session map[string]any) json.Ra
 	return raw
 }
 
+// stripeStringValues returns a fresh string slice preserving input order and
+// replacing nil pointers with empty values. Parameter assertions use it to
+// inspect expansions without modifying the original SDK pointer slice.
 func stripeStringValues(values []*string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
