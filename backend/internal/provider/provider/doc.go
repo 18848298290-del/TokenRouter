@@ -1,4 +1,7 @@
-// Package provider connects upstream clients to provider management, probes, and health updates.
+// Package provider adapts provider records and runtime dependencies to upstream
+// clients for management, probes, and health updates. Platform responses become
+// observations consumed by provider services; those services own persistence,
+// credential coordination, and the recovery of schedulable state.
 //
 // Entry points:
 //   - test_targets.go selects platform probe executors.

@@ -19,23 +19,29 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// modelCatalogueTransportFixture captures one model request and returns the
+// configured response object.
 type modelCatalogueTransportFixture struct {
-	resp    *http.Response
-	lastReq *http.Request
+	// resp is returned directly by the fixture. Fetch closes its body, so
+	// configure a fresh response for each independent query.
+	resp *http.Response
+	// lastReq retains the query's prepared request pointer. Sequential assertions
+	// inspect those same headers after synchronous transport capture.
+	lastReq *http.Request // captured model catalogue request
 }
 
-// TestBuildUpstreamModelsRequest_CNProviders checks credential and endpoint selection for CN model
-// synchronization.
-// The OpenAI-format base URL includes platform defaults when no address is configured.
+// TestBuildUpstreamModelsRequest_CNProviders selects CN pay-as-you-go and
+// coding credentials without custom roots. Each request must use its platform's
+// OpenAI-format models endpoint and the configured bearer key.
 func TestBuildUpstreamModelsRequest_CNProviders(t *testing.T) {
 	t.Parallel()
 
 	svc := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
 	cases := []struct {
-		name     string
-		platform string
-		mode     string
-		wantURL  string
+		name     string // model catalogue scenario label
+		platform string // provider platform under test
+		mode     string // provider service mode selection
+		wantURL  string // expected complete model endpoint
 	}{
 		{"kimi default", capability.PlatformKimi, "", "https://api.moonshot.cn/v1/models"},
 		{"kimi coding", capability.PlatformKimi, providercore.ProviderModeCoding, "https://api.kimi.com/coding/v1/models"},
@@ -59,7 +65,9 @@ func TestBuildUpstreamModelsRequest_CNProviders(t *testing.T) {
 	}
 }
 
-// TestBuildUpstreamModelsRequest_AnthropicProtocol uses the OpenAI-format base for model synchronization.
+// TestBuildUpstreamModelsRequest_AnthropicProtocol configures a Zhipu Messages
+// root for inference. Model synchronization must choose the platform's
+// OpenAI-format root and append its models endpoint.
 func TestBuildUpstreamModelsRequest_AnthropicProtocol(t *testing.T) {
 	t.Parallel()
 	svc := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
@@ -76,6 +84,9 @@ func TestBuildUpstreamModelsRequest_AnthropicProtocol(t *testing.T) {
 	require.Equal(t, "https://open.bigmodel.cn/api/paas/v4/models", req.URL.String())
 }
 
+// TestBuildV1ModelsURL supplies bare, versioned, complete, and prefixed
+// Anthropic roots. Construction must retain prefixes and produce one v1/models
+// endpoint without duplicating an existing version suffix.
 func TestBuildV1ModelsURL(t *testing.T) {
 	t.Parallel()
 
@@ -85,13 +96,16 @@ func TestBuildV1ModelsURL(t *testing.T) {
 	require.Equal(t, "https://gateway.example.com/antigravity/v1/models", buildV1ModelsURL("https://gateway.example.com/antigravity/"))
 }
 
+// TestBuildOpenAIModelsURL supplies multiple OpenAI-compatible version roots
+// and completed model paths. Endpoint construction must retain platform and
+// version prefixes while appending models exactly once.
 func TestBuildOpenAIModelsURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		base string
-		want string
+		name string // model catalogue scenario label
+		base string // supplied model catalogue root
+		want string // expected model endpoint result
 	}{
 		{
 			name: "zhipu v4 coding base url",
@@ -139,6 +153,9 @@ func TestBuildOpenAIModelsURL(t *testing.T) {
 	}
 }
 
+// TestBuildGeminiModelsURL supplies bare, versioned, and complete Gemini roots.
+// Endpoint construction must produce one v1beta/models path and retain roots
+// that already name that endpoint.
 func TestBuildGeminiModelsURL(t *testing.T) {
 	t.Parallel()
 
@@ -147,13 +164,16 @@ func TestBuildGeminiModelsURL(t *testing.T) {
 	require.Equal(t, "https://generativelanguage.googleapis.com/v1beta/models", buildGeminiModelsURL("https://generativelanguage.googleapis.com/v1beta/models"))
 }
 
+// TestExtractUpstreamModelIDs parses object wrappers, arrays, Codex slugs, and
+// Gemini resource names. Standard IDs must win over extra model fields, and
+// results must be distinct and sorted with resource prefixes removed.
 func TestExtractUpstreamModelIDs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		body string
-		want []string
+		name string   // model catalogue scenario label
+		body string   // supplied catalogue response JSON
+		want []string // expected sorted model identifiers
 	}{
 		{
 			name: "openai and anthropic data array",
@@ -193,6 +213,10 @@ func TestExtractUpstreamModelIDs(t *testing.T) {
 	}
 }
 
+// TestBuildUpstreamModelsRequestSupportsOpenAIOAuth supplies account
+// credentials to the generic builder. The request must use the Codex manifest
+// with client version, bearer authentication, account headers, and nonempty
+// client identity headers.
 func TestBuildUpstreamModelsRequestSupportsOpenAIOAuth(t *testing.T) {
 	svc := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
 	provider := &providercore.Record{
@@ -216,6 +240,9 @@ func TestBuildUpstreamModelsRequestSupportsOpenAIOAuth(t *testing.T) {
 	require.NotEmpty(t, req.Header.Get("Version"))
 }
 
+// TestFetchUpstreamSupportedModelsParsesOpenAIOAuthManifest returns Codex model
+// slugs through the configured transport. Fetch must produce sorted model IDs
+// while authenticating the manifest request with the OAuth token.
 func TestFetchUpstreamSupportedModelsParsesOpenAIOAuthManifest(t *testing.T) {
 	upstream := &modelCatalogueTransportFixture{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -240,6 +267,9 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIOAuthManifest(t *testing.T) {
 	require.Equal(t, "Bearer openai-oauth-token", upstream.lastReq.Header.Get("Authorization"))
 }
 
+// TestExtractGrokUpstreamModelIDs mixes protocol ID fields, metadata, display
+// names, and invalid metadata. The result must prefer usable protocol
+// identities and retain outer IDs when metadata cannot be decoded.
 func TestExtractGrokUpstreamModelIDs(t *testing.T) {
 	t.Parallel()
 
@@ -248,6 +278,10 @@ func TestExtractGrokUpstreamModelIDs(t *testing.T) {
 	require.Equal(t, []string{"grok-4.5", "grok-build-0.1", "grok-composer-2.5-fast", "grok-meta", "grok-name", "grok-safe"}, models)
 }
 
+// TestBuildUpstreamModelsRequestsForAPIKeyProviders prepares Anthropic,
+// bearer-Messages, OpenAI, Grok, and Gemini catalogue requests. Each must
+// select its protocol root, version suffix, and configured authentication
+// scheme.
 func TestBuildUpstreamModelsRequestsForAPIKeyProviders(t *testing.T) {
 	t.Parallel()
 
@@ -332,6 +366,9 @@ func TestBuildUpstreamModelsRequestsForAPIKeyProviders(t *testing.T) {
 	require.Equal(t, "gemini-key", geminiReq.Header.Get("x-goog-api-key"))
 }
 
+// TestBuildUpstreamModelsRequestSupportsGrokOAuth prepares a valid OAuth record
+// for the trusted CLI proxy. The request must use its access token and CLI
+// headers while adding the account ID and email.
 func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
 	t.Parallel()
 
@@ -351,6 +388,10 @@ func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
 	require.NotContains(t, req.Header.Get("Authorization"), "oauth-refresh-token")
 }
 
+// TestBuildUpstreamModelsRequestGrokOAuthRequiresTokenProvider omits the token
+// source for a stored OAuth record. Preparation must report a
+// configuration-kind synchronization error before constructing the model
+// request.
 func TestBuildUpstreamModelsRequestGrokOAuthRequiresTokenProvider(t *testing.T) {
 	t.Parallel()
 
@@ -364,6 +405,9 @@ func TestBuildUpstreamModelsRequestGrokOAuthRequiresTokenProvider(t *testing.T) 
 	require.Contains(t, syncErr.SafeMessage(), "token provider")
 }
 
+// TestBuildAnthropicUpstreamModelsRequestRejectsBedrock asks the Messages
+// catalogue builder to handle a Bedrock record. It must return an
+// unsupported-kind error instead of creating an Anthropic request.
 func TestBuildAnthropicUpstreamModelsRequestRejectsBedrock(t *testing.T) {
 	t.Parallel()
 
@@ -379,6 +423,9 @@ func TestBuildAnthropicUpstreamModelsRequestRejectsBedrock(t *testing.T) {
 	require.Equal(t, providercore.UpstreamModelSyncErrorUnsupported, syncErr.Kind)
 }
 
+// TestFetchUpstreamSupportedModelsParsesOpenAIResponse returns duplicate
+// standard IDs and a name fallback. Fetch must return the sorted distinct list
+// and send the configured bearer key to the versioned models path.
 func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 	t.Parallel()
 
@@ -407,6 +454,9 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+// TestFetchUpstreamSupportedModelsUsesConfiguredBodyLimit returns catalogue
+// JSON beyond an eight-byte ceiling. Fetch must reject the oversized body with
+// a limit diagnostic before model extraction succeeds.
 func TestFetchUpstreamSupportedModelsUsesConfiguredBodyLimit(t *testing.T) {
 	t.Parallel()
 
@@ -432,6 +482,9 @@ func TestFetchUpstreamSupportedModelsUsesConfiguredBodyLimit(t *testing.T) {
 	require.Contains(t, err.Error(), "response exceeds 8 bytes")
 }
 
+// TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse returns repeated xAI
+// catalogue IDs through an API-key transport. Fetch must deduplicate those IDs
+// and retain the configured endpoint and bearer credentials.
 func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	t.Parallel()
 
@@ -460,6 +513,9 @@ func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	require.Equal(t, "Bearer xai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+// TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse returns protocol
+// model fields from the trusted CLI proxy. Fetch must deduplicate and sort them
+// while using OAuth credentials, CLI identity, and account headers.
 func TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse(t *testing.T) {
 	t.Parallel()
 
@@ -485,6 +541,9 @@ func TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse(t *testing.T) {
 	require.Equal(t, "grok-user@example.com", upstream.lastReq.Header.Get("X-Email"))
 }
 
+// TestBuildUpstreamModelsRequestGrokOAuthDoesNotSendIdentityToCustomBase
+// selects a custom relay for an OAuth record. The models path must use that
+// root while user ID and email headers remain absent.
 func TestBuildUpstreamModelsRequestGrokOAuthDoesNotSendIdentityToCustomBase(t *testing.T) {
 	t.Parallel()
 
@@ -499,6 +558,9 @@ func TestBuildUpstreamModelsRequestGrokOAuthDoesNotSendIdentityToCustomBase(t *t
 	require.Empty(t, req.Header.Get("X-Email"))
 }
 
+// TestFetchUpstreamSupportedModelsDoesNotExposeUpstreamBody returns HTTP 502
+// with a secret marker in its JSON body. Raw and safe diagnostics must omit
+// that marker, and the typed error must retain its kind and safe HTTP status.
 func TestFetchUpstreamSupportedModelsDoesNotExposeUpstreamBody(t *testing.T) {
 	t.Parallel()
 
@@ -531,6 +593,9 @@ func TestFetchUpstreamSupportedModelsDoesNotExposeUpstreamBody(t *testing.T) {
 	require.Contains(t, syncErr.SafeMessage(), "HTTP 502")
 }
 
+// grokOAuthModelSyncTestProvider creates an OAuth catalogue record with future
+// expiry and account hints. A nonblank supplied root is stored as given; blank
+// input leaves platform-root selection to the builder.
 func grokOAuthModelSyncTestProvider(baseURL string) *providercore.Record {
 	credentials := map[string]any{
 		"access_token":  "oauth-access-token",
@@ -550,18 +615,25 @@ func grokOAuthModelSyncTestProvider(baseURL string) *providercore.Record {
 	}
 }
 
-// upstreamModelSyncTestConfig supplies URL validation and a response-body limit.
+// upstreamModelSyncTestConfig supplies operator URL validation, an eight-MiB
+// body limit, and the default Codex manifest endpoint. Both ordinary and Grok
+// operator roots use the same validator in these fixtures.
 func upstreamModelSyncTestConfig() ModelCatalogueOptions {
 	policy := egress.OperatorURLPolicy{}
 	return ModelCatalogueOptions{ValidateURL: policy.Validate, OperatorValidator: policy.Validate, BodyLimit: 8 << 20, CodexModelsURL: DefaultCodexModelsURL}
 }
 
+// DoWithTLS captures the request pointer and returns the configured response
+// directly. The query caller owns body cleanup, and the fixture ignores proxy,
+// concurrency, and selected TLS profile.
 func (f *modelCatalogueTransportFixture) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	f.lastReq = req
 	return f.resp, nil
 }
 
-// TestJevModelSyncUsesNames checks the official endpoint, authentication, and models[].name response format.
+// TestJevModelSyncUsesNames prepares a native Jev catalogue request and parses
+// name-based entries. The endpoint and bearer key must match the platform
+// defaults, and IDs must be sorted from complete names.
 func TestJevModelSyncUsesNames(t *testing.T) {
 	service := &ModelCatalogue{Options: upstreamModelSyncTestConfig()}
 	value := &providercore.Record{Platform: providercore.PlatformJev, Type: providercore.ProviderTypeAPIKey, Credentials: map[string]any{"api_key": "test"}}

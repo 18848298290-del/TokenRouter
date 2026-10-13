@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestScheduledCronLifecycle checks deferred job registration and prevents starting after Stop.
+// TestScheduledCronLifecycle exercises repeated Start calls and stopping before
+// startup. Registration must stay deferred, occur at most once for an active
+// instance, and remain absent after an earlier stop.
 func TestScheduledCronLifecycle(t *testing.T) {
 	for _, stopFirst := range []bool{true, false} {
 		schedule, ok := NewScheduledCron(time.UTC).(*ScheduledCron)
@@ -28,6 +30,9 @@ func TestScheduledCronLifecycle(t *testing.T) {
 	}
 }
 
+// TestScheduledCronRejectsInvalidExpression supplies text that cannot form a
+// five-field cron schedule. NextScheduledTestRun must return an error so
+// invalid plans cannot acquire a next execution time.
 func TestScheduledCronRejectsInvalidExpression(t *testing.T) {
 	_, err := NextScheduledTestRun("not a cron", time.Now())
 	require.Error(t, err)

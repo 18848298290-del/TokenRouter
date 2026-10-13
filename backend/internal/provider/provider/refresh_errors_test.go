@@ -25,161 +25,292 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// oldFailureRefresher installs an administrator's new credentials before returning an older exchange failure.
+// oldFailureRefresher rotates stored credentials before returning an older
+// exchange failure.
 type oldFailureRefresher struct {
-	row     *providercore.Record
-	failure error
+	// row is required and shares the repository's live provider record. Refresh
+	// replaces its credential map before returning failure for the older observed
+	// identity.
+	row     *providercore.Record // shared administrator-mutable provider fixture
+	failure error                // configured stale exchange failure
 }
 
-type failureBlocker struct{ calls int }
+// failureBlocker counts accepted background failure notices in sequential
+// stale-identity fixtures.
+type failureBlocker struct {
+	calls int // accepted background failure notice count
+}
 
+// grokReconcileRepo models synchronized reconciliation pages and conditional
+// Grok identity mutations. setErrorIDs and setErrorMessage append together for
+// each captured error write, including ordinary writes with no matching row;
+// corresponding entries describe the same request.
 type grokReconcileRepo struct {
-	mu                      sync.Mutex
-	providers               []providercore.Record
-	requests                []providercore.OAuthRefreshPageOptions
-	setErrorIDs             []int64
-	updatedCredIDs          []int64
-	setErrorMessage         []string
-	getByIDOverrides        map[int64]providercore.Record
-	pageOverride            *providercore.OAuthRefreshCandidatePage
-	reauthorizeOnCAS        bool
+	// mu protects stored providers, override selection, captured page requests,
+	// and conditional mutation flags. Returned outer record copies still share
+	// their nested collections with the selected fixture row.
+	mu        sync.Mutex            // reconciliation state and capture lock
+	providers []providercore.Record // stored reconciliation provider record values
+	// requests retains option values whose Platforms slices remain shared with
+	// the caller. Tests keep those referenced selections stable during page reads
+	// and later capture inspection.
+	requests        []providercore.OAuthRefreshPageOptions // captured reconciliation page option values
+	setErrorIDs     []int64                                // captured permanent-error target identifiers
+	updatedCredIDs  []int64                                // captured credential-update target identifiers
+	setErrorMessage []string                               // captured permanent-error diagnostic messages
+	// getByIDOverrides selects reread record values before stored rows. The outer
+	// returned record is copied while nested fields remain shared.
+	getByIDOverrides map[int64]providercore.Record
+	// pageOverride supplies raw cursor metadata and a copied outer record slice
+	// when nonnil. Normal fixture filtering is bypassed for that page.
+	pageOverride *providercore.OAuthRefreshCandidatePage
+	// reauthorizeOnCAS replaces credentials once before structural-error
+	// comparison and clears itself. The repaired row then rejects its old
+	// credential snapshot.
+	reauthorizeOnCAS bool
+	// reauthorizeOnRefreshCAS replaces credentials once before permanent-refresh
+	// comparison and clears itself. The late failure then loses identity matching.
 	reauthorizeOnRefreshCAS bool
-	conditionalCalls        int
+	conditionalCalls        int // structural error comparison attempt count
 }
 
+// reconcileInvalidator captures token invalidation targets and returns a
+// configured cache error.
 type reconcileInvalidator struct {
-	mu  sync.Mutex
-	ids []int64
-	err error
+	// mu protects ids during invalidation capture and count reads. err is
+	// configured before calls and remains stable while concurrent workers record
+	// their attempted token cleanup.
+	mu  sync.Mutex // invalidation capture access lock
+	ids []int64    // captured invalidation target identifiers
+	err error      // configured token invalidation error
 }
 
+// reconcileRuntimeBlocker captures runtime block and clear targets under a
+// fixture mutex.
 type reconcileRuntimeBlocker struct {
-	mu      sync.Mutex
-	blocked []int64
-	cleared []int64
+	// mu protects blocked and cleared captures across background notices and
+	// reconciliation. snapshot copies their current IDs; tests finish observations
+	// before final assertions.
+	mu      sync.Mutex // runtime block capture access lock
+	blocked []int64    // captured runtime block target identifiers
+	cleared []int64    // captured runtime recovery target identifiers
 }
 
+// tokenCacheInvalidatorStub captures cleanup context and cloned provider state
+// for refresh assertions.
 type tokenCacheInvalidatorStub struct {
-	calls        int
-	err          error
-	ctxErr       error
-	lastProvider *providercore.Record
+	calls  int   // captured token invalidation attempt count
+	err    error // configured token invalidation error
+	ctxErr error // captured cleanup context error
+	// lastProvider holds a CloneRecord result for cleanup assertions. Supported
+	// containers are copied; typed Extra pointers can remain shared and are kept
+	// stable while tests inspect this capture.
+	lastProvider *providercore.Record // cloned invalidation provider record snapshot
 }
 
+// tokenRefreshRuntimeBlocker counts runtime block and recovery calls for
+// sequential refresh tests.
 type tokenRefreshRuntimeBlocker struct {
-	blockCalls int
-	clearCalls int
+	blockCalls int // captured runtime block call count
+	clearCalls int // captured runtime recovery call count
 }
 
+// tokenRefreshSchedulerCache captures cleanup context and provider publication
+// after credential persistence.
 type tokenRefreshSchedulerCache struct {
-	setProviderCalls int
-	ctxErr           error
-	lastProvider     *providercore.Record
+	setProviderCalls int   // captured provider publication count
+	ctxErr           error // captured publication context error
+	// lastProvider holds a CloneRecord result for cleanup assertions. Supported
+	// containers are copied; typed Extra pointers can remain shared and are kept
+	// stable while tests inspect this capture.
+	lastProvider *providercore.Record // cloned published provider record snapshot
 }
 
+// tempUnschedCacheStub captures temporary-state storage and deletion calls
+// during refresh cleanup.
 type tempUnschedCacheStub struct {
-	deleteCalls int
-	setCalls    int
-	lastState   *providercore.TempUnschedState
+	deleteCalls int // captured temporary-state deletion count
+	setCalls    int // captured temporary-state storage count
+	// lastState retains the caller's state pointer from SetTempUnsched.
+	// GetTempUnsched still returns nil, so capture does not model a readable
+	// cache.
+	lastState *providercore.TempUnschedState
 }
 
-// mockTokenCacheForRefreshAPI records token-cache and lock operations for coordinated refresh tests.
+// mockTokenCacheForRefreshAPI controls refresh lock admission and captures
+// invalidation cleanup context.
 type mockTokenCacheForRefreshAPI struct {
-	lockResult   bool
-	lockErr      error
-	releaseCalls int
-	deleteCalls  int
-	deleteCtxErr error
+	lockResult   bool  // configured refresh lock admission flag
+	lockErr      error // configured refresh lock admission error
+	releaseCalls int   // captured refresh lock release count
+	deleteCalls  int   // captured token deletion count
+	deleteCtxErr error // captured token deletion context error
 }
 
-// alwaysFreshRefresherStub models a second check finding credentials already refreshed.
+// alwaysFreshRefresherStub rejects unnecessary exchange through a false
+// freshness decision.
 type alwaysFreshRefresherStub struct{}
 
-// refreshAttemptFixture binds refresh attempts, cleanup, and failure blocking for tests.
+// refreshAttemptFixture retains production refresh attempts and configurable
+// post-persistence cleanup actions.
 type refreshAttemptFixture struct {
-	Attempts providercore.RefreshAttempts
-	Post     *providercore.RefreshPostActions
+	// Attempts holds fixture callbacks and tuning configured before execution.
+	// Its post-action method callbacks retain the Post object returned alongside
+	// those settings.
+	Attempts providercore.RefreshAttempts // configured production refresh attempt behavior
+	// Post remains captured by PostActions and SyncCleanup. Configure its fields
+	// before execution; those bound methods read the same retained cleanup object.
+	Post *providercore.RefreshPostActions // retained configurable post-refresh cleanup actions
 }
 
+// poolHealthProviderRepo captures background pages and health writes across
+// concurrent refresh workers.
 type poolHealthProviderRepo struct {
-	mu                   sync.Mutex
-	pages                map[int64][]providercore.Record
-	requests             []providercore.OAuthRefreshPageOptions
-	updatedCredentialIDs []int64
-	setErrorCalls        int
-	setTempUnschedCalls  int
-	getByIDErr           error
+	// mu protects page capture and write counters across concurrent workers. The
+	// configured pages and lookup error are set before execution and remain stable
+	// during fixture use.
+	mu sync.Mutex // pool capture and counter lock
+	// pages supplies provider slices under selected cursor IDs. Page reads copy
+	// the outer slice and retain nested record values.
+	pages map[int64][]providercore.Record
+	// requests retains option values whose Platforms slices remain shared with
+	// the caller. Tests keep those referenced selections stable during page reads
+	// and later capture inspection.
+	requests             []providercore.OAuthRefreshPageOptions // captured background page option values
+	updatedCredentialIDs []int64                                // captured credential-update provider identifiers
+	setErrorCalls        int                                    // captured permanent-state write count
+	setTempUnschedCalls  int                                    // captured transient-state write count
+	// getByIDErr controls durable lookup failure when nonnil. Otherwise GetByID
+	// reports not-found rather than selecting a record from pages.
+	getByIDErr error
 }
 
+// poolHealthRefresher measures concurrent exchanges and supplies timed or
+// cancellation-insensitive outcomes.
 type poolHealthRefresher struct {
-	err            error
-	delay          time.Duration
-	startDelays    []time.Duration
-	ignoreContext  bool
-	cancel         context.CancelFunc
-	newCredentials map[string]any
-	calls          atomic.Int64
-	active         atomic.Int64
-	maxActive      atomic.Int64
-	startMu        sync.Mutex
-	startTimes     []time.Time
-}
-
-type countingRefreshAttemptGate struct {
-	calls atomic.Int64
-}
-
-type rejectedRefreshAttemptGate struct {
+	// err takes precedence over configured credential results after cancellation
+	// and delay handling. It stays stable while concurrent exchange calls run.
 	err error
+	// delay supplies the default exchange wait. A startDelays entry overrides it
+	// for its corresponding captured invocation index.
+	delay time.Duration
+	// startDelays chooses delays by actual captured start index under startMu.
+	// Callers configure this slice before concurrent exchange invocation.
+	startDelays []time.Duration
+	// ignoreContext makes positive delays use unconditional sleep. The late result
+	// then reaches production timeout handling even after caller cancellation.
+	ignoreContext bool
+	// cancel optionally cancels the parent after activity capture and before
+	// delay. Tests use it to observe whether retries and state mutation stop.
+	cancel context.CancelFunc
+	// newCredentials optionally supplies exchanged values after errors are
+	// excluded. Refresh shallow-copies its map, while nested values remain shared
+	// with stable fixture configuration.
+	newCredentials map[string]any
+	// calls, active, and maxActive record concurrent exchange activity atomically.
+	// startMu separately pairs invocation index with startTimes and its selected
+	// delay override.
+	calls      atomic.Int64 // atomic upstream exchange attempt count
+	active     atomic.Int64 // atomic current exchange activity count
+	maxActive  atomic.Int64 // atomic recorded peak exchange activity
+	startMu    sync.Mutex   // start index and timestamp access lock
+	startTimes []time.Time  // captured actual exchange start timestamps
 }
 
+// countingRefreshAttemptGate counts accepted attempt admission without
+// retaining resource occupancy.
+type countingRefreshAttemptGate struct {
+	calls atomic.Int64 // atomic accepted admission count
+}
+
+// rejectedRefreshAttemptGate returns a configured admission error without a
+// release callback.
+type rejectedRefreshAttemptGate struct {
+	err error // configured rejected admission error
+}
+
+// poolHealthTokenCacheStub exposes an unconfigured cache interface for
+// distributed-lease tuning assertions.
 type poolHealthTokenCacheStub struct {
-	providercore.AccessTokenCache
+	providercore.AccessTokenCache // unconfigured access-token cache methods
 }
 
+// tripBeforeRateAdmissionGate trips platform-cycle state after concurrency
+// admission but before rate admission.
 type tripBeforeRateAdmissionGate struct {
+	// state receives a configuration-failure trip after successful concurrency
+	// admission. Later rate admission delegates to that same cycle state.
 	state *providercore.RefreshProviderState
 }
 
+// breakerTripProviderRepo counts conditional health writes that cycle
+// containment must skip.
 type breakerTripProviderRepo struct {
-	*productionPathRateRepo
-	setErrorCalls atomic.Int64
-	setTempCalls  atomic.Int64
+	*productionPathRateRepo              // embedded synchronized credential fixture store
+	setErrorCalls           atomic.Int64 // atomic permanent mutation attempt count
+	setTempCalls            atomic.Int64 // atomic transient mutation attempt count
 }
 
+// productionPathRateRepo stores cloned credential state for same-provider
+// contention and rate-admission tests.
 type productionPathRateRepo struct {
-	mu        sync.Mutex
-	providers map[int64]*providercore.Record
+	// mu protects providers during reread and conditional credential replacement.
+	// Returned CloneRecord values separate request-owned supported collections
+	// from stored fixture state.
+	mu        sync.Mutex                     // stored credential identity access lock
+	providers map[int64]*providercore.Record // stored contention provider record pointers
 }
 
+// productionPathRefreshStart associates an actual exchange start time with its
+// provider identifier.
 type productionPathRefreshStart struct {
-	providerID int64
-	at         time.Time
+	providerID int64     // provider whose exchange started
+	at         time.Time // actual upstream exchange start timestamp
 }
 
+// productionPathRateExecutor gates the first exchange and captures
+// provider-associated start times.
 type productionPathRateExecutor struct {
+	// firstStarted is closed by the first actual exchange call. Configure it
+	// before execution so contention tests can observe occupied upstream work.
 	firstStarted chan struct{}
+	// releaseFirst gates the first exchange completion. That wait can also return
+	// caller cancellation; later calls return their fresh credentials immediately.
 	releaseFirst chan struct{}
-	calls        atomic.Int64
-	startMu      sync.Mutex
-	starts       []productionPathRefreshStart
+	// calls identifies the gated first invocation atomically, while startMu
+	// protects starts. Each captured entry pairs its provider ID with the actual
+	// exchange start time.
+	calls   atomic.Int64                 // atomic actual exchange call count
+	startMu sync.Mutex                   // provider start capture access lock
+	starts  []productionPathRefreshStart // captured provider-associated exchange starts
 }
 
+// tokenRefreshCandidateRepo captures candidate filtering and conditional
+// cleanup for background scans.
 type tokenRefreshCandidateRepo struct {
-	mu                    sync.Mutex
-	providers             []providercore.Record
-	updatedCredentialIDs  []int64
-	setErrorCalls         int
-	setTempUnschedCalls   int
-	clearTempCalls        int
-	lastTempUnschedReason string
-	listActiveCalls       int
+	// mu protects candidate writes and capture counters. Paged selection reads
+	// configured providers without this lock, so tests prepare that input before
+	// scanning and keep its order stable.
+	mu                    sync.Mutex            // candidate write and capture lock
+	providers             []providercore.Record // configured candidate provider record values
+	updatedCredentialIDs  []int64               // captured candidate credential-update identifiers
+	setErrorCalls         int                   // captured candidate permanent-state write count
+	setTempUnschedCalls   int                   // captured candidate suspension write count
+	clearTempCalls        int                   // captured candidate cooldown recovery count
+	lastTempUnschedReason string                // latest candidate suspension diagnostic reason
+	listActiveCalls       int                   // captured broad active-query call count
 }
 
+// tokenRefreshTestRefresher supplies a configured error or fixed exchanged
+// credentials for scan tests.
 type tokenRefreshTestRefresher struct {
-	err error
+	err error // configured candidate exchange failure
 }
 
+// TestBackgroundFailureCannotBlockNewCredentials rotates stored credentials
+// before permanent or exhausted exchange failures across both refresh engines.
+// Stale failures must skip health writes, runtime blocks, and force-refresh
+// marker cleanup for the new identity.
 func TestBackgroundFailureCannotBlockNewCredentials(t *testing.T) {
 	for _, engine := range []string{"fallback", "unified"} {
 		for _, platform := range []string{capability.PlatformAnthropic, capability.PlatformOpenAI, capability.PlatformGemini, capability.PlatformAntigravity, capability.PlatformQoder} {
@@ -219,6 +350,10 @@ func TestBackgroundFailureCannotBlockNewCredentials(t *testing.T) {
 	}
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthDefaultsToDryRunAndSanitizedPlan
+// scans valid and structurally invalid Grok records without apply mode. The
+// plan must count actions and omit credentials while exchange and mutation
+// captures remain empty.
 func TestTokenRefreshService_ReconcileGrokOAuthDefaultsToDryRunAndSanitizedPlan(t *testing.T) {
 	repo := &grokReconcileRepo{providers: grokReconcileFixtures()}
 	refresher := &poolHealthRefresher{}
@@ -248,6 +383,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthDefaultsToDryRunAndSanitizedPlan(
 	require.NotContains(t, text, `"credentials":`)
 }
 
+// TestGrokTokenRefresher_NeedsRefreshWhenAccessTokenMissingDespiteFarFutureExpiry
+// removes access_token while retaining a distant expiry. Refresh qualification
+// must still request an exchange because the usable access credential is
+// absent.
 func TestGrokTokenRefresher_NeedsRefreshWhenAccessTokenMissingDespiteFarFutureExpiry(t *testing.T) {
 	refresher := providercore.NewGrokTokenRefresher(nil)
 	provider := grokPoolProvider(99)
@@ -257,6 +396,10 @@ func TestGrokTokenRefresher_NeedsRefreshWhenAccessTokenMissingDespiteFarFutureEx
 	require.True(t, refresher.NeedsRefresh(&provider, time.Hour))
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthApplyIsIdempotent applies
+// reconciliation to invalid and expiring records twice. The first run must
+// block or refresh and invalidate caches, while the second performs no
+// duplicate actions.
 func TestTokenRefreshService_ReconcileGrokOAuthApplyIsIdempotent(t *testing.T) {
 	repo := &grokReconcileRepo{providers: grokReconcileFixtures()}
 	invalidator := &reconcileInvalidator{}
@@ -292,6 +435,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthApplyIsIdempotent(t *testing.T) {
 	require.Len(t, updatedIDs, 2)
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthCursorResumesWithoutDuplicates
+// divides three records across two dry-run pages. The returned cursor must
+// resume after the first page and finish without returning either earlier
+// provider again.
 func TestTokenRefreshService_ReconcileGrokOAuthCursorResumesWithoutDuplicates(t *testing.T) {
 	fixtures := grokReconcileFixtures()[:3]
 	repo := &grokReconcileRepo{providers: fixtures}
@@ -312,6 +459,9 @@ func TestTokenRefreshService_ReconcileGrokOAuthCursorResumesWithoutDuplicates(t 
 	require.NotEqual(t, first.Items[1].ProviderID, second.Items[0].ProviderID)
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthCursorUsesRawPageAfterHydrationGap
+// returns one hydrated record with a later raw-page cursor. Reconciliation must
+// retain that cursor so a disappeared selected ID is not reconsidered.
 func TestTokenRefreshService_ReconcileGrokOAuthCursorUsesRawPageAfterHydrationGap(t *testing.T) {
 	provider := grokReconcileFixtures()[0]
 	repo := &grokReconcileRepo{pageOverride: &providercore.OAuthRefreshCandidatePage{
@@ -329,6 +479,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthCursorUsesRawPageAfterHydrationGa
 		"cursor must advance past a raw selected ID that disappeared during hydration")
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthRejectsConflictingApplyMode
+// supplies both apply and dry-run flags to reconciliation. Validation must
+// return the stable reconciliation mode error for that incompatible input
+// selection.
 func TestTokenRefreshService_ReconcileGrokOAuthRejectsConflictingApplyMode(t *testing.T) {
 	svc := newGrokReconcileService(&grokReconcileRepo{}, &poolHealthRefresher{}, nil)
 
@@ -337,6 +491,9 @@ func TestTokenRefreshService_ReconcileGrokOAuthRejectsConflictingApplyMode(t *te
 	require.ErrorIs(t, err, providercore.ErrGrokOAuthReconcileMode)
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthSkipsStaleBlockAfterConcurrentReauthorization
+// returns fresh credentials on the row reread after a stale page selection.
+// Reconciliation must report skipped and leave error-state writes empty.
 func TestTokenRefreshService_ReconcileGrokOAuthSkipsStaleBlockAfterConcurrentReauthorization(t *testing.T) {
 	stale := grokReconcileFixtures()[0]
 	latest := stale
@@ -361,6 +518,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthSkipsStaleBlockAfterConcurrentRea
 	require.Empty(t, setErrorIDs, "a concurrently reauthorized provider must not be disabled from stale page state")
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthDoesNotRuntimeBlockWhenReauthorizationWinsConditionalMutation
+// repairs credentials inside conditional error handling. A lost comparison must
+// report skipped and retain the fresh active record without invalidation,
+// runtime blocking, or unrelated clearing.
 func TestTokenRefreshService_ReconcileGrokOAuthDoesNotRuntimeBlockWhenReauthorizationWinsConditionalMutation(t *testing.T) {
 	provider := grokReconcileFixtures()[0]
 	provider.Credentials["_token_version"] = int64(1)
@@ -393,6 +554,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthDoesNotRuntimeBlockWhenReauthoriz
 	require.Equal(t, "fresh-refresh", latest.GetGrokRefreshToken())
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthReportsPermanentRefreshMutationAsBlocked
+// returns explicit subscription rejection for an expiring record. Accepted
+// permanent mutation must become an applied block action, leaving failed and
+// partial counts zero.
 func TestTokenRefreshService_ReconcileGrokOAuthReportsPermanentRefreshMutationAsBlocked(t *testing.T) {
 	provider := grokReconcileFixtures()[2]
 	repo := &grokReconcileRepo{providers: []providercore.Record{provider}}
@@ -412,6 +577,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthReportsPermanentRefreshMutationAs
 	require.Equal(t, []int64{provider.ID}, setErrorIDs)
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthReportsConcurrentRefreshReauthorizationAsSkipped
+// replaces credentials before permanent refresh failure persistence.
+// Reconciliation must report skipped and retain the repaired active identity
+// without invalidating its token.
 func TestTokenRefreshService_ReconcileGrokOAuthReportsConcurrentRefreshReauthorizationAsSkipped(t *testing.T) {
 	provider := grokReconcileFixtures()[2]
 	repo := &grokReconcileRepo{
@@ -438,6 +607,10 @@ func TestTokenRefreshService_ReconcileGrokOAuthReportsConcurrentRefreshReauthori
 	require.Equal(t, "fresh-refresh", latest.GetGrokRefreshToken())
 }
 
+// TestTokenRefreshService_ReconcileGrokOAuthReportsInvalidationFailureAsPartial
+// fails cache invalidation after a record is blocked. The result must retain
+// the completed block while separately counting a partial outcome instead of
+// failure.
 func TestTokenRefreshService_ReconcileGrokOAuthReportsInvalidationFailureAsPartial(t *testing.T) {
 	provider := grokReconcileFixtures()[0]
 	repo := &grokReconcileRepo{providers: []providercore.Record{provider}}
@@ -452,6 +625,9 @@ func TestTokenRefreshService_ReconcileGrokOAuthReportsInvalidationFailureAsParti
 	require.Equal(t, providercore.GrokOAuthReconcileOutcomePartial, result.Items[0].Outcome)
 }
 
+// TestTokenRefreshService_RefreshWithRetry_InvalidatesCache completes an OAuth
+// exchange and credential-only write. Success must update the local access
+// token and invalidate once while full-row storage remains unused.
 func TestTokenRefreshService_RefreshWithRetry_InvalidatesCache(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -480,6 +656,10 @@ func TestTokenRefreshService_RefreshWithRetry_InvalidatesCache(t *testing.T) {
 	require.Equal(t, "new-token", provider.GetCredential("access_token"))
 }
 
+// TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored fails cache
+// invalidation after successful credential persistence. The attempt must still
+// return success while recording both completed storage and attempted
+// invalidation.
 func TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{err: errors.New("invalidate failed")}
@@ -505,6 +685,9 @@ func TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored(t *testing
 	require.Equal(t, 1, invalidator.calls)
 }
 
+// TestTokenRefreshService_RefreshWithRetry_NilInvalidator omits cache
+// invalidation from a successful OAuth fixture. The exchange must still persist
+// credentials once and return success through the refresh attempt.
 func TestTokenRefreshService_RefreshWithRetry_NilInvalidator(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	cfg := &providercore.RefreshTuning{
@@ -528,6 +711,9 @@ func TestTokenRefreshService_RefreshWithRetry_NilInvalidator(t *testing.T) {
 	require.Equal(t, 1, repo.updateCalls)
 }
 
+// TestTokenRefreshService_RefreshWithRetry_QoderInvalidatesCache exchanges
+// Qoder COSY credentials through shared attempt logic. Success must invoke the
+// supplied token invalidator once for that authentication category.
 func TestTokenRefreshService_RefreshWithRetry_QoderInvalidatesCache(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -553,7 +739,9 @@ func TestTokenRefreshService_RefreshWithRetry_QoderInvalidatesCache(t *testing.T
 	require.Equal(t, 1, invalidator.calls)
 }
 
-// TestTokenRefreshService_RefreshWithRetry_Antigravity checks cache invalidation after refresh.
+// TestTokenRefreshService_RefreshWithRetry_Antigravity completes an Antigravity
+// OAuth exchange. The attempt must persist its credential update and invalidate
+// the supplied token cache once after success.
 func TestTokenRefreshService_RefreshWithRetry_Antigravity(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -579,6 +767,9 @@ func TestTokenRefreshService_RefreshWithRetry_Antigravity(t *testing.T) {
 	require.Equal(t, 1, invalidator.calls) // Antigravity invalidates its token cache too.
 }
 
+// TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker supplies an
+// unexpired token with the forced refresh flag. Qualification must request an
+// exchange even though expiry alone would permit continued use.
 func TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker(t *testing.T) {
 	refresher := &providercore.AntigravityRefreshRules{Printf: func(string, ...any) {}}
 	provider := &providercore.Record{
@@ -596,6 +787,10 @@ func TestAntigravityTokenRefresher_NeedsRefresh_ForceRefreshMarker(t *testing.T)
 	require.True(t, refresher.NeedsRefresh(provider, 0), "server-invalidated token must refresh even before expires_at")
 }
 
+// TestAntigravityTokenRefresher_NeedsRefresh_NormalExpiryRulesUnchanged
+// compares distant and near expiry without forced state. Qualification must
+// skip the unexpired record and accept the record inside the platform refresh
+// window.
 func TestAntigravityTokenRefresher_NeedsRefresh_NormalExpiryRulesUnchanged(t *testing.T) {
 	refresher := &providercore.AntigravityRefreshRules{Printf: func(string, ...any) {}}
 
@@ -626,6 +821,10 @@ func TestAntigravityTokenRefresher_NeedsRefresh_NormalExpiryRulesUnchanged(t *te
 	})
 }
 
+// TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuccess
+// starts with a forced token refresh and temporary suspension. Success must
+// persist credentials, clear the force marker and reason, and request cooldown
+// recovery.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuccess(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	cfg := &providercore.RefreshTuning{
@@ -661,6 +860,10 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityClearsForceRefreshOnSuc
 	require.Equal(t, 1, repo.clearTempCalls, "successful refresh should restore schedulability")
 }
 
+// TestTokenRefreshService_RefreshWithRetry_AntigravityForceRefreshInvalidGrantSetsError
+// rejects a forced refresh with invalid_grant. Handling must write permanent
+// error state and clear the accepted marker while skipping transient
+// suspension.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityForceRefreshInvalidGrantSetsError(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	cfg := &providercore.RefreshTuning{
@@ -690,8 +893,9 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityForceRefreshInvalidGran
 	require.Contains(t, repo.lastErrorMessage, "non-retryable")
 }
 
-// TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider checks that API key providers skip OAuth cache
-// invalidation.
+// TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider runs the scripted
+// exchange with an API-key record. Credential persistence must succeed while
+// OAuth token-cache invalidation remains unused for that authentication type.
 func TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -717,7 +921,10 @@ func TestTokenRefreshService_RefreshWithRetry_NonOAuthProvider(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls) // API key refresh leaves the OAuth cache untouched.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth checks OpenAI OAuth cache invalidation.
+// TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth completes an
+// OpenAI OAuth fixture exchange. The attempt must use credential-only
+// persistence and request token-cache invalidation once before returning
+// success.
 func TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -744,6 +951,9 @@ func TestTokenRefreshService_RefreshWithRetry_OtherPlatformOAuth(t *testing.T) {
 	require.Equal(t, 1, invalidator.calls) // Invalidate the OAuth token after persisting credentials.
 }
 
+// TestTokenRefreshService_RefreshWithRetry_UsesCredentialsUpdater refreshes a
+// record that already has a quota-reset timestamp. Credential-only persistence
+// must leave that timestamp intact and avoid full-row replacement.
 func TestTokenRefreshService_RefreshWithRetry_UsesCredentialsUpdater(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	cfg := &providercore.RefreshTuning{
@@ -775,7 +985,10 @@ func TestTokenRefreshService_RefreshWithRetry_UsesCredentialsUpdater(t *testing.
 	require.WithinDuration(t, resetAt, *provider.RateLimitResetAt, time.Second)
 }
 
-// TestTokenRefreshService_RefreshWithRetry_UpdateFailed checks that persistence failure skips cache invalidation.
+// TestTokenRefreshService_RefreshWithRetry_UpdateFailed fails credential
+// persistence after exchange success. The attempt must return the save
+// diagnostic and skip token invalidation because the new credential was not
+// stored.
 func TestTokenRefreshService_RefreshWithRetry_UpdateFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{updateErr: errors.New("update failed")}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -802,7 +1015,9 @@ func TestTokenRefreshService_RefreshWithRetry_UpdateFailed(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls) // Persistence failed, so keep the cached token.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_RefreshFailed leaves retryable failures eligible for a later cycle.
+// TestTokenRefreshService_RefreshWithRetry_RefreshFailed configures two
+// retryable OAuth exchange attempts. The result must fail while credential,
+// token-invalidation, and permanent provider error-write captures remain zero.
 func TestTokenRefreshService_RefreshWithRetry_RefreshFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -824,11 +1039,12 @@ func TestTokenRefreshService_RefreshWithRetry_RefreshFailed(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 0, repo.updateCalls)   // Failed exchange leaves credentials unchanged.
 	require.Equal(t, 0, invalidator.calls)  // Failed exchange leaves the cached token unchanged.
-	require.Equal(t, 0, repo.setErrorCalls) // Exhausted retries can run again next cycle.
+	require.Equal(t, 0, repo.setErrorCalls) // Retry exhaustion skips permanent error capture.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed leaves retryable failures out of permanent
-// error state.
+// TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed returns a
+// retryable network error. The attempt must skip credential and invalidation
+// writes and leave permanent error-state capture at zero.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -853,7 +1069,9 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityRefreshFailed(t *testin
 	require.Equal(t, 0, repo.setErrorCalls) // Retryable failure does not mark a permanent error.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError checks permanent credential failures.
+// TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError rejects
+// credentials with invalid_grant. Handling must write permanent error state and
+// invalidate the old token while no exchanged credential is persisted.
 func TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -878,8 +1096,9 @@ func TestTokenRefreshService_RefreshWithRetry_AntigravityNonRetryableError(t *te
 	require.Equal(t, 1, repo.setErrorCalls) // Permanent failure marks the provider as erroneous.
 }
 
-// TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable clears database and Redis suspension after
-// success.
+// TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable starts with
+// a temporary suspension and succeeds in exchange. Post-persistence recovery
+// must request one database suspension clear and one configured cache deletion.
 func TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	invalidator := &tokenCacheInvalidatorStub{}
@@ -905,16 +1124,18 @@ func TestTokenRefreshService_RefreshWithRetry_ClearsTempUnschedulable(t *testing
 	err := service.Attempts.Run(context.Background(), provider, refresher, refresher, time.Hour, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
-	require.Equal(t, 1, repo.clearTempCalls)   // database suspension cleared
-	require.Equal(t, 1, tempCache.deleteCalls) // Redis suspension cleared
+	require.Equal(t, 1, repo.clearTempCalls)   // database suspension clear requested
+	require.Equal(t, 1, tempCache.deleteCalls) // cached suspension deletion requested
 }
 
-// TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms checks permanent failure handling
-// across platforms.
+// TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms
+// supplies permanent credential rejection across supported OAuth platforms.
+// Each attempt must request one permanent error-state write through the common
+// classification path.
 func TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms(t *testing.T) {
 	tests := []struct {
-		name     string
-		platform string
+		name     string // refresh scenario label
+		platform string // provider platform under test
 	}{
 		{name: "gemini", platform: capability.PlatformGemini},
 		{name: "anthropic", platform: capability.PlatformAnthropic},
@@ -947,6 +1168,9 @@ func TestTokenRefreshService_RefreshWithRetry_NonRetryableErrorAllPlatforms(t *t
 	}
 }
 
+// TestTokenRefreshService_RefreshWithRetry_NoRefreshTokenDoesNotTempUnschedule
+// reports a missing refresh token. The failure must be classified as permanent,
+// with no credential write or transient cooldown capture.
 func TestTokenRefreshService_RefreshWithRetry_NoRefreshTokenDoesNotTempUnschedule(t *testing.T) {
 	repo := &tokenRefreshProviderRepo{}
 	cfg := &providercore.RefreshTuning{
@@ -970,7 +1194,9 @@ func TestTokenRefreshService_RefreshWithRetry_NoRefreshTokenDoesNotTempUnschedul
 	require.Equal(t, 1, repo.setErrorCalls, "missing refresh token should be treated as a non-retryable credential state")
 }
 
-// TestPathA_Success checks exchange, persistence, and post-refresh cleanup through the coordinator.
+// TestPathA_Success completes exchange through production refresh coordination.
+// Credential persistence, token invalidation, and lock release must each occur
+// once before the attempt returns success.
 func TestPathA_Success(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       100,
@@ -992,6 +1218,10 @@ func TestPathA_Success(t *testing.T) {
 	require.Equal(t, 1, cache.releaseCalls) // refresh lock released
 }
 
+// TestPathA_GrokSuccessPersistenceFailureContainsProviderWithoutRetryOrMutation
+// fails the conditional write after rotated tokens are issued. Containment must
+// stop retry, retain the earlier credential identity, and avoid permanent or
+// transient failure mutation.
 func TestPathA_GrokSuccessPersistenceFailureContainsProviderWithoutRetryOrMutation(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       110,
@@ -1030,6 +1260,10 @@ func TestPathA_GrokSuccessPersistenceFailureContainsProviderWithoutRetryOrMutati
 	require.Equal(t, "attempted-refresh", provider.GetGrokRefreshToken())
 }
 
+// TestPathA_GrokSuccessPublishesDurableSchedulingState disables scheduling
+// during successful credential comparison. Post-refresh publication must retain
+// the durable disabled flag and quota reset while publishing one refreshed
+// provider.
 func TestPathA_GrokSuccessPublishesDurableSchedulingState(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          111,
@@ -1070,6 +1304,10 @@ func TestPathA_GrokSuccessPublishesDurableSchedulingState(t *testing.T) {
 		"post-refresh cache publication must preserve the durable concurrent exclusion state")
 }
 
+// TestPathA_GrokCancelAfterSuccessCASUsesDetachedDurableStateAndInvalidatesCache
+// cancels the caller after accepted credential rotation. Cleanup must
+// reread durable state and invalidate and publish it under usable contexts
+// despite the returned cancellation.
 func TestPathA_GrokCancelAfterSuccessCASUsesDetachedDurableStateAndInvalidatesCache(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          112,
@@ -1121,6 +1359,10 @@ func TestPathA_GrokCancelAfterSuccessCASUsesDetachedDurableStateAndInvalidatesCa
 	require.NotNil(t, scheduler.lastProvider.RateLimitResetAt)
 }
 
+// TestTokenRefreshService_PersistedSuccessCrossingAttemptDeadlineStaysSuccessful
+// delays durable reread beyond an internal attempt deadline after persistence.
+// The committed exchange must remain successful, publish once, and avoid retry,
+// cooldown, or breaker failure.
 func TestTokenRefreshService_PersistedSuccessCrossingAttemptDeadlineStaysSuccessful(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          113,
@@ -1161,6 +1403,10 @@ func TestTokenRefreshService_PersistedSuccessCrossingAttemptDeadlineStaysSuccess
 	require.Equal(t, 1, scheduler.setProviderCalls)
 }
 
+// TestPathA_ParentCancellationAfterPersistStillSynchronizesCacheState cancels
+// immediately after credential persistence. Token invalidation and scheduler
+// publication must still run under usable cleanup contexts while the caller
+// receives cancellation.
 func TestPathA_ParentCancellationAfterPersistStillSynchronizesCacheState(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       109,
@@ -1187,7 +1433,9 @@ func TestPathA_ParentCancellationAfterPersistStillSynchronizesCacheState(t *test
 	require.NoError(t, scheduler.ctxErr, "scheduler sync must use bounded cleanup context")
 }
 
-// TestPathA_LockHeld returns ErrRefreshSkipped when another worker owns the lock.
+// TestPathA_LockHeld rejects coordinated lock admission because another worker
+// owns the key. The attempt must return refresh-skipped and leave credential
+// persistence and token invalidation unused.
 func TestPathA_LockHeld(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       101,
@@ -1207,7 +1455,9 @@ func TestPathA_LockHeld(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls) // A skipped refresh leaves the cached token unchanged.
 }
 
-// TestPathA_AlreadyRefreshed returns ErrRefreshSkipped when the second freshness check passes.
+// TestPathA_AlreadyRefreshed makes the second freshness check reject an
+// unnecessary exchange. The attempt must return refresh-skipped while stored
+// credentials and cache invalidation captures remain unchanged.
 func TestPathA_AlreadyRefreshed(t *testing.T) {
 	// A false NeedsRefresh result produces Refreshed=false.
 	provider := &providercore.Record{
@@ -1235,7 +1485,9 @@ func TestPathA_AlreadyRefreshed(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls)
 }
 
-// TestPathA_NonRetryableError checks that the coordinator marks permanent failures.
+// TestPathA_NonRetryableError rejects coordinated exchange credentials with
+// invalid_grant. Handling must record permanent error and old-token
+// invalidation while leaving credential success storage unused.
 func TestPathA_NonRetryableError(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       103,
@@ -1261,7 +1513,9 @@ func TestPathA_NonRetryableError(t *testing.T) {
 	require.Equal(t, 1, invalidator.calls)  // Invalidate the old cached token after permanent credential failure.
 }
 
-// TestPathA_RetryableErrorExhausted keeps retryable failures out of permanent error state.
+// TestPathA_RetryableErrorExhausted exhausts coordinated network failures under
+// a finite retry count. The attempt must return failure while permanent state,
+// exchanged credentials, and token invalidation remain untouched.
 func TestPathA_RetryableErrorExhausted(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       104,
@@ -1293,11 +1547,15 @@ func TestPathA_RetryableErrorExhausted(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls)  // cached token unchanged
 }
 
+// TestPathA_GrokPermanentFailureCASLetsConcurrentProviderRepairWin repairs
+// credentials or proxy identity before permanent mutation comparison. The
+// attempt must skip stale error persistence, blocking, and invalidation while
+// retaining the repaired active record.
 func TestPathA_GrokPermanentFailureCASLetsConcurrentProviderRepairWin(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*tokenRefreshProviderRepo)
-		assert    func(*testing.T, *providercore.Record)
+		name      string                                 // refresh scenario label
+		configure func(*tokenRefreshProviderRepo)        // fixture identity-race setup callback
+		assert    func(*testing.T, *providercore.Record) // repaired record assertion callback
 	}{
 		{
 			name: "credential reauthorization",
@@ -1364,11 +1622,15 @@ func TestPathA_GrokPermanentFailureCASLetsConcurrentProviderRepairWin(t *testing
 	}
 }
 
+// TestPathA_GrokTransientFailureCASLetsConcurrentProviderRepairWin repairs
+// credentials or proxy identity before transient comparison. The stale cooldown
+// must be skipped while the record stays active and its repaired field remains
+// visible.
 func TestPathA_GrokTransientFailureCASLetsConcurrentProviderRepairWin(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*tokenRefreshProviderRepo)
-		assert    func(*testing.T, *providercore.Record)
+		name      string                                 // refresh scenario label
+		configure func(*tokenRefreshProviderRepo)        // fixture identity-race setup callback
+		assert    func(*testing.T, *providercore.Record) // repaired record assertion callback
 	}{
 		{
 			name: "credential reauthorization",
@@ -1435,10 +1697,14 @@ func TestPathA_GrokTransientFailureCASLetsConcurrentProviderRepairWin(t *testing
 	}
 }
 
+// TestTokenRefreshService_GrokMissingConditionalMutationContractContainsProviderCycle
+// omits the required conditional health writer under both failure categories.
+// The configuration error must trip cycle containment without changing provider
+// status or scheduling.
 func TestTokenRefreshService_GrokMissingConditionalMutationContractContainsProviderCycle(t *testing.T) {
 	tests := []struct {
-		name       string
-		refreshErr error
+		name       string // refresh scenario label
+		refreshErr error  // supplied upstream exchange failure
 	}{
 		{name: "permanent failure", refreshErr: errors.New("invalid_grant: revoked")},
 		{name: "transient failure", refreshErr: errors.New("temporary provider timeout")},
@@ -1471,12 +1737,16 @@ func TestTokenRefreshService_GrokMissingConditionalMutationContractContainsProvi
 	}
 }
 
+// TestTokenRefreshService_GrokConditionalMutationErrorsContainProviderCycle
+// fails permanent or transient conditional mutation execution. Containment must
+// retain the storage cause, replace stale upstream classification, and skip
+// local state, runtime block, and token invalidation.
 func TestTokenRefreshService_GrokConditionalMutationErrorsContainProviderCycle(t *testing.T) {
 	tests := []struct {
-		name             string
-		upstreamErr      error
-		configureRepo    func(*tokenRefreshProviderRepo, error)
-		expectedCASCalls func(*tokenRefreshProviderRepo) int
+		name             string                                 // refresh scenario label
+		upstreamErr      error                                  // supplied upstream exchange failure
+		configureRepo    func(*tokenRefreshProviderRepo, error) // conditional writer error setup callback
+		expectedCASCalls func(*tokenRefreshProviderRepo) int    // conditional writer attempt count reader
 	}{
 		{
 			name:        "permanent failure",
@@ -1541,7 +1811,9 @@ func TestTokenRefreshService_GrokConditionalMutationErrorsContainProviderCycle(t
 	}
 }
 
-// TestPathA_DBUpdateFailed returns a persistence error and skips post-refresh actions.
+// TestPathA_DBUpdateFailed fails coordinated credential storage after exchange.
+// The attempt must expose the persistence sentinel, record one write attempt,
+// and skip all token invalidation afterward.
 func TestPathA_DBUpdateFailed(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       105,
@@ -1563,12 +1835,15 @@ func TestPathA_DBUpdateFailed(t *testing.T) {
 	require.Equal(t, 0, invalidator.calls) // Keep the cached token after persistence fails.
 }
 
-// TestIsNonRetryableRefreshError checks permanent refresh error classification.
+// TestIsNonRetryableRefreshError compares known credential, client, scope,
+// subscription, network, and typed Qoder failures. Classification must retain
+// case-insensitive permanent matching while typed account rejection remains
+// outside shared-platform error handling.
 func TestIsNonRetryableRefreshError(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		expected bool
+		name     string // refresh scenario label
+		err      error  // supplied exchange failure result
+		expected bool   // expected permanent-error classification
 	}{
 		{name: "nil_error", err: nil, expected: false},
 		{name: "network_error", err: errors.New("network timeout"), expected: false},
@@ -1603,6 +1878,10 @@ func TestIsNonRetryableRefreshError(t *testing.T) {
 	}))
 }
 
+// TestTokenRefreshService_ProcessRefreshPagesByStableCursor scans multiple
+// scripted candidate pages with production paging rules. It must advance after
+// each page, refresh every selected record, and wrap position after the short
+// final page.
 func TestTokenRefreshService_ProcessRefreshPagesByStableCursor(t *testing.T) {
 	repo := &poolHealthProviderRepo{pages: map[int64][]providercore.Record{
 		0: {grokPoolProvider(1), grokPoolProvider(2)},
@@ -1635,6 +1914,10 @@ func TestTokenRefreshService_ProcessRefreshPagesByStableCursor(t *testing.T) {
 	require.Zero(t, runtime.CandidatePosition(), "a short final page must wrap the next cycle to the beginning")
 }
 
+// TestTokenRefreshService_BoundsPerProviderConcurrency runs eight delayed
+// exchanges with two configured slots. The fixture must record eight exchange
+// calls while peak concurrent activity reaches the configured two-request
+// limit.
 func TestTokenRefreshService_BoundsPerProviderConcurrency(t *testing.T) {
 	providers := make([]providercore.Record, 0, 8)
 	for id := int64(1); id <= 8; id++ {
@@ -1657,7 +1940,13 @@ func TestTokenRefreshService_BoundsPerProviderConcurrency(t *testing.T) {
 	require.Equal(t, int64(2), refresher.maxActive.Load())
 }
 
+// TestTokenRefreshRateGate_ReservesSpacedSlotsAndHonorsCancellation reserves
+// deterministic intervals, jumps past idle time, and cancels a delayed waiter.
+// Reservation must retain spacing while cancellation returns before the
+// reserved interval elapses.
 func TestTokenRefreshRateGate_ReservesSpacedSlotsAndHonorsCancellation(t *testing.T) {
+	// Twenty-five milliseconds is the deterministic reservation spacing under
+	// test.
 	const interval = 25 * time.Millisecond
 	gate := providercore.NewRefreshRateGateWithInterval(interval)
 	base := time.Unix(1_700_000_000, 0)
@@ -1677,6 +1966,9 @@ func TestTokenRefreshRateGate_ReservesSpacedSlotsAndHonorsCancellation(t *testin
 	require.Less(t, time.Since(started), 100*time.Millisecond, "cancellation must not wait for the reserved slot")
 }
 
+// TestTokenRefreshService_RetriesAcquireRateSlotPerAttempt retries three
+// transient exchange failures. Each upstream attempt must obtain its own
+// admission slot so retries remain subject to the same rate gate.
 func TestTokenRefreshService_RetriesAcquireRateSlotPerAttempt(t *testing.T) {
 	repo := &poolHealthProviderRepo{}
 	refresher := &poolHealthRefresher{err: errors.New("temporary provider failure")}
@@ -1691,6 +1983,9 @@ func TestTokenRefreshService_RetriesAcquireRateSlotPerAttempt(t *testing.T) {
 	require.Equal(t, int64(3), gate.calls.Load(), "every upstream retry must consume a provider rate slot")
 }
 
+// TestTokenRefreshService_ProcessProviderProvidersLegacyNilReleaseGateIsSafe
+// rejects legacy admission with no release callback. Processing must count one
+// skip, no failure or refresh, and leave upstream exchange unused.
 func TestTokenRefreshService_ProcessProviderProvidersLegacyNilReleaseGateIsSafe(t *testing.T) {
 	repo := &poolHealthProviderRepo{}
 	refresher := &poolHealthRefresher{}
@@ -1722,6 +2017,9 @@ func TestTokenRefreshService_ProcessProviderProvidersLegacyNilReleaseGateIsSafe(
 	require.Zero(t, refresher.calls.Load(), "rejected rate admission must not reach the legacy upstream refresher")
 }
 
+// TestTokenRefreshService_ProviderRateGateIsSharedAcrossRuns obtains the
+// platform gate twice from one runtime. Both references must identify the same
+// limiter and reserve adjacent slots on its shared schedule.
 func TestTokenRefreshService_ProviderRateGateIsSharedAcrossRuns(t *testing.T) {
 	runtime := providercore.NewBackgroundRefreshService(providercore.BackgroundRefreshOptions{Tuning: &providercore.RefreshTuning{ProviderQPS: 40}})
 	first := runtime.ProviderRateGate(capability.PlatformGrok)
@@ -1733,6 +2031,9 @@ func TestTokenRefreshService_ProviderRateGateIsSharedAcrossRuns(t *testing.T) {
 	require.Equal(t, base.Add(25*time.Millisecond), second.ReserveSlot(base))
 }
 
+// TestTokenRefreshService_ProviderConcurrencyGateIsSharedAcrossBackgroundAndConcurrentAdminReconciliation
+// starts a background cycle and two apply runs together. All twelve exchanges
+// must execute while sharing the same two-slot platform concurrency limit.
 func TestTokenRefreshService_ProviderConcurrencyGateIsSharedAcrossBackgroundAndConcurrentAdminReconciliation(t *testing.T) {
 	providers := []providercore.Record{
 		grokPoolProvider(1),
@@ -1757,6 +2058,8 @@ func TestTokenRefreshService_ProviderConcurrencyGateIsSharedAcrossBackgroundAndC
 	firstGate := runtime.ProviderConcurrencyGate(capability.PlatformGrok)
 	require.Same(t, firstGate, runtime.ProviderConcurrencyGate(capability.PlatformGrok))
 
+	// Release the cycle and both administration calls through one start signal,
+	// then wait for all three before comparing the common platform activity peak.
 	start := make(chan struct{})
 	adminErrors := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -1786,6 +2089,10 @@ func TestTokenRefreshService_ProviderConcurrencyGateIsSharedAcrossBackgroundAndC
 		"all entry points must share the configured per-provider upstream concurrency cap")
 }
 
+// TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSStartSpacing
+// scripts overlapping exchange completion under two slots and twenty QPS.
+// Every measured start gap must be at least a tenth of the configured interval,
+// and peak activity must reach the configured concurrency.
 func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSStartSpacing(t *testing.T) {
 	const (
 		providerConcurrency = 2
@@ -1794,7 +2101,8 @@ func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSSt
 	)
 	repo := &poolHealthProviderRepo{}
 	refresher := &poolHealthRefresher{
-		// The first two QPS-spaced attempts finish together, exposing stale rate reservations made before capacity
+		// The first two delays differ by the configured 50ms start interval, targeting
+		// coincident completions that can reveal rate slots reserved before capacity
 		// becomes available.
 		startDelays: []time.Duration{
 			220 * time.Millisecond,
@@ -1817,6 +2125,9 @@ func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSSt
 	sharedRateGate := runtime.ProviderRateGate(capability.PlatformGrok)
 	sharedPoolGate := runtime.ProviderConcurrencyGate(capability.PlatformGrok)
 
+	// Release all attempts together so concurrency becomes saturated before their
+	// scripted delays complete, exposing rate slots reserved too early while
+	// workers wait for capacity.
 	start := make(chan struct{})
 	errorsCh := make(chan error, attemptCount)
 	var wg sync.WaitGroup
@@ -1859,7 +2170,13 @@ func TestTokenRefreshService_SaturatedProviderPreservesConcurrencyAndActualQPSSt
 		refresher.maxActive.Load(), providerConcurrency, actualMinimumSpacing, configuredSpacing)
 }
 
+// TestTokenRefreshService_ProductionPathRatesOnlyActualRefreshAfterSameProviderContention
+// queues a same-record lock waiter and another provider behind an active
+// exchange. The now-fresh waiter must skip, while only actual exchanges consume
+// rate spacing.
 func TestTokenRefreshService_ProductionPathRatesOnlyActualRefreshAfterSameProviderContention(t *testing.T) {
+	// Two hundred milliseconds separates actual production-path exchange
+	// admissions.
 	const interval = 200 * time.Millisecond
 	providerOne := grokPoolProvider(71)
 	providerOne.Credentials["needs_refresh"] = true
@@ -1883,6 +2200,9 @@ func TestTokenRefreshService_ProductionPathRatesOnlyActualRefreshAfterSameProvid
 	poolGate := providercore.NewRefreshConcurrencyGate(2)
 	state := providercore.NewRefreshProviderState(providercore.NewRefreshRateGateWithInterval(interval), poolGate, svc.Tuning.FailureThreshold(), IsNonRetryableRefreshError)
 
+	// Hold the first actual exchange, admit a same-record lock waiter, and then
+	// queue another provider before release. Buffered outcomes let all callers
+	// finish before spacing assertions.
 	errorsCh := make(chan error, 3)
 	go func() {
 		errorsCh <- svc.Attempts.Run(context.Background(), firstSelection, executor, executor, time.Hour, state)
@@ -1927,6 +2247,10 @@ func TestTokenRefreshService_ProductionPathRatesOnlyActualRefreshAfterSameProvid
 	t.Logf("actual_refresh_calls=%d actual_start_spacing=%s configured_spacing=%s", executor.calls.Load(), spacing, interval)
 }
 
+// TestTokenRefreshService_ProviderTripBeforeRateAdmissionSkipsWithoutProviderMutation
+// trips cycle state after concurrency admission. Rate admission must return
+// skipped before exchange and leave conditional error and cooldown writers
+// unused.
 func TestTokenRefreshService_ProviderTripBeforeRateAdmissionSkipsWithoutProviderMutation(t *testing.T) {
 	provider := grokPoolProvider(73)
 	stored := providercore.CloneRecord(&provider)
@@ -1948,7 +2272,11 @@ func TestTokenRefreshService_ProviderTripBeforeRateAdmissionSkipsWithoutProvider
 	require.Zero(t, repo.setTempCalls.Load(), "provider skip must never fall through to per-provider cooldown")
 }
 
+// TestTokenRefreshService_ConfigBounds supplies maximum machine integers to
+// retry, timeout, and failure settings. Accessors must clamp those values to
+// defined production bounds and retain the reconciliation page ceiling.
 func TestTokenRefreshService_ConfigBounds(t *testing.T) {
+	// Use the platform's maximum int to exercise every clamped tuning bound.
 	maxInt := int(^uint(0) >> 1)
 	tuning := &providercore.RefreshTuning{
 		MaxRetries:               maxInt,
@@ -1966,6 +2294,10 @@ func TestTokenRefreshService_ConfigBounds(t *testing.T) {
 	require.Equal(t, 500, providercore.MaxGrokOAuthReconcilePageSize)
 }
 
+// TestTokenRefreshService_AttemptTimeoutStaysInsideDistributedLockLease
+// configures the maximum attempt duration with a distributed cache interface.
+// The effective timeout must retain the lease safety margin and stay below one
+// minute.
 func TestTokenRefreshService_AttemptTimeoutStaysInsideDistributedLockLease(t *testing.T) {
 	cache := &poolHealthTokenCacheStub{}
 	tuning := &providercore.RefreshTuning{AttemptTimeoutSeconds: int(providercore.MaxTokenRefreshAttemptTimeout / time.Second)}
@@ -1974,6 +2306,10 @@ func TestTokenRefreshService_AttemptTimeoutStaysInsideDistributedLockLease(t *te
 	require.Less(t, tuning.AttemptTimeout(0, lease, configured), time.Minute)
 }
 
+// TestTokenRefreshService_SharedProviderFailureContainsCycleWithoutProviderMutation
+// returns shared invalid_client errors across several records. One exchange
+// must contain the cycle immediately while provider error and transient
+// mutation captures remain empty.
 func TestTokenRefreshService_SharedProviderFailureContainsCycleWithoutProviderMutation(t *testing.T) {
 	providers := make([]providercore.Record, 0, 5)
 	for id := int64(1); id <= 5; id++ {
@@ -1999,6 +2335,10 @@ func TestTokenRefreshService_SharedProviderFailureContainsCycleWithoutProviderMu
 	require.Zero(t, setTempUnschedCalls, "shared provider failures must not mutate per-provider scheduling state")
 }
 
+// TestTokenRefreshService_SharedDBRereadFailureContainsCycleWithoutProviderMutation
+// fails the coordinated durable reread for several selected records.
+// Containment must stop before exchange and leave provider error and suspension
+// storage unused.
 func TestTokenRefreshService_SharedDBRereadFailureContainsCycleWithoutProviderMutation(t *testing.T) {
 	providers := []providercore.Record{grokPoolProvider(1), grokPoolProvider(2), grokPoolProvider(3)}
 	repo := &poolHealthProviderRepo{
@@ -2024,6 +2364,10 @@ func TestTokenRefreshService_SharedDBRereadFailureContainsCycleWithoutProviderMu
 	require.Zero(t, setTempUnschedCalls, "a shared DB outage must not mutate the selected provider")
 }
 
+// TestTokenRefreshService_GenericGrokForbiddenContainsCycleWithoutProviderMutation
+// returns a coarse entitlement label with generic blocked HTML. The ambiguity
+// must contain the cycle after one call without assigning a permanent or
+// transient account failure.
 func TestTokenRefreshService_GenericGrokForbiddenContainsCycleWithoutProviderMutation(t *testing.T) {
 	providers := []providercore.Record{grokPoolProvider(1), grokPoolProvider(2), grokPoolProvider(3)}
 	repo := &poolHealthProviderRepo{pages: map[int64][]providercore.Record{0: providers}}
@@ -2046,6 +2390,10 @@ func TestTokenRefreshService_GenericGrokForbiddenContainsCycleWithoutProviderMut
 	require.Zero(t, setTempUnschedCalls, "provider containment must not mutate provider scheduling state")
 }
 
+// TestTokenRefreshService_ExplicitGrokEntitlementDenialIsPermanent includes
+// concrete subscription-required evidence in the denial body. The selected
+// provider must receive permanent error state after one exchange and no
+// transient cooldown.
 func TestTokenRefreshService_ExplicitGrokEntitlementDenialIsPermanent(t *testing.T) {
 	repo := &poolHealthProviderRepo{pages: map[int64][]providercore.Record{0: {grokPoolProvider(1)}}}
 	refresher := &poolHealthRefresher{err: errors.New(`GROK_OAUTH_ENTITLEMENT_DENIED: token refresh failed: status 403, body: {"error":"subscription required"}`)}
@@ -2066,6 +2414,9 @@ func TestTokenRefreshService_ExplicitGrokEntitlementDenialIsPermanent(t *testing
 	require.Zero(t, setTempUnschedCalls)
 }
 
+// TestTokenRefreshService_AttemptTimeoutTripsRetryableProviderThreshold times
+// out two sequential attempts under a threshold of two. Both remain transient
+// provider failures before the cycle breaker stops further work.
 func TestTokenRefreshService_AttemptTimeoutTripsRetryableProviderThreshold(t *testing.T) {
 	providers := []providercore.Record{grokPoolProvider(1), grokPoolProvider(2), grokPoolProvider(3)}
 	repo := &poolHealthProviderRepo{pages: map[int64][]providercore.Record{0: providers}}
@@ -2088,6 +2439,10 @@ func TestTokenRefreshService_AttemptTimeoutTripsRetryableProviderThreshold(t *te
 	require.Equal(t, 2, setTempUnschedCalls, "attempt timeouts remain provider-transient failures before containment opens")
 }
 
+// TestTokenRefreshService_ParentCancellationStopsRetryWithoutProviderMutation
+// cancels the caller during a transient exchange failure. The attempt must
+// return cancellation and leave permanent and transient provider-state write
+// captures unused.
 func TestTokenRefreshService_ParentCancellationStopsRetryWithoutProviderMutation(t *testing.T) {
 	repo := &poolHealthProviderRepo{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2110,6 +2465,10 @@ func TestTokenRefreshService_ParentCancellationStopsRetryWithoutProviderMutation
 	require.Zero(t, setTempUnschedCalls)
 }
 
+// TestTokenRefreshService_LateSuccessPastAttemptDeadlineIsRejected returns
+// exchanged credentials after ignoring the internal timeout. The result must be
+// rejected without credential storage while recording a transient attempt
+// failure.
 func TestTokenRefreshService_LateSuccessPastAttemptDeadlineIsRejected(t *testing.T) {
 	repo := &poolHealthProviderRepo{}
 	refresher := &poolHealthRefresher{
@@ -2130,6 +2489,9 @@ func TestTokenRefreshService_LateSuccessPastAttemptDeadlineIsRejected(t *testing
 	require.Equal(t, 1, setTempUnschedCalls)
 }
 
+// TestTokenRefreshService_NonRetryableGrokFailureInvalidatesTokenCache rejects
+// a Grok refresh with invalid_grant. Handling must write permanent error state
+// and invalidate once while temporary suspension stays unused.
 func TestTokenRefreshService_NonRetryableGrokFailureInvalidatesTokenCache(t *testing.T) {
 	repo := &poolHealthProviderRepo{}
 	invalidator := &reconcileInvalidator{}
@@ -2147,6 +2509,10 @@ func TestTokenRefreshService_NonRetryableGrokFailureInvalidatesTokenCache(t *tes
 	require.Equal(t, 1, invalidator.count())
 }
 
+// TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates mixes
+// credentials, platforms, authentication types, scheduling flags, and cooldown
+// reasons. Scanning must use the narrow candidate page and refresh only the
+// eligible IDs, including recoverable OAuth suspension.
 func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	repo := &tokenRefreshCandidateRepo{
@@ -2243,10 +2609,14 @@ func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing
 	require.Equal(t, 1, repo.clearTempCalls, "successful refresh should clear the OAuth 401 temp-unschedulable state")
 }
 
+// TestTokenRefreshService_RefreshFailureDoesNotCallPrivacy supplies
+// retry-exhausted and permanent failures with a privacy factory that rejects
+// invocation. Attempts must write the appropriate failure category while
+// leaving privacy work unused.
 func TestTokenRefreshService_RefreshFailureDoesNotCallPrivacy(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
+		name string // refresh scenario label
+		err  error  // supplied exchange failure result
 	}{
 		{name: "retry exhausted", err: errors.New("temporary upstream timeout")},
 		{name: "non retryable", err: errors.New("invalid_grant: token revoked")},
@@ -2287,22 +2657,42 @@ func TestTokenRefreshService_RefreshFailureDoesNotCallPrivacy(t *testing.T) {
 	}
 }
 
+// CanRefresh accepts every record in the stale-exchange failure fixture.
 func (*oldFailureRefresher) CanRefresh(*providercore.Record) bool { return true }
 
+// NeedsRefresh forces exchange for every stale-failure fixture record.
 func (*oldFailureRefresher) NeedsRefresh(*providercore.Record, time.Duration) bool { return true }
 
+// CacheKey returns the fixed stale-failure fixture token namespace.
 func (*oldFailureRefresher) CacheKey(*providercore.Record) string { return "fixture:old-failure" }
 
+// Refresh replaces stored credentials with administrator values before
+// returning the configured failure. Configure row as the current stored record;
+// the exchange's supplied provider represents an earlier credential version.
+//
+// Replacement installs a new map rather than editing the observed map in place,
+// leaving that earlier credential evidence available for comparison. The failure
+// arrives after the stored identity has changed, so background health persistence
+// must reject its stale version. Both refresh engines use this ordering to check
+// that old failure notices cannot block newly installed credentials.
 func (r *oldFailureRefresher) Refresh(context.Context, *providercore.Record) (map[string]any, error) {
+	// Replace the stored credential identity before returning the earlier exchange
+	// failure, so the attempt's conditional health writer must reject its stale
+	// version.
 	r.row.Credentials = map[string]any{"access_token": "fresh-admin-fixture", "refresh_token": "fresh-refresh-fixture"}
 	return nil, r.failure
 }
 
+// PrepareRefreshFailure returns a callback counting accepted sequential failure
+// notices.
 func (b *failureBlocker) PrepareRefreshFailure(int64) func(providercore.RefreshFailureNotice) {
 	return func(providercore.RefreshFailureNotice) { b.calls++ }
 }
 
-// backgroundAttemptOptions binds test dependencies to production refresh attempts and post-refresh cleanup.
+// backgroundAttemptOptions binds production attempt policy, classifiers,
+// persistence, and cleanup to the supplied fixture store. Optional writer
+// interfaces are installed when implemented, while runtime block publication
+// uses a capture-free callback by default.
 func backgroundAttemptOptions(repo providercore.CredentialUpdateStore, tuning *providercore.RefreshTuning) providercore.RefreshAttempts {
 	post := &providercore.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug,
@@ -2327,33 +2717,48 @@ func backgroundAttemptOptions(repo providercore.CredentialUpdateStore, tuning *p
 	}
 }
 
+// refreshAPIForFixture creates production coordination with supplied
+// repository, cache, and platform refresh policy.
 func refreshAPIForFixture(repo providercore.RefreshRepository, cache providercore.RefreshCache) *providercore.OAuthRefreshAPI {
 	return providercore.NewOAuthRefreshAPI(repo, cache, providercore.RefreshOptions{Platform: providercore.ProviderRefreshPlatformPolicy()})
 }
 
-// Update records full-row writes and delegates to the credential-update stub.
+// Update forwards the record's credentials to the fixture's captured credential
+// writer.
 func (r *poolHealthProviderRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
 
+// Update forwards the record's credentials to synchronized fixture storage.
 func (r *productionPathRateRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
 
+// Update forwards reconciliation credentials to the synchronized fixture merge
+// writer.
 func (r *grokReconcileRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
 
+// PrepareRefreshFailure returns a notice callback that captures runtime
+// blocking by provider ID. Deadline and reason are forwarded to the fixture
+// method, which records only the target identity.
 func (b *reconcileRuntimeBlocker) PrepareRefreshFailure(int64) func(providercore.RefreshFailureNotice) {
 	return func(value providercore.RefreshFailureNotice) {
 		b.BlockProviderScheduling(&providercore.Record{ID: value.ProviderID}, value.Until, value.Reason)
 	}
 }
 
+// Update forwards candidate credentials to the fixture's synchronized
+// credential writer.
 func (r *tokenRefreshCandidateRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
 
+// candidatePostActions creates production post-refresh handling with fixture
+// cooldown comparison and no-op runtime clearing. Reauthentication policy uses
+// production Grok rules, and the caller can attach additional cleanup before
+// attempts run.
 func candidatePostActions(repo *tokenRefreshCandidateRepo) *providercore.RefreshPostActions {
 	return &providercore.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug, ClearBlock: func(int64) {}, NeedsReauth: providercore.GrokNeedsReauth,
@@ -2363,6 +2768,17 @@ func candidatePostActions(repo *tokenRefreshCandidateRepo) *providercore.Refresh
 	}
 }
 
+// ApplyOAuthRefreshFailure rejects an already-cancelled caller before locking
+// and compares configured record identity before recording a failure category.
+// Nil provider storage accepts capture-only scenarios, while missing or
+// mismatched rows reject acceptance before counter updates.
+//
+// Version comparison and accepted counter mutation share the fixture mutex.
+// Configured storage requires a matching row; acceptance records the chosen
+// failure category and reason while stored row fields remain unchanged. Caller
+// cancellation after the initial check is outside this fixture's acceptance
+// test, so these captures establish identity filtering and requested health
+// effects under their controlled cancellation sequence.
 func (r *tokenRefreshCandidateRepo) ApplyOAuthRefreshFailure(ctx context.Context, version providercore.RefreshFailureVersion, failure providercore.RefreshFailure) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -2388,6 +2804,9 @@ func (r *tokenRefreshCandidateRepo) ApplyOAuthRefreshFailure(ctx context.Context
 	return true, nil
 }
 
+// GetByID returns an override or stored shallow record copy under the fixture
+// mutex. Missing IDs return provider-not-found, and nested credentials and
+// Extra remain shared with their selected stored record.
 func (r *grokReconcileRepo) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2404,6 +2823,15 @@ func (r *grokReconcileRepo) GetByID(_ context.Context, id int64) (*providercore.
 	return nil, providercore.ErrProviderNotFound
 }
 
+// ListOAuthRefreshCandidatePage captures options and returns an override or
+// ID-sorted filtered fixture page. Override and normal pages own their outer
+// provider slice, while nested record values remain shared.
+//
+// Normal filtering uses cursor, selected platforms, active status, OAuth/setup
+// eligibility, and required refresh-token text, then stops at the positive
+// limit. The last returned ID supplies NextAfterID and a full page reports
+// HasMore, even if no later record exists. Tests can inject raw cursor metadata
+// through pageOverride to model a hydration gap separately.
 func (r *grokReconcileRepo) ListOAuthRefreshCandidatePage(_ context.Context, options providercore.OAuthRefreshPageOptions) (*providercore.OAuthRefreshCandidatePage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2446,6 +2874,9 @@ func (r *grokReconcileRepo) ListOAuthRefreshCandidatePage(_ context.Context, opt
 	return result, nil
 }
 
+// UpdateCredentials captures the requested ID and merges credentials into
+// matching stored records under the fixture mutex. A missing row still leaves
+// the captured ID visible and returns success.
 func (r *grokReconcileRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2458,6 +2889,9 @@ func (r *grokReconcileRepo) UpdateCredentials(_ context.Context, id int64, crede
 	return nil
 }
 
+// UpdateExtra merges patch values into a matching record under the fixture
+// mutex and initializes missing Extra. Missing IDs return success without
+// capture or mutation; nested patch values remain shared.
 func (r *grokReconcileRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2474,6 +2908,15 @@ func (r *grokReconcileRepo) UpdateExtra(_ context.Context, id int64, updates map
 	return nil
 }
 
+// SetError captures the provider ID and message before mutating matching rows
+// under the mutex. Matching records become error-state and unschedulable, while
+// missing rows still leave the requested error capture visible.
+//
+// The ID and message append as one pair, followed by status, scheduling, and
+// diagnostic updates in the same critical section. Capture therefore identifies
+// the requested operation even when its row is missing, while a matching row's
+// mutation is complete before synchronized readers or snapshot assertions can
+// observe this fixture again.
 func (r *grokReconcileRepo) SetError(_ context.Context, id int64, message string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2489,6 +2932,15 @@ func (r *grokReconcileRepo) SetError(_ context.Context, id int64, message string
 	return nil
 }
 
+// SetGrokOAuthErrorIfCredentialsUnchanged models blocking a structurally
+// invalid active Grok record under the fixture mutex. It counts comparison
+// attempts and can inject one reauthorization before testing the row.
+//
+// Only an active OAuth row with no refresh token and equal expected credentials
+// receives the error state. A repaired identity returns false before capture or
+// scheduling mutation. Comparison, captured error arguments, and row updates
+// remain under the same lock, keeping the fixture's controlled reauthorization
+// point separate from an accepted old block.
 func (r *grokReconcileRepo) SetGrokOAuthErrorIfCredentialsUnchanged(
 	_ context.Context,
 	id int64,
@@ -2503,6 +2955,9 @@ func (r *grokReconcileRepo) SetGrokOAuthErrorIfCredentialsUnchanged(
 		if provider.ID != id {
 			continue
 		}
+		// Repair credentials before comparing the structural failure snapshot. This
+		// injects the administrator-winning case while the same mutex still owns
+		// comparison and any accepted block.
 		if r.reauthorizeOnCAS {
 			r.reauthorizeOnCAS = false
 			provider.Credentials = map[string]any{
@@ -2526,6 +2981,15 @@ func (r *grokReconcileRepo) SetGrokOAuthErrorIfCredentialsUnchanged(
 	return false, nil
 }
 
+// SetGrokOAuthRefreshErrorIfCredentialsUnchanged compares active Grok OAuth
+// credentials and proxy under the fixture mutex before recording permanent
+// failure. An optional one-shot reauthorization runs before that comparison.
+//
+// Changed identities return false with their repaired state intact. Matches
+// capture ID and message, set error status, and disable scheduling in the same
+// critical section. The method reports acceptance only for that matched
+// mutation, allowing reconciliation tests to distinguish an applied permanent
+// block from a stale exchange outcome that must be skipped.
 func (r *grokReconcileRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	_ context.Context,
 	id int64,
@@ -2540,6 +3004,8 @@ func (r *grokReconcileRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 		if provider.ID != id {
 			continue
 		}
+		// Rotate credentials before permanent failure comparison, so a late exchange
+		// cannot classify the new active identity using its old failure.
 		if r.reauthorizeOnRefreshCAS {
 			r.reauthorizeOnRefreshCAS = false
 			provider.Credentials = map[string]any{
@@ -2564,6 +3030,15 @@ func (r *grokReconcileRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	return false, nil
 }
 
+// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged stores a transient
+// deadline after matching active Grok OAuth credentials and proxy under the
+// fixture mutex. Missing or changed records return false.
+//
+// Comparison and both deadline/reason assignments share the lock, so this
+// fixture's accepted cooldown belongs to the same identity it examined. The
+// supplied time value escapes through a new pointer in the stored record;
+// credentials remain unchanged. Reconciliation tests use that result separately
+// from the permanent error-state writer and its captured block actions.
 func (r *grokReconcileRepo) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(
 	_ context.Context,
 	id int64,
@@ -2591,12 +3066,18 @@ func (r *grokReconcileRepo) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnc
 	return false, nil
 }
 
+// snapshot copies captured reconciliation slices under the fixture mutex.
+// Nested values within recorded page options remain shared, so callers inspect
+// those request values without changing their referenced platform slices.
 func (r *grokReconcileRepo) snapshot() ([]providercore.OAuthRefreshPageOptions, []int64, []int64, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]providercore.OAuthRefreshPageOptions(nil), r.requests...), append([]int64(nil), r.setErrorIDs...), append([]int64(nil), r.updatedCredIDs...), append([]string(nil), r.setErrorMessage...)
 }
 
+// BlockProviderScheduling appends a nonnil record's ID under the fixture mutex.
+// Nil records are skipped, while deadline and reason are ignored because these
+// assertions inspect block ownership alone.
 func (b *reconcileRuntimeBlocker) BlockProviderScheduling(provider *providercore.Record, _ time.Time, _ string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2605,18 +3086,26 @@ func (b *reconcileRuntimeBlocker) BlockProviderScheduling(provider *providercore
 	}
 }
 
+// ClearProviderSchedulingBlock records the requested recovery ID under the
+// fixture mutex.
 func (b *reconcileRuntimeBlocker) ClearProviderSchedulingBlock(providerID int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleared = append(b.cleared, providerID)
 }
 
+// snapshot returns copied block and clear ID slices under the fixture mutex.
+// Later fixture writes cannot change the returned slices, letting assertions
+// retain that observed set independently.
 func (b *reconcileRuntimeBlocker) snapshot() (blocked, cleared []int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]int64(nil), b.blocked...), append([]int64(nil), b.cleared...)
 }
 
+// InvalidateToken captures the nonnil provider ID under the fixture mutex and
+// returns the configured error. Failed invalidation still retains the attempted
+// cleanup for partial-outcome assertions after reconciliation has returned.
 func (i *reconcileInvalidator) InvalidateToken(_ context.Context, provider *providercore.Record) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -2624,12 +3113,17 @@ func (i *reconcileInvalidator) InvalidateToken(_ context.Context, provider *prov
 	return i.err
 }
 
+// count reads the captured token invalidation count under the fixture mutex.
 func (i *reconcileInvalidator) count() int {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	return len(i.ids)
 }
 
+// newGrokReconcileService configures production scanning and reconciliation
+// around shared fixture dependencies. It uses the first optional failure
+// observer, attaches optional token invalidation, and supplies bounded tuning
+// plus conditional identity writers and post-refresh cleanup.
 func newGrokReconcileService(repo *grokReconcileRepo, refresher *poolHealthRefresher, invalidator providercore.TokenCacheInvalidator, observers ...providercore.RefreshFailureObserver) *providercore.BackgroundRefreshService {
 	tuning := &providercore.RefreshTuning{
 		MaxRetries:               1,
@@ -2667,6 +3161,9 @@ func newGrokReconcileService(repo *grokReconcileRepo, refresher *poolHealthRefre
 	})
 }
 
+// grokReconcileFixtures creates invalid, expiring, healthy, and API-key Grok
+// record values with fresh credential maps. One current UTC time anchors their
+// expiry differences for deterministic reconciliation category setup.
 func grokReconcileFixtures() []providercore.Record {
 	now := time.Now().UTC()
 	return []providercore.Record{
@@ -2713,14 +3210,21 @@ func grokReconcileFixtures() []providercore.Record {
 	}
 }
 
+// BlockProviderScheduling counts a requested runtime block in sequential
+// refresh fixtures.
 func (b *tokenRefreshRuntimeBlocker) BlockProviderScheduling(*providercore.Record, time.Time, string) {
 	b.blockCalls++
 }
 
+// ClearProviderSchedulingBlock counts a requested runtime recovery in
+// sequential refresh fixtures.
 func (b *tokenRefreshRuntimeBlocker) ClearProviderSchedulingBlock(int64) {
 	b.clearCalls++
 }
 
+// InvalidateToken captures caller cancellation state and a cloned provider
+// before returning its configured error. The capture lets post-persistence
+// tests compare cleanup context and durable scheduling or credential state.
 func (s *tokenCacheInvalidatorStub) InvalidateToken(ctx context.Context, provider *providercore.Record) error {
 	s.calls++
 	s.ctxErr = ctx.Err()
@@ -2728,6 +3232,9 @@ func (s *tokenCacheInvalidatorStub) InvalidateToken(ctx context.Context, provide
 	return s.err
 }
 
+// SetProvider counts publication and captures context error with a cloned
+// provider snapshot. It reports success regardless of cancellation, leaving
+// tests to assert whether cleanup supplied a usable context.
 func (s *tokenRefreshSchedulerCache) SetProvider(ctx context.Context, provider *providercore.Record) error {
 	s.setProviderCalls++
 	s.ctxErr = ctx.Err()
@@ -2735,45 +3242,64 @@ func (s *tokenRefreshSchedulerCache) SetProvider(ctx context.Context, provider *
 	return nil
 }
 
+// SetTempUnsched counts the call and retains the supplied state pointer.
+// Callers keep that state stable while assertions inspect it; the fixture does
+// not associate storage with the requested provider ID.
 func (s *tempUnschedCacheStub) SetTempUnsched(ctx context.Context, providerID int64, state *providercore.TempUnschedState) error {
 	s.setCalls++
 	s.lastState = state
 	return nil
 }
 
+// GetTempUnsched returns no retained runtime state for these refresh fixtures.
 func (s *tempUnschedCacheStub) GetTempUnsched(ctx context.Context, providerID int64) (*providercore.TempUnschedState, error) {
 	return nil, nil
 }
 
+// DeleteTempUnsched counts temporary-state deletion and reports fixture
+// success.
 func (s *tempUnschedCacheStub) DeleteTempUnsched(ctx context.Context, providerID int64) error {
 	s.deleteCalls++
 	return nil
 }
 
+// GetAccessToken returns the fixture cache-miss error for every requested key.
 func (m *mockTokenCacheForRefreshAPI) GetAccessToken(_ context.Context, _ string) (string, error) {
 	return "", errors.New("not cached")
 }
 
+// SetAccessToken accepts fixture writes without retaining any cached token
+// value.
 func (m *mockTokenCacheForRefreshAPI) SetAccessToken(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
 
+// DeleteAccessToken counts invalidation and captures caller context error
+// before returning success. Post-persistence tests inspect the captured context
+// error to detect cleanup inheriting an already cancelled refresh attempt.
 func (m *mockTokenCacheForRefreshAPI) DeleteAccessToken(ctx context.Context, _ string) error {
 	m.deleteCalls++
 	m.deleteCtxErr = ctx.Err()
 	return nil
 }
 
+// AcquireRefreshLock returns the configured admission flag and error for any
+// key. It models that configured outcome and retains no owner, expiry, or
+// occupancy state for subsequent refresh lock calls.
 func (m *mockTokenCacheForRefreshAPI) AcquireRefreshLock(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return m.lockResult, m.lockErr
 }
 
+// ReleaseRefreshLock counts requested lock release and reports fixture success.
 func (m *mockTokenCacheForRefreshAPI) ReleaseRefreshLock(_ context.Context, _ string) error {
 	m.releaseCalls++
 	return nil
 }
 
-// buildPathAService builds a refresh fixture with the shared refresh coordinator.
+// buildPathAService initializes blank fixture statuses to active and installs
+// production refresh coordination with one retry. It returns attempts and a
+// scripted token exchanger while retaining the repository, cache, and
+// invalidator dependencies.
 func buildPathAService(repo *tokenRefreshProviderRepo, cache providercore.AccessTokenCache, invalidator providercore.TokenCacheInvalidator) (*refreshAttemptFixture, *tokenRefresherStub) {
 	for _, provider := range repo.providersByID {
 		if provider != nil && provider.Status == "" {
@@ -2796,20 +3322,32 @@ func buildPathAService(repo *tokenRefreshProviderRepo, cache providercore.Access
 	return service, refresher
 }
 
+// CanRefresh accepts every record for the already-fresh qualification fixture.
 func (r *alwaysFreshRefresherStub) CanRefresh(_ *providercore.Record) bool { return true }
 
+// NeedsRefresh rejects exchange because this fixture models an
+// already-refreshed record.
 func (r *alwaysFreshRefresherStub) NeedsRefresh(_ *providercore.Record, _ time.Duration) bool {
 	return false
 }
 
+// Refresh returns the fixture error when qualification unexpectedly allows an
+// exchange.
 func (r *alwaysFreshRefresherStub) Refresh(_ context.Context, _ *providercore.Record) (map[string]any, error) {
 	return nil, errors.New("should not be called")
 }
 
+// CacheKey returns the already-fresh fixture namespace containing the record's
+// platform.
 func (r *alwaysFreshRefresherStub) CacheKey(provider *providercore.Record) string {
 	return "test:fresh:" + provider.Platform
 }
 
+// newRefreshAttemptFixture binds production attempts and post-actions to
+// sequential write fixtures. Optional invalidator, scheduler, and cooldown
+// dependencies attach their callbacks; classifiers and conditional writers
+// retain their production configuration while the default failure notice is a
+// no-op.
 func newRefreshAttemptFixture(repo *tokenRefreshProviderRepo, tuning *providercore.RefreshTuning, invalidator providercore.TokenCacheInvalidator, scheduler *tokenRefreshSchedulerCache, cooldown providercore.TempUnschedCache) *refreshAttemptFixture {
 	post := &providercore.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug,
@@ -2849,6 +3387,15 @@ func newRefreshAttemptFixture(repo *tokenRefreshProviderRepo, tuning *providerco
 	}}
 }
 
+// ClearRefreshCooldownIfUnchanged finds and compares the observed cooldown
+// under the fixture mutex. Matches count recovery and clear deadline and reason
+// together, while missing or changed rows return false before mutation.
+//
+// ObserveRefreshCooldown includes authentication, parent and quota identity,
+// plus the captured pause deadline and reason. Comparing that complete value
+// prevents cleanup from clearing a different stored window. Comparison, the
+// accepted-clear counter, and both row-field assignments stay under one lock,
+// so the fixture publishes one consistent recovery result for that version.
 func (r *tokenRefreshCandidateRepo) ClearRefreshCooldownIfUnchanged(_ context.Context, v providercore.RefreshCooldownVersion) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2866,10 +3413,15 @@ func (r *tokenRefreshCandidateRepo) ClearRefreshCooldownIfUnchanged(_ context.Co
 	return false, nil
 }
 
+// PrepareRefreshFailure returns a callback counting accepted sequential runtime
+// failure notices.
 func (b *tokenRefreshRuntimeBlocker) PrepareRefreshFailure(int64) func(providercore.RefreshFailureNotice) {
 	return func(providercore.RefreshFailureNotice) { b.blockCalls++ }
 }
 
+// GetByID returns the configured durable-read error or provider-not-found for
+// every lookup. It supplies no success row, allowing scan tests to isolate
+// fallback handling or shared reread containment.
 func (r *poolHealthProviderRepo) GetByID(_ context.Context, _ int64) (*providercore.Record, error) {
 	if r.getByIDErr != nil {
 		return nil, r.getByIDErr
@@ -2877,6 +3429,9 @@ func (r *poolHealthProviderRepo) GetByID(_ context.Context, _ int64) (*providerc
 	return nil, providercore.ErrProviderNotFound
 }
 
+// ListOAuthRefreshCandidatePage captures options and copies the slice scripted
+// under AfterID while holding the fixture mutex. Last record ID supplies the
+// cursor, full length sets HasMore, and nested record state stays shared.
 func (r *poolHealthProviderRepo) ListOAuthRefreshCandidatePage(_ context.Context, options providercore.OAuthRefreshPageOptions) (*providercore.OAuthRefreshCandidatePage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2889,6 +3444,7 @@ func (r *poolHealthProviderRepo) ListOAuthRefreshCandidatePage(_ context.Context
 	return page, nil
 }
 
+// UpdateCredentials records the requested provider ID under the fixture mutex.
 func (r *poolHealthProviderRepo) UpdateCredentials(_ context.Context, id int64, _ map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2896,6 +3452,10 @@ func (r *poolHealthProviderRepo) UpdateCredentials(_ context.Context, id int64, 
 	return nil
 }
 
+// UpdateGrokOAuthCredentialsIfUnchanged captures the target ID and reports
+// acceptance under the fixture mutex. It compares no credential version, so
+// these pool assertions measure calls and concurrency rather than persistence
+// conflict handling.
 func (r *poolHealthProviderRepo) UpdateGrokOAuthCredentialsIfUnchanged(
 	_ context.Context,
 	id int64,
@@ -2909,6 +3469,7 @@ func (r *poolHealthProviderRepo) UpdateGrokOAuthCredentialsIfUnchanged(
 	return true, nil
 }
 
+// SetError counts permanent error writes under the fixture mutex.
 func (r *poolHealthProviderRepo) SetError(context.Context, int64, string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2916,10 +3477,18 @@ func (r *poolHealthProviderRepo) SetError(context.Context, int64, string) error 
 	return nil
 }
 
+// SetGrokOAuthErrorIfCredentialsUnchanged rejects the structural reconciliation
+// block in this pool fixture. It returns false without capture, leaving
+// record-level reconciliation mutation to the dedicated checking repository used
+// by the reconciliation scenarios.
 func (r *poolHealthProviderRepo) SetGrokOAuthErrorIfCredentialsUnchanged(context.Context, int64, map[string]any, string) (bool, error) {
 	return false, nil
 }
 
+// SetGrokOAuthRefreshErrorIfCredentialsUnchanged counts permanent failure and
+// reports acceptance under the fixture mutex. It performs no identity
+// comparison or stored-row mutation, so separate checking fixtures establish
+// stale-failure rejection.
 func (r *poolHealthProviderRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2927,6 +3496,10 @@ func (r *poolHealthProviderRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	return true, nil
 }
 
+// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged counts transient
+// failure and reports acceptance under the fixture mutex. It performs no
+// identity comparison, keeping the pool tests focused on admission and cycle
+// handling.
 func (r *poolHealthProviderRepo) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, time.Time, string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2934,6 +3507,8 @@ func (r *poolHealthProviderRepo) SetGrokOAuthRefreshTempUnschedulableIfCredentia
 	return true, nil
 }
 
+// SetTempUnschedulable counts transient suspension writes under the fixture
+// mutex.
 func (r *poolHealthProviderRepo) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2941,39 +3516,65 @@ func (r *poolHealthProviderRepo) SetTempUnschedulable(context.Context, int64, ti
 	return nil
 }
 
+// snapshot copies page and update-ID captures with failure counts under the
+// fixture mutex. Referenced values inside page options remain shared and are
+// treated as read-only by assertions.
 func (r *poolHealthProviderRepo) snapshot() ([]providercore.OAuthRefreshPageOptions, []int64, int, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]providercore.OAuthRefreshPageOptions(nil), r.requests...), append([]int64(nil), r.updatedCredentialIDs...), r.setErrorCalls, r.setTempUnschedCalls
 }
 
+// Acquire obtains the platform concurrency release function before injecting a
+// configuration failure into cycle state. Admission errors return directly;
+// accepted callers retain release while later rate admission observes the
+// tripped state.
 func (g *tripBeforeRateAdmissionGate) Acquire(ctx context.Context) (func(), error) {
 	release, err := g.state.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// Trip cycle state after acquiring concurrency but before rate admission. The
+	// following admission check must return skipped without treating this as a
+	// record credential failure.
 	g.state.RecordResult(&providercore.ProviderConfigurationRefreshError{Cause: errors.New("fixture provider unavailable")})
 	return release, nil
 }
 
+// AcquireRate delegates to cycle state after the fixture's earlier trip
+// injection.
 func (g *tripBeforeRateAdmissionGate) AcquireRate(ctx context.Context) (func(), error) {
 	return g.state.AcquireRate(ctx)
 }
 
+// SetGrokOAuthRefreshErrorIfCredentialsUnchanged atomically counts a permanent
+// mutation attempt that containment should prevent. It reports acceptance for
+// every call, ignores supplied identity values, and changes no stored provider
+// state.
 func (r *breakerTripProviderRepo) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, string) (bool, error) {
 	r.setErrorCalls.Add(1)
 	return true, nil
 }
 
+// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged atomically counts
+// a transient mutation attempt that containment should prevent. It reports
+// acceptance for every call, ignores supplied identity values, and changes no
+// stored provider state.
 func (r *breakerTripProviderRepo) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, time.Time, string) (bool, error) {
 	r.setTempCalls.Add(1)
 	return true, nil
 }
 
+// Acquire returns the configured admission error and no release function.
+// Tests configure a nonnil rejection error so callers can exercise admission
+// failure without owning any fixture resource.
 func (g *rejectedRefreshAttemptGate) Acquire(context.Context) (func(), error) {
 	return nil, g.err
 }
 
+// GetByID returns a CloneRecord snapshot under the fixture mutex or
+// provider-not-found for a missing row. Contending attempts therefore compare
+// request-local record state with later durable fixture reads.
 func (r *productionPathRateRepo) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2984,6 +3585,9 @@ func (r *productionPathRateRepo) GetByID(_ context.Context, id int64) (*provider
 	return providercore.CloneRecord(provider), nil
 }
 
+// UpdateCredentials replaces a matching row's credential map with a shallow
+// copy under the fixture mutex. Missing IDs return provider-not-found, while
+// nested values remain shared with the supplied exchange result.
 func (r *productionPathRateRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2995,6 +3599,17 @@ func (r *productionPathRateRepo) UpdateCredentials(_ context.Context, id int64, 
 	return nil
 }
 
+// UpdateGrokOAuthCredentialsIfUnchanged compares current credentials and proxy
+// under the fixture mutex before installing a shallow credential copy. Missing
+// or changed rows return false, and the accepted comparison and map replacement
+// share one critical section.
+//
+// Callers establish platform and status before this write because its comparison
+// checks Credentials and ProxyID. A matched row receives a separate
+// top-level map while nested values remain shared with the exchange input.
+// Keeping comparison and publication together lets the same-provider contention
+// test reread the accepted credentials before deciding whether another exchange
+// remains necessary.
 func (r *productionPathRateRepo) UpdateGrokOAuthCredentialsIfUnchanged(
 	_ context.Context,
 	id int64,
@@ -3013,25 +3628,45 @@ func (r *productionPathRateRepo) UpdateGrokOAuthCredentialsIfUnchanged(
 	return true, nil
 }
 
+// CacheKey returns a provider-ID namespace for production-path contention
+// fixtures.
 func (e *productionPathRateExecutor) CacheKey(provider *providercore.Record) string {
 	return fmt.Sprintf("production-path-rate:%d", provider.ID)
 }
 
+// CanRefresh accepts nonnil Grok OAuth records for the contention fixture.
 func (e *productionPathRateExecutor) CanRefresh(provider *providercore.Record) bool {
 	return provider != nil && provider.IsGrokOAuth()
 }
 
+// NeedsRefresh reads the fixture's boolean needs_refresh credential flag.
+// Missing or nonboolean values return false, allowing the same-provider waiter
+// to skip after the first exchange clears that flag.
 func (e *productionPathRateExecutor) NeedsRefresh(provider *providercore.Record, _ time.Duration) bool {
 	needsRefresh, _ := provider.Credentials["needs_refresh"].(bool)
 	return needsRefresh
 }
 
+// Refresh captures actual provider-associated exchange starts and gates its
+// first call until release or cancellation. Required channels are configured
+// before execution, and returned credential maps are fresh for each accepted
+// request.
+//
+// Start capture occurs after service admission, so tests inspect real exchange
+// spacing rather than reserved slots. Atomic call order identifies the gated
+// first request while the start mutex protects the paired ID and timestamp
+// list. Successful completion returns needs_refresh false, making a later
+// waiter on that same provider skip its own upstream exchange after rereading
+// persisted state.
 func (e *productionPathRateExecutor) Refresh(ctx context.Context, provider *providercore.Record) (map[string]any, error) {
 	call := e.calls.Add(1)
 	e.startMu.Lock()
 	e.starts = append(e.starts, productionPathRefreshStart{providerID: provider.ID, at: time.Now()})
 	e.startMu.Unlock()
 	if call == 1 {
+		// Signal actual upstream entry before holding the first exchange. Contending
+		// tests can then occupy the provider lock while another record waits for rate
+		// admission.
 		close(e.firstStarted)
 		select {
 		case <-ctx.Done():
@@ -3046,12 +3681,18 @@ func (e *productionPathRateExecutor) Refresh(ctx context.Context, provider *prov
 	}, nil
 }
 
+// startsSnapshot copies the provider-associated start list under its capture
+// mutex. The returned slice owns its entries, so later captures cannot extend
+// or overwrite that snapshot.
 func (e *productionPathRateExecutor) startsSnapshot() []productionPathRefreshStart {
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	return append([]productionPathRefreshStart(nil), e.starts...)
 }
 
+// Acquire rejects caller cancellation, otherwise counts admission and returns a
+// no-op release function. It retains no occupancy state, letting retry tests
+// compare upstream attempts with admission calls directly.
 func (g *countingRefreshAttemptGate) Acquire(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -3060,16 +3701,29 @@ func (g *countingRefreshAttemptGate) Acquire(ctx context.Context) (func(), error
 	return func() {}, nil
 }
 
+// CacheKey returns the provider-ID namespace used by scripted pool exchanges.
 func (r *poolHealthRefresher) CacheKey(provider *providercore.Record) string {
 	return fmt.Sprintf("pool-health:%d", provider.ID)
 }
 
+// CanRefresh accepts only nonnil Grok OAuth records in this pool fixture.
 func (r *poolHealthRefresher) CanRefresh(provider *providercore.Record) bool {
 	return provider != nil && provider.Platform == capability.PlatformGrok && provider.Type == capability.ProviderTypeOAuth
 }
 
+// NeedsRefresh forces an exchange for every scripted pool fixture record.
 func (r *poolHealthRefresher) NeedsRefresh(*providercore.Record, time.Duration) bool { return true }
 
+// Refresh records concurrent exchange activity and applies scripted per-start
+// or default delays. A configured cancel callback runs before delay; errors win
+// over credential results, and successful custom maps receive a shallow copy.
+//
+// Start index and time are captured under one mutex so delay overrides follow
+// actual invocation order. Atomic counters record current and peak activity,
+// including calls still waiting on their delay. ignoreContext uses an
+// unconditional sleep to model a late exchange result, while ordinary waits
+// return on cancellation. The returned result lets production attempt handling
+// decide whether deadline or persistence owns completion.
 func (r *poolHealthRefresher) Refresh(ctx context.Context, _ *providercore.Record) (map[string]any, error) {
 	r.calls.Add(1)
 	active := r.active.Add(1)
@@ -3084,6 +3738,8 @@ func (r *poolHealthRefresher) Refresh(ctx context.Context, _ *providercore.Recor
 	r.startMu.Unlock()
 	for {
 		maxActive := r.maxActive.Load()
+		// Concurrent exchanges can raise the peak together. Retry a lost update so a
+		// lower observation never overwrites the larger recorded activity count.
 		if active <= maxActive || r.maxActive.CompareAndSwap(maxActive, active) {
 			break
 		}
@@ -3092,6 +3748,9 @@ func (r *poolHealthRefresher) Refresh(ctx context.Context, _ *providercore.Recor
 		r.cancel()
 	}
 	if delay > 0 {
+		// Ignore cancellation only in the scripted late-result path, allowing
+		// production attempt handling to reject success that arrives after its own
+		// deadline.
 		if r.ignoreContext {
 			time.Sleep(delay)
 		} else {
@@ -3115,12 +3774,17 @@ func (r *poolHealthRefresher) Refresh(ctx context.Context, _ *providercore.Recor
 	return map[string]any{"access_token": "new-token", "refresh_token": "new-refresh-token"}, nil
 }
 
+// startsSnapshot copies recorded exchange start times under the capture mutex.
+// The returned slice owns its values, so later exchanges cannot extend or
+// overwrite that captured schedule.
 func (r *poolHealthRefresher) startsSnapshot() []time.Time {
 	r.startMu.Lock()
 	defer r.startMu.Unlock()
 	return append([]time.Time(nil), r.startTimes...)
 }
 
+// grokPoolProvider creates an active Grok OAuth fixture with fresh access and
+// refresh tokens.
 func grokPoolProvider(id int64) providercore.Record {
 	return providercore.Record{
 		ID:       id,
@@ -3134,6 +3798,10 @@ func grokPoolProvider(id int64) providercore.Record {
 	}
 }
 
+// newPoolHealthService builds production background options for one scripted
+// Grok platform. It retains paging and exchange fixtures, stores a private
+// tuning value, and configures attempt and reconciliation classification
+// without starting work.
 func newPoolHealthService(repo *poolHealthProviderRepo, refresher *poolHealthRefresher, cfg providercore.RefreshTuning) *providercore.BackgroundRefreshOptions {
 	return &providercore.BackgroundRefreshOptions{
 		Tuning: &cfg, Pager: repo,
@@ -3143,6 +3811,9 @@ func newPoolHealthService(repo *poolHealthProviderRepo, refresher *poolHealthRef
 	}
 }
 
+// ListActive counts broad queries and returns the shared provider slice under
+// the fixture mutex. Candidate tests expect this method to remain unused in
+// favor of narrow paged selection.
 func (r *tokenRefreshCandidateRepo) ListActive(context.Context) ([]providercore.Record, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3150,6 +3821,16 @@ func (r *tokenRefreshCandidateRepo) ListActive(context.Context) ([]providercore.
 	return r.providers, nil
 }
 
+// ListOAuthRefreshCandidatePage filters stored fixture order by cursor,
+// scheduling, platform, active requirement, credential type, refresh token, and
+// retry-cooldown policy. Callers configure records before this unlocked
+// selection; returned values retain nested references.
+//
+// OAuth, optionally Setup Token, and Qoder COSY can pass type filtering. Retry
+// cooldown recognizes the specific exhausted-refresh reason prefix, so other
+// recoverable suspension remains eligible. The last included ID supplies the
+// cursor and a full page sets HasMore. The helper assumes a positive limit and
+// input order suitable for stable cursor tests.
 func (r *tokenRefreshCandidateRepo) ListOAuthRefreshCandidatePage(_ context.Context, options providercore.OAuthRefreshPageOptions) (*providercore.OAuthRefreshCandidatePage, error) {
 	candidates := make([]providercore.Record, 0, len(r.providers))
 	now := time.Now()
@@ -3185,6 +3866,9 @@ func (r *tokenRefreshCandidateRepo) ListOAuthRefreshCandidatePage(_ context.Cont
 	return page, nil
 }
 
+// UpdateCredentials captures the requested ID and shallow-copies credentials
+// into matching rows under the fixture mutex. Missing rows still retain capture
+// and return success, while nested values remain shared with exchange input.
 func (r *tokenRefreshCandidateRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3197,6 +3881,7 @@ func (r *tokenRefreshCandidateRepo) UpdateCredentials(_ context.Context, id int6
 	return nil
 }
 
+// SetError counts candidate permanent-state writes under the fixture mutex.
 func (r *tokenRefreshCandidateRepo) SetError(context.Context, int64, string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3204,6 +3889,8 @@ func (r *tokenRefreshCandidateRepo) SetError(context.Context, int64, string) err
 	return nil
 }
 
+// SetTempUnschedulable counts candidate suspension and captures its reason
+// under the fixture mutex.
 func (r *tokenRefreshCandidateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3212,6 +3899,8 @@ func (r *tokenRefreshCandidateRepo) SetTempUnschedulable(_ context.Context, _ in
 	return nil
 }
 
+// ClearTempUnschedulable counts candidate cooldown recovery under the fixture
+// mutex.
 func (r *tokenRefreshCandidateRepo) ClearTempUnschedulable(context.Context, int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3219,12 +3908,17 @@ func (r *tokenRefreshCandidateRepo) ClearTempUnschedulable(context.Context, int6
 	return nil
 }
 
+// CanRefresh accepts every record for the scripted candidate exchange fixture.
 func (r *tokenRefreshTestRefresher) CanRefresh(*providercore.Record) bool { return true }
 
+// NeedsRefresh forces an exchange for every selected candidate fixture record.
 func (r *tokenRefreshTestRefresher) NeedsRefresh(*providercore.Record, time.Duration) bool {
 	return true
 }
 
+// Refresh returns the configured failure or a fresh fixed credential map. It
+// performs no transport, allowing candidate scan tests to inspect qualification
+// and post-exchange handling directly.
 func (r *tokenRefreshTestRefresher) Refresh(context.Context, *providercore.Record) (map[string]any, error) {
 	if r.err != nil {
 		return nil, r.err

@@ -15,8 +15,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// testCodexFingerprintSeed supplies a stable valid seed shared by opted-in
+// fingerprint fixtures and deterministic identity assertions.
 const testCodexFingerprintSeed = "11111111-1111-4111-8111-111111111111"
 
+// newTestOAuthProvider creates an OAuth record and adds the fixed seed when its
+// fingerprint mode needs one. The supplied Extra map is retained and can be
+// mutated during setup; existing seed values are preserved.
 func newTestOAuthProvider(id int64, extra map[string]any) *providercore.Record {
 	if providercore.CodexFingerprintModeRequiresSeed(providercore.CodexFingerprintModeFromExtra(extra)) {
 		if extra == nil {
@@ -34,11 +39,17 @@ func newTestOAuthProvider(id int64, extra map[string]any) *providercore.Record {
 	}
 }
 
+// TestResolveConvergedInstallationID_UsesDeviceID supplies a configured device
+// ID together with a valid seed. Installation selection must return that device
+// ID before attempting seed-derived identity.
 func TestResolveConvergedInstallationID_UsesDeviceID(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{"openai_device_id": "real-device-id"})
 	assert.Equal(t, "real-device-id", ConvergedInstallationID(provider, testCodexFingerprintSeed))
 }
 
+// TestResolveConvergedInstallationID_DerivesFromSeed supplies a record without
+// a device ID and a fixed seed. Repeated derivation must produce the same
+// parseable UUID installation identity.
 func TestResolveConvergedInstallationID_DerivesFromSeed(t *testing.T) {
 	provider := newTestOAuthProvider(42, nil)
 	result := ConvergedInstallationID(provider, testCodexFingerprintSeed)
@@ -47,6 +58,9 @@ func TestResolveConvergedInstallationID_DerivesFromSeed(t *testing.T) {
 	assert.Equal(t, result, ConvergedInstallationID(provider, testCodexFingerprintSeed), "确定性")
 }
 
+// TestResolveConvergedInstallationID_DifferentSeeds compares two seeds for one
+// record without device configuration. Their derived installation UUIDs must
+// differ so separate stored seeds do not converge into one identity.
 func TestResolveConvergedInstallationID_DifferentSeeds(t *testing.T) {
 	provider := newTestOAuthProvider(1, nil)
 	a := ConvergedInstallationID(provider, testCodexFingerprintSeed)
@@ -54,19 +68,26 @@ func TestResolveConvergedInstallationID_DifferentSeeds(t *testing.T) {
 	assert.NotEqual(t, a, b)
 }
 
+// TestResolveCodexFingerprintIDsFromRequest_ExplicitOff configures fingerprint
+// mode off on an OAuth record. Request-derived fingerprint IDs must remain nil
+// so outbound rewriting has no generated identity to apply.
 func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{providercore.CodexFingerprintModeExtraKey: "off"})
 	ids := CodexFingerprintIDsFromRequest(provider, nil)
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-// TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff keeps client identity when fingerprinting is
-// unconfigured (#5610).
+// TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff leaves the record
+// without fingerprint configuration. Request-derived IDs must be nil, retaining
+// the default opt-in requirement for generated client identity.
 func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
 	provider := newTestOAuthProvider(1, nil)
 	assert.Nil(t, CodexFingerprintIDsFromRequest(provider, nil), "无 extra 应视为 off")
 }
 
+// TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored enables
+// device, session, and full modes through seeded fixtures. Each mode must
+// produce nonnil IDs with an installation value and the selected mode label.
 func TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored(t *testing.T) {
 	for _, mode := range []string{"device", "session", "full"} {
 		t.Run(mode, func(t *testing.T) {
@@ -79,10 +100,13 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored(t *testing.T
 	}
 }
 
+// TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed
+// supplies absent, blank, noncanonical, nil-UUID, and wrong-type seeds. Enabled
+// modes must return nil even when a configured device ID is also available.
 func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		extra map[string]any
+		name  string         // invalid seed scenario label
+		extra map[string]any // supplied fingerprint configuration fields
 	}{
 		{name: "missing", extra: map[string]any{providercore.CodexFingerprintModeExtraKey: "device"}},
 		{name: "missing with device override", extra: map[string]any{providercore.CodexFingerprintModeExtraKey: "device", "openai_device_id": "real-device"}},
@@ -98,6 +122,9 @@ func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *t
 	}
 }
 
+// TestApplyCodexFingerprintHeaders_OffMode supplies existing installation and
+// window headers with nil generated IDs. Header application must retain those
+// values when convergence is disabled.
 func TestApplyCodexFingerprintHeaders_OffMode(t *testing.T) {
 	h := http.Header{}
 	h.Set("x-codex-installation-id", "original-install-id")
@@ -109,6 +136,9 @@ func TestApplyCodexFingerprintHeaders_OffMode(t *testing.T) {
 	assert.Equal(t, "original-window-id", h.Get("x-codex-window-id"), "nil ids 不改写")
 }
 
+// TestApplyCodexFingerprintHeaders_DeviceMode supplies client session metadata
+// alongside a configured device identity. Rewriting must converge installation
+// fields while retaining session, window, and unrelated embedded metadata.
 func TestApplyCodexFingerprintHeaders_DeviceMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "device",
@@ -133,6 +163,10 @@ func TestApplyCodexFingerprintHeaders_DeviceMode(t *testing.T) {
 	assert.Equal(t, "seccomp", meta["sandbox"], "非指纹字段保留原样")
 }
 
+// TestApplyCodexFingerprintHeaders_SessionMode supplies one client session to a
+// seeded OAuth record. Outbound headers and embedded metadata must use
+// associated installation, session, thread, window, and replacement turn fields while
+// retaining unrelated metadata.
 func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -173,6 +207,9 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	assert.Equal(t, "user", meta["thread_source"], "thread_source 保留原样")
 }
 
+// TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients compares two
+// client sessions on the same seeded record. Installation and provider session
+// must agree while client-derived thread and window identities remain distinct.
 func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -202,6 +239,9 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	assert.Equal(t, hA.Get("x-codex-installation-id"), hB.Get("x-codex-installation-id"))
 }
 
+// TestApplyCodexFingerprintHeaders_FullMode compares two clients under full
+// convergence. Their thread and window identities must agree, and the thread
+// must equal the provider-derived session.
 func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "full",
@@ -229,6 +269,9 @@ func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	assert.Equal(t, hA.Get("x-codex-window-id"), hB.Get("x-codex-window-id"), "full 模式 window_id 应相同")
 }
 
+// TestFingerprintIDs_HeaderAndBody_TurnID_Consistent reuses one attempt ID
+// object for headers and decoded body metadata. Header, top-level body, and
+// embedded body turn IDs must agree, and the two embedded timestamps must match.
 func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -243,7 +286,9 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	h.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`)
 	openai.ApplyCodexFingerprintHeaders(h, ids)
 
-	// Use the same generated IDs for header and body rewriting.
+	// Reuse this attempt's generated IDs across header and body rewriting.
+	// Creating another object would derive another turn identity and read the
+	// clock again before the equivalence assertions.
 	reqBody := map[string]any{
 		"client_metadata": map[string]any{
 			"x-codex-installation-id": "x",
@@ -278,6 +323,9 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, float64(ids.TurnStartedAtUnixMs), headerMeta["turn_started_at_unix_ms"])
 }
 
+// TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently starts with
+// invalid header and body turn-metadata JSON. Rebuilt embedded objects must
+// agree on their six embedded fingerprint fields for that attempt.
 func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.T) {
 	provider := newTestOAuthProvider(2, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
 	clientHeaders := make(http.Header)
@@ -311,6 +359,9 @@ func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.
 	}
 }
 
+// TestApplyCodexFingerprintClientMetadata_OffMode supplies decoded client
+// metadata with nil fingerprint IDs. The map helper must report no modification
+// when no convergence identity is configured.
 func TestApplyCodexFingerprintClientMetadata_OffMode(t *testing.T) {
 	reqBody := map[string]any{
 		"client_metadata": map[string]any{
@@ -321,6 +372,9 @@ func TestApplyCodexFingerprintClientMetadata_OffMode(t *testing.T) {
 	assert.False(t, modified, "nil ids 不改写")
 }
 
+// TestApplyCodexFingerprintClientMetadata_DeviceMode rewrites decoded metadata
+// with a device override. Installation identity must change while the client
+// session and unrelated embedded sandbox value remain intact.
 func TestApplyCodexFingerprintClientMetadata_DeviceMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "device",
@@ -354,6 +408,10 @@ func TestApplyCodexFingerprintClientMetadata_DeviceMode(t *testing.T) {
 	assert.Equal(t, "seccomp", meta["sandbox"], "非指纹字段保留原样")
 }
 
+// TestApplyCodexFingerprintClientMetadata_SessionMode applies a seeded identity
+// to decoded and embedded metadata. Installation and session values must match
+// in both, while decoded thread and window values follow the client session and
+// the embedded sandbox value remains unchanged.
 func TestApplyCodexFingerprintClientMetadata_SessionMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "session",
@@ -398,6 +456,9 @@ func TestApplyCodexFingerprintClientMetadata_SessionMode(t *testing.T) {
 	assert.Equal(t, "seccomp", meta["sandbox"], "非指纹字段保留原样")
 }
 
+// TestApplyCodexFingerprintClientMetadata_FullMode rewrites decoded metadata
+// for a supplied client session. Full convergence must set both session and
+// thread to the provider-derived session value.
 func TestApplyCodexFingerprintClientMetadata_FullMode(t *testing.T) {
 	provider := newTestOAuthProvider(1, map[string]any{
 		providercore.CodexFingerprintModeExtraKey: "full",
@@ -429,8 +490,9 @@ func TestApplyCodexFingerprintClientMetadata_FullMode(t *testing.T) {
 	assert.Equal(t, convergedSession, cm["thread_id"], "full 模式 thread_id 应等于 session_id")
 }
 
-// rawVsMapClientMetadata applies the same IDs to map and raw-byte rewrites
-// and returns their decoded client_metadata values.
+// rawVsMapClientMetadata applies one ID object to decoded and raw JSON paths
+// and returns their metadata maps. It requires valid JSON and an actual raw
+// rewrite, failing the test if either preparation cannot complete.
 func rawVsMapClientMetadata(t *testing.T, body []byte, ids *openai.FingerprintIDs) (map[string]any, map[string]any) {
 	t.Helper()
 
@@ -448,6 +510,9 @@ func rawVsMapClientMetadata(t *testing.T, body []byte, ids *openai.FingerprintID
 	return mapCM, rawCM
 }
 
+// cloneCodexFingerprintIDsForTest copies attempt IDs and resets original-body
+// session capture state. Nil input returns nil; fresh capture lets map and raw
+// variants inspect their own unmodified source metadata.
 func cloneCodexFingerprintIDsForTest(ids *openai.FingerprintIDs) *openai.FingerprintIDs {
 	if ids == nil {
 		return nil
@@ -458,9 +523,15 @@ func cloneCodexFingerprintIDsForTest(ids *openai.FingerprintIDs) *openai.Fingerp
 	return &cloned
 }
 
+// applyMapAndRawFingerprintBodiesForTest rewrites map and raw bodies using
+// separate ID copies with fresh source capture. It fails on JSON or rewrite
+// errors and returns both decoded bodies for equivalence assertions.
 func applyMapAndRawFingerprintBodiesForTest(t *testing.T, body []byte, ids *openai.FingerprintIDs) (map[string]any, map[string]any) {
 	t.Helper()
 
+	// Each variant captures its own original body session before rewriting.
+	// Separate ID copies prevent the first variant's capture state from hiding the
+	// second variant's behavior.
 	mapIDs := cloneCodexFingerprintIDsForTest(ids)
 	rawIDs := cloneCodexFingerprintIDsForTest(ids)
 
@@ -475,6 +546,10 @@ func applyMapAndRawFingerprintBodiesForTest(t *testing.T, body []byte, ids *open
 	return decoded, rawDecoded
 }
 
+// TestApplyCodexFingerprintPromptCacheKey_MapRawEquivalence compares session
+// and full modes for session-derived and explicit cache keys. Map and raw paths
+// must converge defaults consistently while retaining an explicit cache
+// override.
 func TestApplyCodexFingerprintPromptCacheKey_MapRawEquivalence(t *testing.T) {
 	for _, mode := range []providercore.CodexFingerprintMode{providercore.CodexFingerprintSession, providercore.CodexFingerprintFull} {
 		t.Run(string(mode)+"/default", func(t *testing.T) {
@@ -512,6 +587,10 @@ func TestApplyCodexFingerprintPromptCacheKey_MapRawEquivalence(t *testing.T) {
 	})
 }
 
+// TestApplyCodexFingerprintPromptCacheKey_Negatives supplies absent, nonstring,
+// mismatched, and unsupported source identities across enabled and off modes.
+// Cache-key presence and values must remain unchanged when session-derived
+// replacement cannot apply.
 func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 	sessionProvider := newTestOAuthProvider(4310, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
 	sessionIDs := CodexFingerprintIDs(sessionProvider, "header-session", providercore.CodexFingerprintSession)
@@ -521,11 +600,15 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 	require.NotNil(t, deviceIDs)
 
 	tests := []struct {
-		name          string
-		body          []byte
-		ids           *openai.FingerprintIDs
-		wantExists    bool
-		wantCacheKey  any
+		name string // cache-key preservation scenario label
+		body []byte // supplied request JSON bytes
+		// ids shares the table's source identity with other cases. Each variant
+		// copies it and resets body-session capture before rewriting its own input.
+		ids          *openai.FingerprintIDs // supplied attempt fingerprint identity
+		wantExists   bool                   // expected cache-key field presence
+		wantCacheKey any                    // expected retained cache-key value
+		// wantRawString supplies the unchanged JSON expected when ids is nil. Enabled
+		// cases inspect decoded cache fields instead.
 		wantRawString string
 	}{
 		{
@@ -624,6 +707,9 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 	}
 }
 
+// TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant compares
+// missing, object, and nonobject metadata under every enabled mode. Raw
+// rewriting must produce the same decoded metadata values as the map path.
 func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) {
 	embedded := `{\"installation_id\":\"real-install\",\"session_id\":\"real-session\",\"sandbox\":\"seatbelt\"}`
 	bodies := map[string]string{
@@ -644,6 +730,10 @@ func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) 
 	}
 }
 
+// TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields adds
+// identity to a body carrying model, input, stream, and an explicit cache key.
+// Model, stream, and the explicit cache key must remain while generated session
+// and turn values appear.
 func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *testing.T) {
 	provider := newTestOAuthProvider(4243, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
 	ids := CodexFingerprintIDs(provider, "client-sess-preserve", providercore.CodexFingerprintSession)
@@ -665,6 +755,9 @@ func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *test
 	assert.Equal(t, ids.TurnID, cm["turn_id"])
 }
 
+// TestApplyCodexFingerprintClientMetadataRaw_Noop supplies nil IDs and then an
+// empty body. Both operations must report no change and return the
+// corresponding original body value.
 func TestApplyCodexFingerprintClientMetadataRaw_Noop(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol"}`)
 	out, changed, err := openai.ApplyCodexFingerprintClientMetadataRaw(body, nil)
@@ -678,6 +771,9 @@ func TestApplyCodexFingerprintClientMetadataRaw_Noop(t *testing.T) {
 	assert.Nil(t, out)
 }
 
+// TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched supplies
+// arrays, scalar text, and malformed JSON with enabled IDs. Raw rewriting must
+// leave those inputs byte-for-byte unchanged and report no modification.
 func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testing.T) {
 	provider := newTestOAuthProvider(4244, map[string]any{providercore.CodexFingerprintModeExtraKey: "session"})
 	ids := CodexFingerprintIDs(provider, "client-sess-nonobj", providercore.CodexFingerprintSession)

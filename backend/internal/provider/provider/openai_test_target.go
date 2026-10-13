@@ -7,20 +7,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// OpenAI prepared tests apply automatic client policy before obtaining
+// execution credentials. The target creates per-run headers for the selected
+// User-Agent and originator, carries the requested text protocol, and sends
+// preparation failures through the same event output as execution errors.
+
+// openaiTestTarget retains an OpenAI executor and provider record for prepared
+// probe execution.
 type openaiTestTarget struct {
-	executor *OpenAIProviderTest
-	record   *provider.Record
+	executor *OpenAIProviderTest // shared OpenAI probe dependencies
+	// record supplies credentials and routing throughout the test. The caller
+	// keeps it stable until preparation, execution, and information reads finish.
+	record *provider.Record
 }
 
-// Target wraps the provider for execution and exposes credential-free test information.
+// Target binds the supplied record to this OpenAI executor and exposes a test
+// handle. The handle retains the record for credential and routing reads, so
+// callers keep it stable during the probe.
 func (s *OpenAIProviderTest) Target(value *provider.Record) provider.TestTarget {
 	return openaiTestTarget{executor: s, record: value}
 }
 
+// Information returns the retained OpenAI record's routing snapshot and
+// configured protocol.
 func (t openaiTestTarget) Information() provider.TestTargetInfo {
 	return provider.TestTargetInfo{ProviderSnapshot: t.record.RoutingSnapshot(), APIProtocol: (provider.ProtocolTarget{Record: t.record}).GetAPIProtocol()}
 }
 
+// Execute creates one event run, applies optional preparation, and executes the
+// selected model, mode, and test type. Preparation errors are emitted before
+// return, and Result includes any sink failure that cancelled execution.
 func (t openaiTestTarget) Execute(ctx context.Context, request provider.PreparedTestRequest, sink provider.TestEventSink) error {
 	headers := make(http.Header)
 	headers.Set("User-Agent", request.UserAgent)

@@ -17,24 +17,37 @@ import (
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// providerUsageHTTPUpstreamStub captures transport inputs and supplies quota
+// headers on a 429 response.
 type providerUsageHTTPUpstreamStub struct {
-	tlsProfile *tlsfingerprint.Profile
-	req        *http.Request
-	proxyURL   string
-	providerID int64
+	// tlsProfile and req retain the supplied pointers after synchronous capture.
+	// Tests inspect those same objects after the probe returns and keep their
+	// contents stable while transport executes.
+	tlsProfile *tlsfingerprint.Profile // captured selected TLS fingerprint
+	req        *http.Request           // captured prepared usage request
+	proxyURL   string                  // captured request proxy URL
+	providerID int64                   // captured provider record identifier
 }
 
-// openAIObservationIdentityRepo checks that asynchronous writes target the identity observed by the probe.
+// openAIObservationIdentityRepo detects snapshot writes after a usage probe's
+// credential identity changes.
 type openAIObservationIdentityRepo struct {
-	qoderObservationIdentityRepo
-	written chan struct{}
+	qoderObservationIdentityRepo               // embedded conditional observation repository
+	written                      chan struct{} // stale write attempt signal
 }
 
+// openAIObservationIdentityUpstream changes repository state before returning a
+// captured quota response.
 type openAIObservationIdentityUpstream struct {
-	providerUsageHTTPUpstreamStub
+	providerUsageHTTPUpstreamStub // captured quota response transport
+	// beforeReturn is required by this stub. It changes test state after transport
+	// capture and before the usage service receives the response.
 	beforeReturn func()
 }
 
+// TestProviderUsageService_ShouldProbeOpenAICodexSnapshot_ForceBypassesCache
+// records a first probe and repeats inside its cache lifetime. Ordinary
+// admission must skip the repeat while a forced probe bypasses that gate.
 func TestProviderUsageService_ShouldProbeOpenAICodexSnapshot_ForceBypassesCache(t *testing.T) {
 	t.Parallel()
 
@@ -53,6 +66,10 @@ func TestProviderUsageService_ShouldProbeOpenAICodexSnapshot_ForceBypassesCache(
 	}
 }
 
+// TestProviderUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile
+// enables provider TLS fingerprinting on an OAuth probe. The transport must
+// receive a profile, the provider ID, and the OpenAI request context tag while
+// returning quota updates.
 func TestProviderUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +105,9 @@ func TestProviderUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile
 	}
 }
 
+// TestProviderUsageService_ProbeOpenAICodexSnapshotSkipsTLSProfileWhenDisabled
+// disables provider fingerprint selection before an OAuth probe. The probe must
+// still produce quota updates while passing nil as its TLS profile.
 func TestProviderUsageService_ProbeOpenAICodexSnapshotSkipsTLSProfileWhenDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -116,6 +136,9 @@ func TestProviderUsageService_ProbeOpenAICodexSnapshotSkipsTLSProfileWhenDisable
 	}
 }
 
+// TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders supplies
+// exhausted short and weekly quota headers on HTTP 429. Extraction must succeed
+// and retain both canonical utilization values despite the error status.
 func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +165,10 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
+// TestProviderUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra
+// persists an exhausted weekly observation asynchronously. Extra must receive
+// the supplied utilization while the provider-rate-limit capture channel
+// remains empty.
 func TestProviderUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +198,10 @@ func TestProviderUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t 
 	}
 }
 
+// TestProviderUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit
+// displays exhausted weekly data already stored in Extra. The usage window must
+// remain visible while in-memory and stored provider rate limits stay
+// unchanged.
 func TestProviderUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(t *testing.T) {
 	t.Parallel()
 
@@ -207,6 +238,9 @@ func TestProviderUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit
 	}
 }
 
+// TestOpenAIUsageProbeCannotWriteNewAdministratorIdentity replaces credentials
+// just before the probe returns. Quota updates may be returned, but their
+// asynchronous persistence must not write the administrator's newer identity.
 func TestOpenAIUsageProbeCannotWriteNewAdministratorIdentity(t *testing.T) {
 	observed := &providercore.Record{ID: 923, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: providercore.StatusActive, Credentials: map[string]any{"access_token": "observed"}}
 	current := *observed
@@ -223,10 +257,14 @@ func TestOpenAIUsageProbeCannotWriteNewAdministratorIdentity(t *testing.T) {
 	}
 }
 
+// Do delegates the captured usage request to DoWithTLS with a nil profile.
 func (s *providerUsageHTTPUpstreamStub) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return s.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS captures request identity and transport options, then returns fixed
+// quota headers on a 429 response. The caller owns the empty response body and
+// closes it after extraction.
 func (s *providerUsageHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, providerID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	s.req = req
 	s.proxyURL = proxyURL
@@ -244,7 +282,13 @@ func (s *providerUsageHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL st
 	}, nil
 }
 
+// UpdateExtra signals an attempted snapshot write without blocking when the
+// capture channel is full. Tests treat that signal as evidence that a stale
+// identity escaped the conditional writer.
 func (r *openAIObservationIdentityRepo) UpdateExtra(context.Context, int64, map[string]any) error {
+	// Signal at most one pending write attempt without waiting for the assertion.
+	// A full channel already retains the evidence needed to fail the
+	// stale-identity test.
 	select {
 	case r.written <- struct{}{}:
 	default:
@@ -252,8 +296,14 @@ func (r *openAIObservationIdentityRepo) UpdateExtra(context.Context, int64, map[
 	return nil
 }
 
+// DoWithTLS obtains the quota fixture and invokes beforeReturn before exposing
+// it to the probe. Configure that callback to mutate identity at the intended
+// response boundary.
 func (u *openAIObservationIdentityUpstream) DoWithTLS(req *http.Request, proxy string, id int64, n int, p *tlsfingerprint.Profile) (*http.Response, error) {
 	resp, err := u.providerUsageHTTPUpstreamStub.DoWithTLS(req, proxy, id, n, p)
+	// Replace identity after the request used its original credentials but before
+	// probe persistence runs, reproducing a delayed observation racing with an
+	// administrator update.
 	u.beforeReturn()
 	return resp, err
 }

@@ -14,6 +14,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestCodexRequestBodyIdentityNamespaceIsStablePerOAuthProvider rewrites one
+// client body for two upstream accounts. Repeated calls for one account must
+// agree, while top-level and embedded metadata must differ between accounts.
 func TestCodexRequestBodyIdentityNamespaceIsStablePerOAuthProvider(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-codex","prompt_cache_key":"client-session","client_metadata":{"x-codex-installation-id":"client-installation","session_id":"client-session","thread_id":"client-thread","x-codex-window-id":"client-window","x-codex-turn-metadata":"{\"installation_id\":\"client-installation\",\"session_id\":\"client-session\",\"thread_id\":\"client-thread\",\"turn_id\":\"client-turn\",\"window_id\":\"client-window\"}"}}`)
 	provider11 := &providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "chatgpt-provider-11"}}
@@ -52,6 +55,10 @@ func TestCodexRequestBodyIdentityNamespaceIsStablePerOAuthProvider(t *testing.T)
 	}
 }
 
+// TestCodexProviderIdentityNamespaceUsesStableCredentialSource compares
+// account, team-member, seed, and Setup Token sources across local rows.
+// Namespaces must follow credentials, distinguish team members, and avoid
+// exposing the raw Setup Token.
 func TestCodexProviderIdentityNamespaceUsesStableCredentialSource(t *testing.T) {
 	firstRow := &providercore.Record{LoadLocation: time.LoadLocation, ID: 8, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "shared-upstream-provider"}}
 	secondRow := &providercore.Record{LoadLocation: time.LoadLocation, ID: 19, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "shared-upstream-provider"}}
@@ -65,7 +72,9 @@ func TestCodexProviderIdentityNamespaceUsesStableCredentialSource(t *testing.T) 
 
 	seed := "11111111-1111-4111-8111-111111111111"
 	seeded := &providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Extra: map[string]any{providercore.CodexFingerprintSeedExtraKey: seed}}
-	// Local row IDs can collide across deployments; use the seed for upstream identity.
+	// A stored seed supplies the upstream namespace independently of the row ID,
+	// so importing the same identity into another database does not select a
+	// different namespace.
 	require.Equal(t, "seed:"+seed, CodexIdentityNamespace(seeded))
 
 	require.Empty(t, CodexIdentityNamespace(&providercore.Record{LoadLocation: time.LoadLocation, ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}))
@@ -80,6 +89,9 @@ func TestCodexProviderIdentityNamespaceUsesStableCredentialSource(t *testing.T) 
 	require.NotEqual(t, setupNamespace, CodexIdentityNamespace(setupTokenB))
 }
 
+// TestSetOpenAIChatGPTAccountHeadersAddsFedRAMP supplies an OAuth record with a
+// FedRAMP account marker. The outbound headers must include the account ID and
+// the platform's true FedRAMP value.
 func TestSetOpenAIChatGPTAccountHeadersAddsFedRAMP(t *testing.T) {
 	provider := &providercore.Record{
 		LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI,

@@ -10,6 +10,9 @@ import (
 	openaiupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestCalculateOpenAI429ResetTime_7dExhausted supplies an exhausted weekly
+// window and lightly used short window. The selected reset must fall within the
+// weekly interval measured around the call.
 func TestCalculateOpenAI429ResetTime_7dExhausted(t *testing.T) {
 	// Primary = 7d (10080 minutes), Secondary = 5h (300 minutes)
 	headers := http.Header{}
@@ -37,6 +40,9 @@ func TestCalculateOpenAI429ResetTime_7dExhausted(t *testing.T) {
 	}
 }
 
+// TestCalculateOpenAI429ResetTime_5hExhausted supplies an exhausted short
+// window with a later nonexhausted weekly reset. The selected deadline must
+// follow the exhausted five-hour window's reported reset.
 func TestCalculateOpenAI429ResetTime_5hExhausted(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "50")
@@ -63,6 +69,9 @@ func TestCalculateOpenAI429ResetTime_5hExhausted(t *testing.T) {
 	}
 }
 
+// TestCalculateOpenAI429ResetTime_NeitherExhausted_UsesMax supplies reset
+// intervals for two nonexhausted windows. The reset calculation must choose the
+// later supplied deadline when neither utilization reaches exhaustion.
 func TestCalculateOpenAI429ResetTime_NeitherExhausted_UsesMax(t *testing.T) {
 	// Neither window is exhausted, so use the later reset.
 	headers := http.Header{}
@@ -90,6 +99,9 @@ func TestCalculateOpenAI429ResetTime_NeitherExhausted_UsesMax(t *testing.T) {
 	}
 }
 
+// TestCalculateOpenAI429ResetTime_NoCodexHeaders supplies unrelated response
+// headers with no Codex measurements. The reset calculation must return nil so
+// callers retain their separate no-reset handling.
 func TestCalculateOpenAI429ResetTime_NoCodexHeaders(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("content-type", "application/json")
@@ -101,6 +113,9 @@ func TestCalculateOpenAI429ResetTime_NoCodexHeaders(t *testing.T) {
 	}
 }
 
+// TestCalculateOpenAI429ResetTime_ReversedWindowOrder places the five-hour
+// window in primary and the weekly window in secondary. Exhaustion must follow
+// the duration-associated window and select its shorter reset.
 func TestCalculateOpenAI429ResetTime_ReversedWindowOrder(t *testing.T) {
 	// Window identity follows duration even when primary and secondary are reversed.
 	headers := http.Header{}
@@ -128,6 +143,9 @@ func TestCalculateOpenAI429ResetTime_ReversedWindowOrder(t *testing.T) {
 	}
 }
 
+// TestCalculateOpenAI429ResetTime_UserProvidedScenario reproduces exhausted
+// weekly quota with three-percent short-window use. The deadline must follow
+// the weekly reset and retain its approximately four-and-a-half-day duration.
 func TestCalculateOpenAI429ResetTime_UserProvidedScenario(t *testing.T) {
 	// The exhausted weekly window determines the reset even when five-hour usage is low.
 
@@ -156,8 +174,10 @@ func TestCalculateOpenAI429ResetTime_UserProvidedScenario(t *testing.T) {
 	}
 
 	duration := resetAt.Sub(before)
+	// Convert elapsed hours to days for the reported weekly-reset duration.
 	actualDays := duration.Hours() / 24.0
 
+	// The supplied weekly reset is about 4.45 days.
 	if actualDays < 4.4 || actualDays > 4.5 {
 		t.Errorf("expected ~4.45 days, got %.2f days", actualDays)
 	}
@@ -165,6 +185,9 @@ func TestCalculateOpenAI429ResetTime_UserProvidedScenario(t *testing.T) {
 	t.Logf("User scenario: reset_at=%v, duration=%.2f days", resetAt, actualDays)
 }
 
+// TestCalculateOpenAI429ResetTime_5MinFallbackWhenNoReset provides an exhausted
+// utilization percentage without a reset interval. The calculation must return
+// nil, leaving any fallback cooldown choice to its caller.
 func TestCalculateOpenAI429ResetTime_5MinFallbackWhenNoReset(t *testing.T) {
 	// Usage percentages alone cannot provide a reset time.
 
@@ -178,6 +201,9 @@ func TestCalculateOpenAI429ResetTime_5MinFallbackWhenNoReset(t *testing.T) {
 	}
 }
 
+// TestHandle429_AnthropicPlatformUnaffected provides an Anthropic reset header
+// to the Codex parser. The OpenAI reset calculation must return nil because no
+// Codex window was observed.
 func TestHandle429_AnthropicPlatformUnaffected(t *testing.T) {
 	// Anthropic reset headers are ignored by the Codex header parser.
 

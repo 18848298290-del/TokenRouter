@@ -23,17 +23,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
-// CNProviderTest probes fixed or adaptive CN provider protocols through a shared transport.
+// CN API-key probes derive a platform default model when the supplied name is
+// blank, then apply one provider mapping. The record's protocol selects
+// Messages, Responses, or Chat request construction and matching stream
+// parsing, with allowed header overrides applied after authentication.
+
+// CNProviderTest prepares fixed and adaptive native-protocol probes for CN
+// API-key records.
 type CNProviderTest struct {
-	Transport   QoderTransport
+	Transport QoderTransport // provider-aware native probe sender
+	// Profiles optionally resolves native request fingerprints. A missing service
+	// sends no selected TLS profile through the shared transport.
 	Profiles    *egressprovider.TLSProfiles
-	ValidateURL func(string) (string, error)
-	Store       interface {
+	ValidateURL func(string) (string, error) // native upstream root validator
+	// Store optionally records authentication failures from native Messages
+	// probes. A nil store skips these best-effort state writes.
+	Store interface {
+		// SetError records a native probe's provider authentication failure. The
+		// executor ignores write errors while returning the upstream status and
+		// available body as its test failure.
 		SetError(context.Context, int64, string) error
 	}
+	// Responses supplies the shared OpenAI executor for prepared CN Responses
+	// targets. Configure it before that route is selected.
 	Responses *OpenAIProviderTest
 }
 
+// defaultCNProviderTestModel returns the platform's declared connection-test
+// model for Kimi, Zhipu, or DeepSeek. Other platforms return an empty string,
+// leaving Execute to report that no test model is available.
 func defaultCNProviderTestModel(platform string) string {
 	switch platform {
 	case capability.PlatformKimi:
@@ -47,7 +65,10 @@ func defaultCNProviderTestModel(platform string) string {
 	}
 }
 
-// Execute selects a Chat, Responses, or Anthropic probe from the provider protocol.
+// Execute runs the record's fixed native-protocol probe and emits test events.
+// It requires an API-key record and nonblank key, applies a platform default
+// and one model mapping, and closes the response after protocol-specific
+// parsing.
 func (s *CNProviderTest) Execute(
 	c *TestRun,
 	value *providercore.Record,
@@ -97,6 +118,9 @@ func (s *CNProviderTest) Execute(
 		}
 		apiURL = cnTestResponsesURL(value.Platform, baseURL)
 		responsesPayload := openai.TestResponsesPayload(testModelID, prompt, false)
+		// CN Responses probes are stateless connection checks. Disable response
+		// storage in the outgoing native payload before it reaches the platform
+		// endpoint.
 		responsesPayload["store"] = false
 		payload = responsesPayload
 	default:
@@ -146,9 +170,14 @@ func (s *CNProviderTest) Execute(
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		// Keep available non-OK response bytes for probe diagnostics even if reading
+		// fails. The selected endpoint's status remains the reported failure.
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body))
 		if (protocol == providercore.APIProtocolAnthropic && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden)) && s.Store != nil {
+			// Record native Messages authentication rejection when storage is
+			// configured. A failed state write does not replace the upstream failure
+			// already being returned by the probe.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
@@ -163,8 +192,10 @@ func (s *CNProviderTest) Execute(
 	}
 }
 
-// executeChat gives adaptive probes access to Execute, including header overrides, proxies, and TLS
-// profiles.
+// executeChat delegates adaptive Chat coverage to the fixed Execute path. That
+// path supplies model defaults, authentication, allowed header overrides,
+// proxy, and TLS options; adaptive callers suppress its intermediate completion
+// event.
 func (s *CNProviderTest) executeChat(
 	c *TestRun,
 	value *providercore.Record,
@@ -174,6 +205,9 @@ func (s *CNProviderTest) executeChat(
 	return s.Execute(c, value, modelID, prompt)
 }
 
+// resolveTLSProfile selects the record's enabled request fingerprint and direct
+// profile through Profiles. A missing profile service returns nil; callers
+// supply a nonnil record for configured selection.
 func (s *CNProviderTest) resolveTLSProfile(value *providercore.Record) *tlsfingerprint.Profile {
 	if s.Profiles == nil {
 		return nil
@@ -181,6 +215,10 @@ func (s *CNProviderTest) resolveTLSProfile(value *providercore.Record) *tlsfinge
 	return s.Profiles.ResolveRequestTLS(egress.TLSSelection{Enabled: value.IsTLSFingerprintEnabled(), DirectProfileID: value.GetTLSFingerprintProfileID()})
 }
 
+// cnTestResponsesURL returns the platform-specific Responses endpoint under the
+// supplied root. DeepSeek uses the unversioned responses suffix, while other
+// platforms use v1; endpoint construction retains supported version and path
+// prefixes.
 func cnTestResponsesURL(platform, base string) string {
 	if platform == capability.PlatformDeepseek {
 		return httpclient.BuildOpenAIEndpointURL(base, "/responses")

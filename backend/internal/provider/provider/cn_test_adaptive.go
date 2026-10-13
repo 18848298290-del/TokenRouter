@@ -19,9 +19,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ExecuteAdaptive probes the enabled native endpoints for a CN provider.
-// An empty selected value probes every enabled protocol; a non-empty value
-// restricts the probe to that protocol.
+// Adaptive CN tests validate the enabled native protocol set and can narrow it
+// to one administrator-selected protocol. An empty selection checks enabled
+// Chat, Messages, and Responses endpoints in that order, ending at the first
+// failed endpoint.
+//
+// Each endpoint can emit content and status events, but completion is
+// suppressed until every selected endpoint succeeds. Chat owns its start event;
+// tests without Chat commit one start before the other endpoints run. Model
+// preparation applies one mapping for Messages and Responses, while Chat
+// delegates its original supplied model to the fixed executor. Native Responses
+// remove synthetic Codex instructions and request stateless behavior, and
+// native authentication failures can attempt provider error persistence.
+
+// ExecuteAdaptive tests one selected native protocol or every enabled protocol
+// for a CN record. Empty protocol sets and disabled explicit selections fail
+// before an upstream request; a blank Messages or Responses model uses the
+// OpenAI test default before mapping.
+//
+// Chat, Messages, and Responses execute in a fixed order and stop on their
+// first failure. Completion suppression spans those attempts so intermediate
+// parsers cannot declare the entire test successful. Chat supplies its own
+// start event; otherwise this coordinator emits one before execution. The
+// suppression flag is cleared on return and before the single final success
+// event.
 func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record, modelID string, prompt string, selected protocol.ProtocolID) error {
 	testModelID := strings.TrimSpace(modelID)
 	if testModelID == "" {
@@ -34,7 +55,9 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 		return (TestStreamOutput{}).Error(c, "No API key available")
 	}
 
-	// Suppress intermediate completion events until every selected endpoint succeeds.
+	// Each endpoint parser can emit success independently. Suppress those
+	// intermediate completions so a later endpoint failure cannot follow an
+	// already published whole-test success.
 	c.SetSuppressCompletion(true)
 	defer c.SetSuppressCompletion(false)
 	enabled := value.UpstreamProtocols()
@@ -48,7 +71,8 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 		enabled = []protocol.ProtocolID{selected}
 	}
 	c.Begin(false)
-	// Chat emits its own start event; emit one here when Chat is not selected.
+	// The fixed Chat executor commits its own start event. When Chat is absent,
+	// commit one here before Messages or Responses content can reach the sink.
 	if !slices.Contains(enabled, protocol.ProtocolOpenAIChatCompletions) {
 		c.Begin(true)
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -76,6 +100,10 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 	return nil
 }
 
+// executeAdaptiveAnthropic runs a mapped native Messages probe with the
+// supplied key and prompt. It validates the protocol root, applies the selected
+// API-key scheme and allowed overrides, closes the response, and records 401
+// state best effort.
 func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercore.Record, testModelID string, prompt string, authToken string) error {
 	ctx := c.Context
 	baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value}).GetCNProtocolBaseURL(providercore.APIProtocolAnthropic))
@@ -88,6 +116,9 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create adaptive Anthropic test payload")
 	}
+	// These fixed probe payloads contain JSON-compatible values supplied by
+	// platform builders. Encoding retains their supported shapes after the local
+	// protocol preparation.
 	payloadBytes, _ := json.Marshal(payload)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过原生 /v1/messages 测试自适应 Anthropic 端点"})
@@ -111,9 +142,15 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		// Use the available non-OK response prefix for endpoint diagnostics even if
+		// reading fails, retaining the status that caused this adaptive attempt to
+		// stop.
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("Adaptive Anthropic endpoint returned %d: %s", resp.StatusCode, string(body))
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
+			// The endpoint has already returned an authentication failure. Attempt its
+			// provider-state write, then keep the upstream diagnostic when storage
+			// itself reports an error.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
@@ -126,6 +163,10 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	return nil
 }
 
+// executeAdaptiveResponses runs a mapped native Responses probe with the
+// supplied key and prompt. It omits Codex instructions, normalizes supported CN
+// requests to stateless form, closes the response, and records 401 state best
+// effort.
 func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercore.Record, testModelID string, prompt string, authToken string) error {
 	ctx := c.Context
 	baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value}).GetCNProtocolBaseURL(providercore.APIProtocolResponses))
@@ -135,10 +176,18 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	apiURL := cnTestResponsesURL(value.Platform, baseURL)
 
 	payload := openai.TestResponsesPayload(testModelID, prompt, false)
-	// The native Responses probe omits the synthetic instructions used by the OpenAI probe.
+	// Codex's probe builder supplies synthetic instructions for its own endpoint.
+	// Remove that field before native CN Responses execution so this payload
+	// carries the selected prompt directly.
 	delete(payload, "instructions")
+	// These fixed probe payloads contain JSON-compatible values supplied by
+	// platform builders. Encoding retains their supported shapes after the local
+	// protocol preparation.
 	payloadBytes, _ := json.Marshal(payload)
 	if (providercore.ProtocolTarget{Record: value}).UsesNativeCNResponses() {
+		// Native CN Responses use fresh stateless requests. Set store false and
+		// remove any continuation identifier before sending this probe through the
+		// platform endpoint.
 		payloadBytes = openaiprotocol.StatelessResponsesRequest(payloadBytes)
 	}
 
@@ -160,9 +209,15 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		// Use the available non-OK response prefix for endpoint diagnostics even if
+		// reading fails, retaining the status that caused this adaptive attempt to
+		// stop.
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("Adaptive Responses endpoint returned %d: %s", resp.StatusCode, string(body))
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
+			// The endpoint has already returned an authentication failure. Attempt its
+			// provider-state write, then keep the upstream diagnostic when storage
+			// itself reports an error.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
@@ -175,6 +230,9 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	return nil
 }
 
+// doAdaptiveRequest sends a prepared native request with the record's loaded
+// proxy and selected TLS profile. A missing loaded proxy relation leaves the
+// proxy URL empty; the caller closes any returned response body.
 func (s *CNProviderTest) doAdaptiveRequest(req *http.Request, value *providercore.Record) (*http.Response, error) {
 	proxyURL := ""
 	if value.ProxyID != nil && value.Proxy != nil {
@@ -183,7 +241,10 @@ func (s *CNProviderTest) doAdaptiveRequest(req *http.Request, value *providercor
 	return s.Transport.DoWithTLS(req, proxyURL, value.ID, value.Concurrency, s.resolveTLSProfile(value))
 }
 
-// cnAnthropicBaseURLMisconfigHint identifies OpenAI endpoint paths in an Anthropic base URL.
+// cnAnthropicBaseURLMisconfigHint returns a diagnostic for OpenAI-shaped paths
+// in an Anthropic root. Invalid or incomplete URLs and unrecognized paths
+// return empty text; callers validate the root separately before using this
+// hint.
 func cnAnthropicBaseURLMisconfigHint(baseURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

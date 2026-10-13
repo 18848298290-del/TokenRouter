@@ -9,7 +9,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// CodexIdentityNamespace derives an identity namespace from the current provider credentials.
+// Codex metadata isolation follows upstream credentials, so two local rows for
+// the same account can share a namespace. A ChatGPT account ID takes priority,
+// with an optional user ID separating members of one account; a stored
+// fingerprint seed supplies identity when account hints are absent.
+//
+// Setup Token records can finally use a digest of their access token. An
+// unseeded OAuth record returns an empty namespace, leaving callers to their
+// existing session isolation. Request fingerprint IDs read the inbound session
+// before rewriting, and account headers use the same record's FedRAMP flag.
+
+// CodexIdentityNamespace chooses the credential namespace used to isolate Codex
+// metadata and upstream sessions. Nil records and providers outside OpenAI
+// OAuth-like authentication return an empty string.
+//
+// Account and user hints take priority over a stored fingerprint seed, and
+// Setup Token credentials supply the final digest-based choice. Local database
+// IDs do not enter this namespace, so matching credential sources keep the same
+// identity across different rows while team members with distinct user IDs
+// remain separate.
 func CodexIdentityNamespace(provider *providercore.Record) string {
 	if provider == nil || !provider.IsOpenAIOAuthLike() {
 		return ""
@@ -27,7 +45,10 @@ func CodexIdentityNamespace(provider *providercore.Record) string {
 	return ""
 }
 
-// CodexFingerprintIDsFromRequest derives fingerprint IDs from this attempt's client session headers.
+// CodexFingerprintIDsFromRequest derives one attempt's IDs from the record's
+// fingerprint mode and inbound session headers. Read it before outbound header
+// rewriting; nil records, disabled modes, or unusable fingerprint configuration
+// return nil.
 func CodexFingerprintIDsFromRequest(value *providercore.Record, headers http.Header) *openai.FingerprintIDs {
 	if value == nil {
 		return nil
@@ -43,7 +64,10 @@ func CodexFingerprintIDsFromRequest(value *providercore.Record, headers http.Hea
 	return CodexFingerprintIDs(value, session, mode)
 }
 
-// SetChatGPTAccountHeaders adds account headers for OAuth-like providers when headers is non-nil.
+// SetChatGPTAccountHeaders writes ChatGPT account and FedRAMP headers for
+// OpenAI OAuth-like authentication. Nil headers and unsupported records are
+// left untouched; the platform helper uses the record's account ID and FedRAMP
+// flag.
 func SetChatGPTAccountHeaders(headers http.Header, value *providercore.Record) {
 	if headers == nil || value == nil || !value.IsOpenAIOAuthLike() {
 		return

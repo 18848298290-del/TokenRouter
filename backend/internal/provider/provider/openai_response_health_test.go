@@ -13,9 +13,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// response429Clock lets tests advance provider runtime time.
-type response429Clock struct{ nanos atomic.Int64 }
+// response429Clock supplies an atomically adjustable clock for runtime 429
+// recovery tests.
+type response429Clock struct {
+	// nanos uses zero to select the real clock. Nonzero values provide the
+	// runtime state with a controlled test timestamp.
+	nanos atomic.Int64 // Unix nanoseconds
+}
 
+// TestOpenAI429FastPath_BlocksOAuthOnlyAfterRetryWindow expires an OAuth
+// recovery window before a transient 429 observation. The fast path must
+// install a runtime block and deny another retry.
 func TestOpenAI429FastPath_BlocksOAuthOnlyAfterRetryWindow(t *testing.T) {
 	svc := &OpenAIResponseHealth{Runtime: providercore.NewRuntimeBlockState(time.Now)}
 	provider := &providercore.Record{LoadLocation: time.LoadLocation, ID: 420, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
@@ -27,6 +35,9 @@ func TestOpenAI429FastPath_BlocksOAuthOnlyAfterRetryWindow(t *testing.T) {
 	require.False(t, svc.RetryOAuth429(provider, http.StatusTooManyRequests, false, nil, nil))
 }
 
+// TestOpenAIHTTP429StillUsesQuotaResetHeaders observes a nonexhausted weekly
+// window with a reported reset after retry expiry. The runtime block must
+// remain active six days later under that header deadline.
 func TestOpenAIHTTP429StillUsesQuotaResetHeaders(t *testing.T) {
 	svc := &OpenAIResponseHealth{Runtime: providercore.NewRuntimeBlockState(time.Now), Health: &UpstreamHealth{Core: providercore.NewHealthService(nil, nil, providercore.HealthOptions{Now: time.Now})}}
 	provider := &providercore.Record{LoadLocation: time.LoadLocation, ID: 422, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
@@ -42,8 +53,9 @@ func TestOpenAIHTTP429StillUsesQuotaResetHeaders(t *testing.T) {
 	require.True(t, svc.Runtime.Blocked(provider.ID, func() string { return providercore.RefreshCredentialIdentity(provider) }), "HTTP 429 保留上游配额重置边界")
 }
 
-// TestOpenAI429FastPath_SkipsSparkShadow keeps global /responses quota signals
-// from pausing a Spark shadow until the global reset, which could exhaust a single-shadow pool.
+// TestOpenAI429FastPath_SkipsSparkShadow compares a Spark shadow and ordinary
+// OAuth record under exhausted global quota headers. The ordinary provider must
+// receive a runtime block while the shadow's provider block remains absent.
 func TestOpenAI429FastPath_SkipsSparkShadow(t *testing.T) {
 	svc := &OpenAIResponseHealth{Runtime: providercore.NewRuntimeBlockState(time.Now)}
 	parentID := int64(800)
@@ -68,6 +80,9 @@ func TestOpenAI429FastPath_SkipsSparkShadow(t *testing.T) {
 	require.True(t, svc.Runtime.Blocked(normal.ID, func() string { return providercore.RefreshCredentialIdentity(normal) }), "normal OpenAI OAuth provider with an exhausted 5h window must be paused")
 }
 
+// Now returns the stored test time or the real clock when its nanosecond value
+// is zero. Atomic loading permits runtime queries to read a time supplied by
+// Set.
 func (c *response429Clock) Now() time.Time {
 	if n := c.nanos.Load(); n != 0 {
 		return time.Unix(0, n)
@@ -75,11 +90,18 @@ func (c *response429Clock) Now() time.Time {
 	return time.Now()
 }
 
+// Set atomically publishes the supplied time as Unix nanoseconds.
 func (c *response429Clock) Set(now time.Time) { c.nanos.Store(now.UnixNano()) }
 
+// expireResponseRetryForTest replaces runtime state and seeds a retry window
+// beyond its allowed age. It then restores real-time reads through the clock's
+// zero sentinel while returning the clock for later advancement.
 func expireResponseRetryForTest(h *OpenAIResponseHealth, id int64) *response429Clock {
 	clock := &response429Clock{}
 	h.Runtime = providercore.NewRuntimeBlockState(clock.Now)
+	// Seed admission before the allowed recovery interval so markOAuth429 observes
+	// an expired window; reset the clock sentinel afterward to keep normal reads
+	// on wall time.
 	clock.Set(time.Now().Add(-providercore.RuntimeRetryWindow - time.Second))
 	h.Runtime.RetryWindowActive(id)
 	clock.nanos.Store(0)

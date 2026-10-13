@@ -9,6 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestBuildQuotaDims_AllDimensionsReturned configures daily and weekly
+// notifications while disabling the total dimension. The adapter must retain
+// all three dimensions in order with their thresholds, limits, and usage.
 func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
 	// Configure all three dimensions, including a disabled total-quota notification.
 	a := &provider.Record{
@@ -53,6 +56,9 @@ func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
 	require.Equal(t, 1000.0, dims[2].CurrentUsed)
 }
 
+// TestBuildQuotaDims_EmptyExtra supplies a record with no quota settings. The
+// result must still contain daily, weekly, and total dimensions with disabled
+// flags and zero thresholds and limits.
 func TestBuildQuotaDims_EmptyExtra(t *testing.T) {
 	// Missing fields default to zero/disabled.
 	a := &provider.Record{

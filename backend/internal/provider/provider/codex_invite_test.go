@@ -20,6 +20,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestCodexInviteResetServiceGetStatusAggregatesDesktopEndpoints combines
+// eligibility, rules, usage counts, and credit details. The result and endpoint
+// order must match those observations, and the first request must carry
+// invitation defaults, account headers, and the OpenAI transport profile.
 func TestCodexInviteResetServiceGetStatusAggregatesDesktopEndpoints(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          42,
@@ -78,6 +82,10 @@ func TestCodexInviteResetServiceGetStatusAggregatesDesktopEndpoints(t *testing.T
 	require.Equal(t, upstreamcore.HTTPUpstreamProfileOpenAI, upstreamcore.HTTPUpstreamProfileFromContext(upstream.requests[0].Context()))
 }
 
+// TestCodexInviteResetServiceGetStatusKeepsUsageCreditsWhenEligibilityReturns422AndDetailsFail
+// simulates an unavailable invitation endpoint and unauthorized credit details.
+// Status must retain the usage count, report invitation unavailability, and
+// suppress the raw validation message.
 func TestCodexInviteResetServiceGetStatusKeepsUsageCreditsWhenEligibilityReturns422AndDetailsFail(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       50,
@@ -108,6 +116,10 @@ func TestCodexInviteResetServiceGetStatusKeepsUsageCreditsWhenEligibilityReturns
 	require.Equal(t, "/backend-api/wham/rate-limit-reset-credits", upstream.requests[3].URL.Path)
 }
 
+// TestCodexInviteResetServiceSendInviteNormalizesEmails supplies
+// comma-separated addresses and a case-variant duplicate. The request must
+// contain deduplicated normalized emails and the referral key, while returning
+// the upstream message.
 func TestCodexInviteResetServiceSendInviteNormalizesEmails(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          7,
@@ -132,6 +144,10 @@ func TestCodexInviteResetServiceSendInviteNormalizesEmails(t *testing.T) {
 	require.Equal(t, []any{"a@example.com", "b@example.com"}, payload["emails"])
 }
 
+// TestCodexInviteResetServiceSendInviteMapsUnavailableInvite returns a
+// forbidden invitation detail from upstream. The service must expose the stable
+// unavailable reason and message while retaining the upstream detail in error
+// metadata.
 func TestCodexInviteResetServiceSendInviteMapsUnavailableInvite(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          8,
@@ -153,6 +169,9 @@ func TestCodexInviteResetServiceSendInviteMapsUnavailableInvite(t *testing.T) {
 	require.Equal(t, "该推荐码对应的推荐邀请不可用", apperror.FromError(err).Metadata["upstream_detail"])
 }
 
+// TestCodexInviteResetServiceConsumeSendsRedeemRequestID consumes a named reset
+// credit. The returned redemption identifier must match the transmitted
+// request, and the service must retain a zero available count.
 func TestCodexInviteResetServiceConsumeSendsRedeemRequestID(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          9,
@@ -180,6 +199,9 @@ func TestCodexInviteResetServiceConsumeSendsRedeemRequestID(t *testing.T) {
 	require.Equal(t, result.RedeemRequestID, payload["redeem_request_id"])
 }
 
+// TestCodexInviteResetServiceConsumeAllowsAutomaticCreditSelection consumes a
+// credit without specifying its ID. The request must omit credit_id while
+// carrying a redemption identifier and returning the upstream reset count.
 func TestCodexInviteResetServiceConsumeAllowsAutomaticCreditSelection(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          10,
@@ -203,6 +225,9 @@ func TestCodexInviteResetServiceConsumeAllowsAutomaticCreditSelection(t *testing
 	require.NotContains(t, payload, "credit_id")
 }
 
+// TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent configures a
+// dedicated invitation User-Agent with surrounding whitespace. The first status
+// request must use the trimmed value selected from the enabled TLS router.
 func TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          43,
@@ -233,6 +258,10 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent(t *testing.T) 
 	require.Equal(t, "Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64)", upstream.requests[0].Header.Get("User-Agent"))
 }
 
+// TestCodexInviteResetServiceDoesNotReuseTokenUserAgent configures a
+// token-exchange User-Agent without an invitation override. The first invitation
+// status request must keep the dedicated desktop default for that endpoint
+// family.
 func TestCodexInviteResetServiceDoesNotReuseTokenUserAgent(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          45,
@@ -263,6 +292,9 @@ func TestCodexInviteResetServiceDoesNotReuseTokenUserAgent(t *testing.T) {
 	require.Equal(t, openai.CodexInviteDefaultUserAgent, upstream.requests[0].Header.Get("User-Agent"))
 }
 
+// TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile configures both
+// a direct provider fingerprint and a dedicated invitation profile. The
+// invitation profile must take precedence on the first captured status request.
 func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T) {
 	inviteResetProfileID := int64(20)
 	provider := &providercore.Record{
@@ -301,7 +333,10 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T)
 	require.Equal(t, "router-token", upstream.profiles[0].Name)
 }
 
-// newCodexInviteForTest connects the transport stub to the invite/reset service and platform client.
+// newCodexInviteForTest builds the invitation service with transport and
+// credential stubs. It installs the platform factory, reader, UUID source, and
+// warning logger; optional token, profile, and router dependencies remain
+// configurable.
 func newCodexInviteForTest(reader codexInviteResetAdminServiceStub, transport QoderTransport, token *providercore.OpenAITokenSource, profiles *egressprovider.TLSProfiles, routers OpenAITokenRouterReader) *providercore.CodexInviteResetService {
 	factory := CodexInviteFactory{Token: token, Proxy: reader.GetProxy, Transport: transport, Profiles: profiles, Routers: routers}
 	return &providercore.CodexInviteResetService{Options: providercore.CodexInviteResetOptions{

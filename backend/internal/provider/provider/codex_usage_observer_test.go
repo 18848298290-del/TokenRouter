@@ -13,31 +13,54 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// openAICodexSnapshotAsyncRepo captures snapshot patches and unexpected
+// provider-rate-limit writes for observer tests.
 type openAICodexSnapshotAsyncRepo struct {
+	// updateExtraCh optionally captures copied Extra patches from background
+	// writes. A nil channel makes UpdateExtra finish without sending.
 	updateExtraCh chan map[string]any
-	rateLimitCh   chan time.Time
+	// rateLimitCh optionally captures provider recovery deadlines. A nil channel
+	// makes SetRateLimited finish without sending.
+	rateLimitCh chan time.Time
 }
 
+// snapshotUpdateProviderRepo exposes copied Extra patches to quota-header
+// observer assertions.
 type snapshotUpdateProviderRepo struct {
+	// updateExtraCalls optionally captures copied header-derived patches. A nil
+	// channel skips capture, and tests buffer it for background writes.
 	updateExtraCalls chan map[string]any
 }
 
+// SetRateLimited sends the observed reset time to the optional test channel. A
+// nil channel discards it, letting tests detect any forbidden provider-limit
+// side effect when configured.
 func (r *openAICodexSnapshotAsyncRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
 	if r.rateLimitCh != nil {
+		// Send the observed reset to the assertion channel so the snapshot tests can
+		// detect an unexpected provider-wide limit from the background path.
 		r.rateLimitCh <- resetAt
 	}
 	return nil
 }
 
+// UpdateExtra sends a shallow copy of the snapshot patch to the optional
+// channel. A nil channel skips capture; buffered test channels let background
+// persistence finish independently of assertions.
 func (r *openAICodexSnapshotAsyncRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	if r.updateExtraCh != nil {
 		copied := make(map[string]any, len(updates))
 		maps.Copy(copied, updates)
+		// Publish the copied map to the assertion channel after capturing it, so the
+		// test observes a complete patch from the asynchronous writer.
 		r.updateExtraCh <- copied
 	}
 	return nil
 }
 
+// TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotSetRateLimit
+// supplies exhausted weekly quota and a low-use short window. Extra must
+// receive the snapshot while no provider-wide rate-limit write occurs.
 func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotSetRateLimit(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
 		updateExtraCh: make(chan map[string]any, 1),
@@ -68,6 +91,10 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotS
 	}
 }
 
+// TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesNotSetRateLimit
+// supplies two nonexhausted windows. Snapshot persistence must complete while
+// the observer leaves provider-wide rate-limit state untouched during the
+// assertion interval.
 func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesNotSetRateLimit(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
 		updateExtraCh: make(chan map[string]any, 1),
@@ -97,6 +124,10 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesN
 	}
 }
 
+// TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThrottlesExtraWrites
+// observes one provider twice within its configured interval. The first patch
+// must arrive and the second observation must produce no additional captured
+// write.
 func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThrottlesExtraWrites(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
 		updateExtraCh: make(chan map[string]any, 2),
@@ -127,15 +158,23 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThrottlesExtraWrites(t *t
 	}
 }
 
+// UpdateExtra publishes a shallow-copied Extra patch to the optional capture
+// channel. Nil channels skip capture, and callers provide enough buffering for
+// the observer's background write to complete.
 func (r *snapshotUpdateProviderRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
 		maps.Copy(copied, updates)
+		// Publish the copied map to the assertion channel after capturing it, so the
+		// test observes a complete patch from the asynchronous writer.
 		r.updateExtraCalls <- copied
 	}
 	return nil
 }
 
+// TestOpenAIUpdateCodexUsageSnapshotFromHeaders supplies Codex percentages,
+// durations, and relative resets through HTTP headers. The observer must
+// persist correctly associated five-hour and seven-day measurements in Extra.
 func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 	repo := &snapshotUpdateProviderRepo{updateExtraCalls: make(chan map[string]any, 1)}
 	svc := &CodexUsageObserver{Store: repo, Throttle: providercore.NewWriteThrottle(30 * time.Second)}
@@ -159,5 +198,9 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 		t.Fatal("expected UpdateExtra to be called")
 	}
 }
+
+// snapshotFloat returns a fresh pointer to a floating-point quota measurement.
 func snapshotFloat(v float64) *float64 { return &v }
-func snapshotInt(v int) *int           { return &v }
+
+// snapshotInt returns a fresh pointer to an integer quota measurement.
+func snapshotInt(v int) *int { return &v }

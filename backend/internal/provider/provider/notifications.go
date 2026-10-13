@@ -5,6 +5,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Quota notifications evaluate daily, weekly, and total usage independently.
+// Provider settings supply each dimension's enabled flag, threshold mode,
+// usage, and limit; the adapter keeps all three dimensions in that order so
+// billing can apply its notification rules to disabled as well as enabled
+// entries.
+
+// QuotaNotification copies provider quota settings into daily, weekly, and
+// total notification dimensions. A nil record returns nil; each nonnil result
+// includes disabled dimensions so billing can decide which thresholds apply.
 func QuotaNotification(a *provider.Record) *billing.QuotaNotifyProvider {
 	if a == nil {
 		return nil

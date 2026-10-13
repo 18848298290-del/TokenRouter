@@ -13,22 +13,88 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIResponseHealth applies HTTP and stream error observations to health state shared with scheduling.
+// Response health distinguishes failures caused by the request from failures
+// that make a provider or model unsuitable for scheduling. Content rejection
+// exits first, and request-scoped failures exit unless an administrator's
+// custom-code policy matches; account access errors and self-built image
+// denials have separate handling before general policy.
+//
+// Explicit pool and custom-code choices precede image, model, temporary-rule,
+// and Spark cooldown observations. Default 429 handling can be suppressed after
+// the more precise model branches, and default health processing receives a
+// clone with model observation cleared to avoid applying that branch again.
+// Runtime blocks are shared with scheduling, while changed Credentials and
+// Extra from the default path are copied back to the caller's record. API-key
+// transient streaks apply only after provider-level handling leaves the record
+// eligible and pool retry rules permit that recording.
+
+// OpenAIResponseHealth orders response observations and updates runtime health
+// shared with scheduling.
 type OpenAIResponseHealth struct {
-	Health         *UpstreamHealth
-	Runtime        *providercore.RuntimeBlockState
+	// Health optionally supplies durable error, team, and model rules. Configure
+	// its subservices for every observation branch that the caller can reach.
+	Health *UpstreamHealth
+	// Runtime holds shared cooldown and retry-window state. It must be configured
+	// when markOAuth429 clears a recovery window.
+	Runtime *providercore.RuntimeBlockState
+	// ModelTransient optionally records eligible API-key model failure streaks. A
+	// nil state skips transient recording after provider handling.
 	ModelTransient *providercore.ModelTransientState
-	Deferred       *providercore.DeferredService
+	// Deferred optionally queues Ollama Cloud last-used activity. Its absence
+	// skips that update when response health accepts an observation.
+	Deferred *providercore.DeferredService
 }
 
-// OpenAIResponseHealthInput contains request classification and model observations supplied by the gateway.
+// OpenAIResponseHealthInput supplies response classification and
+// current-attempt model intent from gateway execution.
 type OpenAIResponseHealthInput struct {
-	Observation                                               HealthObservation
-	Models                                                    []string
-	SuppressDefaultRateLimit                                  bool
+	// Observation supplies response data and effective request intent. Apply
+	// clears its model flag before default handling after the precise model
+	// branches have run.
+	Observation HealthObservation
+	// Models carries canonical upstream names for health handling. Apply uses its
+	// first entry; an absent or blank entry can require a provider-wide temporary
+	// block.
+	Models []string
+	// SuppressDefaultRateLimit skips the ordinary image-limit and default 429
+	// paths. Model and Spark observations still run before the later default-429
+	// suppression.
+	SuppressDefaultRateLimit bool
+	// ContentRejected, RequestScoped, SelfBuiltImage, and Transient describe
+	// caller classification at different stages of Apply. Earlier request
+	// rejection can prevent later image or transient handling.
+	//
+	// ContentRejected reports content policy rejection and immediately ends all
+	// provider health handling for this observation.
+	//
+	// RequestScoped reports a request-local failure. Apply skips provider health
+	// unless configured custom status policy matches.
+	//
+	// SelfBuiltImage permits image-capability denial handling for a
+	// gateway-constructed image request whose tool payload is controlled.
+	//
+	// Transient marks a retryable upstream failure. Eligible API-key requests can
+	// record model streaks after other handling leaves scheduling active.
+	// ContentRejected: policy-rejected content; RequestScoped: request-local failure.
+	// SelfBuiltImage: constructed image request; Transient: retryable upstream failure.
 	ContentRejected, RequestScoped, SelfBuiltImage, Transient bool
 }
 
+// Apply returns the scheduling and error-policy decision for an upstream
+// response. It can update the caller's Credentials and Extra after default
+// handling; callers keep that record exclusive during evaluation and configure
+// the health subservices reached by the observation.
+//
+// Request rejection and request-scoped policy precede account access and
+// self-built image handling. Explicit custom or pool decisions then take
+// precedence over image, model, temporary-rule, and Spark observations, with
+// suppression affecting the later default 429 path. The default observation
+// clears its model flag because model health has already run.
+//
+// Accepted state writes receive a bounded context detached from request
+// cancellation. Runtime provider blocks supplement durable health state, and
+// eligible API-key transient failures update their model streak only after
+// default handling leaves scheduling active.
 func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore.Record, input OpenAIResponseHealthInput) providercore.UpstreamErrorDecision {
 	statusCode, headers, responseBody := input.Observation.Status, input.Observation.Headers, input.Observation.Body
 	canonicalModel, suppressDefaultRateLimitState := input.Models, input.SuppressDefaultRateLimit
@@ -44,12 +110,20 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if s != nil {
 		s.recordActivity(provider)
 	}
-	// Request-level retries handle capacity shedding while the provider stays schedulable.
+	// Capacity shedding belongs to the request retry path. Returning before
+	// provider-state handling keeps a temporary capacity response from disabling
+	// the account.
 	if provider != nil && provider.Platform == capability.PlatformOpenAI && openai.IsOpenAIRequestScopedCapacityShed("", responseBody) {
 		return providercore.UpstreamErrorDecision{Policy: providercore.ErrorPolicyNone}
 	}
+	// State observations can outlive the response context. Use the bounded
+	// detached provider-state budget so request cancellation does not discard an
+	// accepted health update.
 	stateCtx, cancel := ProviderStateContext(ctx)
 	defer cancel()
+	// Account or workspace access loss applies before model and temporary rules.
+	// Persist authentication failure first, then install the runtime block for
+	// subsequent scheduling.
 	if provider != nil && provider.Platform == capability.PlatformOpenAI && openai.IsOpenAIHTTPUpstreamAccessStateError(0, "", responseBody) {
 		message := "OpenAI upstream provider or workspace is unavailable"
 		if upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(responseBody)); upstreamMsg != "" {
@@ -77,13 +151,18 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if s == nil || provider == nil {
 		return providercore.UpstreamErrorDecision{Policy: providercore.ErrorPolicyNone}
 	}
-	// Propagate workspace deactivation before model and temporary-rule branches can return early.
+	// Propagate workspace deactivation before later model and temporary-rule
+	// branches return, so an accepted team-level failure reaches the shared
+	// workspace handler.
 	if s.Health != nil {
 		s.Health.Team.HandleWorkspaceDeactivated(stateCtx, providercore.CloneRecord(provider), statusCode == http.StatusPaymentRequired && ClientRejectionObservation("", responseBody).WorkspaceDeactivated)
 	}
 	observation := input.Observation
 	observation.Headers = nil
 	decision := providercore.ErrorDecisionWithoutPersistence(provider, statusCode)
+	// Administrator custom-code and pool rules determine whether more specific
+	// observations may run. An explicit skip or bypass returns before default
+	// cooldown and disable handling.
 	if s.Health != nil {
 		if provider.IsPoolMode() || provider.IsCustomErrorCodesEnabled() {
 			decision.Policy = s.Health.ApplyExplicitErrorPolicy(stateCtx, providercore.CloneRecord(provider), observation)
@@ -140,6 +219,9 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	if s.Health == nil {
 		return decision
 	}
+	// Model handling has already had its turn. Clear the model flag before default
+	// processing, then copy back the mutable credential and Extra results from its
+	// clone.
 	defaultObservation := observation
 	defaultObservation.Model, defaultObservation.ModelProvided = "", false
 	defaultObservation.Headers = headers
@@ -166,13 +248,24 @@ func (s *OpenAIResponseHealth) Apply(ctx context.Context, provider *providercore
 	return decision
 }
 
-// recordActivity schedules a coalesced last-used update for Ollama Cloud providers.
+// recordActivity queues a coalesced last-used update for an Ollama Cloud usage
+// record. A missing deferred service, nil record, or other provider category
+// skips activity publication.
 func (s *OpenAIResponseHealth) recordActivity(value *providercore.Record) {
 	if s.Deferred != nil && value != nil && providercore.IsOllamaCloudUsageProvider(providercore.CloneRecord(value)) {
 		s.Deferred.ScheduleLastUsedUpdate(value.ID)
 	}
 }
 
+// markOAuth429 installs a runtime cooldown for a nonshadow OpenAI OAuth-like
+// record. A transient failure inside the recovery window leaves scheduling
+// available, while a quota reset bypasses that retry opportunity.
+//
+// A future supplied reset wins over the health service's positive fallback
+// duration, with five seconds used when neither supplies a deadline. The
+// runtime block is installed before the retry window is cleared, so later
+// admission observes cooldown state rather than opening another window
+// immediately. Runtime must be configured for this update.
 func (s *OpenAIResponseHealth) markOAuth429(ctx context.Context, value *providercore.Record, headers http.Header, body []byte) {
 	if s == nil || value == nil || !value.IsOpenAIOAuthLike() || value.IsShadow() {
 		return
@@ -181,19 +274,29 @@ func (s *OpenAIResponseHealth) markOAuth429(ctx context.Context, value *provider
 	if disposition == providercore.OpenAI429Transient && s.Runtime.RetryWindowActive(value.ID) {
 		return
 	}
+	// A short default also covers absent Health services, so runtime retry
+	// admission receives a finite block after its transient recovery window closes.
 	until := time.Now().Add(5 * time.Second)
 	if reset != nil && reset.After(time.Now()) {
 		until = *reset
 	} else if s.Health != nil {
+		// Absent or stale reset signals permit the configured health fallback. A
+		// positive fallback replaces the short default while quota deadlines retain
+		// their precedence.
 		if cooldown, ok := s.Health.Core.Fallback429Cooldown(ctx, providercore.CloneRecord(value)); ok && cooldown > 0 {
 			until = time.Now().Add(cooldown)
 		}
 	}
+	// Install the chosen cooldown before clearing retry admission, so subsequent
+	// scheduling checks see the block after this recovery window is closed.
 	s.Runtime.BlockProviderScheduling(value, until, "429")
 	s.Runtime.ResetRetry(value.ID)
 }
 
-// RetryOAuth429 requires an active recovery window and rejects disabled, shadow, and non-transient cases.
+// RetryOAuth429 reports same-provider retry eligibility for an enabled HTTP 429
+// response. Nil receivers, disabled decisions, and other statuses return false;
+// the shared eligibility helper then applies identity, quota, and
+// runtime-window checks.
 func (s *OpenAIResponseHealth) RetryOAuth429(value *providercore.Record, status int, disabled bool, headers http.Header, body []byte) bool {
 	if s == nil || disabled || status != http.StatusTooManyRequests {
 		return false
@@ -201,6 +304,9 @@ func (s *OpenAIResponseHealth) RetryOAuth429(value *providercore.Record, status 
 	return CanRetryOpenAI429(s.Runtime, value, headers, body)
 }
 
+// RetryDeadline returns the runtime recovery deadline for a nonshadow OpenAI
+// OAuth-like record. Nil receivers, unsupported records, and absent retry
+// windows return zero time; reading the deadline does not create a window.
 func (s *OpenAIResponseHealth) RetryDeadline(value *providercore.Record) time.Time {
 	if s == nil || value == nil || !value.IsOpenAIOAuthLike() || value.IsShadow() {
 		return time.Time{}
@@ -208,7 +314,10 @@ func (s *OpenAIResponseHealth) RetryDeadline(value *providercore.Record) time.Ti
 	return s.Runtime.RetryDeadline(value.ID)
 }
 
-// RecordModelFailure records the supplied model in the transient state shared with scheduling.
+// RecordModelFailure submits a normalized provider/model failure to shared
+// transient state and logs accepted streak decisions. Missing dependencies,
+// invalid IDs, blank models, and oversized model names produce no recorded
+// streak or warning.
 func (s *OpenAIResponseHealth) RecordModelFailure(value *providercore.Record, model string) {
 	if s == nil || value == nil || s.ModelTransient == nil {
 		return

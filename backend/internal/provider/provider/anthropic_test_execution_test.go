@@ -10,10 +10,15 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// TestAnthropicProbeUsesServiceSamplingCapabilities resolves sampling across
+// API-key, OAuth, Vertex, and Bedrock model identities. Temperature presence
+// must follow service capability while max_tokens remains unchanged and the
+// catalogue view is read once.
 func TestAnthropicProbeUsesServiceSamplingCapabilities(t *testing.T) {
 	for _, tc := range []struct {
+		// kind: provider authentication type; model: selected service model identity.
 		kind, model string
-		sampling    bool
+		sampling    bool // expected temperature field presence
 	}{
 		{"apikey", "claude-opus-4-7", false},
 		{"oauth", "claude-opus-4-7", false},

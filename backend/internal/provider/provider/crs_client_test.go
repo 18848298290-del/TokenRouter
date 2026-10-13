@@ -20,33 +20,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// crsStaleCredentialRepo holds credentials replaced during token exchange to check rejection of stale
-// results.
+// crsStaleCredentialRepo models credential replacement during a CRS post-import
+// token exchange.
 type crsStaleCredentialRepo struct {
-	providercore.CRSProviderStore
+	providercore.CRSProviderStore // unimplemented CRS repository methods
+	// current is the sequential fixture's stored provider.
+	// RefreshTokenWithClientID replaces its credentials before the version-checked
+	// write executes.
 	current *providercore.Record
 }
 
+// crsStaleOAuthClient replaces stored credentials before returning a delayed
+// refresh result.
 type crsStaleOAuthClient struct {
-	OpenAIOAuthClient
-	repo  *crsStaleCredentialRepo
-	calls int
+	OpenAIOAuthClient                         // unimplemented OAuth client methods
+	repo              *crsStaleCredentialRepo // mutable refresh comparison repository
+	calls             int                     // observed token exchange count
 }
 
+// crsDeprecatedExtraProviderRepo retains provider pointers for sequential CRS
+// create and update assertions.
 type crsDeprecatedExtraProviderRepo struct {
-	providercore.CRSProviderStore
+	providercore.CRSProviderStore // unimplemented CRS repository methods
+	// providers retains caller-owned record pointers keyed by CRS ID. Sequential
+	// tests share those objects when creating, updating, and reading imported
+	// state.
 	providers map[string]*providercore.Record
-	nextID    int64
+	nextID    int64 // largest allocated fixture identifier
 }
 
+// crsOpenAIDeprecatedExtraSource supplies a CRS collection and its imported
+// credential and Extra maps.
 type crsOpenAIDeprecatedExtraSource struct {
-	collection  string
-	credentials map[string]any
-	extra       map[string]any
+	collection  string         // CRS source collection name
+	credentials map[string]any // imported source credential fields
+	extra       map[string]any // imported source Extra fields
 }
 
-// TestCRSClientHTTPContract checks request order, authentication, errors, and body limits against a
-// local server.
+// TestCRSClientHTTPContract serves successful and failed login/export
+// responses, including bodies beyond read caps. Requests must authenticate and
+// execute in order, while failed or incomplete responses return the expected
+// diagnostics.
 func TestCRSClientHTTPContract(t *testing.T) {
 	for _, mode := range []string{"success", "login_error", "blank_token", "login_oversize", "export_error", "export_oversize"} {
 		t.Run(mode, func(t *testing.T) {
@@ -110,6 +124,9 @@ func TestCRSClientHTTPContract(t *testing.T) {
 	}
 }
 
+// TestCRSClientValidationOrderAndOptionsCopy supplies missing configuration,
+// invalid roots, and blank credentials in sequence. Validation must report the
+// first applicable error and retain an independent host-list copy.
 func TestCRSClientValidationOrderAndOptionsCopy(t *testing.T) {
 	_, err := NewCRSClient(CRSClientOptions{}).Fetch(context.Background(), "invalid", "", "")
 	require.EqualError(t, err, "config is not available")
@@ -123,6 +140,10 @@ func TestCRSClientValidationOrderAndOptionsCopy(t *testing.T) {
 	require.Equal(t, []string{"allowed.test"}, client.options.Hosts)
 }
 
+// TestCRSRefreshPreservesConcurrentAdministratorCredentials replaces imported
+// credentials during the follow-up token exchange. Import must count creation
+// once while conditional refresh keeps the administrator's newer access and
+// refresh tokens.
 func TestCRSRefreshPreservesConcurrentAdministratorCredentials(t *testing.T) {
 	repo := &crsStaleCredentialRepo{}
 	client := &crsStaleOAuthClient{repo: repo}
@@ -150,14 +171,18 @@ func TestCRSRefreshPreservesConcurrentAdministratorCredentials(t *testing.T) {
 	require.Equal(t, "admin-new-rt", repo.current.Credentials["refresh_token"])
 }
 
+// TestCRSSyncDiscardsDeprecatedOpenAILongContextBillingExtra imports several
+// old billing-flag representations into new and existing providers.
+// Synchronization must remove that obsolete field while retaining unrelated
+// source and existing Extra values.
 func TestCRSSyncDiscardsDeprecatedOpenAILongContextBillingExtra(t *testing.T) {
 	tests := []struct {
-		name          string
-		collection    string
-		credentials   map[string]any
-		sourceValue   any
-		existingValue any
-		wantAction    string
+		name          string         // obsolete-field scenario label
+		collection    string         // CRS source collection name
+		credentials   map[string]any // imported source authentication fields
+		sourceValue   any            // obsolete value in source
+		existingValue any            // obsolete value already stored
+		wantAction    string         // expected synchronization action label
 	}{
 		{name: "OAuth create discards true", collection: "openaiOAuthAccounts", credentials: map[string]any{"access_token": "oauth-token"}, sourceValue: true, wantAction: "created"},
 		{name: "OAuth create discards malformed", collection: "openaiOAuthAccounts", credentials: map[string]any{"access_token": "oauth-token"}, sourceValue: "false", wantAction: "created"},
@@ -210,8 +235,15 @@ func TestCRSSyncDiscardsDeprecatedOpenAILongContextBillingExtra(t *testing.T) {
 	}
 }
 
-// UpdateOAuthCredentialsIfUnchanged checks the current identity and credential version before applying
-// the update.
+// UpdateOAuthCredentialsIfUnchanged compares the stored record against the
+// exchange's credential version before replacing credentials. Tests initialize
+// current and invoke repository operations sequentially; a mismatch returns
+// false without storing the delayed result.
+//
+// The comparison includes ID, platform, type, status, credentials, and proxy
+// ID, so an administrator replacement during exchange invalidates its result
+// even when the imported row is unchanged. Matching versions delegate to
+// UpdateCredentials and return its error with the successful-match flag.
 func (r *crsStaleCredentialRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, v providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	c := r.current
 	if c.ID != v.ID || c.Platform != v.Platform || c.Type != v.Type || c.Status != v.Status || !reflect.DeepEqual(c.Credentials, v.Credentials) || !reflect.DeepEqual(c.ProxyID, v.ProxyID) {
@@ -220,25 +252,38 @@ func (r *crsStaleCredentialRepo) UpdateOAuthCredentialsIfUnchanged(ctx context.C
 	return true, r.UpdateCredentials(ctx, v.ID, credentials)
 }
 
+// Create assigns the fixture's provider ID and stores a shallow credential-map
+// copy. It mutates the supplied record's ID, while retaining the copy as
+// current for later refresh-version comparisons.
 func (r *crsStaleCredentialRepo) Create(_ context.Context, v *providercore.Record) error {
 	v.ID = 77
 	r.current = crsStaleCopy(v)
 	return nil
 }
 
+// GetByCRSAccountID returns no existing provider for the creation scenario.
 func (r *crsStaleCredentialRepo) GetByCRSAccountID(context.Context, string) (*providercore.Record, error) {
 	return nil, nil
 }
 
+// GetByID returns a copy of the fixture's current record regardless of the
+// supplied ID. Credentials get their own top-level map; other mutable fields
+// remain shared for this sequential scenario.
 func (r *crsStaleCredentialRepo) GetByID(context.Context, int64) (*providercore.Record, error) {
 	return crsStaleCopy(r.current), nil
 }
 
+// UpdateCredentials replaces the fixture's current credentials with the
+// supplied map. The map remains shared with the caller, and this sequential
+// repository ignores the requested provider ID.
 func (r *crsStaleCredentialRepo) UpdateCredentials(_ context.Context, _ int64, v map[string]any) error {
 	r.current.Credentials = v
 	return nil
 }
 
+// crsStaleCopy copies a record and its top-level credential map for refresh
+// comparisons. Nil records return nil; nested credential values and other
+// record references remain shared with the input.
 func crsStaleCopy(v *providercore.Record) *providercore.Record {
 	if v == nil {
 		return nil
@@ -249,12 +294,21 @@ func crsStaleCopy(v *providercore.Record) *providercore.Record {
 	return &out
 }
 
+// RefreshTokenWithClientID counts the exchange and replaces repository
+// credentials with administrator values before returning delayed tokens. This
+// fixture makes the exchange result stale without adding another refresh call.
 func (c *crsStaleOAuthClient) RefreshTokenWithClientID(context.Context, string, string, string, ...openai.OAuthTokenRequestOptions) (*openai.TokenResponse, error) {
 	c.calls++
+	// Model an administrator replacement while token exchange is still in flight.
+	// Conditional persistence must compare against these newer credentials before
+	// accepting the late result.
 	c.repo.current.Credentials = map[string]any{"access_token": "admin-new-at", "refresh_token": "admin-new-rt"}
 	return &openai.TokenResponse{AccessToken: "late-at", RefreshToken: "late-rt", ExpiresIn: 3600}, nil
 }
 
+// newCRSDeprecatedExtraProviderRepo indexes nonnil input records by CRS ID and
+// retains their pointers. The largest existing provider ID initializes the
+// next-create counter, and operations in these fixtures are sequential.
 func newCRSDeprecatedExtraProviderRepo(existing ...*providercore.Record) *crsDeprecatedExtraProviderRepo {
 	repo := &crsDeprecatedExtraProviderRepo{providers: make(map[string]*providercore.Record)}
 	for _, provider := range existing {
@@ -270,6 +324,9 @@ func newCRSDeprecatedExtraProviderRepo(existing ...*providercore.Record) *crsDep
 	return repo
 }
 
+// Create assigns the next fixture ID and stores the supplied record pointer
+// under its CRS ID. The caller sees the assigned ID and shares that record with
+// later repository reads.
 func (r *crsDeprecatedExtraProviderRepo) Create(_ context.Context, provider *providercore.Record) error {
 	r.nextID++
 	provider.ID = r.nextID
@@ -278,20 +335,31 @@ func (r *crsDeprecatedExtraProviderRepo) Create(_ context.Context, provider *pro
 	return nil
 }
 
+// Update retains the supplied provider pointer under its CRS source ID. Reads
+// return that same record, and tests use this repository sequentially without
+// separate transaction or locking behavior.
 func (r *crsDeprecatedExtraProviderRepo) Update(_ context.Context, provider *providercore.Record) error {
 	crsID, _ := provider.Extra["crs_account_id"].(string)
 	r.providers[crsID] = provider
 	return nil
 }
 
+// GetByCRSAccountID returns the stored provider pointer for an exact source ID.
+// Missing IDs return nil without an error, and callers share mutable record
+// state with this sequential fixture.
 func (r *crsDeprecatedExtraProviderRepo) GetByCRSAccountID(_ context.Context, crsID string) (*providercore.Record, error) {
 	return r.providers[crsID], nil
 }
 
+// ListShadowsByParent returns no shadow providers for these CRS synchronization
+// fixtures.
 func (r *crsDeprecatedExtraProviderRepo) ListShadowsByParent(_ context.Context, _ int64) ([]*providercore.Record, error) {
 	return nil, nil
 }
 
+// runCRSOpenAIDeprecatedExtraSync serves the supplied source collection through
+// local CRS login and export routes. It registers server cleanup, runs
+// synchronization against repo, and fails the test on synchronization errors.
 func runCRSOpenAIDeprecatedExtraSync(t *testing.T, repo providercore.CRSProviderStore, source crsOpenAIDeprecatedExtraSource) *providercore.SyncFromCRSResult {
 	t.Helper()
 	provider := map[string]any{
@@ -328,7 +396,9 @@ func runCRSOpenAIDeprecatedExtraSync(t *testing.T, repo providercore.CRSProvider
 	return result
 }
 
-// UpdateConfiguration stores the update; fixture calls are sequential.
+// UpdateConfiguration delegates storage to the fixture's Update method and
+// ignores field-change intent. Calls are sequential and retain the supplied
+// record pointer, allowing assertions to inspect the imported Extra result.
 func (r *crsDeprecatedExtraProviderRepo) UpdateConfiguration(ctx context.Context, record *providercore.Record, _ providercore.ConfigurationChange) error {
 	return r.Update(ctx, record)
 }

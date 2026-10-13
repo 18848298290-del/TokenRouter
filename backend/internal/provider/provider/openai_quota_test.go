@@ -36,61 +36,110 @@ import (
 	openaiupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// GetByID returns stored records; UpdateExtra captures writes for assertions.
+// sparkShadowUsageTestRepo retains parent and shadow fixtures and captures
+// conditional usage patches.
 type sparkShadowUsageTestRepo struct {
-	providercore.OAuthUsageReader
-	providers     map[int64]*providercore.Record
+	providercore.OAuthUsageReader // unimplemented usage repository methods
+	// providers retains the initializer's parent and shadow pointers. GetByID
+	// returns those same records for synchronous reads and delayed version
+	// comparisons, so tests keep them stable during observation writes.
+	providers map[int64]*providercore.Record // shared parent and shadow records
+	// updateExtraCh optionally captures shallow quota patches. Nil skips capture,
+	// and tests buffer it for writes that can complete asynchronously.
 	updateExtraCh chan map[string]any
 }
 
+// quotaReadFixture supplies provider records to the production quota test
+// service.
 type quotaReadFixture interface {
+	// GetProvider loads the requested provider for quota preparation or returns a
+	// lookup error. The service resolves shadow ownership and authentication after
+	// this configured fixture read succeeds.
 	GetProvider(context.Context, int64) (*providercore.Record, error)
 }
 
-// quotaFixture binds production quota querying, recovery, and caching to the platform client factory.
+// quotaFixture retains production quota querying and its configurable platform
+// client factory.
 type quotaFixture struct {
-	*providercore.OpenAIQuotaService
-	factory *OpenAIQuotaFactory
+	*providercore.OpenAIQuotaService // embedded production quota service
+	// factory remains captured by the production Client callback. Install task
+	// callbacks before quota operations and keep that configuration stable while
+	// the retained factory constructs or executes clients.
+	factory *OpenAIQuotaFactory // retained configurable quota client factory
 }
 
-type agentIdentityWSInvalidationRecorder struct{ providerIDs []int64 }
+// agentIdentityWSInvalidationRecorder records provider IDs whose task recovery
+// invalidates WebSocket connections.
+type agentIdentityWSInvalidationRecorder struct {
+	providerIDs []int64 // captured connection invalidation provider identifiers
+}
 
-// stubQuotaProviderRepo stores multiple providers and records Extra updates for quota tests.
+// stubQuotaProviderRepo retains provider pointers and captures Extra patches
+// for sequential quota tests.
 type stubQuotaProviderRepo struct {
-	providers        map[int64]*providercore.Record
+	// providers retains caller record pointers by ID. Sequential tests replace
+	// their credential maps while quota preparation and task recovery read them.
+	providers map[int64]*providercore.Record
+	// extraUpdates retains accepted quota patches by provider ID. Their nested
+	// values remain shared with the caller for later assertions.
 	extraUpdates     map[int64]map[string]any
-	extraUpdateCalls int
-	extraUpdateErr   error
+	extraUpdateCalls int // accepted Extra patch write count
+	// extraUpdateErr returns before any patch capture or accepted-write count. Nil
+	// lets UpdateExtra retain the requested observation.
+	extraUpdateErr error
 }
 
+// quotaProviderGetter loads provider records for administrative quota
+// preparation fixtures.
 type quotaProviderGetter interface {
+	// GetByID returns the selected provider record or lookup error to the
+	// administrative wrapper. Fixture implementations document whether that
+	// returned record shares storage with test setup.
 	GetByID(context.Context, int64) (*providercore.Record, error)
 }
 
+// stubQuotaAdminService forwards provider reads to the configured quota
+// repository fixture.
 type stubQuotaAdminService struct {
-	repo quotaProviderGetter
+	repo quotaProviderGetter // configured quota record lookup fixture
 }
 
-// stubQuotaTokenCache returns configured tokens through the AccessTokenCache interface.
+// stubQuotaTokenCache supplies preconfigured access tokens and accepts other
+// cache operations as no-ops.
 type stubQuotaTokenCache struct {
-	tokens map[string]string
+	// tokens is shared with test setup and read directly by GetAccessToken.
+	// Configure it before quota operations; accepted cache writes do not update it.
+	tokens map[string]string // preconfigured access tokens by key
 }
 
+// stubQuotaHTTPUpstream captures account identity and serves quota fixtures or
+// local HTTP responses.
 type stubQuotaHTTPUpstream struct {
-	capturedProviderID string
-	responseBody       string
-	responses          map[string]stubQuotaHTTPResponse
-	redirectTarget     *url.URL
+	capturedProviderID string // latest captured ChatGPT account header
+	// responseBody is the fallback response text after path scripts miss. Empty
+	// text supplies an empty JSON object with HTTP 200.
+	responseBody string
+	// responses selects fixtures by exact request path when no redirect target is
+	// set. Missing paths retain the fallback response-body choice.
+	responses map[string]stubQuotaHTTPResponse
+	// redirectTarget sends cloned requests to a local scheme and host when nonnil.
+	// It wins over scripted responses and stays stable during calls.
+	redirectTarget *url.URL
 }
 
+// stubQuotaHTTPResponse supplies one quota endpoint's status and JSON response
+// text.
 type stubQuotaHTTPResponse struct {
+	// status supplies the scripted HTTP code. Zero becomes HTTP 200 when the
+	// transport creates this response body.
 	status int
-	body   string
+	body   string // scripted quota response JSON text
 }
 
-// TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows checks that parent credentials
-// authenticate the request while usage is saved on the shadow record and returned as five-hour
-// and seven-day windows in the same call.
+// TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows queries
+// Spark-specific quota using its parent's credentials. The returned short and
+// weekly windows must be nonempty, and the shadow's conditional Extra writer
+// must receive Spark utilization.
 func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -197,14 +246,20 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		"returned UsageInfo.SevenDay must be non-nil (rebuild from merged Extra must happen)")
 }
 
+// TestQueryUsageResetCreditCountPrecedence combines usage counts with explicit,
+// absent, invalid, and filtered detail responses. Authoritative detail counts
+// or lists must take their defined precedence while unusable detail shapes
+// retain available usage data.
 func TestQueryUsageResetCreditCountPrecedence(t *testing.T) {
 	tests := []struct {
-		name        string
-		usageBody   string
-		detailBody  string
-		wantCount   int
-		wantCredits int
-		wantNil     bool
+		name        string // credit detail precedence scenario label
+		usageBody   string // supplied usage response JSON
+		detailBody  string // supplied credit detail response JSON
+		wantCount   int    // expected available reset-credit count
+		wantCredits int    // expected displayed expiration detail count
+		// wantNil expects the merged credit result to be absent. True skips count and
+		// expiration-length checks after the nil assertion.
+		wantNil bool
 	}{
 		{
 			name:       "detail count creates missing usage credits",
@@ -342,6 +397,10 @@ func TestQueryUsageResetCreditCountPrecedence(t *testing.T) {
 	}
 }
 
+// TestOpenAIQuotaServiceQueryUsageUsesCodexHeaders queries usage and expiration
+// details through the desktop endpoint family. Both requests must carry paired
+// Codex, account, integrity, and OpenAI transport headers while parsed credit
+// details remain available.
 func TestOpenAIQuotaServiceQueryUsageUsesCodexHeaders(t *testing.T) {
 	provider := &providercore.Record{
 		ID:          42,
@@ -386,6 +445,10 @@ func TestOpenAIQuotaServiceQueryUsageUsesCodexHeaders(t *testing.T) {
 	}
 }
 
+// TestOpenAIQuotaServiceResetCreditUsesAutomaticSelectionAndRedeemRequestID
+// consumes a reset without choosing a credit ID. The request must omit that ID,
+// include a generated redemption identifier, and return the upstream reset
+// result.
 func TestOpenAIQuotaServiceResetCreditUsesAutomaticSelectionAndRedeemRequestID(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       9,
@@ -416,6 +479,9 @@ func TestOpenAIQuotaServiceResetCreditUsesAutomaticSelectionAndRedeemRequestID(t
 	require.Contains(t, payload["redeem_request_id"], "-")
 }
 
+// TestOpenAIQuotaServiceResetCreditReturnsUpstreamNoCreditResult serves a
+// successful no-credit response. The service must return its code and zero
+// reset count as a result rather than a transport error.
 func TestOpenAIQuotaServiceResetCreditReturnsUpstreamNoCreditResult(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       10,
@@ -439,6 +505,10 @@ func TestOpenAIQuotaServiceResetCreditReturnsUpstreamNoCreditResult(t *testing.T
 	require.Equal(t, "/backend-api/wham/rate-limit-reset-credits/consume", upstream.requests[0].URL.Path)
 }
 
+// TestOpenAIQuotaServiceCacheResetCreditsSnapshot compares complete expiration
+// details, positive counts without details, empty zero counts, and storage
+// failure. Snapshot acceptance and returned errors must preserve the defined
+// validity and persistence rules.
 func TestOpenAIQuotaServiceCacheResetCreditsSnapshot(t *testing.T) {
 	t.Run("保存带到期明细的快照", func(t *testing.T) {
 		repo := &stubQuotaProviderRepo{}
@@ -487,6 +557,10 @@ func TestOpenAIQuotaServiceCacheResetCreditsSnapshot(t *testing.T) {
 	})
 }
 
+// TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings configures direct and
+// invitation-specific client identity settings. Quota requests must use the
+// trimmed invitation agent and resolved invitation profile before provider
+// defaults.
 func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
 	quotaProfileID := int64(20)
 	provider := &providercore.Record{
@@ -531,6 +605,10 @@ func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
 	}
 }
 
+// TestOpenAIQuotaServiceRejectsUnsupportedProvider supplies an API-key record
+// to the OAuth quota service. Query must return a structured
+// unsupported-provider error while omitting the credential value from its
+// diagnostic.
 func TestOpenAIQuotaServiceRejectsUnsupportedProvider(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       7,
@@ -549,7 +627,9 @@ func TestOpenAIQuotaServiceRejectsUnsupportedProvider(t *testing.T) {
 	require.False(t, strings.Contains(err.Error(), "sk-test"))
 }
 
-// TestResetCreditShadowRejected checks the structured conflict before upstream preparation.
+// TestResetCreditShadowRejected supplies a Spark shadow with no usable
+// transport dependencies. The shadow guard must return the structured conflict
+// before upstream client preparation can run.
 func TestResetCreditShadowRejected(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -572,6 +652,10 @@ func TestResetCreditShadowRejected(t *testing.T) {
 		"shadow ResetCredit 应映射为 409 Conflict 而非 500")
 }
 
+// TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce rejects
+// the first assertion-authenticated reset with invalid_task_id. One
+// registration and one replay must use a new assertion, persist the new task,
+// and invalidate its provider's WebSocket connections.
 func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -631,7 +715,9 @@ func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *test
 	require.Equal(t, []int64{provider.ID}, invalidator.providerIDs)
 }
 
-// TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask reuses a task recovered by another request.
+// TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask replaces the
+// stored task before returning its first invalid-task response. Replay must use
+// that concurrently recovered task and perform no additional registration.
 func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -663,6 +749,9 @@ func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 		resetCalls++
 		assertions = append(assertions, r.Header.Get("authorization"))
 		if resetCalls == 1 {
+			// Replace the task through a fresh credential map before returning
+			// invalid_task_id. The recovering caller then must reuse that newer task
+			// instead of registering another.
 			credentials := querycache.ShallowMap(provider.Credentials)
 			credentials["task_id"] = "task-reset-concurrent"
 			provider.Credentials = credentials
@@ -685,10 +774,9 @@ func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 	require.Equal(t, "task-reset-concurrent", decodeAgentAssertionTask(t, assertions[1]))
 }
 
-// TestPrepareProviderShadowResolve checks that a shadow with no account credentials uses its parent's
-// identity.
-//
-// The cached parent token isolates credential resolution from token refresh.
+// TestPrepareProviderShadowResolve supplies a credentialless shadow and a
+// cached parent token. Quota preparation must return the parent's account
+// identity after shadow resolution without requiring a token exchange.
 func TestPrepareProviderShadowResolve(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
@@ -727,6 +815,10 @@ func TestPrepareProviderShadowResolve(t *testing.T) {
 		"prepareProvider should use parent's chatgpt_account_id after shadow resolve")
 }
 
+// TestQueryUsageAgentIdentityUsesAssertionWithoutOAuthToken supplies runtime
+// signing credentials and a FedRAMP account marker. Usage must authenticate
+// with an assertion and transmit account and FedRAMP headers while returning
+// parsed quota.
 func TestQueryUsageAgentIdentityUsesAssertionWithoutOAuthToken(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -767,6 +859,9 @@ func TestQueryUsageAgentIdentityUsesAssertionWithoutOAuthToken(t *testing.T) {
 	require.Equal(t, "true", fedrampHeader)
 }
 
+// TestQueryUsageAgentIdentityRecoversInvalidTaskOnce rejects the first usage
+// request for its stored task. One registration and one replay must persist the
+// replacement task and invalidate the provider's WebSocket connections.
 func TestQueryUsageAgentIdentityRecoversInvalidTaskOnce(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -821,6 +916,10 @@ func TestQueryUsageAgentIdentityRecoversInvalidTaskOnce(t *testing.T) {
 	require.Equal(t, []int64{provider.ID}, invalidator.providerIDs)
 }
 
+// TestQueryUsageIncludesResetCreditExpirations_EndToEnd combines usage count
+// with mixed expiration spellings in credit details. The result must expose
+// expiration dates while serialized quota data omits the upstream credit
+// identifier.
 func TestQueryUsageIncludesResetCreditExpirations_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	provider := &providercore.Record{
@@ -864,6 +963,9 @@ func TestQueryUsageIncludesResetCreditExpirations_EndToEnd(t *testing.T) {
 	require.NotContains(t, string(encoded), "secret-credit-id")
 }
 
+// TestQueryUsageResetCreditDetails401NonFatal returns a valid usage count and
+// an unauthorized detail endpoint. The overall query must succeed with that
+// count and empty credit details.
 func TestQueryUsageResetCreditDetails401NonFatal(t *testing.T) {
 	ctx := context.Background()
 	provider := &providercore.Record{
@@ -901,6 +1003,9 @@ func TestQueryUsageResetCreditDetails401NonFatal(t *testing.T) {
 	require.Empty(t, usage.RateLimitResetCredits.Credits)
 }
 
+// TestCachePostResetSnapshot supplies fresh zero-use short and weekly windows
+// with zero credits. One Extra write must contain both quota measurements and
+// the reset-credit snapshot.
 func TestCachePostResetSnapshot(t *testing.T) {
 	repo := &stubQuotaProviderRepo{}
 	svc := &providercore.OpenAIQuotaService{Options: providercore.OpenAIQuotaOptions{SaveExtra: repo.UpdateExtra}}
@@ -924,8 +1029,9 @@ func TestCachePostResetSnapshot(t *testing.T) {
 	require.Equal(t, 0.0, repo.extraUpdates[100]["codex_7d_used_percent"])
 }
 
-// TestResetCreditGetByIDError_FailsClosed returns lookup errors before upstream preparation.
-// Nil transport and token dependencies would expose an incorrect transition into preparation.
+// TestResetCreditGetByIDError_FailsClosed looks up an absent provider while
+// transport and token dependencies are missing. The lookup error must return
+// before client preparation produces a configuration failure.
 func TestResetCreditGetByIDError_FailsClosed(t *testing.T) {
 	repo := &stubQuotaProviderRepo{providers: map[int64]*providercore.Record{}}
 	svc := newQuotaForTest(stubQuotaAdminService{repo: repo}, nil, nil, nil, nil)
@@ -936,7 +1042,9 @@ func TestResetCreditGetByIDError_FailsClosed(t *testing.T) {
 		"error reached prepareProvider config-check — guard did not fail-closed; got: %v", err)
 }
 
-// TestQueryUsageShadowResolve_EndToEnd queries shadow usage with the parent account header.
+// TestQueryUsageShadowResolve_EndToEnd sends a shadow query with a cached
+// parent token. The transport must receive the parent's account header while
+// returning a nonnil quota result.
 func TestQueryUsageShadowResolve_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
@@ -969,6 +1077,9 @@ func TestQueryUsageShadowResolve_EndToEnd(t *testing.T) {
 		"upstream should receive parent's chatgpt-account-id; got: %s", upstream.capturedProviderID)
 }
 
+// GetByID returns the stored provider pointer under an exact fixture ID.
+// Missing IDs return a fixture error; callers share that record with the
+// sequential test setup.
 func (r *sparkShadowUsageTestRepo) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	if acc, ok := r.providers[id]; ok {
 		return acc, nil
@@ -976,16 +1087,24 @@ func (r *sparkShadowUsageTestRepo) GetByID(_ context.Context, id int64) (*provid
 	return nil, fmt.Errorf("provider %d not found", id)
 }
 
+// UpdateExtra sends a shallow quota-patch copy to the optional capture channel.
+// Nil channels skip capture, and tests buffer configured channels so snapshot
+// persistence can finish before assertions read them.
 func (r *sparkShadowUsageTestRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	if r.updateExtraCh != nil {
 		copied := make(map[string]any, len(updates))
 		maps.Copy(copied, updates)
+		// Publish a complete copied patch to the buffered assertion channel, allowing
+		// the asynchronous usage write to finish before the test consumes its
+		// observation.
 		r.updateExtraCh <- copied
 	}
 	return nil
 }
 
-// UpdateUsageExtraIfUnchanged checks the shadow row identity before capturing usage writes.
+// UpdateUsageExtraIfUnchanged compares the current shadow's complete usage
+// version before capturing a patch. Missing or mismatched rows return false,
+// while a match delegates to UpdateExtra under the observed ID.
 func (r *sparkShadowUsageTestRepo) UpdateUsageExtraIfUnchanged(ctx context.Context, version providercore.UsageObservationVersion, updates map[string]any) (bool, error) {
 	current := r.providers[version.ID]
 	if current == nil || !reflect.DeepEqual(providercore.ObserveUsageVersion(current), version) {
@@ -994,9 +1113,16 @@ func (r *sparkShadowUsageTestRepo) UpdateUsageExtraIfUnchanged(ctx context.Conte
 	return true, r.UpdateExtra(ctx, version.ID, updates)
 }
 
+// newQuotaForTest builds production quota querying with a retained client
+// factory and nonnil reader. Proxy-capable readers supply its proxy callback,
+// optional tokens supply bearer lookup, and missing transport makes the
+// configured readiness predicate false.
 func newQuotaForTest(reader quotaReadFixture, transport QoderTransport, token *providercore.OpenAITokenSource, profiles *egressprovider.TLSProfiles, routers OpenAITokenRouterReader) *quotaFixture {
 	factory := &OpenAIQuotaFactory{Transport: transport, Profiles: profiles, Routers: routers, Tasks: &providercore.OpenAITaskCoordinator{}}
 	if proxy, ok := reader.(interface {
+		// GetProxy loads the configured proxy relation used by the client factory.
+		// The quota fixture installs this optional method when the reader exposes it
+		// and propagates its lookup failures.
 		GetProxy(context.Context, int64) (*egress.Proxy, error)
 	}); ok {
 		factory.Proxy = proxy.GetProxy
@@ -1008,6 +1134,10 @@ func newQuotaForTest(reader quotaReadFixture, transport QoderTransport, token *p
 	return &quotaFixture{OpenAIQuotaService: providercore.NewOpenAIQuotaService(options), factory: factory}
 }
 
+// bindQuotaRepositoryForTest installs Extra persistence and task read,
+// registration, and credential-persistence callbacks on the fixture. Configure
+// it before operations; registration uses the supplied local root and
+// persistence delegates to production credential writing.
 func bindQuotaRepositoryForTest(value *quotaFixture, repo *stubQuotaProviderRepo, baseURL string) {
 	value.Options.SaveExtra = repo.UpdateExtra
 	value.factory.TaskOptions.Read = repo.GetByID
@@ -1020,30 +1150,43 @@ func bindQuotaRepositoryForTest(value *quotaFixture, repo *stubQuotaProviderRepo
 	}
 }
 
+// Update delegates the supplied record's credentials to the fixture's
+// credential writer.
 func (r *stubQuotaProviderRepo) Update(ctx context.Context, value *providercore.Record) error {
 	return r.UpdateCredentials(ctx, value.ID, value.Credentials)
 }
 
+// newOpenAITokenSourceForTest binds repository, token cache, fresh metrics, and
+// production refresh policy to a token source. The authorization parameter is
+// unused, and the supplied dependencies remain shared with the fixture.
 func newOpenAITokenSourceForTest(repo providercore.RefreshRepository, cache providercore.AccessTokenCache, _ *providercore.OpenAIAuthorization) *providercore.OpenAITokenSource {
 	return &providercore.OpenAITokenSource{Repository: repo, Cache: cache, Metrics: &providercore.OpenAITokenMetricsStore{}, Policy: providercore.OpenAIProviderRefreshPolicy(), Debug: slog.Debug, Warn: slog.Warn}
 }
 
+// decodeAgentAssertionTask decodes the assertion envelope and returns its task
+// ID for request comparisons. It fails the test on base64 or JSON errors and
+// performs no signature verification.
 func decodeAgentAssertionTask(t *testing.T, header string) string {
 	t.Helper()
 	encoded := strings.TrimPrefix(header, "AgentAssertion ")
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	require.NoError(t, err)
 	var envelope struct {
-		TaskID string `json:"task_id"`
+		TaskID string `json:"task_id"` // signed assertion task identifier
 	}
 	require.NoError(t, json.Unmarshal(decoded, &envelope))
 	return envelope.TaskID
 }
 
+// InvalidateAgentIdentityWSConnections appends the provider ID targeted by
+// task-recovery invalidation.
 func (r *agentIdentityWSInvalidationRecorder) InvalidateAgentIdentityWSConnections(id int64) {
 	r.providerIDs = append(r.providerIDs, id)
 }
 
+// GetByID returns the shared record pointer for an exact fixture ID or a
+// missing-provider error. The fixture retains caller-owned records, so
+// sequential tests observe their credential replacements directly.
 func (r *stubQuotaProviderRepo) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	acc, ok := r.providers[id]
 	if !ok {
@@ -1052,10 +1195,15 @@ func (r *stubQuotaProviderRepo) GetByID(_ context.Context, id int64) (*providerc
 	return acc, nil
 }
 
+// GetProvider delegates exact provider lookup to the fixture's configured
+// repository.
 func (s stubQuotaAdminService) GetProvider(ctx context.Context, id int64) (*providercore.Record, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
+// UpdateCredentials replaces a matching record's credentials with the supplied
+// map and returns a missing-provider error otherwise. The accepted map remains
+// shared with the caller, and fixture operations are sequential.
 func (r *stubQuotaProviderRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	acc, ok := r.providers[id]
 	if !ok {
@@ -1065,6 +1213,9 @@ func (r *stubQuotaProviderRepo) UpdateCredentials(_ context.Context, id int64, c
 	return nil
 }
 
+// UpdateExtra returns the configured storage error before capture when present.
+// Otherwise it counts the accepted write and retains the supplied patch under
+// the provider ID, sharing nested values with its caller.
 func (r *stubQuotaProviderRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	if r.extraUpdateErr != nil {
 		return r.extraUpdateErr
@@ -1077,6 +1228,9 @@ func (r *stubQuotaProviderRepo) UpdateExtra(_ context.Context, id int64, updates
 	return nil
 }
 
+// GetAccessToken returns the preconfigured token for an exact cache key or a
+// missing-token error. The fixture does not derive provider identity or perform
+// upstream refresh during this lookup.
 func (c *stubQuotaTokenCache) GetAccessToken(_ context.Context, key string) (string, error) {
 	if t, ok := c.tokens[key]; ok {
 		return t, nil
@@ -1084,24 +1238,46 @@ func (c *stubQuotaTokenCache) GetAccessToken(_ context.Context, key string) (str
 	return "", errors.New("token not found")
 }
 
+// SetAccessToken accepts token writes without changing the preconfigured
+// fixture map.
 func (c *stubQuotaTokenCache) SetAccessToken(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
 
+// DeleteAccessToken accepts invalidation without changing the preconfigured
+// token fixture map.
 func (c *stubQuotaTokenCache) DeleteAccessToken(_ context.Context, _ string) error { return nil }
 
+// AcquireRefreshLock reports successful fixture admission for every requested
+// cache key.
 func (c *stubQuotaTokenCache) AcquireRefreshLock(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
 
+// ReleaseRefreshLock accepts fixture release without retaining any lock state.
 func (c *stubQuotaTokenCache) ReleaseRefreshLock(_ context.Context, _ string) error { return nil }
 
+// Do delegates quota response selection to DoWithTLS with a nil profile.
 func (s *stubQuotaHTTPUpstream) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return s.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS captures the account header and selects a local-server,
+// path-specific, or fallback response. Returned bodies belong to their callers,
+// and this fixture is used sequentially.
+//
+// A redirectTarget changes the cloned URL's scheme and host, then clears its
+// explicit Host so local HTTP uses the destination host. Path, query, and
+// headers remain, and the body reader stays shared. Otherwise a matching scripted
+// path wins, with zero scripted status selecting HTTP 200; missing scripts use
+// responseBody or empty JSON. This keeps task registration and quota paths
+// distinct while allowing assertion recovery to run through actual HTTP
+// framing.
 func (s *stubQuotaHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	s.capturedProviderID = req.Header.Get("chatgpt-account-id")
+	// Clone the request and copy its URL before changing the destination, so the
+	// supplied URL and Host remain unchanged while the local sender uses the same
+	// body reader.
 	if s.redirectTarget != nil {
 		cloned := req.Clone(req.Context())
 		target := *req.URL
@@ -1135,7 +1311,9 @@ func (s *stubQuotaHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, 
 	}, nil
 }
 
-// newQuotaRedirectingUpstream sends requests to a local server while retaining their paths and headers.
+// newQuotaRedirectingUpstream configures local-server sending after parsing the
+// server URL. It fails the test on parse errors and retains the target for
+// later request cloning that keeps original paths and headers.
 func newQuotaRedirectingUpstream(t *testing.T, srv *httptest.Server) *stubQuotaHTTPUpstream {
 	t.Helper()
 	target, err := url.Parse(srv.URL)

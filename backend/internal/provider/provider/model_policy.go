@@ -6,7 +6,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// ModelDefaults supplies on-demand platform model candidates and Antigravity defaults.
+// Provider admission combines finite default candidates with platform
+// eligibility for the selected model. Antigravity defaults are read through a
+// callback, Qoder compatibility follows the credential site at check time, and
+// Grok endpoint checks can consult media-generation eligibility only when
+// needed.
+
+// ModelDefaults returns callbacks for finite provider candidates and
+// Antigravity mapping defaults. The Antigravity callback exposes the platform's
+// shared map; callers use it as read-only input to provider mapping resolution.
 func ModelDefaults() provider.ModelMappingDefaults {
 	return provider.ModelMappingDefaults{
 		Models:      DefaultProviderModels,
@@ -14,7 +22,10 @@ func ModelDefaults() provider.ModelMappingDefaults {
 	}
 }
 
-// ModelRules reads site credentials when evaluating Qoder compatibility.
+// ModelRules returns Qoder normalization, Qoder site admission, and OpenAI
+// OAuth eligibility callbacks. Qoder compatibility reads the captured record's
+// current credentials on each call; nil records and invalid sites reject that
+// model.
 func ModelRules(value *provider.Record) provider.ModelPlatformRules {
 	return provider.ModelPlatformRules{
 		NormalizeQoder:      qoder.NormalizeModelForWhitelist,
@@ -23,13 +34,17 @@ func ModelRules(value *provider.Record) provider.ModelPlatformRules {
 			if value == nil {
 				return false
 			}
+			// A site parse failure becomes failed model admission because no recognized
+			// Qoder route can establish compatibility for this credential configuration.
 			site, err := qoder.ParseSite(value.GetCredential("site"))
 			return err == nil && qoder.ModelCompatibleWithSite(site, model)
 		},
 	}
 }
 
-// SupportsOpenAIEndpoint supplies Grok media eligibility when the endpoint check needs it.
+// SupportsOpenAIEndpoint reports endpoint eligibility using provider rules and
+// optional Grok media admission. It delegates platform defaults to the record
+// and supplies the Grok tier check when that capability requires it.
 func SupportsOpenAIEndpoint(value *provider.Record, capability provider.OpenAIEndpointCapability) bool {
 	return value.SupportsOpenAIEndpointCapability(capability, func() (bool, string) {
 		return provider.GrokMediaGenerationEligibility(value, GrokTierRules())

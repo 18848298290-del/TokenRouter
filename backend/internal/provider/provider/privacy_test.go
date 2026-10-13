@@ -20,21 +20,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// privacyIdentityWriter models identity changes during a local HTTP privacy query.
+// privacyIdentityWriter models synchronized credential changes during a local
+// privacy query.
 type privacyIdentityWriter struct {
-	mu      sync.Mutex
-	current providercore.Record
+	// mu protects current during the HTTP fixture's credential replacement and
+	// conditional privacy update. The test acquires the same lock before
+	// inspecting the final stored mode.
+	mu      sync.Mutex          // fixture provider access lock
+	current providercore.Record // current privacy observation identity
 }
 
-type privacyProxyReader struct{ egress.ProxyRepository }
+// privacyProxyReader forces proxy lookup failure for privacy request
+// eligibility tests.
+type privacyProxyReader struct {
+	egress.ProxyRepository // unimplemented proxy repository methods
+}
 
+// privacyProviderWriter counts conditional privacy writes attempted by the
+// service under test.
 type privacyProviderWriter struct {
-	writes atomic.Int32
+	writes atomic.Int32 // attempted privacy write count
 }
 
-// TestEnsureOpenAIPrivacySkipsShadow verifies that shadow providers skip the privacy client factory.
-// Supply a nonempty access_token so the request reaches the shadow check instead of
-// returning early for missing credentials.
+// TestEnsureOpenAIPrivacySkipsShadow supplies a shadow with an access token so
+// eligibility reaches the shadow rule. The privacy client factory must remain
+// unused and Ensure must return an empty mode.
 func TestEnsureOpenAIPrivacySkipsShadow(t *testing.T) {
 	pid := int64(100)
 	shadow := &providercore.Record{
@@ -55,6 +65,9 @@ func TestEnsureOpenAIPrivacySkipsShadow(t *testing.T) {
 	require.False(t, privacyCalled, "privacyClientFactory 不应被影子提供商触发")
 }
 
+// TestAdminService_EnsureOpenAIPrivacy_RetriesNonSuccessModes starts with
+// failed or Cloudflare-blocked privacy state. Ensure must attempt the factory
+// once and return failed state when that factory reports an error.
 func TestAdminService_EnsureOpenAIPrivacy_RetriesNonSuccessModes(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +102,10 @@ func TestAdminService_EnsureOpenAIPrivacy_RetriesNonSuccessModes(t *testing.T) {
 	}
 }
 
+// TestTokenRefreshService_ensureOpenAIPrivacy_RetriesNonSuccessModes refreshes
+// failed or Cloudflare-blocked privacy state. Refresh must attempt the privacy
+// factory once rather than treating those stored modes as successful
+// completion.
 func TestTokenRefreshService_ensureOpenAIPrivacy_RetriesNonSuccessModes(t *testing.T) {
 	t.Parallel()
 
@@ -122,11 +139,16 @@ func TestTokenRefreshService_ensureOpenAIPrivacy_RetriesNonSuccessModes(t *testi
 	}
 }
 
+// TestPrivacyObservationDoesNotOverwriteNewIdentity replaces credentials during
+// the settings request while keeping a newer stored privacy mode. Conditional
+// persistence must reject the delayed observation and retain that newer mode.
 func TestPrivacyObservationDoesNotOverwriteNewIdentity(t *testing.T) {
 	initial := &providercore.Record{ID: 72, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive, Credentials: map[string]any{"access_token": "original"}, Extra: map[string]any{"privacy_mode": "old"}}
 	writer := &privacyIdentityWriter{current: *initial}
 	writer.current.Extra = map[string]any{"privacy_mode": "new-identity-mode"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Replace credentials while the settings response is being served, using the
+		// writer's lock so the later comparison sees the administrator identity.
 		writer.mu.Lock()
 		writer.current.Credentials = map[string]any{"access_token": "admin-new"}
 		writer.mu.Unlock()
@@ -141,8 +163,9 @@ func TestPrivacyObservationDoesNotOverwriteNewIdentity(t *testing.T) {
 	require.Equal(t, "new-identity-mode", writer.current.Extra["privacy_mode"])
 }
 
-// TestPrivacyProxyLookupFailureDoesNotConnectDirectly rejects direct requests and success writes after proxy
-// lookup fails.
+// TestPrivacyProxyLookupFailureDoesNotConnectDirectly exercises Ensure and
+// Force with a proxy reader that fails. Neither path may contact the platform
+// directly or publish a successful privacy write.
 func TestPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ensure", true: "force"}[force], func(t *testing.T) {
@@ -168,7 +191,9 @@ func TestPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	}
 }
 
-// TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly checks that background refresh honors required proxies.
+// TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly exercises
+// background refresh with a failing or absent required proxy reader. The
+// platform request and conditional privacy writer must both remain unused.
 func TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "lookup_failure", true: "missing_reader"}[missing], func(t *testing.T) {
@@ -194,8 +219,19 @@ func TestRefreshPrivacyProxyLookupFailureDoesNotConnectDirectly(t *testing.T) {
 	}
 }
 
-// UpdatePrivacyModeIfUnchanged models PostgreSQL identity checks and skips writes after a conflict.
+// UpdatePrivacyModeIfUnchanged compares the current provider identity and
+// writes its privacy mode under one mutex. A credential-version mismatch
+// returns false without changing Extra, while a match records the supplied
+// mode.
+//
+// The local server can replace credentials before the query returns, so
+// comparison and mutation stay in the same critical section as that
+// replacement. This fixture protects the stale-observation test from accepting
+// a response for credentials that no longer own the stored privacy state.
 func (w *privacyIdentityWriter) UpdatePrivacyModeIfUnchanged(_ context.Context, v providercore.UsageObservationVersion, mode string) (bool, error) {
+	// Keep identity comparison and Extra mutation under the same lock as the HTTP
+	// fixture replacement, preventing a successful write for a superseded
+	// credential version.
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if !providercore.MatchesCredentialVersion(&w.current, v.CredentialVersion) {
@@ -205,10 +241,14 @@ func (w *privacyIdentityWriter) UpdatePrivacyModeIfUnchanged(_ context.Context, 
 	return true, nil
 }
 
+// GetByID returns the fixture's forced error for every proxy lookup.
 func (privacyProxyReader) GetByID(context.Context, int64) (*egress.Proxy, error) {
 	return nil, errors.New("forced proxy lookup failure")
 }
 
+// UpdatePrivacyModeIfUnchanged counts an attempted privacy write and reports
+// success for any supplied version. Proxy eligibility tests expect this
+// unconditional fixture callback to remain unused when lookup fails.
 func (r *privacyProviderWriter) UpdatePrivacyModeIfUnchanged(context.Context, providercore.UsageObservationVersion, string) (bool, error) {
 	r.writes.Add(1)
 	return true, nil

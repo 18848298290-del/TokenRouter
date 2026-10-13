@@ -9,10 +9,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// RuntimeStatusOptions binds batch and settings readers; the provider core determines query order.
+// Administrative runtime status combines live load counters with local provider
+// usage and dynamic quota settings. Optional readers remain absent when their
+// services are absent, while a window-statistics result contributes
+// StandardCost through a newly allocated float value to the provider core's
+// display reader.
+
+// RuntimeStatusOptions connects runtime counters and settings to provider
+// status reads. Nil dependencies leave their callbacks unset; window usage
+// returns StandardCost with the original error, or nil when no statistics were
+// returned.
 func RuntimeStatusOptions(concurrency *scheduler.ConcurrencyService, usage interface {
+	// GetProviderWindowStats reads local provider usage since the supplied window
+	// start.
 	GetProviderWindowStats(context.Context, int64, time.Time) (*usage.ProviderStats, error)
 }, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings interface {
+	// GetOpenAIQuotaAutoPauseSettings reads the current thresholds for OpenAI
+	// quota display state.
 	GetOpenAIQuotaAutoPauseSettings(context.Context) providercore.QuotaAutoPauseSettings
 },
 ) providercore.RuntimeStatusOptions {

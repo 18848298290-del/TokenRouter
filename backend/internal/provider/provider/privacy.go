@@ -8,7 +8,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// PrivacyOptions binds upstream privacy calls; the provider service owns lifecycle and conditional writes.
+// Privacy queries use platform authorization clients while provider services
+// track cancellation and conditional persistence. Antigravity privacy is
+// available from its authorization options, and OpenAI privacy is installed
+// when a client factory is supplied; administration logs use the same provider
+// privacy options.
+
+// PrivacyOptions supplies platform privacy calls and administrative log
+// callbacks to the provider service. A nil factory leaves the OpenAI callback
+// unset; Antigravity remains configured, and the owning service handles
+// lifecycle and identity-checked writes.
 func PrivacyOptions(factory openai.PrivacyClientFactory, endpoints openai.PrivacyEndpoints) provider.PrivacyOptions {
 	antigravity := provider.AntigravityAuthorization{Options: AntigravityAuthorizationOptions(nil)}
 	options := provider.PrivacyOptions{

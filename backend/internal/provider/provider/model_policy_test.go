@@ -15,6 +15,10 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// TestProviderSupportsOpenAIEndpointCapability compares authentication
+// defaults, explicit capabilities, legacy route metadata, and unsupported
+// names. Endpoint eligibility must respect configured disablement while
+// applying the defined OAuth and API-key defaults.
 func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 	t.Run("OpenAI APIKey 默认兼容 chat、embeddings 和 alpha search", func(t *testing.T) {
 		provider := &acct.Record{
@@ -101,8 +105,8 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 
 	// Legacy OAuth records can contain empty capability containers; treat these as unconfigured.
 	for _, emptyCapabilities := range []struct {
-		name  string
-		value any
+		name  string // provider model policy scenario label
+		value any    // supplied capability container value
 	}{
 		{name: "map[string]any", value: map[string]any{}},
 		{name: "[]any", value: []any{}},
@@ -258,12 +262,14 @@ func TestProviderSupportsOpenAIEndpointCapability(t *testing.T) {
 	})
 }
 
-// TestGrokProviderModelMappingRemainsExplicit checks that built-in aliases are not added to saved mappings.
+// TestGrokProviderModelMappingRemainsExplicit reads missing, invalid, and
+// supplied Grok mappings. Resolution must return only usable saved rules,
+// leaving absent or invalid mappings empty and configured aliases intact.
 func TestGrokProviderModelMappingRemainsExplicit(t *testing.T) {
 	tests := []struct {
-		name        string
-		credentials map[string]any
-		want        map[string]string
+		name        string            // provider model policy scenario label
+		credentials map[string]any    // supplied provider credential configuration
+		want        map[string]string // expected saved mapping rules
 	}{
 		{name: "missing credentials"},
 		{name: "missing mapping", credentials: map[string]any{}},
@@ -292,6 +298,10 @@ func TestGrokProviderModelMappingRemainsExplicit(t *testing.T) {
 	}
 }
 
+// TestGrokWhitelistRunsBeforeBuiltinNormalization compares unrestricted,
+// explicit-whitelist, and mapped Grok records. Admission must check the
+// configured final name before platform normalization can turn an otherwise
+// rejected alias into another model.
 func TestGrokWhitelistRunsBeforeBuiltinNormalization(t *testing.T) {
 	unrestricted := &acct.Record{Platform: capability.PlatformGrok, Credentials: map[string]any{}}
 	require.True(t, unrestricted.IsModelSupported("custom-grok-model", ModelDefaults(), ModelRules(unrestricted)))
@@ -327,6 +337,10 @@ func TestGrokWhitelistRunsBeforeBuiltinNormalization(t *testing.T) {
 	require.True(t, legacy.IsModelSupported("grok", ModelDefaults(), ModelRules(legacy)))
 }
 
+// TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate compares
+// missing billing evidence with a partial billing observation. Only the
+// unobserved record must remain a media-probe candidate under endpoint
+// capability rules.
 func TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate(t *testing.T) {
 	unobserved := &acct.Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}
 	eligible, reason := acct.GrokMediaGenerationEligibility(unobserved, GrokTierRules())
@@ -345,14 +359,18 @@ func TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate(t *testing.
 	require.False(t, SupportsOpenAIEndpoint(inconclusive, acct.OpenAIEndpointCapabilityGrokMediaGeneration))
 }
 
+// TestMixedGroupProviderModelScope checks Anthropic and OpenAI records with
+// unknown and cross-platform names. Empty scope stays unrestricted, while
+// explicit final-model whitelists constrain mapped results and omit wildcard
+// patterns from enumeration.
 func TestMixedGroupProviderModelScope(t *testing.T) {
 	// Empty configuration accepts unknown models; a whitelist restricts the final mapped name.
 	claude := "claude-sonnet-4-6"
 	gpt := "gpt-5.4"
 	for _, tc := range []struct {
-		platform string
-		own      string
-		other    string
+		platform string // provider platform under test
+		own      string // platform-associated model example
+		other    string // other platform model example
 	}{
 		{acct.PlatformAnthropic, claude, gpt},
 		{acct.PlatformOpenAI, gpt, claude},
@@ -375,6 +393,10 @@ func TestMixedGroupProviderModelScope(t *testing.T) {
 	}
 }
 
+// TestGrokProviderModelMappingRemainsIndependentFromRuntimeSettings changes the
+// global Grok text default and reads an unrelated request model. Mapping
+// resolution must retain that request spelling regardless of the runtime
+// default.
 func TestGrokProviderModelMappingRemainsIndependentFromRuntimeSettings(t *testing.T) {
 	original := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(original) })
@@ -387,13 +409,17 @@ func TestGrokProviderModelMappingRemainsIndependentFromRuntimeSettings(t *testin
 	requireMappedModel(t, provider, "claude-sonnet-4-5", "claude-sonnet-4-5")
 }
 
+// TestProviderIsModelSupported combines absent scope, aliases, terminal
+// wildcards, explicit final whitelists, and Qoder routes. Admission must apply
+// one mapping before scope and platform checks while allowing unmatched
+// requests in unrestricted records.
 func TestProviderIsModelSupported(t *testing.T) {
 	tests := []struct {
-		name           string
-		platform       string
-		credentials    map[string]any
-		requestedModel string
-		expected       bool
+		name           string         // provider model policy scenario label
+		platform       string         // provider platform under test
+		credentials    map[string]any // supplied provider credential configuration
+		requestedModel string         // request model under evaluation
+		expected       bool           // expected model admission result
 	}{
 		// An empty whitelist accepts specific models absent from the catalogue.
 		{
@@ -655,12 +681,18 @@ func TestProviderIsModelSupported(t *testing.T) {
 	}
 }
 
+// TestProviderGetConfiguredRequestModels enumerates aliases, targets, whitelist
+// names, and finite Qoder defaults. The result must contain permitted concrete
+// candidates and keep advertised defaults consistent with provider admission.
 func TestProviderGetConfiguredRequestModels(t *testing.T) {
 	tests := []struct {
-		name            string
-		platform        string
-		credentials     map[string]any
-		expected        []string
+		name        string         // provider model policy scenario label
+		platform    string         // provider platform under test
+		credentials map[string]any // supplied provider credential configuration
+		expected    []string       // expected concrete candidate names
+		// includeDefaults adds platform candidates to membership assertions. These
+		// cases also check that every returned model passes the provider's admission
+		// rules.
 		includeDefaults bool
 	}{
 		{
@@ -733,13 +765,16 @@ func TestProviderGetConfiguredRequestModels(t *testing.T) {
 	}
 }
 
+// TestProviderGetMappedModel compares exact, wildcard, and unmatched rules,
+// including Gemini suffix spellings. Resolution must return the expected
+// configured target or untouched request name under the current mapping rules.
 func TestProviderGetMappedModel(t *testing.T) {
 	tests := []struct {
-		name           string
-		platform       string
-		credentials    map[string]any
-		requestedModel string
-		expected       string
+		name           string         // provider model policy scenario label
+		platform       string         // provider platform under test
+		credentials    map[string]any // supplied provider credential configuration
+		requestedModel string         // request model under evaluation
+		expected       string         // expected final model target
 	}{
 		{
 			name:           "no mapping returns original",
@@ -827,8 +862,10 @@ func TestProviderGetMappedModel(t *testing.T) {
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases returns administrator-saved
-// mappings unchanged.
+// TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases reads
+// saved Antigravity Gemini aliases and targets. The returned mapping must
+// retain every saved value and contain exactly the configured number of
+// entries.
 func TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "gemini-pro-agent", "gemini-3.1-pro-high": "gemini-3.1-pro-high", "gemini-3.1-pro-preview": "gemini-3.1-pro-high"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -843,7 +880,9 @@ func TestProviderGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *test
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides retains configured target values.
+// TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides supplies
+// custom targets for known Antigravity aliases. Mapping reads must retain those
+// targets and avoid adding extra entries to the supplied set.
 func TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *testing.T) {
 	raw := map[string]any{"gemini-pro-agent": "custom-model", "gemini-3.1-pro-high": "another-model"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -858,6 +897,10 @@ func TestProviderGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *tes
 	}
 }
 
+// TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard
+// supplies an identity rule together with a Gemini wildcard. Exact default
+// aliases must remain absent so the configured wildcard retains its selection
+// role.
 func TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard(t *testing.T) {
 	t.Parallel()
 
@@ -884,14 +927,17 @@ func TestProviderGetModelMapping_AntigravityGemini31ProAliasesRespectWildcard(t 
 	}
 }
 
+// TestProviderResolveMappedModel checks absent rules, identity targets,
+// wildcard targets, and Gemini spellings. The target and matched flag must
+// distinguish a successful identity rule from an unmatched request.
 func TestProviderResolveMappedModel(t *testing.T) {
 	tests := []struct {
-		name           string
-		platform       string
-		credentials    map[string]any
-		requestedModel string
-		expectedModel  string
-		expectedMatch  bool
+		name           string         // provider model policy scenario label
+		platform       string         // provider platform under test
+		credentials    map[string]any // supplied provider credential configuration
+		requestedModel string         // request model under evaluation
+		expectedModel  string         // expected final mapping target
+		expectedMatch  bool           // expected mapping rule match
 	}{
 		{
 			name:           "no mapping reports unmatched",
@@ -974,8 +1020,9 @@ func TestProviderResolveMappedModel(t *testing.T) {
 	}
 }
 
-// TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs returns the configured set
-// without adding entries.
+// TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs reads
+// one saved Antigravity mapping. Resolution must retain that configured set
+// exactly rather than inserting implicit model passthrough entries.
 func TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *testing.T) {
 	raw := map[string]any{"gemini-3-pro-high": "gemini-3.1-pro-high"}
 	provider := &acct.Record{Platform: capability.PlatformAntigravity, Credentials: map[string]any{"model_mapping": raw}}
@@ -990,7 +1037,9 @@ func TestProviderGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *
 	}
 }
 
-// TestGoogleOneEmptyWhitelistAllowsUnknownModel applies the shared whitelist rules to Google One.
+// TestGoogleOneEmptyWhitelistAllowsUnknownModel supplies Google One
+// authentication without model configuration. Mapping must remain empty while
+// admission accepts an unknown model through the unrestricted scope.
 func TestGoogleOneEmptyWhitelistAllowsUnknownModel(t *testing.T) {
 	value := &acct.Record{Platform: capability.PlatformGemini, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"oauth_type": "google_one"}}
 	if len(acct.ResolveModelMapping(value, ModelDefaults())) != 0 {
@@ -1001,6 +1050,9 @@ func TestGoogleOneEmptyWhitelistAllowsUnknownModel(t *testing.T) {
 	}
 }
 
+// TestProviderGetModelMapping_GoogleOnePreservesExplicitMapping supplies one
+// custom Google One alias. Resolution must retain its target and avoid
+// introducing a target identity entry from platform defaults.
 func TestProviderGetModelMapping_GoogleOnePreservesExplicitMapping(t *testing.T) {
 	provider := &acct.Record{
 		Platform: capability.PlatformGemini,
@@ -1022,6 +1074,9 @@ func TestProviderGetModelMapping_GoogleOnePreservesExplicitMapping(t *testing.T)
 	}
 }
 
+// TestProviderGetModelMapping_AntigravityRespectsWildcardOverride supplies one
+// Gemini wildcard target. Default exact aliases must remain absent, and a
+// matching concrete request must resolve through the supplied wildcard.
 func TestProviderGetModelMapping_AntigravityRespectsWildcardOverride(t *testing.T) {
 	provider := &acct.Record{
 		Platform: capability.PlatformAntigravity,
@@ -1047,6 +1102,9 @@ func TestProviderGetModelMapping_AntigravityRespectsWildcardOverride(t *testing.
 	}
 }
 
+// TestProviderGetModelMapping_CacheInvalidatesOnCredentialsReplace reads a
+// mapping and then replaces the credential object. The next read must reflect
+// the replacement target rather than the earlier result.
 func TestProviderGetModelMapping_CacheInvalidatesOnCredentialsReplace(t *testing.T) {
 	provider := &acct.Record{
 		Credentials: map[string]any{
@@ -1072,6 +1130,9 @@ func TestProviderGetModelMapping_CacheInvalidatesOnCredentialsReplace(t *testing
 	}
 }
 
+// TestProviderGetModelMapping_CacheInvalidatesOnMappingLenChange reads a
+// single-rule mapping and then inserts another rule. A subsequent resolution
+// must include the newly stored target after that in-place edit.
 func TestProviderGetModelMapping_CacheInvalidatesOnMappingLenChange(t *testing.T) {
 	rawMapping := map[string]any{
 		"claude-sonnet": "sonnet-a",
@@ -1094,6 +1155,9 @@ func TestProviderGetModelMapping_CacheInvalidatesOnMappingLenChange(t *testing.T
 	}
 }
 
+// TestProviderGetModelMapping_CacheInvalidatesOnInPlaceValueChange replaces an
+// existing target without changing map size. A subsequent read must observe the
+// edited value rather than relying on map length alone.
 func TestProviderGetModelMapping_CacheInvalidatesOnInPlaceValueChange(t *testing.T) {
 	rawMapping := map[string]any{
 		"claude-sonnet": "sonnet-a",
@@ -1116,7 +1180,9 @@ func TestProviderGetModelMapping_CacheInvalidatesOnInPlaceValueChange(t *testing
 	}
 }
 
-// TestModelMappingResultIsolation checks that caller mutations cannot affect later mapping reads.
+// TestModelMappingResultIsolation mutates a mapping result returned to the
+// caller. A later resolution must still return the saved target from the
+// provider's independent configuration.
 func TestModelMappingResultIsolation(t *testing.T) {
 	provider := &acct.Record{Platform: capability.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "target"}}}
 	first := acct.ResolveModelMapping(provider, ModelDefaults())
@@ -1124,11 +1190,16 @@ func TestModelMappingResultIsolation(t *testing.T) {
 	require.Equal(t, "target", acct.ResolveModelMapping(provider, ModelDefaults())["alias"])
 }
 
-// TestModelMappingConcurrentReads checks concurrent reads of shared provider configuration.
+// TestModelMappingConcurrentReads releases several readers against one stable
+// provider mapping. Every resolution must return the configured target while
+// the shared credential map remains read-only.
 func TestModelMappingConcurrentReads(t *testing.T) {
 	provider := &acct.Record{Platform: capability.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "target"}}}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
+	// Release mapping readers together and wait for them all, exercising shared
+	// immutable configuration while each resolution returns a request-private
+	// mapping result.
 	for range 16 {
 		wg.Go(func() {
 			<-start
@@ -1143,6 +1214,10 @@ func TestModelMappingConcurrentReads(t *testing.T) {
 	wg.Wait()
 }
 
+// TestIsModelSupported_OpenAIOAuthEmptyMappingAllowsUnknownModels checks
+// recognized and unknown names on an unrestricted OAuth record. Both sets must
+// remain eligible when no foreign-family exclusion or explicit whitelist
+// applies.
 func TestIsModelSupported_OpenAIOAuthEmptyMappingAllowsUnknownModels(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 	for _, model := range []string{"gpt-5.4", "gpt-5.6-terra", "gpt-5.6-sol"} {
@@ -1153,6 +1228,9 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingAllowsUnknownModels(t *testing.
 	}
 }
 
+// TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels supplies
+// known foreign model families and vendor-qualified forms. OAuth admission must
+// reject them even when the provider has no mapping or explicit whitelist.
 func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 
@@ -1178,6 +1256,10 @@ func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testin
 	}
 }
 
+// TestIsModelSupported_OpenAIOAuthMappingKeepsForkSemantics maps
+// foreign-looking aliases to an eligible OpenAI target. Admission must accept
+// mapped aliases and continue rejecting an unmapped foreign model, including
+// under an explicit target whitelist.
 func TestIsModelSupported_OpenAIOAuthMappingKeepsForkSemantics(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 	provider.Credentials = map[string]any{
@@ -1194,6 +1276,9 @@ func TestIsModelSupported_OpenAIOAuthMappingKeepsForkSemantics(t *testing.T) {
 	require.False(t, provider.IsModelSupported("glm-4.7", ModelDefaults(), ModelRules(provider)))
 }
 
+// TestIsModelSupported_OpenAIOAuthEmptyMappingRespectsWhitelist includes both
+// an eligible OpenAI model and a foreign model in scope. Membership must still
+// respect OAuth model eligibility and reject names outside the whitelist.
 func TestIsModelSupported_OpenAIOAuthEmptyMappingRespectsWhitelist(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 	provider.Credentials = map[string]any{"model_whitelist": []any{"gpt-5.4", "deepseek-v4"}}
@@ -1204,6 +1289,10 @@ func TestIsModelSupported_OpenAIOAuthEmptyMappingRespectsWhitelist(t *testing.T)
 	require.False(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
 }
 
+// TestIsModelSupported_OpenAIOAuthPassthroughKeepsModelScope enables
+// passthrough and then a global wildcard on an OAuth record. A known
+// foreign-family model must remain rejected by authentication-specific
+// admission.
 func TestIsModelSupported_OpenAIOAuthPassthroughKeepsModelScope(t *testing.T) {
 	provider := newOpenAIOAuthProviderForModelTest()
 	provider.Extra = map[string]any{"openai_passthrough": true}
@@ -1212,6 +1301,10 @@ func TestIsModelSupported_OpenAIOAuthPassthroughKeepsModelScope(t *testing.T) {
 	require.False(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
 }
 
+// TestIsModelSupported_OpenAIAPIKeyAllowsUnknownModels checks OpenAI and
+// foreign-looking names on an unrestricted API-key record. Both must be
+// admitted initially, and the explicit global wildcard must continue admitting
+// the foreign-looking name.
 func TestIsModelSupported_OpenAIAPIKeyAllowsUnknownModels(t *testing.T) {
 	provider := &acct.Record{ID: 2, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	require.True(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
@@ -1220,18 +1313,25 @@ func TestIsModelSupported_OpenAIAPIKeyAllowsUnknownModels(t *testing.T) {
 	require.True(t, provider.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(provider)))
 }
 
+// TestIsModelSupported_AnthropicEmptyWhitelistAllowsForeignModel checks a
+// Claude model and a DeepSeek model on an unrestricted Anthropic OAuth record.
+// Admission must accept both names when no whitelist is configured.
 func TestIsModelSupported_AnthropicEmptyWhitelistAllowsForeignModel(t *testing.T) {
 	anthropic := &acct.Record{ID: 3, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeOAuth}
 	require.True(t, anthropic.IsModelSupported("claude-sonnet-4-6", ModelDefaults(), ModelRules(anthropic)))
 	require.True(t, anthropic.IsModelSupported("deepseek-v4", ModelDefaults(), ModelRules(anthropic)))
 }
 
+// TestProviderIsModelSupported_QoderMappingWhitelistSemantics compares
+// mapping-only, empty, explicit, and identity mapping cases. Qoder admission
+// must keep mappings separate from final scope restrictions while applying
+// configured target membership.
 func TestProviderIsModelSupported_QoderMappingWhitelistSemantics(t *testing.T) {
 	tests := []struct {
-		name           string
-		credentials    map[string]any
-		requestedModel string
-		expected       bool
+		name           string         // provider model policy scenario label
+		credentials    map[string]any // supplied provider credential configuration
+		requestedModel string         // request model under evaluation
+		expected       bool           // expected model admission result
 	}{
 		{
 			name: "mapping only does not restrict unmatched request model",
@@ -1308,6 +1408,10 @@ func TestProviderIsModelSupported_QoderMappingWhitelistSemantics(t *testing.T) {
 	}
 }
 
+// TestProviderGetConfiguredRequestModels_QoderMappingWhitelistSemantics
+// enumerates mapping-only, mapping-with-whitelist, and whitelist-only records.
+// Candidate names must include permitted aliases and targets while finite
+// defaults follow the effective scope.
 func TestProviderGetConfiguredRequestModels_QoderMappingWhitelistSemantics(t *testing.T) {
 	mappingOnly := &acct.Record{
 		Platform: capability.PlatformQoder,
@@ -1342,6 +1446,9 @@ func TestProviderGetConfiguredRequestModels_QoderMappingWhitelistSemantics(t *te
 	require.Equal(t, []string{"claude-opus-4-6", "glm-5.2"}, whitelistOnly.GetConfiguredRequestModels(ModelDefaults()))
 }
 
+// TestProviderIsModelSupported_QoderSiteCompatibility compares global and CN
+// eligibility under a wildcard scope. Site restrictions must survive explicit
+// aliases, while mapping into a supported site route can admit that alias.
 func TestProviderIsModelSupported_QoderSiteCompatibility(t *testing.T) {
 	global := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "global", "model_whitelist": []string{"*"}}}
 	cn := &acct.Record{Platform: capability.PlatformQoder, Credentials: map[string]any{"site": "cn", "model_whitelist": []string{"*"}}}
@@ -1362,7 +1469,9 @@ func TestProviderIsModelSupported_QoderSiteCompatibility(t *testing.T) {
 	require.True(t, cn.IsModelSupported("claude-opus-4-6", ModelDefaults(), ModelRules(cn)), "别名可以映射到该站点支持的模型")
 }
 
-// TestUnrestrictedModels accepts unknown names and checks the whitelist after mapping.
+// TestUnrestrictedModels checks unknown models across all ordinary platforms
+// with absent and empty whitelists. Explicit final wildcards must then
+// constrain mapped names and change the unrestricted-scope result.
 func TestUnrestrictedModels(t *testing.T) {
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "qoder", "grok", "kimi", "zhipu", "deepseek"} {
 		t.Run(platform, func(t *testing.T) {
@@ -1383,7 +1492,9 @@ func TestUnrestrictedModels(t *testing.T) {
 	}
 }
 
-// TestSparkModelScope checks model restrictions for the independent Spark quota.
+// TestSparkModelScope supplies an OpenAI OAuth shadow with independent Spark
+// scope. It must reject unknown models and report restricted scope while
+// admitting the finite native Spark model.
 func TestSparkModelScope(t *testing.T) {
 	parent := int64(1)
 	value := &acct.Record{Platform: "openai", Type: "oauth", ParentProviderID: &parent}
@@ -1392,6 +1503,8 @@ func TestSparkModelScope(t *testing.T) {
 	require.True(t, value.IsModelSupported("gpt-5.3-codex-spark", ModelDefaults(), ModelRules(value)))
 }
 
+// requireMappedModel fails the test when one provider mapping differs from the
+// expected target.
 func requireMappedModel(t *testing.T, provider *acct.Record, requested, expected string) {
 	t.Helper()
 	if actual, _ := acct.ResolveMappedModel(acct.ResolveModelMapping(provider, ModelDefaults()), requested); actual != expected {
@@ -1399,6 +1512,8 @@ func requireMappedModel(t *testing.T, provider *acct.Record, requested, expected
 	}
 }
 
+// newOpenAIOAuthProviderForModelTest creates a fresh OpenAI OAuth record for
+// admission assertions.
 func newOpenAIOAuthProviderForModelTest() *acct.Record {
 	return &acct.Record{
 		ID:       1,

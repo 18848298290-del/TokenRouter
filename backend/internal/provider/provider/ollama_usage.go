@@ -9,7 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// OllamaUsageFetcher binds cookies and request parameters to the shared transport and disables redirects.
+// Ollama Cloud usage comes from a fixed browser settings fetch with managed
+// cookies. The adapter forwards the captured proxy, provider ID, and
+// concurrency to the shared sender, while the upstream fetcher receives a
+// context that blocks redirects and a stable unavailable error.
+
+// OllamaUsageFetcher returns a cookie-based usage fetch callback backed by the
+// supplied sender. A nil sender returns the unavailable error; requests pass
+// captured transport parameters and disable redirects through the upstream
+// fetch options.
 func OllamaUsageFetcher(do func(*http.Request, string, int64, int) (*http.Response, error)) func(context.Context, provider.OllamaUsageFetchInput) (*provider.OllamaUsageObservation, error) {
 	return func(ctx context.Context, input provider.OllamaUsageFetchInput) (*provider.OllamaUsageObservation, error) {
 		if do == nil {

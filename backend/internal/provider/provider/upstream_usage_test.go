@@ -20,20 +20,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
-// usageTrackedBody records closure of local TLS responses by usage adapters.
+// usageTrackedBody counts response-body close attempts made by native usage
+// adapters.
 type usageTrackedBody struct {
-	io.ReadCloser
-	closed *atomic.Int64
+	io.ReadCloser               // wrapped HTTP response body
+	closed        *atomic.Int64 // shared body-close attempt counter
 }
 
-// TestNativeUsageAdaptersLocalTLS checks seven adapters' endpoints, authentication precedence, and normalized usage.
+// TestNativeUsageAdaptersLocalTLS queries seven native adapters through local
+// TLS endpoints with competing authorization overrides. Requests must select
+// fixed paths and real credentials, close every response body, and return
+// normalized secret-free results.
 func TestNativeUsageAdaptersLocalTLS(t *testing.T) {
 	tests := []struct {
-		name                string
-		adapter             usagecontract.Adapter
-		base                string
+		name    string                // adapter scenario label
+		adapter usagecontract.Adapter // native usage query implementation
+		base    string                // supplied usage root suffix
+		// paths, bodies, and auth are ordered together by request index. The local
+		// server checks each path and authorization value before returning its
+		// corresponding body.
+		// paths: expected request paths; bodies: supplied response JSON; auth: expected Authorization values.
 		paths, bodies, auth []string
-		mode                string
+		mode                string // expected normalized usage mode
 	}{
 		{"kimi coding", &kimi.KimiCodingUsageAdapter{}, "/coding/v1", []string{"/coding/v1/usages"}, []string{`{"limits":[{"detail":{"limit":100,"remaining":25}}],"usage":{"limit":1000,"remaining":800}}`}, []string{"Bearer key-secret"}, "limits"},
 		{"kimi balance", &kimi.KimiBalanceUsageAdapter{}, "/v1", []string{"/v1/users/me/balance"}, []string{`{"code":0,"data":{"available_balance":"6.25"}}`}, []string{"Bearer key-secret"}, "balance"},
@@ -63,6 +71,9 @@ func TestNativeUsageAdaptersLocalTLS(t *testing.T) {
 			input := &usagecontract.Request{BaseURL: server.URL + tt.base, APIKey: "key-secret", Context: func(ctx context.Context) context.Context { return ctx }, Endpoint: httpclient.BuildOpenAIEndpointURL, ApplyHeaders: func(h http.Header) { h.Set("Authorization", "wrong-secret"); h.Set("X-Custom", "query") }, Do: func(r *http.Request) (*http.Response, error) {
 				resp, err := server.Client().Do(r)
 				if resp != nil {
+					// Wrap each received body with the shared close counter before the adapter
+					// sees it, so request-count equality detects a leaked intermediate
+					// response.
 					resp.Body = &usageTrackedBody{resp.Body, &closed}
 				}
 				return resp, err
@@ -87,4 +98,7 @@ func TestNativeUsageAdaptersLocalTLS(t *testing.T) {
 	}
 }
 
+// Close counts a body-close attempt before delegating to the wrapped response
+// body. The counter is shared with test assertions, and a delegated close error
+// leaves that attempt counted.
 func (b *usageTrackedBody) Close() error { b.closed.Add(1); return b.ReadCloser.Close() }

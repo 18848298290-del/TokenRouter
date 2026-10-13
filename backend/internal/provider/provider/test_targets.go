@@ -6,19 +6,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestTargets reads a provider and selects its platform's test executor.
+// Provider test handles use the stored platform to choose execution after
+// loading the requested provider ID. Jev, Qoder, Gemini, Grok, OpenAI, CN, and
+// Antigravity have explicit routes; remaining platforms enter the Anthropic
+// executor, which validates supported provider types during execution.
+
+// TestTargets loads provider records and binds platform executors for prepared
+// probes.
 type TestTargets struct {
-	Jev         *JevProviderTest
+	Jev *JevProviderTest // Jev SystemOne probe executor
+	// Read is required for target loading. A successful callback returns a nonnil
+	// provider whose platform selects the executor.
 	Read        func(context.Context, int64) (*provider.Record, error)
-	Qoder       *QoderProviderTest
-	Gemini      *GeminiProviderTest
-	Grok        *GrokProviderTest
-	Anthropic   *AnthropicProviderTest
-	OpenAI      *OpenAIProviderTest
-	CN          *CNProviderTest
-	Antigravity *AntigravityProviderTest
+	Qoder       *QoderProviderTest       // Qoder session probe executor
+	Gemini      *GeminiProviderTest      // Gemini platform probe executor
+	Grok        *GrokProviderTest        // Grok platform probe executor
+	Anthropic   *AnthropicProviderTest   // default Anthropic probe executor
+	OpenAI      *OpenAIProviderTest      // OpenAI platform probe executor
+	CN          *CNProviderTest          // CN native-protocol probe executor
+	Antigravity *AntigravityProviderTest // Antigravity platform probe executor
 }
 
+// LoadTestTarget reads the requested provider and returns its platform-bound
+// test handle. Read errors propagate; successful reads supply a nonnil record,
+// and callers configure the executor selected by that platform, including the
+// Anthropic default.
 func (t *TestTargets) LoadTestTarget(ctx context.Context, request provider.TestRequest) (provider.TestTarget, error) {
 	value, err := t.Read(ctx, request.ProviderID)
 	if err != nil {

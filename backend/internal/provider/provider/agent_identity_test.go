@@ -23,6 +23,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses serves
+// both task response encodings through the same runtime registration endpoint.
+// Each call must recover the task ID and send a timestamp and signature.
 func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	requestCount := 0
@@ -35,6 +38,9 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 		require.NotEmpty(t, request["signature"])
 		requestCount++
 		if requestCount == 2 {
+			// Match the platform's Ed25519-to-X25519 conversion before sealing the
+			// second response, so registration must decrypt a task encrypted for the
+			// imported signing key.
 			digest := sha512.Sum512(key.PrivateKey.Seed())
 			var curvePrivate [32]byte
 			copy(curvePrivate[:], digest[:32])
@@ -67,6 +73,9 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 	require.Equal(t, "task-encrypted", taskID)
 }
 
+// newTestAgentIdentityKey generates an Ed25519 runtime key and its base64 PKCS8
+// credential. It fails the test on generation or encoding errors and returns
+// the same private key in both representations.
 func newTestAgentIdentityKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)

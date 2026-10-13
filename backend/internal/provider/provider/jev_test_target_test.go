@@ -14,16 +14,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// jevProbeTransport captures native decision requests and supplies scripted or
+// default SystemOne responses.
 type jevProbeTransport struct {
-	httpclient.UpstreamTransport
-	request  *http.Request
-	body     []byte
+	httpclient.UpstreamTransport // unimplemented upstream transport methods
+	// request retains the transport's input pointer after execution. Sequential
+	// assertions inspect that same prepared request, while body stores freshly
+	// read bytes.
+	request *http.Request // captured SystemOne request pointer
+	body    []byte        // captured decision request bytes
+	// response optionally supplies native JSON. An empty value selects the minimal
+	// Noul response used by the basic probe cases.
 	response string
 }
-type jevProbeEvents struct{ events []provider.TestEvent }
 
+// jevProbeEvents retains typed probe events for sequential decision-response
+// assertions.
+type jevProbeEvents struct {
+	// events stores emitted values in order for sequential assertions. Mutable
+	// Data carried by each event remains shared with the emission caller.
+	events []provider.TestEvent // emitted native probe events
+}
+
+// Do captures the request and available body bytes, then returns scripted JSON
+// or the default Noul response. Read errors are discarded in this fixture, and
+// callers close the returned response body.
 func (t *jevProbeTransport) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	t.request = req
+	// Capture the available body for payload assertions and ignore read failures
+	// in this in-memory request fixture; native validation has already run before
+	// transport.
 	t.body, _ = io.ReadAll(req.Body)
 	body := t.response
 	if body == "" {
@@ -32,8 +52,9 @@ func (t *jevProbeTransport) Do(req *http.Request, _ string, _ int64, _ int) (*ht
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
-// TestJevDecisionTestForwardsQuestions checks mixed question types, structured state, extension
-// fields, and provider model mapping.
+// TestJevDecisionTestForwardsQuestions submits mixed questions with state and
+// an extension field through a mapped provider. Native execution must keep
+// those fields and report upstream response model and usage validity.
 func TestJevDecisionTestForwardsQuestions(t *testing.T) {
 	transport := &jevProbeTransport{response: `{"model":"jev-1.13.0","answers":{"ready":{"type":"noul","noul":0.9},"route":{"type":"choice","choice":"fast","confidence":0.8,"probabilities":{"fast":0.8,"slow":0.2}},"quality":{"type":"score","score":1,"confidence":0.9,"probabilities":{"0":0.1,"1":0.9},"legend":"low to high"}},"usage":{"input_tokens":23,"output_tokens":0}}`}
 	component := &JevProviderTest{Transport: transport, ValidateURL: func(url string) (string, error) { return url, nil }}
@@ -58,7 +79,9 @@ func TestJevDecisionTestForwardsQuestions(t *testing.T) {
 	require.JSONEq(t, transport.response, string(response))
 }
 
-// TestJevDecisionTestRejectsInvalidPayload rejects invalid input before sending an HTTP request.
+// TestJevDecisionTestRejectsInvalidPayload submits malformed, unsupported, and
+// streaming decision bodies. Each case must return an error before sending an
+// HTTP request through the probe transport.
 func TestJevDecisionTestRejectsInvalidPayload(t *testing.T) {
 	for _, body := range []string{`null`, `[]`, `{"state":true,"questions":{}}`, `{"state":"ok","questions":{"x":{"type":"score","instructions":"Rate","criteria":["one"]}}}`, `{"stream":true,"state":"ok","questions":{"x":{"type":"noul","instructions":"Ready?"}}}`} {
 		t.Run(body, func(t *testing.T) {
@@ -70,14 +93,22 @@ func TestJevDecisionTestRejectsInvalidPayload(t *testing.T) {
 		})
 	}
 }
+
+// Begin accepts output startup for the sequential Jev event fixture.
 func (s *jevProbeEvents) Begin(context.Context, bool) error { return nil }
+
+// Emit appends the supplied event for later sequential assertions and reports
+// success. Mutable values carried by the event remain shared with the caller,
+// who leaves them stable during inspection.
 func (s *jevProbeEvents) Emit(_ context.Context, event provider.TestEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }
 
-// TestJevProviderProbeUsesSystemOne checks that manual and background probes use the same native
-// requests and events.
+// TestJevProviderProbeUsesSystemOne runs both manual and automatic requests
+// with no structured body. Both must use the native endpoint, credentials, and
+// default model, then produce three events with test_start first, response text
+// second, and success on the final event.
 func TestJevProviderProbeUsesSystemOne(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		transport := &jevProbeTransport{}

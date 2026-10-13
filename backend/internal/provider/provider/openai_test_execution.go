@@ -21,29 +21,87 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAIProviderTest binds storage, transport, and request policy; TestRun holds per-test state.
-type OpenAIProviderTest struct {
-	Store        OpenAIProviderTestStore
-	Transport    QoderTransport
-	ValidateURL  func(string) (string, error)
-	ApplyRouting func(*TestRun, *providercore.Record, *http.Request, bool)
-	ResolveTLS   func(*TestRun, *providercore.Record) *tlsfingerprint.Profile
-	EnsureTask   func(context.Context, *providercore.Record, string) error
+// OpenAI provider tests choose their endpoint from probe mode, explicit test
+// type, authentication, and text protocol. Native and legacy compact modes use
+// fixed payloads, explicit image selection precedes model-name inference, and
+// API-key text requests can select Chat while OAuth uses Codex Responses.
+//
+// Shadow requests resolve their credential owner for authentication while
+// keeping the selected record's transport identity. Agent Identity task
+// recovery can replay text and compact attempts once without emitting another
+// start event. Quota headers can produce Extra observations on failed requests,
+// and 429 reconciliation persists a reset before recovering an error-state
+// record. Image previews accept platform-specific response forms, and a
+// nonempty API-key image array still fails when it contains no displayable
+// result. Test events carry these observations through the run's retained
+// sink-error handling.
 
+// OpenAIProviderTest prepares provider-authenticated text, compact, and image
+// connection probes.
+type OpenAIProviderTest struct {
+	// Store optionally receives probe observations, but credential-shadow lookup
+	// requires its GetByID method. State write errors are ignored by best-effort
+	// paths.
+	Store       OpenAIProviderTestStore
+	Transport   QoderTransport               // provider-aware probe HTTP sender
+	ValidateURL func(string) (string, error) // configured API-key root validator
+	// ApplyRouting sets outbound identity before transport. Configure this
+	// callback for probe execution because request paths invoke it directly.
+	ApplyRouting func(*TestRun, *providercore.Record, *http.Request, bool)
+	// ResolveTLS selects the attempt's request fingerprint. The callback is
+	// required for transport preparation, though its returned profile may be nil.
+	ResolveTLS func(*TestRun, *providercore.Record) *tlsfingerprint.Profile
+	// EnsureTask prepares or recovers Agent Identity tasks. Configure it before
+	// selecting assertion authentication or a task-replay path.
+	EnsureTask func(context.Context, *providercore.Record, string) error
+
+	// Prepare optionally validates the target's run before Execute obtains
+	// credentials. Preparation errors pass through event output and prevent
+	// executor invocation.
 	Prepare func(*TestRun, *providercore.Record) error
 }
 
-// OpenAIProviderTestStore supplies provider reads and health and usage writes for probes.
+// OpenAIProviderTestStore loads credential owners and stores probe quota and
+// health observations.
 type OpenAIProviderTestStore interface {
+	// GetByID loads the provider needed for credential-owner resolution or returns
+	// a lookup error. Shadow probe preparation propagates that error before
+	// sending an authenticated upstream request.
 	GetByID(context.Context, int64) (*providercore.Record, error)
+	// UpdateExtra stores a quota observation patch under the selected provider ID.
+	// Probe paths treat errors as best effort and can still merge observed values
+	// into their local record.
 	UpdateExtra(context.Context, int64, map[string]any) error
+	// SetError records a provider authentication failure observed by the probe.
+	// Its storage error does not replace the upstream diagnostic being returned
+	// from the failed request.
 	SetError(context.Context, int64, string) error
+	// ClearError recovers an error-state provider after reset persistence.
+	// Reconciliation updates the local status and message only after this call
+	// succeeds, while an earlier cooldown write stays committed on error.
 	ClearError(context.Context, int64) error
+	// SetRateLimited stores the provider's observed reset deadline. Reconciliation
+	// publishes local rate-limit timestamps only after this write succeeds and
+	// then may attempt separate error-state recovery.
 	SetRateLimited(context.Context, int64, time.Time) error
-	providercore.OpenAIPlanWriter
+	providercore.OpenAIPlanWriter // observed subscription plan writer
 }
 
-// Execute runs an OpenAI probe using the provider credentials, mode, and test type.
+// Execute routes an OpenAI probe and emits events for its selected model. Blank
+// models use the platform test default, ordinary mapping applies first, and
+// legacy compact adds its separate mapping; compact modes use fixed payloads
+// before image or text selection.
+//
+// An explicit image type wins over model-name inference, while explicit text
+// prevents that inference. OAuth and shadows resolve their credential owner for
+// authentication, keeping the selected record's proxy, concurrency, and
+// state-write ID. API-key text routes use the requested protocol when supplied
+// for OpenAI, otherwise their resolved configuration.
+//
+// Text Agent Identity failures can recover the currently recorded task and
+// replay once, retaining the run's start-event state. Responses are closed
+// here; OAuth quota patches and 401/429 observations are best-effort state
+// updates that can occur before a diagnostic probe failure is returned.
 func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, mode string, testTypes ...string) error {
 	ctx := c.Context
 	mode, testType, explicitTestType := providercore.ResolveProviderTestModeAndType(mode, testTypes...)
@@ -53,8 +111,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		testModelID = openai.DefaultTestModel
 	}
 
-	// Native V2 uses ordinary Responses model mapping. Legacy compact probes additionally
-	// apply compact_model_mapping.
+	// Compact modes choose different model rules before fixed payload creation.
+	// Native V2 uses the ordinary mapped target, while legacy compact applies its
+	// configured compact mapping afterward.
 	testModelID = mappedTestModel(value, testModelID)
 	if mode == providercore.ProviderTestModeCompact {
 		return s.executeNativeCompaction(c, value, testModelID)
@@ -64,7 +123,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		return s.executeLegacyCompact(c, value, testModelID)
 	}
 
-	// An explicit test type takes precedence over image detection by model name.
+	// Explicit type selection determines whether the image endpoint is tested.
+	// Model-name inference is retained for older calls that omit a type, so
+	// explicit text keeps the text route.
 	if (explicitTestType && testType == providercore.ProviderTestTypeImage) ||
 		(!explicitTestType && strings.HasPrefix(strings.ToLower(testModelID), "gpt-image-")) {
 		imagePrompt := strings.TrimSpace(prompt)
@@ -92,7 +153,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 
 	if credentialProvider.IsOAuth() {
 		isOAuth = true
-		// Agent Identity signs each request instead of storing an OAuth token.
+		// Agent Identity derives a signed Authorization assertion for each request.
+		// Token absence therefore rejects bearer authentication while permitting the
+		// task-signing path to continue.
 		if !credentialProvider.IsOpenAIAgentIdentity() {
 			authToken = credentialProvider.GetOpenAIAccessToken()
 		}
@@ -130,15 +193,22 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 
 	c.Begin(true)
 
-	// OAuth probes trim model names for the ChatGPT Codex endpoint.
+	// The OAuth Codex payload uses the trimmed model name, while the test-start
+	// event retains the selected spelling so the administrator can identify the
+	// tested configuration.
 	upstreamTestModelID := testModelID
 	if isOAuth {
 		upstreamTestModelID = strings.TrimSpace(testModelID)
 	}
 	payload := openai.TestResponsesPayload(upstreamTestModelID, prompt, isOAuth)
+	// Platform probe payloads contain JSON-compatible strings, numbers, and
+	// collections. Their fixed shape allows direct encoding before the request
+	// body is constructed.
 	payloadBytes, _ := json.Marshal(payload)
 
-	// Task recovery retries the probe, so emit the start event only on the first attempt.
+	// Task recovery reuses this run for its replay. Emit the start event before
+	// the first attempt only, so a recovered request does not introduce another
+	// test start.
 	if !c.TaskRecoveryTried {
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
 	}
@@ -178,11 +248,15 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	}
 	s.ApplyRouting(c, value, req, isOAuth)
 	if value.Type == capability.ProviderTypeOAuth {
-		// Pair identity after the probe UA override to prevent mismatched headers from causing a 404.
+		// Routing can replace the initial User-Agent. Reconcile its Codex companion
+		// headers before permitted provider overrides so this request presents one
+		// paired identity.
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// Apply provider header overrides after routing, as forwarding does.
+	// Routing has selected client identity before permitted provider overrides
+	// run. Apply the shared header filter here so blocked authentication and
+	// session headers cannot replace probe credentials.
 	applyGrokQuotaHeaders(credentialProvider, req.Header)
 
 	proxyURL := ""
@@ -197,13 +271,21 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	defer func() { _ = resp.Body.Close() }()
 
 	if isOAuth && s.Store != nil {
+		// Missing quota headers can produce an extraction status error. It supplies
+		// no patch; the probe still handles that response's status and body below.
 		if updates, err := ExtractOpenAIUsageUpdates(resp, time.Now()); err == nil && len(updates) > 0 {
+			// Quota persistence is best effort after the response arrives. Retain
+			// observed values in the request's local Extra even when storing the patch
+			// fails.
 			_ = s.Store.UpdateExtra(ctx, value.ID, updates)
 			value.Extra = providercore.MergeUsageExtra(value.Extra, updates)
 		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Keep the available non-OK body for diagnostic and health classification
+		// even when reading fails. The upstream status remains the probe's reported
+		// failure.
 		body, _ := io.ReadAll(resp.Body)
 		body = RedactAgentIdentityBody(ctx, s.read, credentialProvider, body)
 		if !c.TaskRecoveryTried && credentialProvider.IsOpenAIAgentIdentity() && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -211,6 +293,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 			if err := s.EnsureTask(ctx, credentialProvider, expectedTaskID); err != nil {
 				return (TestStreamOutput{}).Error(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 			}
+			// Set the replay guard before reentering Execute. A repeated task rejection
+			// then returns its failure while the existing start event remains the
+			// probe's sole start.
 			c.TaskRecoveryTried = true
 			return s.Execute(c, value, modelID, prompt, mode, testType)
 		}
@@ -220,6 +305,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		// Persist a 401 as a provider authentication error.
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+			// The upstream has already rejected authentication. Attempt provider error
+			// persistence, but retain that rejection as the returned probe failure even
+			// when its state write fails.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
@@ -228,7 +316,10 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	return (TestStreamOutput{}).Responses(c, resp.Body)
 }
 
-// executeChat probes OpenAI-compatible API key providers through /v1/chat/completions.
+// executeChat probes an already mapped API-key model through Chat Completions
+// with its validated root and token. It applies routing and allowed overrides,
+// closes the response, and attempts 401/429 health updates before returning
+// endpoint failures.
 func (s *OpenAIProviderTest) executeChat(
 	c *TestRun,
 	value *providercore.Record,
@@ -243,6 +334,9 @@ func (s *OpenAIProviderTest) executeChat(
 	c.Begin(true)
 
 	payload := openai.TestChatCompletionsPayload(testModelID, prompt)
+	// Platform probe payloads contain JSON-compatible strings, numbers, and
+	// collections. Their fixed shape allows direct encoding before the request
+	// body is constructed.
 	payloadBytes, _ := json.Marshal(payload)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -258,7 +352,9 @@ func (s *OpenAIProviderTest) executeChat(
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	s.ApplyRouting(c, value, req, false)
 
-	// Apply provider header overrides after routing, as forwarding does.
+	// Routing has selected client identity before permitted provider overrides
+	// run. Apply the shared header filter here so blocked authentication and
+	// session headers cannot replace probe credentials.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -273,12 +369,18 @@ func (s *OpenAIProviderTest) executeChat(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		// Keep the available non-OK body for diagnostic and health classification
+		// even when reading fails. The upstream status remains the probe's reported
+		// failure.
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, value, resp.Header, body)
 		}
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
+			// The upstream has already rejected authentication. Attempt provider error
+			// persistence, but retain that rejection as the returned probe failure even
+			// when its state write fails.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
@@ -287,8 +389,16 @@ func (s *OpenAIProviderTest) executeChat(
 	return (TestStreamOutput{}).ChatCompletions(c, resp.Body)
 }
 
-// executeNativeCompaction probes streaming /responses with compaction_trigger.
-// It uses ordinary model mapping and leaves the administrator's capability setting unchanged.
+// executeNativeCompaction probes Responses with the supplied ordinarily mapped
+// model and fixed compaction payload. OAuth shadows use their credential owner,
+// while transport and observations retain the selected record ID.
+//
+// Remote-compaction negotiation is restored after permitted header overrides.
+// Agent Identity task rejection can replay once and retains the start-event
+// flag. The response is read through a two-MiB cap and redacted before
+// inspection; success requires HTTP 200 and a detected compaction output item.
+// Quota and authentication observations can update provider state, while this
+// probe leaves administrator capability settings unchanged.
 func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *providercore.Record, testModelID string) error {
 	ctx := c.Context
 	credentialProvider := value
@@ -336,6 +446,9 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	if isOAuth {
 		testModelID = strings.TrimSpace(testModelID)
 	}
+	// The native compaction builder returns fixed JSON-compatible values. Encode
+	// that payload directly so task replay sends the same model and compaction
+	// request shape.
 	payloadBytes, _ := json.Marshal(openai.CompactionTestPayload(testModelID, isOAuth))
 	if !c.TaskRecoveryTried {
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -382,7 +495,9 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// Restore V2 negotiation after provider header overrides, as forwarding does.
+	// Permitted overrides can alter negotiation headers after initial
+	// construction. Restore remote-compaction V2 selection last so the probe still
+	// tests the intended endpoint capability.
 	applyGrokQuotaHeaders(value, req.Header)
 	openai.EnsureRemoteCompactionV2Header(req.Header)
 
@@ -397,6 +512,9 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Read at most two MiB and retain available bytes even if reading fails.
+	// Compaction or error inspection operates on that prefix before returning the
+	// probe result.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	body = RedactAgentIdentityBody(ctx, s.read, credentialProvider, body)
 	if !c.TaskRecoveryTried && credentialProvider.IsOpenAIAgentIdentity() && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -404,6 +522,8 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 		if err := s.EnsureTask(ctx, credentialProvider, expectedTaskID); err != nil {
 			return (TestStreamOutput{}).Error(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 		}
+		// Set the run's replay guard before retrying compact execution, preventing a
+		// second task rejection from starting another recursive attempt.
 		c.TaskRecoveryTried = true
 		return s.executeNativeCompaction(c, value, testModelID)
 	}
@@ -412,10 +532,16 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	if s.Store != nil {
 		// Save quota observations while leaving the administrator's capability setting unchanged.
 		var updates map[string]any
+		// A response without usable quota headers contributes no patch, including
+		// extraction status errors. The compact failure path still uses the upstream
+		// status and captured body below.
 		if codexUpdates, err := ExtractOpenAIUsageUpdates(resp, time.Now()); err == nil && len(codexUpdates) > 0 {
 			updates = mergeTestExtraUpdates(updates, codexUpdates)
 		}
 		if len(updates) > 0 {
+			// Quota persistence is best effort after the response arrives. Retain
+			// observed values in the request's local Extra even when storing the patch
+			// fails.
 			_ = s.Store.UpdateExtra(ctx, value.ID, updates)
 			value.Extra = providercore.MergeUsageExtra(value.Extra, updates)
 		}
@@ -427,6 +553,9 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+			// The upstream has already rejected authentication. Attempt provider error
+			// persistence, but retain that rejection as the returned probe failure even
+			// when its state write fails.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
@@ -440,8 +569,16 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 	return nil
 }
 
-// executeLegacyCompact probes /responses/compact without writing capability settings.
-// Authentication and rate-limit failures still update provider health.
+// executeLegacyCompact probes the compact endpoint with an already
+// legacy-mapped model and fixed payload. OAuth shadows resolve authentication
+// through their credential owner, while API-key roots are validated and receive
+// the compact path suffix.
+//
+// Agent Identity task rejection can recover and replay once with the same run's
+// start-event state. The capped response is redacted, and HTTP 200 produces
+// probe success without a separate compaction-item validation. Quota, 401, and
+// 429 observations remain eligible for state updates, but no capability setting
+// is written by this method.
 func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercore.Record, testModelID string) error {
 	ctx := c.Context
 	credentialProvider := value
@@ -487,6 +624,9 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 
 	c.Begin(true)
 
+	// The legacy compact builder returns fixed JSON-compatible values. Its direct
+	// encoding retains the prepared model and fixed input on any task-recovery
+	// replay.
 	payloadBytes, _ := json.Marshal(openai.LegacyCompactionTestPayload(testModelID))
 	if !c.TaskRecoveryTried {
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
@@ -526,11 +666,14 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setTestChatGPTHeaders(req.Header, credentialProvider)
-		// Re-pair Codex identity headers after applying the probe UA override.
+		// Automatic routing can replace the initially selected User-Agent. Rebuild
+		// its Codex companion headers before this compact request reaches transport.
 		openai.EnforceCodexIdentityHeaders(req.Header)
 	}
 
-	// Apply provider header overrides after routing, as forwarding does.
+	// Routing has selected client identity before permitted provider overrides
+	// run. Apply the shared header filter here so blocked authentication and
+	// session headers cannot replace probe credentials.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -544,6 +687,9 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Read at most two MiB and retain available bytes even if reading fails.
+	// Compaction or error inspection operates on that prefix before returning the
+	// probe result.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	body = RedactAgentIdentityBody(ctx, s.read, credentialProvider, body)
 	if !c.TaskRecoveryTried && credentialProvider.IsOpenAIAgentIdentity() && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -551,6 +697,8 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 		if err := s.EnsureTask(ctx, credentialProvider, expectedTaskID); err != nil {
 			return (TestStreamOutput{}).Error(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 		}
+		// Set the run's replay guard before retrying compact execution, preventing a
+		// second task rejection from starting another recursive attempt.
 		c.TaskRecoveryTried = true
 		return s.executeLegacyCompact(c, value, testModelID)
 	}
@@ -558,10 +706,16 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	if s.Store != nil {
 		// Save quota observations while leaving the administrator's capability setting unchanged.
 		var updates map[string]any
+		// A response without usable quota headers contributes no patch, including
+		// extraction status errors. The compact failure path still uses the upstream
+		// status and captured body below.
 		if codexUpdates, err := ExtractOpenAIUsageUpdates(resp, time.Now()); err == nil && len(codexUpdates) > 0 {
 			updates = mergeTestExtraUpdates(updates, codexUpdates)
 		}
 		if len(updates) > 0 {
+			// Quota persistence is best effort after the response arrives. Retain
+			// observed values in the request's local Extra even when storing the patch
+			// fails.
 			_ = s.Store.UpdateExtra(ctx, value.ID, updates)
 			value.Extra = providercore.MergeUsageExtra(value.Extra, updates)
 		}
@@ -574,6 +728,9 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && s.Store != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+			// The upstream has already rejected authentication. Attempt provider error
+			// persistence, but retain that rejection as the returned probe failure even
+			// when its state write fails.
 			_ = s.Store.SetError(ctx, value.ID, errMsg)
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
@@ -584,6 +741,16 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 	return nil
 }
 
+// reconcileOpenAI429State observes the reported plan and persists a reset
+// selected from Codex headers before the response body. Missing dependencies or
+// reset signals skip further handling, and a failed rate-limit write leaves the
+// record's in-memory times unchanged.
+//
+// After reset persistence succeeds, the selected record receives its rate-limit
+// timestamps. An error-state record then attempts ClearError; failure leaves
+// the already persisted cooldown in place, while success updates Status and
+// ErrorMessage locally. These are separate writes, so callers cannot treat a
+// later recovery error as rollback of the observed reset.
 func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value *providercore.Record, headers http.Header, body []byte) {
 	if s == nil || s.Store == nil || value == nil {
 		return
@@ -602,6 +769,8 @@ func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value 
 		return
 	}
 
+	// Persist the observed reset before publishing local timestamps or clearing an
+	// error. A failed write leaves those later recovery steps untouched.
 	if err := s.Store.SetRateLimited(ctx, value.ID, *resetAt); err != nil {
 		return
 	}
@@ -610,6 +779,9 @@ func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value 
 	value.RateLimitedAt = &now
 	value.RateLimitResetAt = resetAt
 
+	// The cooldown has already been committed. Recover the error state separately,
+	// retaining that earlier limit when ClearError fails before local status
+	// publication.
 	if value.Status == providercore.StatusError {
 		if err := s.Store.ClearError(ctx, value.ID); err != nil {
 			return
@@ -619,7 +791,16 @@ func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value 
 	}
 }
 
-// ExecuteImageAPIKey calls the image endpoint with an API key and emits preview events.
+// ExecuteImageAPIKey requests one image using the supplied model and prompt
+// with API-key authentication. It validates the configured root, applies route
+// and header policy, closes the response, and requires HTTP 200 with decodable
+// image entries.
+//
+// A base64 value wins over an entry's URL. Otherwise HTTPS or data:image/
+// values are displayable, and revised prompts can be emitted before their
+// images. The method counts emitted images separately from array entries, so a
+// nonempty array of unusable values returns a diagnostic failure instead of
+// successful completion.
 func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context, value *providercore.Record, modelID, prompt string) error {
 	authToken := value.GetOpenAIApiKey()
 	if authToken == "" {
@@ -646,6 +827,9 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 		"n":               1,
 		"response_format": "b64_json",
 	}
+	// Platform probe payloads contain JSON-compatible strings, numbers, and
+	// collections. Their fixed shape allows direct encoding before the request
+	// body is constructed.
 	payloadBytes, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
@@ -657,7 +841,9 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	s.ApplyRouting(c, value, req, false)
 
-	// Apply provider header overrides after routing, as forwarding does.
+	// Routing has selected client identity before permitted provider overrides
+	// run. Apply the shared header filter here so blocked authentication and
+	// session headers cannot replace probe credentials.
 	applyGrokQuotaHeaders(value, req.Header)
 
 	proxyURL := ""
@@ -682,10 +868,14 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 
 	// Accept b64_json and URL results because relays may ignore response_format and return links.
 	var result struct {
+		// Data contains upstream image candidates. Completion requires at least one
+		// emitted image, so an array alone does not establish a usable preview.
 		Data []struct {
-			B64JSON       string `json:"b64_json"`
-			URL           string `json:"url"`
-			RevisedPrompt string `json:"revised_prompt"`
+			// B64JSON and URL are alternative preview sources. A nonempty B64JSON wins;
+			// otherwise URL must begin with HTTPS or data:image/ before emission.
+			B64JSON       string `json:"b64_json"`       // base64 image preview payload
+			URL           string `json:"url"`            // alternate image preview URL
+			RevisedPrompt string `json:"revised_prompt"` // upstream revised prompt text
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -714,7 +904,9 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 			(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "image", ImageURL: item.URL})
 		}
 	}
-	// A nonempty data array can still contain no displayable images.
+	// Count emitted previews separately from response entries. Rejected URL
+	// schemes and empty payloads can leave a nonempty array with no image the test
+	// UI can display.
 	if images == 0 {
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Upstream returned no image data: %s", logredact.TruncateLine(body, 512)))
 	}
@@ -723,7 +915,16 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	return nil
 }
 
-// ExecuteImageOAuth probes the Codex Responses image tool with OAuth credentials.
+// ExecuteImageOAuth builds a Codex Responses image-tool request with provider
+// or shadow-owner authentication. It uses the selected record's proxy,
+// concurrency, and TLS choices while account headers follow the credential
+// owner.
+//
+// The image builder supplies platform defaults and the outbound agent is paired
+// with Codex identity before sending. Failed statuses return a redacted
+// diagnostic from a capped body; successful replies are collected into image
+// results before previews are emitted. No result is a probe failure, and this
+// path closes the response without task-recovery replay.
 func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, value *providercore.Record, modelID, prompt string) error {
 	credentialProvider := value
 	if value.IsShadow() {
@@ -788,7 +989,9 @@ func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, 
 	}
 	s.ApplyRouting(c, value, req, true)
 	setTestChatGPTHeaders(req.Header, credentialProvider)
-	// Match originator to the final User-Agent prefix to prevent a 404 (issue #3901).
+	// Routing can replace the initial User-Agent. Pair its Codex companion
+	// headers with that final value before preparing transport for this image
+	// probe.
 	openai.EnforceCodexIdentityHeaders(req.Header)
 
 	proxyURL := ""
@@ -805,6 +1008,9 @@ func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, 
 		}
 	}()
 	if resp.StatusCode >= 400 {
+		// Limit failed image-response diagnostics to two MiB and retain available
+		// bytes on read failure, then redact Agent Identity values before extracting
+		// the message.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		body = RedactAgentIdentityBody(ctx, s.read, credentialProvider, body)
 		message := strings.TrimSpace(upstream.ExtractErrorMessage(body))
@@ -844,15 +1050,24 @@ func (s *OpenAIProviderTest) ExecuteImageOAuth(c *TestRun, ctx context.Context, 
 	return nil
 }
 
+// read loads a provider record through the configured probe store.
 func (s *OpenAIProviderTest) read(ctx context.Context, id int64) (*providercore.Record, error) {
 	return s.Store.GetByID(ctx, id)
 }
 
+// agentHeaders obtains signed authentication through EnsureTask and returns its
+// headers or preparation error. The signing task ID is discarded here; replay
+// paths read the credential owner's current task field after a rejected
+// response.
 func (s *OpenAIProviderTest) agentHeaders(ctx context.Context, value *providercore.Record) (http.Header, error) {
 	headers, _, err := AgentIdentityHeaders(ctx, value, s.EnsureTask)
 	return headers, err
 }
 
+// setTestChatGPTHeaders applies account and FedRAMP headers for OpenAI
+// OAuth-like credentials. Nil maps, nil records, and unsupported authentication
+// leave headers untouched; callers pass the resolved credential owner for
+// shadow probes.
 func setTestChatGPTHeaders(headers http.Header, value *providercore.Record) {
 	if headers == nil || value == nil || !value.IsOpenAIOAuthLike() {
 		return
@@ -860,6 +1075,9 @@ func setTestChatGPTHeaders(headers http.Header, value *providercore.Record) {
 	openai.SetChatGPTAccountHeaders(headers, value.GetChatGPTAccountID(), value.IsChatGPTAccountFedRAMP())
 }
 
+// mergeTestExtraUpdates returns a new shallow map combining both patches, with
+// more taking precedence. Two empty maps return nil, and nested mutable values
+// remain shared with their source patches.
 func mergeTestExtraUpdates(base, more map[string]any) map[string]any {
 	if len(base) == 0 && len(more) == 0 {
 		return nil
@@ -870,6 +1088,10 @@ func mergeTestExtraUpdates(base, more map[string]any) map[string]any {
 	return result
 }
 
+// testCodexFingerprint derives attempt IDs for OpenAI OAuth-like records using
+// configured fingerprint mode and inbound session headers. Unsupported records,
+// disabled modes, and missing valid seeds return nil; callers reuse the result
+// for that attempt.
 func testCodexFingerprint(value *providercore.Record, headers http.Header) *openai.FingerprintIDs {
 	if value == nil || !value.IsOpenAIOAuthLike() {
 		return nil
