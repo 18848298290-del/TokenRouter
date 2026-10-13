@@ -9,11 +9,14 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestEstimateOpenAIInputTokens_RequestSamples covers plain message input,
+// instructions with a tool schema, and parts with tool output. Their exact
+// local totals protect framing and text-counting choices.
 func TestEstimateOpenAIInputTokens_RequestSamples(t *testing.T) {
 	cases := []struct {
-		name string
-		req  Request
-		want int
+		name string  // descriptive request case label
+		req  Request // supplied local estimation request
+		want int     // expected input token estimate
 	}{
 		{
 			name: "simple text input",
@@ -62,10 +65,13 @@ func TestEstimateOpenAIInputTokens_RequestSamples(t *testing.T) {
 	}
 }
 
+// TestEstimateGrokCountTokens_AnthropicRequests exercises text, system blocks,
+// tools, and an empty Anthropic conversation for Grok. Accepted converted
+// requests must receive a positive local input estimate.
 func TestEstimateGrokCountTokens_AnthropicRequests(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
+		name string // descriptive request case label
+		body string // Anthropic JSON request bytes
 	}{
 		{
 			name: "simple message",
@@ -96,6 +102,9 @@ func TestEstimateGrokCountTokens_AnthropicRequests(t *testing.T) {
 	}
 }
 
+// TestEstimateGrokCountTokens_RejectsInvalidRequests supplies malformed JSON,
+// a missing model, and unsupported message content. Each input must return an
+// estimation error instead of an accepted token count.
 func TestEstimateGrokCountTokens_RejectsInvalidRequests(t *testing.T) {
 	for _, body := range []string{
 		`{`,
@@ -107,10 +116,13 @@ func TestEstimateGrokCountTokens_RejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+// TestOpenAIInputTokensEncodingForModel checks recent GPT names and older
+// GPT-4 or GPT-3.5 prefixes. Each name must select the expected local
+// tokenizer encoding.
 func TestOpenAIInputTokensEncodingForModel(t *testing.T) {
 	cases := []struct {
-		model string
-		want  string
+		model string // supplied tokenizer model name
+		want  string // expected tokenizer encoding label
 	}{
 		{model: "gpt-5", want: "o200k_base"},
 		{model: "gpt-5.3-codex", want: "o200k_base"},

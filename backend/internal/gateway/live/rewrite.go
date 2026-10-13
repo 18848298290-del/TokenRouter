@@ -14,12 +14,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// Later Live session declarations need the API Key redirect snapshot saved at
+// creation as well as current group and provider model resolution. The
+// rewritten upstream frame must retain the original client model so the return
+// direction can restore that name after internal routing.
+//
+// Additional tool models inside session are redirected independently before
+// the main session.model is resolved. When the client repeats the saved
+// requested name and no Key rule matches, the saved creation model supplies
+// its internal target. Positive stored group identity is passed to the
+// resolver, and an empty upstream mapping is rejected. Errors return the
+// supplied payload rather than a partly rewritten frame; declarations with no
+// main model can still retain successful tool-model changes.
+
 // ModelResolver resolves model mappings for the current provider and final group.
 type ModelResolver interface {
+	// ResolveModel returns group-routing and provider-upstream names for the Key
+	// target model. A nil group represents no positive stored group identifier;
+	// resolution errors stop the entire client-frame rewrite.
 	ResolveModel(context.Context, *int64, string) (string, string, error)
 }
 
-// RewriteClientPayload applies API key, group, and provider mappings to each turn's session.model.
+// RewriteClientPayload returns the routed client frame, original client label,
+// and internal names used for restoration. Nil record or resolver and invalid
+// JSON pass through; a missing session.model returns any completed
+// additional-tool rewrite with empty model evidence.
+//
+// The saved Key mapping applies one hop before current group/provider
+// resolution. A repeated requested name can reuse the stored creation model
+// when no rule matches. Empty upstream names are rejected, and every rewrite
+// or resolution error returns the supplied payload so the proxy does not
+// forward partially changed routing. Successful model evidence preserves Key,
+// group, and upstream stages separately.
 func RewriteClientPayload(
 	ctx context.Context,
 	record *session.LiveCallRecord,
@@ -30,6 +56,9 @@ func RewriteClientPayload(
 		return payload, "", nil, nil
 	}
 	rewritten := payload
+	// Redirect nested tool model declarations with the same creation-time Key
+	// rules before resolving the main model, keeping auxiliary upstream choices
+	// aligned with that saved snapshot.
 	if session := gjson.GetBytes(rewritten, "session"); session.IsObject() && len(record.APIKeyModelMapping) > 0 {
 		rewrittenSession, err := modeltrace.RewriteAPIKeyAdditionalModels([]byte(session.Raw), record.APIKeyModelMapping)
 		if err != nil {
@@ -50,6 +79,9 @@ func RewriteClientPayload(
 	if mappedModel, matched := modelmap.Resolve(record.APIKeyModelMapping, clientModel); matched {
 		keyTarget = mappedModel
 	} else if clientModel == strings.TrimSpace(record.RequestedModel) && strings.TrimSpace(record.Model) != "" {
+		// Reuse the creation target when the saved client alias repeats without a
+		// matching Key rule, retaining its earlier redirection before current group
+		// and provider resolution.
 		keyTarget = strings.TrimSpace(record.Model)
 	}
 	var groupID *int64

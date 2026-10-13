@@ -9,6 +9,10 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 )
 
+// TestOpenAIFirstOutputFailoverStopsAfterOneProviderSwitch passes eligible
+// first-output failures through the public recovery budget. The first call
+// consumes one switch, and the second reports exhaustion without increasing
+// it.
 func TestOpenAIFirstOutputFailoverStopsAfterOneProviderSwitch(t *testing.T) {
 	failoverErr := &forwardcore.UpstreamFailoverError{SafeToFailoverAfterWrite: true}
 	count := 0

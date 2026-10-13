@@ -14,16 +14,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// cyberRedisCommandHook captures actual command widths and write batch sizes
+// for block tests.
 type cyberRedisCommandHook struct {
-	mu            sync.Mutex
-	mgetKeyCounts []int
-	setBatchSizes []int
+	// mu protects mgetKeyCounts and setBatchSizes while Redis hooks append their
+	// observations. Tests inspect those histories after their synchronous commands
+	// finish, and the two slices represent different read and transaction widths.
+	mu            sync.Mutex // command observation history access lock
+	mgetKeyCounts []int      // observed MGET exact-key counts
+	setBatchSizes []int      // observed pipeline SET command counts
 }
 
+// DialHook retains the supplied Redis dialing hook for these command-width
+// assertions.
 func (h *cyberRedisCommandHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+// ProcessHook wraps command execution to record MGET key count before
+// delegation. The command-name argument is excluded, and a mutex guards
+// history; returned command errors do not remove the attempted observation.
 func (h *cyberRedisCommandHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if cmd.Name() == "mget" {
+			// Record actual key width before the Redis call, excluding its command
+			// name; the shared lock keeps hook observations coherent when client
+			// callbacks progress independently.
 			h.mu.Lock()
 			h.mgetKeyCounts = append(h.mgetKeyCounts, len(cmd.Args())-1)
 			h.mu.Unlock()
@@ -32,6 +46,9 @@ func (h *cyberRedisCommandHook) ProcessHook(next redis.ProcessHook) redis.Proces
 	}
 }
 
+// ProcessPipelineHook records the number of SET commands in each nonempty
+// write pipeline before delegation. Non-SET commands are ignored, the history
+// is locked, and command errors retain their attempted batch observation.
 func (h *cyberRedisCommandHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		setCount := 0
@@ -41,6 +58,9 @@ func (h *cyberRedisCommandHook) ProcessPipelineHook(next redis.ProcessPipelineHo
 			}
 		}
 		if setCount > 0 {
+			// Record only SET width for this transaction before delegation, so
+			// MULTI/EXEC framing and other commands do not inflate the exact-block
+			// batch size asserted by tests.
 			h.mu.Lock()
 			h.setBatchSizes = append(h.setBatchSizes, setCount)
 			h.mu.Unlock()
@@ -49,9 +69,16 @@ func (h *cyberRedisCommandHook) ProcessPipelineHook(next redis.ProcessPipelineHo
 	}
 }
 
+// TestGatewayCacheCyberBlockWritesScopeAndExactKeysTogether stores two exact
+// blocks and their coarse scope, then checks the final Redis state. Scope is
+// active with positive retention, lookup returns the first blocked key, and
+// exact keys share the same measured TTL.
 func TestGatewayCacheCyberBlockWritesScopeAndExactKeysTogether(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Close the test Redis client after its assertions so command connections and
+	// hook callbacks do not remain owned by this completed fixture. Cleanup
+	// errors are discarded.
 	t.Cleanup(func() { _ = client.Close() })
 	store, ok := NewGatewayCache(client).(session.CyberSessionBlockStore)
 	require.True(t, ok)
@@ -68,15 +95,23 @@ func TestGatewayCacheCyberBlockWritesScopeAndExactKeysTogether(t *testing.T) {
 	require.Equal(t, server.TTL(cyberSessionBlockPrefix+"block-1"), server.TTL(cyberSessionBlockPrefix+"block-2"))
 }
 
+// TestGatewayCacheCyberBlockCommandsAreBoundedAndLookupShortCircuits writes
+// more than two full exact-key batches and puts one lookup match in the second
+// batch. Hook observations must show bounded writes and stop reads before the
+// third batch.
 func TestGatewayCacheCyberBlockCommandsAreBoundedAndLookupShortCircuits(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Close the test Redis client after its assertions so command connections and
+	// hook callbacks do not remain owned by this completed fixture. Cleanup
+	// errors are discarded.
 	t.Cleanup(func() { _ = client.Close() })
 	hook := &cyberRedisCommandHook{}
 	client.AddHook(hook)
 	store, ok := NewGatewayCache(client).(session.CyberSessionBlockStore)
 	require.True(t, ok)
 
+	// Exercise two full batches and a shorter trailing write batch.
 	keys := make([]string, cyberSessionRedisCommandMaxKeys*2+44)
 	for i := range keys {
 		keys[i] = "block-" + strconv.Itoa(i)
@@ -89,6 +124,7 @@ func TestGatewayCacheCyberBlockCommandsAreBoundedAndLookupShortCircuits(t *testi
 	for i := range lookup {
 		lookup[i] = "missing-" + strconv.Itoa(i)
 	}
+	// Put the match in the second batch so trailing reads can be omitted.
 	lookup[cyberSessionRedisCommandMaxKeys+3] = keys[cyberSessionRedisCommandMaxKeys+3]
 	matched, err := store.FindCyberSessionBlocked(ctx, lookup)
 	require.NoError(t, err)
@@ -96,6 +132,10 @@ func TestGatewayCacheCyberBlockCommandsAreBoundedAndLookupShortCircuits(t *testi
 	require.Equal(t, []int{cyberSessionRedisCommandMaxKeys, cyberSessionRedisCommandMaxKeys}, hook.mgetKeyCounts)
 }
 
+// TestGatewayCacheLiveCallIdentityAndController saves a call and reads its
+// selected identity/model metadata through another cache instance.
+// Observer-to-proxy takeover, matching release, and the first-only close claim
+// must follow stored controller transitions.
 func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
@@ -154,6 +194,9 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	require.False(t, closed)
 }
 
+// TestGatewayCacheReasoningContentRoundTrip stores and retrieves reasoning
+// text by item identifier. A missing key and blank identifier must both return
+// the recovery not-found sentinel rather than cached text.
 func TestGatewayCacheReasoningContentRoundTrip(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})

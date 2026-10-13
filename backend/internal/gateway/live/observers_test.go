@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestObserverStopCancelsAndWaitsForEnteredTask checks that Stop waits for cleanup and rejects new observers.
+// TestObserverStopCancelsAndWaitsForEnteredTask starts one registered observer
+// while Stop runs concurrently. Shutdown must cancel its context, reject a
+// later owner, and wait until the accepted cleanup releases its task count.
 func TestObserverStopCancelsAndWaitsForEnteredTask(t *testing.T) {
 	var mu sync.Mutex
 	var stopped bool
@@ -21,6 +23,9 @@ func TestObserverStopCancelsAndWaitsForEnteredTask(t *testing.T) {
 	stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	stopDone := make(chan error, 1)
+	// Run stopping separately while holding the accepted observer cleanup, then
+	// observe cancellation before completing cleanup to distinguish notification
+	// from finished shutdown waiting.
 	go func() { stopDone <- state.Stop(stopCtx) }()
 	select {
 	case <-run.Done():

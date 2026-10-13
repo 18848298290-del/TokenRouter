@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestEvaluateOpenAIFastPolicy_DefaultPassesKnownTiers checks several model
+// and tier pairs with default empty settings. Every evaluation must return
+// pass, including the empty-tier case.
 func TestEvaluateOpenAIFastPolicy_DefaultPassesKnownTiers(t *testing.T) {
 	settings := Default()
 	require.Empty(t, Default().Rules, "default policy must not rewrite service_tier unless admin configured rules")
@@ -25,11 +28,13 @@ func TestEvaluateOpenAIFastPolicy_DefaultPassesKnownTiers(t *testing.T) {
 	action, _ = Evaluate(settings, 0, false, false, "gpt-5.6-sol", OpenAIFastTierUltrafast)
 	require.Equal(t, "pass", action)
 
-	// empty tier → pass
 	action, _ = Evaluate(settings, 0, false, false, "gpt-5.5", "")
 	require.Equal(t, "pass", action)
 }
 
+// TestEvaluateOpenAIFastPolicy_BlockRuleCarriesMessage selects a matching
+// model in a blocking priority rule. The result must retain the administrator
+// message together with the block action.
 func TestEvaluateOpenAIFastPolicy_BlockRuleCarriesMessage(t *testing.T) {
 	settings := &OpenAIFastPolicySettings{
 		Rules: []OpenAIFastPolicyRule{{
@@ -47,6 +52,9 @@ func TestEvaluateOpenAIFastPolicy_BlockRuleCarriesMessage(t *testing.T) {
 	require.Equal(t, "fast mode is not allowed", msg)
 }
 
+// TestEvaluateOpenAIFastPolicy_ScopeFiltersOAuth evaluates one OAuth-scoped
+// filter against two authentication classes. The OAuth input must filter while
+// the API Key input passes.
 func TestEvaluateOpenAIFastPolicy_ScopeFiltersOAuth(t *testing.T) {
 	settings := &OpenAIFastPolicySettings{
 		Rules: []OpenAIFastPolicyRule{{
@@ -56,17 +64,16 @@ func TestEvaluateOpenAIFastPolicy_ScopeFiltersOAuth(t *testing.T) {
 		}},
 	}
 
-	// OAuth provider → rule matches
-
 	action, _ := Evaluate(settings, 0, true, false, "gpt-4", OpenAIFastTierPriority)
 	require.Equal(t, "filter", action)
-
-	// API Key provider → rule skipped → pass
 
 	action, _ = Evaluate(settings, 0, false, false, "gpt-4", OpenAIFastTierPriority)
 	require.Equal(t, "pass", action)
 }
 
+// TestEvaluateOpenAIFastPolicy_UserScopedRuleOverridesGlobalRule places a
+// global filter before a user pass exception. The matching user receives pass,
+// while another user still receives the global filter.
 func TestEvaluateOpenAIFastPolicy_UserScopedRuleOverridesGlobalRule(t *testing.T) {
 	settings := &OpenAIFastPolicySettings{
 		Rules: []OpenAIFastPolicyRule{

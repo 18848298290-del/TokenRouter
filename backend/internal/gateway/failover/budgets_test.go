@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestShouldStopOpenAIOAuth429Failover_AfterBoundedFullWindows supplies OpenAI
+// OAuth and ordinary provider failures with successive outer counts. OAuth 429
+// recovery must stop at three, while unrelated failures continue.
 func TestShouldStopOpenAIOAuth429Failover_AfterBoundedFullWindows(t *testing.T) {
 	provider := OAuth429Provider{OpenAI: true}
 	apiKeyProvider := OAuth429Provider{}
@@ -21,6 +24,9 @@ func TestShouldStopOpenAIOAuth429Failover_AfterBoundedFullWindows(t *testing.T) 
 	require.False(t, StopOAuth429(provider, 429, 0, &state))
 }
 
+// TestShouldStopOpenAIOAuth429Failover_TracksOneGrokFollowupAttempt follows a
+// Grok 429 with several failure categories and statuses. Its shared state must
+// permit one follow-up and then stop even on an API Key failure.
 func TestShouldStopOpenAIOAuth429Failover_TracksOneGrokFollowupAttempt(t *testing.T) {
 	provider := OAuth429Provider{Grok: true}
 	apiKeyProvider := OAuth429Provider{}

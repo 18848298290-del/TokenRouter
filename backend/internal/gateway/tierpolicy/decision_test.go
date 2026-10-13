@@ -6,11 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDecisionPreservesLazyPolicyOrder checks short-circuiting, group force_off, and lazy price checks.
+// TestDecisionPreservesLazyPolicyOrder records policy and price callback order
+// for system blocks and key overrides. It protects early termination and the
+// second system check after key force_on.
 func TestDecisionPreservesLazyPolicyOrder(t *testing.T) {
 	for _, tc := range []struct {
+		// name labels the subtest, group supplies its group policy, key its API Key
+		// policy, original its request tier, and action the system callback result.
 		name, group, key, original, action string
-		want                               []string
+		want                               []string // expected policy callback sequence
 	}{
 		{name: "系统拒绝", original: "priority", action: "block", want: []string{"system:priority"}},
 		{name: "分组关闭", group: "force_off", key: "force_on", want: nil},
@@ -34,7 +38,9 @@ func TestDecisionPreservesLazyPolicyOrder(t *testing.T) {
 	}
 }
 
-// TestEmptyBodyDoesNotReadFastPolicy checks that empty input bypasses policy reads.
+// TestEmptyBodyDoesNotReadFastPolicy supplies nil body and callbacks to
+// ApplyBody. Empty input must return nil successfully before any policy read
+// can occur.
 func TestEmptyBodyDoesNotReadFastPolicy(t *testing.T) {
 	result, err := ApplyBody(nil, DecisionInput{})
 	require.NoError(t, err)

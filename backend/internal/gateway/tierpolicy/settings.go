@@ -9,49 +9,74 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// OpenAI service tiers determine which Fast policy rules match.
-// priority represents Fast (including the fast alias); ultrafast is separate, and flex has lower priority.
-// An omitted tier uses the upstream default. Rules select an action and provider scope.
+// Administrator Fast settings encode ordered service-tier rules with provider
+// and user scopes. Preparation copies the rule collections before normalizing
+// tier labels and model patterns, so validating saved JSON leaves the supplied
+// settings available to their current readers.
+
+// Fast tier labels select rule matches; force actions choose the tier written
+// after scope and model qualification. The protocol normalizer owns accepted
+// aliases.
 const (
-	OpenAIFastTierAny       = "all"                               // Matches any recognized service_tier.
-	OpenAIFastTierPriority  = protocolopenai.ServiceTierPriority  // Matches priority, including the fast alias.
+	OpenAIFastTierAny       = "all"                               // Matches every caller-supplied tier label.
+	OpenAIFastTierPriority  = protocolopenai.ServiceTierPriority  // Matches the canonical priority tier.
 	OpenAIFastTierUltrafast = protocolopenai.ServiceTierUltrafast // Matches ultrafast.
 	OpenAIFastTierFlex      = protocolopenai.ServiceTierFlex      // Matches flex.
 
-	// OpenAIFastPolicyActionForcePriority rewrites recognized tiers, including flex, auto, default, and scale, to priority.
+	// OpenAIFastPolicyActionForcePriority rewrites recognized tiers, including
+	// flex, auto, default, and scale, to priority.
 	OpenAIFastPolicyActionForcePriority = "force_priority"
-	// OpenAIFastPolicyActionForceUltrafast uses the same scope and model fallback rules as force_priority.
+	// OpenAIFastPolicyActionForceUltrafast uses the same scope and model fallback
+	// rules as force_priority.
 	OpenAIFastPolicyActionForceUltrafast = "force_ultrafast"
 )
 
 // OpenAIFastPolicyRule matches a service tier and applies an action.
 type OpenAIFastPolicyRule struct {
-	ServiceTier          string   `json:"service_tier"`                     // "priority" | "ultrafast" | "flex" | "all"
-	Action               string   `json:"action"`                           // "pass" | "filter" | "block" | "force_priority" | "force_ultrafast"
-	Scope                string   `json:"scope"`                            // "all" | "oauth" | "apikey" | "bedrock"
-	UserIDs              []int64  `json:"user_ids,omitempty"`               // Empty matches all users; otherwise matches the API Key owner.
-	ErrorMessage         string   `json:"error_message,omitempty"`          // Custom message when action is block.
-	ModelWhitelist       []string `json:"model_whitelist,omitempty"`        // Model patterns; empty matches all models.
-	FallbackAction       string   `json:"fallback_action,omitempty"`        // Action for models outside ModelWhitelist.
-	FallbackErrorMessage string   `json:"fallback_error_message,omitempty"` // Custom message when fallback_action is block.
+	ServiceTier string `json:"service_tier"` // "priority" | "ultrafast" | "flex" | "all"
+	Action      string `json:"action"`       // "pass" | "filter" | "block" | "force_priority" | "force_ultrafast"
+	Scope       string `json:"scope"`        // "all" | "oauth" | "apikey" | "bedrock"
+	// UserIDs selects caller-supplied trusted user identities; an empty list makes
+	// the rule global. ExecutionFastPolicy supplies the authenticated payer user ID.
+	UserIDs []int64 `json:"user_ids,omitempty"` // scoped trusted user identifiers
+	// ErrorMessage accompanies the primary action. Resolve uses the message for
+	// a block result and supplies its own diagnostic when that message is empty.
+	ErrorMessage string `json:"error_message,omitempty"` // primary administrator refusal message
+	// ModelWhitelist chooses the primary action for an empty or matching list.
+	// An unmatched model uses FallbackAction, with an empty fallback selecting pass.
+	ModelWhitelist []string `json:"model_whitelist,omitempty"` // accepted model name patterns
+	// FallbackAction and FallbackErrorMessage replace the primary action and
+	// message when ModelWhitelist excludes the model. An empty fallback action
+	// selects pass with an empty message, regardless of the configured message.
+	FallbackAction       string `json:"fallback_action,omitempty"`        // action for unmatched models
+	FallbackErrorMessage string `json:"fallback_error_message,omitempty"` // message for unmatched models
 }
 
-// OpenAIFastPolicySettings contains the service-tier policy rules.
+// OpenAIFastPolicySettings contains ordered administrator rules for Fast tier
+// evaluation.
 type OpenAIFastPolicySettings struct {
-	Rules []OpenAIFastPolicyRule `json:"rules"`
+	// Rules retains configuration order inside the user-scoped and global scans.
+	// Evaluate checks qualifying user rules before it visits qualifying global rules.
+	Rules []OpenAIFastPolicyRule `json:"rules"` // ordered administrator tier rules
 }
 
-// Default returns no rules, leaving requested tiers unchanged.
+// Default returns fresh empty settings that pass requested service tiers
+// unchanged.
 func Default() *OpenAIFastPolicySettings {
 	return &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{}}
 }
 
-// Prepare validates and encodes a normalized copy; the caller persists the result.
+// Prepare validates and JSON-encodes a normalized settings copy for
+// persistence by its caller. Nil input is rejected; tier labels and model
+// patterns are trimmed, while actions and provider scopes require exact
+// configured values.
 func Prepare(settings *OpenAIFastPolicySettings) (string, error) {
 	if settings == nil {
 		return "", fmt.Errorf("settings cannot be nil")
 	}
 
+	// Copy both rule storage and nested slices before normalizing model patterns,
+	// because saved settings can also be retained by concurrent policy readers.
 	copySettings := *settings
 	copySettings.Rules = slices.Clone(settings.Rules)
 	for i := range copySettings.Rules {

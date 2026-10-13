@@ -12,7 +12,15 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// HealthyGrokOAuthProvider creates a schedulable Grok OAuth fixture with unexpired credentials.
+// Credential tests combine admitted execution-provider fixtures with
+// production token and recovery readers. The setup can bind parent-store
+// reads, Grok token acquisition, and runtime quarantine state; supplied
+// credential source objects receive those callbacks directly before the
+// fixture is used.
+
+// HealthyGrokOAuthProvider returns an active one-slot Grok OAuth fixture with
+// the supplied token. Its expiry is two refresh-skew intervals from now and
+// its base URL uses the Grok CLI default.
 func HealthyGrokOAuthProvider(id int64, token string) *gatewayadapter.ExecutionProvider {
 	return &gatewayadapter.ExecutionProvider{
 		Record: provider.Record{
@@ -33,7 +41,11 @@ func HealthyGrokOAuthProvider(id int64, token string) *gatewayadapter.ExecutionP
 	}
 }
 
-// RequestCredentials wires credential reads and recovery to test dependencies.
+// RequestCredentials builds credential and Grok recovery adapters from the
+// fixture services. Nil blocks and sources receive fresh defaults; supplied
+// sources are updated in place, so callers finish setup before sharing them.
+// Store reads and token invalidation are installed only when their
+// dependencies exist.
 func RequestCredentials(store gatewayadapter.ExecutionProviderStore, source *provider.OpenAIExecutionCredentials, tokens *provider.GrokTokenSource, blocks *provider.RuntimeBlockState) *gatewayadapter.RequestCredentials {
 	if blocks == nil {
 		blocks = provider.NewRuntimeBlockState(time.Now)

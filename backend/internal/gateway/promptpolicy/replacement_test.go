@@ -9,6 +9,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestApplyCompiledUserPromptReplacementRules_DefaultEnvironmentContext
+// supplies a UTC evening instant and one environment block. Built-in rules
+// must select Asia/Tokyo and advance its current date to the following day.
 func TestApplyCompiledUserPromptReplacementRules_DefaultEnvironmentContext(t *testing.T) {
 	cfg := DefaultUserPromptReplacementConfig()
 	compiled, err := compileUserPromptReplacementConfig(cfg, time.Minute)
@@ -26,6 +29,9 @@ func TestApplyCompiledUserPromptReplacementRules_DefaultEnvironmentContext(t *te
 	require.Contains(t, got, "<current_date>2026-07-01</current_date>")
 }
 
+// TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotReplaceOutsideEnvironmentContext
+// supplies date and timezone markers without an enclosing environment block.
+// Built-in scoped rules must retain that supplied text unchanged.
 func TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotReplaceOutsideEnvironmentContext(t *testing.T) {
 	cfg := DefaultUserPromptReplacementConfig()
 	compiled, err := compileUserPromptReplacementConfig(cfg, time.Minute)
@@ -38,6 +44,10 @@ func TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotReplaceOutsideEnv
 	require.Equal(t, input, got)
 }
 
+// TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotCrossEnvironmentContextBlocks
+// splits a custom rule's date and timezone evidence across two complete
+// blocks. Scoped application must leave the date unchanged rather than combine
+// those blocks into one match.
 func TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotCrossEnvironmentContextBlocks(t *testing.T) {
 	cfg := &UserPromptReplacementConfig{
 		Enabled: true,
@@ -70,6 +80,10 @@ func TestApplyCompiledUserPromptReplacementRules_DefaultDoesNotCrossEnvironmentC
 	require.NotContains(t, got, "<current_date>scoped</current_date>")
 }
 
+// TestApplyUserPromptReplacementMessages_DefaultHandlesLongerAndShorterJSONReplacement
+// writes built-in replacements into a JSON user string containing escaped
+// newlines. Decoded content must contain the Tokyo date and timezone and
+// remove the earlier timezone text.
 func TestApplyUserPromptReplacementMessages_DefaultHandlesLongerAndShorterJSONReplacement(t *testing.T) {
 	cfg := DefaultUserPromptReplacementConfig()
 	compiled, err := compileUserPromptReplacementConfig(cfg, time.Minute)
@@ -84,6 +98,9 @@ func TestApplyUserPromptReplacementMessages_DefaultHandlesLongerAndShorterJSONRe
 	require.NotContains(t, content, "Asia/Shanghai")
 }
 
+// TestApplyUserPromptReplacementMessages_OnlyUserText supplies matching text
+// under system, assistant, user-string, and user-block content. Only the two
+// user text selections must receive the configured literal replacement.
 func TestApplyUserPromptReplacementMessages_OnlyUserText(t *testing.T) {
 	cfg := &UserPromptReplacementConfig{
 		Enabled: true,

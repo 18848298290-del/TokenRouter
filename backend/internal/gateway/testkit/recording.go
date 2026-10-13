@@ -16,20 +16,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Usage tests need production capture and billing with controllable funds and
+// log repositories. The recording fixture supplies a calculator, default
+// multiplier and rate-cache settings, then builds a recorder using the current
+// dependency and effect selections for each assertion.
+
 // Recording holds dependencies and options for usage-recording tests.
 type Recording struct {
-	Dependencies   completion.Dependencies
-	Options        completion.RecorderOptions
-	GroupPolicies  *routing.PricingConfigService
-	Effects        completion.CommitEffects
-	ProviderLookup func(context.Context, int64) (*provider.Record, error)
+	Dependencies   completion.Dependencies                                // base production completion recording services
+	Options        completion.RecorderOptions                             // production recorder option values
+	GroupPolicies  *routing.PricingConfigService                          // optional group pricing policy reader
+	Effects        completion.CommitEffects                               // completion effect callback configuration
+	ProviderLookup func(context.Context, int64) (*provider.Record, error) // credential provider fixture read callback
 }
 
+// recordProviders resolves credential ownership using the fixture's provider
+// lookup callback.
 type recordProviders struct {
-	lookup func(context.Context, int64) (*provider.Record, error)
+	lookup func(context.Context, int64) (*provider.Record, error) // retained credential provider read callback
 }
 
-// NewRecording supplies default multipliers, cache lifetimes, and a billing calculator.
+// NewRecording constructs a usage fixture with multiplier 1.1, a thirty-second
+// user-group rate cache, and a billing calculator. withResolver installs
+// default price resolution; effect background work starts detached goroutines
+// that tests await when asserting asynchronous results.
 func NewRecording(logs usage.UsageLogRepository, funds completion.Store, rates billing.UserGroupRateRepository, withResolver bool) *Recording {
 	calculator := billingtestkit.Calculator(nil, nil)
 	fixture := &Recording{
@@ -42,6 +52,9 @@ func NewRecording(logs usage.UsageLogRepository, funds completion.Store, rates b
 		Effects: completion.CommitEffects{
 			Activity: &provider.DeferredService{}, Observe: gatewaytelemetry.ObserveCompletion,
 			Funds: billing.SettlementEffects{
+				// Admit effects immediately on detached goroutines; completion is separate
+				// from acceptance, so tests arrange their own wait before asynchronous
+				// assertions.
 				Background: func(_ string, fn func()) bool { go fn(); return true },
 				Observe:    logging.LegacyPrintf,
 				BalanceWarning: func(id int64, balance float64, err error) {
@@ -56,7 +69,11 @@ func NewRecording(logs usage.UsageLogRepository, funds completion.Store, rates b
 	return fixture
 }
 
-// Core builds a recorder using shared Dependencies and the supplied quota updater.
+// Core builds a production recorder from the fixture's current services and
+// options. It copies dependency and effect structs while retaining their
+// referenced services; subscription and authentication capabilities are
+// detected from the supplied implementations. OpenAI mode installs
+// credential-provider lookup.
 func (f *Recording) Core(updater gatewayadapter.QuotaUpdater, openAI bool) *completion.Recorder {
 	deps := f.Dependencies
 	deps.Subscriptions, _ = deps.Funds.(completion.SubscriptionReader)
@@ -76,7 +93,9 @@ func (f *Recording) Core(updater gatewayadapter.QuotaUpdater, openAI bool) *comp
 	return completion.NewRecorder(deps, f.Options)
 }
 
-// RecordOpenAI invokes production capture and completion for usage and funding assertions.
+// RecordOpenAI captures and records an OpenAI completion through a freshly
+// built recorder. Nil input selects no quota updater; production CaptureOpenAI
+// determines the snapshot and Record determines whether it can settle.
 func (f *Recording) RecordOpenAI(ctx context.Context, in *gatewayadapter.OpenAICapture) error {
 	var updater gatewayadapter.QuotaUpdater
 	if in != nil {
@@ -85,11 +104,17 @@ func (f *Recording) RecordOpenAI(ctx context.Context, in *gatewayadapter.OpenAIC
 	return f.Core(updater, true).Record(ctx, gatewayadapter.CaptureOpenAI(ctx, in), true)
 }
 
-// RecordMessages invokes production Messages capture and recording.
+// RecordMessages captures and records a Messages completion using its supplied
+// key service. Callers provide a nonnil capture input; the constructed
+// recorder applies production funding, quota, and usage rules.
 func (f *Recording) RecordMessages(ctx context.Context, in *gatewayadapter.MessagesCapture) error {
 	return f.Core(in.APIKeyService, false).Record(ctx, gatewayadapter.CaptureMessages(ctx, in), false)
 }
 
+// CredentialProvider resolves an optional credential parent from the
+// completion provider snapshot. If resolution retains the constructed source,
+// it returns the supplied snapshot by value; a parent becomes
+// production-projected completion metadata and read errors propagate.
 func (p recordProviders) CredentialProvider(ctx context.Context, in completion.ProviderSnapshot) (*completion.ProviderSnapshot, error) {
 	source := &provider.Record{ID: in.ID, Platform: in.Platform, Type: in.Type, ParentProviderID: in.CredentialProviderID}
 	record, err := provider.ResolveCredentialRecord(ctx, p.lookup, source)

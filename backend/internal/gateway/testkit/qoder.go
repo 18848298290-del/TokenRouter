@@ -12,25 +12,46 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderClient captures requests and supplies response fixtures to the production executor.
+// Qoder execution tests need real request construction and stream parsing
+// around controlled response bytes. The client captures each attempted request
+// and copies its body before either returning an injected error, supplying a
+// successful response stream, or calling the provided request doer.
+
+// QoderClient captures requests and supplies response fixtures to the
+// production executor.
 type QoderClient struct {
-	Request  *http.Request
-	Requests []*http.Request
-	Body     string
-	Bodies   [][]byte
-	Err      error
-	Headers  map[string]string
+	// Request and Requests identify the latest request and ordered request history.
+	// Both retain the constructed pointers, including any changes made by a supplied
+	// doer; tests serialize calls and later inspection of those requests.
+	Request  *http.Request   // most recently constructed HTTP request
+	Requests []*http.Request // constructed HTTP request pointer history
+	Body     string          // preset successful stream response text
+	Bodies   [][]byte        // copied submitted request body history
+	Err      error           // injected request execution failure
+	// Headers retains the most recent supplied map. Tests keep that map stable
+	// while checking it; body history uses copied bytes and has separate ownership.
+	Headers map[string]string // retained submitted request header map
 }
 
-// QoderFixture holds runtime dependencies; blocking-stream tests can replace Client before execution.
+// QoderFixture holds runtime dependencies; blocking-stream tests can replace
+// Client before execution.
 type QoderFixture struct {
-	Runtime *gatewayprovider.QoderRuntime
-	Tokens  *provideradapter.QoderTokenProvider
-	Client  qoder.StreamClient
+	Runtime *gatewayprovider.QoderRuntime       // shared production Qoder runtime fixture
+	Tokens  *provideradapter.QoderTokenProvider // shared production Qoder token source
+	// Client is read through qoderFixtureClient at each execution call. Tests
+	// replace it before execution begins and serialize replacement with runtime use.
+	Client qoder.StreamClient // replaceable Qoder stream client fixture
 }
 
-type qoderFixtureClient struct{ fixture *QoderFixture }
+// qoderFixtureClient reads the fixture's replaceable stream client for runtime
+// calls.
+type qoderFixtureClient struct {
+	fixture *QoderFixture // owning mutable Qoder runtime fixture
+}
 
+// StreamRequestContext captures a context-bound HTTP request and copies its
+// body for assertions. The supplied header map is retained; Err returns after
+// capture, otherwise Body becomes a caller-owned successful response stream.
 func (c *QoderClient) StreamRequestContext(ctx context.Context, _ *qoder.SessionContext, _ string, body []byte, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api1.qoder.sh/test", strings.NewReader(string(body)))
 	if err != nil {
@@ -46,6 +67,9 @@ func (c *QoderClient) StreamRequestContext(ctx context.Context, _ *qoder.Session
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(c.Body))}, nil
 }
 
+// StreamRequestContextWithDoer captures a context-bound request and copied
+// body before invoking the supplied doer. Err returns before that invocation;
+// headers and request pointers remain retained for serial test inspection.
 func (c *QoderClient) StreamRequestContextWithDoer(ctx context.Context, _ *qoder.SessionContext, _ string, body []byte, headers map[string]string, doer qoder.RequestDoer) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api1.qoder.sh/test", strings.NewReader(string(body)))
 	if err != nil {
@@ -61,6 +85,9 @@ func (c *QoderClient) StreamRequestContextWithDoer(ctx context.Context, _ *qoder
 	return doer(req)
 }
 
+// BodyAt returns a byte copy of the recorded body at index. Nil clients
+// and out-of-range or negative indices return nil, allowing assertions to
+// query absent attempts safely.
 func (c *QoderClient) BodyAt(index int) []byte {
 	if c == nil || index < 0 || index >= len(c.Bodies) {
 		return nil
@@ -68,6 +95,9 @@ func (c *QoderClient) BodyAt(index int) []byte {
 	return append([]byte(nil), c.Bodies[index]...)
 }
 
+// BodyCount returns the number of captured bodies for this client. Nil clients
+// report zero; callers serialize the query with stream calls that append
+// request history.
 func (c *QoderClient) BodyCount() int {
 	if c == nil {
 		return 0
@@ -75,17 +105,27 @@ func (c *QoderClient) BodyCount() int {
 	return len(c.Bodies)
 }
 
+// StreamRequestContext delegates through the fixture's current client with the
+// supplied Qoder session and bytes. Callers finish replacing Client before
+// execution; the delegate returns its response body and error unchanged.
 func (c qoderFixtureClient) StreamRequestContext(ctx context.Context, session *qoder.SessionContext, path string, body []byte, headers map[string]string) (*http.Response, error) {
 	return c.fixture.Client.StreamRequestContext(ctx, session, path, body, headers)
 }
 
-// NewQoderFixture builds a Qoder runtime using the supplied test dependencies.
+// NewQoderFixture binds the supplied token source, client, and conversation
+// store to production runtime execution. Its proxy client reads the fixture's
+// current Client, allowing callers to replace that dependency before starting
+// attempts.
 func NewQoderFixture(tokens *provideradapter.QoderTokenProvider, client qoder.StreamClient, conversations *qoder.QoderConversationStore) *QoderFixture {
 	f := &QoderFixture{Tokens: tokens, Client: client}
 	f.Runtime = gatewayprovider.NewQoderRuntime(gatewayprovider.QoderRuntimeOptions{Tokens: tokens, Client: qoderFixtureClient{fixture: f}, Conversations: conversations})
 	return f
 }
 
+// NewDefaultQoderFixture builds a COSY Qoder provider and preloads matching
+// cached credentials for execution tests. Its stream supplies OK, one input
+// token, one output token, and completion; callers own the returned fixture
+// lifetime.
 func NewDefaultQoderFixture() (*provider.Record, *QoderFixture, *QoderClient) {
 	value := &provider.Record{ID: 8801, Name: "qoder", Platform: provider.PlatformQoder, Type: provider.ProviderTypeCosy, Credentials: map[string]any{}}
 	client := &QoderClient{Body: "data: {\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"OK\\\"}}]}\"}\n\n" +

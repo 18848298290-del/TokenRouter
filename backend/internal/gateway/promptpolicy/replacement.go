@@ -16,72 +16,149 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Prompt replacement changes one selected regex group inside protocol user
+// text while retaining the surrounding match. Built-in rules set timezone and
+// current date within environment_context blocks using Asia/Tokyo; scoped
+// matching isolates each detected literal block so a lazy regex cannot combine
+// fields from separate blocks.
+//
+// Configuration compilation is shared process-wide for sixty seconds, with
+// load or rule-compilation errors publishing a disabled five-second entry.
+// Missing or malformed raw JSON chooses built-in defaults, while valid empty
+// configuration keeps its zero-valued enabled flag. JSON field rewrites
+// accumulate individually using one captured clock value; a failed field
+// mutation leaves previously completed changes available. Scoped assembly
+// returns the supplied text when its builder stays empty, including
+// whole-block empty replacement cases, so successful regex deletion alone does
+// not imply empty final output.
+
+// Replacement kinds select literal text, a timezone name, or formatted current
+// time; the environment scope limits a rule's match to one detected block.
 const (
-	// UserPromptReplacementTypeStatic replaces a match with administrator-supplied text.
+	// UserPromptReplacementTypeStatic replaces a match with
+	// administrator-supplied text.
 	UserPromptReplacementTypeStatic = "static"
 	// UserPromptReplacementTypeTimezoneName substitutes the rule's IANA timezone name.
 	UserPromptReplacementTypeTimezoneName = "timezone_name"
-	// UserPromptReplacementTypeCurrentTime substitutes the current time in the configured timezone.
+	// UserPromptReplacementTypeCurrentTime substitutes the current time in the
+	// configured timezone.
 	UserPromptReplacementTypeCurrentTime = "current_time"
-	// UserPromptReplacementScopeEnvironmentContext confines each match to one environment_context block.
+	// UserPromptReplacementScopeEnvironmentContext confines each match to one
+	// environment_context block.
 	UserPromptReplacementScopeEnvironmentContext = "environment_context"
 
+	// Time rules use these timezone and layout defaults, while successful
+	// compilation and transient disabled entries have separate cache lifetimes so
+	// errors are retried sooner.
 	defaultUserPromptReplacementTimezone   = "Asia/Tokyo"
 	defaultUserPromptReplacementTimeLayout = "2006-01-02"
 	defaultUserPromptReplacementCacheTTL   = 60 * time.Second
 	defaultUserPromptReplacementErrorTTL   = 5 * time.Second
 
+	// SettingKeyUserPromptReplacementConfig identifies stored rule JSON read on
+	// cache misses; absent configuration selects the enabled built-in environment
+	// rules through the service's getter.
 	SettingKeyUserPromptReplacementConfig = "user_prompt_replacement_config"
 )
 
-var userPromptReplacementCache atomic.Value // *CompiledConfig
+// userPromptReplacementCache publishes process-wide *CompiledConfig values
+// reused by every service instance. Callers invalidate with a typed nil
+// pointer and leave compiled entries immutable after publication.
+var userPromptReplacementCache atomic.Value // stored value type is *CompiledConfig
 
-// UserPromptReplacementConfig holds administrator-defined user prompt replacement rules.
+// UserPromptReplacementConfig stores the global enable flag and ordered
+// administrator rules.
 type UserPromptReplacementConfig struct {
-	Enabled bool                        `json:"enabled"`
-	Rules   []UserPromptReplacementRule `json:"rules"`
+	// Enabled gates complete body replacement after compilation lookup. Rules are
+	// still normalized and validated when this flag is false, so disabled
+	// configuration can report invalid rule data.
+	Enabled bool                        `json:"enabled"` // whole prompt policy enable flag
+	Rules   []UserPromptReplacementRule `json:"rules"`   // ordered configured prompt replacement rules
 }
 
-// UserPromptReplacementRule describes one user-text replacement.
+// UserPromptReplacementRule selects regex group, scope, and replacement value
+// for user text.
 type UserPromptReplacementRule struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Enabled         bool   `json:"enabled"`
-	Pattern         string `json:"pattern"`
-	TargetGroup     int    `json:"target_group"`
-	ReplacementType string `json:"replacement_type"`
-	Scope           string `json:"scope,omitempty"`
-	StaticText      string `json:"static_text,omitempty"`
-	Timezone        string `json:"timezone,omitempty"`
-	TimeFormat      string `json:"time_format,omitempty"`
+	ID   string `json:"id"`   // administrator rule identifier string
+	Name string `json:"name"` // administrator rule display name
+	// Enabled selects this rule for the compiled list after normalization
+	// validates every supplied rule. A disabled rule still needs a valid pattern,
+	// capture index, scope and replacement settings.
+	Enabled bool   `json:"enabled"` // individual rule compilation enable flag
+	Pattern string `json:"pattern"` // configured Go regular expression
+	// TargetGroup zero replaces the entire regex match; positive values select a
+	// capture. Normalization rejects values outside the compiled pattern's
+	// capture count, including negative indices.
+	TargetGroup     int    `json:"target_group"`     // selected regex capture group index
+	ReplacementType string `json:"replacement_type"` // configured replacement value kind
+	// Scope is empty for whole-text matching or environment_context for
+	// literal-block matching. Normalization restores the environment scope for
+	// the two built-in IDs when earlier saved rules omit it.
+	Scope string `json:"scope,omitempty"` // configured regex matching scope label
+	// StaticText is retained as supplied and inserted literally for static rules.
+	// Dollar expressions have no regex expansion, and empty text can delete the
+	// selected capture.
+	StaticText string `json:"static_text,omitempty"` // literal configured replacement text
+	// Timezone is trimmed and defaults to Asia/Tokyo for time-based rules.
+	// Normalization checks LoadLocation even when the rule is disabled, while
+	// static replacements need no timezone.
+	Timezone string `json:"timezone,omitempty"` // configured IANA timezone name
+	// TimeFormat is a Go layout for current_time. Its trimmed empty value selects
+	// the built-in date layout; static and timezone-name rules do not use it.
+	TimeFormat string `json:"time_format,omitempty"` // configured Go time layout
 }
 
+// compiledUserPromptReplacementRule pairs normalized input with regex and
+// optional timezone lookup.
 type compiledUserPromptReplacementRule struct {
-	rule    UserPromptReplacementRule
-	pattern *regexp.Regexp
-	loc     *time.Location
+	rule    UserPromptReplacementRule // normalized immutable source rule values
+	pattern *regexp.Regexp            // compiled rule regular expression
+	// loc is loaded for timezone-name and current-time rules and is nil for
+	// static rules. Manually constructed current-time entries lacking it use the
+	// host location during replacement.
+	loc *time.Location // resolved optional rule timezone location
 }
 
+// CompiledConfig holds immutable enabled rules and their process-cache expiry
+// timestamp.
 type CompiledConfig struct {
-	enabled   bool
-	rules     []compiledUserPromptReplacementRule
-	expiresAt int64
+	enabled bool                                // whole compiled configuration enable flag
+	rules   []compiledUserPromptReplacementRule // enabled compiled rules in input order
+	// expiresAt is compared with the current Unix-nanosecond clock using a strict
+	// earlier-than test. Equality or a later current time makes the entry require
+	// another load.
+	expiresAt int64 // Unix-nanosecond compiled cache expiry timestamp
 }
 
-// Settings reads and writes prompt replacement configuration.
+// Settings supplies raw prompt-rule configuration reads and validated value
+// persistence.
 type Settings interface {
+	// GetValue returns stored raw JSON or an error for the configuration key.
+	// The service recognizes its configured not-found sentinel as absent settings
+	// and lets other failures reach temporary compilation-error handling.
 	GetValue(context.Context, string) (string, error)
+	// Set persists the supplied raw setting value and reports its write error.
+	// Callers prepare validated JSON through ConfigToRaw before persistence; cache
+	// invalidation belongs to the owning settings publication path.
 	Set(context.Context, string, string) error
 }
 
 // Service loads prompt rules on demand and uses the shared process cache.
 type Service struct {
-	store    Settings
+	// store supplies raw configuration on process-cache misses. Nil storage
+	// selects built-in defaults, while another service can reuse the same global
+	// compiled entry without consulting this store.
+	store Settings
+	// notFound identifies setting-read errors that select built-in defaults.
+	// Other read errors propagate to compilation lookup, which publishes a
+	// temporary disabled entry rather than applying replacement.
 	notFound error
-	warn     func(string, ...any)
+	warn     func(string, ...any) // optional synchronous replacement diagnostic callback
 }
 
-// DefaultUserPromptReplacementConfig returns the built-in prompt replacement rules.
+// DefaultUserPromptReplacementConfig returns fresh enabled rules for timezone
+// and current date inside environment_context blocks. Both select capture two
+// in Asia/Tokyo, and the date rule uses the built-in Go date layout.
 func DefaultUserPromptReplacementConfig() *UserPromptReplacementConfig {
 	return &UserPromptReplacementConfig{
 		Enabled: true,
@@ -111,12 +188,24 @@ func DefaultUserPromptReplacementConfig() *UserPromptReplacementConfig {
 	}
 }
 
+// ParseConfig decodes raw JSON and returns a usable rule collection. Blank or
+// malformed text selects fresh built-in defaults, with malformed JSON reported
+// through the optional diagnostic callback.
+//
+// Valid configuration retains its decoded Enabled flag and rule values, while
+// nil Rules becomes an allocated empty slice. Empty objects and JSON null
+// therefore use disabled zero-valued settings rather than enabled defaults.
+// Rule validation occurs later during normalization or compilation, keeping
+// absence and parse recovery separate from invalid configured rule handling.
 func ParseConfig(raw string, warn func(string, ...any)) *UserPromptReplacementConfig {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return DefaultUserPromptReplacementConfig()
 	}
 	var cfg UserPromptReplacementConfig
+	// Recover malformed persisted JSON with built-in defaults so prompt
+	// processing still has a usable configuration; valid but empty decoded
+	// settings retain their own disabled state.
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		emit(warn, "user_prompt_replacement_config_parse_failed", "error", err)
 		return DefaultUserPromptReplacementConfig()
@@ -127,6 +216,17 @@ func ParseConfig(raw string, warn func(string, ...any)) *UserPromptReplacementCo
 	return &cfg
 }
 
+// normalizeUserPromptReplacementConfig validates rules and returns newly
+// allocated configuration storage. Nil input selects built-in defaults; all
+// supplied rules are validated even when their own or overall enable flag is
+// false.
+//
+// String metadata is trimmed while StaticText stays literal. Missing ID and
+// name receive positional/ID defaults, and the two built-in IDs restore
+// environment scope when omitted for saved-rule compatibility. Capture
+// selection is checked against regex groups, scopes and replacement kinds are
+// constrained, and time rules require a loadable timezone with the built-in
+// date layout for omitted current-time formatting.
 func normalizeUserPromptReplacementConfig(cfg *UserPromptReplacementConfig) (*UserPromptReplacementConfig, error) {
 	if cfg == nil {
 		return DefaultUserPromptReplacementConfig(), nil
@@ -144,7 +244,9 @@ func normalizeUserPromptReplacementConfig(cfg *UserPromptReplacementConfig) (*Us
 		rule.Timezone = strings.TrimSpace(rule.Timezone)
 		rule.TimeFormat = strings.TrimSpace(rule.TimeFormat)
 		if rule.Scope == "" && isDefaultEnvironmentContextUserPromptReplacementRuleID(rule.ID) {
-			// Older saved default rules omit scope but still need confinement to one environment_context block.
+			// Restore scope for saved built-in IDs that predate that field, keeping
+			// their lazy regexes from combining timezone/date evidence across different
+			// environment blocks.
 			rule.Scope = UserPromptReplacementScopeEnvironmentContext
 		}
 		if rule.ID == "" {
@@ -188,6 +290,8 @@ func normalizeUserPromptReplacementConfig(cfg *UserPromptReplacementConfig) (*Us
 	return normalized, nil
 }
 
+// isDefaultEnvironmentContextUserPromptReplacementRuleID reports whether id is
+// one of the two built-in environment rules.
 func isDefaultEnvironmentContextUserPromptReplacementRuleID(id string) bool {
 	switch id {
 	case "environment-context-timezone-japan", "environment-context-current-date-japan":
@@ -197,6 +301,10 @@ func isDefaultEnvironmentContextUserPromptReplacementRuleID(id string) bool {
 	}
 }
 
+// compileUserPromptReplacementConfig normalizes every rule, then compiles only
+// enabled entries with any needed timezone. TTL is stored as supplied using
+// current time; an overall disabled configuration can still contain compiled
+// enabled rules that body application later skips.
 func compileUserPromptReplacementConfig(cfg *UserPromptReplacementConfig, ttl time.Duration) (*CompiledConfig, error) {
 	normalized, err := normalizeUserPromptReplacementConfig(cfg)
 	if err != nil {
@@ -231,13 +339,19 @@ func compileUserPromptReplacementConfig(cfg *UserPromptReplacementConfig, ttl ti
 	return compiled, nil
 }
 
-// GetUserPromptReplacementConfig reads prompt replacement settings, defaulting absent configuration.
+// GetUserPromptReplacementConfig reads raw configuration or selects defaults
+// for nil service/storage and matching not-found errors. Other storage
+// failures propagate; malformed JSON warns and chooses defaults through
+// ParseConfig, while valid raw values remain subject to later rule validation.
 func (s *Service) GetUserPromptReplacementConfig(ctx context.Context) (*UserPromptReplacementConfig, error) {
 	if s == nil || s.store == nil {
 		return DefaultUserPromptReplacementConfig(), nil
 	}
 	raw, err := s.store.GetValue(ctx, SettingKeyUserPromptReplacementConfig)
 	if err != nil {
+		// Treat the configured missing-setting error as an absent policy and select
+		// built-in rules; other failed reads remain errors for the short
+		// disabled-cache recovery path.
 		if errors.Is(err, s.notFound) {
 			return DefaultUserPromptReplacementConfig(), nil
 		}
@@ -246,6 +360,17 @@ func (s *Service) GetUserPromptReplacementConfig(ctx context.Context) (*UserProm
 	return ParseConfig(raw, s.warn), nil
 }
 
+// getCompiledUserPromptReplacementConfig returns the unexpired global entry or
+// loads and compiles another configuration. Callers retain published entries
+// as immutable; all service instances share the same atomic value regardless
+// of their storage adapter.
+//
+// Successful compilation lives sixty seconds, while read or compile failure is
+// observed and publishes a disabled five-second result to suppress repeated
+// failing loads. Concurrent misses can load and publish independently, and
+// settings invalidation has no generation coordination here, so an earlier
+// load can publish after an invalidation. Atomic storage prevents partial
+// entry publication, not stale-result ordering.
 func (s *Service) getCompiledUserPromptReplacementConfig(ctx context.Context) *CompiledConfig {
 	if cached, ok := userPromptReplacementCache.Load().(*CompiledConfig); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
@@ -253,6 +378,9 @@ func (s *Service) getCompiledUserPromptReplacementConfig(ctx context.Context) *C
 		}
 	}
 	cfg, err := s.GetUserPromptReplacementConfig(ctx)
+	// Publish a short disabled entry after storage failure so subsequent requests
+	// bypass replacement until the error cache expires, while the observation
+	// preserves this failed configuration read.
 	if err != nil {
 		emit(s.warn, "user_prompt_replacement_config_load_failed", "error", err)
 		entry := &CompiledConfig{enabled: false, expiresAt: time.Now().Add(defaultUserPromptReplacementErrorTTL).UnixNano()}
@@ -260,6 +388,9 @@ func (s *Service) getCompiledUserPromptReplacementConfig(ctx context.Context) *C
 		return entry
 	}
 	compiled, err := compileUserPromptReplacementConfig(cfg, defaultUserPromptReplacementCacheTTL)
+	// Disable replacement briefly when configured rules fail validation or
+	// compilation; malformed raw JSON already has its separate built-in recovery,
+	// so this invalid-rule path does not substitute default rules.
 	if err != nil {
 		emit(s.warn, "user_prompt_replacement_config_compile_failed", "error", err)
 		entry := &CompiledConfig{enabled: false, expiresAt: time.Now().Add(defaultUserPromptReplacementErrorTTL).UnixNano()}
@@ -270,6 +401,10 @@ func (s *Service) getCompiledUserPromptReplacementConfig(ctx context.Context) *C
 	return compiled
 }
 
+// replacementValueForRule returns literal text, the configured timezone name,
+// or time formatted from the supplied instant. Missing current-time layout
+// selects the built-in date layout; missing compiled location uses time.Local,
+// and unrecognized kinds use StaticText.
 func replacementValueForRule(rule compiledUserPromptReplacementRule, now time.Time) string {
 	switch rule.rule.ReplacementType {
 	case UserPromptReplacementTypeTimezoneName:
@@ -280,6 +415,9 @@ func replacementValueForRule(rule compiledUserPromptReplacementRule, now time.Ti
 			layout = defaultUserPromptReplacementTimeLayout
 		}
 		loc := rule.loc
+		// Use the host location for a manually constructed current-time rule lacking
+		// compiled location; normalized compiled time rules normally carry the
+		// validated timezone selected during compilation.
 		if loc == nil {
 			loc = time.Local
 		}
@@ -289,6 +427,17 @@ func replacementValueForRule(rule compiledUserPromptReplacementRule, now time.Ti
 	}
 }
 
+// applyCompiledUserPromptReplacementRules applies compiled rules in input
+// order using the supplied clock instant. Callers provide normalized rules
+// with usable regexes and capture indices; each rule sees text produced by its
+// predecessor.
+//
+// Environment scope delegates literal-block isolation, while another scope
+// operates over the complete text. A replacement is inserted as a literal
+// value between the selected capture's surrounding bytes, avoiding regex
+// dollar expansion. Missing optional captures retain their original match.
+// TargetGroup zero selects the whole match, and every match for one time rule
+// uses the same supplied instant.
 func applyCompiledUserPromptReplacementRules(text string, rules []compiledUserPromptReplacementRule, now time.Time) string {
 	for _, rule := range rules {
 		if rule.rule.Scope == UserPromptReplacementScopeEnvironmentContext {
@@ -296,6 +445,9 @@ func applyCompiledUserPromptReplacementRules(text string, rules []compiledUserPr
 			continue
 		}
 		replacement := replacementValueForRule(rule, now)
+		// Retain bytes around the selected capture and insert replacement literally,
+		// because administrator text containing dollar expressions is data rather
+		// than a regex expansion template.
 		text = rule.pattern.ReplaceAllStringFunc(text, func(match string) string {
 			ranges := rule.pattern.FindStringSubmatchIndex(match)
 			group := rule.rule.TargetGroup
@@ -313,6 +465,17 @@ func applyCompiledUserPromptReplacementRules(text string, rules []compiledUserPr
 	return text
 }
 
+// applyEnvironmentContextScopedUserPromptReplacementRule isolates regex
+// application to each detected environment block and preserves surrounding
+// text. Detection uses the literal opening prefix and first closing marker,
+// rather than parsing nested XML or validating a complete tag structure.
+//
+// Complete blocks are processed independently so a lazy regex cannot satisfy
+// one match using fields in two blocks. Trailing unmatched or incomplete text
+// remains copied after processed blocks. If the builder has written no bytes,
+// the function returns the supplied text, including cases where empty
+// whole-block replacements consumed input without producing output; suffix
+// text has not yet been copied at that decision.
 func applyEnvironmentContextScopedUserPromptReplacementRule(text string, rule compiledUserPromptReplacementRule, now time.Time) string {
 	var builder strings.Builder
 	cursor := 0
@@ -331,10 +494,15 @@ func applyEnvironmentContextScopedUserPromptReplacementRule(text string, rule co
 			builder.Grow(len(text))
 		}
 		_, _ = builder.WriteString(text[cursor:start])
-		// Match each environment_context block separately so .*? cannot consume text across blocks.
+		// Apply the regex to this complete literal block alone; a lazy wildcard
+		// cannot cross into another block and assemble fields that belong to a
+		// different context.
 		_, _ = builder.WriteString(applySingleUserPromptReplacementRule(text[start:end], rule, now))
 		cursor = end
 	}
+	// The builder measures emitted bytes, not processed blocks. Empty whole-block
+	// replacements can therefore take this unchanged-input result before any
+	// remaining suffix is copied.
 	if builder.Len() == 0 {
 		return text
 	}
@@ -342,8 +510,22 @@ func applyEnvironmentContextScopedUserPromptReplacementRule(text string, rule co
 	return builder.String()
 }
 
+// applySingleUserPromptReplacementRule replaces one normalized capture
+// throughout its supplied text using a compiled regex and one clock value.
+// Callers provide a usable pattern and valid TargetGroup; zero selects the
+// entire match.
+//
+// The surrounding portions of each match are retained, and replacement strings
+// are concatenated literally so dollar expressions are not expanded as regex
+// substitutions. Optional captures that did not participate leave their match
+// unchanged. The supplied instant provides consistent current-time values
+// across repeated matches, while the caller decides whether this text is a
+// whole prompt or one isolated environment block.
 func applySingleUserPromptReplacementRule(text string, rule compiledUserPromptReplacementRule, now time.Time) string {
 	replacement := replacementValueForRule(rule, now)
+	// Keep unmatched portions around each participating capture, inserting the
+	// prepared value literally; an absent optional capture retains its match
+	// instead of using negative substring indices.
 	return rule.pattern.ReplaceAllStringFunc(text, func(match string) string {
 		ranges := rule.pattern.FindStringSubmatchIndex(match)
 		group := rule.rule.TargetGroup
@@ -359,7 +541,10 @@ func applySingleUserPromptReplacementRule(text string, rule compiledUserPromptRe
 	})
 }
 
-// ApplyUserPromptReplacementToBody applies rules to user text fields in the selected protocol.
+// ApplyUserPromptReplacementToBody applies cached rules to user text selected
+// by the protocol. Nil service, empty/invalid JSON, disabled configuration, or
+// no compiled rules returns the supplied body; unknown protocol labels use
+// Messages-shaped traversal and one instant is captured for all fields.
 func (s *Service) ApplyUserPromptReplacementToBody(ctx context.Context, body []byte, protocol string) []byte {
 	if s == nil || len(body) == 0 || !gjson.ValidBytes(body) {
 		return body
@@ -379,6 +564,17 @@ func (s *Service) ApplyUserPromptReplacementToBody(ctx context.Context, body []b
 	}
 }
 
+// applyUserPromptReplacementMessages applies ordered rules to Messages-shaped
+// entries whose role is user. A missing messages array passes through, and
+// callers provide compiled rules plus the common body clock value.
+//
+// String content is considered directly, while array content visits text
+// blocks and their text field. Other roles and block kinds remain outside
+// those selections. Each accepted mutation becomes input to the next field
+// write; a failed mutation keeps the currently supplied body, including
+// earlier successful field changes. That per-field behavior preserves partial
+// progress instead of treating the complete body rewrite as one atomic
+// operation.
 func applyUserPromptReplacementMessages(body []byte, rules []compiledUserPromptReplacementRule, now time.Time, warn ...func(string, ...any)) []byte {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -406,6 +602,16 @@ func applyUserPromptReplacementMessages(body []byte, rules []compiledUserPromptR
 	return updated
 }
 
+// applyUserPromptReplacementOpenAIResponses rewrites string input or eligible
+// text fields in an input array. Callers provide compiled rules and a common
+// clock value; array entries with a nonempty role other than user are skipped.
+//
+// Eligible entries can expose direct text, string content, or content blocks
+// of input_text, text, or empty type. A standalone input string is treated as
+// user text directly. The traversal reads original field values and
+// accumulates mutations into updated bytes, retaining earlier changes if
+// another write fails. Unrecognized nonarray input passes through for the
+// owning protocol handler to interpret.
 func applyUserPromptReplacementOpenAIResponses(body []byte, rules []compiledUserPromptReplacementRule, now time.Time, warn ...func(string, ...any)) []byte {
 	input := gjson.GetBytes(body, "input")
 	updated := body
@@ -443,6 +649,17 @@ func applyUserPromptReplacementOpenAIResponses(body []byte, rules []compiledUser
 	return updated
 }
 
+// applyUserPromptReplacementGemini rewrites string text fields in Gemini parts
+// under user or absent roles. A missing contents array passes through, and
+// callers provide compiled rules with the same instant for the complete body
+// operation.
+//
+// Each selected content must have an array of parts; other shapes and nonuser
+// roles remain outside traversal. Field mutations accumulate using original
+// parsed text values and the current updated body. A nonstring field or write
+// error keeps those existing bytes, including successful earlier replacements,
+// so one malformed or unsupported part does not discard completed changes
+// elsewhere.
 func applyUserPromptReplacementGemini(body []byte, rules []compiledUserPromptReplacementRule, now time.Time, warn ...func(string, ...any)) []byte {
 	contents := gjson.GetBytes(body, "contents")
 	if !contents.IsArray() {
@@ -468,6 +685,10 @@ func applyUserPromptReplacementGemini(body []byte, rules []compiledUserPromptRep
 	return updated
 }
 
+// replaceTextResultAtPath applies rules to a parsed string field and writes
+// changed text into the current body. Nonstrings and unchanged values pass
+// through; a write error warns through the first optional callback and retains
+// supplied bytes, including prior field edits.
 func replaceTextResultAtPath(body []byte, path string, result gjson.Result, rules []compiledUserPromptReplacementRule, now time.Time, warn ...func(string, ...any)) []byte {
 	if result.Type != gjson.String {
 		return body
@@ -478,6 +699,9 @@ func replaceTextResultAtPath(body []byte, path string, result gjson.Result, rule
 		return body
 	}
 	next, err := sjson.SetBytesOptions(body, path, replaced, &sjson.Options{Optimistic: true})
+	// Keep the current accumulated body when a single field write fails, so
+	// previous successful replacements survive while the optional warning records
+	// this path-specific failure.
 	if err != nil {
 		if len(warn) > 0 {
 			emit(warn[0], "user_prompt_replacement_set_path_failed", "path", path, "error", err)
@@ -487,6 +711,10 @@ func replaceTextResultAtPath(body []byte, path string, result gjson.Result, rule
 	return next
 }
 
+// ConfigToRaw normalizes and validates settings before encoding newly
+// allocated rule data as JSON. Nil input chooses built-in defaults; validation
+// or encoding errors stop the result, and the caller owns persistence and
+// compiled-cache invalidation.
 func ConfigToRaw(cfg *UserPromptReplacementConfig) (string, error) {
 	normalized, err := normalizeUserPromptReplacementConfig(cfg)
 	if err != nil {
@@ -499,15 +727,25 @@ func ConfigToRaw(cfg *UserPromptReplacementConfig) (string, error) {
 	return string(raw), nil
 }
 
+// New binds setting storage, its not-found sentinel, and an optional
+// diagnostic callback for prompt rules. Construction performs no load; a nil
+// store later selects defaults, and compiled entries are shared process-wide
+// rather than per service.
 func New(store Settings, notFound error, warn func(string, ...any)) *Service {
 	return &Service{store: store, notFound: notFound, warn: warn}
 }
 
+// emit synchronously reports the named diagnostic when a callback is supplied.
+// A nil callback discards the observation, allowing parse, compile, and
+// field-write recovery to proceed without a diagnostic consumer.
 func emit(warn func(string, ...any), name string, fields ...any) {
 	if warn != nil {
 		warn(name, fields...)
 	}
 }
 
-// SharedCache exposes the compiled cache for bulk-settings invalidation.
+// SharedCache returns the shared atomic value used by settings publication to
+// invalidate compilation. Store only *CompiledConfig values, using a typed nil
+// to trigger the next load; published entries remain immutable and
+// invalidation has no version barrier.
 func SharedCache() *atomic.Value { return &userPromptReplacementCache }

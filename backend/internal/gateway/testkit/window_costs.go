@@ -8,17 +8,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-type windowCosts struct{ source usage.UsageLogRepository }
+// Billing window tests read standard costs from usage fixtures, which may also
+// offer batch lookup. Production billing checks the adapter's method set to
+// decide whether it can obtain several provider observations together.
+//
+// The wrapper retains the optional batch interface when present and otherwise
+// exposes individual reads. Converting results keeps nil collections and
+// individual missing entries visible to the billing cache's absence handling,
+// including when an error accompanies returned data. Nonnil results receive
+// new billing map or struct storage, with StandardCost copied from each usage
+// observation. A nil source returns a nil interface so unavailable fixture
+// storage stays distinguishable from an empty observation.
 
+// windowCosts converts one usage-provider window observation into billing cost
+// statistics.
+type windowCosts struct {
+	source usage.UsageLogRepository // retained usage window fixture reader
+}
+
+// windowCostBatch identifies usage fixtures that can read several provider
+// windows together.
 type windowCostBatch interface {
+	// GetProviderWindowStatsBatch returns provider observations from the supplied
+	// window start, retaining missing entries and an accompanying read error for
+	// the billing adapter to pass through.
 	GetProviderWindowStatsBatch(context.Context, []int64, time.Time) (map[int64]*usage.ProviderStats, error)
 }
+
+// windowCostsBatch adds retained batch reads to the single-window fixture
+// adapter.
 type windowCostsBatch struct {
-	windowCosts
-	batch windowCostBatch
+	windowCosts                 // converted individual provider window reads
+	batch       windowCostBatch // retained batch window fixture capability
 }
 
-// WindowCosts adapts usage fixtures, retaining optional batch lookup and nil results.
+// WindowCosts adapts usage window reads while retaining an optional batch
+// capability for billing type assertions. A nil source returns nil, and nonnil
+// wrappers retain their fixture interfaces for later reads.
+//
+// The source's batch method is detected when the adapter is built. A matching
+// source returns windowCostsBatch with both read forms; another source returns
+// the single-window adapter. Conversion later preserves missing observations
+// and accompanying errors, allowing the billing cache to choose its own
+// absence or retry handling instead of treating adaptation as a successful
+// zero-cost observation.
 func WindowCosts(source usage.UsageLogRepository) billing.WindowCostSource {
 	if source == nil {
 		return nil
@@ -30,6 +63,9 @@ func WindowCosts(source usage.UsageLogRepository) billing.WindowCostSource {
 	return base
 }
 
+// GetWindow copies StandardCost from the source usage observation into billing
+// window statistics. A nil source observation remains nil, and any
+// accompanying error is returned with the converted result.
 func (s windowCosts) GetWindow(ctx context.Context, id int64, start time.Time) (*billing.WindowCostStats, error) {
 	value, err := s.source.GetProviderWindowStats(ctx, id, start)
 	if value == nil {
@@ -38,6 +74,9 @@ func (s windowCosts) GetWindow(ctx context.Context, id int64, start time.Time) (
 	return &billing.WindowCostStats{StandardCost: value.StandardCost}, err
 }
 
+// GetWindows converts a batch observation into newly allocated billing map and
+// value storage. Nil collections and individual nil entries remain nil, and
+// source errors stay paired with the returned observations.
 func (s windowCostsBatch) GetWindows(ctx context.Context, ids []int64, start time.Time) (map[int64]*billing.WindowCostStats, error) {
 	values, err := s.batch.GetProviderWindowStatsBatch(ctx, ids, start)
 	if values == nil {
