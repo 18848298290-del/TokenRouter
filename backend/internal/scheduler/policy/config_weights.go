@@ -2,32 +2,60 @@ package policy
 
 import "math"
 
-// ConfigScoreWeights contains process-level weights converted to ScoreWeights for scoring.
+// Global score configuration needs at least one positive base contribution.
+// Affinity bonuses extend that base when weighted stickiness is active, but
+// they cannot alone make process defaults valid. IsValid checks individual
+// coefficients before evaluating the sums, so a negative or nonfinite field is
+// rejected even when another field would offset it.
+//
+// Finite fields can still overflow when added. The base sum covers seven
+// ordinary score factors, while the full sum also includes previous-response
+// and session affinity. Both sums must remain finite for configuration
+// admission. Group overrides use a separate validator that permits a zero
+// base, which gives deliberate zero group weights a different meaning from
+// unusable global defaults.
+
+// ConfigScoreWeights holds process configuration coefficients before
+// conversion to scoring weights. IsValid enforces finite nonnegative values
+// and a positive base sum for global defaults.
 type ConfigScoreWeights struct {
-	Priority  float64 `mapstructure:"priority"`
-	Load      float64 `mapstructure:"load"`
-	Queue     float64 `mapstructure:"queue"`
-	ErrorRate float64 `mapstructure:"error_rate"`
-	TTFT      float64 `mapstructure:"ttft"`
-	// Reset rewards providers whose session windows reset sooner.
-	// Positive values favor shorter remaining times; zero disables this factor by default.
-	Reset float64 `mapstructure:"reset"`
-	// QuotaHeadroom rewards greater remaining Codex 7d quota.
-	// Zero disables this factor by default.
+	Priority  float64 `mapstructure:"priority"`   // global priority coefficient
+	Load      float64 `mapstructure:"load"`       // provider load coefficient
+	Queue     float64 `mapstructure:"queue"`      // waiting count coefficient
+	ErrorRate float64 `mapstructure:"error_rate"` // feedback health coefficient
+	TTFT      float64 `mapstructure:"ttft"`       // token latency coefficient
+	Reset     float64 `mapstructure:"reset"`      // window reset coefficient
+	// platform quota coefficient
 	QuotaHeadroom float64 `mapstructure:"quota_headroom"`
-	// PreviousResponse and SessionSticky apply when advanced weighted stickiness is enabled.
+	// PreviousResponse and SessionSticky contribute bonuses only when
+	// advanced weighted stickiness is enabled. They are included in the
+	// total sum checked by IsValid but excluded from the required positive
+	// base sum.
+	// previous response bonus
 	PreviousResponse float64 `mapstructure:"previous_response"`
-	SessionSticky    float64 `mapstructure:"session_sticky"`
+	SessionSticky    float64 `mapstructure:"session_sticky"` // session provider bonus
 }
 
+// BaseWeightSum adds the seven coefficients for ordinary candidate score
+// factors.
 func (w ConfigScoreWeights) BaseWeightSum() float64 {
 	return w.Priority + w.Load + w.Queue + w.ErrorRate + w.TTFT + w.Reset + w.QuotaHeadroom
 }
 
+// TotalWeightSum adds the base score coefficients and both affinity bonuses
+// together.
 func (w ConfigScoreWeights) TotalWeightSum() float64 {
 	return w.BaseWeightSum() + w.PreviousResponse + w.SessionSticky
 }
 
+// IsValid reports whether global coefficients can be used as scheduling
+// defaults. Each coefficient must be finite and nonnegative, and the base sum
+// must be positive.
+//
+// The base and full sums are checked separately because adding finite
+// coefficients can overflow, including when the affinity bonuses extend a
+// valid base. Group overrides use ValidateEffectiveWeights instead, which
+// permits a zero base and still checks both sums.
 func (w ConfigScoreWeights) IsValid() bool {
 	for _, weight := range []float64{
 		w.Priority, w.Load, w.Queue, w.ErrorRate, w.TTFT, w.Reset,
