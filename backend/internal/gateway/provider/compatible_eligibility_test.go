@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestEvaluateOpenAIQuotaAutoPause_UsesGlobalDefaultAndWindowReset evaluates a
+// recent 96 percent quota observation under a 95 percent default threshold. A
+// future reset pauses the target, and an elapsed reset clears that pause
+// result.
 func TestEvaluateOpenAIQuotaAutoPause_UsesGlobalDefaultAndWindowReset(t *testing.T) {
 	ctx := WithQuotaAutoPauseSettings(context.Background(), providercore.QuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
 	now := time.Now().UTC()
@@ -38,6 +42,10 @@ func TestEvaluateOpenAIQuotaAutoPause_UsesGlobalDefaultAndWindowReset(t *testing
 	require.False(t, paused)
 }
 
+// TestEvaluateOpenAIQuotaAutoPause_PerProviderDisableOverridesGlobalDefault
+// supplies a high utilization observation alongside a provider-level disable
+// flag. The result remains unpaused even though the request context supplies a
+// lower global threshold.
 func TestEvaluateOpenAIQuotaAutoPause_PerProviderDisableOverridesGlobalDefault(t *testing.T) {
 	ctx := WithQuotaAutoPauseSettings(context.Background(), providercore.QuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
 	provider := &ExecutionProvider{
@@ -56,8 +64,10 @@ func TestEvaluateOpenAIQuotaAutoPause_PerProviderDisableOverridesGlobalDefault(t
 	require.False(t, paused)
 }
 
-// TestCompatibleQuotaSnapshotPreservesParentAttemptState checks that derived attempts isolate thresholds and retain
-// health-observation models.
+// TestCompatibleQuotaSnapshotPreservesParentAttemptState derives a context
+// with stricter thresholds from a parent carrying health-model information.
+// The child pauses independently, the parent stays unpaused, and the
+// health-model hint survives derivation.
 func TestCompatibleQuotaSnapshotPreservesParentAttemptState(t *testing.T) {
 	parent := requeststate.WithExecutionHints(context.Background(), requeststate.ExecutionHints{HealthModel: "observed-model"})
 	parent = WithQuotaAutoPauseSettings(parent, providercore.QuotaAutoPauseSettings{DefaultThreshold5h: 0.99})
@@ -71,7 +81,10 @@ func TestCompatibleQuotaSnapshotPreservesParentAttemptState(t *testing.T) {
 	require.Equal(t, "observed-model", requeststate.ExecutionHintsFromContext(child).HealthModel)
 }
 
-// TestGrokMediaCapabilityFiltersOnlyGeneration checks that media eligibility restricts generation requests.
+// TestGrokMediaCapabilityFiltersOnlyGeneration supplies an active Grok OAuth
+// target with a negative media-eligibility observation. Text capability
+// remains available, while media-generation capability and compatible
+// generation selection are rejected.
 func TestGrokMediaCapabilityFiltersOnlyGeneration(t *testing.T) {
 	provider := &ExecutionProvider{
 		Record: providercore.Record{

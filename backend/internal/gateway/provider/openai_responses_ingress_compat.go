@@ -12,23 +12,51 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Legacy Responses ingress can contain Chat messages or a string prompt
+// alongside native Responses input. Nonnull input remains authoritative, so
+// conversion cannot silently replace its history or previous-response
+// relationship; message-derived history removes previous_response_id when it
+// is adopted as the complete input.
+//
+// Chat conversion supplies input plus scalar and tool fields, while raw
+// legacy-field inspection determines which converted tool, choice, and
+// reasoning values can replace existing data. String prompts are input
+// aliases, whereas object/array prompts stay available for upstream
+// validation. The decoder retains json.Number values in the surrounding map
+// and the body is published by final serialization; conversion of typed input
+// follows the bridge encoding rules.
+
+// convertedLegacyResponsesMessages records converted Chat input and selected
+// legacy configuration fields.
 type convertedLegacyResponsesMessages struct {
-	input              any
-	instructions       string
-	maxOutputTokens    *int
-	temperature        *float64
-	topP               *float64
-	tools              any
-	reasoning          any
-	toolChoice         any
-	serviceTier        string
-	hasChatTools       bool
-	hasChatToolChoice  bool
-	hasReasoningEffort bool
+	input           any      // converted Responses input items
+	instructions    string   // converted system instruction text
+	maxOutputTokens *int     // optional converted output token cap
+	temperature     *float64 // optional converted sampling temperature
+	topP            *float64 // optional converted nucleus sampling
+	tools           any      // converted Responses tool declarations
+	reasoning       any      // converted Responses reasoning configuration
+	toolChoice      any      // converted Responses tool selection
+	serviceTier     string   // converted service tier text
+	// hasChatTools, hasChatToolChoice, and hasReasoningEffort track explicit legacy
+	// inputs independently of converter output. Adoption uses those flags to replace
+	// corresponding fields only when the Chat-shaped request actually supplied them.
+	hasChatTools       bool // explicit legacy tool declarations
+	hasChatToolChoice  bool // explicit legacy tool selection
+	hasReasoningEffort bool // explicit legacy reasoning effort
 }
 
-// NormalizeOpenAIResponsesLegacyIngress converts legacy Chat-shaped Responses payloads.
-// Existing non-null input takes precedence over messages and string prompt aliases.
+// NormalizeOpenAIResponsesLegacyIngress converts legacy Messages or string
+// prompt aliases to Responses input. Empty bodies return unchanged; invalid
+// decoding or conversion returns the supplied body with false and an error.
+//
+// A present nonnull native input wins over converted messages, including an
+// empty array. Converted message input receives compatible top-level fields
+// and loses previous_response_id because that history has been supplied
+// directly. The messages field is then removed; string prompt aliases are
+// removed after filling only absent/null input, while object or array prompts
+// remain. Serialization publishes the rebuilt body after all selected
+// mutations succeed.
 func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -51,20 +79,23 @@ func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 
 			input, hasInput := request["input"]
 			hasNativeInput := hasInput && input != nil
+			// Message-derived history becomes complete input only when native input is
+			// absent or null. Remove its continuation ID so the same history is not resolved twice.
 			if !hasNativeInput {
 				request["input"] = legacy.input
 				applyLegacyResponsesTopLevelFields(request, legacy)
 				delete(request, "previous_response_id")
 			}
 		}
-		// Drop the legacy messages field after choosing the authoritative input history.
+		// Responses forwarding consumes input, so remove the legacy messages alias
+		// after its adoption decision while retaining the selected authoritative history.
 		delete(request, "messages")
 		changed = true
 	}
 
 	if prompt, hasPrompt := request["prompt"]; hasPrompt {
-		// String prompts are legacy input aliases. Objects represent reusable prompt templates.
-		// Leave arrays and other shapes for upstream validation.
+		// String prompts supply legacy text input. Object prompt templates and other
+		// shapes retain their own meaning, so leave them available for upstream validation.
 		if promptText, isLegacyString := prompt.(string); isLegacyString {
 			if input, hasInput := request["input"]; !hasInput || input == nil {
 				request["input"] = promptText
@@ -88,6 +119,10 @@ func NormalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 	return normalized, true, nil
 }
 
+// convertLegacyResponsesMessages decodes Chat input and uses the shared bridge
+// to build Responses fields. It rejects invalid conversion or empty encoded
+// input, and records raw legacy tool/choice presence separately so top-level
+// adoption only replaces the corresponding Chat-shaped fields.
 func convertLegacyResponsesMessages(body []byte) (convertedLegacyResponsesMessages, error) {
 	var converted convertedLegacyResponsesMessages
 	var chatRequest protocolopenai.ChatCompletionsRequest
@@ -134,6 +169,10 @@ func convertLegacyResponsesMessages(body []byte) (convertedLegacyResponsesMessag
 	return converted, nil
 }
 
+// hasChatStyleTools recognizes nested function objects inside a decoded tools
+// array. Other tool representations or non-array values return false, letting
+// legacy ingress preserve flat Responses declarations when no Chat encoding is
+// present.
 func hasChatStyleTools(request map[string]any) bool {
 	tools, ok := request["tools"].([]any)
 	if !ok {
@@ -148,12 +187,19 @@ func hasChatStyleTools(request map[string]any) bool {
 	return false
 }
 
+// hasChatStyleToolChoice recognizes a nested function object in decoded
+// tool_choice. Other choice forms return false, leaving their adoption
+// decision to the legacy-field presence tracked during conversion.
 func hasChatStyleToolChoice(request map[string]any) bool {
 	choice, _ := request["tool_choice"].(map[string]any)
 	_, ok := choice["function"].(map[string]any)
 	return ok
 }
 
+// normalizeLegacyResponsesToolChoice decodes converted choice and flattens a
+// named nested function selection. Non-function choices, missing nested
+// objects, and blank names return their decoded value; invalid JSON returns a
+// contextual error.
 func normalizeLegacyResponsesToolChoice(raw json.RawMessage) (any, error) {
 	var choice any
 	if err := json.Unmarshal(raw, &choice); err != nil {
@@ -171,9 +217,22 @@ func normalizeLegacyResponsesToolChoice(raw json.RawMessage) (any, error) {
 	if name == "" {
 		return choice, nil
 	}
+	// Responses function choice uses a flat name beside type; retaining the
+	// nested Chat function object would give the selected endpoint another request shape.
 	return map[string]any{"type": "function", "name": name}, nil
 }
 
+// applyLegacyResponsesTopLevelFields installs selected converted fields after
+// legacy messages become authoritative input. The writable request retains
+// nonblank instructions, receives available scalar conversions, and removes
+// deprecated Chat top-level spellings.
+//
+// Tool and choice replacement depends on their recorded Chat-shaped presence,
+// while reasoning replacement requires explicit Chat reasoning effort. This
+// keeps preexisting Responses forms from being overwritten by converter
+// defaults when no matching legacy input was supplied. The conversion result
+// is temporary data; NormalizeOpenAIResponsesLegacyIngress serializes the
+// request only after adoption.
 func applyLegacyResponsesTopLevelFields(request map[string]any, legacy convertedLegacyResponsesMessages) {
 	if legacy.instructions != "" && strings.TrimSpace(openai.FirstNonEmptyString(request["instructions"])) == "" {
 		request["instructions"] = legacy.instructions

@@ -16,16 +16,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// mediaAttributeRepo returns a configured group attribute value and counts its
+// reads.
 type mediaAttributeRepo struct {
+	// unused attribute repository operations
 	routing.ModelAttributeRepository
-	config *routing.ModelAttributeConfig
-	reads  int
+	// config is returned by reference for service snapshot capture. Keep it
+	// stable while the service reads and copies the configured rules for each request.
+	config *routing.ModelAttributeConfig // configured group attribute value
+	reads  int                           // observed group configuration reads
 }
 
+// TestApplyModelAttributeParameters resolves offline attributes for sampling,
+// Compact effort, GLM, DeepSeek, and unknown relay cases. Rewritten JSON
+// matches each final-route expectation while unknown capabilities retain
+// supplied fields.
 func TestApplyModelAttributeParameters(t *testing.T) {
 	cases := []struct {
-		name           string
-		target         modelcatalog.Target
+		name string // parameter policy scenario label
+		// final route attribute identity
+		target modelcatalog.Target
+		// body: input request JSON. expected: rewritten request JSON.
 		body, expected string
 	}{
 		{"gpt sampling none", modelcatalog.Target{Platform: "openai", Model: "gpt-5.4"}, `{"reasoning":{"effort":"none"},"temperature":0.4,"top_p":0.8}`, `{"reasoning":{"effort":"none"},"temperature":0.4,"top_p":0.8}`},
@@ -48,6 +59,10 @@ func TestApplyModelAttributeParameters(t *testing.T) {
 	}
 }
 
+// TestApplyModelAttributeParametersOllamaOverrides resolves nonpositive and
+// positive Ollama output caps plus an explicit output attribute. Positive
+// limits clamp selected fields, nonpositive caps retain output values, and the
+// resolved attribute governs later clamping.
 func TestApplyModelAttributeParametersOllamaOverrides(t *testing.T) {
 	for _, cap := range []int{-1, 0, 32768, 65535} {
 		target := modelcatalog.Target{Platform: "openai", Model: "company-model", Ollama: true, OllamaOutputCap: &cap}
@@ -70,11 +85,18 @@ func TestApplyModelAttributeParametersOllamaOverrides(t *testing.T) {
 	require.EqualValues(t, cap, gjson.GetBytes(body, "max_tokens").Int())
 }
 
+// ForGroup increments the fixture read count and returns its configured
+// attribute pointer. The value remains borrowed for the service to snapshot;
+// other repository methods stay unused through the embedded interface.
 func (r *mediaAttributeRepo) ForGroup(context.Context, int64) (*routing.ModelAttributeConfig, error) {
 	r.reads++
 	return r.config, nil
 }
 
+// TestPrepareModelAttributeParametersImageToolOverrides overrides fidelity for
+// one image-tool model while other tools use catalogue or unknown data. Only
+// that model's field follows the override, original bytes remain unchanged,
+// and group config is read once.
 func TestPrepareModelAttributeParametersImageToolOverrides(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		repo := &mediaAttributeRepo{config: &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"gpt-image-2"}, Attributes: modelcatalog.Attributes{Media: &modelcatalog.MediaCapabilities{InputFidelity: &enabled}}}}}}
@@ -92,13 +114,18 @@ func TestPrepareModelAttributeParametersImageToolOverrides(t *testing.T) {
 	}
 }
 
+// TestGeminiThinkingDistinguishesUnknownAndEmptyOptions compares unknown
+// controls with explicit empty or disabled reasoning capability. Effort/budget
+// input passes unknown options and returns errors when selectable controls are
+// explicitly unavailable.
 func TestGeminiThinkingDistinguishesUnknownAndEmptyOptions(t *testing.T) {
 	yes, no := true, false
 	empty := []modelcatalog.ReasoningOption{}
 	for _, tc := range []struct {
-		name  string
+		name string // thinking capability scenario label
+		// configured thinking capability attributes
 		attrs modelcatalog.Attributes
-		fail  bool
+		fail  bool // expected control validation failure
 	}{
 		{"unknown", modelcatalog.Attributes{}, false},
 		{"reasoning known options unknown", modelcatalog.Attributes{Reasoning: &yes}, false},
@@ -108,8 +135,12 @@ func TestGeminiThinkingDistinguishesUnknownAndEmptyOptions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "gemini", Model: "private-model"}, tc.attrs)
 			for _, control := range []struct {
+				// name: control scenario label. body: input
+				// request JSON. effort: expected thinking
+				// level.
 				name, body, effort string
-				budget             int
+				// expected thinking budget tokens
+				budget int
 			}{
 				{"effort", `{"reasoning_effort":"high"}`, "high", 0},
 				{"budget", `{"thinking":{"type":"enabled","budget_tokens":4096}}`, "", 4096},
@@ -129,10 +160,19 @@ func TestGeminiThinkingDistinguishesUnknownAndEmptyOptions(t *testing.T) {
 	}
 }
 
+// TestApplyModelAttributeParametersUsesGLMEffortOverrides supplies configured
+// GLM effort sets across Chat, Responses, and Messages routes. Returned values
+// stay within those sets, empty options remove effort, and Messages encodes
+// enabled thinking.
 func TestApplyModelAttributeParametersUsesGLMEffortOverrides(t *testing.T) {
 	for _, tc := range []struct {
+		// name: effort scenario label. model: final GLM identity.
+		// protocol: upstream encoding protocol. body: input request
+		// JSON. path: checked effort field. want: expected outgoing
+		// effort.
 		name, model, protocol, body, path, want string
-		efforts                                 []string
+		// configured selectable effort levels
+		efforts []string
 	}{
 		{"chat accepts configured low", "glm-5.2", "openai_chat_completions", `{"reasoning_effort":"low"}`, "reasoning_effort", "low", []string{"low", "high"}},
 		{"responses accepts configured medium", "glm-5.3", "openai_responses", `{"reasoning":{"effort":"medium"}}`, "reasoning.effort", "medium", []string{"medium", "high"}},
@@ -161,12 +201,18 @@ func TestApplyModelAttributeParametersUsesGLMEffortOverrides(t *testing.T) {
 	}
 }
 
+// TestModelRequestStateGeminiFieldAliases varies camel and snake
+// generation/thinking fields with level or budget controls. State recognizes
+// each spelling and records the expected enabled/disabled value.
 func TestModelRequestStateGeminiFieldAliases(t *testing.T) {
 	for _, config := range []string{"generationConfig", "generation_config"} {
 		for _, thinking := range []string{"thinkingConfig", "thinking_config"} {
 			for _, tc := range []struct {
+				// field: Gemini control spelling. value:
+				// encoded control value.
 				field, value string
-				enabled      bool
+				// expected request thinking state
+				enabled bool
 			}{
 				{"thinkingLevel", `"high"`, true},
 				{"thinking_level", `"none"`, false},
@@ -184,13 +230,17 @@ func TestModelRequestStateGeminiFieldAliases(t *testing.T) {
 	}
 }
 
+// TestModelRequestStateFieldPrecedence mixes effort, thinking, duplicate keys,
+// escaped keys, and Gemini aliases before mutating source bytes. Parsed state
+// follows the tested precedence and retains copied effort text independently.
 func TestModelRequestStateFieldPrecedence(t *testing.T) {
 	high, low, medium, none := "high", "low", "medium", "none"
 	yes, no := true, false
 	for _, tc := range []struct {
+		// name: precedence scenario label. body: input request JSON.
 		name, body string
-		effort     *string
-		thinking   *bool
+		effort     *string // expected copied effort pointer
+		thinking   *bool   // expected optional thinking state
 	}{
 		{"absent", `{}`, nil, nil},
 		{"effort priority", `{"output_config":{"effort":"low"},"reasoning_effort":"medium","reasoning":{"effort":" HIGH "}}`, &high, &yes},
@@ -215,6 +265,9 @@ func TestModelRequestStateFieldPrecedence(t *testing.T) {
 	}
 }
 
+// BenchmarkModelRequestState measures control extraction as unrelated input
+// grows from KiB to MiB fixtures. Each timed iteration also checks that high
+// effort is recovered from the same body.
 func BenchmarkModelRequestState(b *testing.B) {
 	for _, size := range []int{1024, 1024 * 1024, 8 * 1024 * 1024} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {

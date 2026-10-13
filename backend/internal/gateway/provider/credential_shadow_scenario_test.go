@@ -1,7 +1,5 @@
 package provider
 
-// This file checks shadow-provider credentials, eligibility, and parent health.
-
 import (
 	"context"
 	"testing"
@@ -15,9 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestSparkShadowIntegration covers token lookup, model eligibility, and parent credential health.
-// Shadows read rotated parent tokens, while model_mapping determines model eligibility.
-// A parent error blocks shadows; scheduling pauses and global rate limits leave credentials usable.
+// TestSparkShadowIntegration rotates the stored parent's access token across
+// shadow lookups and credential-source resolution. Assertions cover current
+// parent tokens, Spark mapping support, and parent credential errors
+// separately from scheduling pauses or global rate limits.
 func TestSparkShadowIntegration(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)

@@ -7,7 +7,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokBaseURLForMode maps a configured mode to its platform endpoint.
+// Grok text defaults can select the public API, a named region, or the CLI
+// subscription endpoint. Mode normalization chooses the CLI endpoint for
+// unsupported settings, and a bound reader consults runtime settings each time
+// an execution caller requests the default.
+
+// GrokBaseURLForMode resolves a normalized runtime mode to the corresponding
+// Grok endpoint constant. API and regional modes select their endpoints; CLI,
+// blank, and invalid modes use the CLI default.
 func GrokBaseURLForMode(mode string) string {
 	switch gateway.NormalizeGrokDefaultBaseURLMode(mode) {
 	case "api":
@@ -23,7 +30,9 @@ func GrokBaseURLForMode(mode string) string {
 	}
 }
 
-// GrokDefaultBaseURLReader returns a function that reads the current default endpoint setting.
+// GrokDefaultBaseURLReader binds runtime settings to an endpoint callback that
+// resolves the mode on each call. The settings reader supplies its own
+// defaults and caching, and callers pass the context for that read.
 func GrokDefaultBaseURLReader(settings *gateway.RuntimeSettings) func(context.Context) string {
 	return func(ctx context.Context) string { return GrokBaseURLForMode(settings.GetGrokDefaultBaseURLMode(ctx)) }
 }

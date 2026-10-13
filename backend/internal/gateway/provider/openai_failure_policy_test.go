@@ -11,11 +11,15 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// TestClassifyOpenAIAPIKeyHealthFailureExclusions compares a
+// provider-attributed 502 with shared, request-scoped, authentication, and
+// same-provider retry failures. Only the ordinary provider failure qualifies
+// for the API Key health classification.
 func TestClassifyOpenAIAPIKeyHealthFailureExclusions(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		eligible bool
+		name     string // health classification case label
+		err      error  // forwarding failure under evaluation
+		eligible bool   // expected provider health eligibility
 	}{
 		{name: "provider attributed 502", err: &forwardcore.UpstreamFailoverError{StatusCode: http.StatusBadGateway}, eligible: true},
 		{name: "request scoped capacity", err: &forwardcore.UpstreamFailoverError{StatusCode: 529, RequestScopedTransient: true}},
@@ -32,6 +36,9 @@ func TestClassifyOpenAIAPIKeyHealthFailureExclusions(t *testing.T) {
 	}
 }
 
+// TestOpenAI429RetryDelayHonorsBoundedRetryAfter evaluates an absent
+// Retry-After header and a value exceeding the retry cap. Delay uses the
+// default for absence and the maximum for the oversized value.
 func TestOpenAI429RetryDelayHonorsBoundedRetryAfter(t *testing.T) {
 	deadline := time.Now().Add(providercore.RuntimeRetryWindow)
 	require.Equal(t, openAIOAuth429RetryDelay, OpenAI429RetryDelay(nil, deadline))

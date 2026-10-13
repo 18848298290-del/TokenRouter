@@ -12,7 +12,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// CandidateSnapshot returns a provider snapshot with the protocols enabled for this attempt.
+// A provider can have a model-specific cooldown and a shared-scope cooldown
+// applying to the same request. Qualification checks protocol permission and
+// provider health before asking whether those scopes permit execution;
+// reporting their remaining wait uses the longest active duration because
+// the expiry windows run concurrently.
+//
+// Candidate snapshots copy enabled protocols for route resolution, while the
+// current group determines OAuth, privacy, and protocol requirements. Limit
+// inspection remains separate from permission: Antigravity overages can admit
+// a model with an active cooldown, so Limited reports raw window activity and
+// LimitRemaining reports its observed wait even when Schedulable allows work.
+
+// CandidateSnapshot returns routing provider data with copied enabled
+// protocols resolved for the current attempt. Nil records produce an empty
+// snapshot; protocol selection applies the target's legacy API protocol when
+// needed.
 func (p ModelPolicy) CandidateSnapshot() provider.ProviderSnapshot {
 	if p.Record == nil {
 		return provider.ProviderSnapshot{}
@@ -22,7 +37,9 @@ func (p ModelPolicy) CandidateSnapshot() provider.ProviderSnapshot {
 	return snapshot
 }
 
-// ProtocolRoute checks the candidate against group protocol rules and returns its upstream protocol.
+// ProtocolRoute checks provider protocol support against the supplied group
+// and client protocol using routing.Plan. Nil records return false; the result
+// identifies a native or allowed single-step upstream route.
 func (p ModelPolicy) ProtocolRoute(group *routing.Group, source protocol.ProtocolID) (protocol.ProtocolID, bool) {
 	if p.Record == nil {
 		return "", false
@@ -36,7 +53,9 @@ func (p ModelPolicy) ProtocolRoute(group *routing.Group, source protocol.Protoco
 	return candidate.UpstreamProtocol, ok
 }
 
-// AllowsProtocol checks provider eligibility for the request's group and client protocol.
+// AllowsProtocol checks group OAuth/privacy requirements and resolves the
+// client protocol when present. Missing provider records fail; an absent
+// client protocol passes after the group requirements are satisfied.
 func (p ModelPolicy) AllowsProtocol(ctx context.Context) bool {
 	group, _ := requeststate.GroupFromContext(ctx)
 	if p.Record == nil || group != nil && (group.RequireOAuthOnly && !p.Record.IsOAuth() || group.RequirePrivacySet && !p.Record.IsPrivacySet()) {
@@ -50,7 +69,9 @@ func (p ModelPolicy) AllowsProtocol(ctx context.Context) bool {
 	return ok
 }
 
-// Schedulable checks protocol eligibility, provider status, and model rate limits in order.
+// Schedulable applies protocol eligibility, provider scheduling state, and
+// applicable model window permission in that order. Nil records fail
+// immediately, and each rejected stage prevents later eligibility work.
 func (p ModelPolicy) Schedulable(ctx context.Context, model string) bool {
 	if p.Record == nil {
 		return false
@@ -61,12 +82,22 @@ func (p ModelPolicy) Schedulable(ctx context.Context, model string) bool {
 	return p.AllowsModel(ctx, model)
 }
 
-// Limited reports whether any applicable model rate-limit window is active.
+// Limited reports whether any model or shared-scope limit selected by
+// LimitKeys is active. An empty key set yields false, keeping a missing model
+// window distinct from an active one.
 func (p ModelPolicy) Limited(ctx context.Context, model string) bool {
 	return slices.ContainsFunc(p.LimitKeys(ctx, model), p.Record.ModelRateLimitActive)
 }
 
-// LimitRemaining returns the longest remaining duration among applicable model rate-limit windows.
+// LimitRemaining returns the longest observed remaining duration across the
+// model and shared-scope windows selected by LimitKeys. Empty, invalid, or
+// elapsed windows leave zero, using the provider record's clock for each read.
+//
+// Several scopes can restrict one request simultaneously. Their waits overlap,
+// so adding durations would overstate the cooldown; the maximum identifies the
+// last observed expiry. This is raw window evidence, and callers use
+// Schedulable separately when overage policy can permit execution during a
+// model cooldown.
 func (p ModelPolicy) LimitRemaining(ctx context.Context, model string) time.Duration {
 	remaining := time.Duration(0)
 	for _, key := range p.LimitKeys(ctx, model) {
@@ -77,7 +108,9 @@ func (p ModelPolicy) LimitRemaining(ctx context.Context, model string) time.Dura
 	return remaining
 }
 
-// FinalAntigravityModel resolves the upstream model using this request's thinking setting.
+// FinalAntigravityModel resolves the upstream model using the request's
+// optional thinking hint. It delegates directly to the provider adapter, which
+// owns platform mapping and unsupported-model handling.
 func (p ModelPolicy) FinalAntigravityModel(ctx context.Context, model string) string {
 	return provideradapter.FinalAntigravityModel(p.Record, model, modelThinking(ctx))
 }

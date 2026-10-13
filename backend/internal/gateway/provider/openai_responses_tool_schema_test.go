@@ -10,11 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestOpenAIResponsesToolSchemaCapabilities_PlatformBoundary compares schema
+// gates across supported platforms and an empty platform name. Root-type
+// repair covers compatible providers, while pattern cleanup is enabled only
+// for OpenAI.
 func TestOpenAIResponsesToolSchemaCapabilities_PlatformBoundary(t *testing.T) {
 	tests := []struct {
-		platform         string
-		repairNullType   bool
-		removeLookaround bool
+		platform         string // selected upstream platform name
+		repairNullType   bool   // expected parameter type repair
+		removeLookaround bool   // expected regex lookaround removal
 	}{
 		{capability.PlatformOpenAI, true, true},
 		{capability.PlatformAnthropic, true, false},
@@ -35,11 +39,15 @@ func TestOpenAIResponsesToolSchemaCapabilities_PlatformBoundary(t *testing.T) {
 	}
 }
 
+// TestSanitizeOpenAIResponsesToolSchemasForPlatform_ReplayBoundary replays a
+// null-root schema with regex lookaround across compatible platforms. Shared
+// root repair retains their regex, OpenAI removes it, and unsupported Gemini
+// returns unchanged bytes.
 func TestSanitizeOpenAIResponsesToolSchemasForPlatform_ReplayBoundary(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","parameters":{"type":null,"properties":{"query":{"type":"string","pattern":"(?=keep)"}}}}]}`)
 
 	// A malformed tool definition may be replayed after provider failover.
-	// These compatible platforms repair parameter types and retain supported regex patterns.
+	// These compatible platforms repair parameter types and retain configured regex patterns.
 	for _, platform := range []string{capability.PlatformAnthropic, capability.PlatformGrok, capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		t.Run(platform, func(t *testing.T) {
 			for range 2 {
@@ -64,6 +72,9 @@ func TestSanitizeOpenAIResponsesToolSchemasForPlatform_ReplayBoundary(t *testing
 	require.Equal(t, string(body), string(unsupported))
 }
 
+// TestSanitizeOpenAIResponsesToolSchemasForPlatform_GrokObjectOnlyRootUnion
+// supplies a function schema with an object-only oneOf root to Grok
+// sanitation. It adds object type while retaining the union alternatives.
 func TestSanitizeOpenAIResponsesToolSchemasForPlatform_GrokObjectOnlyRootUnion(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"codex_app__automation_update","parameters":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"}}},{"type":"object","properties":{}}]}}]}`)
 
@@ -75,6 +86,10 @@ func TestSanitizeOpenAIResponsesToolSchemasForPlatform_GrokObjectOnlyRootUnion(t
 	require.True(t, gjson.GetBytes(sanitized, "tools.0.parameters.oneOf").Exists())
 }
 
+// TestOpenAIResponsesToolSchemaPlatformGate_APIKeyAndOAuth runs the WS
+// compatibility wrapper for OpenAI API Key and OAuth schemas. Both repair null
+// type and remove lookaround, while a Grok target bypasses this OpenAI-only
+// wrapper unchanged.
 func TestOpenAIResponsesToolSchemaPlatformGate_APIKeyAndOAuth(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","parameters":{"type":null,"pattern":"(?=drop)"}}]}`)
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {

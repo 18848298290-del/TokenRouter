@@ -16,10 +16,8 @@ import (
 type AdminReadSettings struct {
 	// Antigravity client version override
 	AntigravityUserAgentVersion string
-	// backend-mode admission toggle
-	BackendModeEnabled bool
-	// configured Anthropic system text
-	ClaudeOAuthSystemPrompt string
+	BackendModeEnabled          bool   // backend-mode admission toggle
+	ClaudeOAuthSystemPrompt     string // configured Anthropic system text
 	// JSON system content blocks
 	ClaudeOAuthSystemPromptBlocks string
 	// one-hour Anthropic cache injection
@@ -32,26 +30,19 @@ type AdminReadSettings struct {
 	EnableClientDatelineNormalization bool
 	// provider fingerprint unification toggle
 	EnableFingerprintUnification bool
-	// identity prompt patching toggle
-	EnableIdentityPatch bool
+	EnableIdentityPatch          bool // identity prompt patching toggle
 	// client metadata passthrough toggle
 	EnableMetadataPassthrough bool
-	// default Grok endpoint mode
-	GrokDefaultBaseURLMode string
-	// default Grok text model
-	GrokDefaultTextModel string
-	// configured identity patch text
-	IdentityPatchPrompt string
-	// upper CLI version bound
-	MaxClaudeCodeVersion string
-	// lower CLI version bound
-	MinClaudeCodeVersion string
+	GrokDefaultBaseURLMode    string // default Grok endpoint mode
+	GrokDefaultTextModel      string // default Grok text model
+	IdentityPatchPrompt       string // configured identity patch text
+	MaxClaudeCodeVersion      string // upper CLI version bound
+	MinClaudeCodeVersion      string // lower CLI version bound
 	// Claude Codex plugin permission
 	OpenAIAllowClaudeCodeCodexPlugin bool
 	// outbound Codex User-Agent override
 	OpenAICodexUserAgent string
-	// semantic or visible TTFT
-	OpenAITTFTMode string
+	OpenAITTFTMode       string // semantic or visible TTFT
 	// message cache-control rewrite toggle
 	RewriteMessageCacheControl bool
 	// configured user-prompt replacement rules

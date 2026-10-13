@@ -10,11 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts checks
+// supported call, message, reasoning, output, and unknown item prefixes. The
+// upstream predicate strips listed invalid IDs while retaining valid and
+// opaque representations for those type cases.
 func TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts(t *testing.T) {
 	tests := []struct {
-		itemType string
-		id       string
-		strip    bool
+		itemType string // replay input item type
+		id       string // incoming replay item identity
+		strip    bool   // expected item identity removal
 	}{
 		{itemType: "message", id: "msg_123", strip: false},
 		{itemType: "message", id: "item_123", strip: true},
@@ -46,6 +50,10 @@ func TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts(t *testing.
 	}
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsDoesNotCascadeAcrossIDNamespaces
+// mixes invalid call item IDs with paired outputs and opaque references
+// bearing equal strings. Cleanup removes rejected IDs while retaining all
+// items and their call/reference relationships.
 func TestSanitizeOpenAIResponsesInputItemIDsDoesNotCascadeAcrossIDNamespaces(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","id":"item_bad_call","call_id":"call_valid","name":"lookup","arguments":"{}"},
@@ -74,6 +82,9 @@ func TestSanitizeOpenAIResponsesInputItemIDsDoesNotCascadeAcrossIDNamespaces(t *
 	require.Equal(t, "ctco_bad_output", items[6].Get("call_id").String())
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsLeavesUnrelatedReferencesUntouched
+// supplies a previous-response ID and an opaque item reference needing no
+// edits. Sanitation reports false and returns the exact supplied bytes.
 func TestSanitizeOpenAIResponsesInputItemIDsLeavesUnrelatedReferencesUntouched(t *testing.T) {
 	body := []byte(`{"previous_response_id":"resp_1","input":[{"type":"item_reference","id":"remote_item"}]}`)
 
@@ -84,6 +95,10 @@ func TestSanitizeOpenAIResponsesInputItemIDsLeavesUnrelatedReferencesUntouched(t
 	require.Equal(t, body, sanitized)
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsPreservesReferenceToDuplicateRetainedID
+// gives a function and custom call the same type-specific ID text. The invalid
+// function ID is removed while the valid custom ID and opaque reference
+// survive.
 func TestSanitizeOpenAIResponsesInputItemIDsPreservesReferenceToDuplicateRetainedID(t *testing.T) {
 	body := []byte(`{"input":[{"type":"function_call","id":"ctc_shared","call_id":"call_1"},{"type":"custom_tool_call","id":"ctc_shared","call_id":"call_2"},{"type":"item_reference","id":"ctc_shared"}]}`)
 
@@ -96,6 +111,10 @@ func TestSanitizeOpenAIResponsesInputItemIDsPreservesReferenceToDuplicateRetaine
 	require.Equal(t, "ctc_shared", gjson.GetBytes(sanitized, "input.2.id").String())
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsPreservesOpaqueOutputsAndReferences
+// mixes invalid call identity with opaque outputs and references across
+// namespaces. Every item stays in place, valid values survive, and a second
+// sanitation returns the same bytes with no change.
 func TestSanitizeOpenAIResponsesInputItemIDsPreservesOpaqueOutputsAndReferences(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","id":"item_shared","call_id":"call_real"},
@@ -122,6 +141,9 @@ func TestSanitizeOpenAIResponsesInputItemIDsPreservesOpaqueOutputsAndReferences(
 	require.Equal(t, sanitized, second)
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsStripsEmptyKnownIDsOnly supplies
+// empty IDs on a known message and unknown future item type. The known invalid
+// ID is removed while the future item's field remains present.
 func TestSanitizeOpenAIResponsesInputItemIDsStripsEmptyKnownIDsOnly(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","id":"","content":"hello"},{"type":"future_item","id":""}]}`)
 
@@ -133,6 +155,10 @@ func TestSanitizeOpenAIResponsesInputItemIDsStripsEmptyKnownIDsOnly(t *testing.T
 	require.True(t, gjson.GetBytes(sanitized, "input.1.id").Exists())
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDsStripsOnlyNonPairCallIDs mixes
+// message/reasoning/image call_ids with paired function, custom, search, and
+// shell history. Cleanup removes the non-pair fields while retaining every
+// paired call_id.
 func TestSanitizeOpenAIResponsesInputItemIDsStripsOnlyNonPairCallIDs(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"message","call_id":"remove_message","content":"hi"},

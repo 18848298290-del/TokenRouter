@@ -74,22 +74,28 @@ type cachedVersionBounds struct {
 type cachedGatewayForwardingSettings struct {
 	openAITTFTMode string // stored TTFT mode string
 	// provider fingerprint unification toggle
-	fingerprintUnification           bool
-	metadataPassthrough              bool   // client metadata passthrough toggle
-	cchSigning                       bool   // billing attribution signing toggle
-	claudeOAuthSystemPromptInjection bool   // Anthropic system injection toggle
-	claudeOAuthSystemPrompt          string // configured Anthropic system text
-	claudeOAuthSystemPromptBlocks    string // JSON system content blocks
-	anthropicCacheTTL1hInjection     bool   // one-hour cache injection toggle
-	rewriteMessageCacheControl       bool   // message cache-control rewrite toggle
-	clientDatelineNormalization      bool   // client dateline normalization toggle
-	expiresAt                        int64  // unix nano
+	fingerprintUnification bool
+	// client metadata passthrough toggle
+	metadataPassthrough bool
+	// billing attribution signing toggle
+	cchSigning bool
+	// Anthropic system injection toggle
+	claudeOAuthSystemPromptInjection bool
+	// configured Anthropic system text
+	claudeOAuthSystemPrompt       string
+	claudeOAuthSystemPromptBlocks string // JSON system content blocks
+	// one-hour cache injection toggle
+	anthropicCacheTTL1hInjection bool
+	// message cache-control rewrite toggle
+	rewriteMessageCacheControl bool
+	// client dateline normalization toggle
+	clientDatelineNormalization bool
+	expiresAt                   int64 // unix nano
 }
 
 // gatewayForwardingSettingsResult is the forwarding value tuple returned from cache reads.
 type gatewayForwardingSettingsResult struct {
-	// stored TTFT mode string
-	openAITTFTMode string
+	openAITTFTMode string // stored TTFT mode string
 	// fp selects provider fingerprint unification, mp client metadata passthrough,
 	// cch billing attribution signing, claudeOAuthSystemPromptInjection Anthropic
 	// system injection, cacheTTL1h one-hour cache injection, and
@@ -107,15 +113,22 @@ type ForwardingSnapshot struct {
 	// normalizes this string when choosing semantic or visible event classification.
 	OpenAITTFTMode string
 	// provider fingerprint unification toggle
-	FingerprintUnification           bool
-	MetadataPassthrough              bool   // client metadata passthrough toggle
-	CCHSigning                       bool   // billing attribution signing toggle
-	ClaudeOAuthSystemPromptInjection bool   // Anthropic system injection toggle
-	ClaudeOAuthSystemPrompt          string // configured Anthropic system text
-	ClaudeOAuthSystemPromptBlocks    string // JSON system content blocks
-	AnthropicCacheTTL1hInjection     bool   // one-hour cache injection toggle
-	RewriteMessageCacheControl       bool   // message cache-control rewrite toggle
-	ClientDatelineNormalization      bool   // client dateline normalization toggle
+	FingerprintUnification bool
+	// client metadata passthrough toggle
+	MetadataPassthrough bool
+	// billing attribution signing toggle
+	CCHSigning bool
+	// Anthropic system injection toggle
+	ClaudeOAuthSystemPromptInjection bool
+	// configured Anthropic system text
+	ClaudeOAuthSystemPrompt       string
+	ClaudeOAuthSystemPromptBlocks string // JSON system content blocks
+	// one-hour cache injection toggle
+	AnthropicCacheTTL1hInjection bool
+	// message cache-control rewrite toggle
+	RewriteMessageCacheControl bool
+	// client dateline normalization toggle
+	ClientDatelineNormalization bool
 }
 
 // GetGrokDefaultBaseURLMode reads and normalizes the persisted Grok endpoint
@@ -421,8 +434,14 @@ func (s *RuntimeSettings) GetClaudeCodeVersionBounds(ctx context.Context) (min, 
 
 // PublishForwarding installs persisted version bounds and a forwarding snapshot
 // with fresh sixty-second deadlines. TTFT mode is stored as supplied and
-// normalized by its getter. The two caches are replaced separately, and an already-running
-// refresh can still store its result after a shared key is forgotten.
+// normalized by its getter. The two caches are replaced separately, and an
+// already-running refresh can still store its result after a shared key is
+// forgotten.
+//
+// Each replacement publishes one complete cache object. Callers needing both
+// caches from one revision coordinate those reads separately, because this
+// method supplies neither a combined cache object nor a revision check across
+// the two replacements.
 func (s *RuntimeSettings) PublishForwarding(minVersion, maxVersion string, value ForwardingSnapshot) {
 	// Forget shared keys for future reads, then install the persisted values.
 	// Existing callbacks continue independently, and version bounds and forwarding

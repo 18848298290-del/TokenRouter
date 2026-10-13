@@ -15,8 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestDetachedUpstreamReceivesInternalAbort checks that both detachment entry points
-// ignore client cancellation and still receive server aborts.
+// TestDetachedUpstreamReceivesInternalAbort exercises the unconditional and
+// streaming detachment entry points after client cancellation. Both contexts
+// stay usable until the server abort signal is cancelled, then report
+// context.Canceled.
 func TestDetachedUpstreamReceivesInternalAbort(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		synctest.Test(t, func(t *testing.T) {
@@ -31,6 +33,8 @@ func TestDetachedUpstreamReceivesInternalAbort(t *testing.T) {
 				upstream, release = DetachUpstreamContext(request)
 			}
 			defer release()
+			// Cancel the client before the separate abort signal, then let asynchronous
+			// context propagation settle so each assertion observes its intended source.
 			cancelClient()
 			synctest.Wait()
 			require.NoError(t, upstream.Err())
@@ -41,8 +45,9 @@ func TestDetachedUpstreamReceivesInternalAbort(t *testing.T) {
 	}
 }
 
-// TestOpenAIRequestContextLifetime checks that sending leaves the context alive
-// for body reads and that a later server abort cancels it.
+// TestOpenAIRequestContextLifetime sends Chat and ordinary or guarded HTTP
+// exchanges through the detached context adapter. The sent context remains
+// alive for response-body reads and later receives server cancellation.
 func TestOpenAIRequestContextLifetime(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("response"))

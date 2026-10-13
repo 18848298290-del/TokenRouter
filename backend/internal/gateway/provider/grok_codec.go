@@ -9,11 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// GrokBodyCodec binds random ID generation for request encoding.
+// Grok body encoding needs generated request IDs, and media normalization
+// needs the same size rules used for billing. These constructors bind UUID
+// generation, upload limits, and image/video normalization to the upstream
+// codecs before gateway execution builds a request.
+
+// GrokBodyCodec returns a Grok request codec using UUID string generation.
 func GrokBodyCodec() grok.BodyCodec { return grok.BodyCodec{NewID: uuid.NewString} }
 
-// GrokMediaCodec binds media encoding to billing/pricing normalization
-// and the upstream upload-size limit.
+// GrokMediaCodec returns media normalization using gateway upload limits and
+// billing size rules.
 func GrokMediaCodec() grok.MediaCodec {
 	return grok.MediaCodec{Options: grok.MediaNormalization{
 		MaxUploadPartSize:                             upstream.OpenAIImageMaxUploadPartSize,

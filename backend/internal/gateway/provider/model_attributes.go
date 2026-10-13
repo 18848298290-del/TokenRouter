@@ -16,7 +16,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// ResolveModelAttributes reads the request's catalogue and group settings after the final model is known.
+// Final-route attributes decide request sampling, reasoning controls, output
+// limits, and image-tool options after model mapping. Resolution reuses a
+// request catalogue session and group context, keeping each attempt on the
+// intended catalogue/configuration view while protocol selection and model
+// identity are supplied separately.
+//
+// Parameter policy first interprets client controls to activate conditional
+// attributes, then applies removal, clamping, aliases, and platform encoding
+// rules. Unknown capability values remain different from explicit unsupported
+// or empty option sets. OpenAI image tools are resolved under their own named
+// model before input_fidelity is removed. Grok preparation binds the same
+// resolved attributes to body patching so cache and outgoing request can use
+// the same representation.
+
+// ResolveModelAttributes resolves attributes for the final model, admitted
+// group, and current client/upstream protocols. The first optional protocol
+// overrides the attempt route; request sessions are reused, otherwise
+// service.NewSession supplies one for the lookup.
 func ResolveModelAttributes(ctx context.Context, value *ExecutionProvider, model string, service *routing.ModelAttributeService, protocols ...string) (modelcatalog.Resolution, error) {
 	upstreamProtocol := ""
 	if value != nil {
@@ -35,12 +52,18 @@ func ResolveModelAttributes(ctx context.Context, value *ExecutionProvider, model
 		groupID = group.ID
 	}
 	session := routing.ModelAttributesFromContext(ctx)
+	// An entry can reach this adapter without an existing request session. Create
+	// one from the bound service before resolving this route and its group attributes.
 	if session == nil {
 		session = service.NewSession()
 	}
 	return session.Resolve(ctx, groupID, target)
 }
 
+// ExecutionModelAttributes returns the attached attribute resolution when its
+// target model exactly matches model. Nil targets, missing capabilities, and
+// mismatched names return unknown attributes, so callers resolve the intended
+// route before conversion.
 func ExecutionModelAttributes(value *ExecutionProvider, model string) modelcatalog.Attributes {
 	if value != nil && value.Capabilities != nil && value.Capabilities.Target.Model == model {
 		return value.Capabilities.Attributes
@@ -48,7 +71,9 @@ func ExecutionModelAttributes(value *ExecutionProvider, model string) modelcatal
 	return modelcatalog.Attributes{}
 }
 
-// ModelConversionOptions supplies resolved capabilities to protocol converters; unknown capabilities allow the parameter.
+// ModelConversionOptions supplies known sampling restrictions and max-effort
+// support to protocol conversion. Unknown temperature/top_p remain allowed,
+// and unknown max support also permits the converter to retain that effort.
 func ModelConversionOptions(result modelcatalog.Resolution) bridge.RequestOptions {
 	attrs := result.Attributes
 	max := attrs.EffortSupport("max")
@@ -59,7 +84,10 @@ func ModelConversionOptions(result modelcatalog.Resolution) bridge.RequestOption
 	}
 }
 
-// GeminiThinking converts client controls using the final model's supported Gemini options.
+// GeminiThinking combines final attributes and execution rules with parsed
+// client thinking controls. The bridge resolves toggle, effort, budget bounds,
+// output space, and Antigravity Claude force-budget behavior into its
+// configuration or validation error.
 func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.GeminiThinkingConfig, error) {
 	attrs := result.Attributes
 	minimum, maximum := attrs.ReasoningBudget()
@@ -74,7 +102,18 @@ func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.Gemini
 	return bridge.ResolveGeminiThinking(bridge.ParseGeminiThinkingInput(body), options)
 }
 
-// ApplyModelAttributeParameters applies the resolved route's parameter rules to the body.
+// ApplyModelAttributeParameters applies route attributes after resolving their
+// request-state conditions. It removes prohibited fields, applies output
+// clamping and effort aliases, and adapts platform-specific thinking and
+// reasoning controls.
+//
+// Known unsupported OpenAI none effort is removed when the route has no toggle
+// option; GLM conversion uses the resolved allowed effort set, distinguishing
+// unknown options from an explicitly empty set. Adaptive Anthropic modes
+// remove explicit budgets after encoding adaptive. Grok conversion runs last
+// with these same resolved attributes. Field-edit errors can return nil, while
+// final adaptive edits can return partial bytes with an error; callers adopt
+// the result only when successful.
 func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) ([]byte, error) {
 	result = result.ForRequest(ModelRequestState(body))
 	remove := append([]string(nil), result.Rules.DropFields...)
@@ -84,6 +123,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 	if value := result.Attributes.TopP; value != nil && !*value {
 		remove = append(remove, "top_p")
 	}
+	// Output clamping belongs to the final resolved route, after conditional
+	// attributes have selected their restrictions; the Ollama helper retains bytes on declined edits.
 	if result.Rules.ClampOutput && result.Attributes.OutputLimit != nil {
 		body, _ = ollama.ClampMaxTokens(body, int64(*result.Attributes.OutputLimit))
 	}
@@ -96,6 +137,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			}
 		}
 	}
+	// Apply route-owned effort aliases to supported protocol spellings so an
+	// administrator or platform correction reaches the field actually used by this body.
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
 		effort := gjson.GetBytes(body, path)
 		if mapped := result.Rules.EffortAliases[effort.String()]; effort.Exists() && mapped != "" {
@@ -105,6 +148,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			}
 		}
 	}
+	// A route with known unsupported none and no toggle cannot express disabled
+	// reasoning through these effort fields; remove that spelling before OpenAI forwarding.
 	if result.Target.Platform == "openai" && result.Target.ServiceID() == "" && !result.Attributes.HasReasoningOption("toggle") {
 		if supported := result.Attributes.EffortSupport("none"); supported != nil && !*supported {
 			for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
@@ -117,6 +162,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			}
 		}
 	}
+	// Final GLM options can differ from family defaults. Pass a nonnil empty
+	// effort set when controls are known but absent, preserving that configured distinction.
 	if strings.HasPrefix(strings.ToLower(result.Target.Model), "glm-") {
 		options := thinkingRequestOptions(result.Target.Model)
 		if result.Attributes.ReasoningOptions != nil {
@@ -128,6 +175,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			body, _ = requeststate.NormalizeGLMOpenAIReasoningEffort(body, options)
 		}
 	}
+	// Adaptive mode encodes control through thinking.type, so an enabled request
+	// loses its explicit budget after adaptive is set; propagate either failed byte edit.
 	if (result.Rules.ThinkingMode == "adaptive" || result.Rules.ThinkingMode == "adaptive_between_tools") && gjson.GetBytes(body, "thinking.type").String() == "enabled" {
 		body, err = sjson.SetBytes(body, "thinking.type", "adaptive")
 		if err == nil {
@@ -145,7 +194,17 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 	return body, err
 }
 
-// ModelRequestState reads reasoning controls after group policies, including Gemini JSON field aliases.
+// ModelRequestState reads reasoning controls used to evaluate conditional
+// attributes after group policy. Each top-level path retains its first
+// observed value, and the first nonblank string among nested reasoning, flat
+// effort, and output effort supplies initial state.
+//
+// Explicit recognized thinking.type then replaces the inferred toggle. Gemini
+// camel and snake config forms are visited afterward in that order; later
+// level or numeric budget observations override prior state, with a zero
+// budget meaning disabled. Effort strings are copied away from parsed body
+// storage. Parsing is lenient and does not validate the full request, so
+// ingress validation remains the caller's responsibility.
 func ModelRequestState(body []byte) modelcatalog.RequestState {
 	var reasoning, effort, output, thinking, camelConfig, snakeConfig gjson.Result
 	// Read the controls in one pass so large inputs are skipped once. Each
@@ -191,6 +250,8 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 			state.Thinking = &thinking
 		}
 	}
+	// Gemini aliases are read after ordinary controls. Their loop order supplies
+	// later-observation precedence when both camel and snake spellings occur in one body.
 	for _, config := range []gjson.Result{camelConfig, snakeConfig} {
 		for _, thinkingName := range []string{"thinkingConfig", "thinking_config"} {
 			thinkingConfig := config.Get(thinkingName)
@@ -204,6 +265,7 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 			}
 			for _, key := range []string{"thinkingBudget", "thinking_budget"} {
 				if budget := thinkingConfig.Get(key); budget.Type == gjson.Number {
+					// Zero budget expresses disabled thinking in this state.
 					thinking := budget.Int() != 0
 					state.Thinking = &thinking
 				}
@@ -213,7 +275,15 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 	return state
 }
 
-// PrepareModelAttributeParameters applies the request's attribute snapshot to the final model and image tool models.
+// PrepareModelAttributeParameters applies request attributes using one session
+// for the final model and named image-tool models. Main parameter rewriting
+// runs first; its error can return partially rewritten bytes, which callers
+// adopt only on success.
+//
+// An image tool can name a different model from its text driver. Resolve that
+// tool's own media attributes before removing input_fidelity, so the driver's
+// restrictions cannot be mistaken for the image model's capabilities. Image
+// lookup or field-edit failures return nil and stop preparation.
 func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService, protocols ...string) ([]byte, error) {
 	if routing.ModelAttributesFromContext(ctx) == nil {
 		ctx = routing.WithModelAttributes(ctx, service)
@@ -226,6 +296,8 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 	if err != nil || result.Target.Platform != "openai" {
 		return body, err
 	}
+	// Hosted image tools can target a different model from the text driver.
+	// Resolve each named tool before dropping a fidelity field its own route rejects.
 	for index, tool := range gjson.GetBytes(body, "tools").Array() {
 		if tool.Get("type").String() != "image_generation" || !tool.Get("input_fidelity").Exists() {
 			continue
@@ -249,7 +321,10 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 	return body, nil
 }
 
-// PrepareGrokResponses applies final-route parameters and builds a body shared by cache identity and forwarding.
+// PrepareGrokResponses resolves Responses-route attributes, applies parameter
+// policy, then patches the body through a codec bound to those same
+// attributes. Errors stop preparation, allowing cache identity and forwarding
+// to share the returned encoded body.
 func PrepareGrokResponses(ctx context.Context, provider *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService) ([]byte, error) {
 	resolution, err := ResolveModelAttributes(ctx, provider, model, service, "openai_responses")
 	if err != nil {

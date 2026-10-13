@@ -11,6 +11,8 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// passbackThinkingBody supplies enabled thinking with unsigned assistant history
+// to compare mapped-family passback preservation against Anthropic-oriented filtering rules.
 const passbackThinkingBody = `{
 	"model":"deepseek-v4-pro",
 	"thinking":{"type":"enabled","budget_tokens":1024},
@@ -23,6 +25,9 @@ const passbackThinkingBody = `{
 	]
 }`
 
+// TestThinkingFilters_SkipForPassbackRequired uses thinking history with
+// passback-required DeepSeek, Kimi, and GLM identities. The selected
+// initial/retry/signature filters return the exact supplied bytes.
 func TestThinkingFilters_SkipForPassbackRequired(t *testing.T) {
 	in := []byte(passbackThinkingBody)
 
@@ -31,6 +36,9 @@ func TestThinkingFilters_SkipForPassbackRequired(t *testing.T) {
 	require.True(t, bytes.Equal(in, FilterSignatureSensitiveBlocksForRetry(in, "glm-5.1")))
 }
 
+// TestThinkingFilters_SkipForUnknownModel uses thinking history with unknown
+// or empty mapped identities supplied explicitly. Those family gates decline
+// the tested filters and return unchanged bytes.
 func TestThinkingFilters_SkipForUnknownModel(t *testing.T) {
 	in := []byte(passbackThinkingBody)
 
@@ -39,6 +47,9 @@ func TestThinkingFilters_SkipForUnknownModel(t *testing.T) {
 	require.True(t, bytes.Equal(in, FilterSignatureSensitiveBlocksForRetry(in, "")))
 }
 
+// TestThinkingFilters_StillStripForAnthropicStrict uses the passback fixture
+// under a strict Claude mapped model. Initial filtering changes the body and
+// removes the thinking type marker.
 func TestThinkingFilters_StillStripForAnthropicStrict(t *testing.T) {
 	in := []byte(passbackThinkingBody)
 	out := FilterThinkingBlocks(in, "claude-sonnet-4-5")
@@ -47,9 +58,16 @@ func TestThinkingFilters_StillStripForAnthropicStrict(t *testing.T) {
 	require.NotContains(t, string(out), `"type":"thinking"`)
 }
 
+// TestFilterThinkingBlocks compares signed/unsigned adaptive history, untyped
+// thinking, ordinary tool input, absent messages, and invalid JSON. Selected
+// thinking blocks disappear while unchanged cases retain bytes and valid
+// rewritten bodies decode.
 func TestFilterThinkingBlocks(t *testing.T) {
 	containsThinkingBlock := func(body []byte) bool {
 		var req map[string]any
+		// This predicate supports filtering assertions for decoded message content.
+		// Unreadable fixture output returns false here; the test separately
+		// validates successful rewritten JSON.
 		if err := json.Unmarshal(body, &req); err != nil {
 			return false
 		}
@@ -86,10 +104,10 @@ func TestFilterThinkingBlocks(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		input        string
-		shouldFilter bool
-		expectError  bool
+		name         string // thinking filter scenario label
+		input        string // incoming thinking history JSON
+		shouldFilter bool   // expected historical thinking removal
+		expectError  bool   // malformed body retained case
 	}{
 		{
 			name:         "filters thinking blocks",
@@ -169,6 +187,9 @@ func TestFilterThinkingBlocks(t *testing.T) {
 	}
 }
 
+// TestFilterThinkingBlocksForRetry_DisablesThinkingAndPreservesAsText supplies
+// signed thinking plus visible text under enabled mode. Retry cleanup removes
+// the control and converts thinking text into a retained text block.
 func TestFilterThinkingBlocksForRetry_DisablesThinkingAndPreservesAsText(t *testing.T) {
 	input := []byte(`{
 		"model":"claude-3-5-sonnet-20241022",
@@ -205,6 +226,10 @@ func TestFilterThinkingBlocksForRetry_DisablesThinkingAndPreservesAsText(t *test
 	require.Equal(t, "Let me think...", first["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_DisablesThinkingEvenWithoutThinkingBlocks
+// supplies enabled thinking with a budget and ordinary user/assistant text
+// content. Retry cleanup still removes the top-level thinking field when no
+// historical thinking blocks exist.
 func TestFilterThinkingBlocksForRetry_DisablesThinkingEvenWithoutThinkingBlocks(t *testing.T) {
 	input := []byte(`{
 		"model":"claude-3-5-sonnet-20241022",
@@ -223,6 +248,9 @@ func TestFilterThinkingBlocksForRetry_DisablesThinkingEvenWithoutThinkingBlocks(
 	require.False(t, hasThinking)
 }
 
+// TestFilterThinkingBlocksForRetry_RemovesRedactedThinkingAndKeepsValidContent
+// mixes redacted thinking with visible text under enabled mode. Cleanup
+// removes the control and redacted block while retaining the visible text.
 func TestFilterThinkingBlocksForRetry_RemovesRedactedThinkingAndKeepsValidContent(t *testing.T) {
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
@@ -254,11 +282,13 @@ func TestFilterThinkingBlocksForRetry_RemovesRedactedThinkingAndKeepsValidConten
 	require.Equal(t, "Visible", content0["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_DropsThinkingBlockWithEmptyContent supplies
+// an empty thinking block before visible answer text. Retry cleanup removes
+// the thinking control and empty block, retaining the answer.
 func TestFilterThinkingBlocksForRetry_DropsThinkingBlockWithEmptyContent(t *testing.T) {
-	// History from another model may contain a thinking block with empty thinking text.
-	// Claude extended thinking rejects it with:
-	//   "messages.1.content.0.thinking: each thinking block must contain thinking"
-	// Retry cleanup drops the empty block and retains valid content.
+	// Empty thinking text exercises retry removal while a visible answer remains
+	// available. The assertions check the rewritten history and control fields
+	// without requiring an upstream exchange.
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
 		"messages":[
@@ -285,6 +315,9 @@ func TestFilterThinkingBlocksForRetry_DropsThinkingBlockWithEmptyContent(t *test
 	require.Equal(t, "Answer", testassert.MustType[map[string]any](content[0])["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_EmptyContentGetsPlaceholder supplies a
+// message whose content is redacted thinking alone. Retry cleanup creates one
+// nonempty text placeholder for the otherwise empty message.
 func TestFilterThinkingBlocksForRetry_EmptyContentGetsPlaceholder(t *testing.T) {
 	input := []byte(`{
 		"thinking":{"type":"enabled"},
@@ -310,8 +343,13 @@ func TestFilterThinkingBlocksForRetry_EmptyContentGetsPlaceholder(t *testing.T) 
 	require.NotEmpty(t, content0["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks mixes nonempty/empty
+// user text with an empty assistant message. Cleanup retains the user text and
+// supplies nonempty placeholder content for the assistant.
 func TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks(t *testing.T) {
-	// Empty text blocks cause upstream 400 errors: text content blocks must be non-empty.
+	// One message has usable text beside an empty block; another has only empty
+	// text. Retry cleanup retains the first message's text and supplies the
+	// second message with a placeholder.
 	input := []byte(`{
 		"messages":[
 			{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":""}]},
@@ -341,6 +379,9 @@ func TestFilterThinkingBlocksForRetry_StripsEmptyTextBlocks(t *testing.T) {
 	require.NotEmpty(t, block1["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_StripsNestedEmptyTextInToolResult mixes
+// valid and empty text inside a tool_result. Cleanup retains the tool result
+// and its valid nested text while removing the empty block.
 func TestFilterThinkingBlocksForRetry_StripsNestedEmptyTextInToolResult(t *testing.T) {
 	// Empty text blocks inside tool_result are removed too.
 	input := []byte(`{
@@ -369,6 +410,9 @@ func TestFilterThinkingBlocksForRetry_StripsNestedEmptyTextInToolResult(t *testi
 	require.Equal(t, "valid result", testassert.MustType[map[string]any](nestedContent[0])["text"])
 }
 
+// TestFilterThinkingBlocksForRetry_NestedAllEmptyGetsEmptySlice supplies a
+// tool_result containing empty text alongside visible user text. Cleanup
+// retains both outer items and returns empty nested result content.
 func TestFilterThinkingBlocksForRetry_NestedAllEmptyGetsEmptySlice(t *testing.T) {
 	// A tool_result containing only empty text blocks receives an empty content slice.
 	input := []byte(`{
@@ -395,6 +439,9 @@ func TestFilterThinkingBlocksForRetry_NestedAllEmptyGetsEmptySlice(t *testing.T)
 	require.Len(t, nestedContent, 0)
 }
 
+// TestFilterThinkingBlocksForRetry_PreservesNonEmptyTextBlocks supplies
+// ordinary nonempty text blocks with no thinking or cleanup trigger. Retry
+// filtering returns the exact supplied body bytes.
 func TestFilterThinkingBlocksForRetry_PreservesNonEmptyTextBlocks(t *testing.T) {
 	// Nonempty text blocks pass through unchanged.
 	input := []byte(`{
@@ -409,6 +456,10 @@ func TestFilterThinkingBlocksForRetry_PreservesNonEmptyTextBlocks(t *testing.T) 
 	require.Equal(t, input, out)
 }
 
+// TestFilterSignatureSensitiveBlocksForRetry_DowngradesTools supplies tool-use
+// and result history under enabled thinking. Signature-sensitive cleanup
+// removes the control and converts both tool items into text carrying their
+// type information.
 func TestFilterSignatureSensitiveBlocksForRetry_DowngradesTools(t *testing.T) {
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
@@ -444,6 +495,9 @@ func TestFilterSignatureSensitiveBlocksForRetry_DowngradesTools(t *testing.T) {
 	require.Contains(t, content1["text"], "tool_result")
 }
 
+// TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_FastPath
+// supplies enabled thinking and clear_thinking context edits with ordinary
+// messages. Retry cleanup removes thinking and the now-empty edits field.
 func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_FastPath(t *testing.T) {
 	// The fast path has top-level thinking but no thinking blocks in messages.
 	// It must still remove thinking-dependent context strategies before returning.
@@ -468,6 +522,10 @@ func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_FastPath(t *t
 	require.False(t, hasEdits, "fast path 下 clear_thinking_20251015 应被移除，edits 键应被删除")
 }
 
+// TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_WithThinkingBlocks
+// mixes clear_thinking and another edit with thinking history. Cleanup removes
+// the control and thinking-specific edit while retaining the unrelated context
+// strategy.
 func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_WithThinkingBlocks(t *testing.T) {
 	// The full path includes thinking blocks in message history.
 	input := []byte(`{
@@ -498,6 +556,10 @@ func TestFilterThinkingBlocksForRetry_RemovesClearThinkingStrategy_WithThinkingB
 	require.Equal(t, "keep_this", edit0["type"])
 }
 
+// TestFilterThinkingBlocksForRetry_NoContextManagement_Unaffected supplies
+// enabled thinking and ordinary user text with no context_management field.
+// Cleanup removes the thinking control and leaves the absent
+// context-management value uncreated.
 func TestFilterThinkingBlocksForRetry_NoContextManagement_Unaffected(t *testing.T) {
 	// Missing context_management is accepted while thinking is removed.
 	input := []byte(`{
@@ -515,6 +577,10 @@ func TestFilterThinkingBlocksForRetry_NoContextManagement_Unaffected(t *testing.
 	require.False(t, hasCM)
 }
 
+// TestFilterSignatureSensitiveBlocksForRetry_RemovesClearThinkingStrategy
+// supplies signed thinking and a clear_thinking strategy. Signature cleanup
+// removes top-level thinking and excludes that strategy from any surviving
+// edit list.
 func TestFilterSignatureSensitiveBlocksForRetry_RemovesClearThinkingStrategy(t *testing.T) {
 	input := []byte(`{
 		"thinking":{"type":"enabled","budget_tokens":1024},
@@ -546,6 +612,9 @@ func TestFilterSignatureSensitiveBlocksForRetry_RemovesClearThinkingStrategy(t *
 	}
 }
 
+// TestFilterSignatureSensitiveBlocksForRetry_PreservesNonThinkingStrategies
+// mixes a thinking-specific strategy with another edit under enabled mode.
+// Signature cleanup retains the unrelated edit as the sole context strategy.
 func TestFilterSignatureSensitiveBlocksForRetry_PreservesNonThinkingStrategies(t *testing.T) {
 	input := []byte(`{
 		"thinking":{"type":"enabled"},
@@ -572,6 +641,10 @@ func TestFilterSignatureSensitiveBlocksForRetry_PreservesNonThinkingStrategies(t
 	require.Equal(t, "other_edit", edit0["type"])
 }
 
+// TestFilterSignatureSensitiveBlocksForRetry_NoThinkingField_ContextManagementUntouched
+// supplies historical thinking and clear_thinking edits with no top-level
+// control. Signature cleanup retains the original context edit list for that
+// condition.
 func TestFilterSignatureSensitiveBlocksForRetry_NoThinkingField_ContextManagementUntouched(t *testing.T) {
 	// Without top-level thinking, context_management remains unchanged.
 	input := []byte(`{
@@ -594,11 +667,14 @@ func TestFilterSignatureSensitiveBlocksForRetry_NoThinkingField_ContextManagemen
 	require.Len(t, edits, 1, "无顶层 thinking 时 context_management 不应被修改")
 }
 
+// TestDefaultEffortForThinkingEnabled compares passback families, native
+// DeepSeek effort, Claude, unknown, and empty models. Display defaults return
+// high only for the tested eligible passback identities.
 func TestDefaultEffortForThinkingEnabled(t *testing.T) {
 	tests := []struct {
-		name  string
-		model string
-		want  *string
+		name  string  // display effort scenario label
+		model string  // mapped model family identity
+		want  *string // expected optional display effort
 	}{
 		{name: "glm", model: "glm-5.1", want: thinkingStringPointer("high")},
 		{name: "kimi", model: "kimi-k2.6", want: thinkingStringPointer("high")},
@@ -624,13 +700,16 @@ func TestDefaultEffortForThinkingEnabled(t *testing.T) {
 	}
 }
 
+// TestNormalizeChineseLLMThinking compares MiniMax enabled/adaptive modes,
+// Kimi enabled input, and malformed JSON. Eligible enabled MiniMax converts to
+// adaptive, while every declined case retains the exact supplied bytes.
 func TestNormalizeChineseLLMThinking(t *testing.T) {
 	tests := []struct {
-		name        string
-		model       string
-		input       string
-		wantChanged bool
-		wantType    string
+		name        string // thinking transformation scenario label
+		model       string // mapped model family identity
+		input       string // incoming thinking request JSON
+		wantChanged bool   // expected successful body rewrite
+		wantType    string // expected outgoing thinking type
 	}{
 		{
 			name:        "minimax enabled becomes adaptive",
@@ -671,15 +750,18 @@ func TestNormalizeChineseLLMThinking(t *testing.T) {
 	}
 }
 
+// TestApplyThinkingEnabledFallback compares explicit pointers and family/body
+// states with no effort. Existing pointer identity survives, while only the
+// tested enabled/adaptive passback cases receive high.
 func TestApplyThinkingEnabledFallback(t *testing.T) {
 	explicit := "medium"
 	tests := []struct {
-		name        string
-		effort      *string
-		body        string
-		model       string
-		want        *string
-		wantSamePtr bool
+		name        string  // thinking transformation scenario label
+		effort      *string // supplied optional effort pointer
+		body        string  // incoming thinking control JSON
+		model       string  // mapped model family identity
+		want        *string // expected generated effort pointer
+		wantSamePtr bool    // supplied pointer should survive
 	}{
 		{name: "explicit effort unchanged", effort: &explicit, body: `{"thinking":{"type":"enabled"}}`, model: "glm-5.1", wantSamePtr: true},
 		{name: "glm thinking enabled defaults high", body: `{"thinking":{"type":"enabled"}}`, model: "glm-5.1", want: thinkingStringPointer("high")},
@@ -705,15 +787,18 @@ func TestApplyThinkingEnabledFallback(t *testing.T) {
 	}
 }
 
+// TestNormalizeGLMOpenAIReasoningEffort supplies GLM effort aliases, GLM 5.3
+// low, native max, unrelated family, and absent/unknown values. Converted
+// fields follow the expected paths and all declined cases retain bytes.
 func TestNormalizeGLMOpenAIReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		input         string
-		wantApplied   bool
-		wantPath      string
-		wantValue     string
-		wantUnchanged bool
+		name          string // GLM effort normalization case
+		model         string // mapped GLM family identity
+		input         string // incoming effort request JSON
+		wantApplied   bool   // expected effort normalization result
+		wantPath      string // outgoing effort field path
+		wantValue     string // expected outgoing effort value
+		wantUnchanged bool   // expected original byte retention
 	}{
 		{
 			name:        "flat xhigh maps to max",
@@ -813,5 +898,6 @@ func TestNormalizeGLMOpenAIReasoningEffort(t *testing.T) {
 	}
 }
 
-// thinkingStringPointer returns an independent effort value for assertions.
+// thinkingStringPointer returns separately allocated effort pointer storage
+// for test assertions.
 func thinkingStringPointer(value string) *string { return &value }

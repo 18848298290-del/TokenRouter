@@ -1,7 +1,5 @@
 package provider
 
-// This file compares gateway and upstream Codex versions with clientmeta.CompareVersions.
-
 import (
 	"strings"
 	"testing"
@@ -13,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestCodexVersionConstants_Consistency compares the configured CLI version
+// with the upstream minimum. It also checks that both generated and default
+// gateway User-Agent strings contain the configured version.
 func TestCodexVersionConstants_Consistency(t *testing.T) {
 	require.GreaterOrEqual(t, clientmeta.CompareVersions(openai.CodexCLIVersion, openai.CodexUpstreamMinVersion), 0,
 		"codexCLIVersion must not be below the upstream minimum")

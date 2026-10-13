@@ -19,6 +19,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// TestClaudeUsageSpeedDrivesFastBilling compares otherwise identical Claude
+// usage with and without a fast Speed value. Captured fast usage produces
+// twice the base actual cost and maps to the priority service tier.
 func TestClaudeUsageSpeedDrivesFastBilling(t *testing.T) {
 	billing := billingtestkit.Calculator(nil, nil)
 	svc := completion.NewRecorder(completion.Dependencies{Calculator: billing, Prices: billingtestkit.PriceResolver(nil, billing)}, completion.RecorderOptions{DefaultMultiplier: 1})
@@ -32,6 +35,7 @@ func TestClaudeUsageSpeedDrivesFastBilling(t *testing.T) {
 
 	baseCost := svc.CalculateTokenCost(context.Background(), gatewayprovider.ProjectMessagesCompletionResult(base, gatewayprovider.ExecutionCompletionRecord(provider)), gatewayprovider.ProjectCompletionKey(apiKey), gatewayprovider.ProjectCompletionProvider(gatewayprovider.ExecutionCompletionRecord(provider)), "claude-opus-4-8", "claude-opus-4-8", "", "", 1, nil)
 	fastCost := svc.CalculateTokenCost(context.Background(), gatewayprovider.ProjectMessagesCompletionResult(&fast, gatewayprovider.ExecutionCompletionRecord(provider)), gatewayprovider.ProjectCompletionKey(apiKey), gatewayprovider.ProjectCompletionProvider(gatewayprovider.ExecutionCompletionRecord(provider)), "claude-opus-4-8", "claude-opus-4-8", "", "", 1, nil)
+	// Allow floating-point roundoff while checking the exact twofold Fast multiplier.
 	require.InDelta(t, baseCost.ActualCost*2, fastCost.ActualCost, 1e-12)
 	require.Equal(t, tierpolicy.OpenAIFastTierPriority, completion.ClaudeServiceTier(fast.Usage.Speed))
 }

@@ -9,7 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestCompletionKeySnapshotPreservesSourceGroup checks group identity and base multiplier capture; settlement reads shared prices.
+// TestCompletionKeySnapshotPreservesSourceGroup captures a Key twice while
+// changing its group multiplier between captures. The source keeps its group
+// pointer, and each snapshot retains its own observed multiplier plus billing
+// mode and rate-limit presence.
 func TestCompletionKeySnapshotPreservesSourceGroup(t *testing.T) {
 	group := &routing.Group{ID: 100, RateMultiplier: 2}
 	key := &apikey.APIKey{Group: group, BillingMode: apikey.APIKeyBillingModeBalance, RateLimit5h: 1}

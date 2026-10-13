@@ -17,20 +17,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// searchTransportFunc checks isolation parameters; response fixtures track closure after success and upstream HTTP errors.
+// searchTransportFunc adapts a request assertion callback to standalone search
+// transport.
 type searchTransportFunc func(*http.Request, string, int64, int) (*http.Response, error)
 
+// searchReadCloser records whether a supplied fixture response reader has been
+// closed.
 type searchReadCloser struct {
-	io.Reader
-	closed bool
+	io.Reader      // supplied response body reader
+	closed    bool // response cleanup observed flag
 }
 
+// Do passes request, proxy, provider identity, and concurrency to the fixture
+// callback.
 func (f searchTransportFunc) Do(r *http.Request, p string, id int64, n int) (*http.Response, error) {
 	return f(r, p, id, n)
 }
 
+// Close marks the fixture response body closed and returns a successful
+// cleanup result.
 func (r *searchReadCloser) Close() error { r.closed = true; return nil }
 
+// TestGrokSearchExecutorPreservesRequestAndRelease executes API Key and OAuth
+// search against a transport callback with a closable body. Assertions cover
+// endpoint, token, proxy/isolation parameters, default-model injection,
+// response data, and body closure.
 func TestGrokSearchExecutorPreservesRequestAndRelease(t *testing.T) {
 	for _, kind := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
 		t.Run(kind, func(t *testing.T) {
@@ -64,6 +75,10 @@ func TestGrokSearchExecutorPreservesRequestAndRelease(t *testing.T) {
 	}
 }
 
+// TestGrokSearchExecutorPreservesFailureClasses supplies HTTP 400,
+// auth/payment, rate-limit, and server response fixtures. Selected failures
+// retain status/body in failover errors, ordinary 400 stays a plain error, and
+// every body is closed.
 func TestGrokSearchExecutorPreservesFailureClasses(t *testing.T) {
 	for _, status := range []int{400, 401, 402, 403, 429, 500} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -84,6 +99,10 @@ func TestGrokSearchExecutorPreservesFailureClasses(t *testing.T) {
 	}
 }
 
+// TestGrokSearchExecutorCredentialFailurePrecedesURLRead supplies a Grok API
+// Key target missing its token and callbacks that fail if invoked. Execution
+// returns the credential-stage unauthorized failover reason before endpoint
+// lookup or transport.
 func TestGrokSearchExecutorCredentialFailurePrecedesURLRead(t *testing.T) {
 	executor := &GrokSearchExecutor{DefaultBaseURL: func() string { t.Fatal("凭据失败不读取动态地址"); return "" }, Transport: searchTransportFunc(func(*http.Request, string, int64, int) (*http.Response, error) {
 		t.Fatal("凭据失败不能发送")

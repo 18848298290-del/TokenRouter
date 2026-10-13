@@ -8,13 +8,20 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Usage records capture an upstream request ID only from the
+// provider-configured response header. WebSocket turns omit that
+// header-derived value, and HTTP IDs are trimmed and byte-capped before
+// storage, with truncated tails reduced to valid UTF-8.
+
 const (
-	// maxUsageUpstreamRequestIDLen is the byte cap used to fit IDs in the VARCHAR(128) column.
+	// maxUsageUpstreamRequestIDLen bounds captured upstream IDs in bytes before
+	// persistence to usage_logs.upstream_request_id, including its UTF-8 prefix repair.
 	maxUsageUpstreamRequestIDLen = 128
 )
 
-// UpstreamRequestIDFromHeaders reads the direct upstream ID from the provider-configured header.
-// It returns an empty string when the provider has no configured header.
+// UpstreamRequestIDFromHeaders reads the provider-configured response header
+// and trims its value. Empty headers or an absent configured name return an
+// empty string; common platform header names are not inferred.
 func UpstreamRequestIDFromHeaders(provider *acctcore.Record, h http.Header) string {
 	if len(h) == 0 {
 		return ""
@@ -26,9 +33,10 @@ func UpstreamRequestIDFromHeaders(provider *acctcore.Record, h http.Header) stri
 	return strings.TrimSpace(h.Get(name))
 }
 
-// usageUpstreamRequestIDPtr returns the ID stored in usage_logs.upstream_request_id.
-// WebSocket turns and missing IDs return nil. Long IDs are truncated to the byte
-// cap, then trimmed to a valid UTF-8 prefix.
+// usageUpstreamRequestIDPtr prepares the header-derived ID for
+// usage_logs.upstream_request_id. WS mode and missing IDs return nil;
+// oversized HTTP IDs are byte-truncated and shortened until the retained
+// prefix is valid UTF-8.
 func usageUpstreamRequestIDPtr(provider *acctcore.Record, h http.Header, wsMode bool) *string {
 	if wsMode {
 		return nil
@@ -37,6 +45,8 @@ func usageUpstreamRequestIDPtr(provider *acctcore.Record, h http.Header, wsMode 
 	if id == "" {
 		return nil
 	}
+	// Cap bytes for storage, then discard an incomplete UTF-8 suffix so the
+	// truncated identifier remains a valid string for the usage record writer.
 	if len(id) > maxUsageUpstreamRequestIDLen {
 		id = id[:maxUsageUpstreamRequestIDLen]
 		for id != "" && !utf8.ValidString(id) {

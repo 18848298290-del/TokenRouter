@@ -14,21 +14,26 @@ import (
 	upstreamollama "github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// ollamaMaxTokensCapTestProvider creates an Ollama Cloud usage provider with a custom output cap.
+// ollamaMaxTokensCapTestProvider builds a cloud fixture with the supplied
+// output cap in Extra.
 func ollamaMaxTokensCapTestProvider(id int64, cap any) *ExecutionProvider {
 	provider := ollamaUsageProvider(id)
 	provider.Record.Extra[upstreamollama.MaxTokensCapExtraKey] = cap
 	return provider
 }
 
+// TestOllamaCloudMaxTokensCap supplies supported numeric types, invalid
+// values, and nonpositive configured caps. Numeric values survive, invalid or
+// missing data uses the default, and nonpositive values remain available to
+// disable clamping.
 func TestOllamaCloudMaxTokensCap(t *testing.T) {
 	require.Equal(t, int64(65535), OllamaCloudMaxTokensCap(nil))
 	require.Equal(t, int64(65535), OllamaCloudMaxTokensCap(ollamaUsageProvider(201)))
 
 	tests := []struct {
-		name string
-		cap  any
-		want int64
+		name string // output cap representation case
+		cap  any    // configured output cap value
+		want int64  // expected output cap tokens
 	}{
 		{"float64", float64(32768), 32768},
 		{"int", 40000, 40000},
@@ -48,6 +53,10 @@ func TestOllamaCloudMaxTokensCap(t *testing.T) {
 	}
 }
 
+// TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolution
+// supplies an oversized output request before final attribute resolution.
+// Ollama normalization keeps its output limit, while ordinary endpoints,
+// absent Chat routing, and empty bodies retain their existing representation.
 func TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolution(t *testing.T) {
 	body := []byte(`{"model":"deepseek-chat","max_tokens":100000}`)
 
@@ -74,6 +83,9 @@ func TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolutio
 	require.Equal(t, []byte{}, ApplyOllamaCloudRawChatCompletionsRequest(ollama, []byte{}))
 }
 
+// ollamaUsageProvider builds an active OpenAI API Key fixture with an Ollama
+// URL and fresh Extra map. Its positive concurrency and deterministic name/key
+// values support output-cap policy tests.
 func ollamaUsageProvider(id int64) *ExecutionProvider {
 	return &ExecutionProvider{
 		Record: providercore.Record{
@@ -84,6 +96,8 @@ func ollamaUsageProvider(id int64) *ExecutionProvider {
 	}
 }
 
+// ollamaCloudRawChatCompletionsTestProvider constructs a cloud API Key target
+// with explicit forced Chat routing.
 func ollamaCloudRawChatCompletionsTestProvider() *ExecutionProvider {
 	return &ExecutionProvider{
 		Record: providercore.Record{
@@ -102,6 +116,8 @@ func ollamaCloudRawChatCompletionsTestProvider() *ExecutionProvider {
 	}
 }
 
+// rawChatCompletionsTestProvider constructs an OpenAI API Key fixture with a
+// custom upstream URL.
 func rawChatCompletionsTestProvider() *ExecutionProvider {
 	return &ExecutionProvider{
 		Record: providercore.Record{

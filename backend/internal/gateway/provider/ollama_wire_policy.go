@@ -7,6 +7,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
+// Ollama Cloud compatibility applies to OpenAI API Key targets whose resolved
+// upstream text protocol is Chat. Saved usage metadata or a recognized cloud
+// base URL identifies those targets, and the same gate controls request,
+// JSON-response, and SSE-line normalization.
+
+// IsOllamaCloudRawChatCompletionsProvider recognizes OpenAI API Key targets
+// using resolved Chat routing. Any known Ollama usage key is sufficient
+// evidence; otherwise a string base_url credential must identify an Ollama
+// Cloud host.
 func IsOllamaCloudRawChatCompletionsProvider(provider *ExecutionProvider) bool {
 	if provider == nil || provider.Record.Platform != capability.PlatformOpenAI || provider.Record.Type != capability.ProviderTypeAPIKey {
 		return false
@@ -28,6 +37,9 @@ func IsOllamaCloudRawChatCompletionsProvider(provider *ExecutionProvider) bool {
 	return egress.IsOllamaCloudBaseURL(baseURL)
 }
 
+// ProviderHasOllamaCloudUsageExtra reports whether any session, auto-refresh,
+// or snapshot key is present in Extra. Presence is sufficient regardless of
+// its value, and nil targets or extras return false.
 func ProviderHasOllamaCloudUsageExtra(provider *ExecutionProvider) bool {
 	if provider == nil || provider.Record.Extra == nil {
 		return false
@@ -44,6 +56,10 @@ func ProviderHasOllamaCloudUsageExtra(provider *ExecutionProvider) bool {
 	return false
 }
 
+// ApplyOllamaCloudRawChatCompletionsRequest delegates request normalization
+// for recognized Ollama Cloud Chat targets. Other targets and empty bodies
+// pass through unchanged; the upstream normalizer controls malformed-body and
+// update-error handling.
 func ApplyOllamaCloudRawChatCompletionsRequest(provider *ExecutionProvider, body []byte) []byte {
 	if !IsOllamaCloudRawChatCompletionsProvider(provider) || len(body) == 0 {
 		return body
@@ -51,6 +67,10 @@ func ApplyOllamaCloudRawChatCompletionsRequest(provider *ExecutionProvider, body
 	return ollama.NormalizeOllamaCloudChatCompletionsRequest(body)
 }
 
+// ApplyOllamaCloudRawChatCompletionsResponse delegates JSON-response
+// normalization for recognized Ollama Cloud Chat targets. Other targets and
+// empty bodies pass through unchanged, retaining their existing response
+// representation.
 func ApplyOllamaCloudRawChatCompletionsResponse(provider *ExecutionProvider, body []byte) []byte {
 	if !IsOllamaCloudRawChatCompletionsProvider(provider) || len(body) == 0 {
 		return body
@@ -58,6 +78,10 @@ func ApplyOllamaCloudRawChatCompletionsResponse(provider *ExecutionProvider, bod
 	return ollama.NormalizeOllamaCloudChatCompletionsResponseJSON(body)
 }
 
+// ApplyOllamaCloudRawChatCompletionsSSELine delegates stream-line
+// normalization for recognized Ollama Cloud Chat targets. Other targets and
+// empty lines pass through unchanged, allowing the output reader to retain
+// non-Ollama framing.
 func ApplyOllamaCloudRawChatCompletionsSSELine(provider *ExecutionProvider, line string) string {
 	if !IsOllamaCloudRawChatCompletionsProvider(provider) || line == "" {
 		return line
@@ -65,6 +89,9 @@ func ApplyOllamaCloudRawChatCompletionsSSELine(provider *ExecutionProvider, line
 	return ollama.NormalizeOllamaCloudChatCompletionsSSELine(line)
 }
 
+// OllamaCloudMaxTokensCap resolves the provider output cap through Ollama's
+// numeric policy. Nil targets and absent or invalid values use its default;
+// nonpositive configured caps disable clamping.
 func OllamaCloudMaxTokensCap(provider *ExecutionProvider) int64 {
 	if provider == nil {
 		return ollama.MaxTokensCap(nil, false)

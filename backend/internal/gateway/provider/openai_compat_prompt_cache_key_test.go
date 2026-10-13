@@ -11,11 +11,18 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// mustRawJSON wraps the supplied fixture bytes as json.RawMessage and marks
+// the caller helper. It does not validate JSON, so tests supply the intended
+// encoded content directly.
 func mustRawJSON(t *testing.T, s string) json.RawMessage {
 	t.Helper()
 	return json.RawMessage(s)
 }
 
+// TestShouldAutoInjectPromptCacheKeyForCompat checks listed GPT-5 and Codex
+// model identities against an ordinary GPT-4o name. Selected compatibility
+// families qualify for automatic cache identity while that ordinary model is
+// excluded.
 func TestShouldAutoInjectPromptCacheKeyForCompat(t *testing.T) {
 	require.True(t, ShouldAutoInjectPromptCacheKeyForCompat("gpt-5.5"))
 	require.True(t, ShouldAutoInjectPromptCacheKeyForCompat("gpt-5.5-pro"))
@@ -28,6 +35,9 @@ func TestShouldAutoInjectPromptCacheKeyForCompat(t *testing.T) {
 	require.False(t, ShouldAutoInjectPromptCacheKeyForCompat("gpt-4o"))
 }
 
+// TestShouldAutoInjectPromptCacheKeyForCompat_GPT6AstraForms compares exact
+// Astra with vendor prefixes, alternate spellings, version suffixes, and other
+// families. Only the exact listed Astra identity qualifies among those forms.
 func TestShouldAutoInjectPromptCacheKeyForCompat_GPT6AstraForms(t *testing.T) {
 	for _, model := range []string{
 		"gpt-6-astra",
@@ -54,6 +64,9 @@ func TestShouldAutoInjectPromptCacheKeyForCompat_GPT6AstraForms(t *testing.T) {
 	}
 }
 
+// TestDeriveCompatPromptCacheKey_StableAcrossLaterTurns extends a Chat request
+// after its system and first user messages. Both requests produce the same
+// nonempty cache key for the supplied mapped model.
 func TestDeriveCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
 	base := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-5.4",
@@ -78,6 +91,9 @@ func TestDeriveCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
 	require.NotEmpty(t, k1)
 }
 
+// TestDeriveCompatPromptCacheKey_DiffersAcrossSessions creates two requests
+// differing in first user content under the same model. The derived
+// compatibility keys differ for those opening messages.
 func TestDeriveCompatPromptCacheKey_DiffersAcrossSessions(t *testing.T) {
 	req1 := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-5.4",
@@ -97,6 +113,10 @@ func TestDeriveCompatPromptCacheKey_DiffersAcrossSessions(t *testing.T) {
 	require.NotEqual(t, k1, k2, "different first user messages should yield different keys")
 }
 
+// TestDeriveCompatPromptCacheKey_UsesResolvedSparkFamily derives keys for a
+// plain Spark model and its padded vendor-prefixed identity. Both produce
+// usable keys, and the different full mapped names produce different
+// identities.
 func TestDeriveCompatPromptCacheKey_UsesResolvedSparkFamily(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-5.3-codex-spark",
@@ -111,6 +131,10 @@ func TestDeriveCompatPromptCacheKey_UsesResolvedSparkFamily(t *testing.T) {
 	require.NotEqual(t, k1, k2, "不同完整型号不能共享模型缓存身份")
 }
 
+// TestDeriveAnthropicCompatPromptCacheKey_StableAcrossLaterTurns extends an
+// Anthropic request after fixed system and first user content. Ordinary
+// compatibility derivation retains the same nonempty key despite appended
+// later conversation turns.
 func TestDeriveAnthropicCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
 	base := &protocolanthropic.AnthropicRequest{
 		Model:  "claude-sonnet-4-5",
@@ -135,6 +159,10 @@ func TestDeriveAnthropicCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T
 	require.Equal(t, k1, k2, "cache key should stay stable as later Claude Code turns append history")
 }
 
+// TestDeriveAnthropicCompatPromptCacheKey_UsesCacheControlAnchors uses
+// ephemeral system/user text anchors and appends unanchored history. The key
+// stays stable under anthropic-cache and differs from the ordinary
+// compatibility prefix.
 func TestDeriveAnthropicCompatPromptCacheKey_UsesCacheControlAnchors(t *testing.T) {
 	base := &protocolanthropic.AnthropicRequest{
 		Model: "claude-sonnet-4-5",

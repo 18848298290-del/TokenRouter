@@ -15,7 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestGroupMappingChainIncludesAPIKeyRedirectAndDeduplicatesStages checks Key redirects and duplicate mapping stages.
+// TestGroupMappingChainIncludesAPIKeyRedirectAndDeduplicatesStages combines a
+// Key redirect with group and upstream names. Usage fields retain the
+// requested and group names, while repeated stages appear once in the model
+// chain.
 func TestGroupMappingChainIncludesAPIKeyRedirectAndDeduplicatesStages(t *testing.T) {
 	ctx := modeltrace.WithContext(
 		context.Background(),
@@ -37,7 +40,9 @@ func TestGroupMappingChainIncludesAPIKeyRedirectAndDeduplicatesStages(t *testing
 	require.Equal(t, []string{"gpt-5.6-luna", "gpt-5.6-luna-channel"}, mustAPIKeyResponseModels(t, ctx))
 }
 
-// TestRoutePlannerWithoutGroupDoesNotReadConfiguration checks that ungrouped requests keep their model without configuration reads.
+// TestRoutePlannerWithoutGroupDoesNotReadConfiguration invokes a planner with
+// no group and an otherwise unusable policy repository. The returned mapping
+// keeps the requested model and the route has a zero group ID.
 func TestRoutePlannerWithoutGroupDoesNotReadConfiguration(t *testing.T) {
 	planner := NewRoutePlanner(routing.NewPricingConfigService(nil, nil))
 	plan := planner.PlanRoute(context.Background(), nil, nil, "request-model")
@@ -45,6 +50,10 @@ func TestRoutePlannerWithoutGroupDoesNotReadConfiguration(t *testing.T) {
 	require.Zero(t, plan.GroupID())
 }
 
+// TestProtocolRouteNativeFirstAndExplicitFallback selects Messages before an
+// allowed Responses conversion for a relay with both protocols. Removing
+// native support selects the configured conversion, while an unrelated Chat
+// candidate and a native-only group policy are rejected.
 func TestProtocolRouteNativeFirstAndExplicitFallback(t *testing.T) {
 	provider := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformDeepseek, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{providercore.UpstreamProtocolsKey: []string{"anthropic_messages", "openai_responses"}, "api_base_urls": map[string]any{"anthropic": "https://relay.example/messages", "responses": "https://relay.example/responses"}}}}
 	group := &routing.Group{AllowedProtocols: []protocolcore.ProtocolID{protocolcore.ProtocolAnthropicMessages}, ProtocolFallbacks: map[protocolcore.ProtocolID][]protocolcore.ProtocolID{protocolcore.ProtocolAnthropicMessages: {protocolcore.ProtocolOpenAIResponses}}}
@@ -69,7 +78,10 @@ func TestProtocolRouteNativeFirstAndExplicitFallback(t *testing.T) {
 	require.False(t, ExecutionModelPolicy(provider).AllowsProtocol(ctx))
 }
 
-// TestRoutePlanRebuildsCandidateAndKeepsModelReadTiming checks candidate isolation and fresh model-rule reads during matching.
+// TestRoutePlanRebuildsCandidateAndKeepsModelReadTiming creates an attempt
+// from a shared provider target and changes its model rules. Candidate state
+// stays on the attempt, later mapping reads see its replacement credentials,
+// and incompatible fresh protocols return an error.
 func TestRoutePlanRebuildsCandidateAndKeepsModelReadTiming(t *testing.T) {
 	group := &routing.Group{ID: 7, AllowedProtocols: []protocolcore.ProtocolID{protocolcore.ProtocolAnthropicMessages}, ProtocolFallbacks: map[protocolcore.ProtocolID][]protocolcore.ProtocolID{protocolcore.ProtocolAnthropicMessages: {protocolcore.ProtocolOpenAIResponses}}}
 	ctx := requeststate.WithClientProtocol(requeststate.WithGroup(context.Background(), group), protocolcore.ProtocolAnthropicMessages)

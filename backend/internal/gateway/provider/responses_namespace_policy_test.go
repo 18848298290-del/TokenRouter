@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestShouldFlattenOpenAIResponsesNamespaces compares provider types, Compact,
+// saved flattening, transport, and passthrough combinations. OAuth-like HTTP
+// paths can flatten when selected, while native WS and other provider modes
+// retain their namespace shape.
 func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	oauth := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	apiKey := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -34,12 +38,18 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		provider           *ExecutionProvider
-		transport          egress.OpenAIUpstreamTransport
+		// namespace policy scenario label
+		name string
+		// selected execution target fixture
+		provider *ExecutionProvider
+		// selected upstream transport mode
+		transport egress.OpenAIUpstreamTransport
+		// HTTP-compatible passthrough selection flag
 		passthroughEnabled bool
-		compactPath        bool
-		want               bool
+		// Compact endpoint selection flag
+		compactPath bool
+		// expected namespace policy result
+		want bool
 	}{
 		{name: "oauth_http_default_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "oauth_http_passthrough_default_preserves", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, passthroughEnabled: true, want: false},
@@ -68,6 +78,10 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 	}
 }
 
+// TestShouldKeepOpenAIResponsesToolCallNamespaces compares OAuth, setup-token,
+// API Key, Compact, and declared namespace tools. Retention follows OAuth
+// flattening or API Key declaration evidence, with Compact and missing targets
+// excluded.
 func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 	oauth := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	apiKey := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -81,13 +95,20 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		provider           *ExecutionProvider
-		transport          egress.OpenAIUpstreamTransport
+		// namespace policy scenario label
+		name string
+		// selected execution target fixture
+		provider *ExecutionProvider
+		// selected upstream transport mode
+		transport egress.OpenAIUpstreamTransport
+		// HTTP-compatible passthrough selection flag
 		passthroughEnabled bool
-		compactPath        bool
-		body               []byte
-		want               bool
+		// Compact endpoint selection flag
+		compactPath bool
+		// namespace tool declaration body
+		body []byte
+		// expected namespace policy result
+		want bool
 	}{
 		{name: "oauth_http_keeps", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
 		{name: "oauth_http_passthrough_keeps", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, passthroughEnabled: true, want: true},
@@ -114,6 +135,9 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 	}
 }
 
+// TestShouldStripOpenAIResponsesInputNamespaces compares OAuth-like, API Key,
+// Grok, HTTP, WS, and passthrough paths. Eligible HTTP-compatible paths clean
+// history namespaces, while native WS retains them under the tested gate.
 func TestShouldStripOpenAIResponsesInputNamespaces(t *testing.T) {
 	oauth := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	apiKey := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -121,11 +145,16 @@ func TestShouldStripOpenAIResponsesInputNamespaces(t *testing.T) {
 	grokOAuth := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 
 	tests := []struct {
-		name               string
-		provider           *ExecutionProvider
-		transport          egress.OpenAIUpstreamTransport
+		// namespace policy scenario label
+		name string
+		// selected execution target fixture
+		provider *ExecutionProvider
+		// selected upstream transport mode
+		transport egress.OpenAIUpstreamTransport
+		// HTTP-compatible passthrough selection flag
 		passthroughEnabled bool
-		want               bool
+		// expected namespace policy result
+		want bool
 	}{
 		{name: "oauth_http", provider: oauth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
 		{name: "apikey_http", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
@@ -144,6 +173,10 @@ func TestShouldStripOpenAIResponsesInputNamespaces(t *testing.T) {
 	}
 }
 
+// TestStripOpenAIResponsesInputNamespaces supplies top-level input namespace
+// fields beside nested data, tool declarations, and unusual numeric encodings.
+// Cleanup removes the input fields while retaining nested/tool namespaces and
+// raw numeric/text values.
 func TestStripOpenAIResponsesInputNamespaces(t *testing.T) {
 	body := []byte(`{
 		"meta":9007199254740993,
@@ -176,6 +209,10 @@ func TestStripOpenAIResponsesInputNamespaces(t *testing.T) {
 	require.Equal(t, gjson.GetBytes(body, "input.0.large").Raw, gjson.GetBytes(stripped, "input.0.large").Raw)
 }
 
+// TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact supplies
+// string, object, and nested-only namespace input shapes. Both call-retention
+// modes return the exact original bytes for bodies needing no top-level input
+// cleanup.
 func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testing.T) {
 	tests := [][]byte{
 		[]byte(`{"input":"text","namespace":"top-level"}`),
@@ -191,7 +228,10 @@ func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testin
 	}
 }
 
-// TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces checks that preservation applies to calls while other history is cleaned.
+// TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces mixes call
+// types with message/output/reasoning/item namespaces. Call retention keeps
+// their namespaces and raw numbers, handles folded type names, and full
+// cleanup removes all tested input namespaces.
 func TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces(t *testing.T) {
 	body := []byte(`{
 		"meta":9007199254740993,

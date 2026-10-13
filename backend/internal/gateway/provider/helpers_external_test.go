@@ -23,12 +23,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// fastModeTestContext binds the requested Fast policy, group 11, and model to
+// a fresh context. It provides the policy inputs used by external Fast tests
+// without an authenticated Key record.
 func fastModeTestContext(policy, model string) context.Context {
 	ctx := apikey.WithFastModePolicy(context.Background(), policy)
 	ctx = requeststate.WithGroup(ctx, &routing.Group{ID: 11})
 	return context.WithValue(ctx, telemetry.Model, model)
 }
 
+// fastModeTestResolver builds billing prices from a fixed two-model catalogue
+// snapshot. Both models advertise service-tier and prompt-cache pricing,
+// giving Fast policy tests predictable price capability checks.
 func fastModeTestResolver() *billingcore.PriceResolver {
 	pricing := catalogprovider.NewServiceFromSnapshot(catalogprovider.Options{ModelLookupCandidates: modelidentity.CandidatesFactory}, nil, catalogprovider.Snapshot{Data: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.5": {
@@ -48,7 +54,9 @@ func fastModeTestResolver() *billingcore.PriceResolver {
 	return billingtestkit.PriceResolver(nil, billing)
 }
 
-// newFastPolicyContract creates a dynamic settings reader for service-tier policy tests.
+// newFastPolicyContract builds an execution policy backed by fixture runtime
+// settings. Nil input leaves settings empty for default resolution; nonnil
+// settings are JSON-encoded, and serialization errors fail the test.
 func newFastPolicyContract(t *testing.T, value *tierpolicy.OpenAIFastPolicySettings) *gatewayprovider.ExecutionFastPolicy {
 	t.Helper()
 	repo := &gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{}}

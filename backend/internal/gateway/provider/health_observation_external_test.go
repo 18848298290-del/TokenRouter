@@ -28,12 +28,17 @@ import (
 )
 
 const (
-	// An invalid Responses subpath can return HTML 403 before reaching the OpenAI API (#5334).
+	// openAI403HTMLBody represents HTML forbidden output for endpoint-level
+	// exemption tests, including the OpenAI and CN provider paths exercised below.
 	openAI403HTMLBody = "<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head>" +
 		"<body><h1>403 Forbidden</h1></body></html>"
 
+	// teamLinkedDeactivatedBody identifies workspace deactivation for same-team
+	// fanout assertions, contrasting it with ordinary payment-required response text.
 	teamLinkedDeactivatedBody = `{"detail":{"code":"deactivated_workspace","message":"This workspace has been deactivated."}}`
 
+	// These Grok fixture constants name the saved quota observation and expected
+	// probe, repeat, sustained, maximum, quiet-period, and spending-limit cooldowns.
 	grokQuotaSnapshotExtraKey        = "grok_usage_snapshot"
 	grokRateLimitFallbackCooldown    = 2 * time.Minute
 	grokRateLimitRepeatCooldown      = 10 * time.Minute
@@ -43,93 +48,154 @@ const (
 	grokSpendingLimitProbeCooldown   = 10 * time.Minute
 )
 
-// dbFallbackRepoStub returns a configured database record from GetByID on a cache miss.
+// dbFallbackRepoStub supplies an optional matching provider record for health
+// cache-miss tests.
 type dbFallbackRepoStub struct {
-	gatewaytestkit.ErrorPolicyStore
+	gatewaytestkit.ErrorPolicyStore // unused error policy storage methods
 
-	dbProvider *gatewayprovider.ExecutionProvider // Returned by GetByID when non-nil.
+	// optional matching database provider
+	dbProvider *gatewayprovider.ExecutionProvider
 }
 
-// countingOpenAI403CounterCache records consecutive-403 counter updates.
+// countingOpenAI403CounterCache counts delegated forbidden-counter updates for
+// provider penalty assertions.
 type countingOpenAI403CounterCache struct {
+	// configured forbidden counter responses
 	gatewaytestkit.ForbiddenCounter
 
-	increments int
+	increments int // delegated forbidden counter calls
 }
 
+// openAI403TestHarness combines provider, health, persistence, counter, and
+// runtime-block fixture observations.
 type openAI403TestHarness struct {
-	svc *provideradapter.UpstreamHealth
+	svc *provideradapter.UpstreamHealth // bound fixture health observer
 
-	repo     *gatewaytestkit.HealthStoreRecorder
-	counter  *countingOpenAI403CounterCache
-	blocker  *gatewaytestkit.RuntimeBlockRecorder
+	// provider penalty write recorder
+	repo *gatewaytestkit.HealthStoreRecorder
+	// forbidden counter invocation spy
+	counter *countingOpenAI403CounterCache
+	// runtime scheduling block recorder
+	blocker *gatewaytestkit.RuntimeBlockRecorder
+	// current health observation target
 	provider *gatewayprovider.ExecutionProvider
 }
 
+// anthropicWindowLimitRepo records provider, model, and session-window writes
+// during Anthropic health tests.
 type anthropicWindowLimitRepo struct {
+	// unused health storage methods
 	gatewaytestkit.HealthStoreBase
+	// global rate-limit write count
 	rateLimitCalls          int
-	tempUnschedCalls        int
-	lastRateLimitReset      time.Time
-	modelRateLimitCalls     int
-	lastModelRateLimitScope string
-	lastModelRateLimitReset time.Time
-	sessionWindowCalls      int
-	lastWindowStart         *time.Time
-	lastWindowEnd           *time.Time
-	lastWindowStatus        string
-	lastExtraUpdates        map[string]any
+	tempUnschedCalls        int       // temporary pause write count
+	lastRateLimitReset      time.Time // last global reset deadline
+	modelRateLimitCalls     int       // model scope write count
+	lastModelRateLimitScope string    // last model limit scope
+	lastModelRateLimitReset time.Time // last model reset deadline
+	sessionWindowCalls      int       // session window write count
+	// lastWindowStart and lastWindowEnd retain UpdateSessionWindow pointers.
+	// Tests leave those timestamp values stable through assertions; the recorder
+	// captures status and invocation count alongside this same window observation.
+	lastWindowStart  *time.Time // borrowed session start observation
+	lastWindowEnd    *time.Time // borrowed session end observation
+	lastWindowStatus string     // last session status observation
+	// lastExtraUpdates retains the caller map by reference for later assertions;
+	// test code keeps its entries stable after UpdateExtra records the observation.
+	lastExtraUpdates map[string]any // borrowed passive observation updates
 }
 
+// teamLinkedProviderRepoStub records filtered team lookup and selectively
+// failing error writes.
 type teamLinkedProviderRepoStub struct {
+	// unused health storage methods
 	gatewaytestkit.HealthStoreBase
+	// configured team candidate records
 	teamProviders []gatewayprovider.ExecutionProvider
-	listErr       error
-	listCalls     int
-	setErrorIDs   []int64
-	setErrorMsgs  map[int64]string
-	failSetError  map[int64]error
+	// configured candidate lookup error
+	listErr error
+	// observed team lookup count
+	listCalls int
+	// successfully written provider IDs
+	setErrorIDs []int64
+	// successful error messages by ID
+	setErrorMsgs map[int64]string
+	// configured per-provider write errors
+	failSetError map[int64]error
 }
 
+// fableSchedulingThresholdRepoStub records Fable model cooldown metadata
+// alongside ordinary health writes.
 type fableSchedulingThresholdRepoStub struct {
-	gatewaytestkit.HealthStoreRecorder
+	gatewaytestkit.HealthStoreRecorder // ordinary provider write recorder
 
-	modelCalls      int
-	lastModelScope  string
-	lastModelReset  time.Time
-	lastModelReason string
+	modelCalls      int       // Fable scope write count
+	lastModelScope  string    // last Fable model scope
+	lastModelReset  time.Time // last Fable reset deadline
+	lastModelReason string    // first supplied Fable reason
 }
 
+// grokQuotaProviderRepo records Grok quota updates, cooldown writes, and
+// conditional recovery observations.
 type grokQuotaProviderRepo struct {
+	// unused health storage methods
 	gatewaytestkit.HealthStoreBase
-	providersByID         map[int64]*gatewayprovider.ExecutionProvider
-	updates               map[int64]map[string]any
-	updateCalls           int
-	rateLimitedCalls      int
-	lastRateLimitedID     int64
-	lastRateLimitResetAt  time.Time
-	tempUnschedCalls      int
-	lastTempUnschedID     int64
-	lastTempUnschedUntil  time.Time
+	// providersByID and updates retain borrowed test targets and supplied update
+	// maps. UpdateExtra records each map and merges its keys into a found target;
+	// tests serialize their observation and assertion phases while those values
+	// remain shared.
+	//
+	// borrowed targets by provider ID
+	providersByID map[int64]*gatewayprovider.ExecutionProvider
+	// borrowed update maps by ID
+	updates map[int64]map[string]any
+	// quota snapshot update count
+	updateCalls int
+	// global rate-limit write count
+	rateLimitedCalls int
+	// last rate-limited provider ID
+	lastRateLimitedID int64
+	// last global reset deadline
+	lastRateLimitResetAt time.Time
+	// temporary pause write count
+	tempUnschedCalls int
+	// last temporarily paused provider ID
+	lastTempUnschedID int64
+	// last temporary pause deadline
+	lastTempUnschedUntil time.Time
+	// last temporary pause reason
 	lastTempUnschedReason string
-	recoveryClearCalls    int
-	recoveryObservedAt    time.Time
+	// conditional cooldown clear calls
+	recoveryClearCalls int
+	// supplied observed limit timestamp
+	recoveryObservedAt time.Time
+	// supplied observed reset timestamp
 	recoveryObservedReset time.Time
-	recoveryClearResult   bool
+	// configured recovery match result
+	recoveryClearResult bool
 }
 
-// grokPoolPolicyProviderRepo records provider-state writes from Grok pool error policy.
+// grokPoolPolicyProviderRepo extends quota recording with explicit pool policy
+// write observations.
 type grokPoolPolicyProviderRepo struct {
-	*grokQuotaProviderRepo
-	setErrorCalls            int
-	overloadedCalls          int
-	modelRateLimitCalls      int
-	lastModelRateLimitScope  string
-	lastModelRateLimitReason string
+	*grokQuotaProviderRepo          // embedded quota write recorder
+	setErrorCalls            int    // explicit pool error writes
+	overloadedCalls          int    // explicit pool overload writes
+	modelRateLimitCalls      int    // explicit model scope writes
+	lastModelRateLimitScope  string // last model cooldown scope
+	lastModelRateLimitReason string // first supplied model reason
 }
 
-type grokHealthTestClock struct{ nanos atomic.Int64 }
+// grokHealthTestClock supplies an atomic clock override for runtime block
+// tests.
+type grokHealthTestClock struct {
+	nanos atomic.Int64 /* zero selects wall time */
+}
 
+// TestHandle403_OtherCNProviderWithKimiConcurrencyMessageUsesNormalPolicy
+// supplies the Kimi concurrency phrase on a Zhipu API Key target. Normal 403
+// handling consumes the permanent counter and writes an error, with no Kimi
+// temporary pause.
 func TestHandle403_OtherCNProviderWithKimiConcurrencyMessageUsesNormalPolicy(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{providercore.OpenAI403DisableThresholdDefault}}
@@ -149,6 +215,9 @@ func TestHandle403_OtherCNProviderWithKimiConcurrencyMessageUsesNormalPolicy(t *
 	require.Equal(t, []string{"auth_error"}, blocker.Reasons, "the Kimi-specific runtime block must not apply")
 }
 
+// TestHandle403_CNProviderConcurrencyLimitAlwaysUsesTemporaryCooldown supplies
+// the exact concurrency-limit phrase on Kimi. Health records a temporary pause
+// and runtime block while leaving the permanent-error counter unused.
 func TestHandle403_CNProviderConcurrencyLimitAlwaysUsesTemporaryCooldown(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{providercore.OpenAI403DisableThresholdDefault}}
@@ -171,6 +240,10 @@ func TestHandle403_CNProviderConcurrencyLimitAlwaysUsesTemporaryCooldown(t *test
 	require.True(t, blocker.Until[0].After(time.Now()))
 }
 
+// TestHandle403_KimiConcurrencyLimitRepositoryFailureKeepsRuntimeBlock makes
+// temporary pause storage fail for the Kimi concurrency rejection. The runtime
+// block and failover decision remain, with no permanent-error write or counter
+// consumption.
 func TestHandle403_KimiConcurrencyLimitRepositoryFailureKeepsRuntimeBlock(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{TempErr: errors.New("repository unavailable")}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{providercore.OpenAI403DisableThresholdDefault}}
@@ -197,6 +270,9 @@ func TestHandle403_KimiConcurrencyLimitRepositoryFailureKeepsRuntimeBlock(t *tes
 	require.True(t, blocker.Until[0].After(time.Now()))
 }
 
+// TestHandle403_CNProviderNearMatchRetainsNormalPermanentErrorPolicy changes
+// the ending of the Kimi concurrency message so it is a near match. Health
+// retains the permanent-error write and produces no temporary pause.
 func TestHandle403_CNProviderNearMatchRetainsNormalPermanentErrorPolicy(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{providercore.OpenAI403DisableThresholdDefault}}
@@ -211,6 +287,9 @@ func TestHandle403_CNProviderNearMatchRetainsNormalPermanentErrorPolicy(t *testi
 	require.Equal(t, 0, repo.TempCalls)
 }
 
+// GetByID returns the configured provider when its ID matches the lookup.
+// Absent or mismatched fixtures return nil with no error, so these tests
+// distinguish a missing database record from a read failure.
 func (r *dbFallbackRepoStub) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	if r.dbProvider != nil && r.dbProvider.Record.ID == id {
 		return r.dbProvider, nil
@@ -218,10 +297,14 @@ func (r *dbFallbackRepoStub) GetByID(ctx context.Context, id int64) (*gatewaypro
 	return nil, nil // not found, no error
 }
 
+// TestCheckErrorPolicy_401_DBFallback_Escalates supplies a cached record with
+// no prior reason and a database record showing 401. Gemini returns the
+// escalation policy result, while Antigravity returns temporary-unscheduling
+// policy.
 func TestCheckErrorPolicy_401_DBFallback_Escalates(t *testing.T) {
-	// The cached record lacks the temporary reason, but the database records an earlier 401.
-	// A second 401 escalates the non-Antigravity provider to a permanent error.
-	// Antigravity follows its own error policy.
+	// The stored record supplies an earlier 401 reason missing from the captured
+	// target. Returned policy distinguishes Gemini's escalation path from
+	// Antigravity's temporary rule; these assertions do not inspect a state write.
 	t.Run("gemini_escalates", func(t *testing.T) {
 		repo := &dbFallbackRepoStub{
 			dbProvider: &gatewayprovider.ExecutionProvider{
@@ -291,8 +374,11 @@ func TestCheckErrorPolicy_401_DBFallback_Escalates(t *testing.T) {
 	})
 }
 
+// TestCheckErrorPolicy_401_DBFallback_NoDBRecord_FirstHit uses Antigravity
+// with an empty prior reason in both captured and stored records. The first
+// matching 401 rule returns temporary unscheduling.
 func TestCheckErrorPolicy_401_DBFallback_NoDBRecord_FirstHit(t *testing.T) {
-	// With no earlier 401 in either source, the first hit temporarily pauses scheduling.
+	// With no earlier 401 in either source, the first hit selects temporary policy.
 	repo := &dbFallbackRepoStub{
 		dbProvider: &gatewayprovider.ExecutionProvider{
 			Record: providercore.Record{
@@ -326,6 +412,9 @@ func TestCheckErrorPolicy_401_DBFallback_NoDBRecord_FirstHit(t *testing.T) {
 	require.Equal(t, providercore.ErrorPolicyTempUnscheduled, result, "401 first hit with no DB record should temp-unschedule")
 }
 
+// TestCheckErrorPolicy_401_DBFallback_DBError_FirstHit uses an Antigravity
+// lookup fixture returning nil with no error. The missing record is handled as
+// a first matching 401, producing temporary unscheduling.
 func TestCheckErrorPolicy_401_DBFallback_DBError_FirstHit(t *testing.T) {
 	// A missing cached reason and absent database record are treated as the first hit.
 	repo := &dbFallbackRepoStub{
@@ -356,6 +445,10 @@ func TestCheckErrorPolicy_401_DBFallback_DBError_FirstHit(t *testing.T) {
 	require.Equal(t, providercore.ErrorPolicyTempUnscheduled, result, "401 first hit with DB not found should temp-unschedule")
 }
 
+// TestRateLimitService_HandleUpstreamError_OpenAIOAuth403UsesTempUnschedulable
+// configures seven-minute OpenAI OAuth 403 cooldown and a first counter value.
+// Health writes a temporary pause with counter text and the measured deadline,
+// avoiding permanent error.
 func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403UsesTempUnschedulable(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{1}}
@@ -391,6 +484,10 @@ func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403UsesTempUnschedulabl
 	require.Contains(t, repo.LastTempReason, "(1/3)")
 }
 
+// TestRateLimitService_HandleUpstreamError_OpenAIOAuth403DisabledUsesSetError
+// disables the OpenAI OAuth temporary 403 cooldown. A forbidden response
+// writes one provider error containing the upstream message and records no
+// temporary pause.
 func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403DisabledUsesSetError(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{1}}
@@ -417,6 +514,9 @@ func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403DisabledUsesSetError
 	require.Contains(t, repo.LastErrorMsg, "temporary forbidden")
 }
 
+// TestRateLimitService_HandleUpstreamError_OpenAIOAuth403WithoutCounterUsesSetError
+// omits the 403 counter dependency for an OAuth target. Forbidden handling
+// records one permanent provider error and no temporary pause.
 func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403WithoutCounterUsesSetError(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	service := newUpstreamHealthForTest(repo, &config.Config{}, nil, providercore.HealthOptions{}, nil)
@@ -437,6 +537,9 @@ func TestRateLimitService_HandleUpstreamError_OpenAIOAuth403WithoutCounterUsesSe
 	require.Contains(t, repo.LastErrorMsg, "temporary forbidden")
 }
 
+// TestRateLimitService_HandleUpstreamError_NonOpenAIOAuth403UsesSetError
+// supplies an Anthropic OAuth target with a forbidden response. Ordinary
+// platform handling records a permanent error containing the 403 explanation.
 func TestRateLimitService_HandleUpstreamError_NonOpenAIOAuth403UsesSetError(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	service := newUpstreamHealthForTest(repo, &config.Config{}, nil, providercore.HealthOptions{}, nil)
@@ -457,11 +560,16 @@ func TestRateLimitService_HandleUpstreamError_NonOpenAIOAuth403UsesSetError(t *t
 	require.Contains(t, repo.LastErrorMsg, "Access forbidden (403)")
 }
 
+// IncrementOpenAI403Count increments the spy count before delegating to the
+// embedded counter fixture.
 func (s *countingOpenAI403CounterCache) IncrementOpenAI403Count(ctx context.Context, providerID int64, window int) (int64, error) {
 	s.increments++
 	return s.ForbiddenCounter.IncrementOpenAI403Count(ctx, providerID, window)
 }
 
+// newOpenAI403TestHarness constructs OAuth 403 handling with supplied counter
+// results and a runtime-block recorder. Returned persistence and counter spies
+// expose which penalty path was invoked for each body.
 func newOpenAI403TestHarness(t *testing.T, providerID int64, counts ...int64) *openAI403TestHarness {
 	t.Helper()
 	repo := &gatewaytestkit.HealthStoreRecorder{}
@@ -480,10 +588,15 @@ func newOpenAI403TestHarness(t *testing.T, providerID int64, counts ...int64) *o
 	}
 }
 
+// handle observes an HTTP 403 body on the harness provider and returns
+// StopScheduling.
 func (h *openAI403TestHarness) handle(body string) bool {
 	return gatewayprovider.ApplyExecutionHealth(context.Background(), h.svc, h.provider, gatewayprovider.HealthObservationFromContext(context.Background(), http.StatusForbidden, http.Header{}, []byte(body), nil)).StopScheduling
 }
 
+// requireNoProviderPenalty checks that error writes, temporary pause, runtime
+// blocks, and counter increments stay unused. It marks itself as a helper so
+// failures point to the calling scenario.
 func (h *openAI403TestHarness) requireNoProviderPenalty(t *testing.T) {
 	t.Helper()
 	require.Equal(t, 0, h.repo.SetErrorCalls, "端点级 403 不得永久禁用提供商")
@@ -492,11 +605,14 @@ func (h *openAI403TestHarness) requireNoProviderPenalty(t *testing.T) {
 	require.Equal(t, 0, h.counter.increments, "端点级 403 不得递增连续 403 计数")
 }
 
-// TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider covers common HTML response forms.
+// TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider supplies
+// doctype, bare HTML, and padded uppercase HTML 403 bodies. Each leaves
+// permanent errors, temporary pauses, runtime blocking, and counter increments
+// untouched.
 func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
+		name string // HTML response scenario label
+		body string // upstream forbidden response body
 	}{
 		{"doctype_prefixed", openAI403HTMLBody},
 		{"bare_html_tag", "<html><body>403 Forbidden</body></html>"},
@@ -515,6 +631,9 @@ func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeProvider(t *testing.T) 
 	}
 }
 
+// TestHandleUpstreamErrorCNProviderHTML403DoesNotPenalizeProvider supplies the
+// HTML 403 fixture to Kimi, Zhipu, and DeepSeek API Key targets. Those
+// compatible paths avoid provider penalties and counter increments.
 func TestHandleUpstreamErrorCNProviderHTML403DoesNotPenalizeProvider(t *testing.T) {
 	for _, platform := range []string{capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		t.Run(platform, func(t *testing.T) {
@@ -528,6 +647,10 @@ func TestHandleUpstreamErrorCNProviderHTML403DoesNotPenalizeProvider(t *testing.
 	}
 }
 
+// TestHandleUpstreamErrorCNProviderStructured403UsesCumulativeCooldown
+// supplies structured forbidden errors to three CN platforms with a first
+// counter value. Each increments the counter and writes temporary cooldown
+// rather than permanent error.
 func TestHandleUpstreamErrorCNProviderStructured403UsesCumulativeCooldown(t *testing.T) {
 	for _, platform := range []string{capability.PlatformKimi, capability.PlatformZhipu, capability.PlatformDeepseek} {
 		t.Run(platform, func(t *testing.T) {
@@ -544,7 +667,10 @@ func TestHandleUpstreamErrorCNProviderStructured403UsesCumulativeCooldown(t *tes
 	}
 }
 
-// TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates checks that repeated HTML errors do not advance the disable counter.
+// TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates repeats HTML 403
+// beyond the configured disable threshold. All calls return no scheduling-stop
+// decision and leave the stored counter and provider-penalty observations
+// unused.
 func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h := newOpenAI403TestHarness(t, 502, 1, 2, 3, 4, 5)
 
@@ -555,7 +681,10 @@ func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h.requireNoProviderPenalty(t)
 }
 
-// TestHandleUpstreamError_OpenAIStructured403StillPenalizes checks penalties for structured provider failures.
+// TestHandleUpstreamError_OpenAIStructured403StillPenalizes compares
+// first-hit, threshold, and plain-text forbidden failures on OpenAI OAuth.
+// Counter-backed structured failures pause or disable according to count, and
+// plain text still receives ordinary cooldown.
 func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 	t.Run("first_hit_temp_unschedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 503, 1)
@@ -584,7 +713,9 @@ func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 	})
 }
 
-// TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged checks that the HTML exemption is OpenAI-specific.
+// TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged supplies HTML
+// forbidden bodies to Anthropic and Gemini API Key targets. Each records a
+// permanent error and stops scheduling for the observed failure.
 func TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged(t *testing.T) {
 	for _, platform := range []string{capability.PlatformAnthropic, capability.PlatformGemini} {
 		t.Run(platform, func(t *testing.T) {
@@ -601,6 +732,10 @@ func TestHandleUpstreamError_HTML403OnOtherPlatformsUnchanged(t *testing.T) {
 	}
 }
 
+// TestRateLimitService_HandleUpstreamError_OpenAI403FirstHitTempUnschedulable
+// uses a first 403 counter result with a structured edge rejection. Temporary
+// persistence and runtime block retain the provider ID and message, while
+// permanent error stays unused.
 func TestRateLimitService_HandleUpstreamError_OpenAI403FirstHitTempUnschedulable(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{1}}
@@ -630,6 +765,10 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403FirstHitTempUnschedulable
 	require.True(t, blocker.Until[0].After(time.Now()))
 }
 
+// TestRateLimitService_HandleUpstreamError_OpenAI403ThresholdDisables returns
+// a threshold 403 count for a forbidden workspace response. Health records one
+// permanent provider error, retains counter/message diagnostics, and creates
+// no temporary pause.
 func TestRateLimitService_HandleUpstreamError_OpenAI403ThresholdDisables(t *testing.T) {
 	repo := &gatewaytestkit.HealthStoreRecorder{}
 	counter := &gatewaytestkit.ForbiddenCounter{Counts: []int64{3}}
@@ -652,17 +791,23 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403ThresholdDisables(t *test
 	require.Contains(t, repo.LastErrorMsg, "consecutive_403=3/3")
 }
 
+// SetRateLimited records the requested reset deadline and increments the
+// fixture's global-limit count.
 func (r *anthropicWindowLimitRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
 	r.rateLimitCalls++
 	r.lastRateLimitReset = resetAt
 	return nil
 }
 
+// SetTempUnschedulable increments the fixture count for provider
+// temporary-pause observations.
 func (r *anthropicWindowLimitRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.tempUnschedCalls++
 	return nil
 }
 
+// SetModelRateLimit records the scope and reset deadline with its model-limit
+// invocation count.
 func (r *anthropicWindowLimitRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, resetAt time.Time, _ ...string) error {
 	r.modelRateLimitCalls++
 	r.lastModelRateLimitScope = scope
@@ -670,6 +815,9 @@ func (r *anthropicWindowLimitRepo) SetModelRateLimit(_ context.Context, _ int64,
 	return nil
 }
 
+// UpdateSessionWindow records borrowed start/end pointers plus status and call
+// count. Test callers keep the referenced timestamps stable until assertions
+// finish reading the captured observation.
 func (r *anthropicWindowLimitRepo) UpdateSessionWindow(_ context.Context, _ int64, start, end *time.Time, status string) error {
 	r.sessionWindowCalls++
 	r.lastWindowStart = start
@@ -678,11 +826,18 @@ func (r *anthropicWindowLimitRepo) UpdateSessionWindow(_ context.Context, _ int6
 	return nil
 }
 
+// UpdateExtra retains the supplied update map for passive quota assertions.
+// The fixture does not clone entries, so callers keep those values stable
+// while checking the observation.
 func (r *anthropicWindowLimitRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	r.lastExtraUpdates = updates
 	return nil
 }
 
+// TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule reports
+// exhausted official five-hour utilization alongside a shorter local 429 rule.
+// The official reset governs provider cooldown and rejected session-window
+// times, with no local temporary pause.
 func TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule(t *testing.T) {
 	resetAt := time.Now().Add(3 * time.Hour).Truncate(time.Second)
 	headers := http.Header{}
@@ -723,8 +878,9 @@ func TestHandleUpstreamError_AnthropicWindowLimitPreemptsTempUnschedRule(t *test
 	require.Equal(t, "rejected", repo.lastWindowStatus)
 }
 
-// fable429Headers builds a 429 fixture with the Fable-specific 7d_oi window rejected
-// while the five-hour and seven-day provider windows remain allowed.
+// fable429Headers creates a rejected Fable-specific window alongside allowed
+// five-hour and seven-day windows. Supplied timestamps are encoded as Unix
+// seconds, and the fixture includes overage plus passive observation fields.
 func fable429Headers(reset5h, resetOI time.Time) http.Header {
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-unified-5h-reset", strconv.FormatInt(reset5h.Unix(), 10))
@@ -746,6 +902,10 @@ func fable429Headers(reset5h, resetOI time.Time) http.Header {
 	return headers
 }
 
+// TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit rejects the
+// Fable-specific window while ordinary provider windows remain allowed. Health
+// records the Fable shared model limit and passive observations, leaving
+// provider and five-hour session penalties unused.
 func TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit(t *testing.T) {
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
@@ -790,8 +950,12 @@ func TestHandleUpstreamError_Anthropic7dOiOnlyMarksModelRateLimit(t *testing.T) 
 	require.Equal(t, 0.41, repo.lastExtraUpdates["session_window_utilization"])
 }
 
+// TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi rejects both
+// five-hour and Fable windows in the same observation. Provider cooldown uses
+// the five-hour reset and the Fable model scope is also recorded.
 func TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi(t *testing.T) {
-	// A rejected five-hour window sets the provider cooldown using its reset and also records the Fable model limit.
+	// A rejected five-hour window sets the provider cooldown using its reset
+	// and also records the Fable model limit.
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
 	resetOI := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -812,6 +976,9 @@ func TestHandleUpstreamError_Anthropic5hWindowStillWinsOver7dOi(t *testing.T) {
 	require.Equal(t, providercore.AnthropicFableRateLimitKey, repo.lastModelRateLimitScope)
 }
 
+// TestHandleUpstreamError_AnthropicProviderWindowStillWinsOver7dOi rejects the
+// ordinary seven-day and Fable-specific windows together. Provider cooldown
+// uses the seven-day reset while retaining the Fable model-limit write.
 func TestHandleUpstreamError_AnthropicProviderWindowStillWinsOver7dOi(t *testing.T) {
 	// A rejected seven-day provider window sets provider and Fable model cooldowns.
 	now := time.Now()
@@ -834,8 +1001,13 @@ func TestHandleUpstreamError_AnthropicProviderWindowStillWinsOver7dOi(t *testing
 	require.Equal(t, providercore.AnthropicFableRateLimitKey, repo.lastModelRateLimitScope)
 }
 
+// TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior supplies
+// 429 with allowed ordinary windows and no Fable signal. The earlier reset
+// sets provider cooldown, session-window observation runs, and no model limit
+// is recorded.
 func TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior(t *testing.T) {
-	// Without 7d_oi or a rejected provider window, a 429 uses the earlier reset for the provider cooldown.
+	// Without 7d_oi or a rejected provider window, a 429 uses the earlier reset
+	// for the provider cooldown.
 	now := time.Now()
 	reset5h := now.Add(2 * time.Hour).Truncate(time.Second)
 	reset7d := now.Add(80 * time.Hour).Truncate(time.Second)
@@ -861,7 +1033,10 @@ func TestHandleUpstreamError_Anthropic429Without7dOiKeepsLegacyBehavior(t *testi
 	require.Equal(t, 1, repo.sessionWindowCalls)
 }
 
-// newUpstreamHealthForTest constructs the observer from test configuration.
+// newUpstreamHealthForTest binds the production observer to fixture storage,
+// cache, settings, and health options. A supplied config replaces
+// unauthorized, overload, and CN interval options before gatewaytestkit
+// creates the shared components.
 func newUpstreamHealthForTest(store gatewayprovider.ExecutionProviderStore, cfg *config.Config, cache providercore.TempUnschedCache, options providercore.HealthOptions, readers *gatewayprovider.RuntimeReaders) *provideradapter.UpstreamHealth {
 	if cfg != nil {
 		options.UnauthorizedCooldownMinutes = cfg.RateLimit.OAuth401CooldownMinutes
@@ -871,7 +1046,9 @@ func newUpstreamHealthForTest(store gatewayprovider.ExecutionProviderStore, cfg 
 	return gatewaytestkit.NewHealthObserver(gatewaytestkit.HealthInput{Store: store, Cache: cache, Options: options, Readers: readers})
 }
 
-// newExecutionReadersFixture wraps the settings stub in the settings cache before binding readers.
+// newExecutionReadersFixture binds runtime readers after wrapping a nonnil
+// repository in the settings cache. Nil repository remains nil, and the
+// compatibility config parameter is currently unused.
 func newExecutionReadersFixture(repo settings.Repository, _ *config.Config) *gatewayprovider.RuntimeReaders {
 	if repo != nil {
 		repo = settings.New(repo)
@@ -879,6 +1056,10 @@ func newExecutionReadersFixture(repo settings.Repository, _ *config.Config) *gat
 	return gatewaytestkit.RuntimeReaders(repo)
 }
 
+// TestRateLimitService_TempUnschedulableContextPreservesModelForPoolDependency
+// places the cooldown model in request hints while omitting explicit model
+// arguments for a pool target. Health writes that model scope and leaves
+// provider-wide temporary cooldown unused.
 func TestRateLimitService_TempUnschedulableContextPreservesModelForPoolDependency(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)
@@ -887,7 +1068,8 @@ func TestRateLimitService_TempUnschedulableContextPreservesModelForPoolDependenc
 	provider.Record.Credentials["pool_mode"] = true
 	ctx := requeststate.WithHealthModel(context.Background(), []string{"gpt-5.4"})
 
-	// With no model argument, pool health observation uses the contextual canonical model for cooldown scope.
+	// With no model argument, pool health observation uses the contextual
+	// canonical model for cooldown scope.
 	observation := gatewayprovider.HealthObservationFromContext(ctx, http.StatusNotFound, http.Header{},
 		[]byte(`{"error":{"message":"endpoint not found"}}`), nil)
 	handled := gatewayprovider.ApplyExecutionHealth(ctx, svc, provider, observation).StopScheduling
@@ -898,6 +1080,10 @@ func TestRateLimitService_TempUnschedulableContextPreservesModelForPoolDependenc
 	require.Equal(t, "gpt-5.4", repo.ModelRateLimitCalls[0].Scope)
 }
 
+// TestRateLimitService_ModelTempUnschedulableIsolatesSchedulerByModel reports
+// a final upstream model when provider mappings contain another possible hop.
+// The stored scope stays at that final identity, rejecting its public alias
+// while another model stays schedulable.
 func TestRateLimitService_ModelTempUnschedulableIsolatesSchedulerByModel(t *testing.T) {
 	repo := &gatewaytestkit.ModelHealthStore{}
 	svc := newUpstreamHealthForTest(repo, nil, nil, providercore.HealthOptions{}, nil)
@@ -927,7 +1113,9 @@ func TestRateLimitService_ModelTempUnschedulableIsolatesSchedulerByModel(t *test
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Schedulable(context.Background(), "gpt-5.6-sol"))
 }
 
-// ListByPlatform returns active providers on the requested platform.
+// ListByPlatform records a lookup and returns active fixtures for the supplied
+// platform, or its configured error. The result slice is new, while nested
+// provider data remains borrowed from teamProviders.
 func (r *teamLinkedProviderRepoStub) ListByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	r.listCalls++
 	if r.listErr != nil {
@@ -942,6 +1130,9 @@ func (r *teamLinkedProviderRepoStub) ListByPlatform(ctx context.Context, platfor
 	return out, nil
 }
 
+// SetError returns the configured per-ID error before recording a successful
+// write. Successful calls append the ID and save the message, leaving failed
+// IDs absent from both observations.
 func (r *teamLinkedProviderRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
 	if err, ok := r.failSetError[id]; ok {
 		return err
@@ -954,6 +1145,8 @@ func (r *teamLinkedProviderRepoStub) SetError(ctx context.Context, id int64, err
 	return nil
 }
 
+// newTeamLinkedProvider constructs an active OpenAI OAuth fixture with the
+// supplied team account identity.
 func newTeamLinkedProvider(id int64, teamID string) gatewayprovider.ExecutionProvider {
 	return gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -966,7 +1159,9 @@ func newTeamLinkedProvider(id int64, teamID string) gatewayprovider.ExecutionPro
 	}
 }
 
-// newTeamLinkedFixture includes trigger 1, teammates 2 and 6, another team 3, API Key 4, shadow 5, and already-failed teammate 7.
+// newTeamLinkedFixture creates trigger, matching teammates, another team, API
+// Key, shadow, and errored records for fanout. Fresh credential maps let each
+// scenario modify provider classification before calling health.
 func newTeamLinkedFixture() []gatewayprovider.ExecutionProvider {
 	parentID := int64(1)
 	shadow := gatewayprovider.ExecutionProvider{
@@ -993,6 +1188,8 @@ func newTeamLinkedFixture() []gatewayprovider.ExecutionProvider {
 	}
 }
 
+// newTeamLinkedTestService constructs a health observer and its runtime-block
+// recorder for team scenarios.
 func newTeamLinkedTestService(repo *teamLinkedProviderRepoStub) (*provideradapter.UpstreamHealth,
 	*gatewaytestkit.RuntimeBlockRecorder,
 ) {
@@ -1004,6 +1201,10 @@ func newTeamLinkedTestService(repo *teamLinkedProviderRepoStub) (*provideradapte
 	return rl, blocker
 }
 
+// TestTeamLinkedError_FanoutMarksSameTeamProviders supplies workspace
+// deactivation on a trigger among mixed team/provider records. Matching
+// teammates are written before the trigger, and recorded runtime-block order
+// separates team fanout from ordinary authentication handling.
 func TestTeamLinkedError_FanoutMarksSameTeamProviders(t *testing.T) {
 	repo := &teamLinkedProviderRepoStub{teamProviders: newTeamLinkedFixture()}
 	rl, blocker := newTeamLinkedTestService(repo)
@@ -1018,13 +1219,16 @@ func TestTeamLinkedError_FanoutMarksSameTeamProviders(t *testing.T) {
 	require.Contains(t, repo.setErrorMsgs[6], "team-linked error triggered by provider #1")
 	require.Contains(t, repo.setErrorMsgs[1], "Workspace deactivated (402)")
 	require.NotContains(t, repo.setErrorMsgs[1], "team-linked")
-	// Teammates are blocked in memory before persistence; the trigger uses auth_error.
+	// Recorded fanout blocks use the team-linked reason; the trigger uses auth_error.
 	require.Equal(t, []string{providercore.OpenAITeamLinkedErrorBlockReason, providercore.OpenAITeamLinkedErrorBlockReason, "auth_error"}, blocker.Reasons)
 	require.Equal(t, int64(2), blocker.Providers[0].Record.ID)
 	require.Equal(t, int64(6), blocker.Providers[1].Record.ID)
 	require.Equal(t, int64(1), blocker.Providers[2].Record.ID)
 }
 
+// TestTeamLinkedError_GenericPaymentErrorDoesNotFanout supplies ordinary
+// insufficient-balance text on a team OAuth target. Health writes the trigger
+// alone and performs no team-provider list query.
 func TestTeamLinkedError_GenericPaymentErrorDoesNotFanout(t *testing.T) {
 	repo := &teamLinkedProviderRepoStub{teamProviders: newTeamLinkedFixture()}
 	rl, _ := newTeamLinkedTestService(repo)
@@ -1037,6 +1241,10 @@ func TestTeamLinkedError_GenericPaymentErrorDoesNotFanout(t *testing.T) {
 	require.Zero(t, repo.listCalls)
 }
 
+// TestTeamLinkedError_DedupWithinTTL reports workspace deactivation on two
+// teammates through the same observer. The team list is read once, repeated
+// fanout is suppressed, and ordinary error handling still writes the second
+// trigger.
 func TestTeamLinkedError_DedupWithinTTL(t *testing.T) {
 	repo := &teamLinkedProviderRepoStub{teamProviders: newTeamLinkedFixture()}
 	rl, _ := newTeamLinkedTestService(repo)
@@ -1051,6 +1259,9 @@ func TestTeamLinkedError_DedupWithinTTL(t *testing.T) {
 	require.Equal(t, 1, repo.listCalls)
 }
 
+// TestTeamLinkedError_APIKeyTriggerDoesNotFanout reports workspace
+// deactivation on an API Key target carrying the team account ID. Only that
+// trigger receives an error, and no team enumeration occurs.
 func TestTeamLinkedError_APIKeyTriggerDoesNotFanout(t *testing.T) {
 	repo := &teamLinkedProviderRepoStub{teamProviders: newTeamLinkedFixture()}
 	rl, _ := newTeamLinkedTestService(repo)
@@ -1063,6 +1274,10 @@ func TestTeamLinkedError_APIKeyTriggerDoesNotFanout(t *testing.T) {
 	require.Zero(t, repo.listCalls)
 }
 
+// TestRateLimitService_ApplyProviderSchedulingThreshold_SetsTempUnschedulable
+// sets an 80 percent OpenAI threshold with a 91.5 percent window observation.
+// Threshold handling writes the reset deadline and detailed reason, then
+// copies pause state to the target.
 func TestRateLimitService_ApplyProviderSchedulingThreshold_SetsTempUnschedulable(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":80}`
@@ -1103,6 +1318,10 @@ func TestRateLimitService_ApplyProviderSchedulingThreshold_SetsTempUnschedulable
 	require.Contains(t, payload["error_message"], "91.5% used >= 80%")
 }
 
+// TestRateLimitService_ApplyProviderSchedulingThreshold_UsesProviderOverrideInReason
+// combines a 90 percent global threshold with an 80 percent provider override.
+// An 85.5 percent observation pauses and records the provider override in
+// diagnostic JSON.
 func TestRateLimitService_ApplyProviderSchedulingThreshold_UsesProviderOverrideInReason(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":90}`
@@ -1141,6 +1360,9 @@ func TestRateLimitService_ApplyProviderSchedulingThreshold_UsesProviderOverrideI
 	require.Contains(t, payload["error_message"], "85.5% used >= 80%")
 }
 
+// SetModelRateLimit records scope, reset, count, and the first optional
+// reason. With no reason argument, its previous recorded reason remains
+// available, matching the fixture's capture behavior.
 func (r *fableSchedulingThresholdRepoStub) SetModelRateLimit(_ context.Context, _ int64, scope string, resetAt time.Time, reason ...string) error {
 	r.modelCalls++
 	r.lastModelScope = scope
@@ -1151,6 +1373,10 @@ func (r *fableSchedulingThresholdRepoStub) SetModelRateLimit(_ context.Context, 
 	return nil
 }
 
+// TestRateLimitService_ApplyProviderSchedulingThreshold_FableOnlyLimitsFableModels
+// exceeds a provider override in the Fable-specific window while ordinary
+// usage remains lower. The shared Fable model cooldown leaves other Claude
+// models schedulable, and repeated evaluation avoids a duplicate write.
 func TestRateLimitService_ApplyProviderSchedulingThreshold_FableOnlyLimitsFableModels(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"anthropic":100}`
@@ -1198,6 +1424,10 @@ func TestRateLimitService_ApplyProviderSchedulingThreshold_FableOnlyLimitsFableM
 	require.Equal(t, 1, providerRepo.modelCalls, "an active model limit should not be persisted twice")
 }
 
+// TestRateLimitService_ApplyProviderSchedulingThreshold_SkipsDuplicateTempUnschedulable
+// supplies an active matching threshold pause and unchanged usage/reset
+// evidence. Evaluation remains blocked while preserving reason/deadline and
+// recording no additional temporary write.
 func TestRateLimitService_ApplyProviderSchedulingThreshold_SkipsDuplicateTempUnschedulable(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":80}`
@@ -1240,6 +1470,10 @@ func TestRateLimitService_ApplyProviderSchedulingThreshold_SkipsDuplicateTempUns
 	require.True(t, until.Equal(*provider.Record.TempUnschedulableUntil))
 }
 
+// TestRateLimitService_ApplyProviderSchedulingThreshold_UnsupportedPlatformDoesNotBlock
+// supplies high utilization-like extras on an unsupported platform. Threshold
+// evaluation returns false, records no temporary write, and leaves pause
+// fields absent.
 func TestRateLimitService_ApplyProviderSchedulingThreshold_UnsupportedPlatformDoesNotBlock(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":80}`
@@ -1273,6 +1507,9 @@ func TestRateLimitService_ApplyProviderSchedulingThreshold_UnsupportedPlatformDo
 	require.Empty(t, provider.Record.TempUnschedulableReason)
 }
 
+// UpdateExtra records a borrowed update map and merges entries into a
+// configured target when present. Missing target IDs still retain the update
+// observation and return success; no persistence transaction is simulated.
 func (r *grokQuotaProviderRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	r.updateCalls++
 	if r.updates == nil {
@@ -1292,6 +1529,8 @@ func (r *grokQuotaProviderRepo) UpdateExtra(_ context.Context, id int64, updates
 	return nil
 }
 
+// SetRateLimited records provider ID, reset deadline, and the global-limit
+// invocation count.
 func (r *grokQuotaProviderRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitedCalls++
 	r.lastRateLimitedID = id
@@ -1299,10 +1538,16 @@ func (r *grokQuotaProviderRepo) SetRateLimited(_ context.Context, id int64, rese
 	return nil
 }
 
+// SetRateLimitedIfLater delegates to the recording setter for fixture
+// assertions. It performs no conditional deadline comparison, so tests here
+// observe supplied values rather than store-level extension atomicity.
 func (r *grokQuotaProviderRepo) SetRateLimitedIfLater(ctx context.Context, id int64, resetAt time.Time) error {
 	return r.SetRateLimited(ctx, id, resetAt)
 }
 
+// ClearRateLimitIfObserved records comparison timestamps and returns the
+// fixture's configured match result. It performs no stored-state comparison,
+// letting tests inspect the health consumer's recovery request.
 func (r *grokQuotaProviderRepo) ClearRateLimitIfObserved(_ context.Context, _ int64, observedLimitedAt, observedResetAt time.Time) (bool, error) {
 	r.recoveryClearCalls++
 	r.recoveryObservedAt = observedLimitedAt
@@ -1310,6 +1555,8 @@ func (r *grokQuotaProviderRepo) ClearRateLimitIfObserved(_ context.Context, _ in
 	return r.recoveryClearResult, nil
 }
 
+// SetTempUnschedulable records the provider, deadline, reason, and fixture
+// invocation count.
 func (r *grokQuotaProviderRepo) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
 	r.tempUnschedCalls++
 	r.lastTempUnschedID = id
@@ -1318,16 +1565,23 @@ func (r *grokQuotaProviderRepo) SetTempUnschedulable(_ context.Context, id int64
 	return nil
 }
 
+// SetError increments the fixture's explicit pool-policy error count and
+// returns success.
 func (r *grokPoolPolicyProviderRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// SetOverloaded increments the fixture's pool-policy overload write count and
+// returns success.
 func (r *grokPoolPolicyProviderRepo) SetOverloaded(_ context.Context, _ int64, _ time.Time) error {
 	r.overloadedCalls++
 	return nil
 }
 
+// SetModelRateLimit records model scope and count, plus the first reason when
+// supplied. An absent reason leaves the previous reason intact for this
+// recording fixture.
 func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, _ time.Time, reason ...string) error {
 	r.modelRateLimitCalls++
 	r.lastModelRateLimitScope = scope
@@ -1337,7 +1591,8 @@ func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int6
 	return nil
 }
 
-// newGrokPoolProvider returns a Grok API Key provider with pool mode enabled.
+// newGrokPoolProvider constructs an active Grok API Key fixture with pool mode
+// enabled.
 func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1351,13 +1606,18 @@ func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// newGrokHealthForTest binds production health components for provider-state assertions.
+// newGrokHealthForTest binds storage, optional throttle, runtime blocks,
+// transient model state, and production model normalization. Each call creates
+// fresh runtime/model state for provider health assertions in that scenario.
 func newGrokHealthForTest(store provideradapter.GrokHealthStore, throttle *providercore.WriteThrottle) *provideradapter.GrokHealth {
 	return &provideradapter.GrokHealth{Store: store, Throttle: throttle, Runtime: providercore.NewRuntimeBlockState(time.Now), ModelTransient: providercore.NewModelTransientState(0), NormalizeModel: func(value *providercore.Record, model string) string {
 		return (gatewayprovider.ModelPolicy{Record: value}).NormalizeOpenAI(model)
 	}}
 }
 
+// newGrokPoolHealthForTest binds a provider-ID-indexed recording store and
+// shared runtime blocking to Grok health. It adds the production generic
+// observer so explicit custom and temporary rules can be asserted.
 func newGrokPoolHealthForTest(value *gatewayprovider.ExecutionProvider) (*provideradapter.GrokHealth, *grokPoolPolicyProviderRepo) {
 	repo := &grokPoolPolicyProviderRepo{grokQuotaProviderRepo: &grokQuotaProviderRepo{providersByID: map[int64]*gatewayprovider.ExecutionProvider{value.Record.ID: value}}}
 	health := newGrokHealthForTest(repo, nil)
@@ -1365,18 +1625,28 @@ func newGrokPoolHealthForTest(value *gatewayprovider.ExecutionProvider) (*provid
 	return health, repo
 }
 
+// GetByID returns the configured target pointer for id, or nil with no error
+// when absent. Returned target data stays borrowed for this scenario's later
+// health writes and assertions.
 func (r *grokQuotaProviderRepo) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	return r.providersByID[id], nil
 }
 
+// handleGrokHealthForTest observes a Grok failure with no team-model quota
+// hint and returns StopScheduling.
 func handleGrokHealthForTest(health *provideradapter.GrokHealth, ctx context.Context, value *gatewayprovider.ExecutionProvider, status int, headers http.Header, body []byte, models ...string) bool {
 	return gatewayprovider.ApplyGrokExecutionHealth(ctx, health, value, status, headers, body, "", models...).StopScheduling
 }
 
+// handleGrokHealthWithTeamForTest observes a Grok failure with the supplied
+// team-model hint and returns StopScheduling.
 func handleGrokHealthWithTeamForTest(health *provideradapter.GrokHealth, team string, ctx context.Context, value *gatewayprovider.ExecutionProvider, status int, headers http.Header, body []byte, models ...string) bool {
 	return gatewayprovider.ApplyGrokExecutionHealth(ctx, health, value, status, headers, body, team, models...).StopScheduling
 }
 
+// Now returns the atomic nanosecond override when nonzero, otherwise the
+// current wall time. Clearing the override restores real-time expiry checks
+// for fixtures that installed an earlier block.
 func (c *grokHealthTestClock) Now() time.Time {
 	if n := c.nanos.Load(); n != 0 {
 		return time.Unix(0, n)
@@ -1384,29 +1654,45 @@ func (c *grokHealthTestClock) Now() time.Time {
 	return time.Now()
 }
 
+// Set publishes the supplied Unix nanoseconds for subsequent fixture clock
+// reads.
 func (c *grokHealthTestClock) Set(now time.Time) { c.nanos.Store(now.UnixNano()) }
 
+// bindGrokHealthClockForTest replaces the health runtime with a fresh block
+// state using the returned clock. Tests set its time before evaluating block
+// expiry and retain it for later assertions.
 func bindGrokHealthClockForTest(health *provideradapter.GrokHealth) *grokHealthTestClock {
 	clock := &grokHealthTestClock{}
 	health.Runtime = providercore.NewRuntimeBlockState(clock.Now)
 	return clock
 }
 
+// bindExpiredGrokHealthForTest creates a block while the fixture clock
+// precedes its deadline, then restores real time. This permits the runtime to
+// retain an entry that is already expired when the test observes it.
 func bindExpiredGrokHealthForTest(health *provideradapter.GrokHealth, id int64, expired time.Time) {
 	clock := bindGrokHealthClockForTest(health)
+	// Install the block before its deadline using the controlled clock, then
+	// clear the override so real wall time exposes the expired entry to assertions.
 	clock.Set(expired.Add(-time.Minute))
 	health.Runtime.Block(id, expired, "原过期快照夹具")
 	clock.nanos.Store(0)
 }
 
+// grokInt64PtrForTest returns separately allocated pointer storage for a quota
+// integer fixture.
 func grokInt64PtrForTest(v int64) *int64 { return &v }
 
+// TestHandleGrokProviderUpstreamErrorPoolModeSkipsDefaultLocalState observes
+// authentication, payment, rate, server, and overload statuses on pool API Key
+// targets. Default state penalties stay unused, while 429 still writes the
+// Retry-After quota observation.
 func TestHandleGrokProviderUpstreamErrorPoolModeSkipsDefaultLocalState(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		headers    http.Header
-		body       []byte
+		name       string      // pool failure scenario label
+		statusCode int         // upstream failure status code
+		headers    http.Header // upstream quota response headers
+		body       []byte      // upstream failure payload bytes
 	}{
 		{name: "unauthorized", statusCode: http.StatusUnauthorized},
 		{name: "payment required", statusCode: http.StatusPaymentRequired},
@@ -1451,6 +1737,10 @@ func TestHandleGrokProviderUpstreamErrorPoolModeSkipsDefaultLocalState(t *testin
 	}
 }
 
+// TestUpdateGrokUsageSnapshotPoolModeExhaustedSuccessIsObservationOnly reports
+// a successful but exhausted request window on a pool target. The quota
+// snapshot is stored while rate-limit persistence and runtime blocking remain
+// unused.
 func TestUpdateGrokUsageSnapshotPoolModeExhaustedSuccessIsObservationOnly(t *testing.T) {
 	provider := newGrokPoolProvider(626)
 	svc, repo := newGrokPoolHealthForTest(provider)
@@ -1473,6 +1763,10 @@ func TestUpdateGrokUsageSnapshotPoolModeExhaustedSuccessIsObservationOnly(t *tes
 	require.Zero(t, *stored.Requests.Remaining)
 }
 
+// TestHandleGrokProviderUpstreamErrorPoolModeKeepsExplicitPolicies combines
+// pool mode with custom error codes and matching or unmatched temporary rules.
+// Explicit codes disable and matching rules limit the requested model, while
+// unmatched rules retain ordinary pool behavior.
 func TestHandleGrokProviderUpstreamErrorPoolModeKeepsExplicitPolicies(t *testing.T) {
 	t.Run("custom error code still disables provider", func(t *testing.T) {
 		provider := newGrokPoolProvider(627)
@@ -1565,14 +1859,20 @@ func TestHandleGrokProviderUpstreamErrorPoolModeKeepsExplicitPolicies(t *testing
 	})
 }
 
+// TestHandleGrokProviderUpstreamErrorTempUnschedulesNonRateLimitStates
+// supplies OAuth authentication, entitlement, payment, method, and server
+// failures. Each produces its configured temporary reason/deadline and runtime
+// block, with no rate-limit write.
 func TestHandleGrokProviderUpstreamErrorTempUnschedulesNonRateLimitStates(t *testing.T) {
 	tests := []struct {
-		name            string
-		status          int
+		// temporary cooldown scenario label
+		name   string
+		status int // observed upstream status code
+		// observed response header evidence
 		headers         http.Header
-		wantReason      string
-		wantMinCooldown time.Duration
-		wantMaxCooldown time.Duration
+		wantReason      string        // expected temporary pause reason
+		wantMinCooldown time.Duration // minimum asserted pause duration
+		wantMaxCooldown time.Duration // maximum asserted pause duration
 	}{
 		{
 			name:            "unauthorized reauth",
@@ -1631,6 +1931,9 @@ func TestHandleGrokProviderUpstreamErrorTempUnschedulesNonRateLimitStates(t *tes
 	}
 }
 
+// TestHandleGrokProviderUpstreamErrorSpendingLimit403RateLimits supplies the
+// spending-limit marker under HTTP 403. Health records the probe cooldown as a
+// rate limit and runtime block, leaving generic temporary pause unused.
 func TestHandleGrokProviderUpstreamErrorSpendingLimit403RateLimits(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 614, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 	repo := &grokQuotaProviderRepo{}
@@ -1648,6 +1951,9 @@ func TestHandleGrokProviderUpstreamErrorSpendingLimit403RateLimits(t *testing.T)
 	require.True(t, grok.IsSpendingLimitError(body))
 }
 
+// TestHandleGrokProviderUpstreamError5xxRespectsPoolMode compares a pool API
+// Key target with ordinary API Key handling for 502. Pool state remains
+// available, while ordinary handling receives a two-minute temporary cooldown.
 func TestHandleGrokProviderUpstreamError5xxRespectsPoolMode(t *testing.T) {
 	t.Run("pool mode keeps scheduling state", func(t *testing.T) {
 		provider := &gatewayprovider.ExecutionProvider{
@@ -1687,6 +1993,9 @@ func TestHandleGrokProviderUpstreamError5xxRespectsPoolMode(t *testing.T) {
 	})
 }
 
+// TestHandleGrokProviderUpstreamError405RespectsPoolMode supplies HTTP 405 to
+// a pool API Key target. Runtime blocking and temporary-pause persistence
+// remain unused for that default pool policy.
 func TestHandleGrokProviderUpstreamError405RespectsPoolMode(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1708,6 +2017,10 @@ func TestHandleGrokProviderUpstreamError405RespectsPoolMode(t *testing.T) {
 	require.Nil(t, provider.Record.TempUnschedulableUntil)
 }
 
+// TestHandleGrokProviderUpstreamError429SetsRateLimitedFromRetryAfter observes
+// a Grok OAuth 429 with Retry-After=45 and no body. Health records the
+// measured 45-second global reset and runtime block while temporary
+// unscheduling stays unused.
 func TestHandleGrokProviderUpstreamError429SetsRateLimitedFromRetryAfter(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 61, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 	repo := &grokQuotaProviderRepo{}
@@ -1723,6 +2036,10 @@ func TestHandleGrokProviderUpstreamError429SetsRateLimitedFromRetryAfter(t *test
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
+// TestHandleGrokProviderUpstreamError402RecoversAfterCooldownExpiry creates a
+// payment-required temporary cooldown, then supplies an expired runtime/target
+// observation. Blocking clears and the provider's scheduling predicate becomes
+// true.
 func TestHandleGrokProviderUpstreamError402RecoversAfterCooldownExpiry(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1745,6 +2062,9 @@ func TestHandleGrokProviderUpstreamError402RecoversAfterCooldownExpiry(t *testin
 	require.True(t, provider.View().IsSchedulable())
 }
 
+// TestHandleGrokProviderUpstreamError429UsesLatestExhaustedWindowReset reports
+// exhausted request and token windows with different future resets. Health
+// records the later token reset as the provider rate-limit deadline.
 func TestHandleGrokProviderUpstreamError429UsesLatestExhaustedWindowReset(t *testing.T) {
 	now := time.Now()
 	requestReset := now.Add(10 * time.Minute).Truncate(time.Second)
@@ -1768,6 +2088,9 @@ func TestHandleGrokProviderUpstreamError429UsesLatestExhaustedWindowReset(t *tes
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
+// TestHandleGrokProviderUpstreamError429UsesFallbackReset supplies OAuth 429
+// with no window or Retry-After evidence. Health records the fallback cooldown
+// deadline and leaves temporary pause unused.
 func TestHandleGrokProviderUpstreamError429UsesFallbackReset(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 63, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 	repo := &grokQuotaProviderRepo{}
@@ -1781,6 +2104,10 @@ func TestHandleGrokProviderUpstreamError429UsesFallbackReset(t *testing.T) {
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
+// TestGrokRateLimitResetAtForProviderEscalatesRepeated429s combines recent
+// prior OAuth cooldown lengths with another short Retry-After snapshot.
+// Expected resets progress through repeat and sustained cooldowns to the
+// configured adaptive cap.
 func TestGrokRateLimitResetAtForProviderEscalatesRepeated429s(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	retryAfter := 45
@@ -1790,9 +2117,12 @@ func TestGrokRateLimitResetAtForProviderEscalatesRepeated429s(t *testing.T) {
 		UpdatedAt:         now.Format(time.RFC3339),
 	}
 	tests := []struct {
-		name             string
+		// adaptive cooldown scenario label
+		name string
+		// previous observed cooldown duration
 		previousCooldown time.Duration
-		wantCooldown     time.Duration
+		// expected adaptive cooldown duration
+		wantCooldown time.Duration
 	}{
 		{name: "repeat after short boundary", previousCooldown: 45 * time.Second, wantCooldown: grokRateLimitRepeatCooldown},
 		{name: "sustained repeat", previousCooldown: grokRateLimitRepeatCooldown, wantCooldown: grokRateLimitSustainedCooldown},
@@ -1821,6 +2151,10 @@ func TestGrokRateLimitResetAtForProviderEscalatesRepeated429s(t *testing.T) {
 	}
 }
 
+// TestGrokRateLimitResetAtForProviderPreservesAuthoritativeAndQuietRecovery
+// compares an old quiet-period cooldown with a recent repeated failure plus an
+// exhausted window. Quiet recovery uses Retry-After, while the authoritative
+// future window governs the later reset.
 func TestGrokRateLimitResetAtForProviderPreservesAuthoritativeAndQuietRecovery(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	retryAfter := 45
@@ -1858,6 +2192,10 @@ func TestGrokRateLimitResetAtForProviderPreservesAuthoritativeAndQuietRecovery(t
 	require.WithinDuration(t, authoritativeReset, resetAt, time.Second)
 }
 
+// TestGrokRateLimitResetAtForProviderLeavesAPIKey429PolicyUnchanged gives an
+// API Key target a recent sustained cooldown and a short Retry-After
+// observation. Its reset remains the short header-based value rather than
+// OAuth adaptive escalation.
 func TestGrokRateLimitResetAtForProviderLeavesAPIKey429PolicyUnchanged(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	retryAfter := 45
@@ -1883,6 +2221,9 @@ func TestGrokRateLimitResetAtForProviderLeavesAPIKey429PolicyUnchanged(t *testin
 	require.WithinDuration(t, now.Add(45*time.Second), resetAt, time.Second)
 }
 
+// TestGrokRateLimitResetAtUsesFutureWindowAfterRetryAfterExpires supplies an
+// old 429 snapshot whose Retry-After elapsed but exhausted request window
+// resets later. Rate-limit evaluation retains that future window reset.
 func TestGrokRateLimitResetAtUsesFutureWindowAfterRetryAfterExpires(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	observedAt := now.Add(-2 * time.Minute)
@@ -1905,6 +2246,10 @@ func TestGrokRateLimitResetAtUsesFutureWindowAfterRetryAfterExpires(t *testing.T
 	require.WithinDuration(t, windowReset, resetAt, time.Second)
 }
 
+// TestHandleGrokProviderUpstreamError429DoesNotShortenExistingPause combines a
+// fifteen-minute pause with a new 45-second Retry-After failure. Rate-limit
+// persistence records the short reset, while the controlled runtime clock
+// confirms the longer pause governs availability.
 func TestHandleGrokProviderUpstreamError429DoesNotShortenExistingPause(t *testing.T) {
 	existingUntil := time.Now().Add(15 * time.Minute)
 	provider := &gatewayprovider.ExecutionProvider{
@@ -1931,6 +2276,10 @@ func TestHandleGrokProviderUpstreamError429DoesNotShortenExistingPause(t *testin
 	require.False(t, svc.Runtime.Blocked(provider.Record.ID, func() string { return providercore.RefreshCredentialIdentity(provider.View()) }))
 }
 
+// TestUpdateGrokUsageSnapshotExhaustedSuccessBypassesThrottleAndSetsRateLimited
+// consumes ordinary snapshot allowance before storing an exhausted success.
+// Both observations are written, and the exhausted window sets rate-limit
+// state plus runtime blocking despite the throttle.
 func TestUpdateGrokUsageSnapshotExhaustedSuccessBypassesThrottleAndSetsRateLimited(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 65, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth}}
 	repo := &grokQuotaProviderRepo{}
@@ -1965,6 +2314,10 @@ func TestUpdateGrokUsageSnapshotExhaustedSuccessBypassesThrottleAndSetsRateLimit
 	require.True(t, svc.Runtime.Blocked(provider.Record.ID, func() string { return providercore.RefreshCredentialIdentity(provider.View()) }))
 }
 
+// TestUpdateGrokUsageSnapshotAvailableSuccessDoesNotSetRateLimited stores a
+// successful request-window snapshot with positive remaining quota for a Grok
+// OAuth target. The snapshot write occurs once and global rate-limit
+// persistence remains unused.
 func TestUpdateGrokUsageSnapshotAvailableSuccessDoesNotSetRateLimited(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -1983,6 +2336,10 @@ func TestUpdateGrokUsageSnapshotAvailableSuccessDoesNotSetRateLimited(t *testing
 	require.Zero(t, repo.rateLimitedCalls)
 }
 
+// TestUpdateGrokUsageFromResponseHeaderlessSuccessClearsObservedCooldown
+// observes headerless OAuth success after an expired cooldown. Conditional
+// recovery receives the observed timestamps, leaves informative quota storage
+// untouched, and retains the shared target reset pointer.
 func TestUpdateGrokUsageFromResponseHeaderlessSuccessClearsObservedCooldown(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	limitedAt := now.Add(-grokRateLimitRepeatCooldown)
@@ -2008,6 +2365,10 @@ func TestUpdateGrokUsageFromResponseHeaderlessSuccessClearsObservedCooldown(t *t
 	require.Same(t, &observedResetAt, provider.Record.RateLimitResetAt, "shared provider snapshots must not be mutated in place")
 }
 
+// TestUpdateGrokUsageFromResponseRecoveryRespectsCancellationAndAPIKeyBoundary
+// compares an already cancelled OAuth success observation with API Key success
+// carrying expired cooldown timestamps. Neither invokes the OAuth conditional
+// cooldown recovery writer.
 func TestUpdateGrokUsageFromResponseRecoveryRespectsCancellationAndAPIKeyBoundary(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	observedResetAt := now.Add(-time.Second)
@@ -2052,6 +2413,10 @@ func TestUpdateGrokUsageFromResponseRecoveryRespectsCancellationAndAPIKeyBoundar
 	})
 }
 
+// TestUpdateGrokUsageSnapshotExhaustedSuccessWithoutResetUsesFallback stores
+// exhausted successful token quota lacking a reset. A fallback reset is
+// persisted and added to the snapshot, producing pause before that deadline
+// and no pause afterward.
 func TestUpdateGrokUsageSnapshotExhaustedSuccessWithoutResetUsesFallback(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2078,6 +2443,10 @@ func TestUpdateGrokUsageSnapshotExhaustedSuccessWithoutResetUsesFallback(t *test
 	require.False(t, paused)
 }
 
+// TestHandleGrokProviderUpstreamErrorEntitlement403KeepsDefaultCooldown
+// supplies subscription-required text under OAuth 403. Health records the
+// entitlement reason and a temporary deadline inside the tested thirty-minute
+// range.
 func TestHandleGrokProviderUpstreamErrorEntitlement403KeepsDefaultCooldown(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2095,6 +2464,10 @@ func TestHandleGrokProviderUpstreamErrorEntitlement403KeepsDefaultCooldown(t *te
 	require.Less(t, repo.lastTempUnschedUntil, before.Add(31*time.Minute))
 }
 
+// TestHandleGrokProviderUpstreamError403UsesConfiguredRule matches
+// subscription-required body text against a seven-minute temporary rule on a
+// Grok OAuth target. Health writes one pause inside the asserted
+// six-to-eight-minute timing range.
 func TestHandleGrokProviderUpstreamError403UsesConfiguredRule(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2127,6 +2500,9 @@ func TestHandleGrokProviderUpstreamError403UsesConfiguredRule(t *testing.T) {
 	require.Less(t, repo.lastTempUnschedUntil, before.Add(8*time.Minute))
 }
 
+// TestHandleGrokProviderUpstreamError403ConfiguredUnmatchedKeepsDefaultCooldown
+// configures a 403 rule for unrelated text before a subscription rejection.
+// The ordinary entitlement reason and runtime block remain selected.
 func TestHandleGrokProviderUpstreamError403ConfiguredUnmatchedKeepsDefaultCooldown(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2158,6 +2534,9 @@ func TestHandleGrokProviderUpstreamError403ConfiguredUnmatchedKeepsDefaultCooldo
 	require.True(t, svc.Runtime.Blocked(provider.Record.ID, func() string { return providercore.RefreshCredentialIdentity(provider.View()) }))
 }
 
+// TestHandleGrokProviderUpstreamError_FreeUsageBodyCoolsProvider supplies
+// Free-usage exhaustion under HTTP 400 with no absolute reset. The resulting
+// temporary pause uses the short Free-usage probe duration.
 func TestHandleGrokProviderUpstreamError_FreeUsageBodyCoolsProvider(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2175,6 +2554,9 @@ func TestHandleGrokProviderUpstreamError_FreeUsageBodyCoolsProvider(t *testing.T
 	require.Less(t, repo.lastTempUnschedUntil, before.Add(grok.GrokFreeUsageProbeCooldown+time.Second))
 }
 
+// TestHandleGrokProviderUpstreamError_FreeUsageUsesUpstreamReset reports
+// Free-usage exhaustion under 429 with an hour Retry-After. Rate-limit reset
+// follows the upstream duration, and no generic temporary pause is written.
 func TestHandleGrokProviderUpstreamError_FreeUsageUsesUpstreamReset(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2188,6 +2570,9 @@ func TestHandleGrokProviderUpstreamError_FreeUsageUsesUpstreamReset(t *testing.T
 	require.WithinDuration(t, time.Now().Add(time.Hour), repo.lastRateLimitResetAt, 2*time.Second)
 }
 
+// TestHandleGrokProviderUpstreamError_EmptyOutputCoolsProvider supplies an
+// empty-output failure under HTTP 502 for a Grok OAuth target. Health records
+// one empty-output pause with a measured four-minute temporary deadline.
 func TestHandleGrokProviderUpstreamError_EmptyOutputCoolsProvider(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2204,6 +2589,10 @@ func TestHandleGrokProviderUpstreamError_EmptyOutputCoolsProvider(t *testing.T) 
 	require.WithinDuration(t, before.Add(4*time.Minute), repo.lastTempUnschedUntil, time.Second)
 }
 
+// TestHandleGrokProviderUpstreamError_MultiAgentCapacityBlocksOnlyThatModel
+// supplies engine_overloaded for a multi-agent team model. The specific model
+// quota state is blocked while another Grok model and provider-wide temporary
+// writes remain unaffected.
 func TestHandleGrokProviderUpstreamError_MultiAgentCapacityBlocksOnlyThatModel(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2220,6 +2609,9 @@ func TestHandleGrokProviderUpstreamError_MultiAgentCapacityBlocksOnlyThatModel(t
 	require.False(t, providercore.IsGrokModelQuotaBlocked(provider.Record.ID, "grok-4.5", time.Now()))
 }
 
+// TestHandleGrokProviderUpstreamError_CapacityNeverCoolsProvider reports model
+// capacity under HTTP 429 for ordinary Grok text. The tested failure creates
+// no provider temporary write or runtime block.
 func TestHandleGrokProviderUpstreamError_CapacityNeverCoolsProvider(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2233,6 +2625,9 @@ func TestHandleGrokProviderUpstreamError_CapacityNeverCoolsProvider(t *testing.T
 	require.False(t, svc.Runtime.Blocked(provider.Record.ID, func() string { return providercore.RefreshCredentialIdentity(provider.View()) }))
 }
 
+// TestHandleGrokProviderUpstreamError_FreeUsageDoesNotCoolPoolMode supplies
+// Free-usage exhaustion under HTTP 400 to a pool API Key target. The tested
+// path uses neither temporary pause persistence nor a runtime block.
 func TestHandleGrokProviderUpstreamError_FreeUsageDoesNotCoolPoolMode(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2254,6 +2649,10 @@ func TestHandleGrokProviderUpstreamError_FreeUsageDoesNotCoolPoolMode(t *testing
 	require.False(t, svc.Runtime.Blocked(provider.Record.ID, func() string { return providercore.RefreshCredentialIdentity(provider.View()) }))
 }
 
+// TestHandleGrokProviderUpstreamError_ContentPolicyStillNoMutation reports a
+// new_sensitive content-policy marker under Grok OAuth HTTP 403. The recorder
+// observes zero temporary-unscheduling writes for that request-content
+// failure.
 func TestHandleGrokProviderUpstreamError_ContentPolicyStillNoMutation(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)
@@ -2265,6 +2664,9 @@ func TestHandleGrokProviderUpstreamError_ContentPolicyStillNoMutation(t *testing
 	require.Zero(t, repo.tempUnschedCalls)
 }
 
+// TestHandleGrokProviderUpstreamError_Entitlement403Unchanged reports an
+// ordinary OAuth subscription-required 403. Health retains the entitlement
+// reason and a temporary cooldown within the asserted thirty-minute interval.
 func TestHandleGrokProviderUpstreamError_Entitlement403Unchanged(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newGrokHealthForTest(repo, nil)

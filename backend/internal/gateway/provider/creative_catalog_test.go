@@ -11,13 +11,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-type creativeCatalogRows struct{ values []creative.CatalogProvider }
+// creativeCatalogRows supplies configured provider adapters to creative model
+// catalogue tests.
+type creativeCatalogRows struct {
+	values []creative.CatalogProvider /* returned catalogue provider rows */
+}
 
+// ListSchedulableByGroupIDAndPlatform returns the fixture's configured
+// catalogue providers for creative queries. The slice remains shared with
+// values, so fixture callers keep its entries stable during catalogue reads.
 func (s creativeCatalogRows) ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]creative.CatalogProvider, error) {
 	return s.values, nil
 }
 
-// TestCreativeCatalogUsesExecutionModelPolicy checks that catalog and execution both apply mappings with passthrough enabled.
+// TestCreativeCatalogUsesExecutionModelPolicy lists an image alias mapped to a
+// whitelisted upstream model with passthrough both disabled and enabled. Both
+// catalogue queries retain the alias and report the same mapped image model.
 func TestCreativeCatalogUsesExecutionModelPolicy(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		value := &provider.Record{

@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSanitizeOpenAIResponsesOrphanToolOutputs places outputs before matching
+// calls, mixes output-only history, and supplies previous-response
+// continuation. Matching calls/references retain outputs in any order,
+// unmatched outputs are removed, and continuation allows remote context.
 func TestSanitizeOpenAIResponsesOrphanToolOutputs(t *testing.T) {
 	t.Run("preserves matches regardless of item order", func(t *testing.T) {
 		input := []any{
@@ -37,8 +41,8 @@ func TestSanitizeOpenAIResponsesOrphanToolOutputs(t *testing.T) {
 
 	t.Run("preserves all output variants with matching calls", func(t *testing.T) {
 		pairs := []struct {
-			callType   string
-			outputType string
+			callType   string // input context call type
+			outputType string // paired tool output type
 		}{
 			{callType: "function_call", outputType: "function_call_output"},
 			{callType: "tool_search_call", outputType: "tool_search_output"},

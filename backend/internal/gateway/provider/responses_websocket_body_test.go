@@ -15,9 +15,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// openAIResponsesInputTextMaxChars is the long-text passthrough fixture size.
+// openAIResponsesInputTextMaxChars sets the ASCII prefix size in replay fixtures;
+// larger strings append extra content to check byte retention beyond that size.
 const openAIResponsesInputTextMaxChars = 10000000
 
+// TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup places
+// compaction_trigger before a call/output pair and user message. OAuth
+// preparation retains all four items and moves the trigger to the final
+// position.
 func TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"compaction_trigger"},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"},{"type":"message","role":"user","content":"visible"}]}`)
 	provider := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
@@ -33,7 +38,10 @@ func TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup(t *test
 	require.Equal(t, "compaction_trigger", items[3].Get("type").String())
 }
 
-// TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI checks platform-specific reasoning cleanup.
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI
+// supplies summary and plaintext reasoning content under OpenAI API Key/OAuth
+// and Zhipu. OpenAI cleanup removes content while retaining summary; the other
+// platform bypasses the wrapper.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningContentOnlyForOpenAI(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","store":true,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}]}`)
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
@@ -60,6 +68,10 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningConten
 	require.JSONEq(t, string(body), string(normalized))
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser supplies
+// user, metadata, retention, safety, and stream-options fields on an ordinary
+// OAuth passthrough request. Normalization removes the unsupported fields and
+// enforces stream=true plus store=false.
 func TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","user":"user_123","metadata":{"user_id":"user_123"},"prompt_cache_retention":"24h","safety_identifier":"sid","stream_options":{"include_usage":true}}`)
 
@@ -73,6 +85,10 @@ func TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser(t *testing.T
 	require.False(t, gjson.GetBytes(normalized, "store").Bool())
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_NormalizesCompatibilityFields
+// supplies prompt, commands, truncation, stop aliases, and template kwargs.
+// Passthrough normalization moves prompt text to message input and removes the
+// tested compatibility fields.
 func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesCompatibilityFields(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","prompt":"hello","commands":["unsupported"],"truncation":"auto","stop_sequences":["END"],"chat_template_kwargs":{"enable_thinking":true}}`)
 
@@ -85,6 +101,10 @@ func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesCompatibilityFields(t *te
 	}
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_NormalizesReasoningMode supplies
+// reasoning.mode=pro with model and string input on an OAuth body. Passthrough
+// normalization selects max effort and removes the legacy reasoning mode
+// field.
 func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesReasoningMode(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":"hello","reasoning":{"mode":"pro"}}`)
 
@@ -95,6 +115,10 @@ func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesReasoningMode(t *testing.
 	require.False(t, gjson.GetBytes(normalized, "reasoning.mode").Exists())
 }
 
+// TestNormalizeOpenAIOAuthResponsesCompatibilityBody_PreservesExplicitInput
+// supplies nonnull explicit input and a different legacy prompt value
+// alongside the model. Compatibility normalization retains the explicit input
+// text and removes the prompt alias.
 func TestNormalizeOpenAIOAuthResponsesCompatibilityBody_PreservesExplicitInput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":"explicit","prompt":"legacy"}`)
 
@@ -105,6 +129,10 @@ func TestNormalizeOpenAIOAuthResponsesCompatibilityBody_PreservesExplicitInput(t
 	require.False(t, gjson.GetBytes(normalized, "prompt").Exists())
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_OnlyStripsOAuthFields
+// compares an OAuth and API Key target with legacy prompt/control fields.
+// OAuth transforms and strips them, while API Key preparation reports no
+// change for that body.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_OnlyStripsOAuthFields(t *testing.T) {
 	body := []byte(`{"type":"response.create","prompt":"hello","commands":{},"truncation":"auto","stop_sequences":["END"],"chat_template_kwargs":{"enable_thinking":true}}`)
 
@@ -122,6 +150,10 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_OnlyStripsOAuthField
 	require.JSONEq(t, string(body), string(apiKeyBody))
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesNativeItemIDs
+// supplies valid/invalid custom and search IDs to OAuth and API Key
+// preparation. Invalid item IDs disappear, valid IDs remain, and paired
+// call_id values survive.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesNativeItemIDs(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[` +
 		`{"type":"custom_tool_call","id":"fc_wrong_custom","call_id":"call_custom_1","name":"apply_patch","input":"patch"},` +
@@ -148,6 +180,10 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesNativeItemI
 	}
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_APIKeyStoreFalseReplay
+// mixes bare and encrypted reasoning under store=false with parallel-call
+// controls. Preparation keeps encrypted replay with summary, removes invalid
+// IDs/control fields, and retains the user message.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_APIKeyStoreFalseReplay(t *testing.T) {
 	body := []byte(`{"type":"response.create","store":false,"parallel_tool_calls":true,"input":[` +
 		`{"type":"reasoning","id":"rs_drop","summary":[]},` +
@@ -170,6 +206,9 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_APIKeyStoreFalseRepl
 	require.Equal(t, "message", gjson.GetBytes(normalized, "input.1.type").String())
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_PreservesResponsesLiteParallelToolCalls
+// uses explicit parallel_tool_calls=false with Lite enabled and disabled. Lite
+// retains the field unchanged, while ordinary no-tool preparation removes it.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_PreservesResponsesLiteParallelToolCalls(t *testing.T) {
 	body := []byte(`{"type":"response.create","input":"hello","parallel_tool_calls":false}`)
 	provider := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
@@ -185,11 +224,14 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_PreservesResponsesLi
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 }
 
+// TestNormalizeOpenAIResponsesReasoningMode compares pro mode, explicit effort
+// precedence, and an unrelated mode. Normalization removes legacy mode and
+// selects max, retains high, or leaves effort absent as expected.
 func TestNormalizeOpenAIResponsesReasoningMode(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantEffort string
+		name       string // reasoning mode scenario label
+		body       string // incoming reasoning mode JSON
+		wantEffort string // expected normalized effort text
 	}{
 		{name: "pro maps to max", body: `{"reasoning":{"mode":"pro"}}`, wantEffort: "max"},
 		{name: "explicit effort wins", body: `{"reasoning":{"mode":"pro","effort":"high"}}`, wantEffort: "high"},
@@ -206,6 +248,9 @@ func TestNormalizeOpenAIResponsesReasoningMode(t *testing.T) {
 	}
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_ReasoningModeProviderScope
+// supplies pro mode to OAuth, setup-token, and API Key records. OAuth-like
+// modes convert to max, while API Key input remains unchanged.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_ReasoningModeProviderScope(t *testing.T) {
 	body := []byte(`{"type":"response.create","reasoning":{"mode":"pro"}}`)
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken} {
@@ -221,6 +266,9 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_ReasoningModeProvide
 	require.JSONEq(t, string(body), string(apiKeyBody))
 }
 
+// TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesToolSchemas
+// supplies null root type and regex lookaround to both OpenAI credential
+// modes. Preparation infers object type and removes the unsupported pattern.
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesToolSchemas(t *testing.T) {
 	body := []byte(`{"type":"response.create","tools":[{"type":"function","name":"search","parameters":{"type":null,"properties":{"q":{"type":"string","pattern":"^(?=.*foo).+$"}}}}]}`)
 	for _, providerType := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
@@ -232,6 +280,10 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_SanitizesToolSchemas
 	}
 }
 
+// TestNormalizeOpenAIResponseFormatSchemasBody_PreservesNonStrictOptionalFields
+// normalizes a nonstrict schema with inferred object/array shapes. Unsupported
+// minimum/unique fields disappear, maximum remains, and no required set is
+// invented.
 func TestNormalizeOpenAIResponseFormatSchemasBody_PreservesNonStrictOptionalFields(t *testing.T) {
 	body := []byte(`{"text":{"format":{"type":"json_schema","strict":false,"schema":{"properties":{"tags":{"items":{"type":"string"},"uniqueItems":true}},"minProperties":1,"maxProperties":4}}}}`)
 
@@ -246,6 +298,10 @@ func TestNormalizeOpenAIResponseFormatSchemasBody_PreservesNonStrictOptionalFiel
 	require.False(t, gjson.GetBytes(normalized, "text.format.schema.required").Exists())
 }
 
+// TestNormalizeOpenAIResponseFormatSchemasBody_DoesNotExpandStrictSchema
+// supplies a strict response-format schema with properties and no root type.
+// Normalization infers object while leaving its required and
+// additionalProperties fields absent.
 func TestNormalizeOpenAIResponseFormatSchemasBody_DoesNotExpandStrictSchema(t *testing.T) {
 	body := []byte(`{"response_format":{"type":"json_schema","json_schema":{"strict":true,"schema":{"properties":{"name":{"type":"string"}}}}}}`)
 
@@ -257,6 +313,10 @@ func TestNormalizeOpenAIResponseFormatSchemasBody_DoesNotExpandStrictSchema(t *t
 	require.False(t, gjson.GetBytes(normalized, "response_format.json_schema.schema.additionalProperties").Exists())
 }
 
+// TestNormalizeOpenAIResponseFormatSchemasBody_TraversesNestedSchemaContainers
+// places inferable shapes and unsupported fields in definitions and nested
+// schema containers. Normalization traverses them, retains the tested maximum,
+// and leaves top-level required absent.
 func TestNormalizeOpenAIResponseFormatSchemasBody_TraversesNestedSchemaContainers(t *testing.T) {
 	body := []byte(`{
 		"text":{"format":{"type":"json_schema","schema":{
@@ -285,6 +345,9 @@ func TestNormalizeOpenAIResponseFormatSchemasBody_TraversesNestedSchemaContainer
 	require.False(t, gjson.GetBytes(normalized, "text.format.schema.required").Exists())
 }
 
+// TestNormalizeOpenAIResponseFormatSchemasBody_PreservesExistingTypeValues
+// mixes union, custom object, and null type values within a schema. Existing
+// union/custom types remain while null with items infers array.
 func TestNormalizeOpenAIResponseFormatSchemasBody_PreservesExistingTypeValues(t *testing.T) {
 	body := []byte(`{"text":{"format":{"type":"json_schema","schema":{"properties":{"union":{"type":["object","null"],"properties":{"name":{"type":"string"}}},"custom":{"type":{"vendor":"shape"},"properties":{"id":{"type":"string"}}},"inferred":{"type":null,"items":{"type":"string"}}}}}}}`)
 
@@ -298,6 +361,10 @@ func TestNormalizeOpenAIResponseFormatSchemasBody_PreservesExistingTypeValues(t 
 	require.Equal(t, "array", gjson.GetBytes(normalized, "text.format.schema.properties.inferred.type").String())
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser
+// supplies user, metadata, stream, and store with plain input on Compact OAuth
+// passthrough. Normalization removes those four fields and produces an input
+// array.
 func TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","user":"user_123","metadata":{"user_id":"user_123"},"stream":true,"store":true}`)
 
@@ -311,6 +378,9 @@ func TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser(t *te
 	require.True(t, gjson.GetBytes(normalized, "input").IsArray())
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_StringInputWrappedAsArray supplies
+// plain string input to ordinary OAuth passthrough. The resulting array has
+// one user message with the same text.
 func TestNormalizeOpenAIPassthroughOAuthBody_StringInputWrappedAsArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello world"}`)
 
@@ -327,6 +397,10 @@ func TestNormalizeOpenAIPassthroughOAuthBody_StringInputWrappedAsArray(t *testin
 	require.Equal(t, "hello world", items[0].Get("content").String())
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_EmptyStringInputWrappedAsEmptyArray
+// supplies whitespace-only input alongside a model to ordinary OAuth
+// passthrough. Normalization reports modification and returns an input array
+// containing zero items.
 func TestNormalizeOpenAIPassthroughOAuthBody_EmptyStringInputWrappedAsEmptyArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"  "}`)
 
@@ -339,6 +413,9 @@ func TestNormalizeOpenAIPassthroughOAuthBody_EmptyStringInputWrappedAsEmptyArray
 	require.Len(t, input.Array(), 0, "whitespace-only input should become empty array")
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_ObjectInputWrappedAsArray supplies
+// one typed user-message object as Responses input. OAuth passthrough reports
+// modification and produces a one-item input array retaining the message type.
 func TestNormalizeOpenAIPassthroughOAuthBody_ObjectInputWrappedAsArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":{"type":"message","role":"user","content":"hi"}}`)
 
@@ -353,6 +430,9 @@ func TestNormalizeOpenAIPassthroughOAuthBody_ObjectInputWrappedAsArray(t *testin
 	require.Equal(t, "message", items[0].Get("type").String())
 }
 
+// TestNormalizeOpenAIPassthroughOAuthBody_ArrayInputUnchanged supplies one
+// input message in array form. Passthrough retains array shape, item count,
+// and message type for that request.
 func TestNormalizeOpenAIPassthroughOAuthBody_ArrayInputUnchanged(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hi"}]}`)
 
@@ -365,11 +445,14 @@ func TestNormalizeOpenAIPassthroughOAuthBody_ArrayInputUnchanged(t *testing.T) {
 	require.Equal(t, "message", input.Array()[0].Get("type").String())
 }
 
+// TestDetectOpenAIPassthroughInstructionsRejectReason compares omitted,
+// nonstring, blank, and populated instructions. Omission is accepted while
+// malformed/blank supplied values receive their specific rejection token.
 func TestDetectOpenAIPassthroughInstructionsRejectReason(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		body string
-		want string
+		name string // instruction validation case label
+		body string // instruction request JSON fixture
+		want string // expected instruction rejection token
 	}{
 		{name: "missing is optional", body: `{"model":"gpt-5.1-codex"}`, want: ""},
 		{name: "non string remains rejected", body: `{"instructions":{"text":"invalid"}}`, want: "instructions_not_string"},
@@ -382,6 +465,10 @@ func TestDetectOpenAIPassthroughInstructionsRejectReason(t *testing.T) {
 	}
 }
 
+// TestOpenAIResponsesInputTextIsNeverSilentlyTruncated uses ten-million-byte
+// and larger tool outputs plus user text under API Key preparation. The
+// wrapper reports no change and every asserted output/text value survives
+// decoding.
 func TestOpenAIResponsesInputTextIsNeverSilentlyTruncated(t *testing.T) {
 	atLimit := strings.Repeat("z", openAIResponsesInputTextMaxChars)
 	oversized := strings.Repeat("a", openAIResponsesInputTextMaxChars) + "中"
@@ -432,6 +519,9 @@ func TestOpenAIResponsesInputTextIsNeverSilentlyTruncated(t *testing.T) {
 	require.Equal(t, oversized, oversizedPart["text"])
 }
 
+// TestOpenAIResponsesInputNeverRequestsPreemptiveTruncation compares short
+// output, large input string, and large output without other cleanup triggers.
+// API Key preparation returns exact original bytes with no modification.
 func TestOpenAIResponsesInputNeverRequestsPreemptiveTruncation(t *testing.T) {
 	short := []byte(`{"input":[{"type":"function_call_output","output":"ok"}]}`)
 	largeUnrelated := []byte(`{"input":"` + strings.Repeat("x", openAIResponsesInputTextMaxChars+1) + `"}`)
@@ -457,6 +547,10 @@ func TestOpenAIResponsesInputNeverRequestsPreemptiveTruncation(t *testing.T) {
 	}
 }
 
+// TestNormalizeOpenAIResponsesLitePayloadForProvider_APIKeyOnlyDisablesParallelToolCalls
+// supplies API Key Lite input with parallel calls and unrelated
+// reasoning/tools/large integer. Normalization disables parallel calls while
+// retaining the asserted other values.
 func TestNormalizeOpenAIResponsesLitePayloadForProvider_APIKeyOnlyDisablesParallelToolCalls(t *testing.T) {
 	provider := &providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	body := []byte(`{
@@ -477,6 +571,9 @@ func TestNormalizeOpenAIResponsesLitePayloadForProvider_APIKeyOnlyDisablesParall
 	require.Equal(t, "9007199254740993", gjson.GetBytes(updated, "input.0.nonce").Raw)
 }
 
+// TestNormalizeOpenAIResponsesLitePayloadForProvider_IgnoresNonOpenAIProvider
+// passes parallel calls through a Grok API Key target. Lite normalization
+// returns unchanged bytes and false for the other platform.
 func TestNormalizeOpenAIResponsesLitePayloadForProvider_IgnoresNonOpenAIProvider(t *testing.T) {
 	provider := &providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformGrok, Type: capability.ProviderTypeAPIKey}
 	body := []byte(`{"parallel_tool_calls":true}`)
@@ -488,6 +585,9 @@ func TestNormalizeOpenAIResponsesLitePayloadForProvider_IgnoresNonOpenAIProvider
 	require.Equal(t, body, updated)
 }
 
+// TestNormalizeOpenAIResponsesLitePayloadForProvider_RejectsNullAPIKeyBody
+// supplies JSON null to the OpenAI API Key Lite normalizer. It returns the
+// object-required error with original bytes and false.
 func TestNormalizeOpenAIResponsesLitePayloadForProvider_RejectsNullAPIKeyBody(t *testing.T) {
 	provider := &providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}
 	body := []byte(`null`)

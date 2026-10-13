@@ -14,21 +14,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// These result sinks retain benchmark outputs so repeated intent, capability,
+// and billing extraction work remains observable to the benchmark harness.
 var (
 	imageGenerationIntentBenchmarkResult           bool
 	passthroughImageIntentBenchmarkSink            bool
 	openAIResponsesImageIntentRoutingBenchmarkSink provider.OpenAIEndpointCapability
 
-	// benchmarkStringSink retains parsing results in image-billing benchmarks.
+	// benchmarkStringSink retains parsed model, size tier, and input size values.
 	benchmarkStringSink string
 )
 
+// BenchmarkIsImageGenerationIntent measures large-body intent detection with
+// leading/trailing signals, invalid JSON, and duplicate keys. Setup verifies
+// each expected result before timed iterations record the output sink.
 func BenchmarkIsImageGenerationIntent(b *testing.B) {
 	largeInput := strings.Repeat("x", 1<<20)
 	benchmarks := []struct {
-		name string
-		body []byte
-		want bool
+		name string // image intent scenario label
+		body []byte // serialized request intent fixture
+		want bool   // expected image intent result
 	}{
 		{
 			name: "1MiBInputNoImage",
@@ -74,6 +79,9 @@ func BenchmarkIsImageGenerationIntent(b *testing.B) {
 	}
 }
 
+// TestIsExplicitImageGenerationIntent_IgnoresPassiveNamespace declares
+// image_gen passively with auto choice. Explicit intent is false while the
+// broader general intent still recognizes the declaration.
 func TestIsExplicitImageGenerationIntent_IgnoresPassiveNamespace(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.5",
@@ -92,6 +100,9 @@ func TestIsExplicitImageGenerationIntent_IgnoresPassiveNamespace(t *testing.T) {
 		"passive image_gen namespace SHOULD remain general image intent for forwarding and billing")
 }
 
+// TestIsExplicitImageGenerationIntent_DetectsNativeTool declares a hosted
+// image-generation tool with auto choice on a text model. Explicit intent
+// still returns true for that supported tool form.
 func TestIsExplicitImageGenerationIntent_DetectsNativeTool(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.5",
@@ -103,22 +114,34 @@ func TestIsExplicitImageGenerationIntent_DetectsNativeTool(t *testing.T) {
 		"native image_generation tool IS explicit intent")
 }
 
+// TestIsExplicitImageGenerationIntent_DetectsImageModel queries Responses
+// intent with an image-only model and no body. The explicit predicate
+// recognizes that model identity as an image-generation signal.
 func TestIsExplicitImageGenerationIntent_DetectsImageModel(t *testing.T) {
 	assert.True(t, ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-image-2", nil),
 		"image model IS explicit intent")
 }
 
+// TestIsExplicitImageGenerationIntent_DetectsImageEndpoint queries an
+// image-generation endpoint using a text model and no body. The explicit
+// predicate recognizes the endpoint as sufficient image-generation intent.
 func TestIsExplicitImageGenerationIntent_DetectsImageEndpoint(t *testing.T) {
 	assert.True(t, ImageIntent().IsExplicitImageGenerationIntent("/v1/images/generations", "gpt-5.5", nil),
 		"image endpoint IS explicit intent")
 }
 
+// TestIsExplicitImageGenerationIntent_DetectsExplicitToolChoice selects
+// image_generation by string choice beside an ordinary function declaration.
+// The explicit predicate reports image intent for the selected choice.
 func TestIsExplicitImageGenerationIntent_DetectsExplicitToolChoice(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","tools":[{"type":"function","name":"Read"}],"tool_choice":"image_generation"}`)
 	assert.True(t, ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.5", body),
 		"explicit tool_choice selecting image_generation IS explicit intent")
 }
 
+// TestIsExplicitImageGenerationIntent_PlainTextRequest supplies ordinary hello
+// input and a Read function declaration on a GPT text model. The explicit
+// image-generation predicate remains false for that request.
 func TestIsExplicitImageGenerationIntent_PlainTextRequest(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.5",
@@ -130,6 +153,10 @@ func TestIsExplicitImageGenerationIntent_PlainTextRequest(t *testing.T) {
 		"plain text request should NOT be explicit image intent")
 }
 
+// TestIsExplicitImageGenerationIntentMap_AfterRequestMutation checks decoded
+// passive namespace, hosted tool, and selected namespace shapes. Explicit map
+// intent distinguishes the passive declaration from the two active image
+// signals.
 func TestIsExplicitImageGenerationIntentMap_AfterRequestMutation(t *testing.T) {
 	passiveNamespace := map[string]any{
 		"model": "gpt-5.5",
@@ -155,6 +182,9 @@ func TestIsExplicitImageGenerationIntentMap_AfterRequestMutation(t *testing.T) {
 	assert.True(t, ImageIntent().IsExplicitImageGenerationIntentMap("/v1/responses", "gpt-5.5", explicitNamespaceChoice))
 }
 
+// BenchmarkOpenAIPassthroughImageIntentReuse_LargeBody compares one versus two
+// intent scans over the same large request body. Both timed paths retain their
+// results in the fixture sink for measurement.
 func BenchmarkOpenAIPassthroughImageIntentReuse_LargeBody(b *testing.B) {
 	body := buildLargeOpenAIResponsesImageToolBody(32 << 20)
 
@@ -177,11 +207,15 @@ func BenchmarkOpenAIPassthroughImageIntentReuse_LargeBody(b *testing.B) {
 	})
 }
 
+// TestIsImageGenerationIntentForPlatform_GrokCodexDeclarations compares
+// passive Codex declarations, active image choices, vision input, and call
+// history on Grok. Platform intent follows active generation signals rather
+// than passive or historical tool availability.
 func TestIsImageGenerationIntentForPlatform_GrokCodexDeclarations(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want bool
+		name string // image intent scenario label
+		body string // request declaration JSON fixture
+		want bool   // expected image intent result
 	}{
 		{
 			name: "top-level image_gen namespace is passive",
@@ -250,6 +284,9 @@ func TestIsImageGenerationIntentForPlatform_GrokCodexDeclarations(t *testing.T) 
 	}
 }
 
+// TestIsImageGenerationIntentForPlatform_GrokPreservesHardSignals supplies an
+// image endpoint, image-model argument, or body image-model identity under
+// Grok. Each independent signal still selects image generation.
 func TestIsImageGenerationIntentForPlatform_GrokPreservesHardSignals(t *testing.T) {
 	require.True(t, ImageIntentForPlatform(
 		"/v1/images/generations",
@@ -271,6 +308,10 @@ func TestIsImageGenerationIntentForPlatform_GrokPreservesHardSignals(t *testing.
 	))
 }
 
+// TestIsImageGenerationIntentForPlatform_OtherPlatformsKeepDeclarationSemantics
+// declares the image_gen namespace passively on an ordinary GPT text request.
+// Both OpenAI and Anthropic general platform predicates retain
+// declaration-based image recognition.
 func TestIsImageGenerationIntentForPlatform_OtherPlatformsKeepDeclarationSemantics(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}],"input":"write code"}`)
 
@@ -278,13 +319,17 @@ func TestIsImageGenerationIntentForPlatform_OtherPlatformsKeepDeclarationSemanti
 	require.True(t, ImageIntentForPlatform(media.OpenAIResponsesEndpoint, "gpt-5.5", body, capability.PlatformAnthropic))
 }
 
+// TestIsImageGenerationIntent varies endpoint/model signals, hosted and
+// namespace tools, tool choices, and ordinary/custom declarations. General
+// intent accepts the supported image forms and excludes unrelated names or
+// text-only shapes.
 func TestIsImageGenerationIntent(t *testing.T) {
 	tests := []struct {
-		name     string
-		endpoint string
-		model    string
-		body     []byte
-		want     bool
+		name     string // image intent scenario label
+		endpoint string // requested client endpoint path
+		model    string // requested complete model identity
+		body     []byte // serialized intent request fixture
+		want     bool   // expected image intent result
 	}{
 		{
 			name:     "images endpoint",
@@ -378,13 +423,17 @@ func TestIsImageGenerationIntent(t *testing.T) {
 	}
 }
 
+// TestIsImageGenerationIntentJSONSemantics combines large input,
+// duplicate/null keys, invalid JSON, and escaped field names. Detection
+// follows first-value JSON view behavior while retaining supported trailing or
+// escaped signals.
 func TestIsImageGenerationIntentJSONSemantics(t *testing.T) {
 	largeInput := strings.Repeat("x", 1<<20)
 	tests := []struct {
-		name     string
-		endpoint string
-		body     []byte
-		want     bool
+		name     string // image intent scenario label
+		endpoint string // requested client endpoint path
+		body     []byte // serialized intent request fixture
+		want     bool   // expected image intent result
 	}{
 		{
 			name:     "chat body image model",
@@ -449,11 +498,15 @@ func TestIsImageGenerationIntentJSONSemantics(t *testing.T) {
 	}
 }
 
+// TestIsImageGenerationIntentMap_NamespaceImageGen checks decoded namespace
+// tools in top-level/Lite lists and selected choices. Exact image_gen is
+// recognized while unrelated namespaces or custom imagegen choices are
+// excluded.
 func TestIsImageGenerationIntentMap_NamespaceImageGen(t *testing.T) {
 	tests := []struct {
-		name    string
-		reqBody map[string]any
-		want    bool
+		name    string         // decoded namespace scenario label
+		reqBody map[string]any // decoded mutable request fixture
+		want    bool           // expected image declaration intent
 	}{
 		{
 			name: "top-level namespace image_gen",
@@ -535,6 +588,9 @@ func TestIsImageGenerationIntentMap_NamespaceImageGen(t *testing.T) {
 	}
 }
 
+// TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel supplies a
+// mapped body model and image tool without its own model. Billing config uses
+// that body model and derives the 1K size tier.
 func TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel(t *testing.T) {
 	imageModel, imageSize, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigFromBody(
 		[]byte(`{"model":"mapped-image-model","tools":[{"type":"image_generation","size":"1024x1024"}]}`),
@@ -545,6 +601,9 @@ func TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel(t *testing
 	require.Equal(t, "1K", imageSize)
 }
 
+// TestResolveOpenAIResponsesImageBillingConfigToolModelWins supplies different
+// driver, requested, and image-tool model names. Billing config selects the
+// tool model and its tested 2K size.
 func TestResolveOpenAIResponsesImageBillingConfigToolModelWins(t *testing.T) {
 	imageModel, imageSize, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigFromBody(
 		[]byte(`{"model":"mapped-text-model","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1536x1024"}]}`),
@@ -555,6 +614,10 @@ func TestResolveOpenAIResponsesImageBillingConfigToolModelWins(t *testing.T) {
 	require.Equal(t, "2K", imageSize)
 }
 
+// TestResolveOpenAIResponsesImageBillingConfigFromBodyIgnoresUnrelatedLargeInput
+// includes an extreme numeric nonce in unrelated input beside image model/size
+// fields. Billing extraction succeeds from those relevant fields without
+// interpreting the unrelated number.
 func TestResolveOpenAIResponsesImageBillingConfigFromBodyIgnoresUnrelatedLargeInput(t *testing.T) {
 	cfg, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(
 		[]byte(`{"model":"mapped-text-model","tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":[{"type":"message","content":[{"type":"input_text","text":"hi","nonce":1e1000000}]}]}`),
@@ -566,11 +629,14 @@ func TestResolveOpenAIResponsesImageBillingConfigFromBodyIgnoresUnrelatedLargeIn
 	require.Equal(t, "2048x1152", cfg.InputSize)
 }
 
+// TestResolveOpenAIResponsesImageBillingConfigSupportsOfficialAndCustomSizes
+// compares official, custom, default-tool, and top-level image sizes. Billing
+// extraction returns a nonempty model and each expected size tier.
 func TestResolveOpenAIResponsesImageBillingConfigSupportsOfficialAndCustomSizes(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     []byte
-		wantTier string
+		name     string // image intent scenario label
+		body     []byte // serialized intent request fixture
+		wantTier string // expected image billing tier
 	}{
 		{
 			name:     "official 2k landscape",
@@ -609,6 +675,9 @@ func TestResolveOpenAIResponsesImageBillingConfigSupportsOfficialAndCustomSizes(
 	}
 }
 
+// TestResolveOpenAIResponsesImageBillingConfigDoesNotRejectUnknownSizes
+// supplies a wide size for the tested image model. Billing extraction retains
+// the model and classifies 2K without returning an error.
 func TestResolveOpenAIResponsesImageBillingConfigDoesNotRejectUnknownSizes(t *testing.T) {
 	imageModel, imageSize, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigFromBody(
 		[]byte(`{"model":"gpt-5.4","tools":[{"type":"image_generation","model":"gpt-image-1.5","size":"2048x1152"}]}`),
@@ -619,6 +688,9 @@ func TestResolveOpenAIResponsesImageBillingConfigDoesNotRejectUnknownSizes(t *te
 	require.Equal(t, "2K", imageSize)
 }
 
+// BenchmarkOpenAIResponses_LargeInputImageBillingRaw measures billing field
+// extraction for increasing generated body sizes. Each iteration checks errors
+// and retains extracted model/tier/input-size values in its sink.
 func BenchmarkOpenAIResponses_LargeInputImageBillingRaw(b *testing.B) {
 	for _, size := range benchmarkBodySizes() {
 		b.Run(size.name, func(b *testing.B) {
@@ -638,7 +710,13 @@ func BenchmarkOpenAIResponses_LargeInputImageBillingRaw(b *testing.B) {
 	}
 }
 
+// buildLargeOpenAIResponsesImageToolBody creates an image-tool request with
+// repeated user text until the builder reaches targetBytes. Callers supply
+// nonnegative fixture sizes. Closing JSON adds further bytes, so the result
+// approximates the requested fixture size and can exceed it.
 func buildLargeOpenAIResponsesImageToolBody(targetBytes int) []byte {
+	// Builder writes assemble fixture JSON in memory; WriteString and WriteByte
+	// return nil errors, so discarded errors do not mask external I/O failure here.
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
 	_, _ = builder.WriteString(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":[`)
@@ -655,6 +733,10 @@ func buildLargeOpenAIResponsesImageToolBody(targetBytes int) []byte {
 	return []byte(builder.String())
 }
 
+// BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody compares reused
+// explicit-intent routing with a second scan of unchanged large tools. Setup
+// rejects unexpected image intent, and timed results retain their endpoint
+// capability.
 func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 	body := buildLargeOpenAIResponsesToolsBody(32 << 20)
 	if ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body) {
@@ -689,7 +771,13 @@ func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 	})
 }
 
+// buildLargeOpenAIResponsesToolsBody builds a function-tool request with
+// targetBytes of description text. Fixed JSON structure adds further bytes;
+// callers pass nonnegative sizes and receive a request with no explicit image
+// tool.
 func buildLargeOpenAIResponsesToolsBody(targetBytes int) []byte {
+	// Builder writes assemble fixture JSON in memory; WriteString and WriteByte
+	// return nil errors, so discarded errors do not mask external I/O failure here.
 	var builder strings.Builder
 	builder.Grow(targetBytes + 256)
 	_, _ = builder.WriteString(`{"model":"gpt-5.4","tools":[{"type":"function","name":"search","description":"`)
@@ -698,13 +786,15 @@ func buildLargeOpenAIResponsesToolsBody(targetBytes int) []byte {
 	return []byte(builder.String())
 }
 
+// benchmarkBodySizes returns the labelled four-, eight-, sixteen-, and
+// thirty-two-MiB fixture targets.
 func benchmarkBodySizes() []struct {
-	name  string
-	bytes int
+	name  string // body size benchmark label
+	bytes int    // requested fixture size bytes
 } {
 	return []struct {
-		name  string
-		bytes int
+		name  string // body size benchmark label
+		bytes int    // requested fixture size bytes
 	}{
 		{name: "4MB", bytes: 4 << 20},
 		{name: "8MB", bytes: 8 << 20},

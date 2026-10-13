@@ -22,14 +22,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// agentIdentityCredentialsRepo records credential writes and returns a
+// configured target for task tests.
 type agentIdentityCredentialsRepo struct {
-	ExecutionProviderStore
+	ExecutionProviderStore // unused execution storage methods
 
-	credentials map[string]any
-	provider    *ExecutionProvider
-	mu          sync.Mutex
+	// credentials retains the supplied map after a mutex-protected assignment.
+	// Assertions run after Ensure completes; nested values are left stable by the fixture.
+	credentials map[string]any     // borrowed persisted credential map
+	provider    *ExecutionProvider // borrowed task reread target
+	// credential assignment synchronization lock
+	mu sync.Mutex
 }
 
+// newTestAgentIdentityKey creates an Ed25519 signing fixture and its Base64
+// PKCS8 encoding. Generation or serialization failures fail the calling test
+// before the registration endpoint is constructed.
 func newTestAgentIdentityKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -43,6 +51,10 @@ func newTestAgentIdentityKey(t *testing.T) (openai.AgentIdentityKey, string) {
 	}, base64.StdEncoding.EncodeToString(der)
 }
 
+// TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials registers a task
+// against a local HTTP fixture and persists its ID. Assertions cover
+// target/store task values and private-key exclusion through the sensitive-key
+// predicate applied by the test.
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +87,10 @@ func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {
 	require.NotContains(t, string(mustAgentIdentityJSON(t, redacted)), privateKey)
 }
 
+// TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameProvider starts
+// two independent services for the same provider under one coordinator. Both
+// Ensure calls succeed while the local HTTP registration endpoint receives one
+// call and the stored provider record retains its task ID.
 func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameProvider(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	provider := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 9001, Type: capability.ProviderTypeOAuth, Platform: capability.PlatformOpenAI, Credentials: map[string]any{
@@ -97,6 +113,8 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameProvider(t *testi
 		return provideradapter.RegisterAgentIdentityTask(ctx, value, server.URL)
 	}
 
+	// Release both services from the same gate with distinct request targets so
+	// only the shared provider coordinator can collapse their registration work.
 	start := make(chan struct{})
 	errors := make(chan error, 2)
 	requests := []*ExecutionProvider{cloneAgentIdentityTestProvider(provider), cloneAgentIdentityTestProvider(provider)}
@@ -106,6 +124,8 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameProvider(t *testi
 			errors <- NewExecutionAgentIdentity(coordinator, repo, register, nil).Ensure(context.Background(), request, "")
 		}()
 	}
+	// Wait for both Ensure results before inspecting the stored task and call count;
+	// the buffered result channel lets either worker finish independently of receive order.
 	close(start)
 	require.NoError(t, <-errors)
 	require.NoError(t, <-errors)
@@ -115,16 +135,26 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameProvider(t *testi
 	require.Equal(t, "task-shared", repo.provider.View().GetCredential("task_id"))
 }
 
+// cloneAgentIdentityTestProvider shallow-copies the target and detaches its
+// top-level credential map. Nested credential values and other referenced
+// record fields remain shared, so the fixture limits independent mutation to
+// top-level keys.
 func cloneAgentIdentityTestProvider(provider *ExecutionProvider) *ExecutionProvider {
 	copy := *provider
 	copy.Record.Credentials = querycache.ShallowMap(provider.Record.Credentials)
 	return &copy
 }
 
+// GetByID returns the configured borrowed target regardless of lookup ID, with
+// nil when unset. Tests use the shared coordinator to serialize task
+// consumers; this reader supplies no independent synchronization.
 func (r *agentIdentityCredentialsRepo) GetByID(_ context.Context, _ int64) (*ExecutionProvider, error) {
 	return r.provider, nil
 }
 
+// UpdateCredentials stores the supplied credential map under the fixture mutex
+// and returns success. The map remains borrowed; test assertions read it after
+// the related Ensure calls have completed.
 func (r *agentIdentityCredentialsRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -132,6 +162,9 @@ func (r *agentIdentityCredentialsRepo) UpdateCredentials(_ context.Context, _ in
 	return nil
 }
 
+// mustAgentIdentityJSON encodes a fixture value and fails the caller when JSON
+// serialization fails. It marks itself as a test helper before returning
+// successful encoded bytes.
 func mustAgentIdentityJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)

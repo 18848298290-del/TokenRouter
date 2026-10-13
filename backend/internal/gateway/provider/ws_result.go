@@ -8,7 +8,28 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// ProjectWSResult converts a forwarding result into WebSocket turn observations and replay inputs.
+// A WebSocket turn carries observed usage plus replay inputs that differ from
+// its public response metadata. Converting between the forwarding and WS
+// result types keeps the input-presence flag separate from an empty replay
+// slice, and carries the cross-provider recovery history independently. A
+// local warmup also remains identifiable so a completed local response does
+// not become upstream scheduling success.
+//
+// These adapters transfer observations by value and retain nested headers,
+// usage pointers, image collections, warning bytes, and replay storage.
+// ForwardResultFromWS uses the forwarding result setters to restore private
+// replay fields; ProjectWSResult reads the turn-state header for the WS owner.
+// Callers keep borrowed values stable until consumers finish.
+
+// ProjectWSResult converts forwarding observations and private replay inputs
+// to a WS turn result. Nil input returns nil, and nested mutable values remain
+// shared with the forwarding result.
+//
+// Replay input and its presence flag travel together so an explicitly empty
+// input survives conversion. Cross-provider replay history remains a separate
+// value, and ResponseTurnState comes from the response header. The LocalWarmup
+// flag remains available to distinguish local completion from upstream
+// success.
 func ProjectWSResult(r *forwardcore.OpenAIResult) *gatewayws.ForwardResult {
 	if r == nil {
 		return nil
@@ -58,7 +79,15 @@ func ProjectWSResult(r *forwardcore.OpenAIResult) *gatewayws.ForwardResult {
 	return out
 }
 
-// ForwardResultFromWS converts a WebSocket result for completion records and health observations.
+// ForwardResultFromWS converts a WS turn result for completion and health
+// consumers. Nil input returns nil, while nested headers, collections, warning
+// bytes, and usage pointers continue to share the supplied result's storage.
+//
+// The forwarding result's private replay fields are populated through its
+// setters, carrying both turn input presence and separate provider-failover
+// history. LocalWarmup and terminal-event observations transfer with usage so
+// later scheduling classification can distinguish a local response from an
+// upstream completion.
 func ForwardResultFromWS(r *gatewayws.ForwardResult) *forwardcore.OpenAIResult {
 	if r == nil {
 		return nil

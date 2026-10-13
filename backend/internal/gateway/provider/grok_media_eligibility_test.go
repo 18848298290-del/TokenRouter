@@ -12,18 +12,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// grokMediaEligibilityProberStub records probe calls and returns configured
+// eligibility observations.
 type grokMediaEligibilityProberStub struct {
-	eligible bool
-	reason   string
-	err      error
-	calls    int
+	eligible bool   // configured probe eligibility result
+	reason   string // configured probe reason text
+	err      error  // configured probe failure result
+	calls    int    // observed probe invocation count
 }
 
+// ProbeMediaEligibility increments the fixture call count and returns its
+// configured eligibility, reason, and error. The fixture ignores lookup
+// parameters so tests can isolate whether probing occurs.
 func (s *grokMediaEligibilityProberStub) ProbeMediaEligibility(context.Context, int64) (bool, string, error) {
 	s.calls++
 	return s.eligible, s.reason, s.err
 }
 
+// TestEnsureGrokMediaProviderEligibility compares API Key eligibility with
+// OAuth billing observations that require probing. API Keys skip probing,
+// successful probes return eligibility, and absent or failing probes retain a
+// rejecting result.
 func TestEnsureGrokMediaProviderEligibility(t *testing.T) {
 	t.Run("non oauth provider does not probe", func(t *testing.T) {
 		prober := &grokMediaEligibilityProberStub{}

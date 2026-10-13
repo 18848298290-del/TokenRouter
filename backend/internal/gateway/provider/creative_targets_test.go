@@ -17,35 +17,57 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// creativeDownloadRequests validates image download URLs.
+// creativeDownloadRequests validates download URLs and rejects generation-only
+// request operations.
 type creativeDownloadRequests struct{}
 
-// creativeDownloadTransport checks download transport options and authentication headers.
+// creativeDownloadTransport delegates image downloads to a caller-supplied
+// assertion callback.
 type creativeDownloadTransport struct {
+	// asserted download transport callback
 	do func(*http.Request, string, int64, int) (*http.Response, error)
 }
 
+// ValidateBaseURL validates a fixture URL using egress URL-format rules with
+// HTTP disabled. It returns the validated URL or the validation error to the
+// image download path.
 func (creativeDownloadRequests) ValidateBaseURL(raw string) (string, error) {
 	return egress.ValidateURLFormat(raw, false)
 }
 
+// ImagesURL rejects generation URL lookup by panicking when invoked. Download
+// tests supply this fixture to require the public image fetch path, so
+// generation request preparation cannot silently run during an assertion.
 func (creativeDownloadRequests) ImagesURL(*ExecutionProvider, string) (string, error) {
 	panic("unexpected generation URL lookup")
 }
 
+// TLSProfile rejects a generation TLS-profile lookup by panicking when
+// invoked. The download fixture expects ordinary public image transport, so
+// this failure exposes an accidental transition to the generation request
+// path.
 func (creativeDownloadRequests) TLSProfile(*ExecutionProvider, ...egress.TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile {
 	panic("unexpected generation TLS lookup")
 }
 
+// Do passes the request and provider isolation parameters to the configured
+// callback.
 func (t creativeDownloadTransport) Do(req *http.Request, proxy string, id int64, concurrency int) (*http.Response, error) {
 	return t.do(req, proxy, id, concurrency)
 }
 
+// DoWithTLS rejects generation transport by panicking on any invocation.
+// Image-download tests expect Do to receive their assertions, so the panic
+// identifies an unexpected path before transport parameters escape
+// observation.
 func (creativeDownloadTransport) DoWithTLS(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error) {
 	panic("unexpected generation transport")
 }
 
-// TestCreativeImageDownloadBinding checks proxy use, signed URLs, credential isolation, and public-request marking.
+// TestCreativeImageDownloadBinding fetches a signed public image URL through a
+// provider carrying credentials and a proxy. Assertions cover the exact URL,
+// proxy and isolation parameters, credential-free headers, public-host
+// marking, and returned Base64 bytes.
 func TestCreativeImageDownloadBinding(t *testing.T) {
 	proxyID := int64(3)
 	value := &ExecutionProvider{Record: provider.Record{
@@ -79,7 +101,9 @@ func TestCreativeImageDownloadBinding(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
-// TestCreativeImageDownloadRejectsUnsafeResults checks pre-transport URL rejection and rejects non-image responses.
+// TestCreativeImageDownloadRejectsUnsafeResults supplies private-address and
+// file URLs, then a public URL returning HTML. Unsafe URLs fail before
+// transport, and the fetched HTML is rejected as a disallowed image format.
 func TestCreativeImageDownloadRejectsUnsafeResults(t *testing.T) {
 	value := &ExecutionProvider{Record: provider.Record{ID: 7, Platform: "openai", Type: "apikey"}}
 	calls := 0

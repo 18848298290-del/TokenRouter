@@ -12,31 +12,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// Fast request rules can be scoped to the authenticated payer and override
+// global rules while retaining configuration order within each scope.
+// Execution evaluation reads a context settings pointer when present or
+// runtime settings otherwise; it folds tier case and whitespace, while
+// tierpolicy.Resolve performs canonical tier validation before invoking its
+// callback.
+
+// openAIFastPolicyCtxKey stores a caller-supplied Fast settings pointer for
+// contexts derived from one request or WS session.
 var openAIFastPolicyCtxKey = openAIFastPolicyCtxKeyType{}
 
-// ExecutionFastPolicy reads Fast settings and prices during request processing.
+// ExecutionFastPolicy supplies runtime Fast settings and model-price
+// capability checks to tier decisions.
 type ExecutionFastPolicy struct {
+	// Readers supplies live settings when no context pointer is bound. Nil Readers
+	// causes Evaluate to pass before attempting a runtime settings read.
 	Readers *RuntimeReaders
-	Prices  *billing.PriceResolver
+	Prices  *billing.PriceResolver // forced Fast price capability reader
 }
 
-// openAIFastPolicyCtxKeyType identifies the Fast policy snapshot shared by a WS session.
-// Frames reuse the snapshot; policy updates take effect in new sessions.
-// Disconnecting the session makes reconnecting requests read the updated policy.
+// openAIFastPolicyCtxKeyType identifies a borrowed settings pointer in request
+// context.
 type openAIFastPolicyCtxKeyType struct{}
 
-// Evaluate returns the action and error message for a provider, model, and service tier.
-// An unavailable policy reader or no matching rule returns pass.
+// Evaluate folds tier case and whitespace, then evaluates Fast settings with
+// the trusted payer ID and provider scope. Missing readers, blank tiers, read
+// errors, or absent settings return pass.
 //
-// Matching rules:
-//   - Scope selects provider types: all, oauth, apikey, or bedrock.
-//   - Nonempty UserIDs matches the trusted API Key owner ID.
-//   - ServiceTier is empty, all, or the normalized requested tier.
-//   - ModelWhitelist restricts models; FallbackAction handles unmatched models.
-//   - User rules precede global rules; each set uses the first match in configuration order.
-//
-// A request carries one service_tier, and filter removes that field.
-// Configuration order resolves overlapping model lists within a scope and tier.
+// User-specific rules precede global rules, and each set selects its first
+// qualifying rule before model whitelist action is resolved. Context settings
+// are read by reference; callers keep them immutable during evaluation. Direct
+// callers can supply unknown nonblank tiers, which an all-tier rule can match;
+// tierpolicy.Resolve canonicalizes its input before calling this adapter.
 func (s *ExecutionFastPolicy) Evaluate(ctx context.Context, provider *ExecutionProvider, model, serviceTier string) (action, errMsg string) {
 	if s == nil || s.Readers == nil {
 		return anthropic.BetaPolicyActionPass, ""
@@ -48,6 +56,8 @@ func (s *ExecutionFastPolicy) Evaluate(ctx context.Context, provider *ExecutionP
 	settings := FastPolicySettingsFromContext(ctx)
 	if settings == nil {
 		fetched, err := s.Readers.Gateway.GetOpenAIFastPolicySettings(ctx)
+		// Unavailable settings cannot supply a matching rule. Pass the tier through
+		// so request processing continues under the caller's remaining policy stages.
 		if err != nil || fetched == nil {
 			return anthropic.BetaPolicyActionPass, ""
 		}
@@ -56,7 +66,9 @@ func (s *ExecutionFastPolicy) Evaluate(ctx context.Context, provider *ExecutionP
 	return tierpolicy.Evaluate(settings, openAIFastPolicyUserID(ctx), provider != nil && provider.View().IsOAuth(), provider != nil && provider.View().IsBedrock(), model, tier)
 }
 
-// openAIFastPolicyUserID reads the trusted API Key owner from request context.
+// openAIFastPolicyUserID returns the positive payer ID from the authenticated
+// access snapshot. Nil contexts, absent snapshots, and nonpositive IDs return
+// zero so user-scoped Fast rules have no trusted payer match.
 func openAIFastPolicyUserID(ctx context.Context) int64 {
 	if ctx == nil {
 		return 0
@@ -69,8 +81,10 @@ func openAIFastPolicyUserID(ctx context.Context) int64 {
 	return userID
 }
 
-// WithFastPolicyContext binds one settings snapshot for Evaluate calls
-// using the context or contexts derived from it.
+// WithFastPolicyContext binds the supplied settings pointer to ctx for
+// subsequent evaluation. Nil context or settings returns ctx unchanged; the
+// pointer is borrowed, so callers keep its rules immutable while derived
+// contexts use it.
 func WithFastPolicyContext(ctx context.Context, settings *tierpolicy.OpenAIFastPolicySettings) context.Context {
 	if ctx == nil || settings == nil {
 		return ctx
@@ -78,6 +92,9 @@ func WithFastPolicyContext(ctx context.Context, settings *tierpolicy.OpenAIFastP
 	return context.WithValue(ctx, openAIFastPolicyCtxKey, settings)
 }
 
+// FastPolicySettingsFromContext returns the stored settings pointer when its
+// context value has the expected type. Nil contexts or other values return
+// nil, letting Evaluate read runtime settings when no snapshot is available.
 func FastPolicySettingsFromContext(ctx context.Context) *tierpolicy.OpenAIFastPolicySettings {
 	if ctx == nil {
 		return nil
@@ -88,7 +105,9 @@ func FastPolicySettingsFromContext(ctx context.Context) *tierpolicy.OpenAIFastPo
 	return nil
 }
 
-// GroupFastPolicy requires a fully loaded authorized group and an OpenAI provider.
+// GroupFastPolicy reads the admitted group's effective Fast policy for OpenAI
+// targets. Missing context or target, another platform, or an invalid group
+// context selects follow_request instead of applying unavailable group data.
 func GroupFastPolicy(ctx context.Context, provider *ExecutionProvider) string {
 	if ctx == nil || provider == nil || !provider.View().IsOpenAI() {
 		return routing.GroupOpenAIFastPolicyFollowRequest
@@ -100,6 +119,10 @@ func GroupFastPolicy(ctx context.Context, provider *ExecutionProvider) string {
 	return group.EffectiveOpenAIFastPolicy()
 }
 
+// Input binds group, Key, settings evaluation, and forced-Fast capability
+// callbacks for tierpolicy.Resolve. The callbacks read their context and
+// provider when invoked, so callers keep those request inputs stable during a
+// decision.
 func (s *ExecutionFastPolicy) Input(ctx context.Context, value *ExecutionProvider, model string) tierpolicy.DecisionInput {
 	return tierpolicy.DecisionInput{
 		Model: model, GroupPolicy: GroupFastPolicy(ctx, value), OpenAI: value != nil && value.View().IsOpenAI(),
@@ -111,6 +134,10 @@ func (s *ExecutionFastPolicy) Input(ctx context.Context, value *ExecutionProvide
 	}
 }
 
+// ForceOnSupported requires an OpenAI target and service-tier support from
+// group pricing for model. Missing pricing evidence disables forced injection;
+// callers provide a configured ExecutionFastPolicy receiver when that check is
+// needed.
 func (s *ExecutionFastPolicy) ForceOnSupported(ctx context.Context, provider *ExecutionProvider, model string) bool {
 	return provider != nil && provider.View().IsOpenAI() &&
 		SupportsFastMode(ctx, s.Prices, model)

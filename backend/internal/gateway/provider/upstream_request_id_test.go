@@ -11,6 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestUpstreamRequestIDFromHeaders_UnconfiguredProviderRecordsNothing supplies
+// common platform and proxy request-ID headers with no configured header name.
+// Nil, unconfigured, and blank-configured providers all return an empty
+// upstream identifier.
 func TestUpstreamRequestIDFromHeaders_UnconfiguredProviderRecordsNothing(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Client-Request-ID", "tokenrouter-client")
@@ -28,6 +32,10 @@ func TestUpstreamRequestIDFromHeaders_UnconfiguredProviderRecordsNothing(t *test
 	require.Equal(t, "", UpstreamRequestIDFromHeaders(blank, h))
 }
 
+// TestUpstreamRequestIDFromHeaders_ReadsOnlyConfiguredHeader places an ID in
+// an unrelated header before filling the configured one. Lookup trims the
+// configured value, ignores other headers, and handles nil headers plus an
+// Anthropic header name.
 func TestUpstreamRequestIDFromHeaders_ReadsOnlyConfiguredHeader(t *testing.T) {
 	provider := &providercore.Record{
 		Platform: capability.PlatformOpenAI,
@@ -47,6 +55,9 @@ func TestUpstreamRequestIDFromHeaders_ReadsOnlyConfiguredHeader(t *testing.T) {
 	require.Equal(t, "req_official", UpstreamRequestIDFromHeaders(official, only))
 }
 
+// TestUsageUpstreamRequestIDPtr supplies a long ASCII ID and providers with
+// missing header configuration. WS mode and missing IDs yield nil, while an
+// HTTP ID is truncated to the configured byte cap.
 func TestUsageUpstreamRequestIDPtr(t *testing.T) {
 	provider := &providercore.Record{Extra: map[string]any{providercore.ProviderExtraUpstreamRequestIDHeader: "X-Request-ID"}}
 	h := http.Header{}
@@ -61,6 +72,9 @@ func TestUsageUpstreamRequestIDPtr(t *testing.T) {
 	require.Len(t, *got, maxUsageUpstreamRequestIDLen)
 }
 
+// TestValidateUpstreamRequestIDHeaderExtra checks absent, blank, padded,
+// wrongly typed, malformed, and oversized header settings. Validation removes
+// blank settings, trims a valid name, and rejects invalid types or syntax.
 func TestValidateUpstreamRequestIDHeaderExtra(t *testing.T) {
 	require.NoError(t, providercore.ValidateUpstreamRequestIDHeaderExtra(nil))
 	require.NoError(t, providercore.ValidateUpstreamRequestIDHeaderExtra(map[string]any{}))

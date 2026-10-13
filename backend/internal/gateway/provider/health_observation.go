@@ -11,7 +11,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// ApplyExecutionSchedulingThreshold applies health thresholds and copies scheduling state back to the target.
+// Provider health receives both the first model argument and an effective
+// model resolved from request hints. An empty first argument still counts as
+// supplied, even when the effective model falls back to context. This lets
+// default model observation distinguish argument presence while temporary-rule
+// handling uses the resolved attempt model. Thinking likewise distinguishes a
+// missing hint from an explicit false value.
+//
+// The adapters choose either a borrowed provider record or an ExecutionRecord
+// copy for each health operation. Copy-based paths transfer selected mutations
+// back to the request target; threshold observation transfers pause fields and
+// extras, while error observation transfers credentials and extras. Callers
+// serialize target observation with other request reads and writes.
+
+// ApplyExecutionSchedulingThreshold evaluates scheduling thresholds on an
+// execution record copy and transfers pause deadline, reason, and extras back
+// to value. A nil observer returns false; the returned boolean is the provider
+// core's pause result.
 func ApplyExecutionSchedulingThreshold(ctx context.Context, observer *provideradapter.UpstreamHealth, value *ExecutionProvider) bool {
 	if observer == nil {
 		return false
@@ -26,7 +42,10 @@ func ApplyExecutionSchedulingThreshold(ctx context.Context, observer *providerad
 	return paused
 }
 
-// ObserveExecutionSessionWindow skips empty observations before accessing the optional health dependency.
+// ObserveExecutionSessionWindow decodes the response headers and records a
+// nonempty session-window status through the health core. Empty observations
+// return before dependency access; a recognized observation requires a
+// configured observer and its Core.
 func ObserveExecutionSessionWindow(ctx context.Context, observer *provideradapter.UpstreamHealth, value *ExecutionProvider, headers http.Header) {
 	observation := provideradapter.SessionWindowObservation(headers)
 	if observation.Status == "" {
@@ -35,7 +54,10 @@ func ObserveExecutionSessionWindow(ctx context.Context, observer *provideradapte
 	observer.Core.UpdateSessionWindow(ctx, ExecutionRecord(value), observation)
 }
 
-// ApplyGrokExecutionHealth delegates the attempt and provider record to Grok health handling.
+// ApplyGrokExecutionHealth combines response and request observations for the
+// shared Grok health handler. Missing health or target returns
+// ErrorPolicyNone; models remain ordered inputs, and teamModel identifies both
+// quota and team cooldown processing.
 func ApplyGrokExecutionHealth(ctx context.Context, health *provideradapter.GrokHealth, target *ExecutionProvider, status int, headers http.Header, body []byte, teamModel string, models ...string) provider.UpstreamErrorDecision {
 	if health == nil || target == nil {
 		return provider.UpstreamErrorDecision{Policy: provider.ErrorPolicyNone}
@@ -50,7 +72,15 @@ func ApplyGrokExecutionHealth(ctx context.Context, health *provideradapter.GrokH
 	})
 }
 
-// HealthObservationFromContext collects model, thinking, and endpoint details for health evaluation.
+// HealthObservationFromContext captures response evidence and request hints
+// for provider health handling. Headers and body are borrowed, so callers keep
+// them stable while the health consumer reads.
+//
+// Model retains the first supplied argument verbatim and ModelProvided records
+// its presence, including an empty value. EffectiveModel uses the trimmed
+// nonblank first argument or the stored attempt hint; later arguments are
+// ignored. HandleDefault uses argument presence for model observation, while
+// temporary-rule checks use EffectiveModel.
 func HealthObservationFromContext(ctx context.Context, status int, headers http.Header, body []byte, models []string) provideradapter.HealthObservation {
 	input := provideradapter.HealthObservation{Status: status, Headers: headers, Body: body, EffectiveModel: requeststate.HealthModel(ctx, models), ModelProvided: len(models) > 0, Thinking: requeststate.HealthThinking(ctx), ImagesEndpoint: requeststate.OpenAIImagesEndpointFromContext(ctx)}
 	if len(models) > 0 {
@@ -59,7 +89,9 @@ func HealthObservationFromContext(ctx context.Context, status int, headers http.
 	return input
 }
 
-// ApplyExecutionHealth observes an independent record, then copies credentials and extra state back to the target.
+// ApplyExecutionHealth observes a provider copy and transfers credentials and
+// extras back to the target after evaluation. The observer must be configured;
+// other fields mutated on the copied record remain on that temporary record.
 func ApplyExecutionHealth(ctx context.Context, observer *provideradapter.UpstreamHealth, target *ExecutionProvider, input provideradapter.HealthObservation) provider.UpstreamErrorDecision {
 	record := ExecutionRecord(target)
 	result := observer.ApplyUpstreamError(ctx, record, input)
@@ -69,7 +101,9 @@ func ApplyExecutionHealth(ctx context.Context, observer *provideradapter.Upstrea
 	return result
 }
 
-// ExecutionErrorPolicy returns provider identity, platform, type, and credentials for policy evaluation.
+// ExecutionErrorPolicy returns the identity and credential fields used by
+// provider error rules. Nil targets return nil; the credential map is borrowed
+// from the target, so callers keep it stable during classification.
 func ExecutionErrorPolicy(value *ExecutionProvider) *provider.Record {
 	if value == nil {
 		return nil
@@ -77,7 +111,10 @@ func ExecutionErrorPolicy(value *ExecutionProvider) *provider.Record {
 	return &provider.Record{ID: value.Record.ID, Platform: value.Record.Platform, Type: value.Record.Type, Credentials: value.Record.Credentials}
 }
 
-// ApplyOpenAIResponseHealth combines request, model, and response details for OpenAI health evaluation.
+// ApplyOpenAIResponseHealth combines request hints, model inputs, and
+// content/transient classification for OpenAI response health handling. It
+// passes the target's borrowed record to health.Apply, with
+// suppressDefaultRateLimit controlling the caller's ordinary limit policy.
 func ApplyOpenAIResponseHealth(ctx context.Context, health *provideradapter.OpenAIResponseHealth, target *ExecutionProvider, status int, headers http.Header, body []byte, suppressDefaultRateLimit bool, models ...string) provider.UpstreamErrorDecision {
 	return health.Apply(ctx, target.View(), provideradapter.OpenAIResponseHealthInput{
 		Observation:              HealthObservationFromContext(ctx, status, headers, body, models),

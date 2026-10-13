@@ -7,6 +7,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestNormalizeOpenAIResponsesLegacyIngressMessagesOnly supplies Chat
+// system/tool history with a stale previous-response ID and no native input.
+// Conversion creates paired Responses call/output input, keeps stream=false,
+// and removes legacy messages plus continuation.
 func TestNormalizeOpenAIResponsesLegacyIngressMessagesOnly(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":false,"messages":[{"role":"system","content":"repo policy"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"hello\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}],"previous_response_id":"resp_stale"}`)
 
@@ -24,6 +28,10 @@ func TestNormalizeOpenAIResponsesLegacyIngressMessagesOnly(t *testing.T) {
 	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "stream").Type)
 }
 
+// TestNormalizeOpenAIResponsesLegacyIngressConvertsChatTopLevelFields supplies
+// Chat tools, nested choice, token cap, effort, and tier alongside messages.
+// Conversion produces flat tool fields, Responses output cap and reasoning,
+// while removing legacy top-level spellings.
 func TestNormalizeOpenAIResponsesLegacyIngressConvertsChatTopLevelFields(t *testing.T) {
 	body := []byte(`{"model":"gpt-4.1","messages":[{"role":"user","content":"weather?"}],"tools":[{"type":"function","function":{"name":"lookup","description":"Lookup weather","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}},"max_tokens":64,"reasoning_effort":"high","service_tier":"flex","temperature":0.2,"top_p":0.7}`)
 
@@ -45,6 +53,10 @@ func TestNormalizeOpenAIResponsesLegacyIngressConvertsChatTopLevelFields(t *test
 	require.False(t, gjson.GetBytes(normalized, "reasoning_effort").Exists())
 }
 
+// TestNormalizeOpenAIResponsesLegacyIngressNativeInputRemainsAuthoritative
+// supplies native input with legacy messages and nested tool fields. The
+// native history, tool/choice shape, and previous-response ID remain, while
+// messages is removed.
 func TestNormalizeOpenAIResponsesLegacyIngressNativeInputRemainsAuthoritative(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":[{"id":"msg_native","type":"message","role":"user","content":[{"type":"input_text","text":"keep me"}]}],"messages":[{"role":"user","content":"do not merge"}],"tools":[{"type":"function","function":{"name":"native_shape"}}],"tool_choice":{"type":"function","function":{"name":"native_shape"}},"previous_response_id":"resp_keep"}`)
 
@@ -60,6 +72,9 @@ func TestNormalizeOpenAIResponsesLegacyIngressNativeInputRemainsAuthoritative(t 
 	require.Equal(t, "resp_keep", gjson.GetBytes(normalized, "previous_response_id").String())
 }
 
+// TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands
+// supplies string prompt and commands with no native input. The prompt text
+// becomes input and both legacy fields disappear.
 func TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands(t *testing.T) {
 	body := []byte(`{"model":"gpt-4.1","prompt":"hello","commands":[{"name":"legacy"}]}`)
 
@@ -71,6 +86,9 @@ func TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands(t
 	require.False(t, gjson.GetBytes(normalized, "commands").Exists())
 }
 
+// TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate
+// supplies an object prompt template as native Responses data. Normalization
+// reports no change, retains its template ID, and creates no input field.
 func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":{"id":"pmpt_abc","version":"7","variables":{"topic":"ownership"}}}`)
 
@@ -82,6 +100,10 @@ func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *t
 	require.False(t, gjson.GetBytes(normalized, "input").Exists())
 }
 
+// TestNormalizeOpenAIResponsesLegacyIngressPreservesUnknownPromptShapeWhileDroppingCommands
+// supplies a two-element array prompt alongside legacy commands and no native
+// input. Normalization drops commands while retaining both prompt elements and
+// leaving input absent.
 func TestNormalizeOpenAIResponsesLegacyIngressPreservesUnknownPromptShapeWhileDroppingCommands(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":["one","two"],"commands":[{"name":"legacy"}]}`)
 

@@ -19,7 +19,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCompletionCaptureKeepsTurnTimeAndIndependentInputs checks isolation from later request, tier, and price-card changes.
+// TestCompletionCaptureKeepsTurnTimeAndIndependentInputs captures a WS pricing
+// time with mutable payer, Key, multiplier, image metadata, and request bytes.
+// Later mutations leave the asserted snapshot values and requested reasoning
+// effort at their capture observations.
 func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 	multiplier := 1.5
 	groupID := int64(17)
@@ -57,15 +60,16 @@ func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 	require.Equal(t, "high", *out.RequestedReasoningEffort)
 }
 
-// TestCompletionCapturePreservesQuotaCapabilityPresence checks that an interface containing a typed nil still denotes
-// a supplied capability.
+// TestCompletionCapturePreservesQuotaCapabilityPresence compares an absent
+// interface with one containing a typed nil API Key service. Both Messages and
+// OpenAI capture record capability presence rather than invoking that service.
 func TestCompletionCapturePreservesQuotaCapabilityPresence(t *testing.T) {
 	var absent QuotaUpdater
 	var typedNil *apikey.APIKeyService
 	for _, tc := range []struct {
-		name  string
-		value QuotaUpdater
-		want  bool
+		name  string       // quota interface presence case
+		value QuotaUpdater // supplied quota capability interface
+		want  bool         // expected quota capability presence
 	}{{"absent", absent, false}, {"typed-nil", typedNil, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, CaptureMessages(context.Background(), &MessagesCapture{APIKeyService: tc.value}).QuotaUpdates)
@@ -74,7 +78,10 @@ func TestCompletionCapturePreservesQuotaCapabilityPresence(t *testing.T) {
 	}
 }
 
-// TestCompletionCyberInputFreezesLegacyProjection checks snapshot isolation from user, provider, Key, and subscription inputs.
+// TestCompletionCyberInputFreezesLegacyProjection captures a cyber failure
+// with mutable Key, payer, provider multiplier, and subscription plan values.
+// The worker input retains observed identifiers, rates, token usage, trimmed
+// model, and failure/compaction flags.
 func TestCompletionCyberInputFreezesLegacyProjection(t *testing.T) {
 	group := int64(7)
 	rate := 1.25
@@ -103,6 +110,9 @@ func TestCompletionCyberInputFreezesLegacyProjection(t *testing.T) {
 	require.True(t, input.NativeCompactionV2)
 }
 
+// TestResolveUsageBillingRequestID_ForcedWebSearchBeatsClientID supplies a
+// compatibility context request seed and a web-search operation key. Billing
+// identity selects the recognized operation key for that completion.
 func TestResolveUsageBillingRequestID_ForcedWebSearchBeatsClientID(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
@@ -110,6 +120,10 @@ func TestResolveUsageBillingRequestID_ForcedWebSearchBeatsClientID(t *testing.T)
 	require.Equal(t, "web_search:uuid-1", got)
 }
 
+// TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream supplies a
+// compatibility request seed with an ordinary upstream response ID. Billing
+// identity uses the client-prefixed seed instead of the ordinary upstream
+// value.
 func TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
@@ -117,6 +131,9 @@ func TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream(t *testing.T) 
 	require.Equal(t, "client:client-shared-id", got)
 }
 
+// TestIsForcedUsageBillingRequestID compares recognized search, video, audio,
+// and Realtime operation prefixes with an ordinary Response ID. The operation
+// keys qualify as forced identities while the Response ID does not.
 func TestIsForcedUsageBillingRequestID(t *testing.T) {
 	t.Parallel()
 	require.True(t, completion.ForcedRequestID("web_search:x"))
@@ -126,6 +143,9 @@ func TestIsForcedUsageBillingRequestID(t *testing.T) {
 	require.False(t, completion.ForcedRequestID("resp_abc"))
 }
 
+// TestStableGrokAudioBillingRequestID compares plain, already prefixed, and
+// blank upstream audio IDs. Existing identity remains stable, while blank
+// input generates a nonempty suffix under the Grok audio namespace.
 func TestStableGrokAudioBillingRequestID(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "grok_audio:up-1", StableAudioBillingRequestID("up-1"))
@@ -135,6 +155,9 @@ func TestStableGrokAudioBillingRequestID(t *testing.T) {
 	require.Greater(t, len(got), len("grok_audio:"))
 }
 
+// TestStableGrokRealtimeBillingRequestID compares plain, already prefixed, and
+// blank Realtime session IDs. Existing identity remains stable and blank input
+// returns the Realtime operation prefix with generated identity.
 func TestStableGrokRealtimeBillingRequestID(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "grok_realtime:s1", StableRealtimeBillingRequestID("s1"))
@@ -143,6 +166,10 @@ func TestStableGrokRealtimeBillingRequestID(t *testing.T) {
 	require.True(t, strings.HasPrefix(got, "grok_realtime:"))
 }
 
+// TestResolveUsageBillingRequestID_ForcedGrokAudioBeatsClientID supplies a
+// compatibility request seed beside a prefixed audio operation ID. Billing
+// capture keeps the operation-specific audio key as its deduplication
+// identity.
 func TestResolveUsageBillingRequestID_ForcedGrokAudioBeatsClientID(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")

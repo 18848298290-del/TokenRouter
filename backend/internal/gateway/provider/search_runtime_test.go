@@ -18,47 +18,69 @@ import (
 )
 
 var (
-	// webSearchToolBody contains a web_search tool.
+	// These request fixtures distinguish web_search from text_editor declarations
+	// while retaining ordinary user input, so policy tests select their intended tool shape.
 	webSearchToolBody = []byte(`{"tools":[{"type":"web_search"}],"messages":[{"role":"user","content":"test"}]}`)
 
 	// nonWebSearchToolBody contains a non-search tool.
 	nonWebSearchToolBody = []byte(`{"tools":[{"type":"text_editor"}],"messages":[{"role":"user","content":"test"}]}`)
 )
 
-// searchSettingRows returns the fixture's saved JSON configuration.
+// searchSettingRows supplies encoded search configuration to the test runtime
+// settings reader.
 type searchSettingRows struct {
-	search.ConfigRepository
-	data string
+	search.ConfigRepository        // unused config repository operations
+	data                    string // encoded search configuration JSON
 }
 
+// searchPricingConfigRows supplies group-feature configuration fixtures to
+// routing policy reads.
 type searchPricingConfigRows struct {
-	routing.PricingConfigRepository
+	routing.PricingConfigRepository // unused routing repository operations
+	// configured group-feature fixture rows
 	pricingConfigs []testkit.Configuration
 }
 
+// GetValue returns the fixture JSON configuration regardless of the setting
+// key.
 func (r searchSettingRows) GetValue(context.Context, string) (string, error) { return r.data, nil }
 
+// newSearchSettingsFixture constructs search runtime with a fixed Brave
+// provider and enabled flag. It binds the supplied registry so tests control
+// manager availability independently of encoded global configuration.
 func newSearchSettingsFixture(enabled bool, registry *search.Registry) *search.ConfigService {
 	value := &search.WebSearchEmulationConfig{Enabled: enabled, Providers: []search.WebSearchProviderConfig{{Type: "brave", APIKey: "sk-test"}}}
+	// The fixed fixture contains scalar fields, nil integer pointers, and a
+	// provider slice; it has no unsupported values or cyclic references that can fail JSON encoding.
 	data, _ := json.Marshal(value)
 	return search.NewConfigService(searchSettingRows{data: string(data)}, nil, nil, registry)
 }
 
+// ListAll returns the fixture configuration slice by reference for routing
+// policy tests. Callers keep its entries stable while the pricing service
+// reads and captures group feature configuration.
 func (r searchPricingConfigRows) ListAll(context.Context) ([]testkit.Configuration, error) {
 	return r.pricingConfigs, nil
 }
 
+// GetGroupPlatforms returns an empty platform map for the group-policy
+// fixture. The input group list does not affect this result, allowing tests to
+// focus on their configured feature flags.
 func (r searchPricingConfigRows) GetGroupPlatforms(context.Context, []int64) (map[int64]string, error) {
 	return map[int64]string{}, nil
 }
 
+// newPricingConfigServiceWithCache clones a fixture configuration and attaches
+// it to groupID before binding the test service. The caller input remains
+// available while the clone supplies group-feature policy.
 func newPricingConfigServiceWithCache(groupID int64, ch *testkit.Configuration) *routing.PricingConfigService {
 	value := ch.Clone()
 	value.GroupIDs = []int64{groupID}
 	return testkit.NewPricingConfigService(searchPricingConfigRows{pricingConfigs: []testkit.Configuration{*value}}, nil, routing.PricingConfigOptions{Now: time.Now})
 }
 
-// newSearchProviderPolicy creates a provider with the given search-emulation mode.
+// newSearchProviderPolicy creates an Anthropic API Key fixture with the
+// supplied emulation mode.
 func newSearchProviderPolicy(mode string) *searchtools.ProviderPolicy {
 	return &searchtools.ProviderPolicy{
 		ID:       1,
@@ -68,6 +90,9 @@ func newSearchProviderPolicy(mode string) *searchtools.ProviderPolicy {
 	}
 }
 
+// TestShouldEmulateWebSearch_NilManager enables settings and provider policy
+// while publishing no manager. The emulator still returns false because search
+// execution is unavailable.
 func TestShouldEmulateWebSearch_NilManager(t *testing.T) {
 	registry := search.NewRegistry()
 	registry.Set(nil)
@@ -80,6 +105,9 @@ func TestShouldEmulateWebSearch_NilManager(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_NotOnlyWebSearchTool publishes an active search
+// manager but supplies a text-editor tool request. Policy evaluation returns
+// false despite enabled global settings and provider mode.
 func TestShouldEmulateWebSearch_NotOnlyWebSearchTool(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -93,6 +121,9 @@ func TestShouldEmulateWebSearch_NotOnlyWebSearchTool(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: nonWebSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_GlobalDisabled publishes a search manager and
+// provider-enabled mode with the global search setting disabled. The
+// web-search request remains denied by emulation's global gate.
 func TestShouldEmulateWebSearch_GlobalDisabled(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -107,6 +138,9 @@ func TestShouldEmulateWebSearch_GlobalDisabled(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_AccountDisabled publishes a search manager with
+// enabled global settings but provider-disabled mode. That override makes
+// emulation false for the supplied web-search tool request.
 func TestShouldEmulateWebSearch_AccountDisabled(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -119,6 +153,9 @@ func TestShouldEmulateWebSearch_AccountDisabled(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_ProviderEnabled publishes a manager with enabled
+// global and provider modes plus a web-search request. Emulation is permitted
+// with no group policy.
 func TestShouldEmulateWebSearch_ProviderEnabled(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -131,6 +168,9 @@ func TestShouldEmulateWebSearch_ProviderEnabled(t *testing.T) {
 	require.True(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_DefaultMode_GroupPolicyEnabled publishes search
+// and enables the Anthropic group feature for provider default mode. A request
+// in that group qualifies for emulation.
 func TestShouldEmulateWebSearch_DefaultMode_GroupPolicyEnabled(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -153,6 +193,9 @@ func TestShouldEmulateWebSearch_DefaultMode_GroupPolicyEnabled(t *testing.T) {
 	require.True(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: &groupID}))
 }
 
+// TestShouldEmulateWebSearch_DefaultMode_GroupPolicyDisabled supplies provider
+// default mode and an explicitly disabled group feature. Emulation returns
+// false despite the manager and global enablement.
 func TestShouldEmulateWebSearch_DefaultMode_GroupPolicyDisabled(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -175,6 +218,9 @@ func TestShouldEmulateWebSearch_DefaultMode_GroupPolicyDisabled(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: &groupID}))
 }
 
+// TestShouldEmulateWebSearch_DefaultMode_NilGroupID supplies enabled global
+// search, an active manager, and default provider mode with no group ID.
+// Missing group policy keeps the web-search request ineligible for emulation.
 func TestShouldEmulateWebSearch_DefaultMode_NilGroupID(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()
@@ -188,6 +234,9 @@ func TestShouldEmulateWebSearch_DefaultMode_NilGroupID(t *testing.T) {
 	require.False(t, svc.ShouldEmulate(context.Background(), searchtools.PolicyInput{Body: webSearchToolBody, Mode: SearchProviderMode(provider), Platform: provider.Platform, GroupID: nil}))
 }
 
+// TestShouldEmulateWebSearch_DefaultMode_NilPricingConfigService supplies a
+// group ID but no group-policy service under default provider mode. Emulation
+// remains disabled when that policy cannot be read.
 func TestShouldEmulateWebSearch_DefaultMode_NilPricingConfigService(t *testing.T) {
 	mgr := search.NewManager([]search.ProviderConfig{{Type: "brave", APIKey: "k"}}, nil, searchprovider.NewExecutor(), nil)
 	registry := search.NewRegistry()

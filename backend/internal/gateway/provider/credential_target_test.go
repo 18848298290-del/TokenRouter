@@ -13,18 +13,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// stubChatGPTHeadersRepo implements GetByID for credential-header tests.
-// Other storage methods are unused.
+// stubChatGPTHeadersRepo supplies ID-indexed parent targets for ChatGPT header
+// tests.
 type stubChatGPTHeadersRepo struct {
+	// ExecutionProviderStore leaves unused operations unimplemented; tests must
+	// call only the fixture's GetByID override when resolving credential parents.
 	ExecutionProviderStore
 
-	byID map[int64]*ExecutionProvider
+	byID map[int64]*ExecutionProvider // parent targets by ID
 }
 
+// GetByID returns the configured execution target for id, with nil for missing
+// entries. Other repository operations are left on the embedded interface and
+// must stay unused in these header tests.
 func (r *stubChatGPTHeadersRepo) GetByID(_ context.Context, id int64) (*ExecutionProvider, error) {
 	return r.byID[id], nil
 }
 
+// TestResolveAndSetOpenAIChatGPTAccountHeaders constructs ordinary and shadow
+// OAuth execution targets with different account IDs. Header application uses
+// the parent account for shadows and the ordinary target's own account
+// otherwise.
 func TestResolveAndSetOpenAIChatGPTAccountHeaders(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
@@ -75,6 +84,9 @@ func TestResolveAndSetOpenAIChatGPTAccountHeaders(t *testing.T) {
 	})
 }
 
+// TestResolveCredentialProvider resolves an ordinary OAuth target and a shadow
+// sharing its parent ID. It checks the returned provider IDs and rejects an
+// API Key record offered as the shadow parent.
 func TestResolveCredentialProvider(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)

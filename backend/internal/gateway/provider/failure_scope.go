@@ -12,8 +12,16 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// IsContentPolicyRejection identifies OpenAI refusals tied to the request content.
-// Callers must exclude these from provider-wide error rules, even when stream events imply HTTP 502.
+// Request-content and request-shape failures need different treatment from
+// provider outages during health observation and replay. Classifiers combine
+// structured OpenAI markers with message matching and Grok content-policy
+// rules, while transient status recognition identifies errors eligible for
+// short-lived recovery policy.
+
+// IsContentPolicyRejection recognizes OpenAI content refusals from nested
+// error markers and selected message phrases. Empty bodies return false;
+// callers exclude matching failures from provider-wide error rules even when a
+// stream wrapper supplies HTTP 502.
 func IsContentPolicyRejection(responseBody []byte) bool {
 	if len(responseBody) == 0 {
 		return false
@@ -44,8 +52,10 @@ func IsContentPolicyRejection(responseBody []byte) bool {
 	return false
 }
 
-// IsRequestScopedProviderFailure identifies failures specific to one request.
-// HTTP 413 remains eligible for provider failover because an upstream proxy may impose its own size limit.
+// IsRequestScopedProviderFailure identifies content, cyber, invalid-request,
+// and context-window errors whose scope is this request. Grok targets also use
+// Grok content-policy classification; HTTP 413 alone remains eligible for
+// provider failover because a proxy may impose its own limit.
 func IsRequestScopedProviderFailure(provider *ExecutionProvider, statusCode int, responseBody []byte) bool {
 	upstreamMsg := strings.TrimSpace(upstream.ExtractErrorMessage(responseBody))
 	if hit, _, _ := upstreamopenai.DetectOpenAICyberPolicy(responseBody); hit {
@@ -60,7 +70,10 @@ func IsRequestScopedProviderFailure(provider *ExecutionProvider, statusCode int,
 	return provider != nil && provider.Record.Platform == capability.PlatformGrok && grok.IsGrokContentPolicyRejection(statusCode, responseBody)
 }
 
-// IsTransientProviderFailure classifies status codes and processing errors that may recover shortly.
+// IsTransientProviderFailure recognizes server and proxy failure statuses,
+// plus OpenAI transient-processing errors reported as HTTP 400. Other statuses
+// return false, leaving caller policy to decide how classification affects
+// cooldown or replay.
 func IsTransientProviderFailure(statusCode int, responseBody []byte) bool {
 	switch statusCode {
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
@@ -72,8 +85,11 @@ func IsTransientProviderFailure(statusCode int, responseBody []byte) bool {
 	}
 }
 
-// OpenAIWSHTTPBridgeRequestScopedError identifies errors specific to the current request.
-// Callers must neither change provider health nor replay the turn under pool retry rules for these errors.
+// OpenAIWSHTTPBridgeRequestScopedError recognizes cyber, warning,
+// client-input, context-window, and Grok content-policy failures for a bridge turn.
+// Callers exclude matches from provider health changes and pool retries
+// because replay under another connection cannot resolve that request
+// condition.
 func OpenAIWSHTTPBridgeRequestScopedError(provider *ExecutionProvider, statusCode int, message string, body []byte) bool {
 	if hit, _, _ := upstreamopenai.DetectOpenAICyberPolicy(body); hit {
 		return true

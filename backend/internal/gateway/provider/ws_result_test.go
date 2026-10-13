@@ -8,8 +8,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 )
 
-// TestWSLocalWarmupResultRoundTrip checks that converted local warmups remain
-// excluded from upstream scheduling success feedback.
+// TestWSLocalWarmupResultRoundTrip converts a local warmup through the WS and
+// forwarding result types. The warmup flag and request ID survive, and the
+// result remains excluded from scheduling success.
 func TestWSLocalWarmupResultRoundTrip(t *testing.T) {
 	original := &forward.OpenAIResult{LocalWarmup: true, RequestID: "resp_warmup", OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed"}
 	result := ForwardResultFromWS(ProjectWSResult(original))

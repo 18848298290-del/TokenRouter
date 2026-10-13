@@ -19,97 +19,186 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// MessagesCapture supplies synchronous capture inputs. Submit the CaptureMessages snapshot to asynchronous workers.
-type MessagesCapture struct {
-	Result             *forwardcore.MessagesResult
-	APIKey             *apikey.APIKey
-	User               *identity.User
-	Provider           *provider.Record
-	Subscription       *billing.UserSubscription // Optional subscription.
-	InboundEndpoint    string                    // Client request path.
-	UpstreamEndpoint   string                    // Normalized upstream path.
-	UserAgent          string                    // Request User-Agent.
-	IPAddress          string                    // Client IP address.
-	ClientSessionID    string                    // Explicit client session ID used to correlate usage rows.
-	RequestPayloadHash string                    // Semantic payload hash that detects conflicting reuse of a request ID.
-	RequestBody        []byte                    // Original body used to resolve the requested billing reasoning tier.
-	ForceCacheBilling  bool                      // Bill input tokens as cache reads after a sticky-provider switch.
-	APIKeyService      QuotaUpdater              // Optional API Key quota updater.
+// Completion can run after the HTTP request or WS turn has ended, so capture
+// resolves usage, payer, provider, and pricing evidence synchronously before a
+// worker receives it. Dedicated snapshot helpers copy the mutable fields that
+// worker normalization uses, and source writers are serialized with this
+// capture phase.
+//
+// Financial deduplication and diagnostic correlation can select different IDs.
+// Ordinary telemetry seeds feed the shared billing-key resolver, while
+// SettlementKey applies WS or video operation overrides. Related video
+// completions derive stable diagnostic records from Key and financial
+// identity; ordinary completions update the active request and its aliases.
+// Requested reasoning is extracted from original bytes before capture returns,
+// and a WS turn can retain its start time for price selection.
 
-	routing.PricingUsageFields // Group mappings resolved by the handler before forwarding.
+// MessagesCapture supplies request-owned inputs for synchronous Messages
+// completion snapshot capture.
+type MessagesCapture struct {
+	// Result, APIKey, User, and Provider are read during synchronous capture.
+	// Callers serialize source mutation until capture has copied worker-owned data;
+	// returning from capture permits submitting that snapshot to asynchronous completion.
+	//
+	// forwarding result usage evidence
+	Result *forwardcore.MessagesResult
+	// admitted request API Key
+	APIKey *apikey.APIKey
+	// completion payer user input
+	User *identity.User
+	// executed provider configuration input
+	Provider *provider.Record
+	// optional subscription pricing evidence
+	Subscription *billing.UserSubscription
+	// client request endpoint path
+	InboundEndpoint string
+	// normalized upstream endpoint path
+	UpstreamEndpoint string
+	// client request User-Agent text
+	UserAgent string
+	// observed client IP address
+	IPAddress string
+	// explicit client session correlation ID
+	ClientSessionID string
+	// semantic request payload digest
+	RequestPayloadHash string
+	// RequestBody is read synchronously for requested reasoning effort. Keep these
+	// bytes stable during capture; they are not retained by the completion snapshot.
+	RequestBody       []byte // original requested reasoning body
+	ForceCacheBilling bool   // requested cache-read billing override
+	// APIKeyService is checked for interface presence and is never invoked during
+	// capture; an interface containing a typed nil still records QuotaUpdates=true.
+	APIKeyService QuotaUpdater // supplied Key quota-update capability
+
+	// Group mappings resolved by the handler before forwarding.
+	routing.PricingUsageFields
 }
 
-// QuotaUpdater indicates whether the caller supplied quota updates; capture does not invoke it.
+// QuotaUpdater identifies a supplied API Key quota-update capability during
+// completion capture.
 type QuotaUpdater interface {
+	// UpdateQuotaUsed increments the selected API Key quota usage by cost.
 	UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cost float64) error
+	// UpdateRateLimitUsage increments the selected API Key window usage by cost.
 	UpdateRateLimitUsage(ctx context.Context, apiKeyID int64, cost float64) error
 }
 
-// OpenAICapture supplies synchronous inputs and the pricing time for an HTTP request or WS turn.
+// OpenAICapture supplies request or WS-turn observations for synchronous
+// completion capture.
 type OpenAICapture struct {
-	Result             *forwardcore.OpenAIResult
-	APIKey             *apikey.APIKey
-	User               *identity.User
-	Provider           *provider.Record
-	Subscription       *billing.UserSubscription
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string // Request User-Agent.
-	IPAddress          string // Client IP address.
-	ClientSessionID    string // Explicit client session ID used to correlate usage rows.
+	// Result, APIKey, User, and Provider are read during synchronous capture.
+	// Callers serialize source mutation until capture has copied worker-owned data;
+	// returning from capture permits submitting that snapshot to asynchronous completion.
+	//
+	// forwarding result usage evidence
+	Result *forwardcore.OpenAIResult
+	APIKey *apikey.APIKey // admitted request API Key
+	// completion payer user input
+	User *identity.User
+	// executed provider configuration input
+	Provider *provider.Record
+	// optional subscription pricing evidence
+	Subscription *billing.UserSubscription
+	// client request endpoint path
+	InboundEndpoint string
+	// normalized upstream endpoint path
+	UpstreamEndpoint string
+	// client request User-Agent text
+	UserAgent string
+	// observed client IP address
+	IPAddress string
+	// explicit client session correlation ID
+	ClientSessionID string
+	// semantic request payload digest
 	RequestPayloadHash string
-	RequestBody        []byte // Original body used to resolve the requested billing reasoning tier.
-	// PricingAt is the WS turn start; HTTP callers leave it zero to use recording time.
-	PricingAt     time.Time
-	APIKeyService QuotaUpdater
-	CyberBlocked  bool
+	// RequestBody is read synchronously for requested reasoning effort. Keep these
+	// bytes stable during capture; they are not retained by the completion snapshot.
+	RequestBody []byte // original requested reasoning body
+	// PricingAt supplies the WS turn start for time-sensitive prices; zero makes
+	// completion use its recording time, as ordinary HTTP capture callers intend.
+	PricingAt time.Time
+	// APIKeyService is checked for interface presence and is never invoked during
+	// capture; an interface containing a typed nil still records QuotaUpdates=true.
+	APIKeyService QuotaUpdater // supplied Key quota-update capability
+	CyberBlocked  bool         // request cyber failure marker
 	// NativeCompactionV2 reports whether runtime inspection identified native remote compaction v2.
-	NativeCompactionV2 bool
+	NativeCompactionV2 bool // native compaction v2 observation
 	routing.PricingUsageFields
 }
 
-// CyberCapture supplies usage inputs for cyber_policy failures during forwarding.
+// CyberCapture supplies cyber-failure usage and request identity for
+// completion recording.
 type CyberCapture struct {
-	APIKey             *apikey.APIKey
-	Provider           *provider.Record
-	Subscription       *billing.UserSubscription
-	RequestID          string
-	Model              string
-	Stream             bool
-	InputTokens        int
-	OutputTokens       int
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string
-	IPAddress          string
-	ClientSessionID    string
+	APIKey *apikey.APIKey // admitted request API Key
+	// executed provider configuration input
+	Provider *provider.Record
+	// optional subscription pricing evidence
+	Subscription *billing.UserSubscription
+	// observed upstream operation identity
+	RequestID string
+	// trimmed cyber billing model
+	Model string
+	// request streaming mode flag
+	Stream bool
+	// observed aggregate input tokens
+	InputTokens int
+	// observed aggregate output tokens
+	OutputTokens int
+	// client request endpoint path
+	InboundEndpoint string
+	// normalized upstream endpoint path
+	UpstreamEndpoint string
+	// client request User-Agent text
+	UserAgent string
+	// observed client IP address
+	IPAddress string
+	// explicit client session correlation ID
+	ClientSessionID string
+	// semantic request payload digest
 	RequestPayloadHash string
-	APIKeyService      QuotaUpdater
+	// APIKeyService is checked for interface presence and is never invoked during
+	// capture; an interface containing a typed nil still records QuotaUpdates=true.
+	APIKeyService QuotaUpdater // supplied Key quota-update capability
 
 	// NativeCompactionV2 carries the native compaction flag through failure handling.
-	NativeCompactionV2 bool
+	NativeCompactionV2 bool // native compaction v2 observation
 	routing.PricingUsageFields
 }
 
+// CompletionBillingKey delegates billing deduplication selection using context
+// request seeds and the upstream operation ID. Recognized operation prefixes
+// win; the shared resolver supplies compatibility/local namespaces or a
+// generated key when evidence is absent.
 func CompletionBillingKey(ctx context.Context, upstreamRequestID string) string {
 	return completion.ResolveBillingKey(RequestIdentity(ctx, upstreamRequestID, ""), scheduler.GenerateRequestID)
 }
 
-// StableAudioBillingRequestID builds a durable TTS/STT usage key, preferring the upstream request ID.
+// StableAudioBillingRequestID creates the stable Grok audio operation key from
+// a trimmed upstream ID. Existing audio prefixes survive, and blank input
+// generates a new ID that callers retain for subsequent completion.
 func StableAudioBillingRequestID(upstreamRequestID string) string {
 	return completion.StableAudioRequestID(upstreamRequestID, scheduler.GenerateRequestID)
 }
 
-// StableRealtimeBillingRequestID builds a durable usage key for one Realtime WebSocket session.
+// StableRealtimeBillingRequestID creates a stable Grok Realtime operation key
+// from a trimmed session ID. Existing prefixes survive, while blank input
+// generates an ID that callers retain across that session's completion work.
 func StableRealtimeBillingRequestID(sessionID string) string {
 	return completion.StableRealtimeRequestID(sessionID, scheduler.GenerateRequestID)
 }
 
+// CompletionPayloadFingerprint selects supplied semantic payload evidence or a
+// prefixed context request seed. The shared resolver can return empty when
+// only an upstream operation ID is available, keeping identity distinct from
+// payload evidence.
 func CompletionPayloadFingerprint(ctx context.Context, requestPayloadHash string) string {
 	return completion.PayloadFingerprint(RequestIdentity(ctx, "", requestPayloadHash))
 }
 
-// CaptureMessages snapshots usage and payer data before completion submission.
+// CaptureMessages extracts Messages result, payer, Key, provider, and pricing
+// fields before returning a worker snapshot. Nil input returns nil; callers
+// serialize capture with source mutations, and supplied quota capability is
+// recorded by interface presence without invocation.
 func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input {
 	if in == nil {
 		return nil
@@ -138,7 +227,10 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 	return completion.Snapshot(out)
 }
 
-// CaptureOpenAI captures the WS turn time and independent billing-model chain.
+// CaptureOpenAI extracts result, payer, pricing time, request reasoning, and
+// provider fields before returning a completion snapshot. Nil input returns
+// nil; native usage can enable context force-cache billing, and WS PricingAt
+// remains the supplied turn time.
 func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 	if in == nil {
 		return nil
@@ -170,6 +262,10 @@ func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 	return completion.Snapshot(out)
 }
 
+// RequestIdentity captures context request seeds plus the supplied upstream ID
+// and payload digest. Nil context leaves context seeds empty;
+// telemetry.ClientRequestID and RequestID currently use the same compatibility
+// context key, while upstream/payload stay separate.
 func RequestIdentity(ctx context.Context, upstream, payload string) completion.RequestIdentity {
 	out := completion.RequestIdentity{Upstream: upstream, PayloadHash: payload}
 	if ctx != nil {
@@ -179,7 +275,10 @@ func RequestIdentity(ctx context.Context, upstream, payload string) completion.R
 	return out
 }
 
-// CaptureCyber copies policy-event and identity data for asynchronous recording.
+// CaptureCyber builds a cyber-blocked completion input when Key, Key.User,
+// provider, and trimmed model are present. Missing requirements return nil;
+// the generated forwarding result carries observed tokens and uses the Key
+// user as the payer input.
 func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 	if in.APIKey == nil || in.APIKey.User == nil || in.Provider == nil || strings.TrimSpace(in.Model) == "" {
 		return nil
@@ -206,7 +305,9 @@ func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 		IPAddress:          in.IPAddress,
 		ClientSessionID:    in.ClientSessionID,
 		RequestPayloadHash: in.RequestPayloadHash,
-		APIKeyService:      in.APIKeyService,
+		// APIKeyService is checked for interface presence and is never invoked during
+		// capture; an interface containing a typed nil still records QuotaUpdates=true.
+		APIKeyService: in.APIKeyService,
 
 		PricingUsageFields: in.PricingUsageFields,
 		CyberBlocked:       true,
@@ -214,11 +315,23 @@ func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 	})
 }
 
-// captureRequestIdentity separates diagnostic identifiers from billing deduplication keys before the request ends.
+// captureRequestIdentity assigns financial and diagnostic identities before
+// completion outlives the request. It first resolves BillingKey and applies
+// SettlementKey overrides, then retains the telemetry request ID unless a
+// missing ID or video completion needs a stable related record.
+//
+// Main-request capture updates model/provider observations and aliases,
+// limiting appended attempts to nonchild requests below the cap. A distinct
+// derived ID receives a completed related record with actor, Key, team,
+// provider, and timing evidence. out.Result must be present. Existing
+// client/local context seeds can coincide, while task or WS settlement
+// identity remains separate from the diagnostic row.
 func captureRequestIdentity(ctx context.Context, out *completion.Input, upstreamID string) {
 	out.BillingKey = CompletionBillingKey(ctx, upstreamID)
 	out.BillingKey = out.SettlementKey()
 	out.RequestID = telemetry.RequestIDValue(ctx)
+	// Video polling and missing diagnostic IDs derive a stable related ID from
+	// Key identity and settlement key, so repeated financial operations correlate to one record.
 	if out.RequestID == "" || out.Result.VideoCount > 0 {
 		var keyID int64
 		if out.APIKey != nil {
@@ -237,6 +350,8 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 				if out.Result.UpstreamRequestID != nil {
 					attempt.RequestID = *out.Result.UpstreamRequestID
 				}
+				// Child completion already belongs to its own request relationship. Append
+				// main-request attempts only below the cap, retaining aliases even when history is full.
 				if !childRequest && len(record.Attempts) < 256 {
 					record.Attempts = append(record.Attempts, attempt)
 				}
@@ -251,8 +366,12 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 			telemetry.AddRequestAlias(ctx, "upstream", *out.Result.UpstreamRequestID)
 		}
 	}
+	// A derived diagnostic ID needs its own completed record rather than rewriting
+	// the active request record; carry settlement aliases and captured actor/provider identity.
 	if out.RequestID != telemetry.RequestIDValue(ctx) {
 		record := telemetry.RequestRecord{RequestID: out.RequestID, State: "completed", Model: out.Result.Model, StartedAt: out.PricingAt}
+		// Without a turn pricing timestamp, infer start from the observed duration
+		// at capture time so the related completion record still has a useful request window.
 		if record.StartedAt.IsZero() {
 			record.StartedAt = time.Now().Add(-out.Result.Duration)
 		}

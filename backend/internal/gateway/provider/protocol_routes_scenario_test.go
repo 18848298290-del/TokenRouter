@@ -1,7 +1,5 @@
 package provider
 
-// These scenarios cover protocol selection, image policy, and independent transports across route planning and provider eligibility.
-
 import (
 	"context"
 	"testing"
@@ -19,6 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestProtocolImagePolicyAndBatchBinding normalizes a group's image policy and
+// resolves API Key and service-account batch protocols. Independent Responses
+// image policy remains effective, and batch routing chooses the credential
+// type's upstream protocol.
 func TestProtocolImagePolicyAndBatchBinding(t *testing.T) {
 	group := &routing.Group{AllowedProtocols: []protocolcore.ProtocolID{}, ResponsesImagePolicy: "enabled"}
 	require.NoError(t, routing.NormalizeGroupProtocolPolicy(group, nil))
@@ -29,7 +31,8 @@ func TestProtocolImagePolicyAndBatchBinding(t *testing.T) {
 	group.ResponsesImagePolicy = "block"
 	require.Equal(t, providercore.CodexImagePolicyStrip, GroupResponsesExplicitToolPolicy(group, providercore.CodexImagePolicyAllow))
 	for _, tc := range []struct {
-		kind   string
+		kind string // provider authentication type
+		// expected upstream batch protocol
 		target protocolcore.ProtocolID
 	}{{capability.ProviderTypeAPIKey, protocolcore.ProtocolGeminiBatch}, {capability.ProviderTypeServiceAccount, protocolcore.ProtocolVertexBatch}} {
 		a := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformGemini, Type: tc.kind, Credentials: map[string]any{providercore.UpstreamProtocolsKey: []protocolcore.ProtocolID{tc.target}}}}
@@ -39,6 +42,10 @@ func TestProtocolImagePolicyAndBatchBinding(t *testing.T) {
 	}
 }
 
+// TestProtocolAuxiliaryModelURLAndIndependentTransports normalizes a relay
+// base URL and checks records advertising WS or Compact alone. Those routes
+// satisfy Responses capability independently of HTTP text support, while image
+// edits retain creative operations despite a Responses image block.
 func TestProtocolAuxiliaryModelURLAndIndependentTransports(t *testing.T) {
 	provider := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformKimi, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"api_protocol": "anthropic", "base_url": "https://relay.example/custom/anthropic", "api_key": "test"}}}
 	require.NoError(t, NormalizeExecutionProtocols(provider))

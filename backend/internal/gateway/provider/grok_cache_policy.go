@@ -8,18 +8,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Known Free Grok OAuth targets can route function tools through the upstream
+// cacheable mixed-tool path. The provider override accepts booleans, with
+// invalid configured values disabling client-only caching; tier classification
+// includes inferred Free evidence and differs from the explicit-tier soft
+// quota gate.
+
+// grokClientToolCacheOptInExtraKey names the provider Extra override
+// controlling client-only tool cache routing for known Free OAuth targets.
 const grokClientToolCacheOptInExtraKey = "grok_client_tool_cache_enabled"
 
-// ApplyGrokFreeMessagesFunctionToolCacheRoute enables the cacheable mixed-tool route
-// for known Free providers. Client-only tools use it by default; providers can opt out
-// when adding native search tools would change the intended behavior (#4486).
+// ApplyGrokFreeMessagesFunctionToolCacheRoute prepares the Free-provider
+// tool-cache route with function-search support enabled. Client-only tools
+// follow the provider cache policy, while the upstream helper receives both
+// forwarded and original-intent bodies to decide applicability.
 func ApplyGrokFreeMessagesFunctionToolCacheRoute(body, intentSourceBody []byte, provider *ExecutionProvider, cacheIdentity string) ([]byte, error) {
 	allowPureClientTools, _ := GrokClientToolCacheProviderPolicy(provider)
 	return ApplyGrokFreeToolCacheRoute(body, intentSourceBody, provider, cacheIdentity, allowPureClientTools, true)
 }
 
-// GrokClientToolCacheProviderPolicy accepts JSON booleans and defaults to enabled
-// for known Free OAuth providers. Paid, API Key, and unknown providers are disabled.
+// GrokClientToolCacheProviderPolicy returns client-tool cache enablement and
+// whether a recognized Free provider configured an override. An absent
+// override enables caching; a non-boolean override returns disabled with
+// explicit=true, and other providers return false for both results.
 func GrokClientToolCacheProviderPolicy(provider *ExecutionProvider) (enabled, explicit bool) {
 	if !IsKnownGrokFreeProvider(provider) {
 		return false, false
@@ -38,6 +49,10 @@ func GrokClientToolCacheProviderPolicy(provider *ExecutionProvider) (enabled, ex
 	return enabled, true
 }
 
+// ApplyGrokFreeToolCacheRoute delegates cache-route encoding with Free-tier
+// eligibility and the supplied tool permissions. Blank cacheIdentity returns
+// body unchanged; the upstream helper decides whether forwarded and
+// original-intent tool sets qualify.
 func ApplyGrokFreeToolCacheRoute(body, intentSourceBody []byte, provider *ExecutionProvider, cacheIdentity string, allowPureClientTools, allowFunctionSearch bool) ([]byte, error) {
 	if strings.TrimSpace(cacheIdentity) == "" {
 		return body, nil
@@ -45,8 +60,9 @@ func ApplyGrokFreeToolCacheRoute(body, intentSourceBody []byte, provider *Execut
 	return grok.ApplyGrokFreeToolCacheRoute(body, intentSourceBody, IsKnownGrokFreeProvider(provider), cacheIdentity, allowPureClientTools, allowFunctionSearch)
 }
 
-// IsKnownGrokFreeProvider identifies Free providers for cache routing and media blocking.
-// Its inferred-tier matching is broader than the soft gate that requires an explicit Free tier.
+// IsKnownGrokFreeProvider applies provider tier rules to identify Free OAuth
+// targets for cache and media policy. Inferred Free evidence participates,
+// while the rolling soft quota gate uses the separate explicit-tier predicate.
 func IsKnownGrokFreeProvider(provider *ExecutionProvider) bool {
 	return providercore.KnownGrokFreeProvider(ExecutionRecord(provider), provideradapter.GrokTierRules())
 }

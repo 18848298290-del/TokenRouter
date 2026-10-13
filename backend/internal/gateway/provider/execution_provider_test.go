@@ -9,7 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestExecutionProviderPreservesNativeGraphAndIsolation checks root references and credential-map isolation after copying.
+// TestExecutionProviderPreservesNativeGraphAndIsolation copies a record whose
+// group membership points back to that record. Root references follow the
+// copied record, credential-map mutations stay isolated, and execution target
+// JSON contains no record fields.
 func TestExecutionProviderPreservesNativeGraphAndIsolation(t *testing.T) {
 	source := &provider.Record{ID: 1, Credentials: map[string]any{"access_token": "original"}}
 	source.ProviderGroups = []provider.GroupMembership{{ProviderID: 1, GroupID: 3, Provider: source}}
@@ -26,7 +29,9 @@ func TestExecutionProviderPreservesNativeGraphAndIsolation(t *testing.T) {
 	require.JSONEq(t, `{}`, string(payload), "执行凭据与路线不能作为持久或公开载荷")
 }
 
-// TestExecutionProviderValueCopyAndBoundReader checks per-attempt field replacement and visibility through a previously bound reader.
+// TestExecutionProviderValueCopyAndBoundReader replaces credentials on an
+// attempt value copied from another target. A previously bound reader observes
+// ApplyExecutionRecord updates, and nil conversion entry points return nil.
 func TestExecutionProviderValueCopyAndBoundReader(t *testing.T) {
 	shared := NewExecutionProvider(&provider.Record{ID: 1, Credentials: map[string]any{"access_token": "shared"}})
 	attempt := *shared

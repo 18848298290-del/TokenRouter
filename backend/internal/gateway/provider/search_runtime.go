@@ -12,11 +12,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
-// searchSource reads the registry owned by the configuration runtime.
-type searchSource struct{ registry *search.Registry }
+// Search-tool emulation reads the current search manager from the shared
+// configuration registry and group policy from routing. Missing runtime or
+// group-policy dependencies remain optional, so the emulator can apply its own
+// disable/default decisions without constructing another manager or settings
+// cache.
 
-type searchGroupPolicy struct{ groupPolicies *routing.PricingConfigService }
+// searchSource adapts the configuration-owned registry to synchronous search
+// manager reads.
+type searchSource struct {
+	registry *search.Registry /* shared search manager registry */
+}
 
+// searchGroupPolicy adapts routing group policy to search-emulation enablement
+// checks.
+type searchGroupPolicy struct {
+	// group search policy reader
+	groupPolicies *routing.PricingConfigService
+}
+
+// Current returns the registry's currently published manager as the search
+// implementation. A nil registry or an empty publication returns nil, allowing
+// the emulator to treat search execution as unavailable.
 func (s searchSource) Current() searchtools.Searcher {
 	if s.registry == nil {
 		return nil
@@ -28,6 +45,9 @@ func (s searchSource) Current() searchtools.Searcher {
 	return manager
 }
 
+// Enabled reads group routing policy and asks whether search emulation is
+// enabled for platform. Missing policy returns false, and lookup errors
+// propagate; the bound group-policy service must be configured.
 func (p searchGroupPolicy) Enabled(ctx context.Context, groupID int64, platform string) (bool, error) {
 	policy, err := p.groupPolicies.GetGroupPolicy(ctx, groupID)
 	if err != nil || policy == nil {
@@ -36,7 +56,10 @@ func (p searchGroupPolicy) Enabled(ctx context.Context, groupID int64, platform 
 	return policy.IsWebSearchEmulationEnabled(platform), nil
 }
 
-// NewSearchTools binds group policy, search settings, and the manager registry for synchronous search.
+// NewSearchTools binds search runtime, registry, and optional group policy to
+// a synchronous emulator. Nil dependencies remain unset, while time.Now, UUID
+// generation, and observeSearch provide its clock, request IDs, and event
+// reporting.
 func NewSearchTools(runtime *search.ConfigService, groupPolicies *routing.PricingConfigService) *searchtools.Emulator {
 	var registry *search.Registry
 	var settings searchtools.Settings
@@ -51,7 +74,9 @@ func NewSearchTools(runtime *search.ConfigService, groupPolicies *routing.Pricin
 	return searchtools.NewEmulator(searchSource{registry}, settings, policy, time.Now, func() string { return uuid.New().String() }, observeSearch)
 }
 
-// SearchProviderMode reads the provider's search mode and logs legacy configuration.
+// SearchProviderMode resolves a provider's search-emulation mode and logs
+// recognized legacy boolean input. Mode resolution owns nil/default behavior;
+// the log includes provider identity when legacy configuration was observed.
 func SearchProviderMode(value *searchtools.ProviderPolicy) string {
 	selection := searchtools.ProviderMode(value)
 	if selection.LegacyBool != nil {
@@ -60,6 +85,10 @@ func SearchProviderMode(value *searchtools.ProviderPolicy) string {
 	return selection.Mode
 }
 
+// observeSearch logs execution, completion, search failures, and output-write
+// failures for emulation. Other event kinds are ignored, leaving the
+// emulator's event producers to choose which transitions have gateway
+// diagnostics.
 func observeSearch(e searchtools.Event) {
 	switch e.Kind {
 	case "executing":

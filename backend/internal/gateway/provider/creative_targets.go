@@ -20,22 +20,46 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// CreativeTargets holds task dependencies and binds an execution target after each provider selection.
+// Creative image tasks need downloaded image bytes even when ordinary API
+// response backfill is disabled. Target binding supplies separate public-image
+// download and authenticated generation operations, using the selected
+// provider's proxy, headers, TLS, and credentials when each callback executes.
+// Gemini options also capture the requested model and current project ID when
+// constructed.
+
+// CreativeTargets binds app-owned request, credential, transport, and activity
+// dependencies to creative execution.
 type CreativeTargets struct {
+	// Requests supplies endpoint validation and generation transport policy. Configure
+	// it before invoking target callbacks that resolve URLs, downloads, or TLS profiles.
 	Requests interface {
+		// ImagesURL resolves the selected provider's image endpoint for generation requests.
 		ImagesURL(*ExecutionProvider, string) (string, error)
+		// ValidateBaseURL applies outbound URL policy to generation and public image download targets.
 		ValidateBaseURL(string) (string, error)
+		// TLSProfile resolves the selected provider's TLS profile for authenticated image generation.
 		TLSProfile(*ExecutionProvider, ...egress.TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile
 	}
-	Credentials  *providercore.OpenAIExecutionCredentials
-	Identity     *ExecutionAgentIdentity
-	Transport    httpclient.UpstreamTransport
-	Routes       GrokRoutes
+	// OpenAI and Grok credential source
+	Credentials *providercore.OpenAIExecutionCredentials
+	// Agent Identity authentication adapter
+	Identity *ExecutionAgentIdentity
+	// shared upstream request transport
+	Transport httpclient.UpstreamTransport
+	// Grok media endpoint policy
+	Routes GrokRoutes
+	// optional Gemini access token source
 	GeminiTokens *providercore.GeminiTokenSource
-	Enter        func() (func(), error)
+	// creative request activity admission callback
+	Enter func() (func(), error)
 }
 
-// ForProvider binds execution functions that read credentials and send requests when called.
+// ForProvider builds OpenAI, Grok, and Gemini callbacks for the selected
+// execution target. A nil receiver returns an empty target; other calls
+// require a nonnil provider and dependencies for the invoked platform
+// operations. Callers keep the target stable while callbacks read credentials
+// and transport settings. Public image download uses the provider proxy and
+// isolation parameters separately from generation authentication.
 func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprovider.Target {
 	target := &creativeprovider.Target{}
 	if s == nil {
@@ -45,7 +69,8 @@ func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprov
 		value, _, err := s.Credentials.Resolve(ctx, ExecutionRecord(provider))
 		return value, err
 	}
-	// Creative requires image bytes, so URL downloads are independent of optional API image backfill.
+	// Creative result storage needs bytes even when API URL backfill is disabled.
+	// Bind a public-image downloader through the selected proxy, separately from generation authentication.
 	imageDownload := openai.ImageBackfillOptions{
 		ValidateURL: func(raw string) (string, error) {
 			return s.Requests.ValidateBaseURL(raw)
@@ -120,7 +145,10 @@ func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprov
 	return target
 }
 
-// validateGeminiBaseURL rejects invalid or empty target addresses.
+// validateGeminiBaseURL applies the configured URL validator and requires a
+// nonblank validated result. The Requests dependency must be configured;
+// validator errors propagate, and an empty successful result becomes a local
+// error.
 func (s *CreativeTargets) validateGeminiBaseURL(raw string) (string, error) {
 	validated, err := s.Requests.ValidateBaseURL(raw)
 	if err != nil {
@@ -132,6 +160,9 @@ func (s *CreativeTargets) validateGeminiBaseURL(raw string) (string, error) {
 	return validated, nil
 }
 
+// creativeTargetProxyURL returns the hydrated proxy URL for a target with both
+// proxy ID and record. Nil targets or incomplete proxy hydration select an
+// empty transport proxy string.
 func creativeTargetProxyURL(value *ExecutionProvider) string {
 	if value == nil || value.Record.ProxyID == nil || value.Record.Proxy == nil {
 		return ""

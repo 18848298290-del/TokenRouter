@@ -10,6 +10,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Previous-response recovery needs to distinguish an unavailable continuation
+// ID from an unsupported continuation parameter. Compatible API Key requests
+// enable continuation only for selected model identities and saved support
+// policy; classifiers then recognize upstream text and structured error forms
+// before a caller decides how to retry.
+
+// CompatContinuationEnabled permits automatic continuation for API Key targets
+// whose saved extras enable it and whose model qualifies for compatibility
+// cache keys. Nil targets, other credential types, or unsupported model
+// identities return false.
 func CompatContinuationEnabled(provider *ExecutionProvider, model string) bool {
 	if provider == nil || provider.Record.Type != capability.ProviderTypeAPIKey {
 		return false
@@ -20,6 +30,10 @@ func CompatContinuationEnabled(provider *ExecutionProvider, model string) bool {
 	return ShouldAutoInjectPromptCacheKeyForCompat(model)
 }
 
+// CompatPreviousResponseNotFound recognizes missing or unavailable
+// previous-response evidence for HTTP 400 and 404. It checks supplied text,
+// raw body, and nested error code/message, including unsupported-parameter
+// compatibility markers.
 func CompatPreviousResponseNotFound(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
 		return false
@@ -38,6 +52,9 @@ func CompatPreviousResponseNotFound(statusCode int, upstreamMsg string, upstream
 		check(gjson.GetBytes(upstreamBody, "error.message").String())
 }
 
+// CompatPreviousResponseUnsupported recognizes HTTP 400 text naming
+// previous_response_id alongside an unsupported-protocol marker. It checks
+// message, raw body, and nested errors; other status codes return false.
 func CompatPreviousResponseUnsupported(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if statusCode != http.StatusBadRequest {
 		return false

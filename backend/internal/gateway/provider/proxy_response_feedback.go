@@ -13,6 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// OpenAI stream disconnects can identify a shared proxy fault, while client
+// cancellation and deadline errors provide different evidence. Proxy feedback
+// records qualifying failures in the circuit and logs a newly activated
+// quarantine; successful streams clear that proxy's retained failure state.
+
+// openAIProxyStreamCircuitProxyID returns a positive proxy ID for an OpenAI
+// execution target. Missing targets, other platforms, absent proxy IDs, and
+// nonpositive IDs return false so callers skip circuit feedback.
 func openAIProxyStreamCircuitProxyID(provider *ExecutionProvider) (int64, bool) {
 	if provider == nil || provider.Record.Platform != capability.PlatformOpenAI || provider.Record.ProxyID == nil || *provider.Record.ProxyID <= 0 {
 		return 0, false
@@ -20,6 +28,10 @@ func openAIProxyStreamCircuitProxyID(provider *ExecutionProvider) (int64, bool) 
 	return *provider.Record.ProxyID, true
 }
 
+// RecordProxyStreamDisconnect records a qualifying OpenAI proxy failure and
+// logs newly activated quarantine. Nil errors and context cancellation or
+// deadline errors are ignored; the circuit handles its own nil/disabled cases
+// and shared state.
 func RecordProxyStreamDisconnect(circuit *egress.ProxyStreamCircuit, provider *ExecutionProvider, streamErr error, upstreamRequestID string) {
 	proxyID, ok := openAIProxyStreamCircuitProxyID(provider)
 	if !ok || streamErr == nil || errors.Is(streamErr, context.Canceled) || errors.Is(streamErr, context.DeadlineExceeded) {
@@ -40,6 +52,9 @@ func RecordProxyStreamDisconnect(circuit *egress.ProxyStreamCircuit, provider *E
 	)
 }
 
+// ClearProxyStreamDisconnect clears retained failures for an OpenAI target's
+// positive proxy ID after success. Targets without that identity and nil
+// circuits are ignored, letting output callers share one feedback path.
 func ClearProxyStreamDisconnect(circuit *egress.ProxyStreamCircuit, provider *ExecutionProvider) {
 	proxyID, ok := openAIProxyStreamCircuitProxyID(provider)
 	if !ok {

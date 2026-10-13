@@ -16,6 +16,9 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// TestClaudeAPIKeyFastModeWireEncoding forces Fast on for a priced Anthropic
+// API Key model, then forces it off. Speed and Fast beta token are added
+// together, removed together, and an unrelated beta token survives removal.
 func TestClaudeAPIKeyFastModeWireEncoding(t *testing.T) {
 	resolver := fastModeTestResolver()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeAPIKey}}
@@ -37,7 +40,10 @@ func TestClaudeAPIKeyFastModeWireEncoding(t *testing.T) {
 	require.True(t, claude.ContainsBetaToken(claude.GetHeaderRaw(headers, "anthropic-beta"), "context-management-2025-06-27"))
 }
 
-// TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType checks forced removal across credential types with no price resolver.
+// TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType uses
+// force-off with no price resolver on Anthropic API Key, OAuth, and
+// setup-token targets. Every tested type loses Fast signaling while an
+// unrelated beta remains.
 func TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType(t *testing.T) {
 	ctx := fastModeTestContext(apikey.APIKeyFastModePolicyForceOff, "claude-opus-4-8")
 
@@ -62,6 +68,9 @@ func TestClaudeAPIKeyFastModeForceOffIgnoresCapabilityAndCredentialType(t *testi
 	}
 }
 
+// TestAPIKeyFastModeIgnoresUnsupportedProviderAdapters uses Key force-on for a
+// Grok target in OpenAI tier policy and a Bedrock target in Anthropic policy.
+// Neither gains the unsupported forced wire fields.
 func TestAPIKeyFastModeIgnoresUnsupportedProviderAdapters(t *testing.T) {
 	openAISvc := newFastPolicyContract(t, tierpolicy.Default())
 	openAISvc.Prices = fastModeTestResolver()
