@@ -24,9 +24,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// identityAdminKeys converts Key summaries for identity administration with pagination and sorting.
-type identityAdminKeys struct{ *keypostgres.KeyStore }
+// User administration needs Key display data and live concurrency alongside
+// identity mutations. The application binds Key and user transaction
+// participants to the shared Ent client, and the HTTP adapter converts Key
+// group display and concurrency loads for administrator responses.
 
+// identityAdminKeys adapts stored Key pages for identity administration
+// responses.
+type identityAdminKeys struct {
+	*keypostgres.KeyStore // shared Key storage
+}
+
+// List returns Key summaries using the requested page, size, and ordering. Nil
+// Key results stay nil, absent pagination yields total zero, and GroupID
+// references are passed from the stored Key rows.
 func (p identityAdminKeys) List(ctx context.Context, id int64, page, size int, sortBy, order string) ([]identity.AdminKeySummary, int64, error) {
 	keys, pagination, e := p.ListByUserID(ctx, id, pagination.PaginationParams{Page: page, PageSize: size, SortBy: sortBy, SortOrder: order}, apikey.APIKeyListFilters{})
 	if e != nil {
@@ -45,19 +56,28 @@ func (p identityAdminKeys) List(ctx context.Context, id int64, page, size int, s
 	return out, pagination.Total, nil
 }
 
-// provideIdentityAdmin binds transaction participants and post-commit cache invalidation dependencies.
+// provideIdentityAdmin binds user administration to shared entitlement, cache,
+// and Key services. Key lifecycle writes receive the selected Ent transaction,
+// and tasks supplies tracked post-mutation background work for application
+// shutdown.
 func provideIdentityAdmin(client *dbent.Client, users *identitypostgres.UserStore, keys *keypostgres.KeyStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, rpm scheduler.UserRPMCache, settings *identityAuthSettings, subs identity.DefaultSubscriptionAssigner, balances billing.BalanceAdjuster, records *billing.RedeemAdmin, invalidator apikey.APIKeyAuthCacheInvalidator, cache *billing.Eligibility, affiliates *promotion.AffiliateService, tasks *lifecycle.Tasks) *identity.UserAdmin {
 	observe := identity.Observer{Log: logging.LegacyPrintf}
 	transactions := &identitypostgres.AdminMutations{Client: client, Users: users, Keys: keys, KeysInTx: func(tx *dbent.Tx) identity.AdminKeyParticipant { return keys.LifecycleInTx(tx) }, Observer: observe}
 	return identity.NewUserAdmin(identity.AdminDependencies{Now: time.Now, Users: users, Groups: identityAdminGroups{Repository: groups}, Keys: identityAdminKeys{keys}, Rates: rates, RPM: rpm, Settings: settings, Subscriptions: subs, Balances: balances, Records: records, Invalidator: invalidator, BalanceCache: cache, Affiliates: affiliates, Transactions: transactions, Observer: observe, Background: tasks.Go})
 }
 
+// provideKeyAdmin binds Key group mutation and user access participants to
+// shared stores. UsersInTx creates the access writer from the selected Ent
+// transaction, while invalidator and billing cache supply later administration
+// effects.
 func provideKeyAdmin(client *dbent.Client, keys *keypostgres.KeyStore, users *identitypostgres.UserStore, groups *routingpostgres.GroupStore, invalidator apikey.APIKeyAuthCacheInvalidator, cache *billing.Eligibility) *apikey.Admin {
 	mutations := &keypostgres.AdminGroupMutations{Client: client, Keys: keys, Users: users, UsersInTx: func(tx *dbent.Tx) keypostgres.GroupAccessWriter { return identitypostgres.GroupAccessInTx(tx) }, Observer: logging.LegacyPrintf}
 	return &apikey.Admin{Keys: keys, Users: users, Groups: keyGroups{Repository: groups}, Mutations: mutations, Invalidator: invalidator, RateLimits: cache}
 }
 
-// provideIdentityAdminHTTP binds Key display and live concurrency reads; identity owns user administration rules.
+// provideIdentityAdminHTTP supplies Key DTO reads, concurrency loads, and
+// step-up enforcement to user HTTP. The load callback returns available counts
+// alongside the scheduler error, omitting nil load entries from its result map.
 func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, concurrency *scheduler.ConcurrencyService, totp *identity.TotpService, users *identity.UserService, settings *identity.RuntimeSettings) *identityhttp.AdminUserHandler[keydto.APIKey[routingdto.Group]] {
 	listKeys := func(ctx context.Context, id int64, page, size int, sortBy, order string) ([]keydto.APIKey[routingdto.Group], int64, error) {
 		rows, total, err := keys.GetUserAPIKeys(ctx, id, page, size, sortBy, order)

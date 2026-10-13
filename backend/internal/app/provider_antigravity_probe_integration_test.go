@@ -21,28 +21,43 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// These constructors combine platform probing with application activity tracking in integration tests.
+// Antigravity test requests use persisted provider credentials and the retry
+// component shared with forwarding. A recording transport exposes bearer
+// headers, model-specific probe paths, response closure, and typed SSE event
+// order, followed by activity shutdown that rejects another probe.
+
+// The integration constructor aliases use production retry, probe, and activity
+// assembly to exercise their shared dependencies.
 var (
 	NewAntigravityRetryForTest = provideAntigravityRetry
 	NewAntigravityProbeForTest = provideAntigravityProbe
 	NewGatewayActivityForTest  = provideGatewayRequestActivity
 )
 
+// antigravityProbeBody records response closure after the probe consumes its
+// reader.
 type antigravityProbeBody struct {
-	io.Reader
-	closed bool
+	io.Reader      // supplied response stream
+	closed    bool // recorded body closure
 }
 
-// antigravityProbeTransport supplies local response streams; database reads, token lookup, retry, and SSE
-// handling use production components.
+// antigravityProbeTransport captures probe requests and supplies local
+// Antigravity response streams.
 type antigravityProbeTransport struct {
-	requests  []*http.Request
-	bodies    []string
-	responses []*antigravityProbeBody
+	// requests, bodies, and responses are appended together after each successful
+	// body read. Sequential subtests inspect matching indexes after Test returns, retaining request pointers and response closure state.
+	requests  []*http.Request         // captured upstream requests
+	bodies    []string                // captured request bodies
+	responses []*antigravityProbeBody // returned response readers
 }
 
+// Close records response-body cleanup and returns success to the probe caller.
 func (b *antigravityProbeBody) Close() error { b.closed = true; return nil }
 
+// Do reads and records the request body before returning a fixed Antigravity
+// stream. It returns body-read errors immediately, retains request pointers for
+// assertions, and gives the caller an owned response body with closure
+// recording.
 func (s *antigravityProbeTransport) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -55,10 +70,15 @@ func (s *antigravityProbeTransport) Do(req *http.Request, _ string, _ int64, _ i
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: response}, nil
 }
 
+// DoWithTLS delegates the same probe exchange while ignoring the TLS profile.
 func (s *antigravityProbeTransport) DoWithTLS(req *http.Request, proxy string, id int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return s.Do(req, proxy, id, concurrency)
 }
 
+// TestNativeAntigravityProbeAssembly runs Claude and Gemini probes using stored
+// Antigravity credentials and application constructors. It checks prepared
+// headers and body, response closure, safe ordered SSE events, and rejection
+// after shared activity stops.
 func TestNativeAntigravityProbeAssembly(t *testing.T) {
 	t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "prod")
 	f := newDatabaseFixture(t)
@@ -102,6 +122,8 @@ func TestNativeAntigravityProbeAssembly(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	// Stop registered activity after the probes complete, then invoke the same
+	// test service again to check that its existing barrier rejects new upstream execution.
 	require.NoError(t, manager.Stop(ctx))
 	before := len(transport.requests)
 	recorder := httptest.NewRecorder()

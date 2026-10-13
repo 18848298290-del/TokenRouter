@@ -19,13 +19,26 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-type teamIdentityUsers struct{ Users identity.UserRepository }
+// Team persistence shares SQL participants for membership, Key lifecycle, and
+// member usage reporting. Identity users are narrowed to invitation/ownership
+// snapshots, and the service receives notification delivery plus optional
+// published Key invalidation and display settings from the application graph.
 
-// provideTeamRepository shares the SQL pool across membership, key lifecycle, and member usage operations.
+// teamIdentityUsers narrows identity records for team ownership and invitation
+// consumers.
+type teamIdentityUsers struct {
+	Users identity.UserRepository // shared identity reads
+}
+
+// provideTeamRepository joins team persistence, Key participants, usage
+// counters, and calendar reporting.
 func provideTeamRepository(db *sql.DB, calendar timezone.Calendar, reports *usagepostgres.Store) team.TeamRepository {
 	return teampostgres.NewTeamRepositoryWithReports(db, keypostgres.NewTeamKeys(db), billingpostgres.NewMemberUsageStore(db, &calendar), calendar, reports)
 }
 
+// GetByID returns identity fields needed by team operations for a stored user.
+// Absent users remain nil, and available snapshots retain the repository error
+// with ID, email, and username.
 func (p teamIdentityUsers) GetByID(ctx context.Context, id int64) (*team.UserSnapshot, error) {
 	u, e := p.Users.GetByID(ctx, id)
 	if u == nil {
@@ -34,6 +47,9 @@ func (p teamIdentityUsers) GetByID(ctx context.Context, id int64) (*team.UserSna
 	return &team.UserSnapshot{ID: u.ID, Email: u.Email, Username: u.Username}, e
 }
 
+// GetByEmail returns team identity data from the supplied email lookup. Missing
+// users remain nil, and available snapshots retain the identity repository's
+// error for invitation or ownership handling.
 func (p teamIdentityUsers) GetByEmail(ctx context.Context, email string) (*team.UserSnapshot, error) {
 	u, e := p.Users.GetByEmail(ctx, email)
 	if u == nil {
@@ -42,6 +58,10 @@ func (p teamIdentityUsers) GetByEmail(ctx context.Context, email string) (*team.
 	return &team.UserSnapshot{ID: u.ID, Email: u.Email, Username: u.Username}, e
 }
 
+// provideTeam constructs membership and invitation rules with shared storage
+// and mail delivery. Optional cfg supplies deployment defaults, display
+// settings remain an optional interface, and Key invalidation is exposed only
+// when a cache is supplied.
 func provideTeam(repo team.TeamRepository, users *identitypostgres.UserStore, email *notification.Mailer, cache apikey.APIKeyCache, limiter team.TeamInvitationLimiter, settings *site.DisplaySettings, cfg *config.Config) *team.TeamService {
 	var options *team.Options
 	if cfg != nil {

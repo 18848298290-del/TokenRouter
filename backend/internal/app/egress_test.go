@@ -11,7 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestNewProxyExitInfoProberUsesConfiguredTargets checks that probes use the configured target URL.
+// Proxy exit probes can query configured URLs even when no proxy address is
+// supplied. A local server returns one IP result, and the test checks both the
+// parsed address and the number of upstream calls.
+
+// TestNewProxyExitInfoProberUsesConfiguredTargets configures a local ipify-
+// style probe endpoint and supplies an empty proxy. It checks the parsed exit
+// IP and confirms exactly one call reaches the configured server.
 func TestNewProxyExitInfoProberUsesConfiguredTargets(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -13,18 +13,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// NewModelAvailabilityForTest constructs model diagnostics for integration tests.
+// Model diagnostics read persistent configured providers even while their
+// transient health windows prevent execution. A grouped, allowlisted provider
+// remains visible for its configured model, while a missing model, absent
+// group, or administratively disabled provider produces the tested diagnostic
+// distinctions.
+
+// NewModelAvailabilityForTest uses production diagnostic assembly with the
+// persistent provider store in this scenario.
 var NewModelAvailabilityForTest = provideGatewayModelAvailability
 
-// TestModelAvailabilityUsesPersistentProviderStore checks that configured models remain discoverable during
-// transient cooldowns.
+// TestModelAvailabilityUsesPersistentProviderStore persists a grouped provider
+// with active rate, overload, and pause windows. It checks configured-model
+// support, missing-model diagnosis, explicit-group requirements, and exclusion
+// after the provider is administratively disabled.
 func TestModelAvailabilityUsesPersistentProviderStore(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
 	group, err := f.client.Group.Create().SetName("test-diagnostic-group").SetAllowedProtocols([]protocol.ProtocolID{protocol.ProtocolOpenAIResponses}).Save(ctx)
 	require.NoError(t, err)
 	cooldown := time.Now().Add(time.Hour)
-	// The allowlist limits diagnostic candidates; mapping converts upstream model names.
+	// The mapping and whitelist make public-known the configured diagnostic model.
+	// Active cooldown columns distinguish persistent model support from immediate provider execution eligibility.
 	row, err := f.client.Provider.Create().
 		SetName("test-diagnostic-provider").
 		SetPlatform(capability.PlatformOpenAI).

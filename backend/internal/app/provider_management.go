@@ -35,9 +35,21 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-type providerGroupReferences struct{ store *routingpostgres.GroupStore }
+// Provider management combines current runtime status, stored configuration,
+// model catalogs, privacy, and coordinated refresh. New provider snapshots
+// enter the import probe queue, while model, tier, and privacy query services
+// register their own waits before shared transport and storage are closed.
 
-// providePrivacyClientFactory uses a 30-second timeout, Chrome fingerprint, and shared connection pool.
+// providerGroupReferences adapts routing group data for provider administration
+// rules.
+type providerGroupReferences struct {
+	store *routingpostgres.GroupStore // routing group references
+}
+
+// providePrivacyClientFactory returns shared req clients using a thirty-second
+// timeout and impersonation. Each invocation passes its proxy URL to the shared
+// pool; application transport cleanup owns idle connections reused by those
+// clients.
 func providePrivacyClientFactory() openai.PrivacyClientFactory {
 	return func(proxyURL string) (*req.Client, error) {
 		return httpclient.GetSharedReqClient(httpclient.ReqClientOptions{
@@ -48,11 +60,17 @@ func providePrivacyClientFactory() openai.PrivacyClientFactory {
 	}
 }
 
-// provideProviderAdmin binds provider administration to shared storage and platform operations.
+// provideProviderAdmin binds provider writes, quota counters, privacy, groups,
+// and creation hooks. tasks owns background administration work, and the shared
+// store supplies configuration plus duplicate reads before the constructed
+// admin is returned.
 func provideProviderAdmin(store *providerpostgres.ProviderStore, usage *billingpostgres.ProviderUsageStore, blocker provider.RuntimeUnblocker, privacy *provider.PrivacyService, groups *routingpostgres.GroupStore, proxies *egresspostgres.ProxyStore, tasks *lifecycle.Tasks, upstream httpclient.UpstreamTransport, tls *egressadapter.TLSProfiles) *provider.Admin {
 	return provider.NewAdmin(store, provider.AdminOptions{ShadowModels: provideradapter.DefaultSparkShadowModels, Duplicates: store, Quotas: usage, RuntimeBlocker: blocker, Privacy: privacy, Groups: providerGroupReferences{groups}, Proxies: proxies, Creation: provider.CreationOptions{Now: time.Now, LoadLocation: time.LoadLocation, NewSeed: uuid.NewString}, Credentials: provideradapter.CreateCredentialHooks(upstream, tls), Background: tasks.Go, Error: slog.Error})
 }
 
+// GetGroup returns identity and OAuth-only policy for one stored routing group.
+// A nil stored result remains nil, while an available group reference is
+// returned with the original repository error.
 func (g providerGroupReferences) GetGroup(ctx context.Context, id int64) (*provider.GroupReference, error) {
 	value, err := g.store.GetByID(ctx, id)
 	if value == nil {
@@ -61,6 +79,9 @@ func (g providerGroupReferences) GetGroup(ctx context.Context, id int64) (*provi
 	return &provider.GroupReference{ID: value.ID, Name: value.Name, RequireOAuthOnly: value.RequireOAuthOnly}, err
 }
 
+// ActiveGroups converts all active routing groups and ignores the platform
+// argument. Nil repository results remain nil, and available identity plus
+// OAuth-only flags are returned alongside the read error.
 func (g providerGroupReferences) ActiveGroups(ctx context.Context, platform string) ([]provider.GroupReference, error) {
 	rows, err := g.store.ListActive(ctx)
 	if rows == nil {
@@ -73,11 +94,16 @@ func (g providerGroupReferences) ActiveGroups(ctx context.Context, platform stri
 	return out, err
 }
 
+// ValidateGroups delegates group-ID existence checks to routing with the shared
+// store.
 func (g providerGroupReferences) ValidateGroups(ctx context.Context, ids []int64) error {
 	return routing.ValidateGroupIDs(ctx, g.store, ids)
 }
 
-// provideProviderManagement binds administration and presentation options to provider HTTP handlers.
+// provideProviderManagement binds administration, reports, runtime
+// presentation, and batch operations for HTTP. Report dates use the supplied
+// calendar, query errors retain their cause, and both single and batch creation
+// schedule captured provider snapshots through the shared import probe queue.
 func provideProviderManagement(admin *provider.Admin, presenter *providerhttp.RuntimePresenter, ollama *provider.OllamaCloudUsageService, privacy *provider.PrivacyService, probes *provider.GrokImportProbeScheduler, quota *provider.GrokQuotaService, managed *provider.ManagedRefreshService, tasks *lifecycle.Tasks, recovery *provider.RecoveryService, listing *provider.ManagementList, catalog *routing.AdminCatalog, tier *provider.TierManagement, models *provider.ModelSyncService, usage *usagepostgres.Store, calendar timezone.Calendar) *providerhttp.ManagementHandler {
 	query := func(ctx context.Context, id int64, start, end time.Time) (*usagetypes.ProviderUsageStatsResponse, error) {
 		value, err := usage.GetProviderUsageStats(ctx, id, start, end)
@@ -103,12 +129,16 @@ func provideProviderManagement(admin *provider.Admin, presenter *providerhttp.Ru
 	}})
 }
 
-// provideAdminModelCatalog reads platform snapshots on each query.
+// provideAdminModelCatalog binds administrator model queries to the shared
+// catalog service.
 func provideAdminModelCatalog(catalog *catalogprovider.Service) *routing.AdminCatalog {
 	return routing.NewAdminCatalog(routingprovider.AdminCatalogOptions(catalog))
 }
 
-// provideProviderModelSync binds credentials and requests for model queries and registers query shutdown.
+// provideProviderModelSync constructs credential-aware model queries and
+// registers their shutdown wait. cfg and manager are required; operator hosts
+// are cloned, response bytes use the configured model-read limit, and the
+// shared task coordinator handles agent identity preparation.
 func provideProviderModelSync(store *providerpostgres.ProviderStore, transport httpclient.UpstreamTransport, claude *provider.ClaudeTokenSource, gemini *provider.GeminiTokenSource, grok *provider.GrokTokenSource, antigravity *provider.AntigravityTokenSource, profiles *egressadapter.TLSProfiles, tasks *provideradapter.ProbeTasks, settings *gateway.RuntimeSettings, cfg *config.Config, manager *lifecycle.Manager) *provider.ModelSyncService {
 	policy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	limit := resolveModelsListReadLimit(cfg)
@@ -121,24 +151,33 @@ func provideProviderModelSync(store *providerpostgres.ProviderStore, transport h
 	return core
 }
 
-// provideProviderPrivacy shares privacy settings and platform clients between admin operations and background refresh.
+// provideProviderPrivacy constructs privacy operations using shared stores and
+// platform clients. Call before lifecycle startup; its registered stop cancels
+// and waits at level twenty-six before HTTP idle connections and storage
+// cleanup.
 func provideProviderPrivacy(store *providerpostgres.ProviderStore, proxies *egresspostgres.ProxyStore, factory openai.PrivacyClientFactory, manager *lifecycle.Manager) *provider.PrivacyService {
 	core := provider.NewPrivacyService(store, proxies, provideradapter.PrivacyOptions(factory, openai.PrivacyEndpoints{}))
 	manager.Register(lifecycle.Hook{Name: "ProviderPrivacy", StopOrder: 26, Stop: core.StopContext})
 	return core
 }
 
-// provideProviderRuntimePresenter binds runtime status readers for provider presentation.
+// provideProviderRuntimePresenter combines shared batch runtime readers with
+// provider and Ollama presentation.
 func provideProviderRuntimePresenter(admin *provider.Admin, ollama *provider.OllamaCloudUsageService, concurrency *scheduler.ConcurrencyService, usage *usagepostgres.Store, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings *provider.QuotaSettingsCache) *providerhttp.RuntimePresenter {
 	return providerhttp.NewRuntimePresenter(provider.NewRuntimeStatusReader(provideradapter.RuntimeStatusOptions(concurrency, usage, sessions, rpm, settings)), admin, ollama)
 }
 
-// provideProviderManagementList shares scheduler feedback and runtime readers for batch list queries.
+// provideProviderManagementList combines administrator list reads with runtime
+// status and scheduler feedback. Score options use the same shared state as
+// execution; settings and startup configuration are supplied to that option
+// adapter.
 func provideProviderManagementList(admin *provider.Admin, ollama *provider.OllamaCloudUsageService, concurrency *scheduler.ConcurrencyService, usage *usagepostgres.Store, sessions scheduler.SessionLimitCache, rpm scheduler.RPMCache, settings *provider.QuotaSettingsCache, shared *schedulerSharedState, store *settingscore.Store, cfg *config.Config) *provider.ManagementList {
 	return provider.NewManagementList(admin, provider.NewRuntimeStatusReader(provideradapter.RuntimeStatusOptions(concurrency, usage, sessions, rpm, settings)), provider.NewSchedulerScoreView(admin, providerScoreOptions(concurrency, shared, store, cfg)), ollama)
 }
 
-// provideProviderTier binds tier management and includes its shutdown wait in the lifecycle budget.
+// provideProviderTier constructs tier queries with shared Gemini authorization
+// and provider administration. It registers query stop at level twenty-six, so
+// the service can wait before the application closes its shared dependencies.
 func provideProviderTier(admin *provider.Admin, source *provider.GeminiAuthorization, manager *lifecycle.Manager) *provider.TierManagement {
 	core := provider.NewTierManagement(admin, provider.ProviderTierManagementOptions(source))
 	manager.Register(lifecycle.Hook{Name: "ProviderTier", StopOrder: 26, Stop: core.StopContext})

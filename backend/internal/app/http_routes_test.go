@@ -29,12 +29,22 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi"
 )
 
+// Gateway route guards classify aliases and reject disabled protocols using the
+// client's error format before body processing. These scenarios distinguish
+// route registration from successful execution, cover method and path
+// admission, and inspect retired paths separately from existing resource
+// operations and generation endpoints.
+
+// Protocol error aliases select the expected Anthropic, OpenAI, and Google
+// envelopes in group-admission denial scenarios.
 const (
-	groupClientProtocolErrorAnthropic = gatewayhttp.GroupClientProtocolErrorAnthropic
-	groupClientProtocolErrorOpenAI    = gatewayhttp.GroupClientProtocolErrorOpenAI
-	groupClientProtocolErrorGoogle    = gatewayhttp.GroupClientProtocolErrorGoogle
+	groupClientProtocolErrorAnthropic = gatewayhttp.GroupClientProtocolErrorAnthropic // Messages denial envelope
+	groupClientProtocolErrorOpenAI    = gatewayhttp.GroupClientProtocolErrorOpenAI    // OpenAI denial envelope
+	groupClientProtocolErrorGoogle    = gatewayhttp.GroupClientProtocolErrorGoogle    // Google denial envelope
 )
 
+// Route classification aliases and request-reading guard callbacks connect
+// protocol admission scenarios to the production gateway adapters.
 var (
 	routeProtocol = gatewayhttp.RouteProtocol
 
@@ -45,8 +55,14 @@ var (
 	requireGeminiGenerateContentProtocol = testRouteGuards.RequireGeminiGenerateContentProtocol
 )
 
+// groupClientProtocolErrorFormat aliases the production error-envelope choice
+// for route guards.
 type groupClientProtocolErrorFormat = gatewayhttp.GroupClientProtocolErrorFormat
 
+// TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable points Redis at an
+// unavailable local port and requests eight public authentication paths. Every
+// request must return TooManyRequests and the limiter message before ordinary
+// business validation.
 func TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         "127.0.0.1:1",
@@ -55,6 +71,8 @@ func TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable(t *testing.T) {
 		WriteTimeout: 50 * time.Millisecond,
 	})
 	t.Cleanup(func() {
+		// The fixture client owns its local connection state. Close it after
+		// route assertions and discard the cleanup error from the intentionally unavailable Redis endpoint.
 		_ = rdb.Close()
 	})
 
@@ -83,7 +101,10 @@ func TestAuthRoutesRateLimitFailCloseWhenRedisUnavailable(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesIgnoreRequestLanguage checks English errors on gateway routes and bare aliases.
+// TestGatewayRoutesIgnoreRequestLanguage requests disabled OpenAI protocols and
+// aliases with a Chinese language header. It checks Forbidden, English
+// Content-Language and error text, the protocol code, and absence of Han
+// characters.
 func TestGatewayRoutesIgnoreRequestLanguage(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithGroup(&config.Config{}, &routing.Group{ID: 1, AllowedProtocols: []protocolcore.ProtocolID{}})
 	for _, path := range []string{"/v1/responses", "/responses", "/backend-api/codex/responses", "/v1/chat/completions"} {
@@ -98,17 +119,23 @@ func TestGatewayRoutesIgnoreRequestLanguage(t *testing.T) {
 	}
 }
 
+// newGatewayRoutesTestRouterWithConfig delegates configured route fixtures to
+// the shared option helper.
 func newGatewayRoutesTestRouterWithConfig(cfg *config.Config, platform ...string) *gin.Engine {
 	return newGatewayRoutesTestRouterWithOptions(cfg, platform...)
 }
 
+// TestGatewayRoutesClientProtocolGateRejectsAliasesBeforeReadingBody supplies
+// groups missing Messages, Responses, or Chat permission across their aliases.
+// It checks each request receives the expected protocol error with Forbidden
+// and an unread tracked body.
 func TestGatewayRoutesClientProtocolGateRejectsAliasesBeforeReadingBody(t *testing.T) {
 	tests := []struct {
-		name      string
-		platform  string
-		protocols []protocolcore.ProtocolID
-		paths     []string
-		code      string
+		name      string                    // denied client protocol
+		platform  string                    // unused platform scenario label
+		protocols []protocolcore.ProtocolID // enabled group protocols
+		paths     []string                  // equivalent request aliases
+		code      string                    // expected denial code
 	}{
 		{
 			name:      "messages",
@@ -156,13 +183,15 @@ func TestGatewayRoutesClientProtocolGateRejectsAliasesBeforeReadingBody(t *testi
 	}
 }
 
-// TestGatewayRoutesCountTokensHonorsProtocolGate checks group admission before provider selection determines
-// counting support.
+// TestGatewayRoutesCountTokensHonorsProtocolGate requests counting aliases with
+// every group protocol disabled. It checks the Messages permission envelope
+// takes precedence over later counting support and leaves each tracked body
+// unread.
 func TestGatewayRoutesCountTokensHonorsProtocolGate(t *testing.T) {
 	tests := []struct {
-		name     string
-		platform string
-		path     string
+		name     string // counting route scenario
+		platform string // unused platform scenario label
+		path     string // requested counting alias
 	}{
 		{name: "qoder_v1", platform: capability.PlatformQoder, path: "/v1/messages/count_tokens"},
 		{name: "qoder_alias", platform: capability.PlatformQoder, path: "/messages/count_tokens"},
@@ -193,6 +222,10 @@ func TestGatewayRoutesCountTokensHonorsProtocolGate(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesResponsesSubpathGuardRunsBeforeProtocolGate requests encoded
+// unsupported subpaths while Responses permission is disabled. It checks
+// NotFound and the subpath message appear before a protocol_not_allowed
+// rejection can be returned.
 func TestGatewayRoutesResponsesSubpathGuardRunsBeforeProtocolGate(t *testing.T) {
 	groupID := int64(1)
 	router := newGatewayRoutesTestRouterWithGroup(&config.Config{}, &routing.Group{
@@ -213,12 +246,16 @@ func TestGatewayRoutesResponsesSubpathGuardRunsBeforeProtocolGate(t *testing.T) 
 	}
 }
 
+// TestRequireGroupClientProtocolUsesNativeErrorEnvelopes denies a configured
+// protocol under three client formats. It checks Forbidden and format-specific
+// body text, plus the LocalPolicyDenied business-observation reason after the
+// guard finishes.
 func TestRequireGroupClientProtocolUsesNativeErrorEnvelopes(t *testing.T) {
 	tests := []struct {
-		name     string
-		protocol protocolcore.ProtocolID
-		format   groupClientProtocolErrorFormat
-		contains []string
+		name     string                         // client envelope scenario
+		protocol protocolcore.ProtocolID        // denied group protocol
+		format   groupClientProtocolErrorFormat // selected client envelope
+		contains []string                       // expected message fragments
 	}{
 		{"anthropic", protocolcore.ProtocolAnthropicMessages, groupClientProtocolErrorAnthropic, []string{"permission_error", "Anthropic Messages"}},
 		{"openai", protocolcore.ProtocolOpenAIResponses, groupClientProtocolErrorOpenAI, []string{"protocol_not_allowed", "OpenAI Responses"}},
@@ -250,6 +287,10 @@ func TestRequireGroupClientProtocolUsesNativeErrorEnvelopes(t *testing.T) {
 	}
 }
 
+// TestRequireGeminiGenerateContentProtocolOnlyGatesTextActions uses an empty
+// group permission set for model actions. It checks generate, stream, and
+// counting actions return PERMISSION_DENIED while an unrelated custom action
+// reaches NoContent.
 func TestRequireGeminiGenerateContentProtocolOnlyGatesTextActions(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -276,6 +317,10 @@ func TestRequireGeminiGenerateContentProtocolOnlyGatesTextActions(t *testing.T) 
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered requests Compact and
+// Codex Responses aliases through assembled route fixtures. It checks each
+// avoids NotFound, establishing route dispatch without asserting successful
+// provider execution.
 func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 
@@ -294,12 +339,15 @@ func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesQoderPathsAreRegistered sends Messages and Chat bodies
+// through the Qoder-oriented fixture and aliases. It checks each route avoids
+// NotFound rather than requiring configured provider execution to succeed.
 func TestGatewayRoutesQoderPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformQoder)
 
 	for _, tc := range []struct {
-		path string
-		body string
+		path string // compatibility request alias
+		body string // protocol request bytes
 	}{
 		{path: "/v1/messages", body: `{"model":"claude-sonnet-4-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`},
 		{path: "/v1/chat/completions", body: `{"model":"gpt-5-codex","messages":[{"role":"user","content":"hi"}]}`},
@@ -314,6 +362,9 @@ func TestGatewayRoutesQoderPathsAreRegistered(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesQoderResponsesSubpathsAreRejected requests Compact aliases
+// under the Qoder-oriented group fixture. It checks Forbidden and
+// protocol_not_allowed for each unsupported Responses subpath before execution.
 func TestGatewayRoutesQoderResponsesSubpathsAreRejected(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformQoder)
 
@@ -331,6 +382,9 @@ func TestGatewayRoutesQoderResponsesSubpathsAreRejected(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesQoderResponsesWebSocketIsRejected requests GET Responses
+// aliases under the Qoder-oriented group fixture. Each must return Forbidden
+// and protocol_not_allowed instead of entering a WebSocket execution path.
 func TestGatewayRoutesQoderResponsesWebSocketIsRejected(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformQoder)
 
@@ -348,6 +402,9 @@ func TestGatewayRoutesQoderResponsesWebSocketIsRejected(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesNonNativeResponsesWebSocketIsRejected requests Responses GET
+// under the Anthropic-oriented route fixture. It checks Forbidden and
+// protocol_not_allowed for the group's unsupported WebSocket protocol.
 func TestGatewayRoutesNonNativeResponsesWebSocketIsRejected(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithOptions(&config.Config{}, capability.PlatformAnthropic)
 	w := httptest.NewRecorder()
@@ -357,7 +414,9 @@ func TestGatewayRoutesNonNativeResponsesWebSocketIsRejected(t *testing.T) {
 	require.Contains(t, w.Body.String(), "protocol_not_allowed")
 }
 
-// TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered checks all three public Alpha Search paths.
+// TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered inspects the assembled
+// POST route inventory. It checks versioned, bare, and Codex Alpha Search paths
+// are present without issuing their execution requests.
 func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	registered := make(map[string]bool)
@@ -376,8 +435,10 @@ func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup checks rejection before body reads when Alpha Search is
-// disabled for the group.
+// TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup requests Alpha Search under
+// the Grok-oriented group fixture. It checks Forbidden and
+// protocol_not_allowed, limiting this scenario to observed group-protocol
+// rejection.
 func TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformGrok)
 	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
@@ -390,6 +451,9 @@ func TestGatewayRoutesAlphaSearchRejectsNonOpenAIGroup(t *testing.T) {
 	require.Contains(t, w.Body.String(), "protocol_not_allowed")
 }
 
+// TestGatewayRoutesOpenAIImagesPathsAreRegistered requests versioned and bare
+// image-generation/edit aliases. It checks dispatch avoids NotFound for every
+// path, without asserting successful image generation by the fixture.
 func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 
@@ -408,7 +472,10 @@ func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesAsyncImagesPathsAreRemoved checks 404 responses for retired asynchronous image endpoints.
+// TestGatewayRoutesAsyncImagesPathsAreRemoved inspects and requests retired
+// asynchronous image patterns and concrete paths. It checks absence plus
+// NotFound, while the independent batch-image submission and resource routes
+// remain registered.
 func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	registered := make(map[string]bool)
@@ -417,9 +484,9 @@ func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 	}
 
 	removed := []struct {
-		method      string
-		routePath   string
-		requestPath string
+		method      string // retired request method
+		routePath   string // retired registration pattern
+		requestPath string // concrete retired path
 	}{
 		{method: http.MethodPost, routePath: "/v1/images/generations/async", requestPath: "/v1/images/generations/async"},
 		{method: http.MethodPost, routePath: "/v1/images/edits/async", requestPath: "/v1/images/edits/async"},
@@ -455,8 +522,9 @@ func TestGatewayRoutesAsyncImagesPathsAreRemoved(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesBillingIntrospectionIsRemoved checks a 404 for the retired public billing introspection
-// endpoint.
+// TestGatewayRoutesBillingIntrospectionIsRemoved checks the retired public
+// billing endpoint in the route inventory. It then requests that path and
+// requires NotFound, preserving its removal from public API dispatch.
 func TestGatewayRoutesBillingIntrospectionIsRemoved(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 	for _, route := range router.Routes() {
@@ -469,6 +537,10 @@ func TestGatewayRoutesBillingIntrospectionIsRemoved(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered requests image/video
+// creation and existing video-resource aliases under the Grok fixture. It
+// checks dispatch avoids NotFound and the unsupported-platform message across
+// both POST and GET paths.
 func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformGrok)
 
@@ -522,13 +594,17 @@ func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesVideosFollowProtocolAndResourceRules requests video creation
+// and existing resource paths under the OpenAI-oriented fixture. It checks POST
+// generation is denied by protocol policy while GET results omit the
+// unsupported-platform message.
 func TestGatewayRoutesVideosFollowProtocolAndResourceRules(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformOpenAI)
 
 	for _, tc := range []struct {
-		method string
-		path   string
-		body   string
+		method string // resource request method
+		path   string // generation or resource path
+		body   string // supplied request body
 	}{
 		{http.MethodPost, "/v1/videos/generations", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
 		{http.MethodPost, "/v1/videos", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
@@ -569,12 +645,16 @@ func TestGatewayRoutesVideosFollowProtocolAndResourceRules(t *testing.T) {
 	}
 }
 
+// TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints requests Messages,
+// Chat, WS, Responses, and counting aliases under Grok-oriented fixtures. It
+// checks route dispatch and platform presentation, while counting reaches the
+// expected billing_service_error from incomplete dependencies.
 func TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints(t *testing.T) {
 	router := newGatewayRoutesTestRouter(capability.PlatformGrok)
 
 	for _, tc := range []struct {
-		method string
-		path   string
+		method string // compatibility request method
+		path   string // compatibility route alias
 	}{
 		{http.MethodPost, "/v1/messages"},
 		{http.MethodPost, "/v1/chat/completions"},
@@ -619,9 +699,10 @@ func TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints(t *testing.T) {
 	}
 }
 
-// TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths checks Responses path admission.
-// Responses subpaths forward to matching upstream endpoints, so invalid paths must be rejected
-// before scheduling and forwarding.
+// TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths supplies
+// traversal, encoded separators, fragments, and malformed Compact paths. It
+// checks every request returns NotFound with the unsupported-subpath message
+// before an execution handler can accept it.
 func TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths(t *testing.T) {
 	router := newGatewayRoutesTestRouter()
 
@@ -646,6 +727,10 @@ func TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths(t *testing.T)
 	}
 }
 
+// TestGatewayRoutesOpenAICompatibleCountTokensPathIsRegistered requests the
+// counting endpoint for four named platform cases. It checks each
+// avoids NotFound, establishing shared route registration rather than
+// successful token counting.
 func TestGatewayRoutesOpenAICompatibleCountTokensPathIsRegistered(t *testing.T) {
 	for _, platform := range []string{
 		capability.PlatformOpenAI,
@@ -665,7 +750,10 @@ func TestGatewayRoutesOpenAICompatibleCountTokensPathIsRegistered(t *testing.T) 
 	}
 }
 
-// RegisterUserRoutes registers authenticated user routes for the fixture.
+// RegisterUserRoutes mounts fixture user resources under JWT, backend-mode,
+// panel, and audit guards. Supplied module handlers are registered in their
+// route families, team receives step-up, and usage/creative routes receive the
+// heavy-query limiter.
 func RegisterUserRoutes(
 	v1 *gin.RouterGroup,
 	h *routeTestHandlers,
@@ -692,10 +780,14 @@ func RegisterUserRoutes(
 	billinghttp.RegisterUserRoutes(authenticated, h.Redeem, h.Subscription)
 }
 
-// TestProtocolAllPublicRoutesDeniedBeforeUpstream checks shared admission across routes and aliases before
-// handlers run.
+// TestProtocolAllPublicRoutesDeniedBeforeUpstream requests the listed public
+// generation protocols and aliases with empty group permissions. It checks
+// Forbidden for every path, and Gemini action dispatch uses a direct guard
+// fixture with a terminal failure callback.
 func TestProtocolAllPublicRoutesDeniedBeforeUpstream(t *testing.T) {
-	paths := []struct{ platform, method, path string }{
+	paths := []struct {
+		platform, method, path string // platform: unused scenario platform label; method: requested HTTP verb; path: public protocol endpoint
+	}{
 		{"openai", "POST", "/v1/messages"},
 		{"openai", "POST", "/v1/responses"},
 		{"openai", "POST", "/responses"},
@@ -751,7 +843,8 @@ func TestProtocolAllPublicRoutesDeniedBeforeUpstream(t *testing.T) {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			router := newGatewayRoutesTestRouterWithGroup(&config.Config{}, &routing.Group{ID: 1, AllowedProtocols: []protocolcore.ProtocolID{}})
 			if strings.HasPrefix(tc.path, "/v1beta/") {
-				// Inject the group after Gemini authentication to test action dispatch independently.
+				// Install the Key fixture directly in the Gemini router so this branch
+				// exercises action-specific protocol admission before the terminal handler, independently of authentication setup.
 				router = gin.New()
 				router.Use(func(c *gin.Context) {
 					c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{Group: &routing.Group{AllowedProtocols: []protocolcore.ProtocolID{}}})
@@ -765,6 +858,10 @@ func TestProtocolAllPublicRoutesDeniedBeforeUpstream(t *testing.T) {
 	}
 }
 
+// TestProtocolAuxiliaryAndExistingJobs classifies existing job, model, usage,
+// and Live resource operations. It checks those paths have no extended
+// generation protocol, while custom-voice deletion retains its dedicated
+// protocol identity.
 func TestProtocolAuxiliaryAndExistingJobs(t *testing.T) {
 	for _, path := range []string{"/v1/videos/id", "/v1/videos/id/content", "/v1/images/batches/id", "/v1/images/batches/id/download", "/v1/live/id", "/models", "/v1/usage"} {
 		require.Empty(t, extendedRouteProtocol(http.MethodGet, path), path)
@@ -776,11 +873,13 @@ func TestProtocolAuxiliaryAndExistingJobs(t *testing.T) {
 	require.Equal(t, protocolcore.ProtocolCustomVoices, extendedRouteProtocol(http.MethodDelete, "/v1/custom-voices/id"))
 }
 
-// TestProtocolRouteAliases checks equivalent protocols and rejects similar prefixes and wrong methods.
+// TestProtocolRouteAliases compares protocol identities across bare, versioned,
+// and Codex prefixes. It checks the expected mappings, rejects similar prefixes
+// and wrong methods, and leaves Compact to its complete-path guard.
 func TestProtocolRouteAliases(t *testing.T) {
 	for _, tc := range []struct {
-		method, path string
-		want         protocolcore.ProtocolID
+		method, path string                  // method: requested HTTP verb; path: base protocol alias
+		want         protocolcore.ProtocolID // expected protocol identity
 	}{
 		{http.MethodPost, "/embeddings", protocolcore.ProtocolEmbeddings},
 		{http.MethodPost, "/images/generations", protocolcore.ProtocolImagesGenerations},
@@ -816,7 +915,10 @@ func TestProtocolRouteAliases(t *testing.T) {
 	require.Empty(t, extendedRouteProtocol(http.MethodPost, "/v1/responses/compact"))
 }
 
-// TestRemovedFeatureRoutesReturnNotFound checks 404 responses for retired user and administrator endpoints.
+// TestRemovedFeatureRoutesReturnNotFound mounts user and administrator fixtures
+// with pass-through guards. It requests the retired import-default and
+// data-sharing paths under four methods and checks every response remains
+// NotFound.
 func TestRemovedFeatureRoutesReturnNotFound(t *testing.T) {
 	router := gin.New()
 	// Embedded identity handlers need an outer receiver before method values can be registered.

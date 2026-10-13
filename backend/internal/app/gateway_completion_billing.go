@@ -22,18 +22,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// GatewayCompletionRecorders holds the Forward and OpenAI recorders, each with its own rate cache.
-type GatewayCompletionRecorders struct{ Forward, OpenAI *completion.Recorder }
+// Messages and OpenAI completion use separate rate readers with shared pricing,
+// funds, and usage storage. OpenAI additionally resolves credential-parent
+// providers and clears forbidden counters, while both recorders send settlement
+// side effects through the application task tracker.
 
-// completionProviders resolves a shadow provider to its credential parent for completion statistics.
-type completionProviders struct {
-	store *providerpostgres.ProviderStore
+// GatewayCompletionRecorders holds the two recorders bound to platform attempt
+// runtimes.
+type GatewayCompletionRecorders struct {
+	// Forward and OpenAI are passed unchanged into their respective attempt
+	// bindings. Each uses the matching rate cache supplied by gatewayBillingRates.
+	Forward, OpenAI *completion.Recorder // Forward: Messages completion recorder; OpenAI: compatible completion recorder
 }
 
-type completionHealth struct{ core *provider.HealthService }
+// completionProviders resolves credential ownership for OpenAI completion
+// provider statistics.
+type completionProviders struct {
+	store *providerpostgres.ProviderStore // credential parent reader
+}
 
-// ProvideGatewayCompletionRecorders binds pricing, settlement, statistics, and post-commit effects to both
-// recorders.
+// completionHealth connects successful OpenAI completion to provider forbidden-
+// counter reset.
+type completionHealth struct {
+	core *provider.HealthService // provider health commands
+}
+
+// ProvideGatewayCompletionRecorders constructs Messages and OpenAI recorders
+// around shared billing dependencies. rates, health, and tasks are required by
+// assembly; nil cfg selects multiplier one, optional settings enable Forward
+// cache injection, and subscriptions are available when funds implements their
+// read interface.
 func ProvideGatewayCompletionRecorders(
 	requests *requestlog.Service,
 	rates *gatewayBillingRates,
@@ -93,6 +111,10 @@ func ProvideGatewayCompletionRecorders(
 	return GatewayCompletionRecorders{Forward: completion.NewRecorder(forward, options), OpenAI: completion.NewRecorder(openai, options)}
 }
 
+// CredentialProvider resolves the credential-owning provider for a completion
+// snapshot. When resolution returns the input record, it returns the supplied
+// snapshot; a parent record is converted through ProjectCompletionProvider, and
+// lookup errors stop the conversion.
 func (p completionProviders) CredentialProvider(ctx context.Context, in completion.ProviderSnapshot) (*completion.ProviderSnapshot, error) {
 	original := &provider.Record{ID: in.ID, Platform: in.Platform, Type: in.Type, ParentProviderID: in.CredentialProviderID}
 	value, err := provider.ResolveCredentialRecord(ctx, p.store.GetByID, original)
@@ -105,12 +127,16 @@ func (p completionProviders) CredentialProvider(ctx context.Context, in completi
 	return gatewayprovider.ProjectCompletionProvider(value), nil
 }
 
+// ResetOpenAI403Counter delegates successful-completion counter reset to
+// provider health.
 func (p completionHealth) ResetOpenAI403Counter(ctx context.Context, id int64) {
 	p.core.ResetForbiddenCounter(ctx, id)
 }
 
-// gatewayCommitEffects creates post-commit handlers whose background work uses the shared application task
-// tracker.
+// gatewayCommitEffects binds activity, funds-cache, authentication, and
+// optional notification effects. tasks is required for tracked settlement work;
+// the returned handlers run when completion invokes post-commit processing, and
+// cfg is currently unused by this adapter.
 func gatewayCommitEffects(deferred *provider.DeferredService, eligibility *billing.Eligibility, notifications *billing.BalanceNotifyService, keys *apikey.APIKeyService, tasks *lifecycle.Tasks, cfg *config.Config) *completion.CommitEffects {
 	value := &completion.CommitEffects{
 		Activity: deferred,

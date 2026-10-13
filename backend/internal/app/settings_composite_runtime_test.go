@@ -40,43 +40,83 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// settingAtomicRepo injects write and post-commit read failures to check the persistence status returned by HTTP.
+// Combined settings HTTP must distinguish omitted fields, explicit clearing,
+// validation rejection, write failure, and committed data whose later
+// application fails. These scenarios inspect stored strings, response values,
+// reader order, notification timing, and security transitions across
+// module-owned settings with controlled failure fixtures.
+//
+// The shared fixture uses production preparation and registry behavior but
+// skips plan lookup and payment channel refresh. Response sentinels cover every
+// flattened DTO field across GET and PUT, including optional and secret
+// omissions. Separate cases exercise WS null patches, identity grants, payment
+// source normalization, DingTalk policy, creative operations, captcha
+// credentials, step-up transitions, and forwarded-IP trust after malformed
+// historical input.
+
+// settingAtomicRepo counts write attempts and injects persistence or later
+// reload failure.
 type settingAtomicRepo struct {
-	*settingHandlerRepoStub
-	writes    int
-	failWrite bool
-	failApply bool
+	*settingHandlerRepoStub // shared string settings fixture
+	// writes counts attempts before failWrite is checked. failWrite rejects the
+	// batch; failApply rejects later GetAll after any attempt, letting HTTP tests locate persistence versus application failure.
+	writes    int  // batch write attempts
+	failWrite bool // injected prewrite rejection
+	failApply bool // injected postattempt reload failure
 }
 
+// failingAuthSourceSettingsRepoStub rejects batches containing the email-source
+// balance key.
 type failingAuthSourceSettingsRepoStub struct {
-	values map[string]string
-	err    error
+	values map[string]string // stored setting values
+	// err is returned unchanged for a batch containing the email-source balance
+	// key. Nil reports success while that branch still applies no keys.
+	err error // selected batch failure
 }
 
+// creativeModelCandidateReaderStub supplies shared candidates and optional
+// group-twelve operation filtering.
 type creativeModelCandidateReaderStub struct {
-	candidates     []creative.CreativeModelCandidate
+	candidates []creative.CreativeModelCandidate // configured creative candidates
+	// sanitizeGemini chooses the fixture's group-twelve inpaint filter after
+	// normalization. False returns the input slice unchanged, retaining the caller's values and references.
 	sanitizeGemini bool
 }
 
+// settingsResponseSource records calls and supplies the configured
+// response-stage snapshot.
 type settingsResponseSource struct {
-	*composite.Runtime
-	snapshot     *composite.Snapshot
-	fastPolicy   *tierpolicy.OpenAIFastPolicySettings
-	responseRead int
-	reads        int
-	calls        *[]string
-}
-
-type settingsResponsePayment struct {
-	config *paymentcore.PaymentConfig
-	err    error
-	calls  *[]string
-}
-
-type settingsResponseMonitoring struct {
+	*composite.Runtime // actual preparation and reads
+	// snapshot replaces Runtime reads when reads reaches responseRead, while
+	// fastPolicy supplies response-only policy data. Both returned pointers remain owned by the scenario for its assertions.
+	snapshot     *composite.Snapshot                  // configured response settings
+	fastPolicy   *tierpolicy.OpenAIFastPolicySettings // configured Fast response
+	responseRead int                                  // first fixture snapshot read
+	reads        int                                  // attempted settings reads
+	// calls is shared with payment and monitoring fixtures and appended before
+	// every selected read. Tests keep the pointer initialized while synchronous response assembly records its order.
 	calls *[]string
 }
 
+// settingsResponsePayment records payment reads and returns configured data
+// plus error.
+type settingsResponsePayment struct {
+	// config and err are returned together, including a nonnil config on error.
+	// calls records this read in the response fixture's shared ordered list before either value is returned.
+	config *paymentcore.PaymentConfig // configured payment snapshot
+	err    error                      // configured payment failure
+	calls  *[]string                  // shared response call order
+}
+
+// settingsResponseMonitoring records read order while reporting disabled
+// runtime monitoring.
+type settingsResponseMonitoring struct {
+	calls *[]string // shared monitoring call order
+}
+
+// TestSettingsResponsesWSPatchAndNull patches WS timeout to null and a
+// connection limit to explicit zero. It checks removal versus retained zero,
+// effective response data, and clearing the whole override object with null.
 func TestSettingsResponsesWSPatchAndNull(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{ws.SettingKey: `{"read_timeout_seconds":45,"max_ingress_connections_per_api_key":5}`})
 	response := doUpdateSettings(t, h, map[string]any{"responses_ws": map[string]any{"read_timeout_seconds": nil, "max_ingress_connections_per_api_key": 0}}, nil)
@@ -88,6 +128,9 @@ func TestSettingsResponsesWSPatchAndNull(t *testing.T) {
 	require.JSONEq(t, `{}`, repo.values[ws.SettingKey])
 }
 
+// TestSettingsResponsesWSInvalidPatchDoesNotWrite submits max_conns_per_provider
+// one over a stored forty-five-second timeout override. It checks BadRequest
+// and that the stored timeout JSON remains unchanged after the rejected patch.
 func TestSettingsResponsesWSInvalidPatchDoesNotWrite(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{ws.SettingKey: `{"read_timeout_seconds":45}`})
 	response := doUpdateSettings(t, h, map[string]any{"responses_ws": map[string]any{"max_conns_per_provider": 1}}, nil)
@@ -95,6 +138,10 @@ func TestSettingsResponsesWSInvalidPatchDoesNotWrite(t *testing.T) {
 	require.JSONEq(t, `{"read_timeout_seconds":45}`, repo.values[ws.SettingKey])
 }
 
+// TestSettingsResponseFieldsAndPaymentErrors serves GET and PUT responses with
+// configured, absent, nil, and failed payment readers. It checks reader order,
+// GET/PUT error differences, omitted secrets, optional fields, and every
+// expected flattened response value.
 func TestSettingsResponseFieldsAndPaymentErrors(t *testing.T) {
 	for _, paymentCase := range []string{"configured", "absent service", "nil config", "read error", "config with error"} {
 		t.Run(paymentCase, func(t *testing.T) {
@@ -166,7 +213,7 @@ func TestSettingsResponseFieldsAndPaymentErrors(t *testing.T) {
 					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 					require.Equal(t, append(wantCalls, "totp", "fast"), calls)
 					var response struct {
-						Data map[string]json.RawMessage `json:"data"`
+						Data map[string]json.RawMessage `json:"data"` // decoded combined response values
 					}
 					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 					for _, field := range []string{"smtp_password", "turnstile_secret_key", "oidc_connect_client_secret"} {
@@ -179,6 +226,9 @@ func TestSettingsResponseFieldsAndPaymentErrors(t *testing.T) {
 	}
 }
 
+// fillSettingsResponseScalars writes distinct boolean, string, int, and float64
+// sentinels into a pointed struct. The pointer and fields must be usable by
+// reflection; other field kinds remain unchanged for scenario-specific setup.
 func fillSettingsResponseScalars(target any) {
 	value := reflect.ValueOf(target).Elem()
 	for i := range value.NumField() {
@@ -189,13 +239,25 @@ func fillSettingsResponseScalars(target any) {
 		case reflect.String:
 			field.SetString("fixture." + value.Type().Field(i).Name)
 		case reflect.Int:
+			// Index-based sentinels expose conversion from the wrong DTO source field.
 			field.SetInt(int64(i + 10))
 		case reflect.Float64:
+			// Fractional sentinels keep float conversion distinct from integral fields.
 			field.SetFloat(float64(i) + 0.25)
 		}
 	}
 }
 
+// assertSettingsResponseFields compares every flattened response member against
+// its settings, payment, or auth-source fixture value. It consumes data by
+// deleting checked keys, so callers pass a fresh decoded map for one response;
+// nil payment selects zero-valued payment options.
+//
+// JSON-text members are compared as raw JSON, absent optional Fast/PUT
+// threshold fields are checked separately, and nil subscription/fee values use
+// their exposed empty collections. After auth-source fields and force-email are
+// checked, any remaining key fails the assertion, exposing unowned response
+// additions.
 func assertSettingsResponseFields(t *testing.T, data map[string]json.RawMessage, source *settingsResponseSource, payment *paymentcore.PaymentConfig, authDefaults *identity.AuthSourceDefaultSettings, method string) {
 	t.Helper()
 	snapshot := source.snapshot
@@ -237,6 +299,8 @@ func assertSettingsResponseFields(t *testing.T, data map[string]json.RawMessage,
 			value := settingsValue.FieldByName(field.Name)
 			if !value.IsValid() {
 				paymentName := strings.TrimPrefix(field.Name, "Payment")
+				// This response uses the shortened payment suffix while the source
+				// field spells out Strategy. Resolve that actual identity before reflecting its expected value.
 				if field.Name == "PaymentLoadBalanceStrat" {
 					paymentName = "LoadBalanceStrategy"
 				}
@@ -252,8 +316,8 @@ func assertSettingsResponseFields(t *testing.T, data map[string]json.RawMessage,
 		delete(data, name)
 	}
 	for _, provider := range []struct {
-		name  string
-		value identity.ProviderDefaultGrantSettings
+		name  string                                // flattened auth-source prefix
+		value identity.ProviderDefaultGrantSettings // expected provider grants
 	}{
 		{"email", authDefaults.Email},
 		{"linuxdo", authDefaults.LinuxDo},
@@ -279,6 +343,9 @@ func assertSettingsResponseFields(t *testing.T, data map[string]json.RawMessage,
 	require.Empty(t, data)
 }
 
+// GetAllSettings records each read and returns the shared snapshot at or after
+// responseRead. Earlier reads delegate to Runtime; calls is required, and the
+// threshold counts attempted invocations even when delegation fails.
 func (s *settingsResponseSource) GetAllSettings(ctx context.Context) (*composite.Snapshot, error) {
 	*s.calls = append(*s.calls, "settings")
 	s.reads++
@@ -288,35 +355,52 @@ func (s *settingsResponseSource) GetAllSettings(ctx context.Context) (*composite
 	return s.Runtime.GetAllSettings(ctx)
 }
 
+// GetAuthSourceDefaultSettings records its call before delegating to the
+// embedded settings runtime.
 func (s *settingsResponseSource) GetAuthSourceDefaultSettings(ctx context.Context) (*identity.AuthSourceDefaultSettings, error) {
 	*s.calls = append(*s.calls, "auth")
 	return s.Runtime.GetAuthSourceDefaultSettings(ctx)
 }
 
+// IsTotpEncryptionKeyConfigured records response assembly and returns the fixed
+// configured-key marker.
 func (s *settingsResponseSource) IsTotpEncryptionKeyConfigured() bool {
 	*s.calls = append(*s.calls, "totp")
 	return true
 }
 
+// GetOpenAIFastPolicySettings records the read and returns the configured
+// shared policy pointer. Nil policy remains nil, letting response tests check
+// optional omission rather than constructing another policy snapshot.
 func (s *settingsResponseSource) GetOpenAIFastPolicySettings(context.Context) (*tierpolicy.OpenAIFastPolicySettings, error) {
 	*s.calls = append(*s.calls, "fast")
 	return s.fastPolicy, nil
 }
 
+// GetPaymentConfig records the payment read and returns config with err
+// unchanged. Both may be nonnil, allowing GET and PUT response assembly to
+// exercise their different payment failure handling.
 func (s *settingsResponsePayment) GetPaymentConfig(context.Context) (*paymentcore.PaymentConfig, error) {
 	*s.calls = append(*s.calls, "payment")
 	return s.config, s.err
 }
 
+// IsMonitoringEnabled records the monitoring read and returns false for the
+// fixture.
 func (s *settingsResponseMonitoring) IsMonitoringEnabled(context.Context) bool {
 	*s.calls = append(*s.calls, "monitoring")
 	return false
 }
 
+// SetMonitoringEnabled accepts the fixture callback without changing its
+// reported false value.
 func (s *settingsResponseMonitoring) SetMonitoringEnabled(bool) {}
 
-// newCompositeSettingsHTTPFixture binds settings reads, preparation, and persistence with a no-op plan validator.
-// The fixture publishes trusted-proxy settings and update notifications.
+// newCompositeSettingsHTTPFixture constructs combined HTTP options with shared
+// settings and grant readers. cfg is required, plan validation is a no-op, and
+// the application callbacks publish forwarded-IP values then notify site.
+// Payment channel refresh is disabled in the participant used by these
+// scenarios.
 func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.Config) (settingshttp.HandlerOptions, *settingscore.Store) {
 	store := settingscore.New(repo)
 	oauth := provideOAuthSettings(store, cfg)
@@ -347,13 +431,16 @@ func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.C
 	}
 	source := composite.NewRuntime(store, read, prepare, grants, gatewayRuntime, cfg.Totp.EncryptionKeyConfigured, applications)
 	participants := staticSettingsParticipants(&paymentcore.Runtime{}, grants, defaults, rules)
-	// Use the payment preparer with channel refresh disabled for this fixture.
+	// Retain payment field preparation while disabling provider refresh for the
+	// fixture, so combined persistence and response tests do not need configured payment-channel instances.
 	participants[len(participants)-1] = paymentcore.SettingsParticipant(nil)
 	registry, err := settingscore.NewRegistry(participants...)
 	return settingshttp.HandlerOptions{Settings: source, Participants: registry, ParticipantError: err}, store
 }
 
-// TestSettingsFieldOwnership checks complete, unique registration of flattened request fields.
+// TestSettingsFieldOwnership enumerates static participants and the flattened
+// update request type. It checks unique ownership, all 283 request fields are
+// represented, and no participant declares an extra field outside that request.
 func TestSettingsFieldOwnership(t *testing.T) {
 	defaults := scheduler.DefaultAdminSettingsDefaults()
 	participants := staticSettingsParticipants(&paymentcore.Runtime{}, nil, &defaults, provideGatewayAdminRules())
@@ -362,8 +449,10 @@ func TestSettingsFieldOwnership(t *testing.T) {
 	owners := map[string]string{}
 	for _, participant := range participants {
 		encoded, err := json.Marshal(struct {
-			Module       string
-			Fields, Keys []string
+			// Module identifies the participant while Fields and Keys expose its
+			// declared ownership mapping. This JSON log supports field-registration inspection alongside the uniqueness assertions below.
+			Module       string   // settings participant name
+			Fields, Keys []string // Fields: flattened request names; Keys: persisted setting identities
 		}{participant.Module, participant.Fields, participant.Keys})
 		require.NoError(t, err)
 		t.Logf("TEST_PARTICIPANT %s", encoded)
@@ -387,7 +476,9 @@ func TestSettingsFieldOwnership(t *testing.T) {
 	require.Empty(t, owners, "参与者不应声明不存在的输入字段")
 }
 
-// TestSettingsRejectedFastPolicyHasNoWrites checks that later validation failure prevents earlier fields from being saved.
+// TestSettingsRejectedFastPolicyHasNoWrites combines a site-name change with
+// invalid Fast policy. It checks BadRequest and that the site name remains its
+// previously stored value after the rejected patch.
 func TestSettingsRejectedFastPolicyHasNoWrites(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{site.SettingKeySiteName: "before"})
 	rec := doUpdateSettings(t, h, map[string]any{"site_name": "after", "openai_fast_policy_settings": map[string]any{"rules": []map[string]any{{"service_tier": "priority", "action": "bogus", "scope": "all"}}}}, nil)
@@ -395,6 +486,9 @@ func TestSettingsRejectedFastPolicyHasNoWrites(t *testing.T) {
 	require.Equal(t, "before", repo.values[site.SettingKeySiteName], "后段校验拒绝后不应保存站点名称")
 }
 
+// SetMultiple counts the attempt before optionally returning an injected write
+// error. Successful attempts delegate the batch to the embedded fixture; writes
+// therefore describes attempts rather than committed transactions.
 func (r *settingAtomicRepo) SetMultiple(ctx context.Context, values map[string]string) error {
 	r.writes++
 	if r.failWrite {
@@ -403,6 +497,9 @@ func (r *settingAtomicRepo) SetMultiple(ctx context.Context, values map[string]s
 	return r.settingHandlerRepoStub.SetMultiple(ctx, values)
 }
 
+// GetAll injects a reload error after a write attempt when failApply is
+// enabled. Otherwise it delegates the snapshot read, allowing scenarios to
+// distinguish write rejection from saved-but-unapplied settings.
 func (r *settingAtomicRepo) GetAll(ctx context.Context) (map[string]string, error) {
 	if r.failApply && r.writes > 0 {
 		return nil, errors.New("settings reload failed")
@@ -410,6 +507,9 @@ func (r *settingAtomicRepo) GetAll(ctx context.Context) (map[string]string, erro
 	return r.settingHandlerRepoStub.GetAll(ctx)
 }
 
+// TestSettingsCombinedUpdateCommitsOnce updates site, payment, and Fast policy
+// through combined HTTP. It checks successful response, one fixture batch
+// write, and all three stored values from that accepted update.
 func TestSettingsCombinedUpdateCommitsOnce(t *testing.T) {
 	repo := &settingAtomicRepo{settingHandlerRepoStub: &settingHandlerRepoStub{values: map[string]string{site.SettingKeySiteName: "before"}}}
 	options, _ := newCompositeSettingsHTTPFixture(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -424,6 +524,10 @@ func TestSettingsCombinedUpdateCommitsOnce(t *testing.T) {
 	require.Equal(t, `{"rules":[]}`, repo.values[gateway.SettingKeyOpenAIFastPolicySettings])
 }
 
+// TestSettingsCombinedWriteAndApplyErrors injects failure before the batch
+// write or during post-write reload. It checks unsuccessful HTTP and no
+// notification, distinguishing unchanged persistence from saved data with
+// SETTINGS_APPLY_FAILED and persisted metadata.
 func TestSettingsCombinedWriteAndApplyErrors(t *testing.T) {
 	for _, scenario := range []string{"write", "apply"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -446,18 +550,22 @@ func TestSettingsCombinedWriteAndApplyErrors(t *testing.T) {
 	}
 }
 
+// Get rejects unsupported single-record access in the failing batch fixture.
 func (s *failingAuthSourceSettingsRepoStub) Get(ctx context.Context, key string) (*settingscore.Setting, error) {
 	panic("unexpected Get call")
 }
 
+// GetValue rejects single-key access outside the fixture's batch settings path.
 func (s *failingAuthSourceSettingsRepoStub) GetValue(ctx context.Context, key string) (string, error) {
 	panic("unexpected GetValue call")
 }
 
+// Set rejects individual writes in the all-or-rejected batch fixture.
 func (s *failingAuthSourceSettingsRepoStub) Set(ctx context.Context, key, value string) error {
 	panic("unexpected Set call")
 }
 
+// GetMultiple returns a fresh map of requested present fixture settings.
 func (s *failingAuthSourceSettingsRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -468,6 +576,9 @@ func (s *failingAuthSourceSettingsRepoStub) GetMultiple(ctx context.Context, key
 	return out, nil
 }
 
+// SetMultiple returns the configured err unchanged when email-source balance is
+// present, applying no keys. That includes nil err; other batches initialize
+// values as needed and write each supplied string synchronously.
 func (s *failingAuthSourceSettingsRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
 	if _, ok := settings[identity.SettingKeyAuthSourceDefaultEmailBalance]; ok {
 		return s.err
@@ -481,16 +592,22 @@ func (s *failingAuthSourceSettingsRepoStub) SetMultiple(ctx context.Context, set
 	return nil
 }
 
+// GetAll returns a new outer map of the configured setting strings.
 func (s *failingAuthSourceSettingsRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
 	out := make(map[string]string, len(s.values))
 	maps.Copy(out, s.values)
 	return out, nil
 }
 
+// Delete rejects removal from the failing settings write fixture.
 func (s *failingAuthSourceSettingsRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }
 
+// TestSettingHandler_GetSettings_InjectsAuthSourceDefaults reads stored
+// email-source grants and force-email policy through combined settings HTTP. It
+// checks balance, concurrency, subscription count, and the force-email flag in
+// the flattened response.
 func TestSettingHandler_GetSettings_InjectsAuthSourceDefaults(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -525,6 +642,10 @@ func TestSettingHandler_GetSettings_InjectsAuthSourceDefaults(t *testing.T) {
 	require.Len(t, subscriptions, 1)
 }
 
+// TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults updates
+// email-source balance while omitting other grant defaults. It checks formatted
+// stored balance, retained concurrency/subscriptions/force-email, and the
+// corresponding response values after the partial save.
 func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -571,11 +692,14 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
-// TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL checks URL normalization and browser-generated content IDs.
+// TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL submits
+// trimmed markdown menu URLs with slug, compact browser ID, and hyphenated ID
+// forms. It checks accepted normalization and stored menu data, or rejection
+// with no menu key written.
 func TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL(t *testing.T) {
 	for _, test := range []struct {
-		id     string
-		status int
+		id     string // requested custom menu identity
+		status int    // expected validation status
 	}{
 		{"guide", http.StatusOK},
 		{"00112233445566778899aabbccddeeff", http.StatusOK},
@@ -610,6 +734,10 @@ func TestSettingHandler_UpdateSettings_AcceptsMarkdownCustomMenuURL(t *testing.T
 	}
 }
 
+// TestSettingHandler_UpdateSettings_RejectsEmptyMarkdownCustomMenuSlug submits
+// a markdown menu URL without its slug. It checks BadRequest and absence of the
+// custom-menu storage key, keeping the invalid choice out of saved
+// configuration.
 func TestSettingHandler_UpdateSettings_RejectsEmptyMarkdownCustomMenuSlug(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -646,6 +774,10 @@ func TestSettingHandler_UpdateSettings_RejectsEmptyMarkdownCustomMenuSlug(t *tes
 	require.NotContains(t, repo.values, site.SettingKeyCustomMenuItems)
 }
 
+// TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler
+// updates visible channels, subscription priority, and quota pause thresholds
+// over existing Ops JSON. It checks canonical storage and response values,
+// retained retention fields, and removed aggregation data.
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -709,6 +841,9 @@ func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedS
 	require.Equal(t, 0.9, quota["default_threshold_7d"])
 }
 
+// TestSettingHandler_UpdateSettings_PreservesLegacyBlankPaymentVisibleMethodSource
+// updates an unrelated promo flag while payment source text is blank. It checks
+// successful HTTP retains the blank Alipay source and its enabled stored flag.
 func TestSettingHandler_UpdateSettings_PreservesLegacyBlankPaymentVisibleMethodSource(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -740,6 +875,10 @@ func TestSettingHandler_UpdateSettings_PreservesLegacyBlankPaymentVisibleMethodS
 	require.Equal(t, "true", repo.values[paymentcore.SettingPaymentVisibleMethodAlipayEnabled])
 }
 
+// TestSettingHandler_UpdateSettings_PersistsExplicitFalseOIDCCompatibilityFlags
+// sends explicit false OIDC PKCE and ID-token-validation values. It checks
+// successful storage of both false strings and matching response booleans
+// rather than applying their missing-value defaults.
 func TestSettingHandler_UpdateSettings_PersistsExplicitFalseOIDCCompatibilityFlags(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -795,6 +934,10 @@ func TestSettingHandler_UpdateSettings_PersistsExplicitFalseOIDCCompatibilityFla
 	require.Equal(t, false, data["oidc_connect_validate_id_token"])
 }
 
+// TestSettingHandler_UpdateSettings_DoesNotSolidifyImplicitOIDCSecurityDefaultsOnLegacyUpgrade
+// updates enabled OIDC with stored security flags absent and implicit
+// configuration defaults. It checks the compatibility path saves false values
+// for PKCE and ID-token validation.
 func TestSettingHandler_UpdateSettings_DoesNotSolidifyImplicitOIDCSecurityDefaultsOnLegacyUpgrade(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -863,6 +1006,10 @@ func TestSettingHandler_UpdateSettings_DoesNotSolidifyImplicitOIDCSecurityDefaul
 	require.Equal(t, "false", repo.values[identity.SettingKeyOIDCConnectValidateIDToken])
 }
 
+// TestSettingHandler_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource
+// supplies an unsupported Alipay source while changing the promo flag. It
+// checks BadRequest and no source key is written, keeping invalid channel
+// choices out of persistence.
 func TestSettingHandler_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(t *testing.T) {
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -890,6 +1037,10 @@ func TestSettingHandler_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(
 	require.NotContains(t, repo.values, paymentcore.SettingPaymentVisibleMethodAlipaySource)
 }
 
+// TestSettingHandler_UpdateSettings_DoesNotPersistPartialSystemSettingsWhenAuthSourceDefaultsFail
+// injects failure for a batch containing email-source balance and system
+// settings. It checks InternalServerError and retains both the old registration
+// flag and the prior balance.
 func TestSettingHandler_UpdateSettings_DoesNotPersistPartialSystemSettingsWhenAuthSourceDefaultsFail(t *testing.T) {
 	repo := &failingAuthSourceSettingsRepoStub{
 		values: map[string]string{
@@ -924,6 +1075,10 @@ func TestSettingHandler_UpdateSettings_DoesNotPersistPartialSystemSettingsWhenAu
 	require.Equal(t, "9.5", repo.values[identity.SettingKeyAuthSourceDefaultEmailBalance])
 }
 
+// TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail compares changed
+// email grants and force-email policy alongside unchanged system snapshots. It
+// checks each balance, concurrency, subscription, signup/first-bind, and
+// force-email identity appears in the diff.
 func TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail(t *testing.T) {
 	changed := settingshttp.DiffSettings(
 		&composite.Snapshot{},
@@ -959,6 +1114,8 @@ func TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail(t *testing.T) {
 	require.Contains(t, changed, "force_email_on_third_party_signup")
 }
 
+// newDingTalkSettingsHandler constructs combined HTTP with empty stored
+// settings and fixture defaults.
 func newDingTalkSettingsHandler() (*settingshttp.Handler, *settingHandlerRepoStub) {
 	repo := &settingHandlerRepoStub{values: map[string]string{}}
 	options, _ := newCompositeSettingsHTTPFixture(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -966,7 +1123,8 @@ func newDingTalkSettingsHandler() (*settingshttp.Handler, *settingHandlerRepoStu
 	return handler, repo
 }
 
-// baseValidDingTalkBody returns a minimal valid DingTalk settings body.
+// baseValidDingTalkBody returns fresh complete DingTalk credentials with
+// unrestricted corporate policy.
 func baseValidDingTalkBody() map[string]any {
 	return map[string]any{
 		"dingtalk_connect_enabled":                 true,
@@ -977,8 +1135,10 @@ func baseValidDingTalkBody() map[string]any {
 	}
 }
 
-// TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID checks successful persistence
-// when internal_only has an empty internal_corp_id.
+// TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID sends enabled
+// internal-only DingTalk with empty internal corporate identity. It checks
+// successful HTTP accepts that input, limiting the scenario to the observed
+// validation/save response.
 func TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -999,7 +1159,10 @@ func TestSettingsPUT_DingTalk_V3_InternalOnlyAllowsEmptyCorpID(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_HappyPath_None checks successful persistence with the none policy.
+// TestSettingsPUT_DingTalk_HappyPath_None sends complete enabled DingTalk
+// credentials with unrestricted corporate policy. It checks successful HTTP and
+// the enabled flag in returned combined settings, covering the accepted
+// configuration path.
 func TestSettingsPUT_DingTalk_HappyPath_None(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1024,7 +1187,10 @@ func TestSettingsPUT_DingTalk_HappyPath_None(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_enabled"])
 }
 
-// TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID checks internal_only with a corporate ID.
+// TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID sends complete
+// DingTalk credentials under internal-only policy with a corporate ID. It
+// checks HTTP OK for that accepted combination of corporate policy and supplied
+// identity.
 func TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1045,8 +1211,10 @@ func TestSettingsPUT_DingTalk_HappyPath_InternalOnly_WithCorpID(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip checks persistence and response of bypass_registration.
-// The internal_only policy permits bypass_registration.
+// TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip enables registration
+// bypass under internal-only DingTalk policy. It checks successful HTTP returns
+// the bypass flag true after the combined settings update has accepted that
+// policy.
 func TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1072,9 +1240,10 @@ func TestSettingsPUT_DingTalk_BypassRegistration_RoundTrip(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_bypass_registration"])
 }
 
-// TestSettingsPUT_DingTalk_Disabled_SkipsValidation checks that disabled DingTalk accepts incomplete credentials.
-// An empty client_id is accepted here; enabling DingTalk would reject it with
-// "Client ID is required when enabled".
+// TestSettingsPUT_DingTalk_Disabled_SkipsValidation sends disabled DingTalk
+// with an empty client ID and internal-only policy. It checks successful HTTP
+// accepts the incomplete disabled-provider configuration in this settings
+// scenario.
 func TestSettingsPUT_DingTalk_Disabled_SkipsValidation(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1097,7 +1266,10 @@ func TestSettingsPUT_DingTalk_Disabled_SkipsValidation(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip checks all three sync switches under internal_only.
+// TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip enables all three
+// profile sync switches under internal-only DingTalk policy. It checks
+// successful HTTP returns email, display-name, and department sync flags as
+// true.
 func TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1127,7 +1299,10 @@ func TestSettingsPUT_DingTalk_SyncFlags_InternalOnly_RoundTrip(t *testing.T) {
 	require.Equal(t, true, data["dingtalk_connect_sync_dept"], "sync_dept should be true for internal_only")
 }
 
-// TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse checks that none disables all three sync switches.
+// TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse sends enabled
+// profile sync switches under unrestricted DingTalk policy. It checks
+// successful HTTP returns all three switches false after the policy
+// normalization path.
 func TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse(t *testing.T) {
 	handler, _ := newDingTalkSettingsHandler()
 
@@ -1157,9 +1332,10 @@ func TestSettingsPUT_DingTalk_SyncFlags_PolicyNone_CoercedToFalse(t *testing.T) 
 	require.Equal(t, false, data["dingtalk_connect_sync_dept"], "sync_dept must be coerced to false when policy=none")
 }
 
-// TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone checks compatibility with whitelist input.
-// An API request with corp_restriction_policy=whitelist
-// is normalized to none before persistence.
+// TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone submits the historical
+// whitelist corporate policy text. It checks successful HTTP writes the
+// canonical none policy into stored DingTalk settings, covering compatibility
+// normalization before persistence.
 func TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone(t *testing.T) {
 	handler, repo := newDingTalkSettingsHandler()
 
@@ -1181,7 +1357,10 @@ func TestSettingsPUT_DingTalk_StaleWhitelist_CoercedToNone(t *testing.T) {
 		"stale whitelist 应在写入路径被 coerce 为 none")
 }
 
-// TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip checks custom attribute keys and defaults for empty values.
+// TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip updates custom sync attribute
+// keys and then explicitly empty keys. It checks custom keys in
+// storage/response and the canonical email, name, and department defaults
+// stored for empty inputs.
 func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 	t.Run("custom_attr_keys_saved", func(t *testing.T) {
 		handler, repo := newDingTalkSettingsHandler()
@@ -1249,6 +1428,9 @@ func TestSettingsPUT_DingTalk_SyncAttrKey_RoundTrip(t *testing.T) {
 	})
 }
 
+// TestDiffSettingsTracksGoogleOneTapSwitch compares disabled and enabled Google
+// One Tap snapshots. It checks the changed-field result includes the separate
+// google_one_tap_enabled setting identity for the administrator diff.
 func TestDiffSettingsTracksGoogleOneTapSwitch(t *testing.T) {
 	before := &composite.Snapshot{GoogleOneTapEnabled: false}
 	after := &composite.Snapshot{GoogleOneTapEnabled: true}
@@ -1258,15 +1440,21 @@ func TestDiffSettingsTracksGoogleOneTapSwitch(t *testing.T) {
 	require.Contains(t, changed, "google_one_tap_enabled")
 }
 
+// TestUpdateSettingsNormalizedModuleFields exercises omitted, empty, and null
+// values across scalar and pointer fields. It checks stored text and response
+// defaults distinguish explicit clearing from retention according to each field
+// representation.
 func TestUpdateSettingsNormalizedModuleFields(t *testing.T) {
 	tests := []struct {
-		field         string
-		stored        string
-		storedValue   any
-		emptyValue    any
-		emptyResponse any
-		emptyStored   string
-		pointerField  bool
+		// field identifies the same stored key and response member. stored and
+		// storedValue form the retained case; emptyValue, emptyStored, and optional emptyResponse define explicit clearing, while pointerField controls null retention.
+		field         string // updated setting identity
+		stored        string // initial persisted text
+		storedValue   any    // initial interpreted value
+		emptyValue    any    // explicit cleared input
+		emptyResponse any    // cleared response override
+		emptyStored   string // cleared persisted text
+		pointerField  bool   // null retains stored input
 	}{
 		{field: "default_balance", stored: "12.00000000", storedValue: float64(12), emptyValue: float64(0), emptyStored: "0.00000000"},
 		{field: "default_subscriptions", stored: `[{"plan_id":17}]`, storedValue: []any{map[string]any{"plan_id": float64(17)}}, emptyValue: []any{}, emptyStored: "[]"},
@@ -1303,7 +1491,7 @@ func TestUpdateSettingsNormalizedModuleFields(t *testing.T) {
 					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 					require.Equal(t, wantStored, repo.values[tt.field])
 					var response struct {
-						Data map[string]any `json:"data"`
+						Data map[string]any `json:"data"` // decoded combined response values
 					}
 					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 					require.Equal(t, wantValue, response.Data[tt.field])
@@ -1313,6 +1501,9 @@ func TestUpdateSettingsNormalizedModuleFields(t *testing.T) {
 	}
 }
 
+// TestUpdateSettingsPartialPayloadKeepsUnsentKeys changes risk control while
+// site, SMTP, and Turnstile values are stored. It checks the sent flag is
+// written and each unsent value remains available after successful HTTP.
 func TestUpdateSettingsPartialPayloadKeepsUnsentKeys(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		site.SettingKeySiteName:             "Example Gateway",
@@ -1335,7 +1526,10 @@ func TestUpdateSettingsPartialPayloadKeepsUnsentKeys(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyTurnstileEnabled])
 }
 
-// TestUpdateSettingsFullPayloadStillClearsSentEmptyFields checks that an explicit empty value clears the setting.
+// TestUpdateSettingsFullPayloadStillClearsSentEmptyFields sends an empty
+// site-name string over an existing value. It checks successful HTTP stores the
+// empty value, preserving the distinction between explicit clearing and an
+// omitted field.
 func TestUpdateSettingsFullPayloadStillClearsSentEmptyFields(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		site.SettingKeySiteName: "Example Gateway",
@@ -1348,8 +1542,9 @@ func TestUpdateSettingsFullPayloadStillClearsSentEmptyFields(t *testing.T) {
 		"明确发送的空值表示主动清空，而不是省略字段")
 }
 
-// TestUpdateSettingsSMTPFromAliasIsWritable checks the smtp_from_email request alias.
-// The alias maps the request field to the SMTP sender storage key.
+// TestUpdateSettingsSMTPFromAliasIsWritable sends the smtp_from_email request
+// alias over a stored sender. It checks successful HTTP updates the canonical
+// SMTP sender storage key with the supplied address.
 func TestUpdateSettingsSMTPFromAliasIsWritable(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		notification.SettingKeySMTPFrom: "old@example.com",
@@ -1361,7 +1556,10 @@ func TestUpdateSettingsSMTPFromAliasIsWritable(t *testing.T) {
 	require.Equal(t, "new@example.com", repo.values[notification.SettingKeySMTPFrom])
 }
 
-// TestUpdateSettingsCreativeEnabledPartialSemantics checks that explicit values are saved and omission retains stored values.
+// TestUpdateSettingsCreativeEnabledPartialSemantics explicitly disables
+// creative and then updates another flag with creative omitted. It checks false
+// is persisted when sent and an already disabled creative value remains stored
+// when omitted.
 func TestUpdateSettingsCreativeEnabledPartialSemantics(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeEnabled: "true",
@@ -1380,6 +1578,10 @@ func TestUpdateSettingsCreativeEnabledPartialSemantics(t *testing.T) {
 		"未发送 creative_enabled 时必须保留存储值")
 }
 
+// TestUpdateSettingsCreativeModelSettingsPartialSemantics omits, clears, and
+// submits an invalid creative model operation list. It checks omission retains
+// JSON, an empty array saves no models, and rejected capability input leaves
+// that saved array unchanged.
 func TestUpdateSettingsCreativeModelSettingsPartialSemantics(t *testing.T) {
 	stored := `[{"group_id":12,"model":"gpt-image-2","operations":["generate"]}]`
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
@@ -1408,7 +1610,9 @@ func TestUpdateSettingsCreativeModelSettingsPartialSemantics(t *testing.T) {
 	require.JSONEq(t, "[]", repo.values[creative.SettingKeyCreativeModelSettings])
 }
 
-// TestUpdateSettingsCreativeWorkerCountPartialSemantics checks that omission retains the stored worker count.
+// TestUpdateSettingsCreativeWorkerCountPartialSemantics changes creative worker
+// count and then submits an unrelated partial update. It checks the new count
+// is stored and the omitted worker setting remains unchanged afterward.
 func TestUpdateSettingsCreativeWorkerCountPartialSemantics(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeWorkerCount: "4",
@@ -1423,7 +1627,9 @@ func TestUpdateSettingsCreativeWorkerCountPartialSemantics(t *testing.T) {
 	require.Equal(t, "7", repo.values[creative.SettingKeyCreativeWorkerCount])
 }
 
-// TestUpdateSettingsRejectsInvalidCreativeWorkerCount checks rejection of nonpositive worker counts.
+// TestUpdateSettingsRejectsInvalidCreativeWorkerCount submits zero and negative
+// counts over a configured creative worker value. It checks BadRequest for both
+// inputs and retains the same stored positive count.
 func TestUpdateSettingsRejectsInvalidCreativeWorkerCount(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		creative.SettingKeyCreativeWorkerCount: "4",
@@ -1436,7 +1642,10 @@ func TestUpdateSettingsRejectsInvalidCreativeWorkerCount(t *testing.T) {
 	}
 }
 
-// TestUpdateSettingsNormalizesGeminiInpaintBeforeSave checks that normalization removes unsupported Gemini inpaint before saving.
+// TestUpdateSettingsNormalizesGeminiInpaintBeforeSave uses the fixture
+// normalizer for group twelve with generate and inpaint. It checks successful
+// HTTP stores only generation after the callback filters the unsupported
+// fixture operation.
 func TestUpdateSettingsNormalizesGeminiInpaintBeforeSave(t *testing.T) {
 	repo := &settingHandlerRepoStub{values: map[string]string{}}
 	options, _ := newCompositeSettingsHTTPFixture(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -1454,10 +1663,18 @@ func TestUpdateSettingsNormalizesGeminiInpaintBeforeSave(t *testing.T) {
 	require.JSONEq(t, `[{"group_id":12,"model":"gemini-3.1-flash-image","operations":["generate"]}]`, repo.values[creative.SettingKeyCreativeModelSettings])
 }
 
+// ListCreativeModelCandidates returns the fixture's shared candidate slice and
+// nested operation lists. Callers keep those values stable during HTTP
+// conversion or copy them before mutating them, since edits would change the
+// fixture's supplied candidates.
 func (s *creativeModelCandidateReaderStub) ListCreativeModelCandidates(context.Context) ([]creative.CreativeModelCandidate, error) {
 	return s.candidates, nil
 }
 
+// NormalizeCreativeModelSettingsForSave returns input unchanged when
+// sanitizeGemini is false. Otherwise it applies creative normalization and
+// removes inpaint from every group-twelve entry, regardless of that entry's
+// model name or platform.
 func (s *creativeModelCandidateReaderStub) NormalizeCreativeModelSettingsForSave(_ context.Context, input []creative.CreativeModelSetting) ([]creative.CreativeModelSetting, error) {
 	if !s.sanitizeGemini {
 		return input, nil
@@ -1470,6 +1687,8 @@ func (s *creativeModelCandidateReaderStub) NormalizeCreativeModelSettingsForSave
 		if normalized[i].GroupID != 12 {
 			continue
 		}
+		// The fixture filters group twelve regardless of model identity. Reuse
+		// its normalized operation storage while retaining generation choices and removing each inpaint occurrence before save.
 		filtered := normalized[i].Operations[:0]
 		for _, operation := range normalized[i].Operations {
 			if operation != creative.CreativeOperationInpaint {
@@ -1481,6 +1700,9 @@ func (s *creativeModelCandidateReaderStub) NormalizeCreativeModelSettingsForSave
 	return normalized, nil
 }
 
+// TestListCreativeModelCandidates serves one configured Grok image candidate
+// through creative settings HTTP. It checks successful output includes the
+// fixture group name and model identity from that candidate.
 func TestListCreativeModelCandidates(t *testing.T) {
 	h := creativehttp.NewSettingsHandler(&creativeModelCandidateReaderStub{candidates: []creative.CreativeModelCandidate{{
 		GroupID:    12,
@@ -1498,7 +1720,9 @@ func TestListCreativeModelCandidates(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "grok-imagine")
 }
 
-// TestGetCreativeWorkerStatus checks callback snapshots and the inactive zero status returned by a nil worker.
+// TestGetCreativeWorkerStatus reads status from a nil worker method and a
+// populated callback snapshot. It checks successful HTTP returns the respective
+// running, worker-count, and busy-worker values for both sources.
 func TestGetCreativeWorkerStatus(t *testing.T) {
 	var worker *creative.CreativeWorkerRuntime
 	h := creativehttp.NewSettingsHandler(nil, worker.Status)
@@ -1525,6 +1749,9 @@ func TestGetCreativeWorkerStatus(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"busy_workers":60`)
 }
 
+// TestUpdateSettingsGrokDefaultBaseURLModeIsWritable updates a stored CLI mode
+// to a regional Grok mode. It checks successful HTTP saves the requested
+// eu-west-1 value in the canonical gateway setting key.
 func TestUpdateSettingsGrokDefaultBaseURLModeIsWritable(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		gateway.SettingKeyGrokDefaultBaseURLMode: "cli",
@@ -1537,6 +1764,10 @@ func TestUpdateSettingsGrokDefaultBaseURLModeIsWritable(t *testing.T) {
 	require.Equal(t, "eu-west-1", repo.values[gateway.SettingKeyGrokDefaultBaseURLMode])
 }
 
+// TestUpdateSettingsRejectsTwoCaptchaProviders enables Turnstile and Tencent
+// together with complete-looking credential input. It checks BadRequest and the
+// mutually-exclusive-provider message, keeping that combination out of the
+// accepted settings path.
 func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTurnstileEnabled:   "true",
@@ -1559,6 +1790,10 @@ func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "cannot be enabled at the same time")
 }
 
+// TestUpdateSettingsRequiresFourTencentCaptchaCredentialsWhenEnabled enables
+// Tencent with only an app ID supplied. It checks BadRequest and an
+// AppSecretKey diagnostic, covering the missing credential rejection reached by
+// that input.
 func TestUpdateSettingsRequiresFourTencentCaptchaCredentialsWhenEnabled(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1571,6 +1806,10 @@ func TestUpdateSettingsRequiresFourTencentCaptchaCredentialsWhenEnabled(t *testi
 	require.Contains(t, rec.Body.String(), "AppSecretKey")
 }
 
+// TestUpdateSettingsRetainsStoredTencentCaptchaCredentialsWhenInputsEmpty
+// enables Tencent while submitting blank sensitive fields over stored secrets.
+// It checks successful HTTP retains all three configured secret values used to
+// complete the accepted captcha options.
 func TestUpdateSettingsRetainsStoredTencentCaptchaCredentialsWhenInputsEmpty(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTencentCaptchaAppSecretKey:   "stored-app-secret",
@@ -1592,8 +1831,9 @@ func TestUpdateSettingsRetainsStoredTencentCaptchaCredentialsWhenInputsEmpty(t *
 	require.Equal(t, "stored-cloud-secret-key", repo.values[identity.SettingKeyTencentCaptchaCloudSecretKey])
 }
 
-// TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion checks that a partial update retains the configured region.
-// Resetting an international deployment to China would select the wrong SDK and verification endpoint.
+// TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion updates risk
+// control while Tencent region is international. It checks successful HTTP
+// retains the stored international choice when the captcha region is omitted.
 func TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTencentCaptchaRegion: identity.TencentCaptchaRegionINTL,
@@ -1606,6 +1846,10 @@ func TestUpdateSettingsPartialPayloadKeepsTencentCaptchaRegion(t *testing.T) {
 		repo.values[identity.SettingKeyTencentCaptchaRegion])
 }
 
+// TestUpdateSettingsNormalizesUnknownTencentCaptchaRegion submits an
+// unrecognized region over an international stored value. It checks successful
+// HTTP writes the canonical China region rather than retaining an unsupported
+// region string.
 func TestUpdateSettingsNormalizesUnknownTencentCaptchaRegion(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTencentCaptchaRegion: identity.TencentCaptchaRegionINTL,
@@ -1619,6 +1863,9 @@ func TestUpdateSettingsNormalizesUnknownTencentCaptchaRegion(t *testing.T) {
 		"未知站点必须落回中国站，不能写入无法识别的值")
 }
 
+// TestUpdateSettingsWritesTencentCaptchaRegionWhenSent sends the recognized
+// international captcha region in a partial payload. It checks successful HTTP
+// writes that canonical value into its stored setting key.
 func TestUpdateSettingsWritesTencentCaptchaRegionWhenSent(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1629,6 +1876,10 @@ func TestUpdateSettingsWritesTencentCaptchaRegionWhenSent(t *testing.T) {
 		repo.values[identity.SettingKeyTencentCaptchaRegion])
 }
 
+// TestUpdateSettingsValidatesTencentCaptchaAppIDWhenEnabledFlagIsOmitted keeps
+// Tencent enabled in storage and submits a nonnumeric app ID. It checks
+// BadRequest and positive-integer validation even though the update omits the
+// enabled flag.
 func TestUpdateSettingsValidatesTencentCaptchaAppIDWhenEnabledFlagIsOmitted(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyTencentCaptchaEnabled:        "true",
@@ -1646,6 +1897,9 @@ func TestUpdateSettingsValidatesTencentCaptchaAppIDWhenEnabledFlagIsOmitted(t *t
 	require.Contains(t, rec.Body.String(), "positive integer")
 }
 
+// newStepUpSwitchTestHandler constructs combined HTTP over the supplied stored
+// map. It retains that map in the repository for mutation assertions and uses a
+// default concurrency of five for settings preparation.
 func newStepUpSwitchTestHandler(t *testing.T, stored map[string]string) (*settingshttp.Handler, *settingHandlerRepoStub) {
 	t.Helper()
 
@@ -1654,7 +1908,10 @@ func newStepUpSwitchTestHandler(t *testing.T, stored map[string]string) (*settin
 	return settingshttp.NewHandler(options), repo
 }
 
-// TestUpdateSettingsEnableStepUpRejectsWithoutSession checks the dedicated error for enabling step-up without authentication.
+// TestUpdateSettingsEnableStepUpRejectsWithoutSession requests the
+// disabled-to-enabled step-up transition without a session. It checks
+// Forbidden, the TOTP prerequisite reason, and absence of a saved true step-up
+// value.
 func TestUpdateSettingsEnableStepUpRejectsWithoutSession(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1665,7 +1922,9 @@ func TestUpdateSettingsEnableStepUpRejectsWithoutSession(t *testing.T) {
 	require.NotEqual(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsEnableStepUpRejectsAdminAPIKey checks the dedicated reason for rejecting admin API key authentication.
+// TestUpdateSettingsEnableStepUpRejectsAdminAPIKey requests step-up enablement
+// using an administrator API-Key marker. It checks Forbidden with the dedicated
+// admin-key rejection reason before the settings transition is accepted.
 func TestUpdateSettingsEnableStepUpRejectsAdminAPIKey(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1677,7 +1936,9 @@ func TestUpdateSettingsEnableStepUpRejectsAdminAPIKey(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
 }
 
-// TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService checks a 500 response when the authenticated user cannot be validated.
+// TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService provides an
+// authenticated subject but omits the user service during step-up enablement.
+// It checks InternalServerError and retains a value other than true in storage.
 func TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1689,7 +1950,9 @@ func TestUpdateSettingsEnableStepUpFailsClosedWithoutUserService(t *testing.T) {
 	require.NotEqual(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsDisableStepUpRequiresStepUp checks a 401 response when disabling step-up without authentication.
+// TestUpdateSettingsDisableStepUpRequiresStepUp requests true-to-false step-up
+// transition without authentication. It checks Unauthorized and retains the
+// stored true value after the privileged transition is rejected.
 func TestUpdateSettingsDisableStepUpRequiresStepUp(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1701,7 +1964,9 @@ func TestUpdateSettingsDisableStepUpRequiresStepUp(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsDisableStepUpRejectsAdminAPIKey checks a 403 response when an admin API key disables step-up.
+// TestUpdateSettingsDisableStepUpRejectsAdminAPIKey requests step-up
+// disablement using an administrator API-Key marker. It checks Forbidden, the
+// dedicated rejection reason, and retained enabled state in storage.
 func TestUpdateSettingsDisableStepUpRejectsAdminAPIKey(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1716,7 +1981,10 @@ func TestUpdateSettingsDisableStepUpRejectsAdminAPIKey(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsStepUpNoTransitionSkipsGate checks ordinary saving when step-up stays disabled.
+// TestUpdateSettingsStepUpNoTransitionSkipsGate sends false while step-up is
+// already absent/disabled. It checks successful saving of false and the
+// persisted disabled session-binding default without triggering an enablement
+// transition.
 func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1728,7 +1996,9 @@ func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 	require.Equal(t, "false", repo.values[identity.SettingKeySessionBindingEnabled])
 }
 
-// TestUpdateSettingsStepUpKeepEnabledSkipsGate checks ordinary saving when step-up stays enabled.
+// TestUpdateSettingsStepUpKeepEnabledSkipsGate sends true when step-up is
+// already stored true. It checks successful HTTP retains enabled state,
+// exercising a save without a change to that security switch.
 func TestUpdateSettingsStepUpKeepEnabledSkipsGate(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled: "true",
@@ -1740,8 +2010,10 @@ func TestUpdateSettingsStepUpKeepEnabledSkipsGate(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyStepUpEnabled])
 }
 
-// TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues checks that omitted security switches retain their stored values.
-// Keeping the switches enabled does not trigger transition checks.
+// TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues updates
+// registration while four security switches are stored enabled. It checks
+// successful HTTP retains each omitted enabled value rather than changing them
+// during an unrelated partial update.
 func TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyStepUpEnabled:                       "true",
@@ -1759,7 +2031,10 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled checks disabled defaults for omitted switches.
+// TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled updates registration
+// with four security switches absent. It checks successful HTTP saves their
+// disabled defaults, distinguishing the missing-state path from retained
+// enabled settings.
 func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1772,7 +2047,9 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	require.Equal(t, "false", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsEnablesUserEmailChange checks that a partial update can enable email changes.
+// TestUpdateSettingsEnablesUserEmailChange sends user_email_change_enabled true
+// into an empty settings fixture. It checks successful HTTP and the canonical
+// stored true value for that explicit partial update.
 func TestUpdateSettingsEnablesUserEmailChange(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
@@ -1782,7 +2059,9 @@ func TestUpdateSettingsEnablesUserEmailChange(t *testing.T) {
 	require.Equal(t, "true", repo.values[identity.SettingKeyUserEmailChangeEnabled])
 }
 
-// TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue checks that omission retains the stored default key limit.
+// TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue updates
+// registration while the default Key count is stored. It checks successful HTTP
+// retains the omitted limit string for subsequent user creation policy reads.
 func TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1794,7 +2073,10 @@ func TestUpdateSettingsOmittedDefaultUserAPIKeyLimitKeepsStoredValue(t *testing.
 	require.Equal(t, "33", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit checks that zero sets an unlimited default key count.
+// TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit sends explicit zero over
+// a nonzero default Key limit. It checks successful HTTP stores zero,
+// preserving the configured unlimited-count representation for later policy
+// interpretation.
 func TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1806,7 +2088,9 @@ func TestUpdateSettingsExplicitZeroDefaultUserAPIKeyLimit(t *testing.T) {
 	require.Equal(t, "0", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit checks rejection before persistence.
+// TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit sends a negative
+// default Key count over a stored limit. It checks BadRequest,
+// INVALID_API_KEY_LIMIT, and unchanged stored value after the invalid update.
 func TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1819,7 +2103,9 @@ func TestUpdateSettingsRejectsNegativeDefaultUserAPIKeyLimit(t *testing.T) {
 	require.Equal(t, "33", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
-// TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange checks rejection of limits beyond PostgreSQL INTEGER range.
+// TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange submits one
+// beyond the identity maximum default Key limit. It checks BadRequest, the
+// dedicated limit reason, and retained prior storage for this range violation.
 func TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		identity.SettingKeyDefaultUserAPIKeyLimit: "33",
@@ -1832,6 +2118,10 @@ func TestUpdateSettingsRejectsDefaultUserAPIKeyLimitAboveDatabaseRange(t *testin
 	require.Equal(t, "33", repo.values[identity.SettingKeyDefaultUserAPIKeyLimit])
 }
 
+// TestUpdateSettingsForwardedClientIPHeadersOmittedPreservesAndEmptyClears
+// first omits and then explicitly empties the configured forwarded-header list.
+// It checks retained versus cleared JSON in storage and the corresponding
+// returned header arrays.
 func TestUpdateSettingsForwardedClientIPHeadersOmittedPreservesAndEmptyClears(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		runtimeconfig.SettingKeyForwardedClientIPHeaders: `["X-Cdn-Ip","True-Client-Ip"]`,
@@ -1848,6 +2138,10 @@ func TestUpdateSettingsForwardedClientIPHeadersOmittedPreservesAndEmptyClears(t 
 	require.Contains(t, cleared.Body.String(), `"forwarded_client_ip_headers":[]`)
 }
 
+// TestUpdateSettingsMalformedForwardedClientIPHeadersRemainFailClosedWhenOmitted
+// loads malformed stored headers with forwarded trust requested, then saves an
+// unrelated setting. It checks trust stays false and both storage and published
+// configuration are normalized to disabled trust with an empty list.
 func TestUpdateSettingsMalformedForwardedClientIPHeadersRemainFailClosedWhenOmitted(t *testing.T) {
 	cfg := &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}}
 	repo := &settingHandlerRepoStub{values: map[string]string{
@@ -1871,6 +2165,10 @@ func TestUpdateSettingsMalformedForwardedClientIPHeadersRemainFailClosedWhenOmit
 	require.Contains(t, rec.Body.String(), `"forwarded_client_ip_headers":[]`)
 }
 
+// TestUpdateSettingsRejectsInvalidForwardedClientIPHeader sends a header name
+// containing whitespace over a valid stored list. It checks BadRequest and
+// unchanged prior JSON, rejecting the invalid name before it can replace trust
+// inputs.
 func TestUpdateSettingsRejectsInvalidForwardedClientIPHeader(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
 		runtimeconfig.SettingKeyForwardedClientIPHeaders: `["X-Existing-IP"]`,
@@ -1884,7 +2182,10 @@ func TestUpdateSettingsRejectsInvalidForwardedClientIPHeader(t *testing.T) {
 	require.JSONEq(t, `["X-Existing-IP"]`, repo.values[runtimeconfig.SettingKeyForwardedClientIPHeaders])
 }
 
-// TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields checks dedicated errors for retired experimental scheduler fields.
+// TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields submits each
+// retired experimental scheduler field through combined settings HTTP. It
+// checks BadRequest, the dedicated deprecation reason, and that field's name in
+// the diagnostic response.
 func TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields(t *testing.T) {
 	for _, field := range []string{
 		"advanced_scheduler_enabled",

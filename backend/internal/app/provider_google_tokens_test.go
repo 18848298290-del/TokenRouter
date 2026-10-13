@@ -12,9 +12,23 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// geminiFullLocalUsage returns usage at the quota limit through the statistics interface.
-type geminiFullLocalUsage struct{ usagecore.UsageLogRepository }
+// Official AI Studio quota and third-party Gemini providers follow different
+// local admission rules. A usage source reports the official Pro limit, and the
+// scenario checks official rejection alongside third-party eligibility,
+// cooldown, and quota display with its absent daily buckets.
 
+// geminiFullLocalUsage supplies official Pro quota exhaustion for the precheck
+// fixture.
+type geminiFullLocalUsage struct {
+	// UsageLogRepository supplies unused methods; this fixture implements
+	// model statistics for the official quota precheck invoked by the scenario.
+	usagecore.UsageLogRepository
+}
+
+// TestGeminiThirdPartyAPIKeySkipsLocalQuota compares official free-tier and
+// third-party API-Key providers. It checks quota presence, third-party cooldown
+// and display buckets, then verifies local Pro exhaustion denies the official
+// provider while allowing the third-party path.
 func TestGeminiThirdPartyAPIKeySkipsLocalQuota(t *testing.T) {
 	ctx := context.Background()
 	quotaService := provider.NewGeminiQuotaService(provider.GeminiQuotaOptions{})
@@ -66,6 +80,9 @@ func TestGeminiThirdPartyAPIKeySkipsLocalQuota(t *testing.T) {
 	require.True(t, thirdPartyAllowed)
 }
 
+// GetModelStatsWithFilters returns fifty Pro requests for this quota fixture.
+// It ignores filters and dates, providing the fixed exhausted usage observation
+// consumed by the official precheck scenario.
 func (r *geminiFullLocalUsage) GetModelStatsWithFilters(context.Context, time.Time, time.Time, int64, int64, int64, int64, *int16, *bool, *int8) ([]usagecore.ModelStat, error) {
 	return []usagecore.ModelStat{{Model: "gemini-2.5-pro", Requests: 50}}, nil
 }

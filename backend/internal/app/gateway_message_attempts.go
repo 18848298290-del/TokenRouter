@@ -18,7 +18,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// messageAttemptBindings supplies execution callbacks; textattempt owns HTTP output and per-attempt state.
+// Messages, compatible text, and Gemini attempts reuse one set of admission,
+// selection, and completion dependencies. Assembly binds each available
+// platform callback and retains the Forward recorder, while textattempt.Runtime
+// owns per-attempt HTTP state and output handling.
+
+// messageAttemptBindings supplies platform callbacks and shared admission to
+// textattempt. shared is required; queue helpers are created when queue and cfg
+// are present, optional executors expose their supported callbacks, and Forward
+// completion uses the supplied worker submission policy.
 func messageAttemptBindings(
 	cooldown *provider.RetryCooldown,
 	digest *session.DigestSessionStore,
@@ -38,6 +46,7 @@ func messageAttemptBindings(
 ) textattempt.Bindings {
 	var queueHelper *gatewayhttp.UserMsgQueueHelper
 	if queue != nil && cfg != nil {
+		// Queue pings use the configured interval as a duration in seconds.
 		queueHelper = gatewayhttp.NewUserMsgQueueHelper(queue, gatewayhttp.SSEPingFormatClaude, time.Duration(cfg.Concurrency.PingInterval)*time.Second)
 	}
 
@@ -110,7 +119,10 @@ func messageAttemptBindings(
 	return b
 }
 
-// provideMessageAttemptRuntime binds shared dependencies to message execution.
+// provideMessageAttemptRuntime creates the Messages attempt runtime from
+// application bindings. Its required and optional dependencies follow
+// messageAttemptBindings, and the runtime retains those callbacks for requests
+// using the assembled instance.
 func provideMessageAttemptRuntime(
 	cooldown *provider.RetryCooldown,
 	digest *session.DigestSessionStore,

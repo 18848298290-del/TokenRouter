@@ -13,6 +13,15 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok OAuth routes distinguish trusted official endpoints from operator-
+// configured relay targets. These scenarios exercise the application URL-policy
+// binding for HTTP opt-in, allowlists, private hosts, malformed credentials,
+// preserved path prefixes, and image or video media endpoints.
+
+// TestGrokAPIKeyURLPolicyFollowsGlobalSecurityConfig builds API-Key routes from
+// global URL security settings. It checks accepted HTTP targets and encoded
+// media paths when permitted, and rejection when HTTP or the enabled allowlist
+// rules disallow them.
 func TestGrokAPIKeyURLPolicyFollowsGlobalSecurityConfig(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -66,6 +75,10 @@ func TestGrokAPIKeyURLPolicyFollowsGlobalSecurityConfig(t *testing.T) {
 	})
 }
 
+// TestGrokAPIKeyURLPolicyAppliesAllowlistAndPrivateHostControls changes
+// allowlist and loopback policy for one configured API-Key provider. It checks
+// accepted targets, host mismatches, private-address rejection, and acceptance
+// after private hosts are enabled.
 func TestGrokAPIKeyURLPolicyAppliesAllowlistAndPrivateHostControls(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -99,6 +112,9 @@ func TestGrokAPIKeyURLPolicyAppliesAllowlistAndPrivateHostControls(t *testing.T)
 	require.Equal(t, "https://127.0.0.1/v1/responses", target)
 }
 
+// TestGrokAPIKeyURLPolicyRedactsMalformedConfiguredURL supplies a malformed
+// base URL containing credential text. The returned policy error must use the
+// expected safe message and omit the configured secret.
 func TestGrokAPIKeyURLPolicyRedactsMalformedConfiguredURL(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -117,6 +133,10 @@ func TestGrokAPIKeyURLPolicyRedactsMalformedConfiguredURL(t *testing.T) {
 	require.NotContains(t, err.Error(), "secret")
 }
 
+// TestGrokOAuthURLPolicy exercises trusted OAuth endpoints and custom relays
+// under restrictive settings. It checks official and regional targets, relay
+// path prefixes, HTTP opt-in, allowlist rejection, and the operator checks
+// retained with unsafe overrides enabled.
 func TestGrokOAuthURLPolicy(t *testing.T) {
 	t.Run("default CLI gateway always allowed under restrictive allowlist", func(t *testing.T) {
 		provider := &gatewayprovider.ExecutionProvider{
@@ -281,6 +301,10 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 	})
 }
 
+// TestGrokOAuthMediaURLFollowsCustomForwardingUpstream configures an OAuth
+// relay with unsafe overrides enabled and the operator allowlist disabled.
+// Video generation must use that relay's media endpoint rather than a default
+// target.
 func TestGrokOAuthMediaURLFollowsCustomForwardingUpstream(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	provider := &gatewayprovider.ExecutionProvider{

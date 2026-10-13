@@ -22,24 +22,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
-// standaloneSearchExecution passes provider selection and execution results to standalone search.
+// Standalone Grok search selects a provider and carries its acquisition,
+// waiting, and release data into HTTP orchestration. Search-tool emulation
+// separately shares configuration and group policy, while both paths reuse
+// application transport and runtime endpoint-mode readers.
+
+// standaloneSearchExecution adapts Grok provider selection and one search
+// exchange.
 type standaloneSearchExecution struct {
-	selector *selection.Compatible
-	executor *gatewayprovider.GrokSearchExecutor
+	selector *selection.Compatible               // Grok provider selection
+	executor *gatewayprovider.GrokSearchExecutor // standalone search exchange
 }
 
-// standaloneSearchTarget holds the request's selected provider; completion recording receives a snapshot.
+// standaloneSearchTarget holds the selected record used for search and
+// completion.
 type standaloneSearchTarget struct {
-	source   *gatewayprovider.GrokSearchExecutor
-	provider *provider.Record
+	source   *gatewayprovider.GrokSearchExecutor // selected search execution
+	provider *provider.Record                    // selected provider record
 }
 
-// ProvideGatewaySearchTools constructs the shared search tool orchestrator.
+// ProvideGatewaySearchTools combines shared search configuration with group
+// tool policy.
 func ProvideGatewaySearchTools(settings *search.ConfigService, modelConfigs *routing.PricingConfigService) *searchtools.Emulator {
 	runtime := gatewayprovider.NewSearchTools(settings, modelConfigs)
 	return runtime
 }
 
+// Select requests a Grok text-capable provider and returns its search target.
+// Selection errors return false; absence also returns false with nil error,
+// while a target carries scheduler acquisition and release information for HTTP
+// ownership.
 func (p standaloneSearchExecution) Select(ctx context.Context, group int64, model string, excluded map[int64]struct{}) (gatewayhttp.StandaloneSearchTarget, searchtools.Selection, bool, error) {
 	selected, _, err := p.selector.SelectProviderWithSchedulerForCapability(ctx, &group, "", "", model, excluded, egress.OpenAIUpstreamTransportHTTPSSE, provider.OpenAIEndpointCapabilityTextGeneration, false, false, capability.PlatformGrok)
 	if err != nil {
@@ -52,18 +64,26 @@ func (p standaloneSearchExecution) Select(ctx context.Context, group int64, mode
 	return target, searchtools.Selection{ProviderID: selected.Provider.Record.ID, Acquired: selected.Acquired, Release: selected.ReleaseFunc, WaitPlan: selected.WaitPlan}, true, nil
 }
 
+// CompletionRecord returns the selected provider record for synchronous
+// completion capture. The pointer belongs to this target, so callers capture
+// the needed data before releasing its request resources.
 func (t standaloneSearchTarget) CompletionRecord() *provider.Record {
 	return t.provider
 }
 
+// Execute delegates one standalone search exchange using the selected provider.
 func (t standaloneSearchTarget) Execute(ctx context.Context, body []byte) ([]byte, error) {
 	return t.source.Execute(ctx, t.provider, body)
 }
 
-// ProvideGatewaySearchHTTP shares selection, funding, moderation, and completion with the search endpoint.
+// ProvideGatewaySearchHTTP binds search admission, slots, completion, and
+// selected-provider execution. Configured ping seconds control the concurrency
+// helper; optional Key, moderation, and activity services are attached when
+// supplied, while the search-tools dependency only orders assembly.
 func ProvideGatewaySearchHTTP(executor *gatewayprovider.GrokSearchExecutor, selector *selection.Compatible, funding *admission.FundingAdmission, concurrency *scheduler.ConcurrencyService, keys *apikey.APIKeyService, moderator *moderation.ContentModerationService, workers *completion.UsageRecordWorkerPool, cfg *config.Config, _ *searchtools.Emulator, activity *gatewayRequestActivity, recorders GatewayCompletionRecorders) *gatewayhttp.SearchHandler {
 	interval := time.Duration(0)
 	if cfg != nil {
+		// Search slot waiting emits pings at the configured interval in seconds.
 		interval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 	}
 	ports := gatewayhttp.SearchPorts{Selector: standaloneSearchExecution{selector, executor}, Funding: funding, Concurrency: gatewayhttp.NewConcurrencyHelper(concurrency, gatewayhttp.SSEPingFormatClaude, interval), Recorder: recorders.Forward, Workers: workers}
@@ -80,7 +100,9 @@ func ProvideGatewaySearchHTTP(executor *gatewayprovider.GrokSearchExecutor, sele
 	return result
 }
 
-// provideGrokSearchExecutor shares transport and reads the endpoint on each request.
+// provideGrokSearchExecutor binds shared transport and optional dynamic
+// endpoint lookup. With readers present, DefaultBaseURL reads the current mode
+// through a background context each time the executor requests its default URL.
 func provideGrokSearchExecutor(client *transport.Client, readers *gatewayprovider.RuntimeReaders) *gatewayprovider.GrokSearchExecutor {
 	out := &gatewayprovider.GrokSearchExecutor{Transport: client}
 	if readers != nil {

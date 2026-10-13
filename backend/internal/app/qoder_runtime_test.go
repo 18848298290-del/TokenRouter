@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// TestNewQoderGatewayServiceUsesInjectedRefreshAPI checks that refresh and execution share the injected session cache.
+// Request-side Qoder refresh and execution must refer to the same session
+// provider. The scenario places a credential-matched session into that provider
+// and asks an execution target for its session, making pointer sharing and the
+// injected coordinator visible.
+
+// TestNewQoderGatewayServiceUsesInjectedRefreshAPI assembles refresh and
+// execution using one injected token provider. It checks coordinator/provider
+// identity and confirms the target returns the same cached session for matching
+// credentials, then stops the owned provider in cleanup.
 func TestNewQoderGatewayServiceUsesInjectedRefreshAPI(t *testing.T) {
 	tokens := provideQoderTokens(nil, nil)
 	t.Cleanup(func() { require.NoError(t, tokens.StopContext(context.Background())) })

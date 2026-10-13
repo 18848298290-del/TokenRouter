@@ -12,12 +12,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// provideOpenAIResponseHealth shares provider health, runtime state, and deferred writes.
+// OpenAI output shares provider health, reasoning history, response lineage,
+// and the proxy stream circuit. Its startup options retain platform stream
+// budgets and a default response-read limit, while request-time callbacks
+// supply TTFT policy and continuation lifetime.
+
+// provideOpenAIResponseHealth combines shared containment, transient models,
+// and deferred writes.
 func provideOpenAIResponseHealth(observer *provideradapter.UpstreamHealth, blocks *provider.RuntimeBlockState, models *provider.ModelTransientState, deferred *provider.DeferredService) *provideradapter.OpenAIResponseHealth {
 	return &provideradapter.OpenAIResponseHealth{Health: observer, Runtime: blocks, ModelTransient: models, Deferred: deferred}
 }
 
-// provideOpenAIResponseOutput binds static options and dependencies for response output.
+// provideOpenAIResponseOutput constructs response handling around the shared
+// health and session services. Nil cfg uses the default read bytes; positive
+// configured bytes replace them, readers enables dynamic TTFT policy, and
+// identity and choices supply method callbacks.
 func provideOpenAIResponseOutput(cfg *config.Config, health *provideradapter.OpenAIResponseHealth, grok *provideradapter.GrokHealth, observer *provideradapter.UpstreamHealth, headers *egress.CompiledHeaderFilter, turns *gatewayhttp.CodexTurnStateHeaders, circuit *egress.ProxyStreamCircuit, readers *gatewayadapter.RuntimeReaders, responses session.OpenAIWSStateStore, choices *selection.Compatible, history *session.ReasoningHistory, identity *gatewayadapter.ExecutionAgentIdentity) *gatewayhttp.OpenAIResponseOutput {
 	output := &gatewayhttp.OpenAIResponseOutput{
 		Reasoning: history, Redact: identity.Redact, Health: health, GrokHealth: grok, Observer: observer, Headers: headers, Turns: turns,
@@ -48,17 +57,24 @@ func provideOpenAIResponseOutput(cfg *config.Config, health *provideradapter.Ope
 	return output
 }
 
-// provideReasoningHistory obtains the optional reasoning content cache from the shared gateway cache.
+// provideReasoningHistory binds the gateway cache's optional reasoning-content
+// capability. Failed capability assertion leaves Cache nil, which the reasoning
+// history adapter receives together with its cache-failure warning callback.
 func provideReasoningHistory(cache session.GatewayCache) *session.ReasoningHistory {
 	store, _ := cache.(session.ReasoningContentCache)
 	return &session.ReasoningHistory{Cache: store, Warn: gatewayadapter.WarnReasoningCacheFailure}
 }
 
-// provideOpenAIResponseState constructs the application's shared session store.
+// provideOpenAIResponseState constructs shared HTTP and WS continuation state
+// from cache.
 func provideOpenAIResponseState(cache session.GatewayCache) session.OpenAIWSStateStore {
 	return session.NewOpenAIWSStateStore(cache, gatewayadapter.LogOpenAIWSModeInfo)
 }
 
+// provideResponseHeaderFilter compiles response-header policy or returns nil
+// for missing cfg. Configured allow and removal slices are consumed by
+// CompileHeaderFilter, whose compiled result is independent of later changes
+// to those input slices.
 func provideResponseHeaderFilter(cfg *config.Config) *egress.CompiledHeaderFilter {
 	if cfg == nil {
 		return nil

@@ -12,16 +12,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// grokQuotaImportProbe returns quota probe summaries to the import queue.
-type grokQuotaImportProbe struct{ Source *provider.GrokQuotaService }
+// Grok import schedules quota observations using a provider routing snapshot
+// captured after the import write. The queue has its own three-worker,
+// twenty-five-second probe options and registered shutdown, while import-side
+// tasks use the application tracker and proxy reads retain lookup errors.
 
-// provideProviderImportProbes registers shutdown for the lazily started import probe queue.
+// grokQuotaImportProbe narrows shared Grok quota queries into import summaries.
+type grokQuotaImportProbe struct {
+	Source *provider.GrokQuotaService // imported provider probing
+}
+
+// provideProviderImportProbes constructs lazy import probing with three workers
+// and a twenty-five-second task budget. Call before lifecycle startup; its stop
+// hook waits at producer shutdown level twenty while provider and storage
+// dependencies remain usable.
 func provideProviderImportProbes(manager *lifecycle.Manager) *provider.GrokImportProbeScheduler {
 	queue := provider.NewGrokImportProbeScheduler(provider.GrokImportProbeOptions{Concurrency: 3, Timeout: 25 * time.Second, Debug: slog.Debug, Info: slog.Info, Warn: slog.Warn, Error: slog.Error})
+	// Imported snapshots may still be queued after HTTP completion. Register
+	// queue draining before the later quota services and shared storage enter their shutdown levels.
 	manager.Register(lifecycle.Hook{Name: "ProviderImportProbes", StopOrder: 20, Stop: queue.StopContext})
 	return queue
 }
 
+// provideGrokOAuthWithImports assembles authorization, token normalization,
+// import persistence, and reconciliation for HTTP. The proxy callback reports
+// absence and returns lookup errors, imported snapshots enter the shared probe
+// queue, and background import work is registered through tasks.
 func provideGrokOAuthWithImports(
 	queue *provider.GrokImportProbeScheduler,
 	grokOAuthService *provider.GrokAuthorization,
@@ -54,6 +70,9 @@ func provideGrokOAuthWithImports(
 	return providerhttp.NewGrokOAuthHandler(auth, imports, quota, providerhttp.GrokOAuthHTTPOptions{ProxyURL: proxyURL, RuntimeSanity: func() any { return grok.RuntimeSanity() }, Reconciler: reconciler})
 }
 
+// QueryQuota returns model, response status, and header observations from
+// shared quota probing. A nil result remains nil, while any available summary
+// is returned together with the original query error.
 func (p grokQuotaImportProbe) QueryQuota(ctx context.Context, id int64) (*provider.GrokImportProbeResult, error) {
 	v, err := p.Source.QueryQuota(ctx, id)
 	if v == nil {

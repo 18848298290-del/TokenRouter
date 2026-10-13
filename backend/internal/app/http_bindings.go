@@ -27,12 +27,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/web"
 )
 
-// httpRouteMount registers HTTP handlers built by app constructors.
+// HTTP middleware reads published locale and CSP frame origins while settings
+// updates refresh those values. Failed refreshes retain the last successful
+// state, and embedded frontend builds add cache invalidation to the same
+// notification that reloads frame origins.
+
+// httpRouteMount registers application route families with their shared
+// security middleware.
 type httpRouteMount func(*gin.Engine, httpRouteSecurity, gin.HandlerFunc, func(*gin.RouterGroup))
 
-// provideRouterRuntime binds public data and HTTP handlers; each module owns its rules and state.
+// provideRouterRuntime constructs middleware and route registration, and
+// registers settings shutdown hooks before lifecycle startup. It reads the
+// default locale during construction, initializes frame origins during startup,
+// and retains prior values when either settings refresh fails. Embedded
+// frontend construction can return an error after hooks have been registered;
+// the application rollback owns their cleanup.
 func provideRouterRuntime(requests *requestlog.Service, public *site.PublicService, pages *sitehttp.PageHandler, backendMode *admission.BackendMode, store *settings.Store, redisClient *redis.Client, manager *lifecycle.Manager, cfg *config.Config, mount httpRouteMount, panelSettings *runtimeconfig.PanelSettings, opsService *ops.OpsService, jwtAuth identityhttp.JWTAuthMiddleware, adminAuth identityhttp.AdminAuthMiddleware, auditLog middleware.AuditLogMiddleware, stepUpAuth identityhttp.StepUpAuthMiddleware,
 ) (*server.RouterRuntime, error) {
+	// Seal update admission before waiting for HTTP handlers, then wait for
+	// accepted settings work so later settings subscribers and shared stores can close safely.
 	manager.Register(lifecycle.Hook{Name: "SettingsUpdateAdmission", StopOrder: 14, Stop: func(context.Context) error { store.Updates().Seal(); return nil }})
 	manager.Register(lifecycle.Hook{Name: "SettingsUpdates", StopOrder: 17, Stop: store.Updates().Stop})
 
@@ -41,6 +54,8 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 	refreshLanguage := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
+		// A failed locale read leaves the last published value available. The
+		// initial English value therefore remains usable when construction cannot load this setting.
 		if value, err := store.GetValue(ctx, "default_locale"); err == nil {
 			defaultLanguage.Store(value)
 		}
@@ -54,6 +69,8 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		next, err := public.GetFrameSrcOrigins(ctx)
+		// Replace origins after a successful read so CSP readers use a complete
+		// slice; failures retain the previously published origins, including the initial empty slice.
 		if err == nil {
 			origins.Store(&next)
 		}
@@ -80,6 +97,8 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 			return nil, err
 		}
 		rt.Frontend = frontend.Middleware()
+		// One settings notification invalidates rendered public data before loading
+		// frame origins, so later HTML generation and CSP reads can consume the refreshed inputs.
 		notify = func() { frontend.InvalidateCache(); refresh() }
 	}
 	manager.Register(lifecycle.Hook{Name: "HTTPSettingsInitialization", StartOrder: 182, StopOrder: 800, Start: func(context.Context) error {
@@ -87,6 +106,8 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 		return nil
 	}})
 
+	// Retain this unsubscribe callback until its late cleanup hook; settings
+	// notifications remain available while earlier producer and request phases are still draining.
 	unsubscribe := store.Subscribe(notify)
 	manager.Register(lifecycle.Hook{Name: "SettingsHTTPNotification", StopOrder: 800, Stop: func(context.Context) error { unsubscribe(); return nil }})
 	counter := redisinfra.NewFixedWindowLimiter(redisClient, "rate_limit:")
@@ -106,7 +127,10 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 	return rt, nil
 }
 
-// provideHTTPOptions reads listener settings and selects the body limit by configuration precedence.
+// provideHTTPOptions copies listener options from required startup
+// configuration. A nonpositive server body limit uses the gateway limit, and
+// trusted proxies are copied while H2C settings and timeout values are passed
+// to server.Options.
 func provideHTTPOptions(cfg *config.Config) server.Options {
 	maxBody := cfg.Server.MaxRequestBodySize
 	if maxBody <= 0 {

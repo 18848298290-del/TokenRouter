@@ -74,10 +74,8 @@ type openAIHTTP2FallbackState struct {
 // caller. Plan uses these observations to downgrade selected OpenAI HTTP/2
 // when that fingerprint cannot negotiate h2.
 type TransportRequest struct {
-	// selected egress fingerprint profile
-	TLSProfile *TLSFingerprintProfile
-	// selected provider header overrides
-	Headers map[string]string
+	TLSProfile *TLSFingerprintProfile // selected egress fingerprint profile
+	Headers    map[string]string      // selected provider header overrides
 	// ValidateResolvedIP requests DNS-address validation; PublicHostsOnly requires
 	// public addresses; DisableRedirects rejects redirect following.
 	ValidateResolvedIP, PublicHostsOnly, DisableRedirects bool

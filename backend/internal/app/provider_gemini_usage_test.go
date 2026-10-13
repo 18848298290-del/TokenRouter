@@ -9,6 +9,14 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Gemini local quota display tracks provider cost independently of user
+// charges. Two model rows deliberately supply different actual and provider
+// amounts, allowing request, token, and model-family totals to expose an
+// incorrect cost-field choice in the adapter.
+
+// TestGeminiAggregateUsageUsesProviderCost supplies Pro and Flash usage with
+// user charges different from provider cost. It checks family request/token
+// totals and provider-cost amounts within the numeric comparison tolerance.
 func TestGeminiAggregateUsageUsesProviderCost(t *testing.T) {
 	// Gemini local usage uses provider cost even when the user charge differs.
 	stats := []usagecore.ModelStat{
@@ -34,6 +42,7 @@ func TestGeminiAggregateUsageUsesProviderCost(t *testing.T) {
 	require.Equal(t, int64(3), totals.FlashRequests)
 	require.Equal(t, int64(300), totals.ProTokens)
 	require.Equal(t, int64(400), totals.FlashTokens)
+	// Compare floating-point aggregated costs within a one-millionth numeric tolerance.
 	require.InDelta(t, 10, totals.ProCost, 0.000001)
 	require.InDelta(t, 2, totals.FlashCost, 0.000001)
 }

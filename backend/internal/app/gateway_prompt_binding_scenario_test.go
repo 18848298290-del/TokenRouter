@@ -1,7 +1,5 @@
 package app
 
-// These tests cover prompt policy caching across token-count HTTP handlers.
-
 import (
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +16,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// TestPromptPolicyDirectHTTPBindingSharesCache checks that two handlers share one lazy settings load even when
-// requests fail validation.
+// Token-count handlers consult prompt policy before rejecting a body missing
+// its model. Two handlers receive one prompt service backed by a counting
+// settings store, making its lazy initialization and shared rule-cache reuse
+// visible even on unsuccessful requests.
+
+// TestPromptPolicyDirectHTTPBindingSharesCache sends invalid model-less
+// requests through two handlers sharing one prompt service. It checks no
+// settings reads occur during assembly, both requests fail validation, and only
+// one lazy settings read occurs.
 func TestPromptPolicyDirectHTTPBindingSharesCache(t *testing.T) {
 	repository := &readerStoreProbe{}
 	prompts := provideGatewayPromptPolicy(settings.New(repository))

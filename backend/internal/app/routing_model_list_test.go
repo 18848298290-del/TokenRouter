@@ -12,8 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestRequestableNativeProtocolsRequireEveryProvider checks native protocol classification.
-// A model protocol is native only when every provider serving that model supports it without conversion.
+// A public alias can resolve to different upstream models on Anthropic and
+// OpenAI providers. The scenario distinguishes broadly requestable converted
+// protocols from native protocols, which survive only when every provider
+// serving that alias supports them directly.
+
+// TestRequestableNativeProtocolsRequireEveryProvider resolves an Anthropic-only
+// alias and an alias shared with OpenAI. It checks all configured text
+// protocols remain requestable, while native protocols reflect the single
+// provider or the empty intersection across both.
 func TestRequestableNativeProtocolsRequireEveryProvider(t *testing.T) {
 	groupID := int64(7)
 	textProtocols := []capability.ProtocolID{capability.ProtocolAnthropicMessages, capability.ProtocolOpenAIResponses, capability.ProtocolOpenAIChatCompletions}

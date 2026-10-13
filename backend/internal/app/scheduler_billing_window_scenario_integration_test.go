@@ -2,8 +2,6 @@
 
 package app
 
-// These tests cover session and billing-window caches sharing the application Redis client.
-
 import (
 	"context"
 	"testing"
@@ -16,7 +14,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestSessionAndWindowCachesKeepIndependentState checks separate keys and independent cache contents.
+// Session and billing-window caches use independent Redis keys for the same
+// provider identity. The scenario writes both, releases the session, and checks
+// the cost remains available with its bounded TTL before another session is
+// admitted through the shared client.
+
+// TestSessionAndWindowCachesKeepIndependentState writes a session and window
+// cost through application cache constructors. It checks Redis cost keys and
+// TTL, session counts, retained cost after release, missing batch entries, and
+// a subsequent successful claim.
 func TestSessionAndWindowCachesKeepIndependentState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

@@ -1,7 +1,5 @@
 package app
 
-// These tests cover subscription plan JSON exposed through billing and HTTP assembly.
-
 import (
 	"context"
 	"encoding/json"
@@ -20,18 +18,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// Subscription-plan HTTP responses include localization editor data as well as
+// stored Ent fields. Empty, explicit-zero, and populated plans are compared
+// with marshaled entities so projection changes cannot silently drop fields or
+// alter their JSON representation.
+
+// billingPlanHTTPFixture supplies the plan rows returned through the billing
+// HTTP handler.
 type billingPlanHTTPFixture struct {
+	// PlanRepository supplies unused methods; this fixture implements ListPlans
+	// for the handler path exercised here and leaves other methods unconfigured.
 	billing.PlanRepository
-	plans []*billing.SubscriptionPlan
+	plans []*billing.SubscriptionPlan // configured plan rows
 }
 
+// ListPlans returns the fixture's configured subscription plans without
+// querying storage.
 func (f billingPlanHTTPFixture) ListPlans(context.Context) ([]*billing.SubscriptionPlan, error) {
 	return f.plans, nil
 }
 
-// TestBillingPlanHTTPPreservesEntJSON checks plan fields and initial editor content when copy is absent.
+// TestBillingPlanHTTPPreservesEntJSON serves empty, explicit-zero, and
+// populated plans through billing HTTP. Each response must match Ent JSON after
+// initial localization content has been populated from the stored plan fields.
 func TestBillingPlanHTTPPreservesEntJSON(t *testing.T) {
 	zero, original := 0.0, 25.0
+	// An eight-hour zone exposes time serialization in the entity comparison.
 	now := time.Date(2026, 9, 12, 10, 15, 0, 0, time.FixedZone("test", 8*60*60))
 	cases := map[string]*dbent.SubscriptionPlan{
 		"empty":         {},
@@ -47,7 +59,7 @@ func TestBillingPlanHTTPPreservesEntJSON(t *testing.T) {
 			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/plans", nil))
 			require.Equal(t, http.StatusOK, response.Code)
 			var envelope struct {
-				Data json.RawMessage `json:"data"`
+				Data json.RawMessage `json:"data"` // serialized plan array
 			}
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
 			copy := *original

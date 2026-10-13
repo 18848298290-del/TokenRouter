@@ -12,8 +12,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// providerScoreOptions binds static parameters and the settings cache and feedback used by scheduling.
+// Administrator score snapshots use the same feedback and runtime settings as
+// provider selection. Process configuration supplies initial weights and escape
+// policy, but group overrides are read only for advanced groups, keeping basic
+// group display independent of stale advanced settings.
+
+// providerScoreOptions binds diagnostic scoring to shared feedback and
+// effective scheduler settings. Nil cfg supplies built-in inputs; a positive
+// configured Top-K overrides seven, and the callback uses group overrides only
+// for advanced groups while replacing nil context with Background.
 func providerScoreOptions(concurrency *scheduler.ConcurrencyService, shared *schedulerSharedState, store *settings.Store, cfg *config.Config) provider.SchedulerScoreOptions {
+	// Diagnostic candidate scoring starts with seven Top-K choices before settings overrides.
 	topK := 7
 	weights := policy.ScoreWeights{Priority: 1, Load: 1, Queue: 0.7, ErrorRate: 0.8, TTFT: 0.5, Previous: 5, SessionSticky: 3}
 	defaults := policy.RuntimeSettings{EwmaErrorRateAlpha: scheduler.DefaultErrorRateAlpha, EwmaTTFTAlpha: scheduler.DefaultTTFTAlpha, StickyEscape: policy.StickyEscapeConfig{Enabled: true, TtftMs: 15000, ErrorRate: 0.5}}
@@ -36,6 +45,8 @@ func providerScoreOptions(concurrency *scheduler.ConcurrencyService, shared *sch
 			ctx = context.Background()
 		}
 		var overrides policy.GroupAdvancedSchedulerOverrides
+		// Basic groups can retain old advanced configuration. Admit overrides
+		// only for an advanced group so those retained fields cannot alter its basic score display.
 		if group != nil && group.SchedulerType == "advanced" {
 			overrides = group.AdvancedSchedulerOverrides
 		}

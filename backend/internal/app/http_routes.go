@@ -24,22 +24,44 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi"
 )
 
-// httpRouteSecurity holds middleware in route-family order using instances supplied by app.
+// Panel routes share authentication, backend-mode policy, limits, and audit
+// instances assembled once by the application. Gateway registration uses the
+// engine directly for protocol paths, while authentication, user,
+// administrator, payment, and page registrars receive the /api/v1 group.
+
+// httpRouteSecurity carries the assembled guards and limiters used by route
+// families.
 type httpRouteSecurity struct {
+	// JWT, Admin, Audit, StepUp, BackendAuth, and BackendUser are supplied
+	// once by router assembly. Each route family chooses the guards and their execution order.
+	// JWT: panel bearer authentication.
+	// Admin: administrator access authentication.
+	// Audit: panel activity recording.
+	// StepUp: sensitive action verification.
+	// BackendAuth: authentication backend policy.
+	// BackendUser: user backend policy.
 	JWT, Admin, Audit, StepUp, BackendAuth, BackendUser gin.HandlerFunc
-	Panel                                               *servermiddleware.PanelRateLimiter
-	AuthLimiter                                         *servermiddleware.RateLimiter
+	Panel                                               *servermiddleware.PanelRateLimiter // panel request limits
+	AuthLimiter                                         *servermiddleware.RateLimiter      // public authentication limits
 }
 
 type (
-	authRouteMount    func(*gin.RouterGroup, httpRouteSecurity)
-	userRouteMount    func(*gin.RouterGroup, httpRouteSecurity)
-	adminRouteMount   func(*gin.RouterGroup, httpRouteSecurity, gin.HandlerFunc)
+	// authRouteMount registers authentication and public panel routes with shared guards.
+	authRouteMount func(*gin.RouterGroup, httpRouteSecurity)
+	// userRouteMount registers authenticated user resources with shared security middleware.
+	userRouteMount func(*gin.RouterGroup, httpRouteSecurity)
+	// adminRouteMount registers administrator resources and the supplied protocol catalogue.
+	adminRouteMount func(*gin.RouterGroup, httpRouteSecurity, gin.HandlerFunc)
+	// gatewayRouteMount registers protocol endpoints directly on the Gin engine.
 	gatewayRouteMount func(*gin.Engine)
+	// paymentRouteMount registers payment routes under the supplied panel group.
 	paymentRouteMount func(*gin.RouterGroup, httpRouteSecurity)
 )
 
-// provideHTTPRouteMount combines route registration functions.
+// provideHTTPRouteMount returns the ordered application route registration
+// callback. It mounts panel families under /api/v1, passes the engine to
+// gateway registration, and retains idempotency dependencies as Wire
+// construction requirements.
 func provideHTTPRouteMount(auth authRouteMount, user userRouteMount, admin adminRouteMount, gateway gatewayRouteMount, payment paymentRouteMount,
 	_ *idempotency.IdempotencyCoordinator, _ *idempotency.IdempotencyCleanupService,
 ) httpRouteMount {
@@ -54,7 +76,10 @@ func provideHTTPRouteMount(auth authRouteMount, user userRouteMount, admin admin
 	}
 }
 
-// provideAuthRouteMount binds authentication handlers and cross-module readers to route registration.
+// provideAuthRouteMount binds authentication, public settings, unsubscribe,
+// marketplace, and session routes. Its authentication limiter uses fail-close
+// dependency handling, while public settings use the panel public-IP limiter
+// supplied through security.
 func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 	ePublicSettings *sitehttp.PublicHandler,
 	eNotification *notificationhttp.Handler,
@@ -75,7 +100,10 @@ func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 	}
 }
 
-// provideGatewayRouteMount binds constructed gateway endpoints to route registration.
+// provideGatewayRouteMount returns gateway registration with the assembled
+// protocol handlers and middleware. Responses WS, usage, and Qoder Chat method
+// callbacks are captured, and batch-image routes are added through the gateway
+// registrar callback.
 func provideGatewayRouteMount(eCountTokensHTTP *gatewayhttp.CountTokensHandler,
 	eQoderCompatibleHTTP *gatewayhttp.QoderCompatibleHandler,
 	eCompatibleTextHTTP *gatewayhttp.CompatibleTextHandler,
@@ -99,13 +127,20 @@ func provideGatewayRouteMount(eCountTokensHTTP *gatewayhttp.CountTokensHandler,
 	}
 }
 
+// providePaymentRouteMount binds payment handlers with user, administrator,
+// backend-mode, panel, and audit guards. The returned callback passes those
+// shared instances to paymenthttp.RegisterRoutes, which applies them to its
+// route families.
 func providePaymentRouteMount(user *paymenthttp.PaymentHandler, webhook *paymenthttp.PaymentWebhookHandler, admin *paymenthttp.AdminHandler, plans *billinghttp.PlanHandler) paymentRouteMount {
 	return func(v1 *gin.RouterGroup, security httpRouteSecurity) {
 		paymenthttp.RegisterRoutes(v1, user, webhook, admin, plans, paymenthttp.RouteMiddleware{JWT: security.JWT, BackendMode: security.BackendUser, Panel: security.Panel.Global(), Admin: security.Admin, Audit: security.Audit})
 	}
 }
 
-// provideUserRouteMount binds user handlers and cross-module readers to route registration.
+// provideUserRouteMount mounts user resources after JWT, backend-mode, panel,
+// and audit middleware. Team routes receive step-up protection, and usage plus
+// creative registrars receive the heavy-query limiter in addition to those
+// group guards.
 func provideUserRouteMount(
 	eUserPromotion *promotionhttp.UserHandler,
 	eSubscription *billinghttp.SubscriptionHandler,

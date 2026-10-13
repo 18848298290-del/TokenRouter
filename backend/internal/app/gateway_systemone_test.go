@@ -22,20 +22,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// SystemOne execution uses application-bound price checks and copied
+// destination policy before sending a decision request. The transport fixture
+// captures authorization and returns filtered headers, making successful
+// execution, blocked custom URLs, and activity shutdown observable through its
+// call count.
+
+// systemOneTransportStub captures the request and returns a fixed decision
+// response.
 type systemOneTransportStub struct {
+	// UpstreamTransport supplies unused methods; Do captures the single HTTP
+	// path exercised here, so another transport entry would require an explicit fixture implementation.
 	httpclient.UpstreamTransport
-	calls   int
-	request *http.Request
+	// calls and request record each Do invocation. This fixture is used
+	// synchronously, and the test reads both after the corresponding forward returns.
+	calls   int           // completed transport invocations
+	request *http.Request // latest upstream request
 }
 
+// Do records one transport call and returns a successful SystemOne body with
+// test headers. The caller owns closing the returned body; proxy and
+// concurrency arguments are ignored by this fixture.
 func (s *systemOneTransportStub) Do(request *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	s.calls++
 	s.request = request
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Test": []string{"visible"}, "X-Secret": []string{"hidden"}}, Body: io.NopCloser(strings.NewReader(`{"model":"jev-1.13.0","answers":{"available":{"type":"noul","noul":1}},"usage":{"input_tokens":1,"output_tokens":0}}`))}, nil
 }
 
-// TestProvideSystemOneExecutor checks decision execution, header filtering, URL restrictions, and the shutdown
-// barrier.
+// TestProvideSystemOneExecutor forwards a decision through application assembly
+// after mutating the source allowlist. It checks URL and authorization, usage
+// and filtered headers, then confirms blocked targets and stopped activity make
+// no additional transport call.
 func TestProvideSystemOneExecutor(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.UpstreamResponseReadMaxBytes = 1024
@@ -62,6 +79,8 @@ func TestProvideSystemOneExecutor(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 1, transport.calls)
 	target.Record.Credentials["base_url"] = "https://api.typesafe.ai"
+	// Seal the activity barrier before one more decision call. The existing
+	// executor binding must reject that call before it reaches this transport fixture.
 	require.NoError(t, activity.StopContext(context.Background()))
 	_, err = executor.Forward(context.Background(), c, target, systemone.ProbeBody("jev-latest", ""))
 	require.Error(t, err)

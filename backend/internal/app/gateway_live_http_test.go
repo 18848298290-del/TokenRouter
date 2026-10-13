@@ -16,13 +16,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestLiveAssemblyKeepsPermissionAndStopBeforeRead checks platform admission and shutdown before reading the body.
+// Live admission and application stopping are checked before request-body
+// reading. Two handlers share one activity barrier, making an application stop
+// visible to the second handler while the first scenario exposes the group's
+// disabled Live permission.
+
+// TestLiveAssemblyKeepsPermissionAndStopBeforeRead invokes two handlers sharing
+// one application activity barrier. It checks group-permission rejection before
+// stopping, shutdown rejection afterward, and no request-body read in either
+// path.
 func TestLiveAssemblyKeepsPermissionAndStopBeforeRead(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("live-contract")}
 	first := provideLiveHTTP(nil, nil, nil, nil, activity)
 	second := provideLiveHTTP(nil, nil, nil, nil, activity)
 	for _, stopped := range []bool{false, true} {
 		if stopped {
+			// Seal the shared barrier after the first call so the second handler
+			// observes shutdown through its existing activity binding before reading request input.
 			require.NoError(t, activity.StopContext(context.Background()))
 		}
 		writer := httptest.NewRecorder()

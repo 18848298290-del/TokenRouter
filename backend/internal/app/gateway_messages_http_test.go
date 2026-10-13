@@ -38,26 +38,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil"
 )
 
-// gatewayExecutionProviderRows supplies execution providers by group for forwarding tests.
+// Messages attempts remap the original body using the current Key group,
+// including fallback destinations. Session fixtures record admission and
+// failure cleanup across OAuth and Setup Token providers, checking that
+// successful sessions stay reserved while failed attempts release their session
+// slots.
+
+// gatewayExecutionProviderRows supplies grouped execution targets for Messages
+// preparation scenarios.
 type gatewayExecutionProviderRows struct {
+	// ExecutionProviderStore supplies unused reads; this fixture implements
+	// grouped candidate lookup for the Messages preparation paths exercised below.
 	gatewayprovider.ExecutionProviderStore
 
-	byGroup map[int64][]gatewayprovider.ExecutionProvider
+	byGroup map[int64][]gatewayprovider.ExecutionProvider // grouped provider fixtures
 }
 
-// gatewaySessionLimitCacheStub records cache operations; scheduling and completion decide when to release
-// sessions.
+// gatewaySessionLimitCacheStub records session claims and releases made by
+// production orchestration.
 type gatewaySessionLimitCacheStub struct {
-	testutil.StubSessionLimitCache
-	registered   map[int64][]string
-	unregistered map[int64][]string
+	testutil.StubSessionLimitCache // remaining cache stubs
+	// registered and unregistered hold session IDs per provider from claim and
+	// release callbacks. The tests compare them after synchronous handler execution to distinguish retained success from failed-attempt cleanup.
+	registered   map[int64][]string // claimed provider sessions
+	unregistered map[int64][]string // released provider sessions
 }
 
+// gatewaySessionUpstreamStub records provider calls and returns configured
+// Messages responses.
 type gatewaySessionUpstreamStub struct {
+	// respond determines the response for each attempted provider. Tests set
+	// it before serving requests and keep it available throughout synchronous forwarding.
 	respond func(int64) (*http.Response, error)
-	called  []int64
+	called  []int64 // attempted provider identities
 }
 
+// ListSchedulableByGroupID returns a copied outer slice for the configured
+// group. Nested provider records retain their references, and an absent group
+// returns nil without error for the selection fixture.
 func (s *gatewayExecutionProviderRows) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]gatewayprovider.ExecutionProvider, error) {
 	providers, ok := s.byGroup[groupID]
 	if !ok {
@@ -68,6 +86,10 @@ func (s *gatewayExecutionProviderRows) ListSchedulableByGroupID(ctx context.Cont
 	return out, nil
 }
 
+// TestPrepareGatewayAttemptRequestUsesCurrentAPIKeyGroupMapping prepares the
+// same original body under source and fallback Keys. It checks each group's
+// mapped model and pricing identity, fallback usage fields, and unchanged
+// original parsed request bytes.
 func TestPrepareGatewayAttemptRequestUsesCurrentAPIKeyGroupMapping(t *testing.T) {
 	sourceGroupID := int64(6101)
 	fallbackGroupID := int64(6102)
@@ -124,8 +146,9 @@ func TestPrepareGatewayAttemptRequestUsesCurrentAPIKeyGroupMapping(t *testing.T)
 	require.Equal(t, "client-alias", gjson.GetBytes(parsed.Body.Bytes(), "model").String())
 }
 
-// TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping checks that Messages bodies use the Gemini group's
-// mapped model.
+// TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping prepares a Messages
+// body under a Gemini pricing group. It checks the attempt model, rewritten
+// JSON model, and selected pricing configuration ID.
 func TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping(t *testing.T) {
 	groupID := int64(6103)
 	pricingConfigService := routingtestkit.NewPricingConfigService(&gatewayExecutionPricingConfigRows{
@@ -153,25 +176,41 @@ func TestPrepareGatewayAttemptRequestUsesGeminiGroupMapping(t *testing.T) {
 	require.Equal(t, int64(703), mapping.PricingConfigID)
 }
 
+// RegisterSession appends the claimed session and reports successful admission.
+// Capacity and TTL inputs are ignored, and callers initialize registered before
+// invoking this synchronous recording fixture.
 func (s *gatewaySessionLimitCacheStub) RegisterSession(_ context.Context, providerID int64, sessionID string, _ int, _ time.Duration) (bool, error) {
 	s.registered[providerID] = append(s.registered[providerID], sessionID)
 	return true, nil
 }
 
+// UnregisterSession appends the released session for later lifecycle
+// assertions. Callers initialize unregistered before use; the fixture records
+// each invocation rather than implementing Redis session expiry or
+// deduplication.
 func (s *gatewaySessionLimitCacheStub) UnregisterSession(_ context.Context, providerID int64, sessionID string) error {
 	s.unregistered[providerID] = append(s.unregistered[providerID], sessionID)
 	return nil
 }
 
+// Do records the selected provider and delegates response creation to respond.
+// Callers provide that callback; it controls status and transport failure for
+// each attempted provider in the scenario.
 func (s *gatewaySessionUpstreamStub) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
 	s.called = append(s.called, providerID)
 	return s.respond(providerID)
 }
 
+// DoWithTLS uses the same fixture exchange while ignoring the TLS profile. The
+// request and selection arguments are passed to Do so provider call recording
+// matches ordinary transport.
 func (s *gatewaySessionUpstreamStub) DoWithTLS(req *http.Request, proxy string, providerID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return s.Do(req, proxy, providerID, concurrency)
 }
 
+// gatewaySessionResponse creates a Messages success or error response with a
+// closable body. Error statuses select JSON errors; successful stream requests
+// receive the fixed message event sequence, and callers own body closure.
 func gatewaySessionResponse(status int, stream bool) *http.Response {
 	contentType := "application/json"
 	body := `{"id":"msg_session","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1},"stop_reason":"end_turn"}`
@@ -187,8 +226,10 @@ func gatewaySessionResponse(status int, stream bool) *http.Response {
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(body))}
 }
 
-// newGatewaySessionLimitFixture exercises scheduling, forwarding, and handler completion with upstream, Redis,
-// and billing stubs.
+// newGatewaySessionLimitFixture assembles cached OAuth or Setup Token
+// selection, forwarding, and completion. Optional failover adds a second
+// provider; billing workers start here and t.Cleanup drains them after the
+// scenario.
 func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover bool, upstream *gatewaySessionUpstreamStub) (*messageEndpointsFixture, *apikey.APIKey, *gatewaySessionLimitCacheStub) {
 	t.Helper()
 	groupID := int64(11)
@@ -202,6 +243,8 @@ func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover b
 		},
 	}}
 	if failover {
+		// The second candidate differs in ID, priority, and membership. Its
+		// nested credentials and extras remain shared with the first fixture provider.
 		second := *providers[0]
 		second.Record.ID, second.Record.Priority = 13, 1
 		second.Record.ProviderGroups = []providercore.GroupMembership{{ProviderID: second.Record.ID, GroupID: groupID}}
@@ -235,6 +278,10 @@ func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover b
 	return h, key, sessions
 }
 
+// serveGatewaySessionMessage serves one Messages request using the supplied Key
+// and group. It installs HTTP subject and request group context, optionally
+// requests streaming, and returns the recorder after synchronous handler
+// completion.
 func serveGatewaySessionMessage(h *messageEndpointsFixture, key *apikey.APIKey, stream bool) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -252,14 +299,18 @@ func serveGatewaySessionMessage(h *messageEndpointsFixture, key *apikey.APIKey, 
 	return recorder
 }
 
+// TestGatewayHandlerMessages_SessionSlotLifecycle exercises success, rejection,
+// transport failure, and failover for OAuth and Setup Token providers. It
+// checks attempted IDs, retained successful sessions, and release of the failed
+// provider's claimed sessions.
 func TestGatewayHandlerMessages_SessionSlotLifecycle(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken} {
 		for _, tc := range []struct {
-			name         string
-			stream       bool
-			upstreamCode int
-			transportErr bool
-			failover     bool
+			name         string // session scenario label
+			stream       bool   // request streaming flag
+			upstreamCode int    // first response status
+			transportErr bool   // injected connection failure
+			failover     bool   // second provider success
 		}{
 			{name: "non_stream_success", upstreamCode: http.StatusOK},
 			{name: "stream_success", stream: true, upstreamCode: http.StatusOK},
@@ -303,6 +354,10 @@ func TestGatewayHandlerMessages_SessionSlotLifecycle(t *testing.T) {
 	}
 }
 
+// TestOpenAIGatewayMessagesProtocolPolicyAllowsGrokGroups invokes Messages with
+// permitted and disallowed protocol lists. It checks permission_error for
+// disallowed Messages and a dependency-unavailable error after a permitted
+// Grok-oriented group reaches preparation.
 func TestOpenAIGatewayMessagesProtocolPolicyAllowsGrokGroups(t *testing.T) {
 	t.Run("openai_group_without_messages_protocol_is_rejected", func(t *testing.T) {
 		rec := httptest.NewRecorder()

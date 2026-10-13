@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 )
 
+// Completion-pool configuration treats zero values differently across capacity
+// and scaling fields. The scenarios check disabled-scaling bounds, construction
+// with a configured worker count, and preservation of the default options when
+// the application configuration is absent.
+
+// TestUsageRecordWorkerPool_OptionsFromConfig_AutoScaleDisabled supplies fixed
+// capacity with conflicting scale bounds. It checks scaling is disabled, both
+// bounds become the worker count, and the configured task timeout is converted
+// to seconds.
 func TestUsageRecordWorkerPool_OptionsFromConfig_AutoScaleDisabled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.UsageRecord.WorkerCount = 64
@@ -29,6 +38,9 @@ func TestUsageRecordWorkerPool_OptionsFromConfig_AutoScaleDisabled(t *testing.T)
 	require.Equal(t, 7*time.Second, opts.TaskTimeout)
 }
 
+// TestNewUsageRecordWorkerPool_FromConfig constructs and starts a three-worker
+// completion pool through application assembly. Its reported maximum
+// concurrency must match configuration, and test cleanup stops the owned pool.
 func TestNewUsageRecordWorkerPool_FromConfig(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.UsageRecord.WorkerCount = 3
@@ -45,6 +57,10 @@ func TestNewUsageRecordWorkerPool_FromConfig(t *testing.T) {
 	require.Equal(t, 3, stats.MaxConcurrency)
 }
 
+// TestUsageRecordWorkerPool_OptionsFromConfig_NilConfig requests options
+// without application configuration. It checks worker and queue capacity, task
+// and overflow defaults, and enabled scaling with the default minimum and
+// maximum worker bounds.
 func TestUsageRecordWorkerPool_OptionsFromConfig_NilConfig(t *testing.T) {
 	opts := usageRecordPoolOptionsFromConfig(nil)
 	require.Equal(t, completion.DefaultOptions().WorkerCount, opts.WorkerCount)

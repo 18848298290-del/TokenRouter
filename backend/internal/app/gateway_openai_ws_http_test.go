@@ -50,58 +50,128 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// A Responses WebSocket can fail before upgrade, during its first request, or
+// between later turns on the same connection. These cases distinguish HTTP
+// admission errors from WebSocket close reasons, verify provider switching
+// before useful output, and check which request metadata reaches completion
+// recording.
+//
+// The upstream fixtures publish payloads and completion signals through
+// buffered channels so assertions can observe forwarding without reading
+// handler state concurrently. Turn fixtures retain the initial connection
+// identity while exposing mutable key and group repositories to later
+// authentication checks. Tests wait for terminal events, recorded warnings, and
+// handler exit separately because those observations describe different stages;
+// a successful read alone does not establish that cleanup or risk-control
+// persistence has finished.
+
+// openAIResponsesWSUsageLogCase supplies a first frame and optional recording
+// inputs.
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload string
-	userAgent    *string
+	firstPayload string // First client request frame.
+	// userAgent supplies the dial header when nonnil; an empty string explicitly
+	// tests completion recording without a usable agent value.
+	userAgent *string
+	// groupMapping enables pricing configuration when nonempty and maps requested
+	// model names before the frame reaches the upstream fixture.
 	groupMapping map[string]string
 }
 
+// openAIResponsesWSUsageLogResult pairs recorded usage with the upstream
+// request frame.
 type openAIResponsesWSUsageLogResult struct {
+	// log is the original pointer published by Create after the terminal event;
+	// assertions inspect the recorder result rather than a copied fixture value.
 	log                  *usage.UsageLog
-	upstreamFirstPayload []byte
+	upstreamFirstPayload []byte // First frame received upstream.
 }
 
+// openAIWSUsageHandlerProviderRepoStub exposes one execution provider to
+// WebSocket selection.
 type openAIWSUsageHandlerProviderRepoStub struct {
+	// ExecutionProviderStore supplies unimplemented methods through embedding;
+	// tests must stay within the selection and lookup methods overridden below.
 	gatewayprovider.ExecutionProviderStore
 
+	// provider supplies copied outer values to selection and lookup; nested
+	// credentials and extra maps remain shared with the stored fixture record.
 	provider gatewayprovider.ExecutionProvider
 }
 
+// openAIWSUsageHandlerUsageLogRepoStub captures completion writes through an
+// optional channel.
 type openAIWSUsageHandlerUsageLogRepoStub struct {
+	// UsageLogRepository supplies unimplemented methods through embedding;
+	// this fixture only overrides creation used by completion recording.
 	usage.UsageLogRepository
+	// created receives shared log pointers when nonnil; callers must buffer or
+	// drain it because Create sends without selecting on context cancellation.
 	created chan *usage.UsageLog
 }
 
+// openAIWSUsageHandlerPricingConfigRepoStub supplies model mapping and group
+// platform fixtures.
 type openAIWSUsageHandlerPricingConfigRepoStub struct {
+	// PricingConfigRepository supplies unimplemented methods through embedding;
+	// tests use only the configuration and platform reads implemented below.
 	routing.PricingConfigRepository
+	// modelConfigs is returned directly by ListAll, including its backing array
+	// and nested mapping values, so readers must avoid unintended fixture mutation.
 	modelConfigs   []routingtestkit.Configuration
-	groupPlatforms map[int64]string
+	groupPlatforms map[int64]string // Stored group platform names.
 }
 
+// openAIWSPassthroughHandlerHarness exposes an upgraded client and mutable
+// per-turn authentication fixtures.
 type openAIWSPassthroughHandlerHarness struct {
-	clientConn     *coderws.Conn
-	handlerDone    <-chan struct{}
+	// clientConn is already upgraded; test cleanup closes it before the local
+	// handler server so a waiting handler can observe connection termination.
+	clientConn *coderws.Conn
+	// handlerDone closes after ResponsesWebSocket returns, allowing assertions to
+	// distinguish a client close event from completion of handler cleanup.
+	handlerDone <-chan struct{}
+	// Recorded moderation warning store.
 	moderationRepo *contentModerationHandlerTestRepo
-	gatewayCache   session.GatewayCache
-	apiKey         *apikey.APIKey
-	keys           *wsTurnKeys
-	groups         *wsTurnGroups
+	// gatewayCache stores session blocks in the Redis test fixture, whose
+	// registered cleanup owns the Redis client and supporting test server.
+	gatewayCache session.GatewayCache
+	// apiKey supplies the initial connection identity; keys and groups expose
+	// separately mutable repositories that later turns reread to check access.
+	apiKey *apikey.APIKey // Initial authenticated key snapshot.
+	keys   *wsTurnKeys    // Mutable authentication key repository.
+	groups *wsTurnGroups  // Mutable group permission repository.
 }
 
-// wsTurnKeys holds the current authentication record; the connection retains its authentication snapshot.
+// wsTurnKeys stores the authentication record reread between WebSocket turns.
+// Its mutex protects replacement and copying while the established connection
+// retains its earlier authentication snapshot.
 type wsTurnKeys struct {
+	// APIKeyRepository supplies unimplemented methods through embedding; tests
+	// use only the authentication lookup overridden by this mutable fixture.
 	apikey.APIKeyRepository
-	mu  sync.Mutex
-	key *apikey.APIKey
+	// mu protects key reads and replacement; GetByKeyForAuth copies key while
+	// holding mu so revocation cannot interleave with publication of that copy.
+	mu  sync.Mutex     // Key record access lock.
+	key *apikey.APIKey // Current authentication key record.
 }
 
-// wsTurnGroups returns group permission snapshots so tests can revoke protocols between turns.
+// wsTurnGroups stores protocol permissions reread between WebSocket turns. Its
+// mutex protects permission replacement and the copied slice returned to
+// authentication.
 type wsTurnGroups struct {
+	// GroupRepository supplies unimplemented methods through embedding; tests
+	// use only the lightweight group lookup overridden by this fixture.
 	routing.GroupRepository
-	mu    sync.Mutex
-	group routing.Group
+	// mu protects group reads and replacement of AllowedProtocols; GetByIDLite
+	// copies group and its protocol slice while holding mu before publication.
+	mu    sync.Mutex    // Group permission access lock.
+	group routing.Group // Current group permission record.
 }
 
+// TestResponsesWebSocketCredentialFailoverLoop exercises revoked credentials,
+// invalid provider configuration, and cancellation during refresh. It checks
+// healthy-provider output or close reasons together with selection,
+// error-recording, and upstream-hit counts.
 func TestResponsesWebSocketCredentialFailoverLoop(t *testing.T) {
 	dial := func(t *testing.T, router *gin.Engine) (*coderws.Conn, func()) {
 		t.Helper()
@@ -111,6 +181,8 @@ func TestResponsesWebSocketCredentialFailoverLoop(t *testing.T) {
 		cancel()
 		require.NoError(t, err)
 		return conn, func() {
+			// Terminate the client before closing the local server so a waiting
+			// handler can leave its socket read; teardown errors are discarded.
 			_ = conn.CloseNow()
 			server.Close()
 		}
@@ -161,11 +233,15 @@ func TestResponsesWebSocketCredentialFailoverLoop(t *testing.T) {
 		defer cleanup()
 		conn, closeConn := dial(t, router)
 		writeFirst(t, conn)
+		// Wait until refresh has entered the cancellable path before closing
+		// the client; otherwise cancellation could precede the operation being tested.
 		select {
 		case <-findHandlerRefresherStarted(router):
 		case <-time.After(2 * time.Second):
 			t.Fatal("credential refresh did not start")
 		}
+		// Closing both client and server interrupts refresh through request
+		// cancellation before the assertions inspect reselection and provider errors.
 		closeConn()
 
 		require.Eventually(t, func() bool { return repo.selectorCalls() == 1 }, 2*time.Second, 20*time.Millisecond)
@@ -174,6 +250,10 @@ func TestResponsesWebSocketCredentialFailoverLoop(t *testing.T) {
 	})
 }
 
+// TestOpsWebSocketCredentialFailoverSuccessDoesNotCreateRequestError supplies a
+// provider-auth event to an otherwise successful upgrade-shaped request. It
+// checks a captured HTTP 200 Ops entry retaining the upstream event and its
+// phase.
 func TestOpsWebSocketCredentialFailoverSuccessDoesNotCreateRequestError(t *testing.T) {
 	queue := newOpsCaptureQueue(2)
 
@@ -205,6 +285,9 @@ func TestOpsWebSocketCredentialFailoverSuccessDoesNotCreateRequestError(t *testi
 	require.Equal(t, string(forwardcore.GatewayFailureStageProviderAuth), events[0].Stage)
 }
 
+// TestOpsWebSocketCredentialFailoverExhaustedIsRecorded presents exhausted
+// credentials without a live socket. It checks that Ops captures
+// service-unavailable details even though the outer recorder remains HTTP 200.
 func TestOpsWebSocketCredentialFailoverExhaustedIsRecorded(t *testing.T) {
 	queue := newOpsCaptureQueue(2)
 
@@ -238,6 +321,10 @@ func TestOpsWebSocketCredentialFailoverExhaustedIsRecorded(t *testing.T) {
 	require.Equal(t, forwardcore.GrokCredentialUnavailableClientMessage, job.entry.ErrorMessage)
 }
 
+// TestOpenAIResponsesWebSocket_SetsClientTransportWSWhenUpgradeValid sends
+// an unauthenticated GET request with upgrade headers to Responses. It checks
+// HTTP Unauthorized while the request still retains the WebSocket
+// client-transport marker.
 func TestOpenAIResponsesWebSocket_SetsClientTransportWSWhenUpgradeValid(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -252,6 +339,9 @@ func TestOpenAIResponsesWebSocket_SetsClientTransportWSWhenUpgradeValid(t *testi
 	require.Equal(t, gatewayhttp.OpenAIClientTransportWS, gatewayhttp.GetOpenAIClientTransport(c))
 }
 
+// TestOpenAIResponsesWebSocket_InvalidUpgradeDoesNotSetTransport sends an
+// ordinary HTTP request to the WebSocket entry. It checks upgrade-required
+// status and an unchanged unknown transport marker.
 func TestOpenAIResponsesWebSocket_InvalidUpgradeDoesNotSetTransport(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -264,6 +354,9 @@ func TestOpenAIResponsesWebSocket_InvalidUpgradeDoesNotSetTransport(t *testing.T
 	require.Equal(t, gatewayhttp.OpenAIClientTransportUnknown, gatewayhttp.GetOpenAIClientTransport(c))
 }
 
+// TestOpenAIResponsesWebSocket_IngressCapacityRejected scripts an ingress-lease
+// refusal before upgrade. It checks dialing fails with no established
+// connection and exposes TooManyRequests in the returned HTTP response.
 func TestOpenAIResponsesWebSocket_IngressCapacityRejected(t *testing.T) {
 	cache := &httptestkit.ConcurrencyHooks{
 		AcquireIngressLeaseFn: func(context.Context, int64, int, string) (bool, error) {
@@ -283,9 +376,14 @@ func TestOpenAIResponsesWebSocket_IngressCapacityRejected(t *testing.T) {
 	require.Nil(t, clientConn)
 	require.NotNil(t, response)
 	require.Equal(t, http.StatusTooManyRequests, response.StatusCode)
+	// Admission status is already captured; discard body-close errors because
+	// this assertion concerns the HTTP rejection rather than transport teardown.
 	_ = response.Body.Close()
 }
 
+// TestOpenAIResponsesWebSocket_IngressLeaseBackendUnavailableBeforeUpgrade
+// makes ingress admission return a backend error. It checks that dialing fails
+// with an HTTP service-unavailable response before a socket is established.
 func TestOpenAIResponsesWebSocket_IngressLeaseBackendUnavailableBeforeUpgrade(t *testing.T) {
 	cache := &httptestkit.ConcurrencyHooks{
 		AcquireIngressLeaseFn: func(context.Context, int64, int, string) (bool, error) {
@@ -305,9 +403,14 @@ func TestOpenAIResponsesWebSocket_IngressLeaseBackendUnavailableBeforeUpgrade(t 
 	require.Nil(t, clientConn)
 	require.NotNil(t, response)
 	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+	// Admission status is already captured; discard body-close errors because
+	// this assertion concerns the HTTP rejection rather than transport teardown.
 	_ = response.Body.Close()
 }
 
+// TestOpenAIResponsesWebSocket_FirstMessageTimeoutUsesConfig opens a connection
+// without sending its first frame. It checks bounded read failure and the
+// configured one-second timeout in the captured warning.
 func TestOpenAIResponsesWebSocket_FirstMessageTimeoutUsesConfig(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -322,6 +425,8 @@ func TestOpenAIResponsesWebSocket_FirstMessageTimeoutUsesConfig(t *testing.T) {
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() { _ = clientConn.CloseNow() }()
 
 	started := time.Now()
@@ -332,6 +437,8 @@ func TestOpenAIResponsesWebSocket_FirstMessageTimeoutUsesConfig(t *testing.T) {
 
 	require.Error(t, err)
 	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	// The tolerance permits scheduling variation while distinguishing the configured
+	// first-frame timeout from immediate rejection or the longer client read deadline.
 	require.GreaterOrEqual(t, elapsed, 500*time.Millisecond)
 	require.Less(t, elapsed, 4*time.Second)
 	require.Eventually(t, func() bool {
@@ -341,6 +448,9 @@ func TestOpenAIResponsesWebSocket_FirstMessageTimeoutUsesConfig(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestOpenAIResponsesWebSocket_IngressLeaseReleasedOnEarlyReturn sends an
+// invalid binary first frame after ingress admission. It checks a
+// policy-violation close and eventual release of the claimed ingress lease.
 func TestOpenAIResponsesWebSocket_IngressLeaseReleasedOnEarlyReturn(t *testing.T) {
 	cache := &httptestkit.ConcurrencyHooks{
 		AcquireIngressLeaseFn: func(context.Context, int64, int, string) (bool, error) {
@@ -357,6 +467,8 @@ func TestOpenAIResponsesWebSocket_IngressLeaseReleasedOnEarlyReturn(t *testing.T
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() { _ = clientConn.CloseNow() }()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
@@ -375,6 +487,9 @@ func TestOpenAIResponsesWebSocket_IngressLeaseReleasedOnEarlyReturn(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestOpenAIResponsesWebSocket_IngressLeaseReleasedWhenUpgradeFails omits the
+// required WebSocket key after ingress admission. It checks failed upgrade
+// status and eventual release of the ingress lease.
 func TestOpenAIResponsesWebSocket_IngressLeaseReleasedWhenUpgradeFails(t *testing.T) {
 	cache := &httptestkit.ConcurrencyHooks{
 		AcquireIngressLeaseFn: func(context.Context, int64, int, string) (bool, error) {
@@ -394,6 +509,8 @@ func TestOpenAIResponsesWebSocket_IngressLeaseReleasedWhenUpgradeFails(t *testin
 	req.Header.Set("Sec-WebSocket-Version", "13")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
+	// Upgrade failure is inspected through status and lease release; body-close
+	// errors are discarded after the response has supplied those observations.
 	_ = resp.Body.Close()
 	require.NotEqual(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	require.Eventually(t, func() bool {
@@ -401,6 +518,9 @@ func TestOpenAIResponsesWebSocket_IngressLeaseReleasedWhenUpgradeFails(t *testin
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID supplies a
+// message identifier where a response identifier is required. It checks a
+// policy-violation close mentioning the invalid previous_response_id.
 func TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID(t *testing.T) {
 	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
 	wsServer := newOpenAIWSHandlerTestServer(t, h, authctx.AuthSubject{UserID: 1, Concurrency: 1})
@@ -410,6 +530,8 @@ func TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID(t *testin
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() {
 		_ = clientConn.CloseNow()
 	}()
@@ -431,6 +553,10 @@ func TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID(t *testin
 	require.Contains(t, strings.ToLower(closeErr.Reason), "previous_response_id")
 }
 
+// TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailure
+// supplies a valid response identifier and fails user-slot acquisition. It
+// checks the internal-error close reason from concurrency admission after
+// first-frame validation.
 func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailure(t *testing.T) {
 	cache := &httptestkit.ConcurrencyHooks{
 		AcquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
@@ -445,6 +571,8 @@ func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailu
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() {
 		_ = clientConn.CloseNow()
 	}()
@@ -466,9 +594,14 @@ func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailu
 	require.Contains(t, strings.ToLower(closeErr.Reason), "failed to acquire user concurrency slot")
 }
 
+// TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame returns a
+// flagged moderation result for the first request. It checks the configured
+// block message and a persisted flagged log containing the submitted prompt.
 func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T) {
 	moderationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/moderations", r.URL.Path)
+		// Supply the flagged moderation response; the downstream policy and log
+		// assertions expose an unsuccessful exchange without a separate fixture write assertion.
 		_, _ = w.Write([]byte(`{"results":[{"category_scores":{"sexual":0.9}}]}`))
 	}))
 	defer moderationServer.Close()
@@ -508,6 +641,8 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	require.Eventually(t, func() bool {
 		return len(repo.logSnapshot()) == 1
 	}, time.Second, 10*time.Millisecond)
+	// Discard the completed direct-check log before exercising ingress so the
+	// next single-log assertion identifies the WebSocket request rather than setup work.
 	repo.resetLogs()
 	h := newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{
 		Source:    &gatewayExecutionFixture{},
@@ -528,6 +663,8 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() {
 		_ = clientConn.CloseNow()
 	}()
@@ -544,6 +681,8 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 	_, payload, readErr := clientConn.Read(readCtx)
 	cancelRead()
+	// Blocking may arrive as an error frame or a policy close; both paths
+	// must expose the configured message before the persisted moderation log is checked.
 	if readErr == nil {
 		require.Contains(t, string(payload), "content_policy_violation")
 		require.Contains(t, string(payload), "内容审计测试阻断")
@@ -563,6 +702,9 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	require.Equal(t, "bad prompt", logs[0].InputExcerpt)
 }
 
+// TestOpenAIRecordForwardResultCyberWarning_RecordsWSV2TerminalWarning passes a
+// successful result carrying a terminal upstream warning. It checks one
+// moderation warning with provider, model, user email, and warning text.
 func TestOpenAIRecordForwardResultCyberWarning_RecordsWSV2TerminalWarning(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -613,6 +755,9 @@ func TestOpenAIRecordForwardResultCyberWarning_RecordsWSV2TerminalWarning(t *tes
 	require.Contains(t, warning.WarningText, "cybersecurity risk")
 }
 
+// TestOpenAIRecordForwardErrorCyberWarning_RecordsWSV2TerminalWarning wraps an
+// upstream warning inside a forwarding error. It checks warning recognition and
+// the recorded provider, model, user email, status, and text.
 func TestOpenAIRecordForwardErrorCyberWarning_RecordsWSV2TerminalWarning(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -665,6 +810,9 @@ func TestOpenAIRecordForwardErrorCyberWarning_RecordsWSV2TerminalWarning(t *test
 	require.Contains(t, warning.WarningText, "high-risk cyber")
 }
 
+// TestOpenAIResponsesWebSocket_PassthroughUsageLogPersistsUserAgentAndReasoningEffort
+// sends an explicit reasoning effort and User-Agent. It checks the retained
+// agent, normalized effort, and WebSocket flag in the completion log.
 func TestOpenAIResponsesWebSocket_PassthroughUsageLogPersistsUserAgentAndReasoningEffort(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload: `{"type":"response.create","model":"gpt-5.4","stream":false,"reasoning":{"effort":"HIGH"}}`,
@@ -678,6 +826,9 @@ func TestOpenAIResponsesWebSocket_PassthroughUsageLogPersistsUserAgentAndReasoni
 	require.True(t, got.log.OpenAIWSMode)
 }
 
+// TestOpenAIResponsesWebSocket_PassthroughUsageLogInfersReasoningFromInitialRequestModel
+// maps a model ending in xhigh to an upstream model. It checks the mapped frame
+// and a nil recorded effort when the request has no explicit reasoning field.
 func TestOpenAIResponsesWebSocket_PassthroughUsageLogInfersReasoningFromInitialRequestModel(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload: `{"type":"response.create","model":"gpt-5.4-xhigh","stream":false}`,
@@ -692,6 +843,9 @@ func TestOpenAIResponsesWebSocket_PassthroughUsageLogInfersReasoningFromInitialR
 	require.Nil(t, got.log.ReasoningEffort, "模型映射前后的后缀都不生成 effort")
 }
 
+// TestOpenAIResponsesWebSocket_StripsPreviousResponseIDWhenStickyPreviousMisses
+// sends ordinary input with an unmatched previous response. It checks that the
+// upstream frame drops the identifier while retaining the input.
 func TestOpenAIResponsesWebSocket_StripsPreviousResponseIDWhenStickyPreviousMisses(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload: `{"type":"response.create","model":"gpt-5.4","stream":false,"previous_response_id":"resp_other_group","input":[{"type":"input_text","text":"hello"}]}`,
@@ -702,6 +856,10 @@ func TestOpenAIResponsesWebSocket_StripsPreviousResponseIDWhenStickyPreviousMiss
 	require.Equal(t, "hello", gjson.GetBytes(got.upstreamFirstPayload, "input.0.text").String())
 }
 
+// TestOpenAIResponsesWebSocket_KeepsFunctionCallOutputPreviousResponseIDWhenStickyPreviousMisses
+// sends a function-call output with an unmatched previous response. It checks
+// that the upstream frame retains the response identifier for the tool-result
+// turn.
 func TestOpenAIResponsesWebSocket_KeepsFunctionCallOutputPreviousResponseIDWhenStickyPreviousMisses(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload: `{"type":"response.create","model":"gpt-5.4","stream":false,"previous_response_id":"resp_tool_chain","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`,
@@ -711,6 +869,9 @@ func TestOpenAIResponsesWebSocket_KeepsFunctionCallOutputPreviousResponseIDWhenS
 		"工具续链无法用完整 input 重建，sticky miss 时也应保留 previous_response_id")
 }
 
+// TestOpenAIResponsesWebSocket_PassthroughUsageLogLeavesUserAgentNilWhenMissing
+// sends an empty User-Agent with explicit reasoning effort. It checks a nil
+// agent in the completion log and retention of the explicit effort.
 func TestOpenAIResponsesWebSocket_PassthroughUsageLogLeavesUserAgentNilWhenMissing(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload: `{"type":"response.create","model":"gpt-5.4","stream":false,"reasoning":{"effort":"medium"}}`,
@@ -722,6 +883,9 @@ func TestOpenAIResponsesWebSocket_PassthroughUsageLogLeavesUserAgentNilWhenMissi
 	require.Equal(t, "medium", *got.log.ReasoningEffort)
 }
 
+// newOpenAIWSHandlerTestServer serves Responses WebSocket requests with fixed
+// key and user context. It returns a live httptest server whose caller must
+// close it after closing any established client connection.
 func newOpenAIWSHandlerTestServer(t *testing.T, h *gatewayHTTPEndpointsFixture, subject authctx.AuthSubject) *httptest.Server {
 	t.Helper()
 	groupID := int64(2)
@@ -740,6 +904,9 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *gatewayHTTPEndpointsFixture, 
 	return httptest.NewServer(router)
 }
 
+// ListSchedulableByPlatform returns the fixture provider when its platform
+// matches or the filter is empty. A mismatched nonempty platform returns no
+// candidates; the returned provider value retains its nested references.
 func (s *openAIWSUsageHandlerProviderRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	if platform != "" && s.provider.Record.Platform != platform {
 		return nil, nil
@@ -747,10 +914,16 @@ func (s *openAIWSUsageHandlerProviderRepoStub) ListSchedulableByPlatform(ctx con
 	return []gatewayprovider.ExecutionProvider{s.provider}, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform applies the platform filter without
+// restricting the fixture by group. It delegates to ListSchedulableByPlatform
+// and preserves that method's empty-filter and shared-reference behavior.
 func (s *openAIWSUsageHandlerProviderRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return s.ListSchedulableByPlatform(ctx, platform)
 }
 
+// GetByID returns an outer copy of the fixture provider when its ID matches. An
+// unknown ID returns nil without error, and nested provider references remain
+// shared.
 func (s *openAIWSUsageHandlerProviderRepoStub) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	if s.provider.Record.ID != id {
 		return nil, nil
@@ -759,17 +932,28 @@ func (s *openAIWSUsageHandlerProviderRepoStub) GetByID(ctx context.Context, id i
 	return &provider, nil
 }
 
+// Create reports a successful usage write and optionally publishes the original
+// log pointer. A configured channel must have capacity or a receiver because
+// sending blocks and does not observe context cancellation.
 func (s *openAIWSUsageHandlerUsageLogRepoStub) Create(ctx context.Context, log *usage.UsageLog) (bool, error) {
 	if s.created != nil {
+		// Publish the recorder-owned pointer before returning success so the
+		// receiving assertion observes the actual write rather than a reconstructed log.
 		s.created <- log
 	}
 	return true, nil
 }
 
+// ListAll returns the stored pricing configuration slice without copying its
+// backing array or nested values. Callers that modify the returned
+// configurations also modify this fixture's shared data.
 func (s *openAIWSUsageHandlerPricingConfigRepoStub) ListAll(ctx context.Context) ([]routingtestkit.Configuration, error) {
 	return s.modelConfigs, nil
 }
 
+// GetGroupPlatforms builds a new map for the requested group IDs. It trims
+// stored platform values and omits blank results, allowing tests to distinguish
+// a missing platform from a configured platform.
 func (s *openAIWSUsageHandlerPricingConfigRepoStub) GetGroupPlatforms(ctx context.Context, groupIDs []int64) (map[int64]string, error) {
 	out := make(map[int64]string, len(groupIDs))
 	for _, groupID := range groupIDs {
@@ -780,7 +964,13 @@ func (s *openAIWSUsageHandlerPricingConfigRepoStub) GetGroupPlatforms(ctx contex
 	return out, nil
 }
 
+// TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent returns a
+// usage-limit event from the first provider. It checks completion from the
+// second provider, delivery to both upstreams, and rate-limit marking of the
+// first.
 func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {
+	// Buffer one request per upstream so its handler can send the terminal
+	// event before the test consumes the forwarding observations after client completion.
 	firstHitCh := make(chan []byte, 1)
 	secondHitCh := make(chan []byte, 1)
 
@@ -789,6 +979,8 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		if err != nil {
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -799,6 +991,8 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		}
 
 		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+		// Emit the scripted terminal event; downstream completion and timeout
+		// assertions detect delivery failure, so this fixture discards the write error.
 		_ = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
 		cancelWrite()
 	}))
@@ -809,6 +1003,8 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		if err != nil {
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -819,8 +1015,12 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		}
 
 		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+		// Emit the scripted terminal event; downstream completion and timeout
+		// assertions detect delivery failure, so this fixture discards the write error.
 		_ = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_ws_failover_ok","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`))
 		cancelWrite()
+		// End the scripted exchange after its terminal write; delivery is
+		// observed separately, so the close-handshake error does not replace that result.
 		_ = conn.Close(coderws.StatusNormalClosure, "done")
 	}))
 	defer secondUpstream.Close()
@@ -952,6 +1152,8 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() { _ = clientConn.CloseNow() }()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
@@ -966,6 +1168,8 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
 	require.Equal(t, "resp_ws_failover_ok", gjson.GetBytes(event, "response.id").String())
 
+	// Both upstreams must receive a request; bounded independent waits distinguish
+	// successful recovery from a client event produced without the expected provider switch.
 	select {
 	case <-firstHitCh:
 	case <-time.After(3 * time.Second):
@@ -979,7 +1183,13 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	require.Equal(t, []int64{int64(9902)}, providerRepo.rateLimitedIDs)
 }
 
+// TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClientForOneFailover
+// leaves the first upstream silent after receiving its request. It checks
+// recovered output on the same client, one connection per provider, handler
+// exit, and no penalty for the healthy provider.
 func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClientForOneFailover(t *testing.T) {
+	// Buffer one request per upstream so its handler can send the terminal
+	// event before the test consumes the forwarding observations after client completion.
 	firstHitCh := make(chan []byte, 1)
 	secondHitCh := make(chan []byte, 1)
 	var firstConnections atomic.Int32
@@ -991,6 +1201,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 		if err != nil {
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -1000,6 +1212,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 			firstHitCh <- payload
 		}
 
+		// Keep the silent upstream alive after receiving the frame so the
+		// gateway first-output deadline can trigger failover before fixture shutdown wins.
 		select {
 		case <-r.Context().Done():
 		case <-time.After(3 * time.Second):
@@ -1013,6 +1227,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 		if err != nil {
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -1035,6 +1251,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 			}
 		}
 		readCtx, cancelRead = context.WithTimeout(r.Context(), 3*time.Second)
+		// Wait for client-side termination after the scripted response so the
+		// upstream stays available through the turn; the final read result is discarded.
 		_, _, _ = conn.Read(readCtx)
 		cancelRead()
 	}))
@@ -1140,6 +1358,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	})
 	router.GET("/openai/v1/responses", func(c *gin.Context) {
 		h.ResponsesWebSocket(c)
+		// Publish handler return after its socket processing finishes so exit
+		// assertions cannot mistake a terminal client event for completed handler cleanup.
 		close(handlerDone)
 	})
 	handlerServer := httptest.NewServer(router)
@@ -1153,6 +1373,8 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() { _ = clientConn.CloseNow() }()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1176,11 +1398,15 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	require.Contains(t, eventTypes, "response.output_text.delta")
 	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 
+	// Wait for handler exit separately from payload delivery because a completed
+	// response can be observed while connection processing and cleanup still continue.
 	select {
 	case <-handlerDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("websocket handler did not finish after healthy failover turn")
 	}
+	// Both upstreams must receive a request; bounded independent waits distinguish
+	// successful recovery from a client event produced without the expected provider switch.
 	select {
 	case <-firstHitCh:
 	case <-time.After(3 * time.Second):
@@ -1196,9 +1422,22 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	require.NotContains(t, providerRepo.rateLimitedIDs, int64(9913), "healthy failover provider must not be penalized")
 }
 
+// runOpenAIResponsesWebSocketUsageLogCase sends a first frame through a local
+// upstream and returns its recorded usage and forwarded payload. Optional group
+// mapping configures pricing-based model rewriting; a nonnil userAgent supplies
+// the dial header, including an explicitly empty value.
+//
+// The upstream publishes its first payload before reporting terminal write
+// success, while completion recording publishes through a separate channel. The
+// helper waits for the client event, usage log, payload, and upstream result
+// independently with bounded deadlines. Those waits preserve each observation's
+// identity rather than treating a completed client event as proof of a finished
+// recorder. Deferred cleanup closes the client before its server.
 func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSUsageLogCase) openAIResponsesWSUsageLogResult {
 	t.Helper()
 
+	// Keep payload and terminal status separate so a received frame does not
+	// imply a successful response write; buffering lets upstream finish before assertions drain them.
 	upstreamPayloadCh := make(chan []byte, 1)
 	upstreamErrCh := make(chan error, 1)
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1209,6 +1448,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			upstreamErrCh <- err
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() {
 			_ = conn.CloseNow()
 		}()
@@ -1235,6 +1476,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			upstreamErrCh <- writeErr
 			return
 		}
+		// End the scripted exchange after its terminal write; delivery is
+		// observed separately, so the close-handshake error does not replace that result.
 		_ = conn.Close(coderws.StatusNormalClosure, "done")
 		upstreamErrCh <- nil
 	}))
@@ -1361,6 +1604,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	)
 	cancelDial()
 	require.NoError(t, err)
+	// Close the fixture client after the asserted exchange; teardown errors do
+	// not change the event or admission result observed by these assertions.
 	defer func() {
 		_ = clientConn.CloseNow()
 	}()
@@ -1375,8 +1620,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cancelRead()
 	require.NoError(t, err)
 	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+	// Finish the client exchange before waiting for recorder and upstream reports;
+	// those independent results establish completion even if the close handshake fails.
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
+	// Completion recording and upstream processing publish independently; wait for
+	// each result so a terminal client frame cannot conceal missing persistence or forwarding.
 	var usageLog *usage.UsageLog
 	select {
 	case usageLog = <-usageRepo.created:
@@ -1405,10 +1654,14 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	}
 }
 
+// testStringPtr returns a pointer to the supplied string value.
 func testStringPtr(v string) *string {
 	return &v
 }
 
+// GetByKeyForAuth reads the current fixture key under its mutex and returns an
+// API-key copy. A removed key returns ErrAPIKeyNotFound; the requested key
+// string does not select a different record.
 func (r *wsTurnKeys) GetByKeyForAuth(context.Context, string) (*apikey.APIKey, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1418,26 +1671,60 @@ func (r *wsTurnKeys) GetByKeyForAuth(context.Context, string) (*apikey.APIKey, e
 	return apikey.CopyAPIKey(r.key), nil
 }
 
+// remove clears the current key while holding the repository mutex. Subsequent
+// authentication lookups return ErrAPIKeyNotFound, while previously copied
+// connection context still refers to the earlier record.
 func (r *wsTurnKeys) remove() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Remove the repository record rather than the retained connection snapshot
+	// so the next turn must detect revocation through its authentication lookup.
 	r.key = nil
 }
 
+// GetByIDLite returns the fixture group with a separate allowed-protocol slice.
+// It ignores the requested ID and copies under the repository mutex, so a
+// subsequent revokeWS call changes later lookups without replacing an earlier
+// result's protocol list.
+//
+// The outer group value is copied first, and AllowedProtocols receives its own
+// backing array before publication. Other nested group references keep the
+// ordinary shallow-copy behavior. This boundary matters because the
+// connection's initial group snapshot and the repository's next-turn
+// permissions must remain distinguishable after revocation.
 func (r *wsTurnGroups) GetByIDLite(context.Context, int64) (*routing.Group, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	value := r.group
+	// Copy protocol storage before unlocking so later permission replacement cannot
+	// alter the allowed-protocol view already returned for an earlier authentication lookup.
 	value.AllowedProtocols = append([]capability.ProtocolID(nil), r.group.AllowedProtocols...)
 	return &value, nil
 }
 
+// revokeWS replaces allowed protocols under the repository mutex with HTTP
+// Responses alone. Later group lookups therefore lose Responses WebSocket
+// permission while snapshots already returned keep their copied protocol
+// slices.
 func (r *wsTurnGroups) revokeWS() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Keep HTTP Responses permission while removing WebSocket permission under
+	// the same lock used by lookups, isolating revocation to the follow-up protocol.
 	r.group.AllowedProtocols = []capability.ProtocolID{capability.ProtocolOpenAIResponses}
 }
 
+// newOpenAIWSPassthroughHandlerHarness opens a Responses WebSocket backed by a
+// caller-supplied upstream URL and Redis gateway cache. It enables warning
+// recording and session blocking, then exposes key and group stores that tests
+// can mutate between turns.
+//
+// The HTTP middleware installs an initial authentication snapshot, while
+// subsequent lookups copy the current repository records. handlerDone closes
+// only after ResponsesWebSocket returns, giving callers an explicit exit
+// observation in addition to socket events. Test cleanup registers server
+// closure before client closure so the client closes first. Redis and
+// moderation cleanup follow their respective test-fixture ownership.
 func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *openAIWSPassthroughHandlerHarness {
 	t.Helper()
 	gatewayCache := testutil.NewRedisGatewayCache(t)
@@ -1526,6 +1813,8 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 	})
 	router.GET("/openai/v1/responses", func(c *gin.Context) {
 		h.ResponsesWebSocket(c)
+		// Publish handler return after its socket processing finishes so exit
+		// assertions cannot mistake a terminal client event for completed handler cleanup.
 		close(handlerDone)
 	})
 	handlerServer := httptest.NewServer(router)
@@ -1535,6 +1824,8 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(handlerServer.URL, "http")+"/openai/v1/responses", nil)
 	cancelDial()
 	require.NoError(t, err)
+	// Cleanup runs in reverse registration order, closing this client before
+	// the listener closes, letting socket reads terminate; teardown errors are discarded.
 	t.Cleanup(func() { _ = clientConn.CloseNow() })
 
 	return &openAIWSPassthroughHandlerHarness{
@@ -1548,13 +1839,23 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 	}
 }
 
+// TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn
+// receives a terminal cyber-policy failure from upstream. It checks warning
+// persistence and the Redis session block before asserting that the
+// same-session follow-up closes without reaching upstream.
 func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *testing.T) {
+	// Observe upstream exit and follow-up delivery separately because socket
+	// termination alone cannot establish whether the second frame was forwarded.
 	upstreamDone := make(chan struct{})
 	secondUpstreamFrame := make(chan []byte, 1)
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Signal upstream handler exit even on an early read or write failure;
+		// the outer test waits before deciding whether a follow-up reached this socket.
 		defer close(upstreamDone)
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		require.NoError(t, err)
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -1599,7 +1900,8 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 
 	require.Eventually(t, func() bool {
 		warnings := harness.moderationRepo.cyberWarningSnapshot()
-		// Upstream warnings are recorded as gateway 502 errors; WS events have no HTTP status field.
+		// The warning receives gateway 502 status because the terminal WebSocket
+		// event carries no HTTP status; wait for persistence before checking session blocking.
 		return len(warnings) == 1 && warnings[0].WarningText == "blocked by upstream policy" &&
 			warnings[0].UpstreamStatus == http.StatusBadGateway
 	}, 3*time.Second, 10*time.Millisecond, "handler AfterTurn must call recordCyberPolicyIfMarked and write the risk-control event")
@@ -1626,8 +1928,11 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	var closeErr coderws.CloseError
 	require.ErrorAs(t, err, &closeErr)
 	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-	// Session blocks use a fixed English close reason.
+	// The blocked follow-up closes with the fixed English session-policy reason,
+	// allowing the assertion to distinguish session blocking from other admission failures.
 	require.Equal(t, "This session is blocked by the security policy. Start a new session.", closeErr.Reason)
+	// Join the handler and upstream before inspecting buffered frames so a
+	// still-running sender cannot make an absent follow-up observation appear conclusive.
 	select {
 	case <-harness.handlerDone:
 	case <-time.After(3 * time.Second):
@@ -1645,13 +1950,23 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	}
 }
 
+// TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup completes
+// two ordinary turns on one connection. It checks both response IDs, the
+// forwarded follow-up frame, empty warnings, an absent session block, and
+// eventual exit.
 func TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup(t *testing.T) {
+	// Observe upstream exit and follow-up delivery separately because socket
+	// termination alone cannot establish whether the second frame was forwarded.
 	upstreamDone := make(chan struct{})
 	secondUpstreamFrame := make(chan []byte, 1)
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Signal upstream handler exit even on an early read or write failure;
+		// the outer test waits before deciding whether a follow-up reached this socket.
 		defer close(upstreamDone)
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		require.NoError(t, err)
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 
 		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
@@ -1678,6 +1993,8 @@ func TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup(t *test
 		require.NoError(t, err)
 
 		readCtx, cancelRead = context.WithTimeout(r.Context(), 3*time.Second)
+		// Wait for client-side termination after the scripted response so the
+		// upstream stays available through the turn; the final read result is discarded.
 		_, _, _ = conn.Read(readCtx)
 		cancelRead()
 	}))
@@ -1720,6 +2037,8 @@ func TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup(t *test
 	require.Empty(t, matched)
 
 	require.NoError(t, harness.clientConn.Close(coderws.StatusNormalClosure, "done"))
+	// Join the handler and upstream before inspecting buffered frames so a
+	// still-running sender cannot make an absent follow-up observation appear conclusive.
 	select {
 	case <-harness.handlerDone:
 	case <-time.After(3 * time.Second):
@@ -1738,20 +2057,37 @@ func TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup(t *test
 	}
 }
 
-// TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup checks that a deleted Key cannot send another upstream
-// turn.
+// TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup deletes the repository
+// key after a completed first turn. It checks a policy-violation close and
+// confirms that the second request does not reach upstream.
 func TestOpenAIResponsesWebSocketDeletedKeyRejectsFollowup(t *testing.T) {
 	testOpenAIWSRevokedAccessRejectsFollowup(t, func(h *openAIWSPassthroughHandlerHarness) { h.keys.remove() })
 }
 
-// TestOpenAIResponsesWebSocketDisabledGroupRejectsFollowup checks that reauthentication rejects revoked group
-// protocol access.
+// TestOpenAIResponsesWebSocketDisabledGroupRejectsFollowup removes WebSocket
+// permission after a completed first turn. It checks a policy-violation close
+// and confirms that the second request does not reach upstream.
 func TestOpenAIResponsesWebSocketDisabledGroupRejectsFollowup(t *testing.T) {
 	testOpenAIWSRevokedAccessRejectsFollowup(t, func(h *openAIWSPassthroughHandlerHarness) { h.groups.revokeWS() })
 }
 
+// testOpenAIWSRevokedAccessRejectsFollowup completes one upstream turn, invokes
+// revoke, and attempts another request on the same client. The callback
+// receives mutable authentication fixtures and must apply the permission change
+// before returning.
+//
+// The upstream reports whether its second read succeeded, then runs deferred
+// socket cleanup. The helper checks that report and waits for
+// ResponsesWebSocket to return through handlerDone under one overall deadline.
+// Receiving reached establishes the forwarding observation, while handlerDone
+// establishes handler return; neither signal joins the upstream handler's
+// deferred closure. Deferred server closure releases listeners; harness
+// cleanup closes the client and stops moderation, with Redis cleanup owned by
+// the cache fixture.
 func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIWSPassthroughHandlerHarness)) {
 	t.Helper()
+	// Buffer the second-read report so upstream can publish it before socket
+	// cleanup; after a completed first turn, false confirms no follow-up frame.
 	reached := make(chan bool, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, nil)
@@ -1759,6 +2095,8 @@ func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIW
 			reached <- false
 			return
 		}
+		// End the upstream socket when this exchange finishes so handler reads
+		// can terminate; assertions inspect forwarded events rather than teardown errors.
 		defer func() { _ = conn.CloseNow() }()
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
@@ -1782,6 +2120,8 @@ func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIW
 	_, event, err := harness.clientConn.Read(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "resp_before_delete", gjson.GetBytes(event, "response.id").String())
+	// Revoke repository access only after the first response has completed,
+	// preserving the initial authenticated turn while forcing a fresh check on follow-up.
 	revoke(harness)
 	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, payload))
 	_, _, err = harness.clientConn.Read(ctx)
@@ -1792,6 +2132,8 @@ func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIW
 	case <-ctx.Done():
 		t.Fatal("上游连接未结束")
 	}
+	// The second-read report establishes forwarding; wait separately for handler
+	// return so the client close does not stand in for completed gateway cleanup.
 	select {
 	case <-harness.handlerDone:
 	case <-ctx.Done():
@@ -1799,18 +2141,20 @@ func testOpenAIWSRevokedAccessRejectsFollowup(t *testing.T, revoke func(*openAIW
 	}
 }
 
-// TestOpenAIWSAssemblyUpgradeAndStopBoundaries checks that upgrade and dependency checks leave the body unread
-// and shutdown rejects new connections.
+// TestOpenAIWSAssemblyUpgradeAndStopBoundaries exercises missing upgrade
+// headers, unavailable dependencies, and stopped request activity. It checks
+// the corresponding status and message while confirming that every rejection
+// leaves the request body unread.
 func TestOpenAIWSAssemblyUpgradeAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("ws-entry-contract")}
 	common := provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h := provideResponsesWSHTTP(nil, nil, nil, nil, common, nil, nil, nil, activity, nil, nil, nil, nil)
 	for _, step := range []struct {
-		name    string
-		upgrade bool
-		stop    bool
-		status  int
-		message string
+		name    string // Admission boundary case name.
+		upgrade bool   // Supply valid upgrade headers.
+		stop    bool   // Stop shared request activity.
+		status  int    // Expected HTTP response status.
+		message string // Expected response body fragment.
 	}{
 		{"upgrade", false, false, http.StatusUpgradeRequired, "WebSocket upgrade required"},
 		{"dependencies", true, false, http.StatusServiceUnavailable, "Service temporarily unavailable"},
@@ -1838,6 +2182,9 @@ func TestOpenAIWSAssemblyUpgradeAndStopBoundaries(t *testing.T) {
 	}
 }
 
+// closeOpenAIWSFailoverExhausted presents a provider failure through the shared
+// WebSocket close helper. It delegates error classification to
+// FailoverPresentation and records stream failure in Ops even when conn is nil.
 func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, err *forwardcore.UpstreamFailoverError) {
 	gatewayhttp.CloseResponsesWSFailure(c, conn, wshttp.FailoverPresentation(err), gatewayhttp.MarkOpsStreamFailure)
 }

@@ -21,23 +21,41 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// nativeProviderTestTransport replaces upstream networking while the test uses assembled provider reads, targets, and SSE output.
+// Provider connection tests load persisted credentials and dispatch through
+// application-assembled platform targets. A recording transport supplies each
+// platform's stream shape, letting the scenario check its request path and
+// selected provider alongside typed test-start and successful completion
+// events.
+
+// nativeProviderTestTransport records platform test requests and serves a
+// configured stream body.
 type nativeProviderTestTransport struct {
-	body     string
-	requests []*http.Request
-	ids      []int64
+	body string // configured platform stream
+	// requests and ids are appended together for each Do invocation. Sequential
+	// subtests inspect the corresponding indexes after platform Test returns, retaining each supplied request pointer.
+	requests []*http.Request // captured upstream requests
+	ids      []int64         // captured provider identities
 }
 
+// Do records the request and provider ID before returning the configured
+// stream. The caller closes the owned response body, while proxy and
+// concurrency inputs are ignored by this sequential platform-test fixture.
 func (f *nativeProviderTestTransport) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
 	f.requests = append(f.requests, req)
 	f.ids = append(f.ids, id)
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(f.body))}, nil
 }
 
+// DoWithTLS delegates the configured platform test exchange while ignoring TLS
+// profile.
 func (f *nativeProviderTestTransport) DoWithTLS(req *http.Request, proxy string, id int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return f.Do(req, proxy, id, concurrency)
 }
 
+// TestNativeProviderTestAssembly runs OpenAI, Gemini, Anthropic, and Kimi tests
+// against stored API-Key providers. It checks construction performs no
+// exchange, each platform uses its expected path and provider, and SSE contains
+// start and successful completion events.
 func TestNativeProviderTestAssembly(t *testing.T) {
 	f := newDatabaseFixture(t)
 	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
@@ -45,7 +63,9 @@ func TestNativeProviderTestAssembly(t *testing.T) {
 	manager := lifecycle.New()
 	core := NewProviderTestsForTest(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil)
 	require.Empty(t, transport.requests, "构造不请求供应商")
-	for _, test := range []struct{ platform, model, path, body string }{
+	for _, test := range []struct {
+		platform, model, path, body string // platform: tested provider platform; model: requested test model; path: expected upstream path; body: supplied protocol stream
+	}{
 		{provider.PlatformOpenAI, "gpt-5.4", "/v1/responses", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"},
 		{provider.PlatformGemini, "gemini-2.5-flash", "/v1beta/models/gemini-2.5-flash:streamGenerateContent", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\ndata: [DONE]\n\n"},
 		{provider.PlatformAnthropic, "claude-sonnet-4-5", "/v1/messages", "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"},
@@ -69,5 +89,7 @@ func TestNativeProviderTestAssembly(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	// Join registered test resources after all platform subtests finish while
+	// the fixture database remains available for any final provider cleanup work.
 	require.NoError(t, manager.Stop(ctx))
 }

@@ -9,6 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 )
 
+// Completion recording uses configured queue capacity, task budgets, and
+// overflow handling. Assembly starts from worker-pool defaults, applies fields
+// according to their zero-value rules, and normalizes the result before binding
+// completion telemetry to the pool.
+
+// usageRecordPoolOptionsFromConfig returns defaults for nil cfg and normalized
+// overrides otherwise. Positive capacity and step fields replace defaults;
+// sample percentage, down threshold, and cooldown accept zero, while
+// AutoScaleEnabled is copied directly and overflow policy is trimmed and
+// lowercased.
 func usageRecordPoolOptionsFromConfig(cfg *config.Config) completion.UsageRecordWorkerPoolOptions {
 	opts := completion.DefaultOptions()
 	if cfg == nil {
@@ -21,6 +31,7 @@ func usageRecordPoolOptionsFromConfig(cfg *config.Config) completion.UsageRecord
 		opts.QueueSize = cfg.Gateway.UsageRecord.QueueSize
 	}
 	if cfg.Gateway.UsageRecord.TaskTimeoutSeconds > 0 {
+		// Convert configured seconds into each completion task's execution budget.
 		opts.TaskTimeout = time.Duration(cfg.Gateway.UsageRecord.TaskTimeoutSeconds) * time.Second
 	}
 	if policy := strings.TrimSpace(strings.ToLower(cfg.Gateway.UsageRecord.OverflowPolicy)); policy != "" {
@@ -49,14 +60,20 @@ func usageRecordPoolOptionsFromConfig(cfg *config.Config) completion.UsageRecord
 		opts.AutoScaleDownStep = cfg.Gateway.UsageRecord.AutoScaleDownStep
 	}
 	if cfg.Gateway.UsageRecord.AutoScaleCheckIntervalSeconds > 0 {
+		// Scaling checks use a duration expressed in configured seconds.
 		opts.AutoScaleInterval = time.Duration(cfg.Gateway.UsageRecord.AutoScaleCheckIntervalSeconds) * time.Second
 	}
 	if cfg.Gateway.UsageRecord.AutoScaleCooldownSeconds >= 0 {
+		// The cooldown duration spaces scaling changes in configured seconds.
 		opts.AutoScaleCooldown = time.Duration(cfg.Gateway.UsageRecord.AutoScaleCooldownSeconds) * time.Second
 	}
 	return completion.NormalizeOptions(opts)
 }
 
+// provideUsageRecordWorkerPool constructs the bounded completion pool with
+// application telemetry. The downstream constructor creates its pond pool
+// immediately; lifecycle Start begins periodic scaling, and lifecycle
+// StopContext waits before the task dependencies are closed.
 func provideUsageRecordWorkerPool(cfg *config.Config) *completion.UsageRecordWorkerPool {
 	opts := usageRecordPoolOptionsFromConfig(cfg)
 	opts.Observe = telemetry.Completion

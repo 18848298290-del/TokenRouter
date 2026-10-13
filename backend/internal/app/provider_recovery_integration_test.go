@@ -16,7 +16,16 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// TestNativeProviderHealthAssembly checks PostgreSQL reads and writes through assembled health components.
+// Assembled provider health shares one core across platform and model observers
+// before reaching PostgreSQL. The persistent scenarios inspect Anthropic
+// session-window updates, model-scoped image cooldown, and unauthorized shadow
+// requests that contain the credential parent while leaving the shadow's own
+// state intact.
+
+// TestNativeProviderHealthAssembly observes platform errors through the
+// application-assembled health graph. It checks shared core references,
+// persisted Anthropic reset/window state, model-only image limits, and
+// credential-parent containment for an unauthorized OpenAI shadow.
 func TestNativeProviderHealthAssembly(t *testing.T) {
 	f := newDatabaseFixture(t)
 	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
@@ -33,6 +42,8 @@ func TestNativeProviderHealthAssembly(t *testing.T) {
 		require.NoError(t, err)
 		value, err := store.GetByID(t.Context(), row.ID)
 		require.NoError(t, err)
+		// Header reset timestamps use Unix seconds, so remove finer precision
+		// before comparing the stored limit and session-window endpoints with that wire value.
 		reset := time.Now().Add(3 * time.Hour).Truncate(time.Second)
 		headers := make(http.Header)
 		headers.Set("anthropic-ratelimit-unified-5h-utilization", "1.02")

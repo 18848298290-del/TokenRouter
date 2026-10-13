@@ -19,8 +19,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
+// Registration attempts consume the public authentication Redis limit before
+// business validation returns a bad request. The integration scenario repeats
+// one client IP until the sixth request is rejected, while local Docker
+// discovery determines whether the container-backed test can run or must fail
+// under strict verification.
+
+// authRouteRedisImageTag selects the Redis container version used to exercise
+// persistent authentication rate counters in this integration fixture.
 const authRouteRedisImageTag = "redis:8.4-alpine"
 
+// TestAuthRegisterRateLimitThresholdHitReturns429 sends six invalid
+// registration requests from one client IP. The first five must reach
+// BadRequest business validation, and the sixth must return TooManyRequests
+// with the rate-limit message.
 func TestAuthRegisterRateLimitThresholdHitReturns429(t *testing.T) {
 	ctx := context.Background()
 	rdb := startAuthRouteRedis(t, ctx)
@@ -28,6 +40,8 @@ func TestAuthRegisterRateLimitThresholdHitReturns429(t *testing.T) {
 	router := newAuthRoutesTestRouter(rdb)
 	const path = "/api/v1/auth/register"
 
+	// Public registration permits five attempts in this IP window. A sixth
+	// request distinguishes rate-counter admission from the bad-body validation reached by earlier requests.
 	for i := 1; i <= 6; i++ {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -45,6 +59,10 @@ func TestAuthRegisterRateLimitThresholdHitReturns429(t *testing.T) {
 	}
 }
 
+// startAuthRouteRedis starts and pings a Redis container after Docker
+// discovery. It registers client and container cleanup with t; close and
+// termination errors are discarded, and callers provide the context used by
+// setup and container cleanup.
 func startAuthRouteRedis(t *testing.T, ctx context.Context) *redis.Client {
 	t.Helper()
 	ensureAuthRouteDockerAvailable(t)
@@ -52,6 +70,8 @@ func startAuthRouteRedis(t *testing.T, ctx context.Context) *redis.Client {
 	redisContainer, err := rediscontainer.Run(ctx, authRouteRedisImageTag)
 	require.NoError(t, err)
 	t.Cleanup(func() {
+		// Container termination is final fixture cleanup. Its failure is discarded
+		// so this callback does not replace the assertions already made about authentication rate limiting.
 		_ = redisContainer.Terminate(ctx)
 	})
 
@@ -66,11 +86,17 @@ func startAuthRouteRedis(t *testing.T, ctx context.Context) *redis.Client {
 	})
 	require.NoError(t, rdb.Ping(ctx).Err())
 	t.Cleanup(func() {
+		// Client cleanup runs before container termination because it was registered
+		// later; the callback discards its close error after the fixture assertions have completed.
 		_ = rdb.Close()
 	})
 	return rdb
 }
 
+// ensureAuthRouteDockerAvailable permits container setup when its discovery
+// heuristic succeeds. Missing Docker evidence fails CI or strict verification,
+// while ordinary local runs skip the integration scenario instead of attempting
+// setup.
 func ensureAuthRouteDockerAvailable(t *testing.T) {
 	t.Helper()
 	if authRouteDockerAvailable() {
@@ -82,6 +108,10 @@ func ensureAuthRouteDockerAvailable(t *testing.T) {
 	t.Skip("Docker 未启用，跳过认证限流集成测试")
 }
 
+// authRouteDockerAvailable reports configured DOCKER_HOST or an existing
+// candidate socket path. This is a discovery heuristic based on environment and
+// filesystem presence; container setup performs the actual daemon operation
+// afterward.
 func authRouteDockerAvailable() bool {
 	if os.Getenv("DOCKER_HOST") != "" {
 		return true
@@ -99,6 +129,8 @@ func authRouteDockerAvailable() bool {
 		if socket == "" {
 			continue
 		}
+		// Missing or unreadable candidates do not end discovery. Continue across
+		// platform socket locations until a present path or the exhausted candidate list determines the result.
 		if _, err := os.Stat(socket); err == nil {
 			return true
 		}
@@ -106,8 +138,13 @@ func authRouteDockerAvailable() bool {
 	return false
 }
 
+// authRouteUserHomeDir returns the user directory used for Docker socket
+// candidates. A lookup error becomes an empty string, leaving the discovery
+// helper to continue its other environment and path checks.
 func authRouteUserHomeDir() string {
 	home, err := os.UserHomeDir()
+	// Directory lookup failure supplies no home-based prefix. Docker discovery
+	// still considers the environment and remaining platform socket candidates before rejecting availability.
 	if err != nil {
 		return ""
 	}

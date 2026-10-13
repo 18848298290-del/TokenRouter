@@ -16,7 +16,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// provideGatewayRouteMiddleware binds gateway authentication, group checks, and request recording.
+// Gateway route registration shares authentication and group checks across
+// endpoint families. The bound middleware installs model attributes and the
+// final group into request context, while protocol-specific guards record
+// group-assignment rejection before platform handlers begin execution.
+
+// provideGatewayRouteMiddleware binds authentication, body limits, diagnostics,
+// and request context installation. cfg is required; optional client bindings
+// supply group fallback, and each route later chooses the protocol-specific
+// guards and middleware from this assembled value.
 func provideGatewayRouteMiddleware(
 	apiKeyAuth keyhttp.APIKeyAuthMiddleware,
 	apiKeyService *apikey.APIKeyService,
@@ -71,7 +79,10 @@ func provideGatewayRouteMiddleware(
 	}
 }
 
-// provideGroupAssignmentGuard binds effective group access and rejection recording.
+// provideGroupAssignmentGuard constructs group rejection using the supplied
+// protocol error writer. Rejected calls are recorded as both an Ops client-
+// business limit and an ingress group-assignment rejection before the error
+// is written and the Gin chain is aborted.
 func provideGroupAssignmentGuard(writer func(*gin.Context, int, string)) gin.HandlerFunc {
 	return gatewayhttp.RequireGroupAssignment(gatewayhttp.GroupAssignmentOptions{
 		Access:     gatewayhttp.EffectiveGroupAssignment,

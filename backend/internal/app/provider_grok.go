@@ -20,20 +20,32 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// provideGrokAuthorization binds dynamic configuration and uses Redis for sessions when available.
+// Grok authorization can store browser sessions in Redis when that application
+// resource is available. Quota probing reuses operator URL policy, execution
+// transport, and local usage statistics, while request-side token refresh
+// shares the same coordinator and cached credentials.
+
+// provideGrokAuthorization constructs password policy and authorization session
+// storage. With Redis supplied it stops the constructor's existing store before
+// replacing it with the Redis adapter; absent Redis retains the constructed
+// store.
 func provideGrokAuthorization(proxies egress.ProxyRepository, client provider.GrokAuthorizationClient, cfg *config.Config, redisClient *redis.Client) *provider.GrokAuthorization {
 	options := provideradapter.GrokAuthorizationOptions(proxies, func() bool {
 		return cfg != nil && cfg.Gateway.Grok.PasswordAuthEnabled
 	})
 	authorization := provider.NewGrokAuthorization(client, options)
 	if redisClient != nil {
+		// Stop the constructor-owned session store before installing Redis storage,
+		// ending its local resource lifetime before future authorization calls use the replacement adapter.
 		authorization.Store.Stop()
 		authorization.Store = rediscache.NewGrokSessionStore(redisClient)
 	}
 	return authorization
 }
 
-// provideGrokQuota binds provider storage and upstream requests for quota probes.
+// provideGrokQuota binds quota requests to shared tokens, transport, proxies,
+// and usage statistics. cfg is required and its host slice is cloned; endpoint
+// mode remains a request-time reader from shared gateway settings.
 func provideGrokQuota(store *providerpostgres.ProviderStore, proxies egress.ProxyRepository, token *provider.GrokTokenSource, transport httpclient.UpstreamTransport, cfg *config.Config, usageStore *usagepostgres.Store, settings *gateway.RuntimeSettings) *provider.GrokQuotaService {
 	policy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	requests := &provideradapter.GrokQuotaTransport{Do: transport.Do, Proxy: proxies.GetByID, DefaultBaseURL: gatewayprovider.GrokDefaultBaseURLReader(settings), OperatorValidator: policy.Validate, MapStatus: forward.MapStatus}
@@ -41,7 +53,10 @@ func provideGrokQuota(store *providerpostgres.ProviderStore, proxies egress.Prox
 	return provideradapter.NewGrokQuota(store, token, requests, newProviderLocalUsageStats(usageStore))
 }
 
-// provideGrokTokens shares the token cache and refresh coordinator across gateway and manual queries.
+// provideGrokTokens constructs cached Grok token lookup with the platform
+// refresh policy. Its callback invokes the shared OAuth coordinator using the
+// Grok refresher so gateway and manual queries share credential refresh
+// handling.
 func provideGrokTokens(store *providerpostgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.GrokAuthorization, refresh *provider.OAuthRefreshAPI) *provider.GrokTokenSource {
 	executor := provider.NewGrokTokenRefresher(authorization)
 	return &provider.GrokTokenSource{

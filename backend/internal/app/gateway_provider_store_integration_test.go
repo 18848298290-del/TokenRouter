@@ -16,11 +16,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// NewExecutionProviderStoreForTest builds the execution provider store for integration tests.
+// Configuration edits must not overwrite quota consumption accumulated after an
+// execution target was read. The persistent scenario checks copied credentials,
+// a declared name-only edit, and an outer Ent transaction whose uncommitted
+// name is visible through its participant and disappears after rollback.
+
+// NewExecutionProviderStoreForTest uses production store assembly for
+// persistent provider and funding-state scenarios.
 var NewExecutionProviderStoreForTest = provideExecutionProviderStore
 
-// TestExecutionStoreUsesNativeStateAndOuterTransaction checks funding field protection and participation in an
-// outer Ent transaction.
+// TestExecutionStoreUsesNativeStateAndOuterTransaction edits a stale execution
+// target after a quota increment. It checks credential isolation and name-only
+// persistence, then confirms an outer transaction can read its change and roll
+// it back while retaining prior quota state.
 func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
@@ -38,6 +46,8 @@ func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	require.Equal(t, "fixture-key", another.View().GetCredential("api_key"))
 	require.NoError(t, store.IncrementQuotaUsed(ctx, row.ID, 2.5))
 	writer, ok := store.(interface {
+		// UpdateConfiguration participates in the supplied Ent transaction while
+		// merging only declared configuration fields, retaining current credentials and funding counters.
 		UpdateConfiguration(context.Context, *gatewayadapter.ExecutionProvider, provider.ConfigurationChange) error
 	})
 	require.True(t, ok, "保留执行边界原配置参与能力")
@@ -51,6 +61,8 @@ func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	tx, err := f.client.Tx(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() {
+		// The test rolls back explicitly below. Cleanup also handles assertion
+		// exits, and an already completed transaction is accepted by this final rollback.
 		err := tx.Rollback()
 		if err != nil && !errors.Is(err, sql.ErrTxDone) {
 			require.NoError(t, err)
@@ -59,7 +71,8 @@ func TestExecutionStoreUsesNativeStateAndOuterTransaction(t *testing.T) {
 	txctx := dbent.NewTxContext(ctx, tx)
 	value.Record.Name = "uncommitted"
 	require.NoError(t, writer.UpdateConfiguration(txctx, value, provider.ConfigurationChange{Fields: provider.ConfigName}))
-	// Ordinary queries use a separate connection; transaction participants can read uncommitted data.
+	// Read through the transaction client to observe its uncommitted name.
+	// The later ordinary store read happens after rollback and must retain the prior committed name.
 	within, err := tx.Client().Provider.Get(txctx, row.ID)
 	require.NoError(t, err)
 	require.Equal(t, "uncommitted", within.Name)

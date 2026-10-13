@@ -18,43 +18,70 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// identityAuthSettings combines identity settings readers from the owning modules.
+// Authentication rules and persistence share one dependency value containing
+// user, entitlement, email, and session services. AuthState receives the
+// constructed AuthService as its Rules callback target, while settings adapters
+// obtain promotion flags and DingTalk registration policy from their owning
+// readers.
+
+// identityAuthSettings combines the owning readers used by authentication
+// rules.
 type identityAuthSettings struct {
-	*identity.RuntimeSettings
-	*identity.GrantSettings
-	*site.DisplaySettings
-	oauth     *identity.OAuthSettings
-	promotion *promotion.RuntimeSettings
+	// RuntimeSettings, GrantSettings, DisplaySettings, oauth, and promotion
+	// retain application readers. Authentication delegates each setting to its owning reader using the operation's context.
+	*identity.RuntimeSettings                            // identity runtime flags
+	*identity.GrantSettings                              // signup entitlement settings
+	*site.DisplaySettings                                // public site display
+	oauth                     *identity.OAuthSettings    // OAuth provider settings
+	promotion                 *promotion.RuntimeSettings // promotion runtime flags
 }
 
-// identityAuthGraph holds authentication use cases and transaction adapters shared by authentication endpoints.
+// identityAuthGraph retains authentication rules and storage used by HTTP
+// assembly.
 type identityAuthGraph struct {
-	Core   *identity.AuthService
-	State  *identitypostgres.AuthState
-	Client *dbent.Client
+	// Core and State share AuthDependencies, and State.Rules is assigned Core
+	// after construction. Client is the Ent owner reused when HTTP assembles pending-state persistence.
+	Core   *identity.AuthService       // authentication rule service
+	State  *identitypostgres.AuthState // authentication persistence state
+	Client *dbent.Client               // shared Ent client
 }
 
+// provideIdentityAuthSettings groups shared identity, display, OAuth, and
+// promotion readers.
 func provideIdentityAuthSettings(runtime *identity.RuntimeSettings, grants *identity.GrantSettings, display *site.DisplaySettings, oauth *identity.OAuthSettings, promotion *promotion.RuntimeSettings) *identityAuthSettings {
 	return &identityAuthSettings{RuntimeSettings: runtime, GrantSettings: grants, DisplaySettings: display, oauth: oauth, promotion: promotion}
 }
 
+// IsPromoCodeEnabled reads the promotion flag from shared runtime settings.
 func (s identityAuthSettings) IsPromoCodeEnabled(ctx context.Context) bool {
 	return s.promotion.IsPromoCodeEnabled(ctx)
 }
 
+// IsInvitationCodeEnabled reads invitation acceptance from shared promotion
+// runtime settings.
 func (s identityAuthSettings) IsInvitationCodeEnabled(ctx context.Context) bool {
 	return s.promotion.IsInvitationCodeEnabled(ctx)
 }
 
+// IsAffiliateAdminRechargeEnabled reads the administrator recharge rebate flag
+// from promotion settings.
 func (s identityAuthSettings) IsAffiliateAdminRechargeEnabled(ctx context.Context) bool {
 	return s.promotion.IsAffiliateAdminRechargeEnabled(ctx)
 }
 
+// GetDingTalkConnectOAuthConfig returns DingTalk registration policy from the
+// OAuth reader. It carries enabled, bypass, and corporate-restriction values
+// with the original read error for authentication to interpret.
 func (s identityAuthSettings) GetDingTalkConnectOAuthConfig(ctx context.Context) (identity.DingTalkRegistrationPolicy, error) {
 	value, err := s.oauth.GetDingTalkConnectOAuthConfig(ctx)
 	return identity.DingTalkRegistrationPolicy{Enabled: value.Enabled, BypassRegistration: value.BypassRegistration, CorpRestrictionPolicy: value.CorpRestrictionPolicy}, err
 }
 
+// provideIdentityAuthGraph constructs authentication rules and Ent persistence
+// with shared dependencies. Optional settings, email, queued delivery,
+// promotions, and affiliate capabilities are attached when supplied; cfg
+// captures signup and session options, and the resulting core is assigned to
+// state.Rules.
 func provideIdentityAuthGraph(
 	entClient *dbent.Client,
 	users *identitypostgres.UserStore,
@@ -103,8 +130,10 @@ func provideIdentityAuthGraph(
 	return &identityAuthGraph{Core: core, State: state, Client: entClient}
 }
 
-// provideIdentityProfiles uses application task tracking to wait for background profile operations during
-// shutdown.
+// provideIdentityProfiles constructs profile operations with shared
+// invalidation and balance caches. Its background callback uses the application
+// task tracker, allowing shutdown to wait for admitted profile work before
+// closing the stores it uses.
 func provideIdentityProfiles(users *identitypostgres.UserStore, settings settingscore.Repository, keys apikey.APIKeyAuthCacheInvalidator, cache billing.BillingCache, tasks *lifecycle.Tasks) *identity.UserService {
 	return identity.NewUserService(users, settings, keys, cache, func(name string, fn func()) bool { return tasks.Go(name, fn) }, time.Now)
 }

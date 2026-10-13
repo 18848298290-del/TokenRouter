@@ -12,9 +12,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// paymentOAuthSettingsFixture supplies settings to app adapters; payment checks WeChat eligibility.
+// WeChat in-app checkout returns an authorization requirement when MP
+// credentials and resume signing are available. These cases check
+// payment-specific redirect data, missing configuration errors, the configured
+// legacy signing key, and EasyPay selection that bypasses this WeChat
+// authorization path.
+
+// paymentOAuthSettingsFixture supplies selected OAuth setting values to payment
+// assembly.
 type paymentOAuthSettingsFixture map[string]string
 
+// TestMaybeBuildWeChatOAuthRequiredResponse configures MP OAuth and a dedicated
+// resume key for in-app payment. It checks the required result, app and scope,
+// payment callback, and normalized authorization URL with the original purchase
+// context.
 func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	t.Setenv("PAYMENT_RESUME_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
 
@@ -63,6 +74,10 @@ func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	}
 }
 
+// TestMaybeBuildWeChatOAuthRequiredResponseRequiresMPConfigInWeChat omits MP
+// configuration for a WeChat browser order. It checks no response is returned
+// and the payment-specific MP-unconfigured reason identifies the failed
+// prerequisite.
 func TestMaybeBuildWeChatOAuthRequiredResponseRequiresMPConfigInWeChat(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +103,9 @@ func TestMaybeBuildWeChatOAuthRequiredResponseRequiresMPConfigInWeChat(t *testin
 	}
 }
 
+// TestMaybeBuildWeChatOAuthRequiredResponseRequiresResumeSigningKey provides MP
+// credentials but no signing key. It checks no OAuth response is returned and
+// PAYMENT_RESUME_NOT_CONFIGURED reports the unavailable resume prerequisite.
 func TestMaybeBuildWeChatOAuthRequiredResponseRequiresResumeSigningKey(t *testing.T) {
 	t.Parallel()
 
@@ -123,6 +141,9 @@ func TestMaybeBuildWeChatOAuthRequiredResponseRequiresResumeSigningKey(t *testin
 	}
 }
 
+// TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigningKey
+// supplies MP credentials with a stable legacy key. It checks checkout returns
+// an OAuth-required result and a nonblank authorization payload.
 func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigningKey(t *testing.T) {
 	svc := newWeChatPaymentCheckout(map[string]string{
 		identity.SettingKeyWeChatConnectEnabled:             "true",
@@ -158,6 +179,10 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 	}
 }
 
+// TestMaybeBuildWeChatOAuthRequiredResponseForSelectionSkipsEasyPayProvider
+// supplies a WeChat browser request with an EasyPay instance selection. It
+// checks successful preparation returns no WeChat OAuth-required response for
+// that selected channel.
 func TestMaybeBuildWeChatOAuthRequiredResponseForSelectionSkipsEasyPayProvider(t *testing.T) {
 	svc := newWeChatPaymentOAuthTestService(map[string]string{
 		identity.SettingKeyWeChatConnectEnabled:             "true",
@@ -185,11 +210,17 @@ func TestMaybeBuildWeChatOAuthRequiredResponseForSelectionSkipsEasyPayProvider(t
 	}
 }
 
+// newWeChatPaymentOAuthTestService builds checkout with supplied OAuth settings
+// and the fixed fixture signing key. The helper delegates production runtime
+// assembly to newWeChatPaymentCheckout, leaving unused operations unconfigured.
 func newWeChatPaymentOAuthTestService(values map[string]string) *payment.Checkout {
 	return newWeChatPaymentCheckout(values,
 		[]byte("0123456789abcdef0123456789abcdef"))
 }
 
+// GetMultiple returns only the requested keys present in this settings map. The
+// returned map is newly allocated, and missing settings are omitted so OAuth
+// defaults can apply.
 func (s paymentOAuthSettingsFixture) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	values := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -200,6 +231,10 @@ func (s paymentOAuthSettingsFixture) GetMultiple(_ context.Context, keys []strin
 	return values, nil
 }
 
+// newWeChatPaymentCheckout constructs payment checkout through production
+// assembly with UTC dates. Only OAuth preparation dependencies are configured;
+// callers exercise that path while order, refund, and fulfillment resources
+// remain nil.
 func newWeChatPaymentCheckout(values map[string]string, key []byte) *payment.Checkout {
 	settings := identity.NewOAuthSettings(paymentOAuthSettingsFixture(values), nil, nil)
 	runtime := providePaymentRuntime(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, payment.EncryptionKey(key), settings, nil, timezone.NewCalendar(time.UTC))

@@ -8,8 +8,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
-// TestResponseHeaderFilterConfigurationProjection checks nil and default options, allow/remove rules, and
-// isolation from input mutations.
+// Response-header filtering compiles configured allow and remove rules for
+// upstream output. The tests check disabled defaults, enabled connection-header
+// removal, isolation from later configuration-slice changes, and the response-
+// read limit selected during OpenAI output assembly.
+
+// TestResponseHeaderFilterConfigurationProjection compiles disabled and enabled
+// header options from mutable configuration slices. It checks default and
+// forced rules, removes Connection, and confirms later input mutations do not
+// alter the compiled filter.
 func TestResponseHeaderFilterConfigurationProjection(t *testing.T) {
 	require.Nil(t, provideResponseHeaderFilter(nil))
 	cfg := &config.Config{}
@@ -30,6 +37,9 @@ func TestResponseHeaderFilterConfigurationProjection(t *testing.T) {
 	require.False(t, enabled.Allows("X-Replaced"))
 }
 
+// TestResolveUpstreamResponseReadLimit assembles OpenAI output with missing and
+// positive configuration limits. The output options must use the default
+// response-read bytes in the first case and the supplied value in the second.
 func TestResolveUpstreamResponseReadLimit(t *testing.T) {
 	t.Run("use default when config missing", func(t *testing.T) {
 		require.Equal(t, config.DefaultUpstreamResponseReadMaxBytes, provideOpenAIResponseOutput(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).Options.ReadLimit)

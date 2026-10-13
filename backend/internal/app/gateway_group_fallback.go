@@ -15,20 +15,46 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// runtimeGroupFallbackResolver applies authorization, funding, and session checks in the same order for text
-// handlers.
+// A text request can move to another configured group after the current group
+// rejects its client. Each destination is resolved through API-Key
+// authorization before its protocol, funding, and session isolation are
+// checked. The returned Key and subscription belong to that destination, so
+// later route planning uses the selected group.
+//
+// Client restriction traversal follows configured fallback IDs and records
+// visited groups to stop cycles. It checks cancellation before each hop and
+// returns a compatible current group immediately. Initial traversal rechecks
+// funds without consuming RPM; the final handler performs its normal admission.
+// Runtime group fallback can include RPM accounting through the same resolver.
+
+// runtimeGroupFallbackResolver returns an authorized destination Key and its
+// resolved subscription.
 type runtimeGroupFallbackResolver func(context.Context, *apikey.APIKey, int64, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error)
 
-// provideFundingAdmission shares eligibility and RPM stores; successful funding checks precede RPM accounting.
+// provideFundingAdmission combines billing eligibility and scheduler-owned user
+// RPM admission.
 func provideFundingAdmission(funds *billing.Eligibility, rpm scheduler.UserRPMCache, rates billing.UserGroupRateRepository) *admission.FundingAdmission {
 	limiter := scheduler.NewRPMAdmission(rpm, rates, scheduler.Diagnostics{Logf: logging.LegacyPrintf})
 	return admission.NewFundingAdmission(funds, limiter)
 }
 
+// provideRuntimeGroupFallbackResolver binds destination validation with funding
+// and RPM checks. It returns nil when keys or funding is absent; callers invoke
+// the resolver after deciding which configured target group to try.
 func provideRuntimeGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission.FundingAdmission, subscriptions *billing.SubscriptionService, cache session.GatewayCache) runtimeGroupFallbackResolver {
 	return provideGroupFallbackResolver(keys, funding, subscriptions, cache, false)
 }
 
+// provideGroupFallbackResolver creates destination validation and returns nil
+// when keys or funding is absent. Its callback requires the current Key,
+// resolves the requested destination, and rejects unsupported client protocols
+// before resolving enforced funding.
+//
+// After funding admission succeeds, session isolation is checked with the
+// original Key's user identity and current execution hints. fundingOnly selects
+// the funding-only recheck that skips RPM. The selected Key and subscription
+// are returned together so callers can publish matching authorization and
+// funding state.
 func provideGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission.FundingAdmission, subscriptions *billing.SubscriptionService, cache session.GatewayCache, fundingOnly bool) runtimeGroupFallbackResolver {
 	if keys == nil || funding == nil {
 		return nil
@@ -39,6 +65,8 @@ func provideGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission
 	}
 	isolate := messageSessionIsolation(cache)
 	return func(ctx context.Context, key *apikey.APIKey, id int64, source protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error) {
+		// Resolve the destination first so protocol, funds, and isolation checks
+		// consume an authorized group view rather than the current group's settings.
 		resolved, err := keys.ResolveRuntimeGroup(ctx, key, id)
 		if err != nil {
 			return nil, nil, err
@@ -65,8 +93,16 @@ func provideGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission
 	}
 }
 
-// provideClientGroupFallbackResolver rechecks funding without counting RPM. The final handler acquires
-// concurrency and counts RPM once.
+// provideClientGroupFallbackResolver returns a client-restriction traversal
+// using funding-only destination checks. Missing keys or funding produces a nil
+// callback. A compatible starting group returns the current Key with a nil
+// subscription; each followed hop replaces both values using destination
+// authorization.
+//
+// The traversal records visited group IDs and checks the next target before
+// following it, rejecting cycles and missing fallback configuration.
+// Cancellation stops before the next iteration. Funding-only checks leave RPM
+// accounting to final admission after the handler receives the selected group.
 func provideClientGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission.FundingAdmission, subscriptions *billing.SubscriptionService, cache session.GatewayCache) func(context.Context, *apikey.APIKey, protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error) {
 	resolve := provideGroupFallbackResolver(keys, funding, subscriptions, cache, true)
 	if resolve == nil {
@@ -75,6 +111,8 @@ func provideClientGroupFallbackResolver(keys *apikey.APIKeyService, funding *adm
 	return func(ctx context.Context, key *apikey.APIKey, source protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error) {
 		current := key
 		var subscription *billing.UserSubscription
+		// Keep every traversed group ID so configured fallback cycles terminate
+		// before another authorization and funding pass repeats the same destination.
 		visited := map[int64]struct{}{}
 		for current != nil && current.Group != nil {
 			if err := ctx.Err(); err != nil {
@@ -95,6 +133,8 @@ func provideClientGroupFallbackResolver(keys *apikey.APIKeyService, funding *adm
 				return nil, nil, apperror.Forbidden("GROUP_FALLBACK_CYCLE", "fallback group cycle detected")
 			}
 			var err error
+			// A restricted client follows the configured target after cycle checks.
+			// Destination validation returns the matching Key and subscription for the next hop.
 			current, subscription, err = resolve(ctx, current, *target, source)
 			if err != nil {
 				return nil, nil, err

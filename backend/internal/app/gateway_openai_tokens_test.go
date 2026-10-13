@@ -15,14 +15,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// TestOpenAITokenAssemblyKeepsReadAndStopBoundaries checks rejection before body reads when dependencies are
-// missing or request activity has stopped.
+// OpenAI auxiliary token handlers reject unavailable dependencies before
+// reading input. Two assembled instances share an application activity barrier,
+// so the second call after stopping reports shutdown through that same binding
+// while both paths retain an unread request body.
+
+// TestOpenAITokenAssemblyKeepsReadAndStopBoundaries invokes token handlers with
+// missing dependencies before and after stopping shared activity. Both calls
+// must return ServiceUnavailable with the path-specific message and leave the
+// request body unread.
 func TestOpenAITokenAssemblyKeepsReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("token-contract")}
 	first := provideOpenAITokensHTTP(nil, nil, nil, nil, nil, nil, activity, nil, nil, nil, nil)
 	second := provideOpenAITokensHTTP(nil, nil, nil, nil, nil, nil, activity, nil, nil, nil, nil)
 	for _, stopped := range []bool{false, true} {
 		if stopped {
+			// Stop the barrier shared by both assembled handlers before the second
+			// entry method runs, making shutdown observable before its dependency and body checks.
 			require.NoError(t, activity.StopContext(context.Background()))
 		}
 		writer := httptest.NewRecorder()

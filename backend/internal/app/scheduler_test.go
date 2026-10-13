@@ -13,7 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestProviderRuntimeBlockBindingSharesRecoveryFence checks that recovery and execution observe the same scheduling-block generation.
+// Scheduling consumers share runtime containment and feedback within one
+// application instance. These scenarios compare the same recovery fence and
+// counter data through multiple bindings, then exercise tracked
+// completion/Codex tasks across a timed-out stop, later drain, and rejected
+// late admission.
+
+// TestProviderRuntimeBlockBindingSharesRecoveryFence installs a token-side
+// block and reads it through response health. It checks matching generation,
+// conditional clearing, removal of the block, and advancement of the recovery
+// fence.
 func TestProviderRuntimeBlockBindingSharesRecoveryFence(t *testing.T) {
 	state := provider.NewRuntimeBlockState(time.Now)
 	gateway := provideOpenAIResponseHealth(nil, state, nil, nil).Runtime
@@ -29,7 +38,10 @@ func TestProviderRuntimeBlockBindingSharesRecoveryFence(t *testing.T) {
 	require.Greater(t, state.ManagedRecoveryFence(value.Record.ID), fence)
 }
 
-// TestSchedulerSharedStateBindsLegacyConsumers checks shared feedback and compatible parameter readers.
+// TestSchedulerSharedStateBindsLegacyConsumers constructs two isolated
+// application states and reports through one selection binding. It checks
+// settings/sticky objects differ, only the bound feedback changes, and the
+// initial compatibility read count is zero.
 func TestSchedulerSharedStateBindsLegacyConsumers(t *testing.T) {
 	state := provideSchedulerSharedState(nil, nil)
 	snapshot := gatewayCompatibilitySnapshot(state)
@@ -45,7 +57,10 @@ func TestSchedulerSharedStateBindsLegacyConsumers(t *testing.T) {
 	require.Zero(t, untouched)
 }
 
-// TestGatewayBackgroundTasksUseApplicationOwner checks task draining and rejection after shutdown for both execution paths.
+// TestGatewayBackgroundTasksUseApplicationOwner blocks a Messages effect or
+// OpenAI Codex task under the shared tracker. It checks timed-out stop reports
+// that task, a later stop drains after release, and stopped admission rejects
+// another callback.
 func TestGatewayBackgroundTasksUseApplicationOwner(t *testing.T) {
 	for _, name := range []string{"messages", "openai"} {
 		t.Run(name, func(t *testing.T) {
@@ -55,6 +70,8 @@ func TestGatewayBackgroundTasksUseApplicationOwner(t *testing.T) {
 			if name == "openai" {
 				run = openai.CodexUsage.Go
 			}
+			// Coordinate one accepted task with started and release so Stop observes
+			// outstanding work rather than racing task completion before its timeout assertion.
 			started := make(chan struct{})
 			release := make(chan struct{})
 			require.True(t, run("contract", func() { close(started); <-release }))
@@ -62,6 +79,8 @@ func TestGatewayBackgroundTasksUseApplicationOwner(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 			defer cancel()
 			err := tasks.Stop(ctx)
+			// The first stop budget expired while the task was blocked. Release
+			// its callback before the later stop joins completion and tests sealed task admission.
 			close(release)
 			require.ErrorContains(t, err, "contract=1")
 			finish, done := context.WithTimeout(context.Background(), time.Second)

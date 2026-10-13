@@ -27,17 +27,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// provideAgentTaskCoordinator shares a process-local lock per persisted provider across task entry points.
+// Immediate, scheduled, and group availability tests share production provider
+// targets and typed test events. Test assembly captures operator URL policy and
+// platform credentials, while administrator Qoder probes own a separate session
+// provider whose stop hook runs after periodic test producers stop.
+
+// provideAgentTaskCoordinator constructs shared process-local agent
+// registration coordination for persisted providers.
 func provideAgentTaskCoordinator() *provider.OpenAITaskCoordinator {
 	return &provider.OpenAITaskCoordinator{}
 }
 
-// provideProviderExpiry binds provider storage to an expiry check that runs every minute.
+// provideProviderExpiry constructs one-minute provider expiry maintenance with
+// shared storage and clock.
 func provideProviderExpiry(store *providerpostgres.ProviderStore) *provider.ExpiryService {
 	return provider.NewExpiryService(store, provider.ExpiryOptions{Interval: time.Minute, Now: time.Now, Observe: log.Printf})
 }
 
-// provideProviderProbeTasks binds task coordination and conditional credential writes.
+// provideProviderProbeTasks binds agent identity tasks to conditional provider
+// writes. It shares coordinator locks and connection invalidation, while
+// registration uses the fixed OpenAI accounts endpoint and persistence retains
+// its mutation error.
 func provideProviderProbeTasks(store *providerpostgres.ProviderStore, connections *openaiws.OpenAIWSConnections, coordinator *provider.OpenAITaskCoordinator) *provideradapter.ProbeTasks {
 	return &provideradapter.ProbeTasks{Coordinator: coordinator, Options: provider.OpenAITaskOptions{
 		Read: store.GetByID,
@@ -52,13 +62,22 @@ func provideProviderProbeTasks(store *providerpostgres.ProviderStore, connection
 	}}
 }
 
-// provideScheduledTests creates scheduled test operations; the lifecycle manager starts the runner.
+// provideScheduledTests binds scheduled plan and result operations with clock
+// and next-run calculation. Background execution is constructed by
+// provideScheduledTestRunner and started later through the application's
+// lifecycle registration.
 func provideScheduledTests(plans provider.ScheduledTestPlanRepository, results provider.ScheduledTestResultRepository) *provider.ScheduledTestService {
 	return provider.NewScheduledTestService(plans, results, provider.ScheduledTestOptions{Now: time.Now, NextRun: provideradapter.NextScheduledTestRun})
 }
 
+// provideScheduledTestRunner binds periodic tests and successful-test recovery
+// using required cfg. Valid configured timezone replaces time.Local; failed
+// loading retains the process location, and the runner receives a ten-second
+// execution offset.
 func provideScheduledTestRunner(plans provider.ScheduledTestPlanRepository, scheduled *provider.ScheduledTestService, tests *provider.TestService, recovery *provider.RecoveryService, cfg *config.Config) *provider.ScheduledTestRunnerService {
 	location := time.Local
+	// Preserve the initialized process location when configured zone loading fails.
+	// The cron adapter then still receives a concrete location for its next-run calculations.
 	if parsed, err := time.LoadLocation(cfg.Timezone); err == nil && parsed != nil {
 		location = parsed
 	}
@@ -67,7 +86,10 @@ func provideScheduledTestRunner(plans provider.ScheduledTestPlanRepository, sche
 	}, Recover: recovery.RecoverProviderAfterSuccessfulTest})
 }
 
-// provideProviderTests shares provider storage and platform test targets between background tasks and HTTP.
+// provideProviderTests constructs shared platform test targets and their
+// operator URL policy. cfg and manager are required; a nonnil catalog supplies
+// capability snapshots, while Qoder tests receive a separate session provider
+// with its own registered stop.
 func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *provider.GeminiTokenSource, claudeToken *provider.ClaudeTokenSource, grokToken *provider.GrokTokenSource, ag *provideradapter.AntigravityProbe, transport httpclient.UpstreamTransport, cfg *config.Config, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, settings *gateway.RuntimeSettings, tasks *provideradapter.ProbeTasks, manager *lifecycle.Manager, catalog *catalogprovider.Service) *provider.TestService {
 	urlPolicy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	probePolicy := &provideradapter.OpenAIProbePolicy{Available: true, ForceCLI: cfg.Gateway.ForceCodexCLI, Read: store.GetByID, AllowClaudeCode: settings.IsOpenAIAllowClaudeCodeCodexPluginEnabled, BrowserUserAgent: settings.GetOpenAICodexUserAgent, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Routers: routers, Profiles: profiles, ManualProfiles: profiles}
@@ -78,7 +100,8 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 		attributes = catalog.CapabilityView
 	}
 	anthropicTest := &provideradapter.AnthropicProviderTest{Attributes: attributes, Tokens: claudeToken, Transport: transport, Profiles: profiles, Store: store, ValidateURL: urlPolicy.Validate}
-	// Admin tests use a separate Qoder session cache with registered shutdown.
+	// Administrator probes build Qoder sessions in their own provider. Register
+	// its stop after periodic test producers so shared session builds finish before transport cleanup.
 	qoderSessions := provideradapter.NewQoderTokenProvider(qoder.SessionBuilder{})
 	qoderSessions.SetHTTPUpstream(transport, profiles)
 	manager.Register(lifecycle.Hook{Name: "ProviderTestQoderSessions", StopOrder: 26, Stop: qoderSessions.StopContext})
@@ -96,7 +119,9 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 	return core
 }
 
-// provideProviderTestHTTP shares background test operations and runs health recovery after a successful test.
+// provideProviderTestHTTP exposes the shared test service with successful-test
+// recovery. The recovery callback discards the returned recovery description
+// and returns its error for the HTTP handler to interpret.
 func provideProviderTestHTTP(core *provider.TestService, recovery *provider.RecoveryService) *providerhttp.TestHandler {
 	return providerhttp.NewTestHandler(core, func(ctx context.Context, id int64) error {
 		_, err := recovery.RecoverProviderAfterSuccessfulTest(ctx, id)

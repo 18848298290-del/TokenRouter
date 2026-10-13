@@ -21,11 +21,20 @@ import (
 	servermiddleware "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// Compatibility route tests use the backup HTTP adapter's ID validation.
+// Administrator registration exposes protocol capabilities and sensitive module
+// operations behind shared guards. These scenarios inspect authentication/audit
+// order, catalogue input isolation, retained diagnostics routes, canonical
+// backup IDs, and the different HTTP outcomes of removed fixed paths versus
+// surviving wildcard routes.
+
+// requireCanonicalBackupID aliases production backup ID validation for route
+// compatibility scenarios using canonical and removed path values.
 var requireCanonicalBackupID = backuphttp.RequireCanonicalBackupID
 
-// TestProtocolCatalogHTTPContract checks authentication before auditing and isolation from changes to injected
-// catalogue data.
+// TestProtocolCatalogHTTPContract mutates injected endpoint data after
+// constructing the protocol handler. It checks unauthorized/forbidden requests
+// stop before audit, administrator requests reach auth then audit then catalog,
+// and output retains the constructed catalogue.
 func TestProtocolCatalogHTTPContract(t *testing.T) {
 	endpoints := testEndpoints()
 	expected, err := json.Marshal(routinghttpapi.AdminProtocolCatalog(endpoints))
@@ -54,8 +63,8 @@ func TestProtocolCatalogHTTPContract(t *testing.T) {
 		catalog(c)
 	})
 	for _, tc := range []struct {
-		auth   string
-		status int
+		auth   string // supplied authentication category
+		status int    // expected HTTP status
 	}{
 		{"", http.StatusUnauthorized},
 		{"user", http.StatusForbidden},
@@ -73,8 +82,8 @@ func TestProtocolCatalogHTTPContract(t *testing.T) {
 		}
 		require.Equal(t, []string{"auth", "audit", "catalog"}, calls)
 		var response struct {
-			Code int             `json:"code"`
-			Data json.RawMessage `json:"data"`
+			Code int             `json:"code"` // panel result code
+			Data json.RawMessage `json:"data"` // serialized protocol catalogue
 		}
 		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 		require.Zero(t, response.Code)
@@ -82,8 +91,10 @@ func TestProtocolCatalogHTTPContract(t *testing.T) {
 	}
 }
 
-// TestAdminImageStorageRoutesAreRemoved checks that retired image storage settings are absent and backup
-// settings remain reachable.
+// TestAdminImageStorageRoutesAreRemoved registers backup routes and requests
+// three retired image-storage paths. It checks each is absent and returns
+// NotFound, while the current backup configuration and schedule routes remain
+// registered.
 func TestAdminImageStorageRoutesAreRemoved(t *testing.T) {
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")
@@ -100,8 +111,8 @@ func TestAdminImageStorageRoutesAreRemoved(t *testing.T) {
 	}
 
 	removed := []struct {
-		method string
-		path   string
+		method string // retired request method
+		path   string // retired concrete path
 	}{
 		{method: http.MethodGet, path: "/api/v1/admin/backups/image-storage"},
 		{method: http.MethodPut, path: "/api/v1/admin/backups/image-storage"},
@@ -133,8 +144,10 @@ func TestAdminImageStorageRoutesAreRemoved(t *testing.T) {
 	}
 }
 
-// TestAdminUpstreamBillingProbeRoutesAreRemoved checks ordinary 404 responses for retired billing multiplier
-// probe endpoints.
+// TestAdminUpstreamBillingProbeRoutesAreRemoved registers provider
+// administration with its current handlers. It checks five retired
+// multiplier-probe patterns are absent and their concrete request paths return
+// ordinary NotFound responses.
 func TestAdminUpstreamBillingProbeRoutesAreRemoved(t *testing.T) {
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")
@@ -152,9 +165,9 @@ func TestAdminUpstreamBillingProbeRoutesAreRemoved(t *testing.T) {
 		registered[route.Method+" "+route.Path] = true
 	}
 	removed := []struct {
-		method      string
-		routePath   string
-		requestPath string
+		method      string // retired request method
+		routePath   string // retired registration pattern
+		requestPath string // concrete request path
 	}{
 		{method: http.MethodGet, routePath: "/api/v1/admin/providers/upstream-billing-probe/settings", requestPath: "/api/v1/admin/providers/upstream-billing-probe/settings"},
 		{method: http.MethodPut, routePath: "/api/v1/admin/providers/upstream-billing-probe/settings", requestPath: "/api/v1/admin/providers/upstream-billing-probe/settings"},
@@ -171,6 +184,10 @@ func TestAdminUpstreamBillingProbeRoutesAreRemoved(t *testing.T) {
 	}
 }
 
+// TestAdminAdvancedSchedulerScoreRoutesAreRegistered binds provider
+// administration and scheduler diagnostics. It checks the read and preview
+// score endpoints appear in the Gin route inventory for the configured provider
+// wildcard.
 func TestAdminAdvancedSchedulerScoreRoutesAreRegistered(t *testing.T) {
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")
@@ -191,7 +208,9 @@ func TestAdminAdvancedSchedulerScoreRoutesAreRegistered(t *testing.T) {
 	require.True(t, registered["POST /api/v1/admin/providers/:id/advanced-scheduler-score/preview"])
 }
 
-// TestCanonicalBackupIDRouteGuard checks that backup wildcard routes accept the service's generated ID format.
+// TestCanonicalBackupIDRouteGuard requests canonical, uppercase, malformed,
+// short, and removed-name backup IDs. It checks only the canonical lowercase ID
+// reaches NoContent while invalid wildcard values return NotFound.
 func TestCanonicalBackupIDRouteGuard(t *testing.T) {
 	router := gin.New()
 	router.GET("/backups/:id", requireCanonicalBackupID, func(c *gin.Context) {
@@ -199,9 +218,9 @@ func TestCanonicalBackupIDRouteGuard(t *testing.T) {
 	})
 
 	tests := []struct {
-		name       string
-		id         string
-		wantStatus int
+		name       string // backup validation scenario
+		id         string // wildcard backup identity
+		wantStatus int    // expected HTTP status
 	}{
 		{name: "canonical", id: "0a1b2c3d", wantStatus: http.StatusNoContent},
 		{name: "removed fixed path", id: "image-storage", wantStatus: http.StatusNotFound},
@@ -220,7 +239,10 @@ func TestCanonicalBackupIDRouteGuard(t *testing.T) {
 	}
 }
 
-// TestRetiredAdminStatisticsNativeRoutes checks retired routes after administrator authentication.
+// TestRetiredAdminStatisticsNativeRoutes mounts production administration using
+// an observable auth guard. It checks the removed group path returns NotFound,
+// the redeem wildcard authenticates before invalid-ID rejection, and missing
+// authorization returns Unauthorized.
 func TestRetiredAdminStatisticsNativeRoutes(t *testing.T) {
 	router := gin.New()
 	checked := 0
@@ -239,8 +261,8 @@ func TestRetiredAdminStatisticsNativeRoutes(t *testing.T) {
 	}
 	routeInventoryMount[adminRouteMount](t, provideAdminRouteMount)(router.Group("/api/v1"), security, func(c *gin.Context) { c.Status(http.StatusOK) })
 	for _, tc := range []struct {
-		path   string
-		status int
+		path   string // retired statistics path
+		status int    // expected HTTP status
 	}{
 		{"/api/v1/admin/groups/2/stats", http.StatusNotFound},
 		{"/api/v1/admin/redeem-codes/stats", http.StatusBadRequest},
@@ -263,6 +285,10 @@ func TestRetiredAdminStatisticsNativeRoutes(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+// TestOpsAdminRoutesRequireAdminAuthentication requests four Ops diagnostic
+// paths under injected administration guards. It checks absent authorization
+// returns Unauthorized and a non-administrator token returns Forbidden before
+// the handlers run.
 func TestOpsAdminRoutesRequireAdminAuthentication(t *testing.T) {
 	router := gin.New()
 	handlers := &routeTestHandlers{Admin: &routeTestAdminHandlers{Ops: opshttp.NewOpsHandler(nil)}}
@@ -284,9 +310,9 @@ func TestOpsAdminRoutesRequireAdminAuthentication(t *testing.T) {
 		"/api/v1/admin/ops/dashboard/openai-token-stats",
 	} {
 		for _, tc := range []struct {
-			name       string
-			auth       string
-			wantStatus int
+			name       string // authentication rejection scenario
+			auth       string // supplied bearer header
+			wantStatus int    // expected HTTP status
 		}{
 			{name: "unauthenticated", wantStatus: http.StatusUnauthorized},
 			{name: "non-admin", auth: "Bearer user-token", wantStatus: http.StatusForbidden},

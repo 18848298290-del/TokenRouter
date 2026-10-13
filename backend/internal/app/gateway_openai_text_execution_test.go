@@ -19,14 +19,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// TestAnthropicReasoningPolicy_AllEntrypointsDeny checks provider policy after selection and before upstream
-// calls for all three client protocols.
+// Reasoning limits apply to the Anthropic provider through Messages, Responses,
+// and Chat entry methods. Each test request asks for max effort above its
+// group's high limit and checks both the HTTP denial and the retained
+// requested-effort observation.
+
+// TestAnthropicReasoningPolicy_AllEntrypointsDeny sends excessive effort
+// through all three client entry methods. Each path must return Forbidden while
+// preserving the requested max effort in request state for observation.
 func TestAnthropicReasoningPolicy_AllEntrypointsDeny(t *testing.T) {
 	executor := &gatewayhttp.UnifiedTextExecutor{}
 	target := gatewayadapter.NewExecutionProvider(&provider.Record{ID: 1, Platform: "anthropic", Type: "apikey"})
 	for _, tc := range []struct {
-		path, field string
-		handle      func(*gin.Context)
+		// path and field encode the same excessive effort in each protocol, while
+		// handle calls its matching method on the shared selected-provider executor.
+		path, field string             // path: client endpoint path; field: protocol effort member
+		handle      func(*gin.Context) // selected protocol execution
 	}{
 		{"/v1/messages", `"output_config":{"effort":"max"}`, func(c *gin.Context) {
 			_, _ = executor.Messages(c.Request.Context(), c, target, []byte(c.GetString("body")), "", "")

@@ -60,84 +60,155 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// mockTempUnscheduler records calls to TempUnscheduleRetryableError.
+// Text endpoint rejection can occur before provider selection, after a
+// credential refresh, or after upstream output has already reached the client.
+// The tests distinguish those stages through scheduler counters, recorded
+// provider calls, HTTP status, response frames, and completion writes instead
+// of relying on an endpoint's final status alone.
+//
+// Cancellation fixtures publish refresh entry before the test cancels the
+// request and waits for handler return. Retry fixtures keep provider identity
+// with every observed call so same-provider retries remain distinguishable from
+// switches. Mixed-platform cases use protocol-specific upstream bodies and a
+// shared transport, then inspect both the client result and the recorded
+// provider and settlement. Error-output cases separately exercise official
+// terminal frames, heartbeat-only output, and sanitized client messages because
+// those states permit different fallback responses.
+
+// mockTempUnscheduler retains provider IDs and error pointers from
+// temporary-unscheduling calls.
 type mockTempUnscheduler struct {
+	// calls retains the original failover-error pointers in invocation order;
+	// serial tests inspect this slice after the handler has returned.
 	calls []tempUnscheduleCall
 }
 
+// tempUnscheduleCall pairs a selected provider with its retained failover
+// error.
 type tempUnscheduleCall struct {
-	providerID  int64
+	providerID int64 // Selected provider record ID.
+	// failoverErr is the original pointer supplied by failover handling, so
+	// assertions inspect it after the call without concurrent error mutation.
 	failoverErr *forwardcore.UpstreamFailoverError
 }
 
+// countingGatewaySchedulerCache counts snapshot reads while delegating their
+// contents to fakeSchedulerCache.
 type countingGatewaySchedulerCache struct {
-	*fakeSchedulerCache
-	snapshotCalls atomic.Int64
+	// fakeSchedulerCache supplies snapshot results, and snapshotCalls counts
+	// every GetSnapshot invocation before delegation so cancellation tests can
+	// detect selection reads independently of the returned provider data.
+	*fakeSchedulerCache              // Delegated snapshot data fixture.
+	snapshotCalls       atomic.Int64 // Snapshot read invocation count.
 }
 
-// cyberSessionBlockHandlerCacheStub returns a cached session block and counts reads.
+// cyberSessionBlockHandlerCacheStub holds one block flag and counts block
+// checks. Tests access this mutable fixture serially; session ownership and
+// provider lookups return fixed misses.
 type cyberSessionBlockHandlerCacheStub struct {
-	blocked   bool
-	readCalls int
+	blocked   bool // Single session block flag.
+	readCalls int  // Session block read count.
 }
 
+// openAIHTTPPassthroughFailoverUpstream records provider calls and returns
+// scripted HTTP 502 responses.
 type openAIHTTPPassthroughFailoverUpstream struct {
+	// UpstreamTransport supplies unimplemented methods through embedding;
+	// tests use the ordinary and fingerprinted execution methods overridden below.
 	httpclient.
 		UpstreamTransport
-	mu          sync.Mutex
-	providerIDs []int64
+	// mu protects providerIDs appends and snapshots so transport calls and
+	// observation can overlap without exposing a partially updated call sequence.
+	mu          sync.Mutex // Provider call observation lock.
+	providerIDs []int64    // Observed provider execution order.
 }
 
+// openAIHTTPPassthroughAuthFailoverUpstream distinguishes the healthy provider
+// from scripted authentication failures.
 type openAIHTTPPassthroughAuthFailoverUpstream struct {
+	// UpstreamTransport supplies unimplemented methods through embedding;
+	// tests use the ordinary and fingerprinted execution methods overridden below.
 	httpclient.
 		UpstreamTransport
-	mu          sync.Mutex
-	providerIDs []int64
-	statusCode  int
+	// mu protects providerIDs appends and snapshots so transport calls and
+	// observation can overlap without exposing a partially updated call sequence.
+	mu          sync.Mutex // Provider call observation lock.
+	providerIDs []int64    // Observed provider execution order.
+	// statusCode is returned for providers other than healthy ID 9911; tests
+	// set it before transport use to script unauthorized or forbidden responses.
+	statusCode int
 }
 
+// openAIHTTPPassthroughSSERateLimitUpstream records calls and emits rate-limit
+// failures inside HTTP 200 streams.
 type openAIHTTPPassthroughSSERateLimitUpstream struct {
+	// UpstreamTransport supplies unimplemented methods through embedding;
+	// tests use the ordinary and fingerprinted execution methods overridden below.
 	httpclient.
 		UpstreamTransport
-	mu          sync.Mutex
-	providerIDs []int64
+	// mu protects providerIDs appends and snapshots so transport calls and
+	// observation can overlap without exposing a partially updated call sequence.
+	mu          sync.Mutex // Provider call observation lock.
+	providerIDs []int64    // Observed provider execution order.
 }
 
-// openAIResponsesFailoverProviderRepo supplies platform selection and provider rereads for failover tests.
+// openAIResponsesFailoverProviderRepo supplies platform-filtered provider
+// values and ID rereads for failover tests.
 type openAIResponsesFailoverProviderRepo struct {
+	// ExecutionProviderStore supplies unimplemented methods through embedding;
+	// tests use only the ID and platform reads overridden below.
 	gatewayprovider.ExecutionProviderStore
 
+	// providers supplies copied outer values to selection and rereads; nested
+	// maps and pointers stay shared with these stored fixture records.
 	providers []gatewayprovider.ExecutionProvider
 }
 
-// openAIResponsesFailoverCancelUpstream returns HTTP 520 and can invoke a callback
-// on the first call to simulate a client disconnect while the upstream request is in flight.
+// openAIResponsesFailoverCancelUpstream records calls and returns scripted HTTP
+// 520 responses. Its optional first-call callback runs after the recording
+// mutex is released to simulate request cancellation.
 type openAIResponsesFailoverCancelUpstream struct {
+	// UpstreamTransport supplies unimplemented methods through embedding;
+	// tests use the ordinary and fingerprinted execution methods overridden below.
 	httpclient.
 		UpstreamTransport
-	mu          sync.Mutex
-	providerIDs []int64
-	onFirstDo   func()
+	// mu protects providerIDs appends and snapshots so transport calls and
+	// observation can overlap without exposing a partially updated call sequence.
+	mu          sync.Mutex // Provider call observation lock.
+	providerIDs []int64    // Observed provider execution order.
+	// onFirstDo runs once for the first recorded call, after mu is released;
+	// set this optional callback before transport use to avoid concurrent replacement.
+	onFirstDo func()
 }
 
-// mixedHTTPTransport records selected providers and endpoints through a local HTTP server.
+// mixedHTTPTransport records selected provider IDs before forwarding requests
+// with the default HTTP client.
 type mixedHTTPTransport struct {
-	mu        sync.Mutex
-	providers []int64
+	// mu protects providers appends and cloned observations; requests release
+	// mu before network forwarding so call recording does not serialize HTTP exchanges.
+	mu        sync.Mutex // Provider observation access lock.
+	providers []int64    // Observed provider request order.
 }
 
+// mixedHTTPNoSearch supplies an absent searcher for mixed-platform text
+// requests.
 type mixedHTTPNoSearch struct{}
 
-// newEmptyGenericSelectionFixture uses default budgets with no provider or window data sources.
+// newEmptyGenericSelectionFixture constructs generic selection with default
+// options and absent data sources.
 func newEmptyGenericSelectionFixture() *selection.Generic {
 	return selection.NewGeneric(selection.GenericDependencies{}, selection.DefaultOptions())
 }
 
+// TestChatCompletionsRejectsGPTImageModelsBeforeScheduling submits supported
+// image-model names to both Chat Completions handlers. It checks
+// invalid-request responses and an absent selected-provider marker for every
+// model.
 func TestChatCompletionsRejectsGPTImageModelsBeforeScheduling(t *testing.T) {
 	for _, model := range []string{"gpt-image-1", "gpt-image-1.5", "gpt-image-2"} {
 		for _, tc := range []struct {
-			name string
-			call func(*gin.Context)
+			name string             // Endpoint fixture case name.
+			call func(*gin.Context) // Endpoint handler under test.
 		}{
 			{
 				name: "gateway",
@@ -167,8 +238,9 @@ func TestChatCompletionsRejectsGPTImageModelsBeforeScheduling(t *testing.T) {
 	}
 }
 
-// TestChatCompletionsRejectsGroupMappedImageModel checks endpoint capability against the group-mapped model at
-// both Chat Completions endpoints.
+// TestChatCompletionsRejectsGroupMappedImageModel maps a request alias to an
+// image model for both Chat Completions handlers. It checks endpoint rejection
+// before a selected-provider marker is installed.
 func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
 	groupID := int64(4349)
 	pricingConfigService := newGatewayExecutionPricingConfigServiceForTest(groupID, capability.PlatformOpenAI, routingtestkit.Configuration{
@@ -178,8 +250,8 @@ func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
 	})
 
 	tests := []struct {
-		name string
-		call func(*gin.Context)
+		name string             // Endpoint fixture case name.
+		call func(*gin.Context) // Endpoint handler under test.
 	}{
 		{
 			name: "gateway",
@@ -209,8 +281,10 @@ func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency checks that invalid requests consume
-// no concurrency slots.
+// TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency submits
+// an authenticated image-model request through a counted user-slot hook. It
+// checks bad-request status and zero user-slot acquisition calls at Chat
+// Completions.
 func TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency(t *testing.T) {
 	var acquireCalls atomic.Int64
 	cache := &httptestkit.ConcurrencyHooks{
@@ -233,22 +307,32 @@ func TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency(t *te
 	require.Zero(t, acquireCalls.Load(), "rejection must happen before user/provider concurrency and scheduling")
 }
 
+// newOpenAIImageChatRejectionHandler builds the image-model rejection fixture
+// with empty concurrency hooks.
 func newOpenAIImageChatRejectionHandler(t *testing.T) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 	return newOpenAIImageChatRejectionHandlerWithCache(t, &httptestkit.ConcurrencyHooks{})
 }
 
+// newOpenAIImageChatRejectionHandlerWithCache builds an image-model rejection
+// fixture using the supplied concurrency hooks. Execution and selection use
+// empty fixtures so endpoint validation can be inspected before upstream
+// forwarding.
 func newOpenAIImageChatRejectionHandlerWithCache(t *testing.T, cache *httptestkit.ConcurrencyHooks) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 	return newOpenAIImageChatRejectionHandlerWithService(t, cache, &gatewayExecutionFixture{}, newExecutionAvailabilityForTest(
 		nil, nil, nil), newEmptyCompatibleSelectionFixture())
 }
 
+// setImageChatTestAuth installs the fixed image-test principal and an ungrouped
+// key.
 func setImageChatTestAuth(c *gin.Context) {
 	setImageChatTestAuthForGroup(c, 0)
 }
 
-// setImageChatTestAuthForGroup injects image endpoint authentication with an optional group.
+// setImageChatTestAuthForGroup installs the image-test key and a principal with
+// concurrency one. A positive groupID supplies both group references; other
+// values leave the key ungrouped.
 func setImageChatTestAuthForGroup(c *gin.Context, groupID int64) {
 	apiKey := &apikey.APIKey{ID: 4348, UserID: 4348, User: &identity.User{ID: 4348}}
 	if groupID > 0 {
@@ -259,19 +343,31 @@ func setImageChatTestAuthForGroup(c *gin.Context, groupID int64) {
 	c.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: apiKey.UserID, Concurrency: 1})
 }
 
+// TempUnscheduleRetryableError appends the provider ID and original error
+// pointer for later assertions. This fixture performs no provider mutation and
+// expects callers to serialize access to its observation slice.
 func (m *mockTempUnscheduler) TempUnscheduleRetryableError(_ context.Context, providerID int64, failoverErr *forwardcore.UpstreamFailoverError) {
 	m.calls = append(m.calls, tempUnscheduleCall{providerID: providerID, failoverErr: failoverErr})
 }
 
+// newGatewayExecutionHandlerForTest constructs message-compatible endpoints
+// with the supplied store and no pricing configuration.
 func newGatewayExecutionHandlerForTest(repo gatewayprovider.ExecutionProviderStore) *messageEndpointsFixture {
 	return newGatewayExecutionHandlerWithPricingConfigForTest(repo, nil)
 }
 
+// GetSnapshot increments its atomic read counter before delegating to
+// fakeSchedulerCache. The delegated snapshot, cache-hit flag, and error pass
+// through so tests can observe selection attempts without replacing snapshot
+// behavior.
 func (c *countingGatewaySchedulerCache) GetSnapshot(ctx context.Context, bucket scheduler.SchedulerBucket) ([]scheduler.SnapshotProvider, bool, error) {
 	c.snapshotCalls.Add(1)
 	return c.fakeSchedulerCache.GetSnapshot(ctx, bucket)
 }
 
+// TestGatewayHandlerPreCancelledCompatibleRequestsDoNotSelectProvider invokes
+// compatible Responses and Chat handlers with already-cancelled contexts. It
+// checks zero scheduler snapshot reads and an absent selected-provider marker.
 func TestGatewayHandlerPreCancelledCompatibleRequestsDoNotSelectProvider(t *testing.T) {
 	groupID := int64(9100)
 	group := &routing.Group{ID: groupID, Hydrated: true, Status: billing.StatusActive}
@@ -308,10 +404,10 @@ func TestGatewayHandlerPreCancelledCompatibleRequestsDoNotSelectProvider(t *test
 	}
 
 	tests := []struct {
-		name string
-		path string
-		body string
-		call func(*gin.Context)
+		name string             // Compatible request case name.
+		path string             // Client endpoint request path.
+		body string             // JSON client request body.
+		call func(*gin.Context) // Endpoint handler under test.
 	}{
 		{
 			name: "responses", path: "/v1/responses", body: `{"model":"claude-test","input":"hello","stream":false}`,
@@ -346,6 +442,9 @@ func TestGatewayHandlerPreCancelledCompatibleRequestsDoNotSelectProvider(t *test
 	}
 }
 
+// TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedJSON413 presents a
+// body-limit error carrying secret upstream text. It checks HTTP 413, the safe
+// invalid-request message, and absence of the secret.
 func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedJSON413(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -363,6 +462,9 @@ func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedJSON413(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "must-not-leak")
 }
 
+// TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedResponsesSSE presents a
+// body-limit failure in streaming mode. It checks a Responses failed event with
+// safe invalid-request details and no upstream secret.
 func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedResponsesSSE(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -377,6 +479,9 @@ func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedResponsesSSE(t *testing
 	require.NotContains(t, body, "must-not-leak")
 }
 
+// TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedAnthropicError renders
+// the same body-limit failure as Anthropic JSON and SSE. It checks each
+// protocol's safe invalid-request message and absence of secret upstream text.
 func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedAnthropicError(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		rec := httptest.NewRecorder()
@@ -410,6 +515,9 @@ func TestOpenAIBodyLimitFailoverExhausted_ReturnsRedactedAnthropicError(t *testi
 	})
 }
 
+// bodyLimitFailoverTestError creates a retryable provider body-limit failure
+// with distinct upstream and client messages. The secret-bearing response body
+// lets tests detect accidental exposure through JSON or stream error output.
 func bodyLimitFailoverTestError() *forwardcore.UpstreamFailoverError {
 	return &forwardcore.UpstreamFailoverError{
 		StatusCode:         http.StatusRequestEntityTooLarge,
@@ -422,6 +530,9 @@ func bodyLimitFailoverTestError() *forwardcore.UpstreamFailoverError {
 	}
 }
 
+// TestOpenAIResponses_CompactUnauthorizedLogsFailed submits an unauthenticated
+// compact request with a Codex User-Agent. It checks HTTP 401 and a warning log
+// containing the response status and compact path.
 func TestOpenAIResponses_CompactUnauthorizedLogsFailed(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -441,6 +552,10 @@ func TestOpenAIResponses_CompactUnauthorizedLogsFailed(t *testing.T) {
 	require.True(t, logSink.ContainsFieldValue("path", "/v1/responses/compact"))
 }
 
+// TestResponsesCredentialFailoverLoop exercises revoked, missing, and unusable
+// Grok credentials together with refresh and post-forward cancellation. It
+// checks safe failures or healthy output, provider mutations, selection counts,
+// upstream calls, and scheduler feedback for the applicable cases.
 func TestResponsesCredentialFailoverLoop(t *testing.T) {
 	t.Run("revoked provider selects healthy provider", func(t *testing.T) {
 		h, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "revoked")
@@ -488,11 +603,15 @@ func TestResponsesCredentialFailoverLoop(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		done := make(chan struct{})
+		// Run ingress separately so refresh can block while this test cancels
+		// its request; close done after handler return before reading observations.
 		go func() {
 			defer close(done)
 			router.ServeHTTP(recorder, req)
 		}()
 
+		// Cancel after refresh announces entry, then join the handler so the
+		// mutation and upstream assertions observe the completed cancellation path.
 		select {
 		case <-time.After(2 * time.Second):
 			t.Fatal("credential refresh did not start")
@@ -513,6 +632,8 @@ func TestResponsesCredentialFailoverLoop(t *testing.T) {
 		h, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "postmap_cancel")
 		defer cleanup()
 		ctx, cancel := context.WithCancel(context.Background())
+		// Install the payment-failure cancellation callback under the transport
+		// lock before forwarding so its failure snapshot contains both controls.
 		upstream.mu.Lock()
 		upstream.failProviderID = 801
 		upstream.cancelRequest = cancel
@@ -531,10 +652,10 @@ func TestResponsesCredentialFailoverLoop(t *testing.T) {
 
 	t.Run("pre-cancelled request never invokes a provider selector", func(t *testing.T) {
 		tests := []struct {
-			name   string
-			method string
-			path   string
-			body   string
+			name   string // Cancelled endpoint case name.
+			method string // Client HTTP request method.
+			path   string // Client endpoint request path.
+			body   string // JSON client request body.
 		}{
 			{name: "responses", method: http.MethodPost, path: "/openai/v1/responses", body: `{"model":"grok","input":"hello","stream":false}`},
 			{name: "messages", method: http.MethodPost, path: "/openai/v1/messages", body: `{"model":"grok","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`},
@@ -595,6 +716,9 @@ func TestResponsesCredentialFailoverLoop(t *testing.T) {
 	})
 }
 
+// TestResponsesGrok429FailoverIsBounded returns a rate limit from one or two
+// Grok providers. It checks a healthy follow-up or bounded exhaustion,
+// rate-limit mutations, and redacted failure text.
 func TestResponsesGrok429FailoverIsBounded(t *testing.T) {
 	t.Run("first rate limited provider selects healthy provider", func(t *testing.T) {
 		_, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "first_429")
@@ -629,6 +753,9 @@ func TestResponsesGrok429FailoverIsBounded(t *testing.T) {
 	})
 }
 
+// TestResponsesGrok402FailoverCooldown returns payment-required from the first
+// Grok provider, then sends another request. It checks temporary unscheduling
+// and repeated use of the healthy provider during cooldown.
 func TestResponsesGrok402FailoverCooldown(t *testing.T) {
 	_, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "first_402")
 	defer cleanup()
@@ -654,6 +781,9 @@ func TestResponsesGrok402FailoverCooldown(t *testing.T) {
 	require.Equal(t, []int64{801, 802, 802}, upstream.providerHits(), "cooldown must exclude the 402 provider from later requests")
 }
 
+// TestResponsesGrok429FailoverHandlesMixedStatuses combines rate limits with
+// server errors and an API-key provider. It checks the observed provider
+// sequence and success or safe failure under each retry order.
 func TestResponsesGrok429FailoverHandlesMixedStatuses(t *testing.T) {
 	t.Run("429 then 500 stops after the bounded followup", func(t *testing.T) {
 		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "mixed_429_500")
@@ -696,6 +826,9 @@ func TestResponsesGrok429FailoverHandlesMixedStatuses(t *testing.T) {
 	})
 }
 
+// TestGrokMedia429FailoverIsBounded submits video generation to a rate-limited
+// Grok provider pool. It checks one healthy follow-up or HTTP 429 after two
+// calls, with redacted rate-limit text.
 func TestGrokMedia429FailoverIsBounded(t *testing.T) {
 	t.Run("first 429 selects one healthy followup", func(t *testing.T) {
 		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "first_429")
@@ -725,12 +858,16 @@ func TestGrokMedia429FailoverIsBounded(t *testing.T) {
 	})
 }
 
+// TestGrokOAuthCredentialFailoverAcrossHTTPHandlers exercises Messages, Chat
+// Completions, raw chat fallback, and video generation. It checks
+// healthy-provider recovery or credential exhaustion with recorded mutations
+// and secret-free client messages.
 func TestGrokOAuthCredentialFailoverAcrossHTTPHandlers(t *testing.T) {
 	endpoints := []struct {
-		name   string
-		method string
-		path   string
-		body   string
+		name   string // Credential endpoint case name.
+		method string // Client HTTP request method.
+		path   string // Client endpoint request path.
+		body   string // JSON client request body.
 	}{
 		{name: "messages", method: http.MethodPost, path: "/openai/v1/messages", body: `{"model":"grok","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`},
 		{name: "chat completions", method: http.MethodPost, path: "/openai/v1/chat/completions", body: `{"model":"grok","messages":[{"role":"user","content":"hello"}],"stream":false}`},
@@ -772,6 +909,9 @@ func TestGrokOAuthCredentialFailoverAcrossHTTPHandlers(t *testing.T) {
 	}
 }
 
+// TestGrokOAuthMissingSelectedRowRetriesHealthyProviderWithoutMutation makes
+// the selected provider disappear during its reread. It checks healthy upstream
+// execution and empty credential-error and temporary-unscheduling observations.
 func TestGrokOAuthMissingSelectedRowRetriesHealthyProviderWithoutMutation(t *testing.T) {
 	_, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "missing_row")
 	defer cleanup()
@@ -787,6 +927,10 @@ func TestGrokOAuthMissingSelectedRowRetriesHealthyProviderWithoutMutation(t *tes
 	require.Empty(t, repo.setTempIDs)
 }
 
+// TestGatewayChatCredentialStopDoesNotSelectAnotherProviderAndReturnsSafe503
+// supplies a credential failure that stops provider switching. It checks
+// exhausted state with zero switches and a safe HTTP 503 despite supplied
+// secret-bearing client details.
 func TestGatewayChatCredentialStopDoesNotSelectAnotherProviderAndReturnsSafe503(t *testing.T) {
 	stopErr := &forwardcore.UpstreamFailoverError{
 		Stage:              forwardcore.GatewayFailureStageProviderAuth,
@@ -813,6 +957,10 @@ func TestGatewayChatCredentialStopDoesNotSelectAnotherProviderAndReturnsSafe503(
 	require.NotContains(t, recorder.Body.String(), "client_secret")
 }
 
+// TestGatewayChatAntigravityCredentialFailureReturnsActionableMessage renders a
+// typed Antigravity credential rejection with secret upstream text. It checks
+// the actionable HTTP 502 message and absence of bearer and refresh-token
+// details.
 func TestGatewayChatAntigravityCredentialFailureReturnsActionableMessage(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -834,6 +982,9 @@ func TestGatewayChatAntigravityCredentialFailureReturnsActionableMessage(t *test
 	require.NotContains(t, strings.ToLower(recorder.Body.String()), "refresh_token")
 }
 
+// TestOpenAIAccessStateCredentialFailureUsesTypedSafeResponse supplies an
+// access-state failure containing workspace and token details. It checks the
+// typed HTTP 502 client message and absence of those upstream details.
 func TestOpenAIAccessStateCredentialFailureUsesTypedSafeResponse(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -855,6 +1006,10 @@ func TestOpenAIAccessStateCredentialFailureUsesTypedSafeResponse(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "must-not-leak")
 }
 
+// TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError renders an
+// overload failure through OpenAI, Responses, and Anthropic outputs. It checks
+// HTTP 503 and protocol-appropriate server-error types while retaining the
+// public overload message.
 func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testing.T) {
 	message := "Our servers are currently overloaded. Please try again later."
 	failoverErr := &forwardcore.UpstreamFailoverError{
@@ -895,6 +1050,10 @@ func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testin
 	})
 }
 
+// TestResponsesFailoverExhaustedAfterForwardedTerminalMarksOpsWithoutDuplicateFrame
+// starts with an official failed frame, no frame, or heartbeat-only output. It
+// checks retained official text, one generated terminal frame where needed, and
+// the corresponding Ops stream-error details.
 func TestResponsesFailoverExhaustedAfterForwardedTerminalMarksOpsWithoutDuplicateFrame(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -938,6 +1097,9 @@ func TestResponsesFailoverExhaustedAfterForwardedTerminalMarksOpsWithoutDuplicat
 	require.Equal(t, 1, strings.Count(heartbeatRecorder.Body.String(), "event: response.failed"))
 }
 
+// TestGatewayChatInferenceExhaustionRestoresRetryAfter renders a rate-limit
+// failure through Chat error output. It checks HTTP 429 and retention of the
+// supplied numeric Retry-After header.
 func TestGatewayChatInferenceExhaustionRestoresRetryAfter(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -951,6 +1113,10 @@ func TestGatewayChatInferenceExhaustionRestoresRetryAfter(t *testing.T) {
 	require.Equal(t, "45", recorder.Header().Get("Retry-After"))
 }
 
+// TestCredentialFailoverExhaustionReturnsFixedSafe503 supplies
+// revoked-credential failure details containing refresh-token text. It checks
+// the fixed HTTP 503 message and absence of the supplied secret-bearing
+// strings.
 func TestCredentialFailoverExhaustionReturnsFixedSafe503(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -972,6 +1138,9 @@ func TestCredentialFailoverExhaustionReturnsFixedSafe503(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "must-not-leak")
 }
 
+// TestInferenceFailoverExhaustionRestoresRetryAfter renders a rate-limit
+// failure through OpenAI attempt support. It checks HTTP 429 and retention of
+// the supplied numeric Retry-After header.
 func TestInferenceFailoverExhaustionRestoresRetryAfter(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -986,6 +1155,9 @@ func TestInferenceFailoverExhaustionRestoresRetryAfter(t *testing.T) {
 	require.Equal(t, "17", recorder.Header().Get("Retry-After"))
 }
 
+// TestFailoverExhaustionRejectsSecretBearingRetryAfter supplies a token-shaped
+// value in a rate-limit Retry-After header. It checks HTTP 429 with that header
+// omitted and no secret in the body.
 func TestFailoverExhaustionRejectsSecretBearingRetryAfter(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -1001,6 +1173,9 @@ func TestFailoverExhaustionRejectsSecretBearingRetryAfter(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "must-not-leak")
 }
 
+// TestFailoverExhaustionRejectsFarFutureRetryAfterDate supplies an HTTP date
+// thirty days ahead in Retry-After. It checks that rate-limit status remains
+// while the far-future header is omitted.
 func TestFailoverExhaustionRejectsFarFutureRetryAfterDate(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -1009,6 +1184,7 @@ func TestFailoverExhaustionRejectsFarFutureRetryAfterDate(t *testing.T) {
 	h.openAIAttemptSupport().HandleFailoverExhausted(c, &forwardcore.UpstreamFailoverError{
 		StatusCode: http.StatusTooManyRequests,
 		ResponseHeaders: http.Header{
+			// Thirty days supplies a far-future value for header rejection.
 			"Retry-After": []string{time.Now().Add(30 * 24 * time.Hour).UTC().Format(http.TimeFormat)},
 		},
 	}, false)
@@ -1017,10 +1193,14 @@ func TestFailoverExhaustionRejectsFarFutureRetryAfterDate(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("Retry-After"))
 }
 
+// TestFailoverExhaustionAllowsBoundedRetryAfterDate supplies an HTTP date one
+// hour ahead in Retry-After. It checks that rate-limit status and the supplied
+// header value reach the client.
 func TestFailoverExhaustionAllowsBoundedRetryAfterDate(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	h := newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{})
+	// One hour supplies a near-future HTTP date accepted by this case.
 	retryAfter := time.Now().Add(time.Hour).UTC().Format(http.TimeFormat)
 
 	h.openAIAttemptSupport().HandleFailoverExhausted(c, &forwardcore.UpstreamFailoverError{
@@ -1032,6 +1212,9 @@ func TestFailoverExhaustionAllowsBoundedRetryAfterDate(t *testing.T) {
 	require.Equal(t, retryAfter, recorder.Header().Get("Retry-After"))
 }
 
+// TestOpsRecoveredCredentialFailoverDoesNotCreateRequestError supplies
+// inference and credential events before a successful response. It checks a
+// captured HTTP 200 Ops entry with both events and the credential phase.
 func TestOpsRecoveredCredentialFailoverDoesNotCreateRequestError(t *testing.T) {
 	queue := newOpsCaptureQueue(2)
 
@@ -1064,8 +1247,9 @@ func TestOpsRecoveredCredentialFailoverDoesNotCreateRequestError(t *testing.T) {
 	require.Equal(t, string(forwardcore.GatewayFailureStageProviderAuth), events[1].Stage)
 }
 
-// TestHandleGroupSelectionBusinessError checks that client policy rejection is not reported as service
-// unavailability.
+// TestHandleGroupSelectionBusinessError wraps the Claude-Code-only group
+// rejection before passing it to the business-error writer. It checks
+// recognition, HTTP 403, permission_error, and the policy's own message.
 func TestHandleGroupSelectionBusinessError(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -1091,12 +1275,16 @@ func TestHandleGroupSelectionBusinessError(t *testing.T) {
 	require.Equal(t, routing.ErrClaudeCodeOnly.Error(), message)
 }
 
+// TestOpenAIResponsesRequiredCapability varies image intent and the selected
+// platform. It checks that OpenAI image intent requires Responses capability
+// while Grok image intent and ordinary text use text-generation capability.
 func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 	tests := []struct {
-		name        string
-		imageIntent bool
-		platform    string
-		want        providercore.OpenAIEndpointCapability
+		name        string // Endpoint capability case name.
+		imageIntent bool   // Explicit image request intent.
+		platform    string // Selected upstream provider platform.
+		// Expected endpoint capability value.
+		want providercore.OpenAIEndpointCapability
 	}{
 		{
 			name:        "OpenAI explicit image intent requires Responses",
@@ -1124,10 +1312,15 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 	}
 }
 
+// TestOpenAIEnsureForwardErrorResponse_ResponsesRouteCyberWarningEmitsOriginalMessage
+// starts a Responses stream before a wrapped cyber warning. It checks a failed
+// event carrying the upstream warning text and invalid-request code.
 func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteCyberWarningEmitsOriginalMessage(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, gatewayhttp.EndpointResponses, nil)
+	// Seed heartbeat output in the in-memory recorder before error rendering;
+	// its bytes are inspected below, so this setup discards the write result.
 	_, _ = c.Writer.WriteString(":\n\n")
 
 	message := "This request has been flagged for potentially high-risk cyber activity."
@@ -1150,12 +1343,17 @@ func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteCyberWarningEmitsOrigina
 	assert.NotContains(t, body, "Upstream request failed")
 }
 
+// TestOpenAIForwardErrorAlreadyCommunicated varies writer growth and the
+// forwarding error's content. It checks recognition after a terminal upstream
+// failure, and rejection when output is absent or contains only a heartbeat.
 func TestOpenAIForwardErrorAlreadyCommunicated(t *testing.T) {
 	t.Run("upstream response failed after write", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, gatewayhttp.EndpointResponses, nil)
 		before := c.Writer.Size()
+		// Seed recorder output before communication detection; the test reads
+		// writer growth and error recognition, so the setup write result is discarded.
 		_, _ = c.Writer.WriteString(`event: response.failed
 data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 
@@ -1181,6 +1379,8 @@ data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, gatewayhttp.EndpointResponses, nil)
 		before := c.Writer.Size()
+		// Seed heartbeat bytes before communication detection; the generic read
+		// error must still need a fallback despite this recorder write.
 		_, _ = c.Writer.WriteString(":\n\n")
 
 		reported := gatewayhttp.OpenAIForwardErrorAlreadyCommunicated(c, before, errors.New("stream read error: unexpected EOF"))
@@ -1189,6 +1389,9 @@ data: {"type":"response.failed","error":{"message":"This content was flagged"}}
 	})
 }
 
+// TestOpenAIHandleFailoverExhausted_CyberWarningPassesThroughMessage renders a
+// forbidden upstream cyber warning. It checks HTTP 403 and the warning's text
+// in place of the generic provider-exhaustion message.
 func TestOpenAIHandleFailoverExhausted_CyberWarningPassesThroughMessage(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1207,6 +1410,9 @@ func TestOpenAIHandleFailoverExhausted_CyberWarningPassesThroughMessage(t *testi
 	assert.NotContains(t, w.Body.String(), "All available providers exhausted")
 }
 
+// TestShouldLogOpenAIForwardFailureAsWarn varies nil context, missing output,
+// fallback output, and an existing response. It checks warning eligibility only
+// for an already-written response when no fallback was written.
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
 	t.Run("fallback_written_should_not_downgrade", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -1235,6 +1441,9 @@ func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
 	})
 }
 
+// TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable supplies
+// authentication to an empty endpoint fixture. It checks panic-free HTTP 503
+// with an api_error and the dependency-unavailable message.
 func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1251,7 +1460,8 @@ func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testin
 		Concurrency: 1,
 	})
 
-	// Missing dependencies should produce a dependency error.
+	// Keep authenticated ingress available while execution dependencies are
+	// absent so the response specifically tests dependency rejection before forwarding.
 	h := newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{})
 	require.NotPanics(t, func() {
 		h.Responses(c)
@@ -1269,6 +1479,9 @@ func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testin
 	assert.Equal(t, "Service temporarily unavailable", errorObj["message"])
 }
 
+// TestOpenAIResponses_SetsClientTransportHTTP submits an unauthenticated HTTP
+// Responses request. It checks HTTP 401 while confirming that the
+// client-transport marker is set to HTTP.
 func TestOpenAIResponses_SetsClientTransportHTTP(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1282,6 +1495,9 @@ func TestOpenAIResponses_SetsClientTransportHTTP(t *testing.T) {
 	require.Equal(t, gatewayhttp.OpenAIClientTransportHTTP, gatewayhttp.GetOpenAIClientTransport(c))
 }
 
+// TestOpenAIResponses_RejectsMessageIDAsPreviousResponseID supplies a message
+// identifier in an authenticated HTTP Responses request. It checks HTTP 400 and
+// continuation guidance requiring a response identifier.
 func TestOpenAIResponses_RejectsMessageIDAsPreviousResponseID(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1308,6 +1524,10 @@ func TestOpenAIResponses_RejectsMessageIDAsPreviousResponseID(t *testing.T) {
 	require.Contains(t, w.Body.String(), "previous_response_id must be a response.id")
 }
 
+// TestOpenAIResponses_AcceptsHTTPContinuationPreviousResponseIDBeforeRouting
+// registers ownership for the requesting user and key before ingress. It checks
+// passage beyond bad-request continuation validation without WebSocket-only
+// guidance.
 func TestOpenAIResponses_AcceptsHTTPContinuationPreviousResponseIDBeforeRouting(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1335,6 +1555,9 @@ func TestOpenAIResponses_AcceptsHTTPContinuationPreviousResponseIDBeforeRouting(
 	require.NotContains(t, w.Body.String(), "Responses WebSocket v2")
 }
 
+// TestOpenAIResponses_RejectsHTTPContinuationOwnedByAnotherUser binds a
+// response to a different user and key in the same group. It checks HTTP 400
+// and unavailable-continuation guidance for the requester.
 func TestOpenAIResponses_RejectsHTTPContinuationOwnedByAnotherUser(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1360,6 +1583,9 @@ func TestOpenAIResponses_RejectsHTTPContinuationOwnedByAnotherUser(t *testing.T)
 	require.Contains(t, w.Body.String(), "previous_response_id is not available for this user")
 }
 
+// TestOpenAIResponses_RejectsUnownedHTTPContinuation supplies an authenticated
+// request with a response identifier absent from the ownership store. It checks
+// HTTP 400 and the unavailable-for-this-user continuation message.
 func TestOpenAIResponses_RejectsUnownedHTTPContinuation(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1379,6 +1605,9 @@ func TestOpenAIResponses_RejectsUnownedHTTPContinuation(t *testing.T) {
 	require.Contains(t, w.Body.String(), "previous_response_id is not available for this user")
 }
 
+// TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousResponseReuse
+// sends an incomplete function-call output through HTTP Responses. It checks
+// WebSocket v2 guidance and absence of advice to reuse previous_response_id.
 func TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousResponseReuse(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -1406,44 +1635,65 @@ func TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousRes
 	require.NotContains(t, w.Body.String(), "reuse previous_response_id")
 }
 
+// GetSessionProviderID returns a fixed cache miss for provider lookup.
 func (s *cyberSessionBlockHandlerCacheStub) GetSessionProviderID(context.Context, int64, string) (int64, error) {
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID acknowledges provider binding without storing any
+// fixture state.
 func (s *cyberSessionBlockHandlerCacheStub) SetSessionProviderID(context.Context, int64, string, int64, time.Duration) error {
 	return nil
 }
 
+// RefreshSessionTTL acknowledges session lifetime refresh without retaining an
+// expiry.
 func (s *cyberSessionBlockHandlerCacheStub) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID acknowledges provider-binding deletion without
+// changing this block fixture.
 func (s *cyberSessionBlockHandlerCacheStub) DeleteSessionProviderID(context.Context, int64, string) error {
 	return nil
 }
 
+// SetSessionOwnerGroupID reports successful owner binding without retaining
+// group ownership.
 func (s *cyberSessionBlockHandlerCacheStub) SetSessionOwnerGroupID(context.Context, int64, string, string, int64, time.Duration) (bool, error) {
 	return true, nil
 }
 
+// GetSessionOwnerGroupID returns a fixed cache miss for group ownership.
 func (s *cyberSessionBlockHandlerCacheStub) GetSessionOwnerGroupID(context.Context, int64, string, string) (int64, error) {
 	return 0, errors.New("not found")
 }
 
+// RefreshSessionOwnerTTL acknowledges owner lifetime refresh without retaining
+// an expiry.
 func (s *cyberSessionBlockHandlerCacheStub) RefreshSessionOwnerTTL(context.Context, int64, string, string, time.Duration) error {
 	return nil
 }
 
+// SetCyberSessionBlocked sets the fixture's single block flag regardless of the
+// supplied session or duration. Callers serialize its use because the flag has
+// no synchronization or expiration behavior.
 func (s *cyberSessionBlockHandlerCacheStub) SetCyberSessionBlocked(context.Context, string, time.Duration) error {
 	s.blocked = true
 	return nil
 }
 
+// IsCyberSessionBlocked increments the read count and returns the fixture's
+// single block flag. It ignores the session key, allowing serial assertions to
+// identify whether group scoping consulted block storage.
 func (s *cyberSessionBlockHandlerCacheStub) IsCyberSessionBlocked(context.Context, string) (bool, error) {
 	s.readCalls++
 	return s.blocked, nil
 }
 
+// TestOpenAIRecordCyberWarning_RecordsStructuredResponseBody supplies a saved
+// request snapshot and structured warning body. It checks recorded user,
+// provider, endpoint, prompt excerpt, and extracted warning text.
 func TestOpenAIRecordCyberWarning_RecordsStructuredResponseBody(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -1498,6 +1748,9 @@ func TestOpenAIRecordCyberWarning_RecordsStructuredResponseBody(t *testing.T) {
 	require.Contains(t, warning.WarningText, "cybersecurity risk")
 }
 
+// TestOpenAIRecordCyberWarning_UsesExplicitPromptExcerpt supplies different
+// context and call-specific prompt excerpts. It checks that the call-specific
+// first-turn excerpt is stored in the cyber warning.
 func TestOpenAIRecordCyberWarning_UsesExplicitPromptExcerpt(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -1539,6 +1792,10 @@ func TestOpenAIRecordCyberWarning_UsesExplicitPromptExcerpt(t *testing.T) {
 	require.Equal(t, "first turn prompt", repo.cyberWarnings[0].PromptExcerpt)
 }
 
+// TestOpenAIRecordCyberWarning_RequestSnapshotUsesCurrentToolOutput saves user
+// text, a function call, and its output in one snapshot. It checks selection of
+// the current tool output, complete input metadata, and retained upstream
+// status.
 func TestOpenAIRecordCyberWarning_RequestSnapshotUsesCurrentToolOutput(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -1591,6 +1848,9 @@ func TestOpenAIRecordCyberWarning_RequestSnapshotUsesCurrentToolOutput(t *testin
 	require.Equal(t, http.StatusOK, repo.cyberWarnings[0].UpstreamStatus)
 }
 
+// TestOpenAIRecordCyberPolicyIfMarked_SkipsSideEffectsOutOfScope marks an
+// upstream cyber-policy failure for a group outside moderation scope. It checks
+// an unhandled result, empty warnings, and an unset recorded marker.
 func TestOpenAIRecordCyberPolicyIfMarked_SkipsSideEffectsOutOfScope(t *testing.T) {
 	cfg := moderation.ContentModerationConfig{
 		CyberWarningEnabled: true,
@@ -1635,6 +1895,9 @@ func TestOpenAIRecordCyberPolicyIfMarked_SkipsSideEffectsOutOfScope(t *testing.T
 	require.False(t, c.GetBool(gatewayhttp.CyberPolicyRecordedKey))
 }
 
+// TestOpenAIRejectCyberSessionBlocked_OnlyChecksRiskControlGroups supplies a
+// blocked session to in-scope and out-of-scope groups. It checks cache-read
+// counts and a forbidden policy response only for the selected group.
 func TestOpenAIRejectCyberSessionBlocked_OnlyChecksRiskControlGroups(t *testing.T) {
 	selectedGroupID := int64(101)
 	outOfScopeGroupID := int64(202)
@@ -1669,10 +1932,10 @@ func TestOpenAIRejectCyberSessionBlocked_OnlyChecksRiskControlGroups(t *testing.
 	})
 	body := []byte(`{"prompt_cache_key":"cyber-scope-session"}`)
 	tests := []struct {
-		name        string
-		groupID     int64
-		wantBlocked bool
-		wantReads   int
+		name        string // Risk-control scope case name.
+		groupID     int64  // Requesting key group ID.
+		wantBlocked bool   // Expected session block result.
+		wantReads   int    // Expected block storage reads.
 	}{
 		{name: "未纳入风控的分组放行", groupID: outOfScopeGroupID, wantBlocked: false, wantReads: 0},
 		{name: "已纳入风控的分组保持屏蔽", groupID: selectedGroupID, wantBlocked: true, wantReads: 1},
@@ -1701,7 +1964,12 @@ func TestOpenAIRejectCyberSessionBlocked_OnlyChecksRiskControlGroups(t *testing.
 	}
 }
 
+// Do records the selected provider and returns a JSON HTTP 502 fixture
+// response. It ignores request and proxy inputs; the caller owns the returned
+// response body and closes it after reading.
 func (u *openAIHTTPPassthroughFailoverUpstream) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
+	// Append the selected identity under the observation lock so concurrent
+	// calls and copied snapshots agree on the recorded provider invocation order.
 	u.mu.Lock()
 	u.providerIDs = append(u.providerIDs, providerID)
 	u.mu.Unlock()
@@ -1712,18 +1980,28 @@ func (u *openAIHTTPPassthroughFailoverUpstream) Do(_ *http.Request, _ string, pr
 	}, nil
 }
 
-// DoWithTLS adapts the failover stub to the TLS fingerprint transport interface.
+// DoWithTLS delegates request execution to Do and ignores the TLS fingerprint
+// profile. The returned scripted response has Do's provider-recording behavior,
+// and the caller retains its response-body cleanup obligation.
 func (u *openAIHTTPPassthroughFailoverUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// calls returns a copy of the recorded provider-ID sequence under its mutex.
+// The caller can inspect or modify the returned slice after unlocking without
+// changing this transport's stored observations.
 func (u *openAIHTTPPassthroughFailoverUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.providerIDs...)
 }
 
+// Do records the selected provider and returns success for provider 9911. Other
+// IDs receive statusCode with a credential-rejection body; the caller owns and
+// closes each returned response body.
 func (u *openAIHTTPPassthroughAuthFailoverUpstream) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
+	// Append the selected identity under the observation lock so concurrent
+	// calls and copied snapshots agree on the recorded provider invocation order.
 	u.mu.Lock()
 	u.providerIDs = append(u.providerIDs, providerID)
 	u.mu.Unlock()
@@ -1741,18 +2019,28 @@ func (u *openAIHTTPPassthroughAuthFailoverUpstream) Do(_ *http.Request, _ string
 	}, nil
 }
 
-// DoWithTLS adapts the authentication failover stub to the TLS fingerprint transport interface.
+// DoWithTLS delegates request execution to Do and ignores the TLS fingerprint
+// profile. The returned scripted response has Do's provider-recording behavior,
+// and the caller retains its response-body cleanup obligation.
 func (u *openAIHTTPPassthroughAuthFailoverUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// calls returns a copy of the recorded provider-ID sequence under its mutex.
+// The caller can inspect or modify the returned slice after unlocking without
+// changing this transport's stored observations.
 func (u *openAIHTTPPassthroughAuthFailoverUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.providerIDs...)
 }
 
+// Do records the selected provider and returns an HTTP 200 event stream with a
+// rate-limit failed event. Retry-After is one second, and the caller owns and
+// closes the response body.
 func (u *openAIHTTPPassthroughSSERateLimitUpstream) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
+	// Append the selected identity under the observation lock so concurrent
+	// calls and copied snapshots agree on the recorded provider invocation order.
 	u.mu.Lock()
 	u.providerIDs = append(u.providerIDs, providerID)
 	u.mu.Unlock()
@@ -1774,17 +2062,25 @@ func (u *openAIHTTPPassthroughSSERateLimitUpstream) Do(_ *http.Request, _ string
 	}, nil
 }
 
-// DoWithTLS adapts the SSE rate-limit stub to the TLS fingerprint transport interface.
+// DoWithTLS delegates request execution to Do and ignores the TLS fingerprint
+// profile. The returned scripted response has Do's provider-recording behavior,
+// and the caller retains its response-body cleanup obligation.
 func (u *openAIHTTPPassthroughSSERateLimitUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// calls returns a copy of the recorded provider-ID sequence under its mutex.
+// The caller can inspect or modify the returned slice after unlocking without
+// changing this transport's stored observations.
 func (u *openAIHTTPPassthroughSSERateLimitUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.providerIDs...)
 }
 
+// TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches
+// scripts gateway failures for a pooled provider and its fallback. It checks
+// two calls to the first provider, one switch, and a safe HTTP 502 response.
 func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(t *testing.T) {
 	groupID := int64(4203)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -1817,6 +2113,8 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
+	// Allow one provider switch after any same-provider pool retry; the
+	// recorded call sequence distinguishes these two budgets.
 	cfg.Gateway.MaxProviderSwitches = 1
 
 	providerRepo := &openAIWSFailoverHandlerProviderRepoStub{providers: providers}
@@ -1880,12 +2178,13 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-// TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider checks provider
-// switching after authentication retries are exhausted.
+// TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider
+// varies HTTP 401 and HTTP 403 failures from the pooled provider. It checks one
+// same-provider retry followed by healthy-provider completion with HTTP 200.
 func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHealthyProvider(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
+		name       string // Authentication failure case name.
+		statusCode int    // Scripted upstream response status.
 	}{
 		{name: "401", statusCode: http.StatusUnauthorized},
 		{name: "403", statusCode: http.StatusForbidden},
@@ -1924,6 +2223,9 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHe
 			cfg := &config.Config{}
 			cfg.Default.RateMultiplier = 1
 			cfg.Security.URLAllowlist.Enabled = false
+			// Allow one provider switch after any same-provider
+			// pool retry; the recorded call sequence distinguishes
+			// these two budgets.
 			cfg.Gateway.MaxProviderSwitches = 1
 
 			providerRepo := &openAIWSFailoverHandlerProviderRepoStub{providers: providers}
@@ -1989,6 +2291,10 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHe
 	}
 }
 
+// TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry
+// returns an HTTP 200 stream containing a rate-limit failure. It checks two
+// calls to the pooled provider, no provider rate-limit mutation, and a safe
+// HTTP 429 with Retry-After.
 func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t *testing.T) {
 	groupID := int64(4204)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -2010,6 +2316,8 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
+	// Allow one provider switch after any same-provider pool retry; the
+	// recorded call sequence distinguishes these two budgets.
 	cfg.Gateway.MaxProviderSwitches = 1
 
 	providerRepo := &openAIWSFailoverHandlerProviderRepoStub{providers: providers}
@@ -2075,8 +2383,10 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-// TestOpenAIHTTPResourceBindingSharesImageCapacity checks that HTTP handlers share the same image concurrency
-// limiter.
+// TestOpenAIHTTPResourceBindingSharesImageCapacity binds supplied concurrency
+// resources to the endpoint fixture. It checks shared object identities,
+// capacity rejection across wrappers, and reacquisition after an idempotent
+// double release.
 func TestOpenAIHTTPResourceBindingSharesImageCapacity(t *testing.T) {
 	resources := &gatewayhttp.OpenAIHTTPResources{
 		Concurrency:  gatewayhttp.NewConcurrencyHelper(nil, gatewayhttp.SSEPingFormatNone, 0),
@@ -2105,6 +2415,9 @@ func TestOpenAIHTTPResourceBindingSharesImageCapacity(t *testing.T) {
 	acquired()
 }
 
+// GetByID returns an outer copy of the provider with the requested ID. Nested
+// references remain shared; an absent ID returns ErrNoAvailableProviders so
+// failover tests can distinguish missing rows.
 func (r openAIResponsesFailoverProviderRepo) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -2115,18 +2428,30 @@ func (r openAIResponsesFailoverProviderRepo) GetByID(_ context.Context, id int64
 	return nil, scheduler.ErrNoAvailableProviders
 }
 
+// ListSchedulableByGroupIDAndPlatform delegates to platform filtering and
+// ignores group membership. It returns copied outer provider values with shared
+// nested references, matching the fixture's platform-only selection setup.
 func (r openAIResponsesFailoverProviderRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// ListSchedulableByPlatform returns the fixture's platform-filtered provider
+// values. An empty filter includes every provider, and schedulability checks
+// are left to consumers of these copied outer values.
 func (r openAIResponsesFailoverProviderRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// ListSchedulableUngroupedByPlatform delegates to platform filtering without
+// checking group membership. Its result keeps the same outer-copy and
+// shared-nested-reference behavior as the other selection reads.
 func (r openAIResponsesFailoverProviderRepo) ListSchedulableUngroupedByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// providersForPlatform allocates a result slice containing provider values that
+// match the platform filter. Empty platform includes every fixture record;
+// nested provider references remain shared with stored values.
 func (r openAIResponsesFailoverProviderRepo) providersForPlatform(platform string) []gatewayprovider.ExecutionProvider {
 	out := make([]gatewayprovider.ExecutionProvider, 0, len(r.providers))
 	for _, provider := range r.providers {
@@ -2137,11 +2462,25 @@ func (r openAIResponsesFailoverProviderRepo) providersForPlatform(platform strin
 	return out
 }
 
+// Do records a provider call and returns an HTTP 520 fixture response. A
+// configured onFirstDo callback runs for the first recorded call after
+// unlocking; callers set that callback before concurrent transport use and
+// close the returned response body.
+//
+// The mutex decides which call is first, while the callback can cancel the
+// request independently of response construction. Cancellation therefore leaves
+// the scripted response available for the gateway's post-forward handling. The
+// callback runs outside the recording lock, so observation methods can read the
+// call sequence while cancellation proceeds.
 func (u *openAIResponsesFailoverCancelUpstream) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
+	// Append the selected identity under the observation lock so concurrent
+	// calls and copied snapshots agree on the recorded provider invocation order.
 	u.mu.Lock()
 	u.providerIDs = append(u.providerIDs, providerID)
 	first := len(u.providerIDs) == 1
 	u.mu.Unlock()
+	// Invoke cancellation after releasing the call-recording lock so the
+	// request can stop without blocking observations of the already recorded attempt.
 	if first && u.onFirstDo != nil {
 		u.onFirstDo()
 	}
@@ -2152,6 +2491,9 @@ func (u *openAIResponsesFailoverCancelUpstream) Do(_ *http.Request, _ string, pr
 	}, nil
 }
 
+// DoWithTLS delegates request execution to Do and ignores the TLS fingerprint
+// profile. The returned scripted response has Do's provider-recording behavior,
+// and the caller retains its response-body cleanup obligation.
 func (u *openAIResponsesFailoverCancelUpstream) DoWithTLS(
 	req *http.Request,
 	proxyURL string,
@@ -2162,12 +2504,19 @@ func (u *openAIResponsesFailoverCancelUpstream) DoWithTLS(
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// calls returns a copy of the recorded provider-ID sequence under its mutex.
+// The caller can inspect or modify the returned slice after unlocking without
+// changing this transport's stored observations.
 func (u *openAIResponsesFailoverCancelUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.providerIDs...)
 }
 
+// newOpenAIResponsesFailoverTestHandler assembles two OAuth providers against
+// the supplied transport and a ten-switch budget. The first provider includes
+// secret proxy credentials for log-redaction assertions, and test cleanup stops
+// the started billing fixture.
 func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream httpclient.UpstreamTransport) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 	proxyID := int64(11)
@@ -2264,6 +2613,10 @@ func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream httpclient.Ups
 	return handler
 }
 
+// newOpenAIResponsesFailoverTestContext builds a fixed authenticated
+// nonstreaming Responses request and recorder. A nonnil ctx replaces the
+// request context, letting callers cancel upstream processing; nil keeps the
+// httptest request context.
 func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	groupID := int64(3131)
@@ -2288,10 +2641,10 @@ func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*
 	return c, rec
 }
 
-// TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected reproduces
-// issue #4257: the client disconnects during an upstream call that returns retryable HTTP 520.
-// The disconnect stops provider selection and classifies the request as 499;
-// provider 2 receives no calls.
+// TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected
+// cancels the request during the first HTTP 520 response. It checks one
+// provider call, client-closed classification, no response body or final
+// upstream-status marker, and the retained failover event.
 func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2308,7 +2661,8 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	_, hasFinalUpstreamErr := c.Get(gatewayhttp.OpsUpstreamStatusCodeKey)
 	require.False(t, hasFinalUpstreamErr, "不应记录 failover 耗尽的上游错误终态")
 
-	// The executor records the upstream 520 as a failover event before returning the error.
+	// The failed attempt retains its HTTP 520 event even when cancellation
+	// prevents exhausted-output handling, so attempt history and final status are checked separately.
 	rawEvents, ok := c.Get(gatewayhttp.OpsUpstreamErrorsKey)
 	require.True(t, ok)
 	events, ok := rawEvents.([]*opscore.OpsUpstreamErrorEvent)
@@ -2318,9 +2672,10 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	require.Equal(t, 520, events[0].UpstreamStatusCode)
 }
 
-// TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient checks that
-// an upstream 520 switches a connected client to provider 2, and two failed providers
-// produce a 502 when the provider budget is exhausted.
+// TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient returns
+// HTTP 520 from two providers while the client remains connected. It checks
+// HTTP 502, switching logs with public proxy attributes, and absent proxy
+// credentials.
 func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
@@ -2343,6 +2698,9 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	require.False(t, logSink.ContainsFieldValue("proxy_password", "proxy-password-secret"))
 }
 
+// newServiceTierHandlerTest builds an empty OpenAI execution fixture with one
+// available user-slot grant. It supplies funding, key, and image components for
+// request validation before usable upstream execution is configured.
 func newServiceTierHandlerTest(t *testing.T) *gatewayHTTPEndpointsFixture {
 	t.Helper()
 	return newGatewayHTTPEndpoints(gatewayHTTPFixtureInput{
@@ -2360,6 +2718,9 @@ func newServiceTierHandlerTest(t *testing.T) *gatewayHTTPEndpointsFixture {
 	})
 }
 
+// runOpenAIHandlerServiceTierTest invokes the supplied endpoint callback with a
+// JSON request and fixed authenticated group. It returns the response recorder
+// after synchronous handler execution so callers can inspect validation errors.
 func runOpenAIHandlerServiceTierTest(t *testing.T, path, body string, handler func(h *gatewayHTTPEndpointsFixture, c *gin.Context)) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -2384,6 +2745,9 @@ func runOpenAIHandlerServiceTierTest(t *testing.T, path, body string, handler fu
 	return rec
 }
 
+// TestOpenAIGatewayHandlerResponses_InvalidServiceTierRejected400 submits
+// unknown, empty, and incorrectly typed Responses service tiers. It checks HTTP
+// 400 with invalid-request type and service_tier guidance for every body.
 func TestOpenAIGatewayHandlerResponses_InvalidServiceTierRejected400(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"gpt-5.5","input":"hi","service_tier":"turbo"}`,
@@ -2401,6 +2765,9 @@ func TestOpenAIGatewayHandlerResponses_InvalidServiceTierRejected400(t *testing.
 	}
 }
 
+// TestOpenAIGatewayHandlerChatCompletions_InvalidServiceTierRejected400 submits
+// unsupported, empty, and array-valued Chat service tiers. It checks HTTP 400
+// with invalid-request type and service_tier guidance for every body.
 func TestOpenAIGatewayHandlerChatCompletions_InvalidServiceTierRejected400(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"turbo"}`,
@@ -2417,12 +2784,15 @@ func TestOpenAIGatewayHandlerChatCompletions_InvalidServiceTierRejected400(t *te
 	}
 }
 
+// TestOpenAICompatibleHandlersRejectInvalidStreamFieldType submits string and
+// numeric stream values to both compatible and OpenAI handlers. It checks HTTP
+// 400 and the shared invalid-stream-type message at each endpoint.
 func TestOpenAICompatibleHandlersRejectInvalidStreamFieldType(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
-		run  func(*gin.Context)
+		name string             // Stream validation case name.
+		path string             // Client endpoint request path.
+		body string             // JSON client request body.
+		run  func(*gin.Context) // Endpoint handler invocation callback.
 	}{
 		{
 			name: "gateway_responses_string_stream",
@@ -2503,12 +2873,16 @@ func TestOpenAICompatibleHandlersRejectInvalidStreamFieldType(t *testing.T) {
 	}
 }
 
+// TestGatewayOpenAICompatibleHandlersAllowBooleanStreamToContinue submits
+// boolean stream values to compatible endpoints with a Claude-Code-only group.
+// It checks the later HTTP 403 policy rejection, showing that stream validation
+// passed.
 func TestGatewayOpenAICompatibleHandlersAllowBooleanStreamToContinue(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
-		run  func(*gin.Context)
+		name string             // Stream validation case name.
+		path string             // Client endpoint request path.
+		body string             // JSON client request body.
+		run  func(*gin.Context) // Endpoint handler invocation callback.
 	}{
 		{
 			name: "responses_false",
@@ -2540,6 +2914,10 @@ func TestGatewayOpenAICompatibleHandlersAllowBooleanStreamToContinue(t *testing.
 	}
 }
 
+// newOpenAICompatibleStreamValidationContext builds an authenticated JSON
+// request with a fixed group and recorder. claudeCodeOnly controls that group's
+// client policy so tests can distinguish body validation from later policy
+// rejection.
 func newOpenAICompatibleStreamValidationContext(path, body string, claudeCodeOnly bool) (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2558,8 +2936,10 @@ func newOpenAICompatibleStreamValidationContext(path, body string, claudeCodeOnl
 	return c, rec
 }
 
-// TestOpenAITextAssemblyReadAndStopBoundaries checks rejection before body reads when dependencies are missing
-// or request activity has stopped.
+// TestOpenAITextAssemblyReadAndStopBoundaries invokes assembled Responses,
+// Chat, and Messages handlers with missing dependencies, then stopped activity.
+// It checks distinct service-unavailable messages and unread bodies in both
+// states.
 func TestOpenAITextAssemblyReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("openai-text-contract")}
 	h := provideOpenAITextHTTP(nil, nil, nil, nil, nil, nil, nil, nil, nil, provideOpenAITextAttemptRuntime(provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)), activity, nil, nil, nil, nil)
@@ -2588,29 +2968,50 @@ func TestOpenAITextAssemblyReadAndStopBoundaries(t *testing.T) {
 	}
 }
 
+// Do records the provider ID under its mutex, then forwards the request with
+// http.DefaultClient. Proxy and concurrency arguments are ignored; successful
+// responses retain the default client's body-cleanup obligation.
 func (s *mixedHTTPTransport) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+	// Record selection before forwarding, then unlock so independent HTTP
+	// exchanges can progress while assertions read a consistent provider call sequence.
 	s.mu.Lock()
 	s.providers = append(s.providers, id)
 	s.mu.Unlock()
 	return http.DefaultClient.Do(req)
 }
 
+// DoWithTLS delegates to Do while ignoring the fingerprint profile supplied by
+// execution. Provider observations and default-client forwarding remain the
+// same, and callers close successful response bodies.
 func (s *mixedHTTPTransport) DoWithTLS(req *http.Request, p string, id int64, n int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return s.Do(req, p, id, n)
 }
 
+// calls returns a cloned provider-ID sequence while holding its mutex. The
+// result keeps nil for an uninitialized sequence and gives callers separate
+// slice storage for observation.
 func (s *mixedHTTPTransport) calls() []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.providers)
 }
 
+// Current returns no searcher for the mixed-platform execution fixture.
 func (mixedHTTPNoSearch) Current() searchtools.Searcher { return nil }
 
+// mixedUpstreamResponse returns fixed successful bodies selected by the
+// upstream URL and stream request. failAnthropic makes Messages URLs return
+// HTTP 502 first; response-write errors are left to the outer HTTP-result
+// assertions.
 func mixedUpstreamResponse(w http.ResponseWriter, r *http.Request, failAnthropic bool) {
+	// Use any bytes read from the fixture request to choose its stream
+	// shape; the outer endpoint assertions detect an unusable exchange after read failure.
 	body, _ := io.ReadAll(r.Body)
 	if failAnthropic && strings.Contains(r.URL.Path, "/messages") {
 		w.WriteHeader(http.StatusBadGateway)
+		// Send the scripted protocol body; the outer HTTP result and
+		// completion assertions expose unsuccessful delivery, so
+		// fixture writes discard their errors.
 		_, _ = io.WriteString(w, `{"error":{"type":"overloaded_error","message":"retry another provider"}}`)
 		return
 	}
@@ -2618,33 +3019,56 @@ func mixedUpstreamResponse(w http.ResponseWriter, r *http.Request, failAnthropic
 	if strings.Contains(r.URL.Path, "/messages") {
 		if gjson.GetBytes(body, "stream").Bool() {
 			w.Header().Set("Content-Type", "text/event-stream")
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-mixed\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5-20250929\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok-mixed\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		} else {
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = io.WriteString(w, `{"id":"msg-mixed","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"ok-mixed"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}`)
 		}
 	} else if strings.Contains(r.URL.Path, "models/") {
 		response := `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok-mixed"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"totalTokenCount":13}}`
 		if strings.Contains(r.URL.Path, "streamGenerateContent") {
 			w.Header().Set("Content-Type", "text/event-stream")
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", response)
 		} else {
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = io.WriteString(w, response)
 		}
 	} else if strings.Contains(r.URL.Path, "chat/completions") {
+		// Send the scripted protocol body; the outer HTTP result and
+		// completion assertions expose unsuccessful delivery, so
+		// fixture writes discard their errors.
 		_, _ = io.WriteString(w, `{"id":"chat-mixed","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok-mixed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}`)
 	} else {
 		response := `{"id":"resp-mixed","object":"response","status":"completed","model":"gpt-5.4","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok-mixed"}]}],"usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}}`
 		if gjson.GetBytes(body, "stream").Bool() {
 			w.Header().Set("Content-Type", "text/event-stream")
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-mixed\",\"model\":\"gpt-5.4\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok-mixed\"}\n\ndata: {\"type\":\"response.completed\",\"response\":%s}\n\n", response)
 		} else {
+			// Send the scripted protocol body; the outer HTTP
+			// result and completion assertions expose unsuccessful
+			// delivery, so fixture writes discard their errors.
 			_, _ = io.WriteString(w, response)
 		}
 	}
 }
 
-// TestMixedGroupTextHTTP exercises all three endpoints and cross-platform failover with selection, conversion,
-// and completion.
+// TestMixedGroupTextHTTP sends Messages, Responses, and Chat requests to
+// Anthropic, OpenAI, Gemini, or an Anthropic-to-OpenAI failover case. It checks
+// converted client text, provider call order, one settlement and log write, and
+// final provider identity.
 func TestMixedGroupTextHTTP(t *testing.T) {
 	for _, path := range []string{"/v1/messages", "/v1/responses", "/v1/chat/completions"} {
 		for _, platform := range []string{"anthropic", "openai", "gemini", "failover"} {
@@ -2661,9 +3085,12 @@ func TestMixedGroupTextHTTP(t *testing.T) {
 				providers := &mixedHTTPProviders{}
 				for index, p := range []string{"anthropic", "openai", "gemini"} {
 					record := &providercore.Record{ID: int64(index + 1), Name: p, Platform: p, Type: "apikey", Status: "active", Schedulable: true, Priority: index + 1, Concurrency: 1, GroupIDs: []int64{groupID}, Credentials: map[string]any{"api_key": "test-key", "base_url": upstream.URL}}
-					// Mixed-group providers declare the models they can serve.
+					// Declare each provider model before selection so a mixed group
+					// can choose the intended platform through its production model policy.
 					record.Credentials["model_whitelist"] = []string{map[string]string{"anthropic": "claude-sonnet-4-5-20250929", "openai": "gpt-5.4", "gemini": "gemini-2.5-flash"}[p]}
 					if p == "openai" && platform == "failover" {
+						// Map the failed Anthropic model to the OpenAI provider model
+						// so the failover attempt can execute after cross-platform selection.
 						record.Credentials["model_mapping"] = map[string]any{"claude-sonnet-4-5-20250929": "gpt-5.4"}
 					}
 					providers.values = append(providers.values, *gatewayprovider.NewExecutionProvider(record))

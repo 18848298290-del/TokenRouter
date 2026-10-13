@@ -26,89 +26,128 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// identityVerificationDelivery adapts verification email events produced by identity.
+// OAuth login, binding, pending completion, and session HTTP share the same
+// identity services and settings readers. WeChat payment authorization reuses
+// credential exchange but returns payment token data, and DingTalk profile
+// completion runs through the application's tracked background tasks.
+
+// identityVerificationDelivery combines verification mail delivery with
+// identity challenge generation.
 type identityVerificationDelivery struct {
-	mail       *notification.Mailer
-	challenges *identity.EmailChallenges
+	mail       *notification.Mailer      // verification email delivery
+	challenges *identity.EmailChallenges // identity challenge generation
 }
 
-// identityHTTP combines authentication and WeChat payment authorization handlers.
+// identityHTTP supplies authentication endpoints and WeChat payment
+// authorization methods.
 type identityHTTP struct {
-	*identityhttp.AuthenticationHandler
-	*paymenthttp.WeChatPaymentHandler
+	*identityhttp.AuthenticationHandler // identity authentication endpoints
+	*paymenthttp.WeChatPaymentHandler   // WeChat payment authorization
 }
 
-// identityHTTPSettings reads authentication settings per request with field-specific defaults and error handling.
+// identityHTTPSettings adapts shared settings for session and OAuth HTTP
+// consumers.
 type identityHTTPSettings struct {
-	*identityAuthSettings
-	*admission.BackendMode
-	public    *site.PublicService
-	composite *composite.Runtime
+	*identityAuthSettings                      // shared authentication settings
+	*admission.BackendMode                     // backend admission reader
+	public                 *site.PublicService // public setting reads
+	composite              *composite.Runtime  // combined setting reads
 }
 
+// SendNotifyVerification delegates the prepared identity notice to notification
+// mail delivery.
 func (d identityVerificationDelivery) SendNotifyVerification(ctx context.Context, n identity.NotifyVerificationNotice) error {
 	return d.mail.SendNotifyVerification(ctx, n.UserID, n.Email, n.Code, n.Locale, n.SiteName)
 }
 
+// providePanelUserHTTP binds user profiles, authentication, verification
+// delivery, and email cache.
 func providePanelUserHTTP(users *identity.UserService, g *identityAuthGraph, mail *notification.Mailer, cache identity.EmailCache, challenges *identity.EmailChallenges) *identityhttp.UserHandler {
 	return identityhttp.NewUserHandler(users, g.Core, identityVerificationDelivery{mail: mail, challenges: challenges}, cache)
 }
 
+// providePromotionUserHTTP binds affiliate operations to the user promotion
+// handler.
 func providePromotionUserHTTP(s *promotion.AffiliateService) *promotionhttp.UserHandler {
 	return promotionhttp.NewUserHandler(s)
 }
 
-// GenerateVerifyCode delegates code generation to identity email challenges.
+// GenerateVerifyCode delegates verification-code creation to the identity
+// challenge service.
 func (d identityVerificationDelivery) GenerateVerifyCode() (string, error) {
 	return d.challenges.GenerateVerifyCode()
 }
 
+// ReadBackendMode prefers backend mode from a successful public settings read.
+// Failed or absent public data falls through to the BackendMode runtime reader,
+// which interprets its own cached setting.
 func (s identityHTTPSettings) ReadBackendMode(ctx context.Context) bool {
 	value, err := s.public.GetPublicSettings(ctx)
 	if err == nil && value != nil {
 		return value.BackendModeEnabled
 	}
+	// Public settings may be unavailable during a read failure. Consult the
+	// backend runtime's own cached rule so session decisions still have a concrete setting source.
 	return s.Enabled(ctx)
 }
 
+// ForceEmail reports third-party signup enforcement from authentication-source
+// defaults. Read errors, absent defaults, or a false flag return false, letting
+// pending HTTP apply the current force-email choice.
 func (s identityHTTPSettings) ForceEmail(ctx context.Context) bool {
 	value, err := s.GetAuthSourceDefaultSettings(ctx)
+	// Unreadable source defaults disable this force-email choice. The pending
+	// handler receives false rather than a settings error from its boolean callback.
 	return err == nil && value != nil && value.ForceEmailOnThirdPartySignup
 }
 
+// LinuxDo converts shared OAuth settings into LinuxDo HTTP flow options.
 func (s identityHTTPSettings) LinuxDo(ctx context.Context) (identity.LinuxDoOAuthOptions, error) {
 	value, err := s.oauth.GetLinuxDoConnectOAuthConfig(ctx)
 	return identity.LinuxDoOAuthOptions(value), err
 }
 
+// OIDC converts shared OAuth settings into OIDC HTTP flow options.
 func (s identityHTTPSettings) OIDC(ctx context.Context) (identity.OIDCOAuthOptions, error) {
 	value, err := s.oauth.GetOIDCConnectOAuthConfig(ctx)
 	return identity.OIDCOAuthOptions(value), err
 }
 
+// Email converts the named OAuth email provider settings into flow options.
 func (s identityHTTPSettings) Email(ctx context.Context, providerName string) (identity.EmailOAuthOptions, error) {
 	value, err := s.oauth.GetEmailOAuthProviderConfig(ctx, providerName)
 	return identity.EmailOAuthOptions(value), err
 }
 
+// DingTalk converts shared OAuth settings into DingTalk HTTP flow options.
 func (s identityHTTPSettings) DingTalk(ctx context.Context) (identity.DingTalkOAuthOptions, error) {
 	value, err := s.oauth.GetDingTalkConnectOAuthConfig(ctx)
 	return identity.DingTalkOAuthOptions(value), err
 }
 
+// GoogleOneTap returns client identity and frontend redirect with the OAuth
+// read error.
 func (s identityHTTPSettings) GoogleOneTap(ctx context.Context) (identityhttp.GoogleOneTapOptions, error) {
 	value, err := s.oauth.GetGoogleOneTapConfig(ctx)
 	return identityhttp.GoogleOneTapOptions{ClientID: value.ClientID, FrontendRedirectURL: value.FrontendRedirectURL}, err
 }
 
+// APIBaseURL returns the trimmed API origin from combined settings. Failed or
+// absent settings return an empty string, allowing the OAuth absolute-URL
+// resolver to handle its request-derived fallback.
 func (s identityHTTPSettings) APIBaseURL(ctx context.Context) string {
 	value, err := s.composite.GetAllSettings(ctx)
 	if err == nil && value != nil {
 		return strings.TrimSpace(value.APIBaseURL)
 	}
+	// Combined settings failure leaves no configured API origin. The HTTP
+	// URL resolver can then derive the absolute callback from the incoming request.
 	return ""
 }
 
+// WeChat combines the requested mode, API origin, and shared WeChat
+// credentials. OAuth read failures return an error; mode-specific AppID,
+// secret, and scope come from the settings object's selectors.
 func (s identityHTTPSettings) WeChat(ctx context.Context, mode string) (identity.WeChatOAuthOptions, error) {
 	base := s.APIBaseURL(ctx)
 	value, err := s.oauth.GetWeChatConnectOAuthConfig(ctx)
@@ -118,14 +157,24 @@ func (s identityHTTPSettings) WeChat(ctx context.Context, mode string) (identity
 	return identity.WeChatOAuthOptions{Mode: mode, AppID: value.AppIDForMode(mode), AppSecret: value.AppSecretForMode(mode), Scope: value.ScopeForMode(mode), RedirectURI: value.RedirectURL, FrontendCallback: value.FrontendRedirectURL, APIBaseURL: base, OpenEnabled: value.OpenEnabled, MPEnabled: value.MPEnabled}, nil
 }
 
+// WeChatFrontend returns a nonblank trimmed frontend callback from shared OAuth
+// settings. Failed reads or blank configured callbacks select the identity HTTP
+// default used when completing the WeChat redirect.
 func (s identityHTTPSettings) WeChatFrontend(ctx context.Context) string {
 	value, err := s.oauth.GetWeChatConnectOAuthConfig(ctx)
 	if err == nil && strings.TrimSpace(value.FrontendRedirectURL) != "" {
 		return strings.TrimSpace(value.FrontendRedirectURL)
 	}
+	// A failed or blank callback setting uses the flow's default frontend
+	// destination, allowing WeChat completion to return to the configured default page.
 	return identityhttp.WechatOAuthDefaultFrontendCB
 }
 
+// provideIdentityHTTP assembles session, pending, binding, and provider
+// handlers around the shared graph. cfg, settings, tasks, and g are required;
+// logout captures pending before it is assigned but is invoked after assembly,
+// and DingTalk completion uses tracked profile tasks. WeChat payment callbacks
+// use the same credential reader with payment-only token conversion.
 func provideIdentityHTTP(g *identityAuthGraph, users *identity.UserService, cfg *config.Config, settings *identityAuthSettings, backend *admission.BackendMode, public *site.PublicService, composite *composite.Runtime, promo *promotion.PromoService, redeems *billing.RedeemService, totp *identity.TotpService, attributes *identity.UserAttributeService, tasks *lifecycle.Tasks, payments *payment.Runtime) *identityHTTP {
 	runtime := identityHTTPSettings{identityAuthSettings: settings, BackendMode: backend, public: public, composite: composite}
 	flow := &identity.PendingFlow{Store: identitypostgres.NewPendingRepository(g.Client, time.Now), Database: &identitypostgres.PendingFlowDatabase{Client: g.Client, Auth: g.Core, Profiles: users}, Auth: g.Core, Profiles: users}
@@ -173,7 +222,9 @@ func provideIdentityHTTP(g *identityAuthGraph, users *identity.UserService, cfg 
 	return &identityHTTP{auth, pay}
 }
 
-// identityProfileObserve writes profile synchronization logs at the requested level, defaulting to info.
+// identityProfileObserve writes profile diagnostics using error, debug, or
+// warning levels. Any other level selects info, and the supplied arguments are
+// passed unchanged to the selected slog call.
 func identityProfileObserve(level, message string, args ...any) {
 	switch level {
 	case "error":

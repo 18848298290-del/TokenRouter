@@ -1,7 +1,5 @@
 package app
 
-// These tests cover backend-mode publication across settings defaults, readers, and combined updates.
-
 import (
 	"context"
 	"net/http"
@@ -17,14 +15,37 @@ import (
 	settingshttp "github.com/TokenFlux/TokenRouter/internal/settings/httpapi"
 )
 
-// delayedBackendReadFixture blocks an earlier single-key load while admin queries use batch reads.
+// A backend-mode load started before an administrator update can finish after
+// the new value has been published. The scenario holds that earlier single-key
+// read until combined settings saves true, then checks both persisted settings
+// and subsequent cached admission retain the administrator value.
+//
+// The delayed fixture announces entry and returns a fixed false value only when
+// the test releases it. Administrator reads use its embedded batch repository
+// and continue while that single-key call is blocked. Joining the load before
+// the final assertion makes this order explicit, exposing whether an older
+// result can replace the later publication.
+
+// delayedBackendReadFixture delays one backend-mode read while allowing batch
+// settings access.
 type delayedBackendReadFixture struct {
-	*settingHandlerRepoStub
-	entered, release chan struct{}
+	*settingHandlerRepoStub // batch settings fixture
+	// entered marks the blocked old read, while release is closed by the test
+	// after publication. Both are initialized before loading, and the old-read branch owns closing entered once.
+	entered, release chan struct{} // entered: old-read start signal; release: old-read continuation signal
 }
 
+// GetValue announces and blocks the backend-mode key before returning the old
+// false value. Initialize fresh entered/release channels and invoke that branch
+// once; the test closes release after publishing newer settings.
+//
+// The blocked branch ignores ctx cancellation so the older result can complete
+// after the update. Other keys delegate to the embedded repository, letting
+// normal settings access retain that fixture's values and missing-key behavior.
 func (r *delayedBackendReadFixture) GetValue(ctx context.Context, key string) (string, error) {
 	if key == admission.BackendModeKey {
+		// Announce the old load before blocking so the test can publish true
+		// through batch settings first, then release false to exercise stale-read rejection deterministically.
 		close(r.entered)
 		<-r.release
 		return "false", nil
@@ -32,7 +53,10 @@ func (r *delayedBackendReadFixture) GetValue(ctx context.Context, key string) (s
 	return r.settingHandlerRepoStub.GetValue(ctx, key)
 }
 
-// TestSettingUpdateLateBackendModeLoad checks that a load started before settings publication cannot overwrite the published value.
+// TestSettingUpdateLateBackendModeLoad delays an earlier backend read while
+// combined settings publishes true. It checks successful HTTP persistence, the
+// stored true value, and a later Enabled read that retains the publication
+// after the old load finishes.
 func TestSettingUpdateLateBackendModeLoad(t *testing.T) {
 	repo := &delayedBackendReadFixture{settingHandlerRepoStub: &settingHandlerRepoStub{values: map[string]string{}}, entered: make(chan struct{}), release: make(chan struct{})}
 	store := settings.New(repo)
@@ -50,6 +74,8 @@ func TestSettingUpdateLateBackendModeLoad(t *testing.T) {
 	require.NoError(t, err)
 	handler := settingshttp.NewHandler(settingshttp.HandlerOptions{Settings: source, Participants: registry})
 	done := make(chan struct{})
+	// Run the old load independently and join it after settings publication.
+	// The entered/release signals select the ordering while done protects the final cached-value assertion.
 	go func() { backend.Enabled(context.Background()); close(done) }()
 	<-repo.entered
 	response := doUpdateSettings(t, handler, map[string]any{"backend_mode_enabled": true}, nil)

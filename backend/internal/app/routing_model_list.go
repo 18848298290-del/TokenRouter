@@ -10,7 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// catalogueReader reads schedulable providers for one group or all groups and converts their model data.
+// Requestable model queries read provider candidates for one requested group or
+// the full schedulable set. The catalogue reader converts those records into
+// routing data and pairs them with the shared group-policy resolver for later
+// model admission and display.
+
+// catalogueReader returns provider catalogue reads bound to shared storage. A
+// nonnil group ID selects its schedulable providers; nil selects all
+// schedulable providers, and repository errors stop conversion before routing
+// data is returned.
 func catalogueReader(store *providerpostgres.ProviderStore) func(context.Context, *int64) ([]routing.CatalogueProvider, error) {
 	return func(ctx context.Context, id *int64) ([]routing.CatalogueProvider, error) {
 		var values []provider.Record
@@ -27,7 +35,8 @@ func catalogueReader(store *providerpostgres.ProviderStore) func(context.Context
 	}
 }
 
-// provideRequestableCatalogue binds provider reads and group policies for model resolution.
+// provideRequestableCatalogue combines provider candidate reads with shared
+// group-policy model resolution.
 func provideRequestableCatalogue(store *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService) *routing.RequestableCatalogue {
 	return &routing.RequestableCatalogue{Read: catalogueReader(store), Resolver: routing.RequestableResolver{GroupPolicies: modelConfigs, Warn: slog.Warn}, Warn: slog.Warn}
 }

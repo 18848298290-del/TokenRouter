@@ -13,19 +13,32 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// providerHealthRuntime holds the health components created by one application assembly.
+// Provider health observation and recovery share the same counters, storage,
+// runtime blocks, and clock. Health delegates window clearing to the recovery
+// instance assigned during assembly, and the exported runtime keeps one
+// observer whose window, team, and model components reference that assembled
+// health state.
+
+// providerHealthRuntime retains shared health, recovery, and platform
+// observation components.
 type providerHealthRuntime struct {
-	Health   *provider.HealthService
-	Recovery *provider.RecoveryService
-	Observer *provideradapter.UpstreamHealth
+	// Health and Recovery are bound together during construction, and Observer
+	// routes platform observations through that Health instance. Consumers retain these same pointers across administration and execution.
+	Health   *provider.HealthService         // shared health commands
+	Recovery *provider.RecoveryService       // shared recovery commands
+	Observer *provideradapter.UpstreamHealth // shared platform observations
 }
 
-// provideUpstreamHealth returns the shared health observer.
+// provideUpstreamHealth returns the platform observer from the constructed
+// health runtime.
 func provideUpstreamHealth(runtime *providerHealthRuntime) *provideradapter.UpstreamHealth {
 	return runtime.Observer
 }
 
-// provideProviderHealthRuntime binds health configuration, settings readers, and infrastructure.
+// provideProviderHealthRuntime constructs mutually bound health observation and
+// recovery services. cfg is required; optional settings, counters, token
+// invalidation, and runtime blocks provide their capabilities, and the
+// window-clear closure is called after recovery has been assigned.
 func provideProviderHealthRuntime(
 	store *providerpostgres.ProviderStore,
 	cache provider.TempUnschedCache,
@@ -66,7 +79,8 @@ func provideProviderHealthRuntime(
 		options.Block = state.BlockProviderScheduling
 	}
 
-	// Recovery and window observation call each other; bind both before exposing the components.
+	// Health window clearing closes over recovery while recovery resets the
+	// health counter. Complete both bindings before returning so later callbacks use the assembled instances.
 	var recovery *provider.RecoveryService
 	options.ClearWindowRateLimit = func(ctx context.Context, id int64) error {
 		return recovery.ClearRateLimit(ctx, id)
@@ -82,6 +96,7 @@ func provideProviderHealthRuntime(
 	recovery = provider.NewRecoveryService(store, cache, recoveryOptions)
 
 	limits := &provideradapter.RateLimitObserver{Health: health, Plans: store, NextGeminiDaily: func() *int64 {
+		// Rate-limit observation expects a Unix-second Gemini quota reset timestamp.
 		reset := provider.GeminiDailyResetTime(time.Now(), geminiQuotaLocation()).Unix()
 		return &reset
 	}}
@@ -99,12 +114,14 @@ func provideProviderHealthRuntime(
 	}
 }
 
-// provideProviderRecovery returns the shared recovery service.
+// provideProviderRecovery returns the recovery service from the constructed
+// health runtime.
 func provideProviderRecovery(runtime *providerHealthRuntime) *provider.RecoveryService {
 	return runtime.Recovery
 }
 
-// provideProviderRuntimeState creates scheduling block state shared by recovery, refresh, and execution.
+// provideProviderRuntimeState constructs shared scheduling containment using
+// the system clock.
 func provideProviderRuntimeState() *provider.RuntimeBlockState {
 	return provider.NewRuntimeBlockState(time.Now)
 }

@@ -27,16 +27,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// qoderHTTPObservation records observations synchronously within the request.
+// Qoder Chat preparation captures body, headers, Key funding, and HTTP metadata
+// before handing the request to its executor. Observation methods keep Gin
+// access in the request path, while request and platform attempts share a Qoder
+// activity barrier in addition to the general gateway barrier.
+
+// qoderHTTPObservation binds Qoder preparation and waiting observations to the
+// current HTTP request.
 type qoderHTTPObservation struct {
-	c               *gin.Context
-	stream, started bool
+	// c identifies the active HTTP request, stream controls wait output, and
+	// started is updated by HTTP waiting. These values remain in the request observer while completion input is captured separately.
+	c               *gin.Context // observed HTTP request
+	stream, started bool         // stream: request streaming flag; started: heartbeat commitment flag
 }
 
-// qoderRequestActivity tracks completion of Chat requests, compatibility requests, and platform attempts.
-type qoderRequestActivity struct{ *lifecycle.Operations }
+// qoderRequestActivity tracks accepted Qoder requests and attempts for
+// application shutdown.
+type qoderRequestActivity struct {
+	*lifecycle.Operations // accepted Qoder operations
+}
 
-// provideQoderChat binds application callbacks to the Qoder Chat handler.
+// provideQoderChat assembles Chat execution with three switches and a
+// thirty-second wait input. Required activity and request barriers are attached
+// before serving; preparation checks Key and subject first, copies
+// body/headers, and captures the effective Key view with the resolved
+// subscription.
 func provideQoderChat(planner *gatewayprovider.RoutePlanner, q *gatewayprovider.QoderRuntime, refresh *provideradapter.QoderRequestRefresh, c *scheduler.ConcurrencyService, b *admission.FundingAdmission, k *apikey.APIKeyService, r *errorpolicy.ErrorPassthroughService, pool *completion.UsageRecordWorkerPool, recorders GatewayCompletionRecorders, activity *qoderRequestActivity, requests *gatewayRequestActivity, choices *selection.Generic) *gatewayhttp.QoderChatHandler {
 	runtime := &qoderRuntime{Routes: planner, Choices: choices, Qoder: q, Refresh: refresh, Billing: b, Keys: k, Completions: pool, Recorder: recorders.Forward}
 	useCase := gateway.NewQoderExecutor(3, 30*time.Second, c, runtime)
@@ -67,6 +82,8 @@ func provideQoderChat(planner *gatewayprovider.RoutePlanner, q *gatewayprovider.
 		}
 		keyView, ok := gatewayhttp.EffectiveAPIKey(c)
 		if !ok {
+			// Preparation can lack an effective request Key binding. Use the
+			// authenticated Key's copied view so funding preparation still receives the known request identity.
 			keyView = apikey.CopyAPIKey(key)
 		}
 		inbound, outbound := gatewayhttp.GetInboundEndpoint(c), gatewayhttp.GetUpstreamEndpoint(c, capability.PlatformQoder)
@@ -85,7 +102,10 @@ func provideQoderChat(planner *gatewayprovider.RoutePlanner, q *gatewayprovider.
 	return result
 }
 
-// qoderPreflight checks the API key before the user context, before reading the request body.
+// qoderPreflight checks Key lookup before authenticated subject lookup. Missing
+// Key returns the authentication failure, missing subject returns the internal
+// context failure, and these checks run before the Chat handler reads its
+// request body.
 func qoderPreflight(c *gin.Context) error {
 	if _, ok := keyhttp.GetAPIKeyFromContext(c); !ok {
 		return &gatewayhttp.HTTPFailure{Status: 401, Type: "authentication_error", Message: "Invalid API key"}
@@ -96,21 +116,35 @@ func qoderPreflight(c *gin.Context) error {
 	return nil
 }
 
+// Prepared publishes the resolved route and elapsed request time to HTTP
+// observations.
 func (o *qoderHTTPObservation) Prepared(request gateway.Request) {
 	o.c.Request = o.c.Request.WithContext(requeststate.WithRoutePlan(o.c.Request.Context(), request.Route))
+	// Observations store elapsed milliseconds from the parsed request start time.
 	gatewayhttp.SetOpsLatencyMs(o.c, gatewayhttp.OpsAuthLatencyMsKey, time.Since(request.Metadata.StartedAt).Milliseconds())
 }
 
+// Selected publishes the selected provider identity and platform to HTTP
+// diagnostics.
 func (o *qoderHTTPObservation) Selected(snapshot provider.ProviderSnapshot) {
 	gatewayhttp.SetOpsSelectedProvider(o.c, snapshot.ID, snapshot.Platform)
 }
 
+// Waiting returns request-bound wait observation with ten-second comment pings.
+// The stream and started fields are passed to HTTP waiting so heartbeat output
+// can record response commitment for this request.
 func (o *qoderHTTPObservation) Waiting(string) scheduler.WaitObserver {
 	return gatewayhttp.WaitObserver(o.c, gatewayhttp.SSEPingFormatComment, 10*time.Second, o.stream, &o.started, true)
 }
 
+// provideQoderRequestActivity registers a shared request/attempt barrier before
+// lifecycle startup. It binds the same Enter callback to Qoder runtime attempts
+// and stops at level fifteen before completion queues and shared dependencies
+// drain.
 func provideQoderRequestActivity(manager *lifecycle.Manager, runtime *gatewayprovider.QoderRuntime) *qoderRequestActivity {
 	activity := lifecycle.NewOperations("QoderRequestsAndAttempts")
+	// Stop request and attempt admission together, then wait for accepted work
+	// before completion recording and the shared platform dependencies enter later cleanup phases.
 	manager.Register(lifecycle.Hook{Name: "QoderRequestsAndAttempts", StopOrder: 15, Stop: activity.StopContext})
 	runtime.BindAttemptActivity(activity.Enter)
 	return &qoderRequestActivity{Operations: activity}

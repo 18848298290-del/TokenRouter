@@ -13,6 +13,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// Usage HTTP reads narrow Key and user references through their owning
+// services. Key ownership checks stay with API-Key operations, user search
+// retains pagination and deleted status, and user/dashboard/admin handlers
+// share the calendar used by the underlying usage services.
+
+// provideUsageKeys binds Key lookup, ownership verification, and search for
+// usage HTTP. Lookup retains missing Key results, search converts available
+// rows into identity/name references, and ownership delegates directly to the
+// supplied service.
 func provideUsageKeys(wrapper *apikey.APIKeyService) ports.KeyReader {
 	keys := wrapper
 	return ports.KeyQueries{Lookup: func(ctx context.Context, id int64) (*ports.KeyReference, error) {
@@ -36,6 +45,10 @@ func provideUsageKeys(wrapper *apikey.APIKeyService) ports.KeyReader {
 	}}
 }
 
+// provideUsageUsers binds administrator user search and pagination for usage
+// HTTP. Search and include-deleted filters pass through, available DeletedAt
+// pointers are retained, and a query error returns the source pagination total
+// alongside nil rows.
 func provideUsageUsers(users *identity.UserAdmin) ports.UserReader {
 	return ports.UserQueries(func(ctx context.Context, page, size int, f ports.UserListFilters, sort, order string) ([]ports.UserReference, int64, error) {
 		rows, total, e := users.ListUsers(ctx, page, size, identity.UserListFilters{Search: f.Search, IncludeDeleted: f.IncludeDeleted}, sort, order)
@@ -50,14 +63,20 @@ func provideUsageUsers(users *identity.UserAdmin) ports.UserReader {
 	})
 }
 
+// provideUsageHTTP combines user usage, Key reads, observations, ranking
+// settings, and dates.
 func provideUsageHTTP(s *usage.UsageService, keys ports.KeyReader, ops *opscore.OpsService, settings *usage.RuntimeSettings, calendar timezone.Calendar) *usagehttp.UsageHandler {
 	return usagehttp.NewUsageHandler(s, keys, ops, settings, calendar)
 }
 
+// provideAdminUsageHTTP combines administrator usage, identity reads, cleanup,
+// observations, and dates.
 func provideAdminUsageHTTP(s *usage.UsageService, keys ports.KeyReader, users ports.UserReader, cleanup *usage.UsageCleanupService, ops *opscore.OpsService, calendar timezone.Calendar) *usageadmin.UsageHandler {
 	return usageadmin.NewUsageHandler(s, keys, users, cleanup, ops, calendar)
 }
 
+// provideDashboardHTTP exposes assembled dashboard queries with the shared
+// application calendar.
 func provideDashboardHTTP(s *usage.DashboardService, calendar timezone.Calendar) *usageadmin.DashboardHandler {
 	return usageadmin.NewDashboardHandler(s, calendar)
 }

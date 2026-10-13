@@ -1,7 +1,5 @@
 package app
 
-// These tests cover warmup interception in Messages and token-counting handlers.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -29,6 +27,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Antigravity warmup interception returns a local Messages response after
+// selecting a provider. These scenarios assemble production handlers with
+// cached candidates and check both ordinary selection and forced-platform
+// contexts, including the selected provider and generated message identity.
+
+// newTestGatewayHandler builds Messages endpoints using a supplied group and
+// cached provider candidates. It starts billing cache workers and returns their
+// cleanup function, which callers invoke after handler execution while fixture
+// dependencies remain usable.
 func newTestGatewayHandler(t *testing.T, group *routing.Group, providers []*gatewayprovider.ExecutionProvider) (*messageEndpointsFixture, func()) {
 	t.Helper()
 
@@ -78,11 +85,17 @@ func newTestGatewayHandler(t *testing.T, group *routing.Group, providers []*gate
 	)
 
 	cleanup := func() {
+		// The helper starts billing cache workers, so the returned cleanup drains
+		// them after each handler scenario before its fixture dependencies go out of use.
 		billingCacheSvc.Stop()
 	}
 	return h, cleanup
 }
 
+// TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedulingV1
+// sends a warmup Messages body through cached Antigravity selection. It
+// checks the selected provider, successful local response, generated message
+// ID, client model, and New Conversation content.
 func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedulingV1(t *testing.T) {
 	groupID := int64(2001)
 	providerID := int64(1001)
@@ -150,7 +163,8 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedul
 
 	require.Equal(t, 200, rec.Code)
 
-	// The handler must select the Antigravity provider.
+	// Selection metadata identifies the provider whose warmup option produced
+	// this local response; inspecting the body alone would not establish its source.
 	selected, ok := c.Get(gatewayhttp.OpsProviderIDKey)
 	require.True(t, ok)
 	require.Equal(t, providerID, selected)
@@ -168,6 +182,10 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_MixedSchedul
 	require.Equal(t, "New Conversation", first["text"])
 }
 
+// TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_ForcePlatform
+// binds Antigravity forcing in request and Gin contexts before a warmup call.
+// It checks successful interception, the selected provider ID, message-ID
+// shape, and response model.
 func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_ForcePlatform(t *testing.T) {
 	groupID := int64(2002)
 	providerID := int64(1002)
@@ -210,9 +228,8 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityProvider_ForcePlatfor
 	req := httptest.NewRequest(http.MethodPost, "/antigravity/v1/messages", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Reproduce the ForcePlatform middleware bindings:
-	// request.Context supplies the execution service.
-	// gin.Context supplies the HTTP handler.
+	// Bind both middleware contexts because execution reads the request context
+	// while HTTP preparation reads Gin values before planning the forced-platform attempt.
 	ctx := requeststate.WithGroup(req.Context(), group)
 	ctx = apikey.WithForcePlatform(ctx, capability.PlatformAntigravity)
 	req = req.WithContext(ctx)

@@ -30,12 +30,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// provideCompositeSettingsHTTP binds domain services and settings coordination to the combined settings handler.
+// Combined settings save through one runtime with module-owned preparers and
+// application callbacks. The application supplies their publication order and
+// shared instances, including WS parameters before gateway settings, site
+// notifications before dynamic worker changes, and payment provider refresh
+// through the participant registry.
+
+// provideCompositeSettingsHTTP joins combined settings and module-specific
+// administration capabilities.
 func provideCompositeSettingsHTTP(source *composite.Runtime, registry *settings.Registry, monitor *ops.OpsService, pay *payment.ConfigService, turnstile *identity.TurnstileService, aliyun *identity.AliyunCaptchaService, attributes *identity.UserAttributeService, totp *identity.TotpService, users *identity.UserService, creative *creative.Public) *settingshttp.Handler {
 	return settingshttp.NewHandler(settingshttp.HandlerOptions{Settings: source, Participants: registry, Monitoring: monitor, Payment: pay, Turnstile: turnstile, Aliyun: aliyun, Attributes: attributes, Totp: totp, User: users, Creative: creative})
 }
 
-// provideCompositeReadOptions shares settings interpretation between background initialization and admin queries.
+// provideCompositeReadOptions binds settings interpretation and current process
+// default readers. cfg, gatewayRules, and defaults are required; forwarded
+// headers come from cfg's published values, while Grok default-model
+// publication uses the platform setter.
 func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, sockets *ws.Runtime) *composite.ReadOptions {
 	return &composite.ReadOptions{ResponsesWS: sockets, OAuth: oauth, Gateway: *gatewayRules, Scheduler: *defaults, DefaultBalance: func() float64 { return cfg.Default.UserBalance }, DefaultConcurrency: func() int { return cfg.Default.UserConcurrency }, Forwarded: func() runtimeconfig.ForwardedInput {
 		value := cfg.ForwardedClientIPSettings()
@@ -45,7 +55,11 @@ func provideCompositeReadOptions(cfg *config.Config, oauth *identity.OAuthSettin
 	}}
 }
 
-// provideCompositeRuntime binds configuration, settings services, and the publication order after commit.
+// provideCompositeRuntime binds preparation and ordered post-save application
+// callbacks. The WS step can return its publication error; subsequent steps
+// publish gateway, scheduler, provider, forwarded-IP, and client settings, then
+// notify site and adjust creative workers plus Ops monitoring. Persistence and
+// application-error handling remain owned by composite.Runtime.
 func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *composite.ReadOptions, grants *identity.GrantSettings, gatewayRuntime *gateway.RuntimeSettings, gatewayRules *gateway.AdminSettingsRules, defaults *scheduler.AdminDefaults, plans *billing.Plans, backendMode *admission.BackendMode, providerRuntime *provider.RuntimeSettings, quota *provider.QuotaSettingsCache, forwarded *runtimeconfig.ForwardedSettings, shared *schedulerSharedState, worker *creative.CreativeWorkerRuntime, monitor *ops.OpsService) *composite.Runtime {
 	prepare := composite.PrepareOptions{ReadValues: store.GetAll, Gateway: *gatewayRules, Scheduler: *defaults, ValidatePlans: func(ctx context.Context, value []billing.DefaultSubscriptionSetting) error {
 		return billing.ValidateDefaultSubscriptionPlans(ctx, value, plans.GetPlan)
@@ -61,6 +75,8 @@ func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *co
 			backendMode.Publish(s.BackendModeEnabled)
 			gatewayRuntime.PublishForwarding(s.MinClaudeCodeVersion, s.MaxClaudeCodeVersion, gateway.ForwardingSnapshot{OpenAITTFTMode: gateway.NormalizeOpenAITTFTMode(s.OpenAITTFTMode), FingerprintUnification: s.EnableFingerprintUnification, MetadataPassthrough: s.EnableMetadataPassthrough, CCHSigning: s.EnableCCHSigning, ClaudeOAuthSystemPromptInjection: s.EnableClaudeOAuthSystemPromptInjection, ClaudeOAuthSystemPrompt: s.ClaudeOAuthSystemPrompt, ClaudeOAuthSystemPromptBlocks: s.ClaudeOAuthSystemPromptBlocks, AnthropicCacheTTL1hInjection: s.EnableAnthropicCacheTTL1hInjection, RewriteMessageCacheControl: s.RewriteMessageCacheControl, ClientDatelineNormalization: s.EnableClientDatelineNormalization})
 			gatewayRuntime.PublishClientUserAgents(s.AntigravityUserAgentVersion, s.OpenAICodexUserAgent)
+			// Gateway settings have been published for later requests. Invalidate the
+			// compiled prompt cache so its next read rebuilds rules from the updated settings values.
 			promptpolicy.SharedCache().Store((*promptpolicy.CompiledConfig)(nil))
 			return nil
 		}},
@@ -94,12 +110,18 @@ func provideCompositeRuntime(store *settings.Store, cfg *config.Config, read *co
 	return composite.NewRuntime(store, *read, prepare, grants, gatewayRuntime, cfg.Totp.EncryptionKeyConfigured, steps)
 }
 
-// provideSettingsParticipants registers settings preparers; construction failure aborts application startup.
+// provideSettingsParticipants constructs the module registry from static field
+// and key ownership. Registry errors propagate to application construction, and
+// WS participant defaults come from the supplied runtime rather than a separate
+// settings snapshot.
 func provideSettingsParticipants(runtime *payment.Runtime, grants *identity.GrantSettings, schedulerDefaults *scheduler.AdminDefaults, gatewayRules *gateway.AdminSettingsRules, sockets *ws.Runtime) (*settings.Registry, error) {
 	return settings.NewRegistry(staticSettingsParticipants(runtime, grants, schedulerDefaults, gatewayRules, sockets.Defaults())...)
 }
 
-// staticSettingsParticipants maps fields to owning modules and storage keys for assembly validation.
+// staticSettingsParticipants returns preparers for the combined settings
+// registry in their listed order. No socket argument uses built-in WS defaults;
+// the first supplied argument replaces them, and additional socket arguments
+// are ignored.
 func staticSettingsParticipants(runtime *payment.Runtime, grants *identity.GrantSettings, schedulerDefaults *scheduler.AdminDefaults, gatewayRules *gateway.AdminSettingsRules, socketDefaults ...ws.Parameters) []settings.Participant {
 	defaults := ws.DefaultParameters()
 	if len(socketDefaults) > 0 {

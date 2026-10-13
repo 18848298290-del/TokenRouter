@@ -17,8 +17,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestErrorRulesStorageAndSubscription checks rule publication, compatibility keys, and write failures using
-// migrated PostgreSQL and Redis.
+// Error-rule updates propagate through PostgreSQL and Redis subscriptions to
+// another runtime instance. The scenario checks compatible cache keys and TTL,
+// returned-snapshot isolation, failed persistence, successful disable
+// publication, and deletion through the same persistent rule service.
+
+// TestErrorRulesStorageAndSubscription starts two error-rule subscribers over
+// migrated PostgreSQL and Redis. It checks cross-instance publication, cache
+// representation and expiry, isolated returned data, unchanged published rules
+// after failed writes, and stored disable/delete results.
 func TestErrorRulesStorageAndSubscription(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -32,6 +39,8 @@ func TestErrorRulesStorageAndSubscription(t *testing.T) {
 	repo := gatewaypg.NewErrorPassthroughRepository(f.client)
 	a := errorpolicy.NewErrorPassthroughService(repo, gatewayredis.NewErrorPassthroughCache(rdb))
 	b := errorpolicy.NewErrorPassthroughService(repo, gatewayredis.NewErrorPassthroughCache(rdb))
+	// Cleanup runs in reverse registration order. Stop both subscribers before
+	// closing the Redis client and container so final subscription callbacks retain their dependencies.
 	t.Cleanup(func() {
 		stop, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
@@ -40,6 +49,8 @@ func TestErrorRulesStorageAndSubscription(t *testing.T) {
 	})
 	require.NoError(t, a.StartContext(ctx))
 	require.NoError(t, b.StartContext(ctx))
+	// Subscription setup completes asynchronously. Wait for both registrations
+	// before publishing so the cross-instance assertion observes the active listener path.
 	require.Eventually(t, func() bool {
 		counts, e := rdb.PubSubNumSub(ctx, "error_passthrough_rules_updated").Result()
 		return e == nil && counts["error_passthrough_rules_updated"] == 2

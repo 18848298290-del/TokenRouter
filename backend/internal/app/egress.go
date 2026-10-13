@@ -19,6 +19,14 @@ import (
 	schedulerpostgres "github.com/TokenFlux/TokenRouter/internal/scheduler/postgres"
 )
 
+// Proxy edits can affect linked providers and scheduler visibility. The proxy
+// store receives transaction participants for those changes, while probing,
+// administrative tasks, and TLS collection use configured network policy and
+// the application's shared task tracker.
+
+// provideEgressProxyStore binds proxy changes to provider mutations and
+// scheduler outbox writes. Each callback receives the store's executor so
+// linked changes can participate in the same database operation.
 func provideEgressProxyStore(client *dbent.Client, db *sql.DB) *egresspostgres.ProxyStore {
 	return egresspostgres.NewProxyStore(client, db, egresspostgres.ProxyStoreOptions{
 		Providers: func(exec postgresinfra.Executor) egresspostgres.ProxyProviderParticipant {
@@ -30,6 +38,10 @@ func provideEgressProxyStore(client *dbent.Client, db *sql.DB) *egresspostgres.P
 	})
 }
 
+// provideEgressProbe constructs proxy probes using configured targets and
+// destination checks. With nil cfg, resolved-IP validation starts enabled; a
+// supplied cfg controls that validation, private hosts, TLS verification, and
+// the response-size limit.
 func provideEgressProbe(cfg *config.Config) egress.ProxyExitInfoProber {
 	options := egressprovider.ProxyProbeOptions{ValidateResolvedIP: true}
 	if cfg != nil {
@@ -44,18 +56,26 @@ func provideEgressProbe(cfg *config.Config) egress.ProxyExitInfoProber {
 	return egressprovider.NewProxyExitInfoProber(options)
 }
 
+// provideEgressAdmin connects proxy administration to probing and tracked
+// background work.
 func provideEgressAdmin(store *egresspostgres.ProxyStore, prober egress.ProxyExitInfoProber, cache egress.ProxyLatencyCache, tasks *lifecycle.Tasks) *egress.ProxyAdmin {
 	return egress.NewProxyAdmin(store, prober, cache, egressprovider.ProxyQualityHTTP{}, egress.ProxyAdminOptions{Now: time.Now, Tasks: tasks, Diagnostics: egress.Diagnostics{Logf: logging.LegacyPrintf}})
 }
 
+// provideEgressProfiles binds persisted TLS profiles to their shared cache.
 func provideEgressProfiles(repo egress.TLSFingerprintProfileRepository, cache egress.TLSFingerprintProfileCache) *egress.TLSFingerprintProfileService {
 	return egress.NewTLSFingerprintProfileService(repo, cache, egress.Diagnostics{Logf: logging.LegacyPrintf})
 }
 
+// provideEgressRouters binds persisted TLS routing rules to their cache.
 func provideEgressRouters(repo egress.TLSFingerprintRouterRepository, cache egress.TLSFingerprintRouterCache) *egress.TLSFingerprintRouterService {
 	return egress.NewTLSFingerprintRouterService(repo, cache, egress.Diagnostics{Logf: logging.LegacyPrintf})
 }
 
+// provideEgressCollector constructs TLS fingerprint collection with the system
+// clock. A supplied cfg sets listener, certificate, session, and record
+// options; listener lifetime is managed separately by the collector and
+// application lifecycle.
 func provideEgressCollector(cfg *config.Config) *egressprovider.TLSFingerprintCollectorService {
 	options := egressprovider.CollectorOptions{Now: time.Now, Diagnostics: egress.Diagnostics{Logf: logging.LegacyPrintf}}
 	if cfg != nil {
@@ -71,19 +91,25 @@ func provideEgressCollector(cfg *config.Config) *egressprovider.TLSFingerprintCo
 	return egressprovider.NewTLSFingerprintCollectorService(options)
 }
 
+// provideEgressProfileHTTP joins profile administration and fingerprint
+// collection for HTTP.
 func provideEgressProfileHTTP(core *egress.TLSFingerprintProfileService, collector *egressprovider.TLSFingerprintCollectorService) *egresshttp.TLSFingerprintProfileHandler {
 	return egresshttp.NewTLSFingerprintProfileHandler(core, collector)
 }
 
+// provideProxyTransfer binds proxy transfers to tracked tasks and system time.
 func provideProxyTransfer(admin *egress.ProxyAdmin, tasks *lifecycle.Tasks) *egress.ProxyTransfer {
 	return egress.NewProxyTransfer(admin, tasks, time.Now)
 }
 
+// provideProxyHTTP exposes proxy administration and transfer operations through
+// HTTP.
 func provideProxyHTTP(admin *egress.ProxyAdmin, transfers *egress.ProxyTransfer) *egresshttp.ProxyHandler {
 	return egresshttp.NewProxyHandler(admin, transfers)
 }
 
-// provideProxyExpiry supplies the shared proxy store to the one-minute expiry worker.
+// provideProxyExpiry constructs one-minute proxy expiry checks for lifecycle
+// startup.
 func provideProxyExpiry(repo egress.ProxyRepository) *egress.ProxyExpiryService {
 	return egress.NewProxyExpiryService(repo, time.Minute)
 }

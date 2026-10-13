@@ -22,12 +22,21 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// provideCalendar captures the timezone initialized by bootstrap; the Ent dependency enforces assembly order.
+// Successful Ent and Redis assembly registers each resource with the lifecycle
+// manager. Redis runtime-key migration finishes before the client is returned
+// to worker constructors, and calendar capture depends on Ent bootstrap so
+// business date calculations use the initialized process timezone.
+
+// provideCalendar captures bootstrap's process location in the shared calendar.
+// The Ent argument is a Wire ordering dependency, requiring database bootstrap
+// before this constructor reads time.Local.
 func provideCalendar(_ *ent.Client) timezone.Calendar {
 	return timezone.NewCalendar(time.Local)
 }
 
-// databaseAdvisoryLease binds the database pool; callers choose lock identities and handle acquisition failure.
+// databaseAdvisoryLease returns nil when no SQL pool is supplied. Its callback
+// hashes the requested lock key, and callers handle the acquisition flag and
+// invoke the returned release after owned work finishes.
 func databaseAdvisoryLease(db *sql.DB) func(context.Context, string) (func(), bool) {
 	if db == nil {
 		return nil
@@ -37,6 +46,9 @@ func databaseAdvisoryLease(db *sql.DB) func(context.Context, string) (func(), bo
 	}
 }
 
+// provideEnt runs Ent bootstrap and registers the acquired client for lifecycle
+// closure. Call before manager startup; bootstrap failure returns immediately,
+// while the registered client owns the shared SQL pool released at level 910.
 func provideEnt(ctx context.Context, cfg *config.Config, manager *lifecycle.Manager) (*ent.Client, error) {
 	client, _, err := bootstrap.InitEnt(ctx, cfg)
 	if err != nil {
@@ -46,12 +58,21 @@ func provideEnt(ctx context.Context, cfg *config.Config, manager *lifecycle.Mana
 	return client, nil
 }
 
+// provideRedis constructs Redis and passes a two-minute child context to
+// runtime-key migration. Socket operations retain the client timeout policy
+// established by bootstrap.InitRedis, so this context is not a strict I/O
+// deadline. Migration failure closes the unregistered client and returns its
+// cause; success registers Redis closure before returning the client to
+// dependent constructors.
 func provideRedis(ctx context.Context, cfg *config.Config, manager *lifecycle.Manager) (*redis.Client, error) {
 	client := bootstrap.InitRedis(cfg)
-	// Migrate runtime keys before constructing workers or accepting traffic so limits use the migrated names.
+	// Migrate runtime keys before returning Redis to dependent constructors.
+	// Workers and traffic then read the migrated names instead of mixing old and current limit namespaces.
 	migrationCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	if err := redisinfra.MigrateProviderNames(migrationCtx, client); err != nil {
+		// Migration failed before lifecycle ownership was registered. Close this
+		// acquired client locally and retain the migration error, discarding any separate close failure.
 		_ = client.Close()
 		return nil, err
 	}
@@ -59,18 +80,22 @@ func provideRedis(ctx context.Context, cfg *config.Config, manager *lifecycle.Ma
 	return client, nil
 }
 
-// provideSettingsStore creates the shared version, notifications, and update coordinator.
+// provideSettingsStore constructs shared settings storage, version,
+// notifications, and update coordination.
 // @project-doc docs/interfaces/configuration.md#runtime_settings
 func provideSettingsStore(client *ent.Client) *settings.Store {
 	return settings.New(settingspostgres.NewSettingRepository(client))
 }
 
-// provideIdempotencyRepository uses the application SQL pool for idempotency storage.
+// provideIdempotencyRepository binds command idempotency persistence to the
+// application SQL pool.
 func provideIdempotencyRepository(db *sql.DB) idempotency.IdempotencyRepository {
 	return idempotencypostgres.NewIdempotencyRepository(db)
 }
 
-// provideSQLDB returns the pool owned and closed by Ent.
+// provideSQLDB returns the pool exposed by the Ent SQL driver. Nil client or
+// another driver type returns an error; callers borrow this pool while Ent
+// retains its lifecycle ownership and closure.
 func provideSQLDB(client *ent.Client) (*sql.DB, error) {
 	if client == nil {
 		return nil, errors.New("nil ent client")

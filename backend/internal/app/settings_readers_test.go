@@ -12,6 +12,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Gateway execution readers must retain the same settings instances used for
+// post-save publication. The scenario assembles them without loading storage,
+// publishes provider scheduling thresholds, and checks execution reads the
+// changed value through the shared cache while process-global User-Agent
+// callbacks are cleared afterward.
+
+// TestSettingsReadersSharePublishedState assembles domain readers and execution
+// settings over one Store. It checks every bound instance is shared,
+// construction performs no source read, and published provider thresholds reach
+// execution without another read.
 func TestSettingsReadersSharePublishedState(t *testing.T) {
 	repo := &readerStoreProbe{}
 	store := settings.New(repo)
@@ -23,7 +33,8 @@ func TestSettingsReadersSharePublishedState(t *testing.T) {
 	searchRuntime := search.NewConfigService(store, nil, nil, search.NewRegistry())
 	readers := provideGatewayRuntimeReaders(store, gatewayRuntime, provider, quota, routing, moderation, searchRuntime, nil)
 	t.Cleanup(func() {
-		// Remove this test's global User-Agent readers so other tests can install their own bindings.
+		// User-Agent resolvers are process-global callbacks installed by assembly.
+		// Clear both after this scenario so later tests can bind their own settings instances independently.
 		openai.SetCodexCanonicalUserAgentResolver(nil)
 		antigravity.SetUserAgentVersionResolver(nil)
 	})

@@ -24,17 +24,34 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
+// Checkout, order queries, fulfillment, and refunds share provider bindings and
+// order storage. Refund rights are constructed from the transaction supplied by
+// RefundStore, connecting balance and subscription changes to that transaction
+// while external provider calls remain owned by RefundWorkflow.
+
+// paymentRefundRights adapts transaction-bound billing changes for payment
+// refund persistence.
 type paymentRefundRights struct {
-	balances      *billingpostgres.BalanceStore
-	subscriptions *billing.SubscriptionService
+	// balances and subscriptions are constructed from RefundStore's selected Ent
+	// transaction. RefundStore owns its completion, so both rights operations participate in that same transaction lifetime.
+	balances      *billingpostgres.BalanceStore // refund balance participant
+	subscriptions *billing.SubscriptionService  // refund subscription participant
 }
 
+// providePaymentRuntime assembles checkout, queries, refunds, fulfillment, and
+// payment resume using shared dependencies. Refund participants receive the
+// selected Ent transaction and application calendar; notifications and
+// fulfillment background effects use the supplied services and task tracker.
+// The environment signing key and configured encryption key are resolved into
+// payment resume keys.
 func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, balancer payment.LoadBalancer, redeem *billing.RedeemService, subscriptions *billing.SubscriptionService, affiliate *promotion.AffiliateService, notification *notificationcore.NotificationEmailService, instances *paymentpostgres.InstanceStore, routingGroups *routingpostgres.GroupStore, identityUsers *identitypostgres.UserStore, coreConfig *payment.ConfigService, key payment.EncryptionKey, settings *identity.OAuthSettings, tasks *lifecycle.Tasks, calendar timezone.Calendar) *payment.Runtime {
 	bindings := payment.NewProviderBindings(instances, registry, balancer, payment.BindingRuntime{Factory: paymentadapter.CreateProvider, RegistryFactory: paymentadapter.CreateProvider, Warn: slog.Warn}, false)
 	store := paymentpostgres.NewRefundStore(client, func(tx *dbent.Tx) payment.RefundRights {
 		return paymentRefundRights{balances: billingpostgres.BalanceInTx(tx), subscriptions: billingpostgres.SubscriptionsInTx(tx, billingGroups{Repository: routingGroups}, billing.DateRuntime{Now: time.Now, Calendar: &calendar})}
 	})
 	audit := func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
+		// This audit callback reports write failure through logging and returns
+		// no error; the payment operation therefore retains its own result independently of diagnostic persistence.
 		if err := store.AppendObservation(ctx, id, action, operator, detail); err != nil {
 			slog.Error("audit log failed", "orderID", id, "action", action, "error", err)
 		}
@@ -56,6 +73,8 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 		}
 		return out, e
 	}, Warn: slog.Warn, Provider: bindings.GetRefundProvider, Observe: func(ctx context.Context) func() { return timing.ObserveDependency(ctx, "payment") }, Audit: func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
+		// This audit callback reports write failure through logging and returns
+		// no error; the payment operation therefore retains its own result independently of diagnostic persistence.
 		if err := store.AppendObservation(ctx, id, action, operator, detail); err != nil {
 			slog.Error("audit log failed", "orderID", id, "action", action, "error", err)
 		}
@@ -73,6 +92,8 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 		WeChatCredential: func(ctx context.Context) (string, string, error) {
 			cfg, e := settings.GetWeChatConnectOAuthConfig(ctx)
 			appID, secret := strings.TrimSpace(cfg.AppIDForMode("mp")), strings.TrimSpace(cfg.AppSecretForMode("mp"))
+			// In-app WeChat checkout needs complete MP credentials. Convert settings
+			// failure or an unusable mode into the payment-specific unavailable reason before authorization proceeds.
 			if e != nil || !cfg.SupportsMode("mp") || appID == "" || secret == "" {
 				return "", "", apperror.ServiceUnavailable("WECHAT_PAYMENT_MP_NOT_CONFIGURED", "wechat in-app payment requires a complete WeChat MP OAuth credential")
 			}
@@ -81,6 +102,8 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 		CreateProvider: paymentadapter.CreateProvider, RememberLocale: notification.RememberRecipientLocale,
 		Observe: func(ctx context.Context) func() { return timing.ObserveDependency(ctx, "payment") }, Error: slog.Error,
 		Audit: func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
+			// Checkout audit is observational: record a failure in logs while the
+			// checkout callback returns no audit error to replace the order operation's result.
 			if e := store.AppendObservation(ctx, id, action, operator, detail); e != nil {
 				slog.Error("audit log failed", "orderID", id, "action", action, "error", e)
 			}
@@ -115,19 +138,28 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 	return &payment.Runtime{Checkout: checkout, OrderQueries: queries, RefundWorkflow: workflow, OrderLifecycle: orderLifecycle, ProviderBindings: bindings}
 }
 
+// DeductBalance delegates refund deduction to the transaction-bound billing
+// balance writer.
 func (p paymentRefundRights) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
 	return p.balances.DeductRefundBalance(ctx, id, amount)
 }
 
+// CompensateBalance delegates refund compensation through the bound billing
+// transaction participant.
 func (p paymentRefundRights) CompensateBalance(ctx context.Context, id int64, amount float64) error {
 	return p.balances.CompensateRefundBalance(ctx, id, amount)
 }
 
+// AdjustSubscription delegates a day adjustment to the transaction-bound
+// subscription service. The returned subscription value is discarded, and the
+// error remains available to RefundStore for its transaction result.
 func (p paymentRefundRights) AdjustSubscription(ctx context.Context, id int64, days int) error {
 	_, err := p.subscriptions.ExtendSubscription(ctx, id, days)
 	return err
 }
 
+// RevokeSubscription delegates revocation through the bound billing
+// subscription transaction participant.
 func (p paymentRefundRights) RevokeSubscription(ctx context.Context, id int64) error {
 	return p.subscriptions.RevokeSubscription(ctx, id)
 }

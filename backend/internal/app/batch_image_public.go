@@ -17,7 +17,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// provideBatchPublic binds batch image submission to shared task, provider, funding, and model settings services.
+// Batch image submissions use the application's provider registry and funding
+// services. Subscription lookup and rate selection receive the job owner's
+// billing identity, while model tracing records the client name and group
+// mapping used for submission.
+
+// provideBatchPublic constructs batch submission dependencies and owner-aware
+// subscription callbacks. A nil cfg leaves PublicOptions unset for the batch
+// service to interpret; optional pricing and authentication invalidation are
+// bound when supplied, while registry and subscription storage remain required
+// by their callbacks.
 func provideBatchPublic(attributes *routing.ModelAttributeService, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService, groups routing.GroupRepository, rates billing.UserGroupRateRepository, queue batchimage.BatchImageQueue, pricing *batchimage.Pricing, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Public {
 	core := &batchimage.Public{
 		Attributes: attributes,

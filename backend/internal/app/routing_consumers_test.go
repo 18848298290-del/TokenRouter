@@ -12,17 +12,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// subscriptionGroupFixture supplies a group with a business name and translated display copy.
+// Subscription display uses translated group text while retaining the stored
+// business name. A shared group fixture changes localization revision across
+// sequential cases, exposing valid translation, stale-translation fallback, and
+// legacy-name behavior through the billing-to-HTTP adapter.
+
+// subscriptionGroupFixture supplies shared group localization for subscription
+// display scenarios.
 type subscriptionGroupFixture struct {
+	// GroupRepository supplies unused methods; GetByIDLite provides the group
+	// data read by subscription enrichment and later exposed by the HTTP conversion.
 	routing.GroupRepository
-	group *routing.Group
+	group *routing.Group // shared localized group
 }
 
+// GetByIDLite returns the configured group pointer for subscription enrichment.
+// The fixture ignores context and ID, sharing its localization with the
+// sequential cases that update revision before each query.
 func (r subscriptionGroupFixture) GetByIDLite(context.Context, int64) (*routing.Group, error) {
 	return r.group, nil
 }
 
-// TestSubscriptionGroupLanguage checks translations, stale-translation fallback, and legacy group names.
+// TestSubscriptionGroupLanguage enriches subscription plans under English and
+// Chinese request language with changing revisions. It checks translated,
+// stale, and legacy group display names while the stored business name remains
+// unchanged.
 func TestSubscriptionGroupLanguage(t *testing.T) {
 	en := "en"
 	group := &routing.Group{ID: 1, Name: "business-name", Localization: routing.GroupLocalization{
@@ -32,9 +46,9 @@ func TestSubscriptionGroupLanguage(t *testing.T) {
 	}}
 	service := billing.NewSubscriptionService(billingGroups{Repository: subscriptionGroupFixture{group: group}}, nil, nil)
 	for _, test := range []struct {
-		language       string
-		want           string
-		sourceRevision int64
+		language       string // requested display language
+		want           string // expected group label
+		sourceRevision int64  // current source revision
 	}{
 		{"en", "English group", 1},
 		{"zh-Hans", "中文分组", 1},

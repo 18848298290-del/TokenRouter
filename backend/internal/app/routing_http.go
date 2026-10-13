@@ -15,11 +15,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// Group administration responses combine current capacity with calendar-based
+// usage summaries and Key display data. The HTTP adapter narrows dashboard
+// totals and Key/group DTOs while the Live capability callback invokes the
+// attestation provider's current availability check.
+
+// provideGroupRateAdmin binds user-group multiplier administration and API-Key
+// invalidation.
 func provideGroupRateAdmin(repo billing.UserGroupRateRepository, keys *apikey.APIKeyService) *billing.GroupRateAdmin {
 	return billing.NewGroupRateAdmin(repo, keys)
 }
 
-// provideRoutingGroupHTTP binds group administration and display queries to routing HTTP.
+// provideRoutingGroupHTTP binds group administration with capacity, rates,
+// usage, and Key reads. Today comes from the shared calendar, dashboard errors
+// retain available result behavior, and Key listing preserves its returned
+// pagination total.
 func provideRoutingGroupHTTP(core *routing.GroupAdmin, capacity *routing.CapacityService, keys *apikey.Admin, rates *billing.GroupRateAdmin, dashboard *usage.DashboardService, calendar timezone.Calendar) *routinghttp.GroupHandler {
 	resources := routinghttp.GroupResources{
 		Capacity: capacity, Rates: rates, Today: calendar.Today,

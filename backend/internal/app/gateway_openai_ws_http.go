@@ -18,7 +18,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// provideResponsesWSHTTP binds WS handlers to shared attempt support, lifecycle tracking, and runtime readers.
+// Responses WS handlers reuse OpenAI attempt support while resolving online
+// parameters from the WS runtime. Sticky binding reads the current session TTL
+// when that runtime is available, and each handler shares pricing, credential
+// execution, and application request activity.
+
+// provideResponsesWSHTTP constructs ingress with shared attempts, pricing, and
+// activity. An available source supplies the online runtime in options;
+// activity and common.Support are required, while responsesWSBindings describes
+// optional execution and funding capabilities.
 func provideResponsesWSHTTP(
 	source *wshttp.OpenAIWebSocketExecutor, credentials *gatewayhttp.RequestCredentialExecutor,
 	funding *admission.FundingAdmission,
@@ -43,7 +51,9 @@ func provideResponsesWSHTTP(
 	return result
 }
 
-// responsesWSOptions returns static connection and first-frame options with defaults.
+// responsesWSOptions supplies default reads, first-message budget, and three
+// provider switches. Positive configured switches replace the default, and the
+// per-Key ingress limit is copied directly when configuration exists.
 func responsesWSOptions(cfg *config.Config) wshttp.ResponsesWSOptions {
 	options := wshttp.ResponsesWSOptions{
 		MaxProviderSwitches: 3,
@@ -59,7 +69,10 @@ func responsesWSOptions(cfg *config.Config) wshttp.ResponsesWSOptions {
 	return options
 }
 
-// responsesWSBindings binds shared state and per-turn execution functions.
+// responsesWSBindings combines online execution, common attempt support, and
+// reauthorization reads. common.Support is required; when source exists,
+// credential and selection callbacks are bound, and sticky TTL prefers
+// source.Runtime's snapshot over the selection default.
 func responsesWSBindings(source *wshttp.OpenAIWebSocketExecutor, credentials *gatewayhttp.RequestCredentialExecutor, funding *admission.FundingAdmission, keys *apikey.APIKeyService, common openaiattempt.Bindings, prompt *promptpolicy.Service, blocks *session.CyberBlocks, choices *selection.Compatible, planner *gatewayprovider.RoutePlanner, subscriptions admission.SubscriptionReader) wshttp.Bindings {
 	b := wshttp.Bindings{
 		Common:        common,
@@ -87,7 +100,10 @@ func responsesWSBindings(source *wshttp.OpenAIWebSocketExecutor, credentials *ga
 		b.Isolate = source.EnsureSessionIsolation
 		b.BindSticky = func(ctx context.Context, groupID *int64, hash string, id int64) error {
 			ttl := choices.SessionStickyTTL()
+			// Runtime settings can change after handler assembly. Read the current
+			// TTL for this binding so new affinity writes use the published session lifetime.
 			if source.Runtime != nil {
+				// Published session lifetimes are seconds, converted here for sticky expiry.
 				ttl = time.Duration(source.Runtime.Snapshot().StickySessionTTLSeconds) * time.Second
 			}
 			return choices.BindStickySessionWithTTL(ctx, groupID, hash, id, ttl)

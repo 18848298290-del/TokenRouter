@@ -59,14 +59,11 @@ type TLSFingerprintRouterRule struct {
 // CodexInviteResetTLSFingerprintProfileID configure reset identity; request
 // Rules are evaluated separately and in stored order.
 type TLSFingerprintRouter struct {
-	// stored router database identity
-	ID int64 `json:"id"`
-	// administrator router display name
-	Name string `json:"name"`
+	ID   int64  `json:"id"`   // stored router database identity
+	Name string `json:"name"` // administrator router display name
 	// optional router description text
 	Description *string `json:"description"`
-	// request matching activation flag
-	Enabled bool `json:"enabled"`
+	Enabled     bool    `json:"enabled"` // request matching activation flag
 	// ChatGPTOAuthTokenUserAgent supplies dedicated token-request identity when
 	// its trimmed value is nonblank. OpenAI authorization otherwise selects its
 	// existing token User-Agent through the consuming caller.
@@ -95,8 +92,7 @@ type TLSFingerprintRouter struct {
 	Rules []TLSFingerprintRouterRule `json:"rules"`
 	// persisted router creation time
 	CreatedAt time.Time `json:"created_at"`
-	// persisted router update time
-	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedAt time.Time `json:"updated_at"` // persisted router update time
 }
 
 // ValidationError identifies the invalid field and the reason.

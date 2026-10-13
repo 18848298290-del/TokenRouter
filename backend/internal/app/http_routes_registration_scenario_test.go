@@ -1,7 +1,5 @@
 package app
 
-// These tests cover route registration and middleware order in http_routes.go and http_routes_admin.go.
-
 import (
 	"encoding/json"
 	"net/http"
@@ -18,8 +16,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// TestNativeRouteInventory compares production registration with the saved inventory and lets Gin detect
-// duplicate routes.
+// Production registration must agree with the saved HTTP method/path inventory
+// and preserve guard order. An early middleware captures the selected chain
+// then aborts, letting the scenario dispatch every route safely with
+// constructed placeholder handlers and inspect removed administration paths
+// afterward.
+
+// TestNativeRouteInventory mounts common and all application route families
+// into one Gin engine. It checks the saved method/path inventory, selected
+// authentication/audit/step-up order, logged handler chains, and NotFound
+// responses for retired administrator paths.
 func TestNativeRouteInventory(t *testing.T) {
 	r := gin.New()
 	var chain []string
@@ -43,6 +49,8 @@ func TestNativeRouteInventory(t *testing.T) {
 		actual = append(actual, route.Method+" "+route.Path)
 		path := route.Path
 		segments := strings.Split(path, "/")
+		// Replace route parameters with a concrete fixture value so each request
+		// matches its registered pattern and the early aborting middleware can capture the full handler chain.
 		for i, part := range segments {
 			if strings.HasPrefix(part, ":") || strings.HasPrefix(part, "*") {
 				segments[i] = "1"
@@ -71,8 +79,10 @@ func TestNativeRouteInventory(t *testing.T) {
 			}
 		}
 		encoded, err := json.Marshal(struct {
-			Method, Path string
-			Handlers     []string
+			// Method and Path identify the registered endpoint, while Handlers records
+			// its selected chain. The JSON log carries all three for route-order inspection.
+			Method, Path string   // Method: registered request verb; Path: registered URL pattern
+			Handlers     []string // ordered handler names
 		}{route.Method, route.Path, append([]string(nil), chain...)})
 		require.NoError(t, err)
 		t.Logf("TEST_ROUTE_CHAIN %s", encoded)
@@ -88,15 +98,26 @@ func TestNativeRouteInventory(t *testing.T) {
 	}
 }
 
-// inventoryJWT identifies the injected authentication middleware in the recorded handler chain.
+// inventoryJWT identifies the injected bearer-auth marker while allowing chain
+// inspection.
 func inventoryJWT(c *gin.Context) { c.Next() }
 
+// inventoryAdmin identifies administrator authentication while allowing
+// recorded chain progression.
 func inventoryAdmin(c *gin.Context) { c.Next() }
 
+// inventoryAudit identifies the audit middleware position in registered route
+// chains.
 func inventoryAudit(c *gin.Context) { c.Next() }
 
+// inventoryStepUp identifies sensitive verification placement in registered
+// route chains.
 func inventoryStepUp(c *gin.Context) { c.Next() }
 
+// inventoryBackendAuth identifies authentication backend-mode policy in route
+// chains.
 func inventoryBackendAuth(c *gin.Context) { c.Next() }
 
+// inventoryBackendUser identifies user backend-mode policy in registered route
+// chains.
 func inventoryBackendUser(c *gin.Context) { c.Next() }

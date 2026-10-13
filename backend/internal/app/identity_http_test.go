@@ -23,26 +23,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Profile HTTP exposes current identity bindings and compatible source fields
+// while email changes use verified binding rather than ordinary profile
+// updates. These scenarios check avatar/profile display, binding and unbinding,
+// session cleanup, password rejection, and authorization-start data using
+// production identity handlers with mutable in-memory user fixtures.
+
+// userHandlerRepoStub supplies one mutable user and its authentication
+// identities for profile tests.
 type userHandlerRepoStub struct {
-	user       *identitycore.User
-	identities []identitycore.UserAuthIdentityRecord
-	unbound    []string
+	// user is the single mutable profile. identities supplies its bindings and
+	// unbound records requested removals. Getters copy outer values, retaining nested references; fixture callers coordinate background profile mutation with these reads.
+	user       *identitycore.User                    // configured mutable user
+	identities []identitycore.UserAuthIdentityRecord // configured provider bindings
+	unbound    []string                              // requested provider removals
 }
 
+// userHandlerEmailCacheStub supplies a fixed verification-code value for email
+// binding.
 type userHandlerEmailCacheStub struct {
+	// data is returned directly for every verification lookup. The fixture keeps
+	// this shared pointer available after its no-op write and delete calls in binding scenarios.
 	data *identitycore.VerificationCodeData
 }
 
-// userHandlerSettingRepoStub supplies email-change settings through GetValue.
+// userHandlerSettingRepoStub supplies direct email-change flag reads for
+// binding tests.
 type userHandlerSettingRepoStub struct {
+	// Repository supplies unused methods; GetValue implements the direct
+	// email-change flag read required to reach password checking in the binding scenario.
 	settings.Repository
-	values map[string]string
+	values map[string]string // identity feature flag values
 }
 
+// userHandlerRefreshTokenCacheStub records requested user-session revocations
+// for identity HTTP assertions.
 type userHandlerRefreshTokenCacheStub struct {
-	revokedUserIDs []int64
+	revokedUserIDs []int64 // requested session cleanup users
 }
 
+// TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields loads a
+// LinuxDo-backed current user through session HTTP. It checks bound flags,
+// avatar URL, nested binding data, and matching avatar/username source labels
+// in the compatible response.
 func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T) {
 	verifiedAt := time.Date(2026, 4, 20, 8, 30, 0, 0, time.UTC)
 	repo := &userHandlerRepoStub{
@@ -81,8 +104,8 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // panel result code
+		Data map[string]any `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -109,6 +132,9 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 	require.Equal(t, "linuxdo", usernameSource["source"])
 }
 
+// TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens calls revoke-all HTTP
+// with a recording refresh cache. It checks successful response and the revoked
+// user identity while the fixture's stored TokenVersion remains unchanged.
 func TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -139,23 +165,25 @@ func TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, []int64{29}, refreshTokenCache.revokedUserIDs)
-	// resolvedTokenVersion derives JWT token_version from email and password_hash fingerprints.
-	// The in-memory TokenVersion increment does not need a users-table write.
-	// Session revocation is handled by the refresh-session cleanup asserted above.
+	// This scenario observes refresh-session cleanup rather than validating an
+	// existing access token. Its single-user repository retains TokenVersion because the cleanup path does not write this fixture user.
 	require.Equal(t, int64(7), repo.user.TokenVersion)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // panel result code
 		Data struct {
-			Message string `json:"message"`
-		} `json:"data"`
+			Message string `json:"message"` // HTTP response message
+		} `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
 	require.Equal(t, "All sessions have been revoked. Please log in again.", resp.Data.Message)
 }
 
-// newUserProfileCore owns asynchronous profile updates and waits for them during test cleanup.
+// newUserProfileCore constructs profile operations with an owned background
+// task tracker. Test cleanup stops admitted work under a five-second budget
+// before fixture dependencies are released, and reports unfinished work as a
+// failed assertion.
 func newUserProfileCore(t *testing.T, users identitycore.UserRepository) *identitycore.UserService {
 	t.Helper()
 	tasks := lifecycle.NewTasks()
@@ -167,7 +195,10 @@ func newUserProfileCore(t *testing.T, users identitycore.UserRepository) *identi
 	return identitycore.NewUserService(users, nil, nil, nil, tasks.Go)
 }
 
-// newUserBindingAuth binds session and email verification with a nil database connection for profile tests.
+// newUserBindingAuth constructs authentication rules and persistence adapters
+// without a database client. cfg supplies required JWT options; callers
+// exercise profile/session paths backed by the supplied users, refresh cache,
+// settings, and email capabilities.
 func newUserBindingAuth(users identitycore.UserRepository, refresh identitycore.RefreshTokenCache, cfg *config.Config, settings identitycore.AuthSettings, email identitycore.AuthEmail) *identitycore.AuthService {
 	options := &identitycore.AuthOptions{JWT: identitycore.SessionOptions{Secret: cfg.JWT.Secret, ExpireHour: cfg.JWT.ExpireHour}}
 	deps := &identitycore.AuthDependencies{Users: users, RefreshTokens: refresh, Options: options, Settings: settings, Email: email}
@@ -177,45 +208,67 @@ func newUserBindingAuth(users identitycore.UserRepository, refresh identitycore.
 	return core
 }
 
-// newUserBindingSettings combines identity readers that check the email-change setting on each call.
+// newUserBindingSettings combines identity, grant, display, OAuth, and
+// promotion readers over one Store.
 func newUserBindingSettings(repo settings.Repository, cfg *config.Config) *identityAuthSettings {
 	store := settings.New(repo)
 	return provideIdentityAuthSettings(provideIdentitySettings(store), provideGrantSettings(store, cfg, nil), provideSiteDisplay(store, cfg), provideOAuthSettings(store, cfg), providePromotionSettings(store))
 }
 
+// Create accepts fixture user creation without adding another stored user.
 func (s *userHandlerRepoStub) Create(context.Context, *identitycore.User) error { return nil }
 
+// CreateWithNormalizedEmailGuard delegates fixture creation while ignoring
+// normalized-email uniqueness.
 func (s *userHandlerRepoStub) CreateWithNormalizedEmailGuard(ctx context.Context, user *identitycore.User, _ string) error {
 	return s.Create(ctx, user)
 }
 
+// GetByID returns an outer copy of the configured nonnil user and ignores the
+// requested identity. Nested references remain shared, so callers keep those
+// values stable when using the returned profile fixture.
 func (s *userHandlerRepoStub) GetByID(context.Context, int64) (*identitycore.User, error) {
 	cloned := *s.user
 	return &cloned, nil
 }
 
+// GetByEmail returns an outer copy of the configured nonnil user regardless of
+// email. Nested references retain fixture ownership, matching the shared record
+// used by these profile and email-binding scenarios.
 func (s *userHandlerRepoStub) GetByEmail(context.Context, string) (*identitycore.User, error) {
 	cloned := *s.user
 	return &cloned, nil
 }
 
+// GetFirstAdmin returns an outer copy of the fixture user without checking
+// role. The user is required, and nested references remain shared rather than
+// implementing an administrator search repository.
 func (s *userHandlerRepoStub) GetFirstAdmin(context.Context) (*identitycore.User, error) {
 	cloned := *s.user
 	return &cloned, nil
 }
 
+// Update stores an outer copy of the supplied user and ignores the field
+// selector. Nested data remains shared with that value, and fixture callers
+// coordinate mutation while profile operations use it.
 func (s *userHandlerRepoStub) Update(_ context.Context, user *identitycore.User, _ identitycore.UserUpdateFields) error {
 	cloned := *user
 	s.user = &cloned
 	return nil
 }
 
+// UpdateWithNormalizedEmailGuard delegates fixture update while ignoring
+// normalized-email uniqueness.
 func (s *userHandlerRepoStub) UpdateWithNormalizedEmailGuard(ctx context.Context, user *identitycore.User, _ string, fields identitycore.UserUpdateFields) error {
 	return s.Update(ctx, user, fields)
 }
 
+// Delete accepts the fixture operation without removing its configured user.
 func (s *userHandlerRepoStub) Delete(context.Context, int64) error { return nil }
 
+// GetUserAvatar returns selected avatar fields when the fixture user has a URL.
+// A nil user or empty URL returns nil without error, and the requested user ID
+// is ignored.
 func (s *userHandlerRepoStub) GetUserAvatar(context.Context, int64) (*identitycore.UserAvatar, error) {
 	if s.user == nil || s.user.AvatarURL == "" {
 		return nil, nil
@@ -229,6 +282,9 @@ func (s *userHandlerRepoStub) GetUserAvatar(context.Context, int64) (*identityco
 	}, nil
 }
 
+// UpsertUserAvatar copies supplied avatar metadata into the configured user and
+// returns it as an avatar value. The user is required, identity is ignored, and
+// callers coordinate writes to this mutable fixture.
 func (s *userHandlerRepoStub) UpsertUserAvatar(_ context.Context, _ int64, input identitycore.UpsertUserAvatarInput) (*identitycore.UserAvatar, error) {
 	s.user.AvatarURL = input.URL
 	s.user.AvatarSource = input.StorageProvider
@@ -244,6 +300,9 @@ func (s *userHandlerRepoStub) UpsertUserAvatar(_ context.Context, _ int64, input
 	}, nil
 }
 
+// DeleteUserAvatar clears the configured user's avatar URL, source, MIME, size,
+// and hash. The user is required; its identity argument is ignored and other
+// profile fields stay available.
 func (s *userHandlerRepoStub) DeleteUserAvatar(context.Context, int64) error {
 	s.user.AvatarURL = ""
 	s.user.AvatarSource = ""
@@ -253,68 +312,100 @@ func (s *userHandlerRepoStub) DeleteUserAvatar(context.Context, int64) error {
 	return nil
 }
 
+// List supplies no user page or pagination in this focused fixture.
 func (s *userHandlerRepoStub) List(context.Context, pagination.PaginationParams) ([]identitycore.User, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
 
+// ListWithFilters supplies no filtered page or pagination in the fixture.
 func (s *userHandlerRepoStub) ListWithFilters(context.Context, pagination.PaginationParams, identitycore.UserListFilters) ([]identitycore.User, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
 
+// AddBalance accepts the unused fixture call without changing stored balance.
 func (s *userHandlerRepoStub) AddBalance(context.Context, int64, float64) error { return nil }
 
+// UpdateBalance accepts the unused fixture call while retaining stored balance.
 func (s *userHandlerRepoStub) UpdateBalance(context.Context, int64, float64) error { return nil }
 
+// DeductBalance returns zero without applying a deduction to fixture state.
 func (s *userHandlerRepoStub) DeductBalance(context.Context, int64, float64) (float64, error) {
 	return 0, nil
 }
 
+// UpdateConcurrency accepts the fixture call without changing its user limits.
 func (s *userHandlerRepoStub) UpdateConcurrency(context.Context, int64, int) error { return nil }
 
+// BatchSetConcurrency reports zero affected users without changing fixture
+// concurrency.
 func (s *userHandlerRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }
 
+// AdjustBalance rejects unsupported financial mutation in this profile-only
+// user fixture.
 func (s *userHandlerRepoStub) AdjustBalance(ctx context.Context, id int64, delta float64) (identitycore.BalanceChange, error) {
 	panic("unexpected AdjustBalance call")
 }
 
+// SetBalance rejects unsupported balance replacement in the profile-only user
+// fixture.
 func (s *userHandlerRepoStub) SetBalance(ctx context.Context, id int64, value float64) (identitycore.BalanceChange, error) {
 	panic("unexpected SetBalance call")
 }
 
+// BatchAddConcurrency reports zero affected users while retaining fixture
+// limits.
 func (s *userHandlerRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
 	return 0, nil
 }
 
+// BatchUpdateLimits reports zero affected users without applying the unused
+// patch.
 func (s *userHandlerRepoStub) BatchUpdateLimits(context.Context, []int64, *int, *int) (int, error) {
 	return 0, nil
 }
 
+// ExistsByEmail reports absence without searching the configured profile
+// fixture.
 func (s *userHandlerRepoStub) ExistsByEmail(context.Context, string) (bool, error) { return false, nil }
 
+// ExistsByNormalizedEmail reports absence without testing the configured email
+// identity.
 func (s *userHandlerRepoStub) ExistsByNormalizedEmail(context.Context, string) (bool, error) {
 	return false, nil
 }
 
+// LockRegistrationEmail accepts fixture registration without acquiring a
+// persistence lock.
 func (s *userHandlerRepoStub) LockRegistrationEmail(context.Context, string) error { return nil }
 
+// RemoveGroupFromAllowedGroups reports zero affected fixture users without
+// changing access.
 func (s *userHandlerRepoStub) RemoveGroupFromAllowedGroups(context.Context, int64) (int64, error) {
 	return 0, nil
 }
 
+// AddGroupToAllowedGroups accepts the unused fixture operation without changing
+// access.
 func (s *userHandlerRepoStub) AddGroupToAllowedGroups(context.Context, int64, int64) error {
 	return nil
 }
 
+// GetLatestUsedAtByUserIDs returns a new empty activity map for fixture users.
 func (s *userHandlerRepoStub) GetLatestUsedAtByUserIDs(context.Context, []int64) (map[int64]*time.Time, error) {
 	return map[int64]*time.Time{}, nil
 }
 
+// GetLatestUsedAtByUserID returns no persisted activity observation for this
+// fixture.
 func (s *userHandlerRepoStub) GetLatestUsedAtByUserID(context.Context, int64) (*time.Time, error) {
 	return nil, nil
 }
 
+// UpdateUserLastActiveAt stores the supplied timestamp when a fixture user
+// exists. It ignores user identity, keeps a pointer to this call's timestamp
+// value, and callers coordinate this mutation with background profile reads.
 func (s *userHandlerRepoStub) UpdateUserLastActiveAt(_ context.Context, _ int64, activeAt time.Time) error {
 	if s.user != nil {
 		s.user.LastActiveAt = &activeAt
@@ -322,28 +413,44 @@ func (s *userHandlerRepoStub) UpdateUserLastActiveAt(_ context.Context, _ int64,
 	return nil
 }
 
+// RemoveGroupFromUserAllowedGroups accepts the fixture call without editing
+// access collections.
 func (s *userHandlerRepoStub) RemoveGroupFromUserAllowedGroups(context.Context, int64, int64) error {
 	return nil
 }
 
+// UpdateTotpSecret accepts the unused call without changing fixture TOTP data.
 func (s *userHandlerRepoStub) UpdateTotpSecret(context.Context, int64, *string) error { return nil }
 
+// EnableTotp accepts the unused call while retaining fixture TOTP state.
 func (s *userHandlerRepoStub) EnableTotp(context.Context, int64) error { return nil }
 
+// DisableTotp accepts the unused call while retaining fixture TOTP state.
 func (s *userHandlerRepoStub) DisableTotp(context.Context, int64) error { return nil }
 
+// GetByIDIncludeDeleted uses the same outer-copy lookup without checking
+// deletion state.
 func (s *userHandlerRepoStub) GetByIDIncludeDeleted(ctx context.Context, id int64) (*identitycore.User, error) {
 	return s.GetByID(ctx, id)
 }
 
+// ListUserAuthIdentities returns an outer slice copy of configured identity
+// records. Metadata and timestamp references remain shared, while the requested
+// user identity is ignored for this single-user fixture.
 func (s *userHandlerRepoStub) ListUserAuthIdentities(context.Context, int64) ([]identitycore.UserAuthIdentityRecord, error) {
 	out := make([]identitycore.UserAuthIdentityRecord, len(s.identities))
 	copy(out, s.identities)
 	return out, nil
 }
 
+// UnbindUserAuthProvider records the requested provider and removes matching
+// identity types from the fixture. It ignores user ID, appends the provider
+// even when no match exists, and copies the filtered outer identity slice
+// afterward.
 func (s *userHandlerRepoStub) UnbindUserAuthProvider(_ context.Context, _ int64, provider string) error {
 	s.unbound = append(s.unbound, provider)
+	// Filter matching provider types through the existing backing slice, then
+	// publish a copied outer result. Identity metadata references remain shared with the retained fixture entries.
 	filtered := s.identities[:0]
 	for _, identity := range s.identities {
 		if identity.ProviderType == provider {
@@ -355,6 +462,9 @@ func (s *userHandlerRepoStub) UnbindUserAuthProvider(_ context.Context, _ int64,
 	return nil
 }
 
+// TestUserHandlerUpdateProfileReturnsAvatarURL supplies a new remote avatar
+// through ordinary profile HTTP. It checks successful panel output contains the
+// requested avatar URL and retains the fixture username.
 func TestUserHandlerUpdateProfileReturnsAvatarURL(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -379,11 +489,13 @@ func TestUserHandlerUpdateProfileReturnsAvatarURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // panel result code
 		Data struct {
+			// returned profile avatar URL
 			AvatarURL string `json:"avatar_url"`
-			Username  string `json:"username"`
-		} `json:"data"`
+			// returned profile username
+			Username string `json:"username"`
+		} `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -391,6 +503,9 @@ func TestUserHandlerUpdateProfileReturnsAvatarURL(t *testing.T) {
 	require.Equal(t, "handler-avatar", resp.Data.Username)
 }
 
+// TestUserHandlerUpdateProfileRejectsEmailField includes email in an ordinary
+// profile patch. It checks BadRequest, the specific forbidden reason/message,
+// and the unchanged stored email so verified binding remains the required path.
 func TestUserHandlerUpdateProfileRejectsEmailField(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -416,9 +531,9 @@ func TestUserHandlerUpdateProfileRejectsEmailField(t *testing.T) {
 	require.Equal(t, "current@example.com", repo.user.Email)
 
 	var resp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Reason  string `json:"reason"`
+		Code    int    `json:"code"`    // panel result code
+		Message string `json:"message"` // HTTP response message
+		Reason  string `json:"reason"`  // identity failure reason
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, http.StatusBadRequest, resp.Code)
@@ -426,6 +541,10 @@ func TestUserHandlerUpdateProfileRejectsEmailField(t *testing.T) {
 	require.Equal(t, "email must be changed through verified email binding", resp.Message)
 }
 
+// TestUserHandlerGetProfileReturnsIdentitySummaries supplies email, LinuxDo,
+// and OIDC profile data through identity HTTP. It checks bound counts and
+// display/provider names, plus the available WeChat bind-start action for an
+// unbound provider.
 func TestUserHandlerGetProfileReturnsIdentitySummaries(t *testing.T) {
 	verifiedAt := time.Date(2026, 4, 20, 8, 30, 0, 0, time.UTC)
 	repo := &userHandlerRepoStub{
@@ -468,32 +587,45 @@ func TestUserHandlerGetProfileReturnsIdentitySummaries(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // panel result code
 		Data struct {
 			Identities struct {
 				Email struct {
-					Bound       bool   `json:"bound"`
-					BoundCount  int    `json:"bound_count"`
+					// provider binding presence flag
+					Bound bool `json:"bound"`
+					// configured provider binding count
+					BoundCount int `json:"bound_count"`
+					// identity display text
 					DisplayName string `json:"display_name"`
-				} `json:"email"`
+				} `json:"email"` // email identity summary
 				LinuxDo struct {
-					Bound       bool   `json:"bound"`
-					BoundCount  int    `json:"bound_count"`
+					// provider binding presence flag
+					Bound bool `json:"bound"`
+					// configured provider binding count
+					BoundCount int `json:"bound_count"`
+					// identity display text
 					DisplayName string `json:"display_name"`
+					// external identity provider key
 					ProviderKey string `json:"provider_key"`
-				} `json:"linuxdo"`
+				} `json:"linuxdo"` // LinuxDo identity summary
 				OIDC struct {
-					Bound       bool   `json:"bound"`
+					// provider binding presence flag
+					Bound bool `json:"bound"`
+					// identity display text
 					DisplayName string `json:"display_name"`
+					// external identity provider key
 					ProviderKey string `json:"provider_key"`
-				} `json:"oidc"`
+				} `json:"oidc"` // OIDC identity summary
 				WeChat struct {
-					Bound         bool   `json:"bound"`
-					CanBind       bool   `json:"can_bind"`
+					// provider binding presence flag
+					Bound bool `json:"bound"`
+					// available binding action flag
+					CanBind bool `json:"can_bind"`
+					// provider binding start path
 					BindStartPath string `json:"bind_start_path"`
-				} `json:"wechat"`
-			} `json:"identities"`
-		} `json:"data"`
+				} `json:"wechat"` // WeChat identity summary
+			} `json:"identities"` // provider identity summaries
+		} `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -512,6 +644,10 @@ func TestUserHandlerGetProfileReturnsIdentitySummaries(t *testing.T) {
 	require.Contains(t, resp.Data.Identities.WeChat.BindStartPath, "/api/v1/auth/oauth/wechat/bind/start")
 }
 
+// TestUserHandlerGetProfileReturnsLegacyCompatibilityFields loads a
+// LinuxDo-linked profile with matching metadata. It checks compatible
+// bound/source fields, nested binding objects, and localization note keys for
+// email and removable provider identities.
 func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 	verifiedAt := time.Date(2026, 4, 20, 8, 30, 0, 0, time.UTC)
 	repo := &userHandlerRepoStub{
@@ -549,8 +685,8 @@ func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // panel result code
+		Data map[string]any `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -591,6 +727,10 @@ func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 	require.Equal(t, "linuxdo", usernameSource["source"])
 }
 
+// TestUserHandlerGetProfileDoesNotInferEditedProfileSourcesWithoutMatchingIdentityMetadata
+// supplies edited username/avatar values different from linked provider
+// metadata. It checks successful HTTP omits inferred avatar, username, and
+// aggregate source objects.
 func TestUserHandlerGetProfileDoesNotInferEditedProfileSourcesWithoutMatchingIdentityMetadata(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -626,8 +766,8 @@ func TestUserHandlerGetProfileDoesNotInferEditedProfileSourcesWithoutMatchingIde
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // panel result code
+		Data map[string]any `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -636,103 +776,153 @@ func TestUserHandlerGetProfileDoesNotInferEditedProfileSourcesWithoutMatchingIde
 	require.NotContains(t, resp.Data, "profile_sources")
 }
 
+// GetValue returns the fixture value or an empty string for a missing key. It
+// reports nil error for either case, leaving the identity reader to interpret
+// its empty-value default.
 func (s *userHandlerSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
 	return s.values[key], nil
 }
 
+// StoreRefreshToken accepts the unused store call without retaining token data.
 func (s *userHandlerRefreshTokenCacheStub) StoreRefreshToken(context.Context, string, *identitycore.RefreshTokenData, time.Duration) error {
 	return nil
 }
 
+// GetRefreshToken always returns ErrRefreshTokenNotFound for the requested
+// fixture credential.
 func (s *userHandlerRefreshTokenCacheStub) GetRefreshToken(context.Context, string) (*identitycore.RefreshTokenData, error) {
 	return nil, identitycore.ErrRefreshTokenNotFound
 }
 
+// DeleteRefreshToken accepts token removal without changing this recording
+// fixture.
 func (s *userHandlerRefreshTokenCacheStub) DeleteRefreshToken(context.Context, string) error {
 	return nil
 }
 
+// DeleteUserRefreshTokens appends the requested user identity to the revocation
+// list. It returns success without modeling stored token families, allowing
+// HTTP tests to inspect whether user-session cleanup was requested.
 func (s *userHandlerRefreshTokenCacheStub) DeleteUserRefreshTokens(_ context.Context, userID int64) error {
 	s.revokedUserIDs = append(s.revokedUserIDs, userID)
 	return nil
 }
 
+// DeleteTokenFamily accepts the unused family cleanup without storing family
+// state.
 func (s *userHandlerRefreshTokenCacheStub) DeleteTokenFamily(context.Context, string) error {
 	return nil
 }
 
+// AddToUserTokenSet accepts membership addition without retaining token-set
+// state.
 func (s *userHandlerRefreshTokenCacheStub) AddToUserTokenSet(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
+// AddToFamilyTokenSet accepts membership addition without retaining family-set
+// state.
 func (s *userHandlerRefreshTokenCacheStub) AddToFamilyTokenSet(context.Context, string, string, time.Duration) error {
 	return nil
 }
 
+// GetUserTokenHashes returns no tracked token hashes for the fixture user.
 func (s *userHandlerRefreshTokenCacheStub) GetUserTokenHashes(context.Context, int64) ([]string, error) {
 	return nil, nil
 }
 
+// GetFamilyTokenHashes returns no tracked hashes for the fixture family.
 func (s *userHandlerRefreshTokenCacheStub) GetFamilyTokenHashes(context.Context, string) ([]string, error) {
 	return nil, nil
 }
 
+// IsTokenInFamily reports false because the fixture stores no family
+// memberships.
 func (s *userHandlerRefreshTokenCacheStub) IsTokenInFamily(context.Context, string, string) (bool, error) {
 	return false, nil
 }
 
+// GetVerificationCode returns the configured verification pointer regardless of
+// email. A nil data field stays nil; the fixture shares this object and its
+// write/delete methods do not consume or replace it.
 func (s *userHandlerEmailCacheStub) GetVerificationCode(context.Context, string) (*identitycore.VerificationCodeData, error) {
 	return s.data, nil
 }
 
+// SetVerificationCode accepts the fixture write without replacing its
+// configured code.
 func (s *userHandlerEmailCacheStub) SetVerificationCode(context.Context, string, *identitycore.VerificationCodeData, time.Duration) error {
 	return nil
 }
 
+// DeleteVerificationCode accepts cleanup while retaining the configured fixture
+// code.
 func (s *userHandlerEmailCacheStub) DeleteVerificationCode(context.Context, string) error {
 	return nil
 }
 
+// GetNotifyVerifyCode returns no notification-email challenge in this focused
+// fixture.
 func (s *userHandlerEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*identitycore.VerificationCodeData, error) {
 	return nil, nil
 }
 
+// SetNotifyVerifyCode accepts the unused write without retaining a notification
+// challenge.
 func (s *userHandlerEmailCacheStub) SetNotifyVerifyCode(context.Context, string, *identitycore.VerificationCodeData, time.Duration) error {
 	return nil
 }
 
+// DeleteNotifyVerifyCode accepts the unused cleanup without changing fixture
+// state.
 func (s *userHandlerEmailCacheStub) DeleteNotifyVerifyCode(context.Context, string) error {
 	return nil
 }
 
+// GetPasswordResetToken returns no password-reset credential from this binding
+// fixture.
 func (s *userHandlerEmailCacheStub) GetPasswordResetToken(context.Context, string) (*identitycore.PasswordResetTokenData, error) {
 	return nil, nil
 }
 
+// SetPasswordResetToken accepts the unused write without retaining a reset
+// credential.
 func (s *userHandlerEmailCacheStub) SetPasswordResetToken(context.Context, string, *identitycore.PasswordResetTokenData, time.Duration) error {
 	return nil
 }
 
+// DeletePasswordResetToken accepts the unused removal without changing binding
+// fixture state.
 func (s *userHandlerEmailCacheStub) DeletePasswordResetToken(context.Context, string) error {
 	return nil
 }
 
+// IsPasswordResetEmailInCooldown reports false for every email in this fixture.
 func (s *userHandlerEmailCacheStub) IsPasswordResetEmailInCooldown(context.Context, string) bool {
 	return false
 }
 
+// SetPasswordResetEmailCooldown accepts the unused call without installing
+// cooldown state.
 func (s *userHandlerEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
 	return nil
 }
 
+// GetNotifyCodeUserRate returns zero without reading notification challenge
+// counts.
 func (s *userHandlerEmailCacheStub) GetNotifyCodeUserRate(context.Context, int64) (int64, error) {
 	return 0, nil
 }
 
+// IncrNotifyCodeUserRate returns zero without incrementing a persisted fixture
+// count.
 func (s *userHandlerEmailCacheStub) IncrNotifyCodeUserRate(context.Context, int64, time.Duration) (int64, error) {
 	return 0, nil
 }
 
+// TestUserHandlerBindEmailIdentityReturnsProfileResponse binds a verified email
+// for a synthetic-email user using a valid code fixture. It checks successful
+// HTTP returns the new email and its bound flag.
 func TestUserHandlerBindEmailIdentityReturnsProfileResponse(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -773,11 +963,13 @@ func TestUserHandlerBindEmailIdentityReturnsProfileResponse(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // panel result code
 		Data struct {
-			Email      string `json:"email"`
-			EmailBound bool   `json:"email_bound"`
-		} `json:"data"`
+			// returned profile email
+			Email string `json:"email"`
+			// email binding presence flag
+			EmailBound bool `json:"email_bound"`
+		} `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -785,6 +977,10 @@ func TestUserHandlerBindEmailIdentityReturnsProfileResponse(t *testing.T) {
 	require.True(t, resp.Data.EmailBound)
 }
 
+// TestUserHandlerUnbindIdentityReturnsUpdatedProfile removes a configured
+// LinuxDo identity while retaining email binding. It checks successful HTTP,
+// the recorded provider removal, and updated nested LinuxDo bound state in the
+// returned profile.
 func TestUserHandlerUnbindIdentityReturnsUpdatedProfile(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -824,8 +1020,8 @@ func TestUserHandlerUnbindIdentityReturnsUpdatedProfile(t *testing.T) {
 	require.Equal(t, []string{"linuxdo"}, repo.unbound)
 
 	var resp struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
+		Code int            `json:"code"` // panel result code
+		Data map[string]any `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -837,6 +1033,10 @@ func TestUserHandlerUnbindIdentityReturnsUpdatedProfile(t *testing.T) {
 	require.Equal(t, false, linuxdoBinding["bound"])
 }
 
+// TestUserHandlerUnbindIdentityRevokesAllUserSessionsWhenAuthServiceConfigured
+// removes LinuxDo with a refresh-cache-backed auth service. It checks
+// successful HTTP requests cleanup for the user while the fixture TokenVersion
+// remains unchanged.
 func TestUserHandlerUnbindIdentityRevokesAllUserSessionsWhenAuthServiceConfigured(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -880,13 +1080,15 @@ func TestUserHandlerUnbindIdentityRevokesAllUserSessionsWhenAuthServiceConfigure
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, []int64{23}, refreshTokenCache.revokedUserIDs)
-	// Refresh-session cleanup revokes sessions.
-	// resolvedTokenVersion derives token_version from email and password_hash fingerprints,
-	// so the in-memory TokenVersion needs no users-table write.
-	// The user row remains unchanged after session cleanup.
+	// The configured auth service requests refresh-session cleanup after removal.
+	// This fixture asserts that request and retains its stored TokenVersion; it performs no access-token validation here.
 	require.Equal(t, int64(4), repo.user.TokenVersion)
 }
 
+// TestUserHandlerUnbindIdentityDoesNotRevokeSessionsWhenNothingWasUnbound
+// requests LinuxDo removal from an email-only user. It checks successful HTTP
+// leaves provider-removal and refresh-revocation lists empty and retains the
+// stored TokenVersion.
 func TestUserHandlerUnbindIdentityDoesNotRevokeSessionsWhenNothingWasUnbound(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -929,6 +1131,10 @@ func TestUserHandlerUnbindIdentityDoesNotRevokeSessionsWhenNothingWasUnbound(t *
 	require.Equal(t, int64(4), repo.user.TokenVersion)
 }
 
+// TestUserHandlerBindEmailIdentityRejectsWrongCurrentPasswordForBoundEmail
+// enables email changes and supplies a wrong current password. It checks
+// BadRequest, PASSWORD_INCORRECT presentation, and unchanged stored email
+// despite a valid verification-code fixture.
 func TestUserHandlerBindEmailIdentityRejectsWrongCurrentPasswordForBoundEmail(t *testing.T) {
 	user := &identitycore.User{
 		ID:       11,
@@ -973,9 +1179,9 @@ func TestUserHandlerBindEmailIdentityRejectsWrongCurrentPasswordForBoundEmail(t 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 
 	var resp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Reason  string `json:"reason"`
+		Code    int    `json:"code"`    // panel result code
+		Message string `json:"message"` // HTTP response message
+		Reason  string `json:"reason"`  // identity failure reason
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, http.StatusBadRequest, resp.Code)
@@ -984,6 +1190,9 @@ func TestUserHandlerBindEmailIdentityRejectsWrongCurrentPasswordForBoundEmail(t 
 	require.Equal(t, "current@example.com", repo.user.Email)
 }
 
+// TestUserHandlerStartIdentityBindingReturnsAuthorizeURL starts WeChat binding
+// with a profile redirect. It checks successful provider/method/browser data
+// and an authorization URL containing the binding intent plus encoded redirect.
 func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 	repo := &userHandlerRepoStub{
 		user: &identitycore.User{
@@ -1008,13 +1217,17 @@ func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 
 	var resp struct {
-		Code int `json:"code"`
+		Code int `json:"code"` // panel result code
 		Data struct {
-			Provider           string `json:"provider"`
-			AuthorizeURL       string `json:"authorize_url"`
-			Method             string `json:"method"`
-			UseBrowserRedirect bool   `json:"use_browser_redirect"`
-		} `json:"data"`
+			// requested identity provider
+			Provider string `json:"provider"`
+			// provider authorization start URL
+			AuthorizeURL string `json:"authorize_url"`
+			// authorization request method
+			Method string `json:"method"`
+			// browser redirect action flag
+			UseBrowserRedirect bool `json:"use_browser_redirect"`
+		} `json:"data"` // profile response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
@@ -1026,7 +1239,8 @@ func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 	require.Contains(t, resp.Data.AuthorizeURL, "redirect=%2Fsettings%2Fprofile")
 }
 
-// ConsumeRefreshToken reports a missing credential, matching this stub's read result.
+// ConsumeRefreshToken reports an absent fixture credential without mutating its
+// revocation list.
 func (s *userHandlerRefreshTokenCacheStub) ConsumeRefreshToken(context.Context, string) (bool, error) {
 	return false, nil
 }

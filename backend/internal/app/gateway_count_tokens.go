@@ -21,25 +21,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// countExecution connects provider selection to token-counting executors.
+// Token counting selects an execution provider using the requested model and
+// excluded-provider set. The selected target routes auxiliary counting to
+// Messages, OpenAI, or Gemini while retaining its session-release capability,
+// and HTTP assembly shares funding, prompt replacement, and failure
+// presentation.
+
+// countExecution binds route planning and provider selection to token-count
+// forwarding.
 type countExecution struct {
-	planner   *gatewayprovider.RoutePlanner
-	choices   *selection.Generic
-	messages  *gatewayhttp.MessagesExecutor
-	auxiliary *gatewayhttp.OpenAIAuxiliary
-	gemini    *gatewayhttp.GeminiExecutor
-	cooldown  func(context.Context, int64, *forwardcore.UpstreamFailoverError)
+	planner   *gatewayprovider.RoutePlanner                                    // Key route planner
+	choices   *selection.Generic                                               // generic provider selection
+	messages  *gatewayhttp.MessagesExecutor                                    // Messages count execution
+	auxiliary *gatewayhttp.OpenAIAuxiliary                                     // OpenAI auxiliary execution
+	gemini    *gatewayhttp.GeminiExecutor                                      // Gemini count execution
+	cooldown  func(context.Context, int64, *forwardcore.UpstreamFailoverError) // provider retry cooldown
 }
 
-// countTarget holds the provider selected for one token count; execution resolves its credentials.
+// countTarget carries one selected provider and its auxiliary counting
+// dependencies.
 type countTarget struct {
-	choices   *selection.Generic
-	gateway   *gatewayhttp.MessagesExecutor
-	auxiliary *gatewayhttp.OpenAIAuxiliary
-	gemini    *gatewayhttp.GeminiExecutor
-	provider  *gatewayprovider.ExecutionProvider
+	choices   *selection.Generic                 // generic provider selection
+	gateway   *gatewayhttp.MessagesExecutor      // Messages count execution
+	auxiliary *gatewayhttp.OpenAIAuxiliary       // OpenAI auxiliary execution
+	gemini    *gatewayhttp.GeminiExecutor        // Gemini count execution
+	provider  *gatewayprovider.ExecutionProvider // selected execution provider
 }
 
+// SelectCountTarget chooses a model-compatible provider and returns its
+// counting adapter. Selection errors end preparation; the adapter retains the
+// same choices service so failed forwarding can release the selected provider
+// session.
 func (p countExecution) SelectCountTarget(ctx context.Context, id *int64, hash, model string, excluded map[int64]struct{}) (gatewayhttp.CountTarget, error) {
 	value, err := p.choices.SelectProviderForModelWithExclusions(ctx, id, hash, model, excluded)
 	if err != nil {
@@ -48,23 +60,39 @@ func (p countExecution) SelectCountTarget(ctx context.Context, id *int64, hash, 
 	return countTarget{gateway: p.messages, auxiliary: p.auxiliary, gemini: p.gemini, provider: value, choices: p.choices}, nil
 }
 
+// PlanCountRoute delegates Key and model routing to the shared planner.
 func (p countExecution) PlanCountRoute(ctx context.Context, key *apikey.APIKey, model string) routing.RoutePlan {
 	return p.planner.PlanKey(ctx, key, model)
 }
 
+// Snapshot returns the selected provider data used by count-attempt reporting.
 func (t countTarget) Snapshot() provider.ProviderSnapshot {
 	return gatewayprovider.ExecutionSnapshot(t.provider)
 }
+
+// RetryLimit returns the selected provider's configured same-provider retry
+// count.
 func (t countTarget) RetryLimit() int { return t.provider.View().GetPoolModeRetryCount() }
+
+// ForwardCountTokens delegates one auxiliary count exchange to the platform
+// executors. Pass the current Gin context and prepared request; platform
+// dispatch chooses the supported counting path and returns its forwarding
+// error.
 func (t countTarget) ForwardCountTokens(ctx context.Context, c *gin.Context, parsed *requeststate.ParsedRequest) error {
 	return gatewayhttp.ForwardSelectedCountTokens(ctx, c, t.provider, parsed, t.gateway, t.auxiliary, t.gemini)
 }
 
+// ReleaseSession delegates release of this provider's reservation for hash.
+// Failed-attempt cleanup supplies an independent context through countAttempt
+// so request cancellation does not suppress the session-release operation.
 func (t countTarget) ReleaseSession(ctx context.Context, hash string) {
 	t.choices.ReleaseProviderSession(ctx, t.provider, hash)
 }
 
-// provideCountTokensHTTP binds token-counting HTTP dependencies.
+// provideCountTokensHTTP binds counting preparation to shared admission and
+// execution services. With nil cfg it supplies a zero body-limit input and ten
+// provider switches; optional availability, client fallback, error rules, and
+// activity tracking are bound when present.
 func provideCountTokensHTTP(planner *gatewayprovider.RoutePlanner, messages *gatewayhttp.MessagesExecutor, shared *schedulerSharedState, funding *admission.FundingAdmission, rules *errorpolicy.ErrorPassthroughService, cfg *config.Config, activity *gatewayRequestActivity, prompts *promptpolicy.Service, availability *gatewayModelAvailability, choices *selection.Generic, cooldown *provider.RetryCooldown, auxiliary *gatewayhttp.OpenAIAuxiliary, gemini *gatewayhttp.GeminiExecutor, clients *messageHTTPBindings) *gatewayhttp.CountTokensHandler {
 	limit := int64(0)
 	switches := 10
@@ -105,6 +133,8 @@ func provideCountTokensHTTP(planner *gatewayprovider.RoutePlanner, messages *gat
 	return result
 }
 
+// TempUnscheduleRetryableError passes the selected failure to the provider
+// cooldown adapter.
 func (p countExecution) TempUnscheduleRetryableError(ctx context.Context, id int64, failure *forwardcore.UpstreamFailoverError) {
 	p.cooldown(ctx, id, failure)
 }

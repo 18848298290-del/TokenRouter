@@ -20,8 +20,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
+// Cyber session blocks written through application assembly must be visible to
+// HTTP lookup through the same Redis keys. The scenario checks explicit-session
+// expiry and transcript scope, including compatibility across client versions
+// and isolation between API-Key identities.
+
+// cyberRuntimeSettingsFixture supplies enabled blocking and a sixty-second
+// lifetime.
 type cyberRuntimeSettingsFixture struct{}
 
+// GetValue returns enabled Cyber blocking or its sixty-second lifetime by key.
+// Unrecognized settings return ErrSettingNotFound so the production runtime
+// reader applies its usual missing-setting behavior.
 func (cyberRuntimeSettingsFixture) GetValue(_ context.Context, key string) (string, error) {
 	switch key {
 	case moderation.SettingKeyCyberSessionBlockEnabled:
@@ -33,7 +43,10 @@ func (cyberRuntimeSettingsFixture) GetValue(_ context.Context, key string) (stri
 	}
 }
 
-// TestNativeCyberSessionBindingOnRedis checks that app and HTTP access share the Redis namespace, scope, and TTL.
+// TestNativeCyberSessionBindingOnRedis writes explicit and transcript blocks
+// through the assembled service. HTTP lookup must find them in Redis, retain
+// the configured TTL bound, accept the tested version change, and isolate
+// another Key identity.
 func TestNativeCyberSessionBindingOnRedis(t *testing.T) {
 	client := rediscontainer.New(t)
 	cache := gatewayredis.NewGatewayCache(client)

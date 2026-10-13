@@ -19,7 +19,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// provideCreativeExecutor binds creative tasks to group policy and execution targets.
+// Creative generation selects providers under the saved task's group policy.
+// The executor reads that policy during preparation, carries the scheduler's
+// release and feedback callbacks into the selected target, and uses shared HTTP
+// execution credentials and transport for generation.
+
+// provideCreativeExecutor binds group policy and provider selection for
+// creative preparation. Execution defaults to five minutes unless cfg supplies
+// a positive timeout; OpenAI and Grok require targets and choices, while Gemini
+// selection is bound when generic is present. Selected targets retain their
+// scheduler release and feedback callbacks.
 func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.ExecutionGroups, targets *gatewayprovider.CreativeTargets, generic *selection.Generic, choices *selection.Compatible, attributes *routing.ModelAttributeService) *creative.Executor {
 	timeout := 5 * time.Minute
 	if cfg != nil && cfg.Creative.ExecuteTimeoutSeconds > 0 {
@@ -99,7 +108,10 @@ func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.Executi
 	return out
 }
 
-// provideCreativeTargets shares credentials, identity, and transport resources with HTTP execution.
+// provideCreativeTargets connects creative execution to the auxiliary request
+// dependencies and activity barrier. auxiliary and activity are required; the
+// returned target factory shares credentials, identity, and transport, while
+// Gemini uses the supplied token source.
 func provideCreativeTargets(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxiliary, tokens *provider.GeminiTokenSource, activity *gatewayRequestActivity) *gatewayprovider.CreativeTargets {
 	requests := auxiliary.Requests
 	return &gatewayprovider.CreativeTargets{

@@ -1,9 +1,9 @@
 package egress
 
 // An outbound attempt carries its selected proxy and fingerprint together with
-// destination and redirect checks. RequestPolicy allocates the TLS and header
-// collections before transport construction, so callers can prepare
-// request-specific values without editing the collections supplied to it.
+// destination and redirect checks. RequestPolicy copies a present profile and
+// any accepted header overrides before transport construction, so callers can
+// prepare request-specific values while retaining the input collections.
 
 // EgressPolicy holds resolved transport identity and destination checks for one
 // outbound attempt.
@@ -30,12 +30,10 @@ type EgressPolicy struct {
 // returned policy. The caller keeps their source collections stable while this
 // synchronous conversion runs.
 type RequestPolicyInput struct {
-	// caller-selected credential-bearing proxy URL
-	ProxyURL string
+	ProxyURL string // caller-selected credential-bearing proxy URL
 	// caller-supplied fingerprint profile pointer
 	TLSProfile *TLSFingerprintProfile
-	// caller-supplied header override values
-	Headers map[string]string
+	Headers    map[string]string // caller-supplied header override values
 	// ValidateResolvedIP requests DNS-address validation; PublicHostsOnly
 	// restricts resolved addresses; DisableRedirects rejects redirect following.
 	ValidateResolvedIP, PublicHostsOnly, DisableRedirects bool

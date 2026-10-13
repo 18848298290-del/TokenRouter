@@ -13,6 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Payment maintenance reconciles pending, processing, and fulfillment work
+// before expiring old orders through OrderLifecycle. Assembly supplies a
+// one-minute runner and singleton lease identity, while step-specific
+// diagnostics report positive work counts and the error severity chosen for
+// each phase.
+
+// providePaymentExpiry constructs one-minute order maintenance using the
+// assembled order lifecycle. A generated owner identifies lease attempts; the
+// Redis leader capability and optional SQL advisory callback are supplied to
+// the common singleton helper before each cycle.
 func providePaymentExpiry(runtime *payment.Runtime, cache provider.CNMonitorLeader, db *sql.DB) *payment.OrderExpiry {
 	owner := uuid.NewString()
 	var advisory func(context.Context, string) (func(), bool)
@@ -27,7 +37,10 @@ func providePaymentExpiry(runtime *payment.Runtime, cache provider.CNMonitorLead
 	return runner
 }
 
-// observePaymentExpiryRuntime records counts and errors by maintenance step.
+// observePaymentExpiryRuntime reports recognized maintenance steps and their
+// outcome. Errors suppress count reporting, nonpositive successful counts
+// produce no log, and unrecognized step names are ignored by both diagnostic
+// switches.
 func observePaymentExpiryRuntime(step string, count int, err error) {
 	if err != nil {
 		switch step {

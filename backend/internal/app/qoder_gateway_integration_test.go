@@ -48,23 +48,49 @@ import (
 	usagepg "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// balanceReader reads a database balance for billing.
-type balanceReader struct{ db *sql.DB }
+// Qoder HTTP service can retain user and provider leases while a disconnected
+// client leaves tail usage unread. The persistent scenario delays that tail
+// until disconnection is observed, then checks final usage, settlement, and
+// slot release across successful, partial-error, and upstream-timeout streams.
+//
+// A completion worker calculates price, settles funds, and writes usage through
+// production stores. Replaying that callback uses the same request identity and
+// verifies one financial effect plus one usage row, while supplier call count
+// stays one. Separate waiting cases reserve the user slot first and force
+// cancellation, heartbeat failure, or funding denial before provider selection
+// can begin.
 
-// storageQoderRuntime supplies test callbacks while execution, leases, settlement, and usage storage use production components.
+// balanceReader adapts a SQL user balance for persistent billing admission.
+type balanceReader struct {
+	db *sql.DB // fixture balance queries
+}
+
+// storageQoderRuntime supplies request callbacks for the persistent Qoder HTTP
+// scenario.
 type storageQoderRuntime struct {
-	prepare        func(context.Context, gateway.Request) (gateway.Request, error)
-	check          func(context.Context) error
+	// prepare, check, and selectProvider are assigned before the HTTP request
+	// begins. The native executor invokes them for this scenario while production leases, upstream execution, and stores retain their normal work.
+	// route preparation callback
+	prepare func(context.Context, gateway.Request) (gateway.Request, error)
+	// funding validation callback
+	check func(context.Context) error
+	// selected provider callback
 	selectProvider func(context.Context, gateway.Request, map[int64]struct{}) (*gateway.Selection, error)
 }
 
+// GetByID returns the requested identity with its SQL balance read result. Even
+// a query error returns the allocated summary, allowing billing to handle the
+// error before consuming its balance.
 func (r balanceReader) GetByID(ctx context.Context, id int64) (*billing.UserSummary, error) {
 	u := &billing.UserSummary{ID: id}
 	err := r.db.QueryRowContext(ctx, "SELECT balance FROM users WHERE id=$1", id).Scan(&u.Balance)
 	return u, err
 }
 
-// TestQoderHTTPStorageChain uses PostgreSQL, Redis, a completion worker, and a local upstream HTTP server.
+// TestQoderHTTPStorageChain runs native Qoder HTTP with PostgreSQL, Redis
+// leases, and a completion worker. It checks waiting rejections, tail usage
+// after disconnect, partial/timeout output, replayed settlement amounts and one
+// usage row, then final user/provider slot release.
 func TestQoderHTTPStorageChain(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -87,6 +113,8 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 	for _, kind := range []string{"wait-cancel", "wait-heartbeat-failure", "wait-billing-recheck"} {
 		t.Run(kind, func(t *testing.T) {
 			const id int64 = 990099
+			// Occupy the user slot before orchestration so waiting begins before
+			// provider selection; the wait observer then injects each distinct admission failure or release.
 			held, e := concur.AcquireUserSlot(ctx, id, 1)
 			require.NoError(t, e)
 			require.True(t, held.Acquired)
@@ -152,9 +180,9 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 	t.Cleanup(eligibility.Stop)
 	price := &pricing.ResolvedPricing{Mode: pricing.BillingModeToken, Source: pricing.PricingSourceConfig, BasePricing: &pricing.ModelPricing{InputPricePerToken: 0.01, OutputPricePerToken: 0.02}}
 	for _, tc := range []struct {
-		name                string
-		stream, partial     bool
-		timeout, disconnect bool
+		name                string // persistent HTTP scenario
+		stream, partial     bool   // stream: requested streaming mode; partial: injected terminal error
+		timeout, disconnect bool   // timeout: upstream budget expiry; disconnect: client tail interruption
 	}{{name: "nonstream"}, {name: "stream", stream: true}, {name: "partial-failure", stream: true, partial: true}, {name: "upstream-timeout", stream: true, partial: true, timeout: true}, {name: "client-disconnect-tail-usage", stream: true, disconnect: true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			uid := uuid.NewString()
@@ -171,6 +199,8 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 			if tc.partial {
 				nativeBody = strings.Replace(nativeBody, "data: {\"body\":\"[DONE]\"}\n\n", qoderFailureFrame, 1)
 			}
+			// Hold supplier tail usage until HTTP detects the client disconnect.
+			// This lets the test inspect occupied leases before releasing the remaining supplier frames for completion.
 			tailAllowed := make(chan struct{})
 			clientGone := make(chan struct{})
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,13 +210,19 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				if tc.timeout || tc.disconnect {
 					first, tail, _ := strings.Cut(successfulQoderStream, "\n\n")
+					// Flush the first semantic frame before holding the remaining tail.
+					// The fixture ignores this write result and uses explicit timeout/disconnect signals to drive later server behavior.
 					_, _ = io.WriteString(w, first+"\n\n")
 					flush, ok := w.(http.Flusher)
 					require.True(t, ok)
 					flush.Flush()
 					if tc.timeout {
+						// Send usage without the terminal frame to keep the client waiting
+						// until its execution budget expires; the controlled fixture discards this server write result.
 						_, _ = io.WriteString(w, strings.Replace(tail, "data: {\"body\":\"[DONE]\"}\n\n", "", 1))
 						flush.Flush()
+						// Omit the terminal frame and keep the server handler open until
+						// execution timeout cancels upstream, exposing tail usage retained before that cancellation.
 						<-r.Context().Done()
 						return
 					}
@@ -195,9 +231,13 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 					case <-r.Context().Done():
 						return
 					}
+					// The disconnect branch permits tail delivery only after the test
+					// inspects occupied slots. It discards this final fixture write result before returning the server handler.
 					_, _ = io.WriteString(w, tail)
 					return
 				}
+				// Ordinary and partial-error cases send their complete controlled frames.
+				// The fixture has no returned write-error channel; client output and completion assertions judge the observed result.
 				_, _ = io.WriteString(w, nativeBody)
 			}))
 			defer provider.Close()
@@ -222,6 +262,8 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 						return
 					}
 					command := &billing.UsageBillingCommand{RequestID: uid, APIKeyID: key.ID, UserID: user.ID, ActorUserID: user.ID, ProviderID: acc.ID, ProviderType: "cosy", GroupID: &group.ID, APIKeyBillingMode: "balance", Model: "auto", InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens, BillableAmountUSD: cost.ActualCost, BaseAmountUSD: cost.TotalCost, BalanceRateMultiplier: 1, APIKeyQuotaCost: cost.ActualCost, ProviderQuotaCost: cost.TotalCost * 2}
+					// Persist the funds command before writing its usage fact. Replay
+					// retains the same request identity, so the settlement store can report an already applied financial command.
 					settled, settleErr := funds.Settle(taskCtx, command)
 					if settleErr != nil {
 						done <- settleErr
@@ -230,6 +272,7 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 					if settled.Applied {
 						completed.Add(1)
 					}
+					// Distinct provider-cost doubling exposes accidental reuse of the user charge field.
 					providerCost := cost.TotalCost * 2
 					_, createErr := facts.Create(taskCtx, &usage.UsageLog{UserID: user.ID, BillingUserID: user.ID, APIKeyID: key.ID, ProviderID: acc.ID, GroupID: &group.ID, RequestID: uid, Model: "auto", InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens, TotalCost: cost.TotalCost, ActualCost: cost.ActualCost, BalanceAmountUSD: cost.ActualCost, ProviderStatsCost: &providerCost, RateMultiplier: 1, Stream: tc.stream, CreatedAt: time.Now()})
 					done <- createErr
@@ -285,6 +328,8 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 			handler.PrepareRequest = func(c *gin.Context, p gatewayhttp.ParsedRequest) (gateway.Request, error) {
 				if tc.disconnect {
 					requestCtx := c.Request.Context()
+					// Publish request cancellation on a dedicated signal so the test
+					// can distinguish observed client departure from merely closing its local response reader.
 					go func() { <-requestCtx.Done(); close(clientGone) }()
 				}
 				value, _ := c.Get("access")
@@ -332,6 +377,8 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 				providerSlots, readErr := concurCache.GetProviderConcurrency(ctx, acc.ID)
 				require.NoError(t, readErr)
 				require.Equal(t, 1, providerSlots)
+				// Both leases remain occupied after disconnection. Release the supplier
+				// tail now so execution collects final usage before completing and returning those slots.
 				close(tailAllowed)
 			} else {
 				data, readErr := io.ReadAll(response.Body)
@@ -364,13 +411,16 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 			var balance, quota float64
 			var count int
 			require.NoError(t, f.db.QueryRowContext(ctx, "SELECT balance FROM users WHERE id=$1", user.ID).Scan(&balance))
+			// SQL amount comparisons allow a hundred-millionth floating-point tolerance.
 			require.InDelta(t, 9.82, balance, 1e-8)
 			require.NoError(t, f.db.QueryRowContext(ctx, "SELECT quota_used FROM api_keys WHERE id=$1", key.ID).Scan(&quota))
+			// Key quota uses the same hundred-millionth numeric comparison tolerance.
 			require.InDelta(t, 0.18, quota, 1e-8)
 			require.NoError(t, f.db.QueryRowContext(ctx, "SELECT count(*) FROM usage_logs WHERE request_id=$1", uid).Scan(&count))
 			require.Equal(t, 1, count)
 			var actual, providerCost float64
 			require.NoError(t, f.db.QueryRowContext(ctx, "SELECT actual_cost,provider_stats_cost FROM usage_logs WHERE request_id=$1", uid).Scan(&actual, &providerCost))
+			// Recorded cost fields retain a hundred-millionth comparison tolerance after SQL reads.
 			require.InDelta(t, 0.18, actual, 1e-8)
 			require.InDelta(t, 0.36, providerCost, 1e-8)
 			slots, err := concurCache.GetUserConcurrency(ctx, user.ID)
@@ -383,18 +433,35 @@ func TestQoderHTTPStorageChain(t *testing.T) {
 	}
 }
 
+// Prepare delegates route preparation to the configured persistent scenario
+// callback.
 func (r *storageQoderRuntime) Prepare(ctx context.Context, v gateway.Request) (gateway.Request, error) {
 	return r.prepare(ctx, v)
 }
 
+// Check delegates funding to the configured callback and ignores
+// request/after-wait inputs.
 func (r *storageQoderRuntime) Check(ctx context.Context, _ gateway.Request, _ bool) error {
 	return r.check(ctx)
 }
 
+// Select delegates request and exclusions to the persistent provider-selection
+// callback.
 func (r *storageQoderRuntime) Select(ctx context.Context, v gateway.Request, excluded map[int64]struct{}) (*gateway.Selection, error) {
 	return r.selectProvider(ctx, v, excluded)
 }
-func (*storageQoderRuntime) CanRefresh(error) bool      { return false }
-func (*storageQoderRuntime) CanFailover(error) bool     { return true }
-func (*storageQoderRuntime) RefreshPending(error) bool  { return false }
+
+// CanRefresh returns false to disable session refresh in this persistent
+// fixture.
+func (*storageQoderRuntime) CanRefresh(error) bool { return false }
+
+// CanFailover returns true for fixture errors considered by the native loop.
+func (*storageQoderRuntime) CanFailover(error) bool { return true }
+
+// RefreshPending returns false because this fixture models no concurrent
+// refresh.
+func (*storageQoderRuntime) RefreshPending(error) bool { return false }
+
+// QueueFailure ignores fixture waiting-counter observations while production
+// cleanup remains exercised.
 func (*storageQoderRuntime) QueueFailure(string, error) {}

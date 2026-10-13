@@ -28,26 +28,53 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Qoder gateway outcomes distinguish committed HTTP output, semantic service,
+// and observed usage. The scenarios exercise switching before output, partial
+// errors after output, completion-only failure, and nonstream cancellation,
+// using production conversion and attempt leases with controlled supplier
+// streams.
+//
+// A blocking sink reserves the first semantic frame and waits for a test
+// release signal. That makes synchronous backpressure visible before provider
+// release or completion occurs, and an injected write failure still allows tail
+// usage to be collected. A separate cancellable supplier waits until the test
+// cancels in-flight nonstream work, while error-rule fixtures expose the final
+// protocol presentation independently of execution.
+
+// qoderErrorPassthroughRepoStub supplies fixed error rules for Qoder HTTP
+// presentation tests.
 type qoderErrorPassthroughRepoStub struct {
-	rules []*errorpolicy.ErrorPassthroughRule
+	rules []*errorpolicy.ErrorPassthroughRule // configured presentation rules
 }
 
-// fixtureClient replaces upstream networking while tests use production conversion, gateway retries, and leases.
+// fixtureClient supplies a counted stream or failure for Qoder attempt
+// scenarios.
 type fixtureClient struct {
-	body    string
-	failure error
-	calls   *atomic.Int32
+	body    string        // supplied native stream
+	failure error         // configured exchange failure
+	calls   *atomic.Int32 // shared exchange count
 }
 
-// blockingSink holds the first semantic frame to exercise synchronous backpressure.
+// blockingSink blocks the first semantic output until the test releases it.
 type blockingSink struct {
-	entered, proceed chan struct{}
-	once             atomic.Bool
-	failure          error
+	// entered announces the frame selected by once; proceed releases that Emit
+	// call. The test creates both channels before execution and closes proceed after intermediate release/completion assertions.
+	entered, proceed chan struct{} // entered: first semantic notification; proceed: blocked emission release
+	once             atomic.Bool   // first semantic claim
+	// failure is returned from the selected semantic call after proceed closes.
+	// Other output events succeed, so the test injects one observable downstream failure.
+	failure error
 }
 
-type cancelableQoderClient struct{ entered chan struct{} }
+// cancelableQoderClient announces exchange entry and waits for request
+// cancellation.
+type cancelableQoderClient struct {
+	entered chan struct{} // supplier entry notification
+}
 
+// TestQoderGatewayErrorDetailsAppliesPassthroughRule starts a custom Qoder
+// error rule before presenting an API failure. It checks mapped status,
+// upstream_error type, custom message, and the Ops skip-monitoring flag.
 func TestQoderGatewayErrorDetailsAppliesPassthroughRule(t *testing.T) {
 	customMessage := "Use another Qoder provider"
 	responseCode := http.StatusTeapot
@@ -90,26 +117,38 @@ func TestQoderGatewayErrorDetailsAppliesPassthroughRule(t *testing.T) {
 	require.Equal(t, true, skip)
 }
 
+// List returns the fixture's shared rule slice for error-service loading.
+// Callers retain stable rules during that load; this fixture supplies
+// configuration rather than implementing persistent rule mutation.
 func (r *qoderErrorPassthroughRepoStub) List(context.Context) ([]*errorpolicy.ErrorPassthroughRule, error) {
 	return r.rules, nil
 }
 
+// GetByID returns no rule and no error in this read-only fixture. The tested
+// path loads List, so individual lookup is left without stored identity
+// behavior.
 func (r *qoderErrorPassthroughRepoStub) GetByID(context.Context, int64) (*errorpolicy.ErrorPassthroughRule, error) {
 	return nil, nil
 }
 
+// Create returns no rule and no error without persisting fixture state.
 func (r *qoderErrorPassthroughRepoStub) Create(context.Context, *errorpolicy.ErrorPassthroughRule) (*errorpolicy.ErrorPassthroughRule, error) {
 	return nil, nil
 }
 
+// Update returns no rule and no error without changing configured rules.
 func (r *qoderErrorPassthroughRepoStub) Update(context.Context, *errorpolicy.ErrorPassthroughRule) (*errorpolicy.ErrorPassthroughRule, error) {
 	return nil, nil
 }
 
+// Delete accepts the unused fixture mutation and retains its configured rules.
 func (r *qoderErrorPassthroughRepoStub) Delete(context.Context, int64) error {
 	return nil
 }
 
+// StreamRequestContext counts an exchange and returns the configured failure or
+// stream body. calls is required, other request arguments are ignored, and the
+// caller closes the owned response reader returned on success.
 func (c fixtureClient) StreamRequestContext(context.Context, *qoder.SessionContext, string, []byte, map[string]string) (*http.Response, error) {
 	c.calls.Add(1)
 	if c.failure != nil {
@@ -118,12 +157,16 @@ func (c fixtureClient) StreamRequestContext(context.Context, *qoder.SessionConte
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(c.body))}, nil
 }
 
+// TestQoderNativeGatewayAttemptsAndCompletion runs success, pre-output failure,
+// and post-output partial failure through the native loop. It checks provider
+// calls and releases, exclusion during failover, one usage completion,
+// success-only sticky binding, and rendered semantic content.
 func TestQoderNativeGatewayAttemptsAndCompletion(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		stream       bool
-		firstFailure bool
-		partial      bool
+		name         string // gateway outcome scenario
+		stream       bool   // client streaming request
+		firstFailure bool   // initial provider rejection
+		partial      bool   // served stream failure
 	}{
 		{name: "nonstream-success"}, {name: "stream-success", stream: true}, {name: "pre-output-failover", stream: true, firstFailure: true}, {name: "post-output-error", stream: true, partial: true},
 	} {
@@ -177,6 +220,9 @@ func TestQoderNativeGatewayAttemptsAndCompletion(t *testing.T) {
 	}
 }
 
+// TestQoderCanceledBeforeNativeGatewayDoesNotSelect cancels the context before
+// starting native orchestration. It checks context.Canceled is returned and the
+// configured provider selector is never invoked for that request.
 func TestQoderCanceledBeforeNativeGatewayDoesNotSelect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -186,6 +232,10 @@ func TestQoderCanceledBeforeNativeGatewayDoesNotSelect(t *testing.T) {
 	require.False(t, called)
 }
 
+// TestQoderNativeGatewayCompletedFailureNeverRetriesSupplier records a
+// completion-side sentinel after successful supplier execution. It checks the
+// loop retains successful execution, saves that observation, and makes only one
+// supplier call.
 func TestQoderNativeGatewayCompletedFailureNeverRetriesSupplier(t *testing.T) {
 	var calls atomic.Int32
 	errSentinel := errors.New("completion store unavailable")
@@ -203,9 +253,22 @@ func TestQoderNativeGatewayCompletedFailureNeverRetriesSupplier(t *testing.T) {
 	require.EqualValues(t, 1, calls.Load())
 }
 
+// Begin accepts the native output head before semantic backpressure is
+// injected.
 func (s *blockingSink) Begin(upstream.OutputHead) error { return nil }
 
+// Emit reserves the first semantic frame and blocks that call until proceed
+// closes. Callers initialize entered and proceed before output and release
+// proceed when their intermediate assertions finish.
+//
+// CompareAndSwap selects one call to close entered, so that notification is
+// issued once even if more semantic events arrive. The selected call returns
+// failure after release, while other events return nil. Production execution
+// calls Emit synchronously, making that selected wait observable before attempt
+// completion and provider release.
 func (s *blockingSink) Emit(event upstream.OutputEvent) error {
+	// Claim one semantic call before signaling the test, preventing duplicate
+	// channel closure while the chosen output waits for the test-controlled backpressure release.
 	if event.Semantic && s.once.CompareAndSwap(false, true) {
 		close(s.entered)
 		<-s.proceed
@@ -214,6 +277,10 @@ func (s *blockingSink) Emit(event upstream.OutputEvent) error {
 	return nil
 }
 
+// TestQoderNativeGatewaySlowSinkAndWriteFailure blocks first semantic output
+// with optional downstream failure. It checks no release or completion occurs
+// before the sink proceeds, then checks one release/completion, collected tail
+// usage, and the client-disconnect observation.
 func TestQoderNativeGatewaySlowSinkAndWriteFailure(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprint(fail), func(t *testing.T) {
@@ -230,6 +297,8 @@ func TestQoderNativeGatewaySlowSinkAndWriteFailure(t *testing.T) {
 					return fixtureClient{body: successfulQoderStream, calls: &calls}, nil
 				}}}, Complete: func(_ context.Context, r upstream.AttemptResult) { result = r; completed.Add(1) }}, nil
 			}}
+			// Run forwarding independently so the test can inspect the blocked Emit
+			// call; receiving done afterward joins its result before reading final completion state.
 			go func() {
 				done <- gateway.NewQoderUseCase(3, time.Second).Run(context.Background(), gateway.Request{Stream: true}, ports, &gateway.OutputTracker{Sink: sink})
 			}()
@@ -252,12 +321,20 @@ func TestQoderNativeGatewaySlowSinkAndWriteFailure(t *testing.T) {
 	}
 }
 
+// StreamRequestContext closes entered before waiting for ctx cancellation and
+// returning its error. Callers initialize a fresh channel for this single
+// exchange; session, model, body, and headers are ignored by the fixture.
 func (c cancelableQoderClient) StreamRequestContext(ctx context.Context, _ *qoder.SessionContext, _ string, _ []byte, _ map[string]string) (*http.Response, error) {
+	// Announce exchange entry before waiting so cancellation exercises the
+	// in-flight supplier path rather than terminating the request before provider dispatch begins.
 	close(c.entered)
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
+// TestQoderNativeGatewayNonstreamCancellation waits until the supplier exchange
+// begins before canceling its request. It checks context.Canceled, one provider
+// release, and no completion recording for the canceled nonstream attempt.
 func TestQoderNativeGatewayNonstreamCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -268,6 +345,8 @@ func TestQoderNativeGatewayNonstreamCancellation(t *testing.T) {
 	ports := gateway.RequestPorts{CanFailover: func(error) bool { return true }, Select: func(context.Context, map[int64]struct{}) (*gateway.Selection, error) {
 		return &gateway.Selection{Acquired: true, Release: func() { releases.Add(1) }, Executor: executor, Input: upstream.AttemptInput{Protocol: protocol.ProtocolOpenAIChatCompletions, Body: []byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`), Target: &qoder.Target{Site: qoder.SiteGlobal, Session: func(context.Context) (*qoder.SessionContext, error) { return &qoder.SessionContext{}, nil }, Client: func() (qoder.StreamClient, error) { return cancelableQoderClient{entered}, nil }}}, Complete: func(context.Context, upstream.AttemptResult) { completed.Add(1) }}, nil
 	}}
+	// Start nonstream execution independently and wait for its supplier entry.
+	// The later done receive joins that call before assertions inspect provider cleanup and completion counts.
 	go func() {
 		done <- gateway.NewQoderUseCase(3, time.Second).Run(ctx, gateway.Request{}, ports, &gateway.OutputTracker{Sink: gatewayhttp.ResponseSink{Writer: httptest.NewRecorder()}})
 	}()
@@ -278,6 +357,10 @@ func TestQoderNativeGatewayNonstreamCancellation(t *testing.T) {
 	require.Zero(t, completed.Load())
 }
 
+// TestQoderNativeGatewayLeadingUsageFailureClosesRetryWithoutSemanticOutput
+// supplies usage and an error without a semantic text frame. It checks
+// committed HTTP/attempt output prevents another supplier call while Semantic
+// stays false and no usage completion is submitted.
 func TestQoderNativeGatewayLeadingUsageFailureClosesRetryWithoutSemanticOutput(t *testing.T) {
 	var calls, completed atomic.Int32
 	body := `{"model":"auto","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`

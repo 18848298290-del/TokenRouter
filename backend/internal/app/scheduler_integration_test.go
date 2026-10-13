@@ -20,13 +20,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// Snapshot replay uses production assembly and the provider outbox publisher.
+// Provider last-used writes reach scheduler cache through the durable outbox
+// replay path. The scenario preloads a cache entry, runs the application
+// snapshot service, updates provider activity, and waits until Redis exposes
+// the persisted Unix-second timestamp.
+
+// The integration aliases use production snapshot assembly and event
+// publication when exercising durable provider outbox replay.
 var (
 	NewSnapshotForTest       = provideSchedulerSnapshot
 	NewProviderEventsForTest = newProviderEvents
 )
 
-// TestSchedulerSnapshotOutboxReplay checks that outbox replay updates the cached last-used timestamp.
+// TestSchedulerSnapshotOutboxReplay starts snapshot replay over persistent
+// provider storage and Redis. It checks an UpdateLastUsed event eventually
+// updates the cached activity timestamp to the stored Unix-second value, then
+// cleanup stops replay before closing its dependencies.
 func TestSchedulerSnapshotOutboxReplay(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
@@ -52,12 +61,16 @@ func TestSchedulerSnapshotOutboxReplay(t *testing.T) {
 	groups := routingpostgres.NewGroupStore(f.client, f.db, routingpostgres.GroupStoreOptions{})
 	runtime := NewSnapshotForTest(cache, outbox, store, groups, cfg)
 	runtime.Start()
+	// Runtime cleanup is registered after Redis cleanup. Its stop therefore
+	// runs first, allowing replay work to finish while its cache and database remain usable.
 	t.Cleanup(runtime.Stop)
 	require.NoError(t, store.UpdateLastUsed(ctx, value.ID))
 	updated, err := store.GetByID(ctx, value.ID)
 	require.NoError(t, err)
 	require.NotNil(t, updated.LastUsedAt)
 	expected := updated.LastUsedAt.Unix()
+	// Last-used writes rely on outbox propagation rather than direct cache sync.
+	// Wait for replay to expose the persisted timestamp before concluding the assembly path is connected.
 	require.Eventually(t, func() bool {
 		cached, err := cache.GetProvider(ctx, value.ID)
 		if err != nil || cached == nil {

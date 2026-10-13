@@ -19,38 +19,72 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Group fallback must resolve destination permissions before admission or
+// session ownership changes. Fixtures make each phase observable through
+// funding and RPM counts, captured isolation identity, and returned Key data,
+// while rejected chains leave the caller's starting group intact.
+
+// fallbackGroupRepository supplies one group or a map of fallback destinations.
 type fallbackGroupRepository struct {
+	// GroupRepository supplies unused methods; this fixture implements the
+	// lightweight group read consumed by runtime group authorization in these tests.
 	routing.GroupRepository
-	group  *routing.Group
+	// group is the shared single destination returned when groups is nil;
+	// callers in these tests let the Key service copy it before changing group state.
+	group *routing.Group
+	// groups overrides group whenever configured, including returning nil
+	// for a missing destination ID during fallback-chain authorization tests.
 	groups map[int64]*routing.Group
 }
 
+// fallbackUserRepository supplies user access data for runtime group
+// authorization.
 type fallbackUserRepository struct {
+	// UserRepository supplies unused methods; GetByID returns the configured
+	// user for the destination permission checks exercised by the Key service.
 	identity.UserRepository
-	user *identity.User
+	user *identity.User // shared fixture user
 }
 
+// fallbackFundingCheck records admission input and returns a configured denial.
 type fallbackFundingCheck struct {
-	calls  int
-	input  billing.CheckInput
-	denied error
+	// calls and input capture each Check invocation before denied is returned.
+	// Tests compare this state to locate authorization and isolation relative to admission.
+	calls  int                // funding invocation count
+	input  billing.CheckInput // latest admission input
+	denied error              // configured funding denial
 }
 
+// fallbackSubscriptionRepository supplies the preferred subscription used by
+// fallback checks.
 type fallbackSubscriptionRepository struct {
+	// UserSubscriptionRepository supplies unused methods; GetByID provides
+	// the preferred subscription needed by production group-coverage resolution.
 	billing.UserSubscriptionRepository
-	value *billing.UserSubscription
+	value *billing.UserSubscription // shared subscription fixture
 }
 
-// Test stores supply data; production operations enforce target-group authorization, subscription coverage, and
-// session isolation.
+// fallbackIsolationCache records session namespace writes and supplies an
+// existing owner.
 type fallbackIsolationCache struct {
+	// GatewayCache supplies unused methods; this fixture implements ownership
+	// claim, read, and refresh calls used by session isolation during fallback.
 	session.GatewayCache
-	ownerID, userID int64
-	source, hash    string
+	// ownerID supplies the existing owner while userID captures the claim's user.
+	// source and hash capture that same claim namespace for later test assertions.
+	ownerID, userID int64  // ownerID: existing owner group; userID: claiming user identity
+	source, hash    string // source: claim namespace category; hash: claim session identifier
 }
 
-type clientFallbackRPM struct{ calls int }
+// clientFallbackRPM counts request admission calls during client fallback
+// traversal.
+type clientFallbackRPM struct {
+	calls int // RPM admission count
+}
 
+// GetByIDLite returns the mapped group when groups is configured, otherwise
+// group. Returned pointers are the fixture's stored values, and an absent
+// mapped ID produces nil without an error.
 func (r fallbackGroupRepository) GetByIDLite(_ context.Context, id int64) (*routing.Group, error) {
 	if r.groups != nil {
 		return r.groups[id], nil
@@ -58,33 +92,54 @@ func (r fallbackGroupRepository) GetByIDLite(_ context.Context, id int64) (*rout
 	return r.group, nil
 }
 
+// GetByID returns the configured user pointer and ignores the requested ID. The
+// fixture shares that user with its callers, letting the production Key service
+// perform destination authorization.
 func (r fallbackUserRepository) GetByID(context.Context, int64) (*identity.User, error) {
 	return r.user, nil
 }
 
+// Check records the latest input and increments the funding-call count. It
+// returns the configured denial after recording, allowing tests to check
+// whether authorization or subscription rejection occurred before admission.
 func (f *fallbackFundingCheck) Check(_ context.Context, input billing.CheckInput) error {
 	f.calls++
 	f.input = input
 	return f.denied
 }
 
+// GetByID returns the fixture's preferred subscription pointer regardless of
+// requested ID. The production subscription resolver checks that supplied
+// subscription's payer and group coverage in these scenarios.
 func (r fallbackSubscriptionRepository) GetByID(context.Context, int64) (*billing.UserSubscription, error) {
 	return r.value, nil
 }
 
+// SetSessionOwnerGroupID records user, source, and hash but reports an existing
+// owner. The requested group and TTL are ignored so production isolation
+// proceeds to the fixture's separate owner read.
 func (c *fallbackIsolationCache) SetSessionOwnerGroupID(_ context.Context, userID int64, source, hash string, groupID int64, _ time.Duration) (bool, error) {
 	c.userID, c.source, c.hash = userID, source, hash
 	return false, nil
 }
 
+// GetSessionOwnerGroupID returns the configured existing owner for isolation
+// comparison. It ignores namespace arguments; SetSessionOwnerGroupID captures
+// those arguments separately for the tests to assert.
 func (c *fallbackIsolationCache) GetSessionOwnerGroupID(context.Context, int64, string, string) (int64, error) {
 	return c.ownerID, nil
 }
 
+// RefreshSessionOwnerTTL accepts the fixture refresh call without changing
+// stored ownership.
 func (c *fallbackIsolationCache) RefreshSessionOwnerTTL(context.Context, int64, string, string, time.Duration) error {
 	return nil
 }
 
+// TestRuntimeGroupFallbackRechecksAuthorizationBeforeFunding rejects exclusive,
+// disabled-public, protocol-incompatible, and inactive destinations. Each
+// rejection must return no Key or subscription and leave the funding checker
+// uncalled.
 func TestRuntimeGroupFallbackRechecksAuthorizationBeforeFunding(t *testing.T) {
 	for _, restriction := range []string{"exclusive", "disabled_public", "protocol", "inactive"} {
 		t.Run(restriction, func(t *testing.T) {
@@ -112,6 +167,9 @@ func TestRuntimeGroupFallbackRechecksAuthorizationBeforeFunding(t *testing.T) {
 	}
 }
 
+// TestRuntimeGroupFallbackChecksSelectedSubscriptionCoverage supplies a
+// preferred subscription covering another group. Resolution must return the
+// specific coverage error before calling the funding checker for the target.
 func TestRuntimeGroupFallbackChecksSelectedSubscriptionCoverage(t *testing.T) {
 	user := &identity.User{ID: 7}
 	target := &routing.Group{ID: 20, Status: "active", AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages}}
@@ -126,6 +184,10 @@ func TestRuntimeGroupFallbackChecksSelectedSubscriptionCoverage(t *testing.T) {
 	require.Zero(t, funds.calls)
 }
 
+// TestRuntimeGroupFallbackPreservesSessionNamespace resolves a destination
+// while original owner and billing user differ. It checks target funding data,
+// original session namespace, unchanged input group, and either isolation
+// conflict or the authorized destination Key.
 func TestRuntimeGroupFallbackPreservesSessionNamespace(t *testing.T) {
 	for _, isolated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "allowed", true: "isolated"}[isolated], func(t *testing.T) {
@@ -159,6 +221,9 @@ func TestRuntimeGroupFallbackPreservesSessionNamespace(t *testing.T) {
 	}
 }
 
+// TestRuntimeGroupFallbackStopsOnFundingDenial injects a billing limit
+// rejection after destination authorization. The returned Key and subscription
+// must be nil, and session-cache access must not begin after that denial.
 func TestRuntimeGroupFallbackStopsOnFundingDenial(t *testing.T) {
 	user := &identity.User{ID: 7}
 	target := &routing.Group{ID: 20, Status: "active", AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolAnthropicMessages}}
@@ -175,13 +240,16 @@ func TestRuntimeGroupFallbackStopsOnFundingDenial(t *testing.T) {
 	require.Zero(t, cache.userID)
 }
 
+// Check increments the fixture RPM count and allows the request.
 func (r *clientFallbackRPM) Check(context.Context, *scheduler.RPMUser, *scheduler.RPMGroup) error {
 	r.calls++
 	return nil
 }
 
-// TestClientGroupFallbackAuthorizesWholeChain checks every hop, defers RPM accounting to the final handler, and
-// leaves the shared key unchanged on rejection.
+// TestClientGroupFallbackAuthorizesWholeChain traverses a three-group client
+// restriction chain under multiple destination failures. It checks every
+// successful hop's funding count, zero RPM calls, the allowed final group, and
+// the unchanged input Key group.
 func TestClientGroupFallbackAuthorizesWholeChain(t *testing.T) {
 	for _, outcome := range []string{"allowed", "exclusive", "protocol", "subscription", "cycle", "composite", "missing_target"} {
 		t.Run(outcome, func(t *testing.T) {

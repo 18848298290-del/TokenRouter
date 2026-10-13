@@ -24,7 +24,22 @@ import (
 	sitepostgres "github.com/TokenFlux/TokenRouter/internal/site/postgres"
 )
 
-// TestMigrationsLockReplayAndRollback checks locks, checksums, rollback, and concurrent-index replay on isolated PostgreSQL.
+// Persistent storage scenarios exercise migration replay and checksums
+// alongside settings, idempotency, and announcement transactions. Concurrent
+// callers contend on production database coordination, while injected SQL
+// failure and explicit rollback make atomic state effects visible through later
+// ordinary reads.
+//
+// Migration checks include a nontransactional concurrent index and cancellation
+// while its advisory lock is held. Settings batch failure retains the old
+// value, repeated idempotency claims produce one side effect before
+// replay/conflict checks, and announcement read state rolls back with creation
+// while a later repeated read retains its first timestamp.
+
+// TestMigrationsLockReplayAndRollback applies the same migrations concurrently
+// on isolated PostgreSQL. It checks one recorded copy of each migration,
+// checksum rejection, rollback of a failing transactional migration, and
+// deadline cancellation while the advisory lock is held.
 func TestMigrationsLockReplayAndRollback(t *testing.T) {
 	fixture := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -32,6 +47,8 @@ func TestMigrationsLockReplayAndRollback(t *testing.T) {
 		"900_test_contract.sql":            {Data: []byte("CREATE TABLE test_migration_contract(id bigint PRIMARY KEY, value text);")},
 		"901_test_contract_index_notx.sql": {Data: []byte("CREATE INDEX CONCURRENTLY IF NOT EXISTS test_migration_index ON test_migration_contract(value);")},
 	}
+	// Apply one migration set from two callers before examining results. The
+	// buffered channel lets both finish while database coordination serializes their persistent changes.
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for range 2 {
@@ -54,7 +71,11 @@ func TestMigrationsLockReplayAndRollback(t *testing.T) {
 	require.True(t, rolledBack)
 	conn, err := fixture.db.Conn(ctx)
 	require.NoError(t, err)
+	// The later registered unlock runs before this connection release. Discard
+	// the final close error after lock behavior assertions while preserving the connection throughout that held-lock scenario.
 	defer func() { _ = conn.Close() }()
+	// Hold the migration advisory identity on a dedicated connection so the
+	// next ApplyMigrations waits and its short context demonstrates lock acquisition cancellation.
 	_, err = conn.ExecContext(ctx, `SELECT pg_advisory_lock(694208311321144027)`)
 	require.NoError(t, err)
 	defer func() {
@@ -66,6 +87,11 @@ func TestMigrationsLockReplayAndRollback(t *testing.T) {
 	require.True(t, errors.Is(postgres.ApplyMigrations(lockCtx, fixture.db, migrations), context.DeadlineExceeded))
 }
 
+// TestStorageContracts exercises transactional settings batches, concurrent
+// idempotency claims, and announcement persistence. It checks rollback on
+// injected failure, one side effect with replay/conflict cleanup, and
+// announcement/read atomicity plus retained first-read time and expiry
+// archival.
 func TestStorageContracts(t *testing.T) {
 	fixture := newDatabaseFixture(t)
 	ctx := context.Background()
@@ -73,7 +99,8 @@ func TestStorageContracts(t *testing.T) {
 		store := settings.New(settingspostgres.NewSettingRepository(fixture.client))
 		require.Same(t, store, settings.New(store), "接口投影必须保留同一设置状态")
 		require.NoError(t, store.Set(ctx, "test_existing", "before"))
-		// A temporary trigger injects a SQL failure.
+		// Reject one key inside the batch write so the test can verify an
+		// existing key and the attempted new key share the same persistence rollback.
 		_, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION test_reject_setting() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'test_reject' THEN RAISE EXCEPTION 'test injected failure'; END IF; RETURN NEW; END $$;
 CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH ROW EXECUTE FUNCTION test_reject_setting();`)
 		require.NoError(t, err)
@@ -95,6 +122,8 @@ CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH
 		cfg.ObserveOnly = false
 		coordinator := idempotency.NewIdempotencyCoordinator(repo, cfg)
 		opts := idempotency.IdempotencyExecuteOptions{Scope: "test.test", ActorScope: "user:1", Method: "POST", Route: "/contract", IdempotencyKey: "same-key", Payload: map[string]string{"value": "same"}, RequireKey: true}
+		// Run concurrent claims for one fingerprint and count only the winning
+		// callback. Joining every caller before replay assertions makes duplicate side effects observable in the final count.
 		var effects atomic.Int32
 		var wg sync.WaitGroup
 		results := make(chan error, 24)
@@ -102,6 +131,8 @@ CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH
 			wg.Go(func() {
 				_, err := coordinator.Execute(ctx, opts, func(context.Context) (any, error) {
 					effects.Add(1)
+					// Keep the winning callback in progress briefly so other claims
+					// can observe its active lease before the result becomes available for replay.
 					time.Sleep(25 * time.Millisecond)
 					return map[string]string{"result": "ok"}, nil
 				})
@@ -120,6 +151,8 @@ CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH
 		opts.Payload = map[string]string{"value": "different"}
 		_, err = coordinator.Execute(ctx, opts, func(context.Context) (any, error) { t.Error("冲突执行副作用"); return nil, nil })
 		require.ErrorIs(t, err, idempotency.ErrIdempotencyKeyConflict)
+		// Advance cleanup time past the fixture entry lifetime so expiry removal
+		// tests the same claimed record after successful replay and payload-conflict handling have completed.
 		deleted, err := repo.DeleteExpired(ctx, time.Now().Add(48*time.Hour), 500)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, deleted)
@@ -135,6 +168,8 @@ CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH
 		rolledBack := &site.Announcement{Title: "rollback", Content: "body", Status: site.AnnouncementStatusActive, NotifyMode: site.AnnouncementNotifyModeSilent}
 		require.NoError(t, repo.Create(txCtx, rolledBack))
 		require.NoError(t, reads.MarkRead(txCtx, rolledBack.ID, user.ID, time.Now()))
+		// Roll back creation and its read marker through the shared Ent context.
+		// Later ordinary repository reads must observe neither part of that uncommitted announcement transaction.
 		require.NoError(t, tx.Rollback())
 		_, err = repo.GetByID(ctx, rolledBack.ID)
 		require.ErrorIs(t, err, site.ErrAnnouncementNotFound)
@@ -143,6 +178,7 @@ CREATE TRIGGER test_setting_failure BEFORE INSERT OR UPDATE ON settings FOR EACH
 		require.Zero(t, count)
 		announcement := &site.Announcement{Title: "visible", Content: "body", Status: site.AnnouncementStatusActive, NotifyMode: site.AnnouncementNotifyModePopup}
 		require.NoError(t, repo.Create(ctx, announcement))
+		// PostgreSQL read timestamps retain microseconds, so match that precision before comparison.
 		first := time.Now().UTC().Truncate(time.Microsecond)
 		require.NoError(t, reads.MarkRead(ctx, announcement.ID, user.ID, first))
 		require.NoError(t, reads.MarkRead(ctx, announcement.ID, user.ID, first.Add(time.Hour)))

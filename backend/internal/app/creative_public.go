@@ -29,20 +29,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// These adapters convert stored users, providers, groups, and moderation results for creative tasks.
-type creativeUsers struct{ store *identitypostgres.UserStore }
+// Creative submissions and result delivery share task funding, transient
+// storage, and usage recording. Stored groups are adapted with localized
+// display text and cloned routing policies, while price and subscription
+// callbacks evaluate the task's group at request time.
 
+// creativeUsers reads stored users for creative submission access checks.
+type creativeUsers struct {
+	store *identitypostgres.UserStore // stored user reader
+}
+
+// creativeProviders converts stored providers into creative catalog provider
+// entries.
 type creativeProviders struct {
-	store *providerpostgres.ProviderStore
+	store *providerpostgres.ProviderStore // stored provider reader
 }
 
-type creativeGroups struct{ store *routingpostgres.GroupStore }
+// creativeGroups reads localized routing groups for creative catalog access.
+type creativeGroups struct {
+	store *routingpostgres.GroupStore // stored group reader
+}
 
+// creativeModeration converts creative review inputs into content-moderation
+// service calls.
 type creativeModeration struct {
-	service *moderation.ContentModerationService
+	service *moderation.ContentModerationService // content review service
 }
 
-// provideCreativePublic binds creative tasks to the shared funding and query stores.
+// provideCreativePublic constructs creative submission and result services
+// using required application dependencies. Transient results default to thirty
+// minutes unless cfg supplies a positive TTL; managed Keys use the configured
+// prefix, and usage recording receives a cloned row before delegation.
 func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeRunRepository, keys *keypostgres.KeyStore, users *identitypostgres.UserStore, providers *providerpostgres.ProviderStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, queue creative.CreativeRunQueue, transient creative.CreativeTransientStore, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, logs usage.UsageLogRepository, pricing *billing.PriceResolver, modelConfigs *routing.PricingConfigService, moderation *moderation.ContentModerationService, auth apikey.APIKeyAuthCacheInvalidator, settings *creative.RuntimeSettings, cfg *config.Config, outbox creative.CreativeRunOutboxRepository, attributes *routing.ModelAttributeService) *creative.Public {
 	ttl := 30 * time.Minute
 	if cfg.Creative.TransientTTLSeconds > 0 {
@@ -67,6 +84,8 @@ func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeR
 		Logs:           completion.SnapshotLogWriter(logs),
 		Observe:        func(component, message string) { logging.LegacyPrintf(component, "%s", message) },
 	}, completion.RecorderOptions{})
+	// Result settlement passes a copied row to the shared recorder so later
+	// record processing reads the values captured for this completed creative task.
 	results.RecordUsage = func(ctx context.Context, row *usage.UsageLog) {
 		recorder.WriteUsage(ctx, querycache.Clone(row), "service.creative_settlement")
 	}
@@ -110,6 +129,8 @@ func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeR
 				Model:   model,
 				GroupID: &g.ID,
 			}, size)
+			// Price lookup failure becomes an unavailable quote; the creative service
+			// uses the boolean to decide whether submission has a usable image price.
 			return price, err == nil
 		},
 		SubscriptionMultiplier: func(ctx context.Context, u int64, g *creative.GroupView, fallback float64) (float64, bool) {
@@ -127,6 +148,9 @@ func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeR
 	}
 }
 
+// GetByID returns the stored user as creative access data. A missing user
+// remains a nil interface, allowing creative.Public to handle absence together
+// with the original repository error.
 func (r creativeUsers) GetByID(ctx context.Context, id int64) (creative.UserAccess, error) {
 	v, err := r.store.GetByID(ctx, id)
 	if v == nil {
@@ -135,6 +159,8 @@ func (r creativeUsers) GetByID(ctx context.Context, id int64) (creative.UserAcce
 	return v, err
 }
 
+// ListSchedulableByGroupIDAndPlatform adapts stored eligible providers for the
+// creative catalog.
 func (r creativeProviders) ListSchedulableByGroupIDAndPlatform(ctx context.Context, id int64, platform string) ([]creative.CatalogProvider, error) {
 	v, err := r.store.ListSchedulableByGroupIDAndPlatform(ctx, id, platform)
 	if err != nil {
@@ -147,11 +173,16 @@ func (r creativeProviders) ListSchedulableByGroupIDAndPlatform(ctx context.Conte
 	return out, nil
 }
 
+// GetByIDLite returns a creative group view in the request language. A nil
+// repository result remains nil, while repository errors are returned with any
+// available converted group.
 func (r creativeGroups) GetByIDLite(ctx context.Context, id int64) (*creative.GroupView, error) {
 	v, err := r.store.GetByIDLite(ctx, id)
 	return creativeGroupView(v, locale.FromContext(ctx)), err
 }
 
+// ListActive converts active routing groups into localized creative catalog
+// entries.
 func (r creativeGroups) ListActive(ctx context.Context) ([]creative.GroupView, error) {
 	v, err := r.store.ListActive(ctx)
 	if err != nil {
@@ -164,6 +195,10 @@ func (r creativeGroups) ListActive(ctx context.Context) ([]creative.GroupView, e
 	return out, nil
 }
 
+// creativeGroupView returns localized group data, or nil for a nil group.
+// Enabled custom model lists and routing policy are copied; ProtocolFallbacks
+// retains the group's supplied value, and operation flags are derived from
+// protocol permissions.
 func creativeGroupView(g *routing.Group, language string) *creative.GroupView {
 	if g == nil {
 		return nil
@@ -187,6 +222,9 @@ func creativeGroupView(g *routing.Group, language string) *creative.GroupView {
 	}
 }
 
+// Check delegates the creative request and its media-retention choice to
+// moderation. It returns the Allowed decision when available and retains the
+// service error; a nil moderation result remains nil.
 func (m creativeModeration) Check(ctx context.Context, v creative.ModerationInput) (*creative.ModerationDecision, error) {
 	out, err := m.service.Check(ctx, moderation.ContentModerationCheckInput{
 		RequestID:        v.RequestID,
@@ -207,6 +245,9 @@ func (m creativeModeration) Check(ctx context.Context, v creative.ModerationInpu
 	return &creative.ModerationDecision{Allowed: out.Allowed}, err
 }
 
+// creativeObserve writes a warning with alternating attribute names and values.
+// An unmatched trailing value is omitted, and non-string attribute names become
+// empty keys through the string assertion.
 func creativeObserve(event string, values ...any) {
 	fields := make([]zap.Field, 0, len(values)/2)
 	for i := 0; i+1 < len(values); i += 2 {
@@ -216,7 +257,8 @@ func creativeObserve(event string, values ...any) {
 	logging.L().Warn(event, fields...)
 }
 
-// provideCreativeSettingsHTTP binds creative settings reads and worker status.
+// provideCreativeSettingsHTTP combines creative setting reads with worker
+// status reporting.
 func provideCreativeSettingsHTTP(public *creative.Public, worker *creative.CreativeWorkerRuntime) *creativehttp.SettingsHandler {
 	return creativehttp.NewSettingsHandler(public, worker.Status)
 }

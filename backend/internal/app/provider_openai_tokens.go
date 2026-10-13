@@ -22,11 +22,22 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// OpenAI authorization, quota management, and execution credentials share token
+// refresh and cached provider reads. Agent identity changes invalidate shared
+// WS connections, quota actions have an early stop hook, and optional parent or
+// token sources are exposed according to the dependencies supplied during
+// assembly.
+
+// provideOAuthTokenCache binds cached provider access tokens to the shared
+// Redis client.
 func provideOAuthTokenCache(rdb *redis.Client) provider.AccessTokenCache {
 	return rediscache.NewOAuthTokenCache(rdb)
 }
 
-// provideOpenAIAuthorization creates shared authorization with a dynamic User-Agent reader.
+// provideOpenAIAuthorization constructs shared OAuth sessions with proxy, TLS,
+// and privacy clients. Runtime settings attach a request-time Codex User-Agent
+// reader when present; the authorization service receives the newly constructed
+// session store.
 func provideOpenAIAuthorization(proxies egress.ProxyRepository, client provideradapter.OpenAIOAuthClient, privacy openai.PrivacyClientFactory, settings *gateway.RuntimeSettings, routers provideradapter.OpenAITokenRouterReader, profiles provideradapter.OpenAITokenProfileResolver) *provider.OpenAIAuthorization {
 	deps := &provideradapter.OpenAIAuthorizationDependencies{
 		Proxies:        proxies,
@@ -41,6 +52,9 @@ func provideOpenAIAuthorization(proxies egress.ProxyRepository, client providera
 	return provider.NewOpenAIAuthorization(provider.NewOpenAISessionStore(), provideradapter.OpenAIAuthorizationOptions(deps))
 }
 
+// provideOpenAIProviderOAuth binds OAuth and quota HTTP with selected proxy
+// reads. Call before lifecycle startup; quota actions stop at level fourteen,
+// and the proxy callback retains lookup errors with its unavailable result.
 func provideOpenAIProviderOAuth(auth *provider.OpenAIAuthorization, admin *provider.Admin, quota *provider.OpenAIQuotaService, recovery *provider.RecoveryService, proxies *egress.ProxyAdmin, manager *lifecycle.Manager) *providerhttp.OpenAIOAuthHandler {
 	handler := providerhttp.NewOpenAIOAuthHandler(auth, admin, quota, recovery, providerhttp.OpenAIHTTPOptions{
 		ClientID: openai.OAuthClientConfigByPlatform,
@@ -57,7 +71,10 @@ func provideOpenAIProviderOAuth(auth *provider.OpenAIAuthorization, admin *provi
 	return handler
 }
 
-// provideOpenAIQuota binds provider reads, persistence, and the shared task coordinator.
+// provideOpenAIQuota binds quota operations to provider management, tokens,
+// transport, and task coordination. Agent registration uses the fixed accounts
+// endpoint, conditional credential persistence returns its error, and
+// connection invalidation shares the application WS owner.
 func provideOpenAIQuota(admin *provider.Admin, store *postgres.ProviderStore, proxies egress.ProxyRepository, transport httpclient.UpstreamTransport, token *provider.OpenAITokenSource, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, connections *openaiws.OpenAIWSConnections, coordinator *provider.OpenAITaskCoordinator) *provider.OpenAIQuotaService {
 	factory := &provideradapter.OpenAIQuotaFactory{
 		Proxy: proxies.GetByID, Transport: transport, Profiles: profiles, Routers: routers,
@@ -82,7 +99,10 @@ func provideOpenAIQuota(admin *provider.Admin, store *postgres.ProviderStore, pr
 	})
 }
 
-// provideOpenAITokens binds shared refresh and caching with token metrics and runtime scheduling blocks.
+// provideOpenAITokens constructs cached token lookup with refresh metrics and
+// scheduling containment. The block callback applies only to nonnil OpenAI or
+// Grok records; refresh uses the common coordinator and the OpenAI platform
+// policy.
 func provideOpenAITokens(store *postgres.ProviderStore, cache provider.AccessTokenCache, authorization *provider.OpenAIAuthorization, refresh *provider.OAuthRefreshAPI, blocks *provider.RuntimeBlockState) *provider.OpenAITokenSource {
 	executor := &provider.OpenAITokenRefresher{Authorization: authorization}
 	return &provider.OpenAITokenSource{
@@ -104,7 +124,10 @@ func provideOpenAITokens(store *postgres.ProviderStore, cache provider.AccessTok
 	}
 }
 
-// provideOpenAIExecutionCredentials binds storage and both token sources for reads during execution.
+// provideOpenAIExecutionCredentials binds parent lookup and platform token
+// readers when available. Missing store or token sources leave their callbacks
+// unset, allowing the execution credential service to distinguish the
+// capabilities supplied by assembly.
 func provideOpenAIExecutionCredentials(store *postgres.ProviderStore, openai *provider.OpenAITokenSource, grok *provider.GrokTokenSource) *provider.OpenAIExecutionCredentials {
 	out := &provider.OpenAIExecutionCredentials{}
 	if store != nil {

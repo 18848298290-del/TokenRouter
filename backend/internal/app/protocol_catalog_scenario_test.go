@@ -1,7 +1,5 @@
 package app
 
-// These tests compare the assembled administrative protocol catalogue with frontend protocol definitions.
-
 import (
 	"encoding/json"
 	"os"
@@ -16,6 +14,15 @@ import (
 	routinghttpapi "github.com/TokenFlux/TokenRouter/internal/routing/httpapi"
 )
 
+// The administrative protocol catalogue and frontend ProtocolID union represent
+// one set of supported identities. The scenario checks catalogue counts and
+// auxiliary references, optionally exports the fixture, and compares both
+// frontend JSON data and TypeScript names to the assembled backend catalogue.
+
+// TestProtocolCatalogFixture validates unique backend protocol IDs, public and
+// auxiliary counts, and frontend synchronization. It checks saved catalogue
+// JSON and the TypeScript union, optionally exporting admin JSON to the
+// configured fixture path for review.
 func TestProtocolCatalogFixture(t *testing.T) {
 	catalog := capability.ProtocolCatalog()
 	require.Len(t, catalog, 25)
@@ -35,6 +42,8 @@ func TestProtocolCatalogFixture(t *testing.T) {
 			require.True(t, ids[operation.Protocol])
 		}
 	}
+	// Fixture export is an opt-in side effect for catalogue review. The
+	// configured path receives the current administrative JSON before the checked-in frontend fixture is compared.
 	if path := os.Getenv("PROTOCOL_CATALOG_TEST_FIXTURE"); path != "" {
 		data, err := json.MarshalIndent(routinghttpapi.AdminProtocolCatalog(testEndpoints()), "", "  ")
 		if err != nil {

@@ -35,14 +35,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// Ops shares provider, user, concurrency, quota, and authentication observers
+// with the application. Error recording receives a separately owned queue,
+// while query, collector, aggregation, cleanup, reports, and release services
+// bind their SQL, Redis, settings, and external adapters here.
+
+// provideOpsErrorQueue constructs error recording and registers its owned
+// shutdown before lifecycle startup. Processor count comes from current
+// GOMAXPROCS, and queue creation is distinct from its lazy worker admission on
+// first enqueue.
 func provideOpsErrorQueue(manager *lifecycle.Manager) *ops.ErrorLogQueue {
 	q := ops.NewErrorLogQueue(ops.ErrorLogQueueOptions{Processors: func() int { return runtime.GOMAXPROCS(0) }, Logf: log.Printf, Stack: debug.Stack})
+	// Error records may arrive through request and completion shutdown phases.
+	// Drain their owned queue before later shared storage closes at the registered cleanup level.
 	manager.Register(lifecycle.Hook{Name: "OpsErrorLogWorkers", StartOrder: 924, StopOrder: 76, Stop: q.Shutdown})
 	return q
 }
 
+// provideOpsRepository binds operations persistence to the application SQL
+// connection pool.
 func provideOpsRepository(db *sql.DB) ops.OpsRepository { return opspostgres.NewOpsRepository(db) }
 
+// provideOpsService constructs operations queries and installs aggregation,
+// quota, and authentication observers. quota is required; it is warmed with a
+// background context during assembly, and its sink receives later Ops quota
+// settings.
 func provideOpsService(repo ops.OpsRepository, settings *settings.Store, options *ops.Options, providers *providerpostgres.ProviderStore, users *identitypostgres.UserStore, c *scheduler.ConcurrencyService, sink *ops.OpsSystemLogSink, quota *provider.QuotaSettingsCache, worker *apikey.AuthCacheInvalidationWorker, keys *apikey.APIKeyService, pre *preaggregation.PreAggregationSettingsService) *ops.OpsService {
 	s := ops.NewOpsService(repo, settings, options, opsProviderReader{providers}, opsUsers{users}, c, sink, opsadapter.LogControl{})
 	s.SetPreAggregationSettings(pre)
@@ -52,28 +69,41 @@ func provideOpsService(repo ops.OpsRepository, settings *settings.Store, options
 	return s
 }
 
+// provideOpsCollector combines shared runtime metrics with database, Redis, and
+// host observations.
 func provideOpsCollector(repo ops.OpsRepository, settings *settings.Store, providers *providerpostgres.ProviderStore, c *scheduler.ConcurrencyService, db *sql.DB, r *redis.Client, options *ops.Options) *ops.OpsMetricsCollector {
 	return ops.NewOpsMetricsCollector(repo, settings, opsProviderReader{providers}, c, opspostgres.NewMetricsQueries(db), opsredis.NewRuntime(r), options, opsadapter.NewHostObserver(db, r))
 }
 
+// provideOpsAggregation binds Ops aggregation to settings, advisory
+// coordination, and Redis runtime.
 func provideOpsAggregation(repo ops.OpsRepository, settings *settings.Store, db *sql.DB, r *redis.Client, options *ops.Options, pre *preaggregation.PreAggregationSettingsService) *ops.OpsAggregationService {
 	return ops.NewOpsAggregationService(repo, settings, opspostgres.NewAdvisory(db), opsredis.NewRuntime(r), options, pre)
 }
 
+// provideOpsEvaluator constructs alert evaluation with shared Ops data and
+// notification delivery.
 func provideOpsEvaluator(s *ops.OpsService, repo ops.OpsRepository, email *notification.Mailer, notifications *notification.NotificationEmailService, r *redis.Client, options *ops.Options, proxies *egresspostgres.ProxyStore) *ops.OpsAlertEvaluatorService {
 	return ops.NewOpsAlertEvaluatorService(s, repo, notificationOpsDelivery(email, notifications), opsredis.NewRuntime(r), options, proxies)
 }
 
+// provideOpsCleanup constructs data cleanup and attaches its reloader to Ops
+// administration.
 func provideOpsCleanup(repo ops.OpsRepository, settings *settings.Store, s *ops.OpsService, db *sql.DB, r *redis.Client, options *ops.Options) *ops.OpsCleanupService {
 	c := ops.NewOpsCleanupService(repo, opspostgres.NewCleanupStore(db), opsredis.NewRuntime(r), options, settings)
 	s.SetCleanupReloader(c)
 	return c
 }
 
+// provideOpsReports combines scheduled reports with user reads and notification
+// delivery.
 func provideOpsReports(s *ops.OpsService, users *identitypostgres.UserStore, email *notification.Mailer, notifications *notification.NotificationEmailService, r *redis.Client, options *ops.Options) *ops.OpsScheduledReportService {
 	return ops.NewOpsScheduledReportService(s, opsUsers{users}, notificationOpsDelivery(email, notifications), opsredis.NewRuntime(r), options)
 }
 
+// provideOpsIngress attaches ingress aggregation when the repository supports
+// its persistence interface. Missing capability returns nil, and a constructed
+// aggregator is installed on the shared Ops service before returning.
 func provideOpsIngress(repo ops.OpsRepository, s *ops.OpsService) *ops.OpsIngressRejectAggregator {
 	r, ok := repo.(ops.OpsIngressRejectRepository)
 	if !ok {
@@ -84,18 +114,30 @@ func provideOpsIngress(repo ops.OpsRepository, s *ops.OpsService) *ops.OpsIngres
 	return a
 }
 
+// provideReleaseClient captures release proxy policy and UPDATE_GITHUB_TOKEN
+// from process configuration. cfg is required; the selected
+// direct-on-proxy-error flag is passed to the release adapter for its request
+// behavior.
 func provideReleaseClient(cfg *config.Config) opsadapter.ReleaseClient {
 	return opsadapter.NewReleaseClient(opsadapter.ReleaseOptions{ProxyURL: cfg.Update.ProxyURL, AllowDirectOnProxyError: cfg.Security.ProxyFallback.AllowDirectOnError, GitHubToken: os.Getenv("UPDATE_GITHUB_TOKEN")})
 }
 
+// provideReleaseQuery binds cached release lookup with the running build
+// metadata.
 func provideReleaseQuery(cache ops.UpdateCache, client opsadapter.ReleaseClient, info BuildInfo) *ops.ReleaseQuery {
 	return ops.NewReleaseQuery(cache, client, info.Version, info.BuildType)
 }
 
+// provideUpdateMaintenance combines release lookup and binary installation for
+// system maintenance.
 func provideUpdateMaintenance(query *ops.ReleaseQuery, client opsadapter.ReleaseClient) *maintenance.UpdateService {
 	return maintenance.NewUpdateService(query, opsadapter.NewBinaryInstaller(client, nil))
 }
 
+// provideOpsOptions returns nil for missing cfg or copied runtime observation
+// options. It recognizes both SQL and Ops not-found errors, configures
+// completion logging, and captures monitor, aggregation, cleanup, connection,
+// and process-log settings.
 func provideOpsOptions(cfg *config.Config) *ops.Options {
 	if cfg == nil {
 		return nil
@@ -114,14 +156,18 @@ func provideOpsOptions(cfg *config.Config) *ops.Options {
 	return o
 }
 
-// provideOpsObservationAccess reads identity data for observations, including failed-authentication Keys for
-// error records.
+// provideOpsObservationAccess binds Key lookup and typed ingress rejection for
+// diagnostic recording. Effective request Keys take precedence; absent
+// effective access uses the Ops fallback Key, whose loaded data supplies
+// observations rather than authentication authority.
 func provideOpsObservationAccess() gatewayhttp.OpsObservationAccess {
 	return gatewayhttp.OpsObservationAccess{
 		APIKey: func(c *gin.Context) *apikey.APIKey {
 			if key, ok := gatewayhttp.EffectiveAPIKey(c); ok && key != nil {
 				return key
 			}
+			// Authentication can fail after loading a Key. Use that separately
+			// stored observation value when effective access is absent, keeping diagnostic attribution available after rejection.
 			key, _ := keyhttp.GetOpsFallbackAPIKey(c)
 			return key
 		},

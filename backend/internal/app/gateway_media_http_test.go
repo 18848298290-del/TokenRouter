@@ -44,17 +44,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Image permission and concurrency checks interpret the current request after
+// group model mapping. These scenarios distinguish passive tool declarations
+// from image intent, exercise provider exhaustion with safe diagnostics, and
+// check early unavailable or shutdown rejection across media and auxiliary
+// entry methods.
+
+// openAIImagesFailoverProviderRepo supplies platform-filtered candidates for
+// image failover scenarios.
 type openAIImagesFailoverProviderRepo struct {
+	// ExecutionProviderStore supplies unused methods; this fixture implements
+	// the candidate and ID reads consumed by image provider selection in this scenario.
 	gatewayprovider.ExecutionProviderStore
 
-	providers []gatewayprovider.ExecutionProvider
+	providers []gatewayprovider.ExecutionProvider // configured execution candidates
 }
 
+// openAIImagesFailoverHTTPUpstream records attempted providers and returns
+// image stream errors.
 type openAIImagesFailoverHTTPUpstream struct {
-	mu          sync.Mutex
-	providerIDs []int64
+	// mu protects providerIDs during transport recording and calls snapshots.
+	// The snapshot method copies the slice before unlocking so assertion readers can keep it independently.
+	mu          sync.Mutex // provider recording lock
+	providerIDs []int64    // attempted provider identities
 }
 
+// TestOpenAIGatewayHandlerResponses_ImageIntentRejectedByImageConcurrency fills
+// the only image slot before a Responses image request. It checks
+// TooManyRequests, rate_limit_error, and the image concurrency rejection
+// message.
 func TestOpenAIGatewayHandlerResponses_ImageIntentRejectedByImageConcurrency(t *testing.T) {
 	body := `{"model":"gpt-5.4","input":"draw","tools":[{"type":"image_generation"}]}`
 	rec := httptest.NewRecorder()
@@ -89,6 +107,8 @@ func TestOpenAIGatewayHandlerResponses_ImageIntentRejectedByImageConcurrency(t *
 		}}},
 		Images: &scheduler.ImageConcurrencyLimiter{}, Availability: newExecutionAvailabilityForTest(nil, nil, nil), Choices: newEmptyCompatibleSelectionFixture(),
 	})
+	// Occupy the sole image slot before invoking Responses so the next image
+	// admission observes saturation; deferred release returns this fixture reservation afterward.
 	release, acquired := h.httpResources().AcquireImage(c, false)
 	require.True(t, acquired)
 	require.NotNil(t, release)
@@ -103,6 +123,10 @@ func TestOpenAIGatewayHandlerResponses_ImageIntentRejectedByImageConcurrency(t *
 	require.Contains(t, rec.Body.String(), "Image generation concurrency limit exceeded")
 }
 
+// TestOpenAIGatewayHandlerResponses_TextOnlyNotRejectedByImageConcurrency fills
+// the image slot before a text-only Responses request. It checks the request
+// avoids the image concurrency status and message, without asserting a
+// successful upstream result.
 func TestOpenAIGatewayHandlerResponses_TextOnlyNotRejectedByImageConcurrency(t *testing.T) {
 	body := `{"model":"gpt-5.4","input":"write code"}`
 	rec := httptest.NewRecorder()
@@ -136,6 +160,8 @@ func TestOpenAIGatewayHandlerResponses_TextOnlyNotRejectedByImageConcurrency(t *
 		}}},
 		Images: &scheduler.ImageConcurrencyLimiter{}, Availability: newExecutionAvailabilityForTest(nil, nil, nil), Choices: newEmptyCompatibleSelectionFixture(),
 	})
+	// Occupy the sole image slot before invoking Responses so the next image
+	// admission observes saturation; deferred release returns this fixture reservation afterward.
 	release, acquired := h.httpResources().AcquireImage(c, false)
 	require.True(t, acquired)
 	require.NotNil(t, release)
@@ -149,6 +175,10 @@ func TestOpenAIGatewayHandlerResponses_TextOnlyNotRejectedByImageConcurrency(t *
 	require.NotContains(t, rec.Body.String(), "Image generation concurrency limit exceeded")
 }
 
+// TestOpenAIGatewayHandlerResponses_GrokPassiveImageToolDeclarationBypassesPermissionGate
+// declares a passive Grok namespace with automatic tool choice. It checks the
+// text request avoids Forbidden and the image permission message in an
+// image-disabled group.
 func TestOpenAIGatewayHandlerResponses_GrokPassiveImageToolDeclarationBypassesPermissionGate(t *testing.T) {
 	body := `{"model":"grok-4.5","tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}],"tool_choice":"auto","input":"write code"}`
 	rec := runOpenAIResponsesImagePermissionGateTest(t, capability.PlatformGrok, body)
@@ -157,6 +187,10 @@ func TestOpenAIGatewayHandlerResponses_GrokPassiveImageToolDeclarationBypassesPe
 	require.NotContains(t, rec.Body.String(), gatewaymedia.ImageGenerationPermissionMessage)
 }
 
+// TestOpenAIGatewayHandlerResponses_GrokResponsesLiteImageToolDeclarationBypassesPermissionGate
+// places a passive Grok namespace inside Responses additional_tools input. It
+// checks this text request avoids image permission rejection under automatic
+// tool choice.
 func TestOpenAIGatewayHandlerResponses_GrokResponsesLiteImageToolDeclarationBypassesPermissionGate(t *testing.T) {
 	body := `{"model":"grok-4.5","tool_choice":"auto","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}]},{"type":"message","role":"user","content":"write code"}]}`
 	rec := runOpenAIResponsesImagePermissionGateTest(t, capability.PlatformGrok, body)
@@ -165,11 +199,14 @@ func TestOpenAIGatewayHandlerResponses_GrokResponsesLiteImageToolDeclarationBypa
 	require.NotContains(t, rec.Body.String(), gatewaymedia.ImageGenerationPermissionMessage)
 }
 
+// TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected
+// supplies explicit image tools, tool choice, and an image model. Grok and
+// OpenAI cases must return Forbidden with the shared image permission message.
 func TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected(t *testing.T) {
 	tests := []struct {
-		name     string
-		platform string
-		body     string
+		name     string // permission scenario label
+		platform string // unused scenario platform label
+		body     string // image intent request
 	}{
 		{
 			name:     "Grok native image_generation declaration",
@@ -203,6 +240,10 @@ func TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected(t
 	}
 }
 
+// TestOpenAIGatewayHandlerResponses_PassiveNamespaceDoesNotTrigger403 declares
+// an OpenAI image namespace with automatic choice for text input. It checks
+// that passive declaration does not itself produce Forbidden in an
+// image-disabled group.
 func TestOpenAIGatewayHandlerResponses_PassiveNamespaceDoesNotTrigger403(t *testing.T) {
 	passiveNamespace := `{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}],"tool_choice":"auto","input":"write code"}`
 	rec := runOpenAIResponsesImagePermissionGateTest(t, capability.PlatformOpenAI, passiveNamespace)
@@ -211,6 +252,11 @@ func TestOpenAIGatewayHandlerResponses_PassiveNamespaceDoesNotTrigger403(t *test
 		"passive image_gen namespace with tool_choice=auto should not trigger 403 (#4447)")
 }
 
+// runOpenAIResponsesImagePermissionGateTest serves Responses with image
+// permission disabled and supplied body. It assembles stub admission and empty
+// selection, then returns the recorder so callers can inspect permission gating
+// independently of later dependency failure. The body drives the case;
+// platform remains an unused scenario label.
 func runOpenAIResponsesImagePermissionGateTest(t *testing.T, platform string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -250,6 +296,10 @@ func runOpenAIResponsesImagePermissionGateTest(t *testing.T, platform string, bo
 	return rec
 }
 
+// TestOpenAIGatewayHandlerImages_DisabledGroupRejectsBeforeScheduling sends
+// image generation through a group that disables images. It checks Forbidden,
+// permission_error, and the shared permission message before later scheduling
+// dependencies are usable.
 func TestOpenAIGatewayHandlerImages_DisabledGroupRejectsBeforeScheduling(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw","size":"1024x1024"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -283,7 +333,10 @@ func TestOpenAIGatewayHandlerImages_DisabledGroupRejectsBeforeScheduling(t *test
 	require.Contains(t, rec.Body.String(), gatewaymedia.ImageGenerationPermissionMessage)
 }
 
-// TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel checks model-family validation after group mapping.
+// TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel submits an alias
+// mapped to an image model with group image permission disabled. It checks the
+// mapped request still receives the expected Forbidden status and permission
+// message.
 func TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel(t *testing.T) {
 	groupID := int64(112)
 	pricingConfigService := newGatewayExecutionPricingConfigServiceForTest(groupID, capability.PlatformOpenAI, testkit.Configuration{
@@ -293,11 +346,11 @@ func TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel(t *testing.T) {
 	})
 
 	tests := []struct {
-		name       string
-		model      string
-		allowImage bool
-		wantStatus int
-		wantText   string
+		name       string // mapped permission scenario
+		model      string // submitted model name
+		allowImage bool   // group image permission
+		wantStatus int    // expected HTTP status
+		wantText   string // expected rejection message
 	}{
 		{name: "普通别名映射为生图模型", model: "draw-alias", wantStatus: http.StatusForbidden, wantText: gatewaymedia.ImageGenerationPermissionMessage},
 	}
@@ -330,8 +383,9 @@ func TestOpenAIGatewayHandlerImagesValidatesGroupMappedModel(t *testing.T) {
 	}
 }
 
-// TestImagesGroupMappedTextModelIsRejectedByActualCandidate checks the final model against the selected
-// provider rules.
+// TestImagesGroupMappedTextModelIsRejectedByActualCandidate maps an image name
+// to a text model allowed by the provider. Native image selection must still
+// return an error and no selected candidate.
 func TestImagesGroupMappedTextModelIsRejectedByActualCandidate(t *testing.T) {
 	groupID := int64(112)
 	policies := newGatewayExecutionPricingConfigServiceForTest(groupID, "openai", testkit.Configuration{ID: 112, Status: billing.StatusActive, ModelMapping: map[string]string{"gpt-image-2": "gpt-5.4"}})
@@ -344,6 +398,9 @@ func TestImagesGroupMappedTextModelIsRejectedByActualCandidate(t *testing.T) {
 	require.Nil(t, selected)
 }
 
+// GetByID returns an outer value copy of the matching provider. Nested
+// references remain shared with the fixture records, and absent IDs return
+// ErrNoAvailableProviders for selection fallback.
 func (r openAIImagesFailoverProviderRepo) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -354,18 +411,29 @@ func (r openAIImagesFailoverProviderRepo) GetByID(_ context.Context, id int64) (
 	return nil, scheduler.ErrNoAvailableProviders
 }
 
+// ListSchedulableByGroupIDAndPlatform returns platform-filtered fixture
+// providers and ignores group identity. Nested data remains shared because
+// providersForPlatform copies values into a new outer result slice.
 func (r openAIImagesFailoverProviderRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// ListSchedulableByPlatform returns the fixture candidates filtered by their
+// platform.
 func (r openAIImagesFailoverProviderRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// ListSchedulableUngroupedByPlatform returns platform-filtered fixture
+// candidates without checking memberships. The fixture reuses the same provider
+// list so image selection can exercise its ungrouped query path.
 func (r openAIImagesFailoverProviderRepo) ListSchedulableUngroupedByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.providersForPlatform(platform), nil
 }
 
+// providersForPlatform returns a new slice of matching outer provider values.
+// Empty platform includes all records, and nested credentials or extras retain
+// the references stored in the fixture.
 func (r openAIImagesFailoverProviderRepo) providersForPlatform(platform string) []gatewayprovider.ExecutionProvider {
 	out := make([]gatewayprovider.ExecutionProvider, 0, len(r.providers))
 	for _, provider := range r.providers {
@@ -376,6 +444,9 @@ func (r openAIImagesFailoverProviderRepo) providersForPlatform(platform string) 
 	return out
 }
 
+// Do records the provider ID under the fixture mutex and returns an image error
+// stream. The response uses HTTP OK with an SSE error body, letting production
+// output classify the image backend failure.
 func (u *openAIImagesFailoverHTTPUpstream) Do(_ *http.Request, _ string, providerID int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
 	u.providerIDs = append(u.providerIDs, providerID)
@@ -392,16 +463,25 @@ func (u *openAIImagesFailoverHTTPUpstream) Do(_ *http.Request, _ string, provide
 	}, nil
 }
 
+// DoWithTLS forwards to the ordinary fixture exchange while ignoring TLS
+// profile.
 func (u *openAIImagesFailoverHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// calls returns an independent copy of the recorded provider-ID slice. It locks
+// the same mutex as Do so tests can inspect a consistent list without sharing
+// mutable backing storage.
 func (u *openAIImagesFailoverHTTPUpstream) calls() []int64 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]int64(nil), u.providerIDs...)
 }
 
+// TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhenExhausted
+// makes two providers return image SSE errors. It checks both attempts, final
+// BadGateway presentation, failover observations, and image-quality/size
+// diagnostics that omit the prompt.
 func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhenExhausted(t *testing.T) {
 	groupID := int64(3130)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -530,8 +610,10 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Equal(t, "failover", events[1].Kind)
 }
 
-// TestMediaAssemblyKeepsReadAndStopBoundaries checks that media and auxiliary handlers reject unavailable or
-// stopped services before reading the body.
+// TestMediaAssemblyKeepsReadAndStopBoundaries invokes image and auxiliary
+// handlers with missing execution before and after shared activity stops. It
+// checks ServiceUnavailable, valid protocol JSON, the appropriate message, and
+// no body read.
 func TestMediaAssemblyKeepsReadAndStopBoundaries(t *testing.T) {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("media-entry-contract")}
 	common := provideOpenAIAttemptBindings(nil, nil, nil, nil, nil, nil, GatewayCompletionRecorders{}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
@@ -540,11 +622,13 @@ func TestMediaAssemblyKeepsReadAndStopBoundaries(t *testing.T) {
 	auxiliary := provideAuxiliaryHTTP(runtime, activity)
 	for _, stopped := range []bool{false, true} {
 		if stopped {
+			// Both handlers retain this shared barrier. Seal it before the stopped
+			// iteration so each existing entry rejects before dependency checks and request-body reads.
 			require.NoError(t, activity.StopContext(context.Background()))
 		}
 		for _, entry := range []struct {
-			name string
-			run  gin.HandlerFunc
+			name string          // media entry label
+			run  gin.HandlerFunc // assembled entry method
 		}{
 			{"images", media.Images},
 			{"embeddings", auxiliary.Embeddings},

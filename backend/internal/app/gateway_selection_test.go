@@ -9,6 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// Routing debug settings support TOKENROUTER and compatibility environment
+// names, with any nonempty current value taking precedence. The accompanying
+// compatibility snapshot scenario checks that request-local thinking state does
+// not populate the snapshot's metadata count when shared counters are absent.
+
+// TestSnapshotOpenAICompatibilityFallbackMetrics reads empty compatibility
+// snapshots around request-local thinking access. Both metadata totals must
+// remain zero, protecting the absence of metadata accounting in the snapshot
+// helper.
 func TestSnapshotOpenAICompatibilityFallbackMetrics(t *testing.T) {
 	before := gatewayCompatibilitySnapshot(nil)
 	ctx := requeststate.WithThinkingEnabled(context.Background(), true)
@@ -20,7 +29,9 @@ func TestSnapshotOpenAICompatibilityFallbackMetrics(t *testing.T) {
 	require.Zero(t, before.MetadataTotal)
 }
 
-// TestProductEnvCompatibility checks legacy variable names and precedence when the new variable disables a flag.
+// TestProductEnvCompatibility enables routing debug through the legacy name
+// with an empty current variable. Nonempty current values "0" and "false" must
+// then take precedence and disable the debug flag.
 func TestProductEnvCompatibility(t *testing.T) {
 	t.Setenv("SUB2API_DEBUG_MODEL_ROUTING", "true")
 	t.Setenv("TOKENROUTER_DEBUG_MODEL_ROUTING", "")

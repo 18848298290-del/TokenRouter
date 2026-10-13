@@ -29,7 +29,16 @@ import (
 	routeusageadmin "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
-// provideAdminRouteMount binds administrator handlers and cross-module readers to route registration.
+// Administrator routes inherit administrator authentication, panel limits,
+// audit, and provider terminology handling before module registration.
+// Sensitive provider, proxy, backup, data-management, and team operations
+// additionally receive the shared step-up guard at the registrar or individual
+// route that requires it.
+
+// provideAdminRouteMount returns administrator registration under /api/v1/admin
+// using constructed handlers. The callback installs administrator, panel,
+// audit, and terminology middleware first, then passes step-up into sensitive
+// module registrars and team transfer or dissolution routes.
 func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerprintProfileHandler,
 	eAdminSchedulerDiagnostics *routescheduler.DiagnosticsHandler,
 	eAdminTLSFingerprintRouter *routeegress.TLSFingerprintRouterHandler,

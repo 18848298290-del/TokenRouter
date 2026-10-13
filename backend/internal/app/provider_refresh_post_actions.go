@@ -11,7 +11,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// provideRefreshPostActions binds storage and logging for actions owned by the provider module.
+// Successful token refresh can trigger privacy checks, identity-matched error
+// or cooldown clearing, and cache publication. The application binds those
+// provider-owned post actions to shared state, adding token invalidation,
+// snapshot writes, and cooldown deletion only when their capabilities are
+// available.
+
+// provideRefreshPostActions assembles post-refresh handling around shared
+// provider storage. Error and cooldown clearing use observed identity versions;
+// optional invalidator, snapshot cache, cooldown cache, and runtime unblocker
+// add the corresponding effects for the provider core to order.
 func provideRefreshPostActions(store *postgres.ProviderStore, privacy *provider.PrivacyService, invalidator provider.TokenCacheInvalidator, cache scheduler.SnapshotCache, cooldown provider.TempUnschedCache, blocker provider.RuntimeUnblocker) *provider.RefreshPostActions {
 	post := &provider.RefreshPostActions{
 		Now: time.Now, Info: slog.Info, Warn: slog.Warn, Debug: slog.Debug,

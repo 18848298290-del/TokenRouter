@@ -16,10 +16,20 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// providerRefreshRegistrations contains one refresh executor registration per platform.
+// Manual and background token refresh share one credential coordinator and
+// platform-specific exchange implementations. Background registration provides
+// both eligibility and execution for six platforms, while application hooks
+// stop accepted coordinator work before the later provider clients and storage
+// are released.
+
+// providerRefreshRegistrations contains platform eligibility and exchange
+// entries for background maintenance.
 type providerRefreshRegistrations []provider.RefreshRegistration
 
-// provideManagedRefresh binds manual credential exchange to the shared refresh coordinator.
+// provideManagedRefresh binds manual exchanges to shared credential
+// coordination and privacy operations. Optional token invalidation is attached
+// when supplied, and each platform result becomes a credential observation with
+// its project-missing flag and exchange error.
 func provideManagedRefresh(admin *provider.Admin, privacy *provider.PrivacyService, coordinator *provider.OAuthRefreshAPI, transport httpclient.UpstreamTransport, profiles *egressprovider.TLSProfiles, claude *provider.ClaudeAuthorization, openai *provider.OpenAIAuthorization, gemini *provider.GeminiAuthorization, ag *provider.AntigravityAuthorization, grok provider.GrokRefreshTokenService, invalidator provider.TokenCacheInvalidator) *provider.ManagedRefreshService {
 	qoder := provideradapter.NewQoderTokenRefresher(provideradapter.QoderRefreshOptions{Transport: transport, Profiles: profiles})
 	source := &provider.ManualCredentialExchange{Claude: claude, OpenAI: openai, Gemini: gemini, Antigravity: ag, Grok: grok, Qoder: qoder.Refresh}
@@ -36,7 +46,9 @@ func provideManagedRefresh(admin *provider.Admin, privacy *provider.PrivacyServi
 	return provider.NewManagedRefreshService(provider.ManagedRefreshOptions{Store: admin, Privacy: privacy, Coordinate: coordinator.WithManagedRefresh, CacheKey: provideradapter.ManagedRefreshCacheKey, Exchange: exchange, Invalidate: invalidate, Log: log.Printf, Warn: slog.Warn, Error: slog.Error})
 }
 
-// provideProviderRefresh binds conditional provider writes to the shared refresh coordinator.
+// provideProviderRefresh constructs the credential coordinator with provider
+// writes and token cache. Call before lifecycle startup; its registered stop
+// waits at level twenty-five for accepted work using those dependencies.
 func provideProviderRefresh(store *providerpostgres.ProviderStore, cache provider.AccessTokenCache, manager *lifecycle.Manager) *provider.OAuthRefreshAPI {
 	coordinator := provider.NewOAuthRefreshAPI(store, cache, provider.RefreshOptions{
 		Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error,
@@ -46,6 +58,11 @@ func provideProviderRefresh(store *providerpostgres.ProviderStore, cache provide
 	return coordinator
 }
 
+// provideRefreshPlatforms returns six platform registrations with eligibility
+// and exchange implementations. Qoder uses shared transport and its
+// authorization credential builder; Antigravity uses its exchange/credential
+// callbacks, and the remaining platforms receive their shared authorization
+// services.
 func provideRefreshPlatforms(claude *provider.ClaudeAuthorization, openai *provider.OpenAIAuthorization, gemini *provider.GeminiAuthorization, antigravity *provider.AntigravityAuthorization, qoder *provideradapter.QoderAuthorization, grok *provider.GrokAuthorization, transport httpclient.UpstreamTransport, profiles *egressprovider.TLSProfiles) providerRefreshRegistrations {
 	claudeRefresh := &provider.ClaudeTokenRefresher{Authorization: claude}
 	openaiRefresh := &provider.OpenAITokenRefresher{Authorization: openai}
@@ -53,8 +70,10 @@ func provideRefreshPlatforms(claude *provider.ClaudeAuthorization, openai *provi
 	agRefresh := &provider.AntigravityRefreshRules{
 		RefreshProviderToken:     antigravity.RefreshProviderToken,
 		BuildProviderCredentials: antigravity.BuildProviderCredentials,
-		Printf:                   func(format string, args ...any) { _, _ = fmt.Printf(format, args...) },
-		Logf:                     log.Printf,
+		// Print diagnostics have no error return in the refresh rules. Discard
+		// output failure here while credential exchange and persistence keep their own failure results.
+		Printf: func(format string, args ...any) { _, _ = fmt.Printf(format, args...) },
+		Logf:   log.Printf,
 	}
 	qoderRefresh := provideradapter.NewQoderTokenRefresher(provideradapter.QoderRefreshOptions{
 		Transport: transport, Profiles: profiles, BuildCredentials: qoder.Core.BuildProviderCredentials,
@@ -70,7 +89,10 @@ func provideRefreshPlatforms(claude *provider.ClaudeAuthorization, openai *provi
 	}
 }
 
-// provideBackgroundRefresh creates the shared refresh service; lifecycle startup runs its maintenance tasks.
+// provideBackgroundRefresh constructs periodic and Grok reconciliation work
+// from required cfg. Tuning values are captured, attempt timeout incorporates
+// the coordinator lease, and shared post actions handle invalidation, cleanup,
+// and publication after provider-owned refresh attempts.
 func provideBackgroundRefresh(store *providerpostgres.ProviderStore, refresh *provider.OAuthRefreshAPI, cfg *config.Config, registrations providerRefreshRegistrations, post *provider.RefreshPostActions, observer provider.RefreshFailureObserver) *provider.BackgroundRefreshService {
 	v := cfg.TokenRefresh
 	tuning := &provider.RefreshTuning{

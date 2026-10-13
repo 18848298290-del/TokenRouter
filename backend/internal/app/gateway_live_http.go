@@ -17,8 +17,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai/liveattestation"
 )
 
-// provideLiveExecution shares credentials, WebSocket dialing, and background task tracking with other execution
-// paths.
+// Live creation shares OpenAI request construction and Grok WebSocket dialing
+// with other gateway execution. Optional cache and concurrency capabilities
+// provide stored call state and leases, while local observer shutdown is
+// registered before later request and storage cleanup phases.
+
+// provideLiveExecution assembles Live execution and registers its local
+// observer stop hook. Default session duration is one hour and retry interval
+// one second; a positive configured duration overrides it, and a nonempty JWT
+// secret supplies the attestation cipher. Call before lifecycle startup with
+// required request, dialer, task, and manager dependencies.
 func provideLiveExecution(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxiliary, cache session.GatewayCache, concurrency *scheduler.ConcurrencyService, choices *selection.Compatible, routes *gatewayadapter.RoutePlanner, recorders GatewayCompletionRecorders, tasks *lifecycle.Tasks, manager *lifecycle.Manager, grok *gatewayhttp.GrokExecutor) *gatewayhttp.OpenAILiveExecutor {
 	out := &gatewayhttp.OpenAILiveExecutor{
 		Options:  gatewayhttp.OpenAILiveOptions{MaxSessionDuration: time.Hour, ObserverRetryInterval: time.Second},
@@ -31,17 +39,22 @@ func provideLiveExecution(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxil
 	}
 	if cfg != nil {
 		if cfg.Gateway.Live.MaxSessionDurationSeconds > 0 {
+			// Configured session seconds become the executor's maximum lifetime duration.
 			out.Options.MaxSessionDuration = time.Duration(cfg.Gateway.Live.MaxSessionDurationSeconds) * time.Second
 		}
 		if strings.TrimSpace(cfg.JWT.Secret) != "" {
 			out.AttestationCipher = openai.NewLiveAttestationCipher(cfg.JWT.Secret)
 		}
 	}
+	// Close local Live observers at the early shutdown level so their tracked
+	// work can finish before request completion and shared dependency cleanup.
 	manager.Register(lifecycle.Hook{Name: "OpenAILiveObservers", StartOrder: 995, StopOrder: 5, Stop: out.StopLiveObservers})
 	return out
 }
 
-// provideLiveHTTP shares funding, concurrency, and moderation services.
+// provideLiveHTTP assembles Live admission, slots, and optional moderation and
+// execution. It binds the shared request activity when supplied, allowing that
+// barrier to reject or track Live calls before handler preparation.
 func provideLiveHTTP(source *gatewayhttp.OpenAILiveExecutor, funding *admission.FundingAdmission, concurrency *scheduler.ConcurrencyService, moderator *moderation.ContentModerationService, activity *gatewayRequestActivity) *gatewayhttp.LiveHandler {
 	ports := gatewayhttp.LivePorts{Slots: concurrency}
 	if source != nil {

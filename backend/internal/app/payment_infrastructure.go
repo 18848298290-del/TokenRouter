@@ -14,21 +14,32 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Encrypted payment configuration uses a configured persistent TOTP key, so an
+// automatically generated key does not become a payment encryption identity.
+// Payment handlers share the registry, instance selector, configuration, and
+// plans assembled for checkout and administration.
+
+// providePaymentHTTP binds checkout and plan reads to user payment HTTP.
 func providePaymentHTTP(runtime *payment.Runtime, cfg *payment.ConfigService, plans *billing.Plans) *paymenthttp.PaymentHandler {
 	return paymenthttp.NewPaymentHandler(runtime, cfg, plans)
 }
 
+// providePaymentAdminHTTP binds payment administration with the shared
+// application calendar.
 func providePaymentAdminHTTP(runtime *payment.Runtime, cfg *payment.ConfigService, plans *billing.Plans, calendar timezone.Calendar) *paymenthttp.AdminHandler {
 	return paymenthttp.NewAdminHandler(runtime, cfg, plans, calendar)
 }
 
+// providePaymentWebhookHTTP joins payment fulfillment and provider-registry
+// webhook verification.
 func providePaymentWebhookHTTP(runtime *payment.Runtime, registry *payment.Registry) *paymenthttp.PaymentWebhookHandler {
 	return paymenthttp.NewPaymentWebhookHandler(runtime, registry)
 }
 
-// providePaymentEncryptionKey uses the explicitly configured TOTP encryption key for payment encryption.
-// Missing or automatically generated keys yield nil and disable payment features that require encryption.
-// Invalid hex or length in an explicitly configured key returns an error to application startup.
+// providePaymentEncryptionKey returns the configured persistent TOTP key for
+// payment encryption. Missing cfg or an unconfigured generated key yields nil,
+// validation errors reach startup, and configuration warnings are logged from
+// ConfiguredEncryptionKey.
 func providePaymentEncryptionKey(cfg *config.Config) (payment.EncryptionKey, error) {
 	if cfg == nil {
 		slog.Warn("payment encryption key not configured — encrypted payment config and resume signing will be unavailable")
@@ -41,17 +52,20 @@ func providePaymentEncryptionKey(cfg *config.Config) (payment.EncryptionKey, err
 	return key, err
 }
 
-// providePaymentRegistry creates the payment provider registry.
-// Providers are registered during operation.
+// providePaymentRegistry constructs the provider registry populated by payment
+// runtime bindings.
 func providePaymentRegistry() *payment.Registry {
 	return payment.NewRegistry()
 }
 
-// providePaymentLoadBalancer binds the payment instance store and encryption key.
+// providePaymentLoadBalancer binds stored payment instances and the configured
+// encryption key.
 func providePaymentLoadBalancer(store *paymentpostgres.InstanceStore, key payment.EncryptionKey) *payment.DefaultLoadBalancer {
 	return payment.NewDefaultLoadBalancer(store, []byte(key), payment.SelectionRuntime{Observe: paymentSelectionLog})
 }
 
+// paymentSelectionLog reports payment selection warnings or uses info for other
+// levels.
 func paymentSelectionLog(level, message string, attrs ...any) {
 	if level == "warn" {
 		slog.Warn(message, attrs...)
@@ -60,6 +74,8 @@ func paymentSelectionLog(level, message string, attrs ...any) {
 	}
 }
 
+// providePaymentConfigCore combines stored instances, encryption, plan
+// validation, and environment-backed provider creation.
 func providePaymentConfigCore(store *paymentpostgres.InstanceStore, settings settingscore.Repository, key payment.EncryptionKey, plans *billing.Plans) *payment.ConfigService {
 	return payment.NewConfigService(store, settings, []byte(key), plans, payment.ConfigurationRuntime{CreateProvider: paymentadapter.CreateProvider, LookupEnv: os.LookupEnv, Warn: slog.Warn})
 }
