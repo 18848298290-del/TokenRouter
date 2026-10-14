@@ -177,6 +177,7 @@ func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) m
 		}
 
 		thresholds := DefaultProviderSchedulingThresholds()
+		ttl := providerSchedulingThresholdsCacheTTL
 		// Give shared storage work its own budget so cancelling the initiating
 		// request does not terminate the observation awaited by other callers.
 		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerSchedulingThresholdsDBTimeout)
@@ -184,28 +185,14 @@ func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) m
 
 		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyProviderSchedulingThresholds)
 		if err != nil {
-			if errors.Is(err, s.notFound) {
-				// An absent key is a stable unconfigured state, so retain defaults for
-				// the normal observation lifetime instead of retrying it as though the
-				// settings store were unavailable.
-				s.providerSchedulingThresholdsCache.Store(&cachedProviderSchedulingThresholds{
-					thresholds: CloneProviderSchedulingThresholds(thresholds),
-					expiresAt:  time.Now().Add(providerSchedulingThresholdsCacheTTL).UnixNano(),
-				})
-				return CloneProviderSchedulingThresholds(thresholds), nil
+			// An absent key is a stable unconfigured state and retains defaults for
+			// the normal lifetime. Unavailable storage retries sooner so a recovered
+			// store can supply configured percentages on a later selection read.
+			if !errors.Is(err, s.notFound) {
+				slog.Warn("failed to get provider scheduling thresholds, falling back to defaults", "error", err)
+				ttl = providerSchedulingThresholdsErrorTTL
 			}
-			// Replace unavailable storage data with defaults and retry sooner so a
-			// recovered store can supply its configured percentages on a later
-			// selection read.
-			slog.Warn("failed to get provider scheduling thresholds, falling back to defaults", "error", err)
-			s.providerSchedulingThresholdsCache.Store(&cachedProviderSchedulingThresholds{
-				thresholds: CloneProviderSchedulingThresholds(thresholds),
-				expiresAt:  time.Now().Add(providerSchedulingThresholdsErrorTTL).UnixNano(),
-			})
-			return CloneProviderSchedulingThresholds(thresholds), nil
-		}
-
-		if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		} else if trimmed := strings.TrimSpace(raw); trimmed != "" {
 			if parsed, err := ParseProviderSchedulingThresholdsSetting(trimmed); err != nil {
 				// Discard malformed stored JSON as a complete setting; initialized
 				// defaults remain available and use the ordinary cache lifetime.
@@ -215,11 +202,11 @@ func (s *RuntimeSettings) GetProviderSchedulingThresholds(ctx context.Context) m
 			}
 		}
 
-		// Publish a private map and its lifetime through one immutable entry;
-		// returned copies then let each reader adjust its own evaluation settings.
+		// Sample expiration after storage and parsing finish, then publish a
+		// private map. Returned copies let readers adjust their own settings.
 		s.providerSchedulingThresholdsCache.Store(&cachedProviderSchedulingThresholds{
 			thresholds: CloneProviderSchedulingThresholds(thresholds),
-			expiresAt:  time.Now().Add(providerSchedulingThresholdsCacheTTL).UnixNano(),
+			expiresAt:  time.Now().Add(ttl).UnixNano(),
 		})
 		return CloneProviderSchedulingThresholds(thresholds), nil
 	})
