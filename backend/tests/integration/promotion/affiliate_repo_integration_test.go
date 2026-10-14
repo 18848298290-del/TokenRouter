@@ -478,6 +478,99 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 	require.GreaterOrEqual(t, total, int64(2), "total must include at least our 2 custom rows")
 }
 
+// TestAffiliateRepository_ProfileReads_UseOuterTransaction fills every stored
+// profile field inside an uncommitted caller transaction. Both public reads
+// observe those values through the context, including NULL and zero overrides,
+// while base-client reads and rollback expose no saved profile.
+func TestAffiliateRepository_ProfileReads_UseOuterTransaction(t *testing.T) {
+	baseClient, _ := testStore(t)
+	// Bound profile reads so selecting the base connection cannot leave a
+	// creation attempt waiting indefinitely on this test's own uncommitted user.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	outerTx, err := baseClient.Tx(ctx)
+	require.NoError(t, err)
+	// Keep rollback registered through assertions so the caller's transaction
+	// releases its fixture writes before the database clone is closed and dropped.
+	t.Cleanup(func() { _ = outerTx.Rollback() })
+	txClient := outerTx.Client()
+	txCtx := dbent.NewTxContext(ctx, outerTx)
+	repo := promotionpostgres.NewAffiliateRepository(baseClient, nil)
+
+	inviter := mustCreateUser(t, txClient, &identity.User{
+		Email: "affiliate-profile-inviter@example.com",
+	})
+	user := mustCreateUser(t, txClient, &identity.User{
+		Email: "affiliate-profile-reader@example.com",
+	})
+	_, err = repo.EnsureUserAffiliate(txCtx, inviter.ID)
+	require.NoError(t, err)
+	_, err = repo.EnsureUserAffiliate(txCtx, user.ID)
+	require.NoError(t, err)
+
+	createdAt := time.Date(2026, time.October, 14, 1, 2, 3, 0, time.UTC)
+	updatedAt := createdAt.Add(2 * time.Hour)
+	zeroRate := 0.0
+	positiveRate := 17.5
+	cases := []struct {
+		name    string   // nullable override scenario
+		rate    *float64 // stored percentage choice
+		inviter *int64   // stored inviter choice
+	}{
+		{name: "null"},
+		{name: "zero", rate: &zeroRate, inviter: &inviter.ID},
+		{name: "positive", rate: &positiveRate, inviter: &inviter.ID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliates
+SET aff_code = 'PROFILE_TEST',
+    aff_code_custom = true,
+    aff_rebate_rate_percent = $2,
+    inviter_id = $3,
+    aff_count = 9,
+    aff_quota = 12.25,
+    aff_frozen_quota = 3.5,
+    aff_history_quota = 45.75,
+    created_at = $4,
+    updated_at = $5
+WHERE user_id = $1`, user.ID, tc.rate, tc.inviter, createdAt, updatedAt)
+			require.NoError(t, err)
+
+			byID, err := repo.EnsureUserAffiliate(txCtx, user.ID)
+			require.NoError(t, err)
+			byCode, err := repo.GetAffiliateByCode(txCtx, " \tproFile_test\n ")
+			require.NoError(t, err)
+			require.Equal(t, byID, byCode)
+			require.Equal(t, &promotion.AffiliateSummary{
+				UserID:               user.ID,
+				AffCode:              "PROFILE_TEST",
+				AffCodeCustom:        true,
+				AffRebateRatePercent: tc.rate,
+				InviterID:            tc.inviter,
+				AffCount:             9,
+				AffQuota:             12.25,
+				AffFrozenQuota:       3.5,
+				AffHistoryQuota:      45.75,
+				CreatedAt:            createdAt,
+				UpdatedAt:            updatedAt,
+			}, byID)
+		})
+	}
+
+	_, err = repo.GetAffiliateByCode(ctx, "PROFILE_TEST")
+	require.ErrorIs(t, err, promotion.ErrAffiliateProfileNotFound)
+	// Roll back before checking through the base connection so an accidental
+	// inner commit would remain visible in the profile count and code lookup.
+	require.NoError(t, outerTx.Rollback())
+	require.Equal(t, 0, querySingleInt(t, ctx, baseClient,
+		"SELECT COUNT(*) FROM user_affiliates WHERE user_id IN ($1, $2)",
+		user.ID, inviter.ID))
+	_, err = repo.GetAffiliateByCode(ctx, "PROFILE_TEST")
+	require.ErrorIs(t, err, promotion.ErrAffiliateProfileNotFound)
+}
+
 // testEntTx opens a transaction on a newly cloned promotion database and
 // registers rollback after case work ends. Callers own any earlier completion;
 // cleanup discards errors from an already ended transaction.

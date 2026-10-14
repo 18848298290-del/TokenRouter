@@ -38,6 +38,22 @@ const (
 	affiliateCodeLength      = 12 // generated invitation code bytes
 	affiliateCodeMaxAttempts = 12 // maximum generated collision attempts
 
+	// affiliateProfileSelectSQL fixes the stored profile column order consumed
+	// by scanAffiliateSummary for both user-ID and invitation-code lookups.
+	affiliateProfileSelectSQL = `
+SELECT user_id,
+       aff_code,
+       aff_code_custom,
+       aff_rebate_rate_percent,
+       inviter_id,
+       aff_count,
+       aff_quota::double precision,
+       aff_frozen_quota::double precision,
+       aff_history_quota::double precision,
+       created_at,
+       updated_at
+FROM user_affiliates`
+
 	// affiliateUserOverviewSQL combines profile counts with distinct
 	// contributing invitees and due frozen ledger amounts for a read-only
 	// administrator overview.
@@ -1077,28 +1093,11 @@ ON CONFLICT (user_id) DO NOTHING`, userID, code)
 	return queryAffiliateByUserID(ctx, client, userID)
 }
 
-// queryAffiliateByUserID returns the saved profile for userID or
-// ErrAffiliateProfileNotFound.
-//
-// Nullable inviter and percentage values are scanned separately so NULL
-// remains distinct from an explicit numeric zero. A saved zero percentage is
-// therefore retained as a custom override, while an absent percentage can
-// later select global policy. Numeric quota columns are read as float64, and
-// the helper closes its rows before returning the profile container.
+// queryAffiliateByUserID returns the saved profile for userID through the
+// supplied client. A missing row returns ErrAffiliateProfileNotFound, and
+// result rows close before the caller reuses its connection.
 func queryAffiliateByUserID(ctx context.Context, client affiliateQueryExecer, userID int64) (*promotion.AffiliateSummary, error) {
-	rows, err := client.QueryContext(ctx, `
-SELECT user_id,
-       aff_code,
-       aff_code_custom,
-       aff_rebate_rate_percent,
-       inviter_id,
-       aff_count,
-       aff_quota::double precision,
-       aff_frozen_quota::double precision,
-       aff_history_quota::double precision,
-       created_at,
-       updated_at
-FROM user_affiliates
+	rows, err := client.QueryContext(ctx, affiliateProfileSelectSQL+`
 WHERE user_id = $1`, userID)
 	if err != nil {
 		return nil, err
@@ -1114,59 +1113,15 @@ WHERE user_id = $1`, userID)
 		return nil, promotion.ErrAffiliateProfileNotFound
 	}
 
-	var out promotion.AffiliateSummary
-	var inviterID sql.NullInt64
-	var rebateRate sql.NullFloat64
-	if err := rows.Scan(
-		&out.UserID,
-		&out.AffCode,
-		&out.AffCodeCustom,
-		&rebateRate,
-		&inviterID,
-		&out.AffCount,
-		&out.AffQuota,
-		&out.AffFrozenQuota,
-		&out.AffHistoryQuota,
-		&out.CreatedAt,
-		&out.UpdatedAt,
-	); err != nil {
-		return nil, err
-	}
-	// Rebuild inviter and rate pointers from their SQL validity flags so an
-	// absent relationship stays claimable and a stored zero remains a custom
-	// override.
-	if inviterID.Valid {
-		out.InviterID = &inviterID.Int64
-	}
-	if rebateRate.Valid {
-		v := rebateRate.Float64
-		out.AffRebateRatePercent = &v
-	}
-	return &out, nil
+	return scanAffiliateSummary(rows)
 }
 
 // queryAffiliateByCode returns the saved owner of a trimmed uppercase
-// invitation code or ErrAffiliateProfileNotFound.
-//
-// Nullable inviter and rate values retain the distinction between absence and
-// an explicit custom zero. This lets binding recognize an unset relationship
-// and lets later rate selection preserve a disabled custom percentage. Quota
-// values are read as float64, and the helper owns result cleanup before
-// returning its new profile container.
+// invitation code through the supplied client. A missing row returns
+// ErrAffiliateProfileNotFound, and result rows close before the caller reuses
+// its connection.
 func queryAffiliateByCode(ctx context.Context, client affiliateQueryExecer, code string) (*promotion.AffiliateSummary, error) {
-	rows, err := client.QueryContext(ctx, `
-SELECT user_id,
-       aff_code,
-       aff_code_custom,
-       aff_rebate_rate_percent,
-       inviter_id,
-       aff_count,
-       aff_quota::double precision,
-       aff_frozen_quota::double precision,
-       aff_history_quota::double precision,
-       created_at,
-       updated_at
-FROM user_affiliates
+	rows, err := client.QueryContext(ctx, affiliateProfileSelectSQL+`
 WHERE aff_code = $1
 LIMIT 1`, strings.ToUpper(strings.TrimSpace(code)))
 	if err != nil {
@@ -1184,6 +1139,18 @@ LIMIT 1`, strings.ToUpper(strings.TrimSpace(code)))
 		return nil, promotion.ErrAffiliateProfileNotFound
 	}
 
+	return scanAffiliateSummary(rows)
+}
+
+// scanAffiliateSummary decodes the current row using affiliateProfileSelectSQL's
+// eleven-column order. The caller advances and closes rows and keeps ownership
+// of the selected connection.
+//
+// SQL NULL produces nil inviter and percentage pointers. Present values keep
+// their pointers even when a stored percentage is zero, because rate selection
+// treats that value as a disabled custom override. Quota values scan as float64
+// after the SELECT casts their PostgreSQL numeric columns.
+func scanAffiliateSummary(rows *sql.Rows) (*promotion.AffiliateSummary, error) {
 	var out promotion.AffiliateSummary
 	var inviterID sql.NullInt64
 	var rebateRate sql.NullFloat64
@@ -1202,9 +1169,8 @@ LIMIT 1`, strings.ToUpper(strings.TrimSpace(code)))
 	); err != nil {
 		return nil, err
 	}
-	// Use SQL validity flags to restore inviter and rate pointers; nil
-	// permits binding or global policy while a present zero retains its saved
-	// meaning.
+	// Use each scanner's validity bit to recover presence; reading only its
+	// numeric value would collapse SQL NULL into an explicit zero override.
 	if inviterID.Valid {
 		out.InviterID = &inviterID.Int64
 	}
