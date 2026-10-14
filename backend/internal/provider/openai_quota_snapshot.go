@@ -100,32 +100,42 @@ func BuildCodexUsageExtraUpdates(snapshot *wire.OpenAICodexUsageSnapshot, fallba
 	// Normalize keeps utilization, duration, and reset observations associated
 	// while selecting categories. Copy their values here so Extra does not retain
 	// snapshot pointers.
-	if normalized := snapshot.Normalize(); normalized != nil {
-		if normalized.Used5hPercent != nil {
-			updates["codex_5h_used_percent"] = *normalized.Used5hPercent
-		}
-		if normalized.Reset5hSeconds != nil {
-			updates["codex_5h_reset_after_seconds"] = *normalized.Reset5hSeconds
-		}
-		if normalized.Window5hMinutes != nil {
-			updates["codex_5h_window_minutes"] = *normalized.Window5hMinutes
-		}
-		if normalized.Used7dPercent != nil {
-			updates["codex_7d_used_percent"] = *normalized.Used7dPercent
-		}
-		if normalized.Reset7dSeconds != nil {
-			updates["codex_7d_reset_after_seconds"] = *normalized.Reset7dSeconds
-		}
-		if normalized.Window7dMinutes != nil {
-			updates["codex_7d_window_minutes"] = *normalized.Window7dMinutes
-		}
-		if reset5hAt := CodexResetAtRFC3339(baseTime, normalized.Reset5hSeconds); reset5hAt != nil {
-			updates["codex_5h_reset_at"] = *reset5hAt
-		}
-		if reset7dAt := CodexResetAtRFC3339(baseTime, normalized.Reset7dSeconds); reset7dAt != nil {
-			updates["codex_7d_reset_at"] = *reset7dAt
-		}
-	}
+	addCodexNormalizedWindowExtraUpdates(updates, snapshot.Normalize(), baseTime)
 
 	return updates
+}
+
+// addCodexNormalizedWindowExtraUpdates copies present canonical window values
+// into updates. Callers supply a writable map and the time anchoring relative
+// resets; nil normalized observations leave the map unchanged. Present zeros
+// and negative relative counts are copied as supplied, while absolute dates
+// use CodexResetAtRFC3339.
+func addCodexNormalizedWindowExtraUpdates(updates map[string]any, normalized *wire.NormalizedCodexLimits, baseTime time.Time) {
+	if normalized == nil {
+		return
+	}
+	if normalized.Used5hPercent != nil {
+		updates["codex_5h_used_percent"] = *normalized.Used5hPercent
+	}
+	if normalized.Reset5hSeconds != nil {
+		updates["codex_5h_reset_after_seconds"] = *normalized.Reset5hSeconds
+	}
+	if normalized.Window5hMinutes != nil {
+		updates["codex_5h_window_minutes"] = *normalized.Window5hMinutes
+	}
+	if normalized.Used7dPercent != nil {
+		updates["codex_7d_used_percent"] = *normalized.Used7dPercent
+	}
+	if normalized.Reset7dSeconds != nil {
+		updates["codex_7d_reset_after_seconds"] = *normalized.Reset7dSeconds
+	}
+	if normalized.Window7dMinutes != nil {
+		updates["codex_7d_window_minutes"] = *normalized.Window7dMinutes
+	}
+	if reset5hAt := CodexResetAtRFC3339(baseTime, normalized.Reset5hSeconds); reset5hAt != nil {
+		updates["codex_5h_reset_at"] = *reset5hAt
+	}
+	if reset7dAt := CodexResetAtRFC3339(baseTime, normalized.Reset7dSeconds); reset7dAt != nil {
+		updates["codex_7d_reset_at"] = *reset7dAt
+	}
 }

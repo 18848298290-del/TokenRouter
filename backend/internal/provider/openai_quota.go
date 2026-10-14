@@ -593,30 +593,7 @@ func BuildCodexSparkWindowExtraUpdates(usage *openai.OpenAIQuotaUsage, now time.
 	}
 
 	updates := make(map[string]any)
-	if normalized.Used5hPercent != nil {
-		updates["codex_5h_used_percent"] = *normalized.Used5hPercent
-	}
-	if normalized.Reset5hSeconds != nil {
-		updates["codex_5h_reset_after_seconds"] = *normalized.Reset5hSeconds
-	}
-	if normalized.Window5hMinutes != nil {
-		updates["codex_5h_window_minutes"] = *normalized.Window5hMinutes
-	}
-	if normalized.Used7dPercent != nil {
-		updates["codex_7d_used_percent"] = *normalized.Used7dPercent
-	}
-	if normalized.Reset7dSeconds != nil {
-		updates["codex_7d_reset_after_seconds"] = *normalized.Reset7dSeconds
-	}
-	if normalized.Window7dMinutes != nil {
-		updates["codex_7d_window_minutes"] = *normalized.Window7dMinutes
-	}
-	if r := CodexResetAtRFC3339(now, normalized.Reset5hSeconds); r != nil {
-		updates["codex_5h_reset_at"] = *r
-	}
-	if r := CodexResetAtRFC3339(now, normalized.Reset7dSeconds); r != nil {
-		updates["codex_7d_reset_at"] = *r
-	}
+	addCodexNormalizedWindowExtraUpdates(updates, normalized, now)
 	if len(updates) == 0 {
 		return nil
 	}

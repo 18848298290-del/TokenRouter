@@ -201,3 +201,201 @@ func TestBuildCodexSparkWindowExtraUpdates_NoBengalfox(t *testing.T) {
 	}
 	require.Nil(t, BuildCodexSparkWindowExtraUpdates(usage, time.Now()))
 }
+
+// TestBuildCodexSparkWindowExtraUpdates_CompleteMaps supplies swapped, partial,
+// and duplicate feature observations at a fixed clock. It checks the complete
+// normalized patch, including minute truncation, zero values, clamped dates,
+// caller time zone, and selection of the first matching feature.
+func TestBuildCodexSparkWindowExtraUpdates_CompleteMaps(t *testing.T) {
+	// UTC+8 with fractional seconds checks the supplied Spark clock and
+	// whole-second RFC3339 output for both selected windows.
+	now := time.Date(2026, 10, 14, 13, 2, 3, 456000000, time.FixedZone("UTC+8", 8*60*60))
+	shortLong := &openai.OpenAIRateLimit{
+		PrimaryWindow: &openai.OpenAIRateLimitWindow{
+			UsedPercent:        12.0,
+			LimitWindowSeconds: 18000,
+			ResetAfterSeconds:  3600,
+			ResetAt:            1,
+		},
+		SecondaryWindow: &openai.OpenAIRateLimitWindow{
+			UsedPercent:        88.0,
+			LimitWindowSeconds: 604800,
+			ResetAfterSeconds:  86400,
+			ResetAt:            2,
+		},
+	}
+	later := &openai.OpenAIRateLimit{
+		PrimaryWindow: &openai.OpenAIRateLimitWindow{
+			UsedPercent:        99.0,
+			LimitWindowSeconds: 18000,
+			ResetAfterSeconds:  5,
+		},
+	}
+	tests := []struct {
+		name  string                   // descriptive fixture name
+		usage *openai.OpenAIQuotaUsage // supplied quota observation
+		want  map[string]any           // complete expected patch
+	}{
+		{
+			name: "nil usage",
+		},
+		{
+			name: "unrelated feature",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{MeteredFeature: "other_feature", RateLimit: shortLong},
+				},
+			},
+		},
+		{
+			name: "nil first match ignores later match",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{MeteredFeature: "codex_bengalfox"},
+					{MeteredFeature: "codex_bengalfox", RateLimit: shortLong},
+				},
+			},
+		},
+		{
+			name: "empty first match ignores later match",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{MeteredFeature: "codex_bengalfox", RateLimit: &openai.OpenAIRateLimit{}},
+					{MeteredFeature: "codex_bengalfox", RateLimit: shortLong},
+				},
+			},
+		},
+		{
+			name: "swapped windows truncate durations and use supplied clock",
+			usage: &openai.OpenAIQuotaUsage{
+				FetchedAt: 1,
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{
+						MeteredFeature: "codex_bengalfox",
+						RateLimit: &openai.OpenAIRateLimit{
+							PrimaryWindow: &openai.OpenAIRateLimitWindow{
+								UsedPercent:        88.0,
+								LimitWindowSeconds: 604859,
+								ResetAfterSeconds:  86400,
+								ResetAt:            1,
+							},
+							SecondaryWindow: &openai.OpenAIRateLimitWindow{
+								UsedPercent:        12.0,
+								LimitWindowSeconds: 18059,
+								ResetAfterSeconds:  3600,
+								ResetAt:            2,
+							},
+						},
+					},
+				},
+			},
+			want: map[string]any{
+				"codex_5h_used_percent":        12.0,
+				"codex_5h_reset_after_seconds": 3600,
+				"codex_5h_window_minutes":      300,
+				"codex_5h_reset_at":            "2026-10-14T14:02:03+08:00",
+				"codex_7d_used_percent":        88.0,
+				"codex_7d_reset_after_seconds": 86400,
+				"codex_7d_window_minutes":      10080,
+				"codex_7d_reset_at":            "2026-10-15T13:02:03+08:00",
+				"codex_usage_updated_at":       "2026-10-14T13:02:03+08:00",
+			},
+		},
+		{
+			name: "first populated match supplies paired fields",
+			usage: &openai.OpenAIQuotaUsage{
+				FetchedAt: 2,
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{MeteredFeature: "other_feature", RateLimit: later},
+					{MeteredFeature: "codex_bengalfox", RateLimit: shortLong},
+					{MeteredFeature: "codex_bengalfox", RateLimit: later},
+				},
+			},
+			want: map[string]any{
+				"codex_5h_used_percent":        12.0,
+				"codex_5h_reset_after_seconds": 3600,
+				"codex_5h_window_minutes":      300,
+				"codex_5h_reset_at":            "2026-10-14T14:02:03+08:00",
+				"codex_7d_used_percent":        88.0,
+				"codex_7d_reset_after_seconds": 86400,
+				"codex_7d_window_minutes":      10080,
+				"codex_7d_reset_at":            "2026-10-15T13:02:03+08:00",
+				"codex_usage_updated_at":       "2026-10-14T13:02:03+08:00",
+			},
+		},
+		{
+			name: "present zero window emits zero fields",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{
+						MeteredFeature: "codex_bengalfox",
+						RateLimit: &openai.OpenAIRateLimit{
+							PrimaryWindow: &openai.OpenAIRateLimitWindow{},
+						},
+					},
+				},
+			},
+			want: map[string]any{
+				"codex_5h_used_percent":        0.0,
+				"codex_5h_reset_after_seconds": 0,
+				"codex_5h_window_minutes":      0,
+				"codex_5h_reset_at":            "2026-10-14T13:02:03+08:00",
+				"codex_usage_updated_at":       "2026-10-14T13:02:03+08:00",
+			},
+		},
+		{
+			name: "partial secondary negative reset clamps absolute date",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{
+						MeteredFeature: "codex_bengalfox",
+						RateLimit: &openai.OpenAIRateLimit{
+							SecondaryWindow: &openai.OpenAIRateLimitWindow{
+								UsedPercent:        0.0,
+								LimitWindowSeconds: 18000,
+								ResetAfterSeconds:  -15,
+							},
+						},
+					},
+				},
+			},
+			want: map[string]any{
+				"codex_5h_used_percent":        0.0,
+				"codex_5h_reset_after_seconds": -15,
+				"codex_5h_window_minutes":      300,
+				"codex_5h_reset_at":            "2026-10-14T13:02:03+08:00",
+				"codex_usage_updated_at":       "2026-10-14T13:02:03+08:00",
+			},
+		},
+		{
+			name: "negative partial minute remains present as zero",
+			usage: &openai.OpenAIQuotaUsage{
+				AdditionalRateLimits: []openai.OpenAIAdditionalRateLimit{
+					{
+						MeteredFeature: "codex_bengalfox",
+						RateLimit: &openai.OpenAIRateLimit{
+							PrimaryWindow: &openai.OpenAIRateLimitWindow{
+								UsedPercent:        12.0,
+								LimitWindowSeconds: -59,
+								ResetAfterSeconds:  -3,
+							},
+						},
+					},
+				},
+			},
+			want: map[string]any{
+				"codex_5h_used_percent":        12.0,
+				"codex_5h_reset_after_seconds": -3,
+				"codex_5h_window_minutes":      0,
+				"codex_5h_reset_at":            "2026-10-14T13:02:03+08:00",
+				"codex_usage_updated_at":       "2026-10-14T13:02:03+08:00",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, BuildCodexSparkWindowExtraUpdates(tt.usage, now))
+		})
+	}
+}
