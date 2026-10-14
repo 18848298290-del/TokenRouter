@@ -270,12 +270,6 @@ func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providerco
 		}
 	}
 
-	// Every 529 path above has already returned before model handling. This
-	// duplicate branch is unreachable and cannot select another overload cooldown.
-	if statusCode == 529 {
-		s.Core.ApplyOverload(ctx, provider)
-		return false
-	}
 	// Authentication recovery decides whether credentials can refresh and which
 	// owner to pause. Keep 401 out of generic temporary handling until that
 	// dedicated recovery path runs.
@@ -315,11 +309,6 @@ func (s *UpstreamHealth) HandleDefault(ctx context.Context, provider *providerco
 		shouldDisable = s.Core.ApplyForbiddenObservation(ctx, provider, ForbiddenObservation(provider, upstreamMsg, responseBody))
 	case 429:
 		s.Limits.Observe429(ctx, provider, headers, responseBody)
-		shouldDisable = false
-	case 529:
-		// Earlier 529 handling returns before status dispatch, so this duplicate
-		// case cannot run or publish an additional overload observation.
-		s.Core.ApplyOverload(ctx, provider)
 		shouldDisable = false
 	default:
 		if statusCode >= 500 {
