@@ -25,6 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
@@ -3218,6 +3219,148 @@ func TestReportOpenAIProviderScheduleResult_SuccessClearsModelTransientState(t *
 	svc.ReportOpenAIProviderScheduleResult(&gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 21636}}, "gpt-5.5", true, nil)
 
 	require.False(t, svc.modelTransient.IsBlocked(21636, "gpt-5.5", now.Add(2*time.Millisecond)))
+}
+
+// TestReportOpenAIProviderScheduleResultForSelection_BasicClearsTransientState
+// reports failed and successful basic requests against an active model cooldown.
+// Success clears the cooldown while feedback stays unchanged and the picker
+// remains uninitialized, including absent results and basic results carrying alphas.
+func TestReportOpenAIProviderScheduleResultForSelection_BasicClearsTransientState(t *testing.T) {
+	for name, selection := range map[string]*gatewayprovider.SelectionResult{
+		"absent": nil,
+		"basic":  {},
+		"basic_with_feedback": {
+			AdvancedSchedulerFeedback: &policy.FeedbackConfig{ErrorRateAlpha: 1, TtftAlpha: 1},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			now := time.Now()
+			stats := schedulercore.NewRuntimeStats(time.Now)
+			stats.Report(21637, false, intPtrForTest(150))
+			before := stats.FeedbackSnapshot(21637)
+			svc := &Compatible{
+				modelTransient:      providercore.NewModelTransientState(128),
+				openaiProviderStats: stats,
+			}
+			svc.modelTransient.RecordFailure(21637, "gpt-5.5", now)
+			svc.modelTransient.RecordFailure(21637, "gpt-5.5", now.Add(time.Millisecond))
+			require.True(t, svc.modelTransient.IsBlocked(21637, "gpt-5.5", now.Add(2*time.Millisecond)))
+
+			svc.ReportOpenAIProviderScheduleResultForSelection(selection, 21637, "gpt-5.5", false, intPtrForTest(300))
+			require.True(t, svc.modelTransient.IsBlocked(21637, "gpt-5.5", now.Add(2*time.Millisecond)))
+			svc.ReportOpenAIProviderScheduleResultForSelection(selection, 21637, " GPT-5.5 ", true, nil)
+
+			require.False(t, svc.modelTransient.IsBlocked(21637, "gpt-5.5", now.Add(2*time.Millisecond)))
+			require.Equal(t, before, stats.FeedbackSnapshot(21637))
+			require.Nil(t, svc.picker)
+		})
+	}
+}
+
+// TestReportOpenAIProviderScheduleResultForSelection_AdvancedDefaultFeedback
+// reports an advanced result that has no captured coefficients.
+// Outcomes use scheduler defaults, nil latency leaves TTFT absent, and later
+// positive samples blend while successful feedback clears the model cooldown.
+func TestReportOpenAIProviderScheduleResultForSelection_AdvancedDefaultFeedback(t *testing.T) {
+	now := time.Now()
+	stats := schedulercore.NewRuntimeStats(time.Now)
+	svc := &Compatible{
+		modelTransient:      providercore.NewModelTransientState(128),
+		openaiProviderStats: stats,
+	}
+	svc.modelTransient.RecordFailure(21638, "gpt-5.5", now)
+	svc.modelTransient.RecordFailure(21638, "gpt-5.5", now.Add(time.Millisecond))
+	selection := &gatewayprovider.SelectionResult{AdvancedScheduler: true}
+
+	svc.ReportOpenAIProviderScheduleResultForSelection(selection, 21638, "gpt-5.5", false, nil)
+	first := stats.FeedbackSnapshot(21638)
+	require.True(t, first.HasFeedback)
+	require.InDelta(t, 0.2, first.ErrorRate, 1e-12)
+	require.Equal(t, int64(1), first.ErrorSamples)
+	require.False(t, first.HasTTFT)
+	require.Zero(t, first.TTFTSamples)
+	require.True(t, svc.modelTransient.IsBlocked(21638, "gpt-5.5", now.Add(2*time.Millisecond)))
+
+	svc.ReportOpenAIProviderScheduleResultForSelection(selection, 21638, "gpt-5.5", true, intPtrForTest(100))
+	svc.ReportOpenAIProviderScheduleResultForSelection(selection, 21638, "gpt-5.5", true, intPtrForTest(200))
+	after := stats.FeedbackSnapshot(21638)
+	require.InDelta(t, 0.128, after.ErrorRate, 1e-12)
+	require.Equal(t, int64(3), after.ErrorSamples)
+	require.True(t, after.HasTTFT)
+	require.InDelta(t, 120, after.TTFT, 1e-12)
+	require.Equal(t, int64(2), after.TTFTSamples)
+	require.False(t, svc.modelTransient.IsBlocked(21638, "gpt-5.5", now.Add(2*time.Millisecond)))
+
+	var absent *Compatible
+	require.NotPanics(t, func() {
+		absent.ReportOpenAIProviderScheduleResultForSelection(selection, 21638, "gpt-5.5", true, nil)
+	})
+}
+
+// TestReportOpenAIProviderScheduleResultForSelection_UsesCapturedFeedback
+// selects an advanced provider before publishing different runtime coefficients.
+// Completion applies the selected coefficients to shared feedback, and a later
+// successful observation clears cooldown state while leaving earlier latency
+// observations unchanged when its TTFT is absent.
+func TestReportOpenAIProviderScheduleResultForSelection_UsesCapturedFeedback(t *testing.T) {
+	groupID := int64(21639)
+	providerID := int64(21640)
+	ctx := withAdvancedSchedulerTestGroup(context.Background(), groupID)
+	runtime := schedulercore.NewSettingsRuntime(schedulercore.Diagnostics{})
+	runtime.Store(policy.RuntimeSettings{
+		EwmaErrorRateAlpha: 0.5, EwmaErrorRateAlphaSet: true,
+		EwmaTTFTAlpha: 0.25, EwmaTTFTAlphaSet: true,
+	})
+	parameters := schedulercore.NewParameters(runtime, nil, schedulercore.DefaultParameters())
+	stats := schedulercore.NewRuntimeStats(time.Now)
+	stats.Report(providerID, true, intPtrForTest(100))
+	provider := gatewayprovider.ExecutionProvider{Record: providercore.Record{
+		ID: providerID, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
+		Status: billing.StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{groupID},
+		Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation,
+	}}
+	svc := newCompatibleSelectionForTest(CompatibleDependencies{
+		Reads: Reads{Providers: schedulerTestOpenAIProviderRepo{providers: []gatewayprovider.ExecutionProvider{provider}}},
+		Shared: Shared{
+			Concurrency: schedulercore.NewConcurrencyService(schedulerTestConcurrencyCache{}, schedulercore.Diagnostics{}),
+			Parameters:  parameters,
+			Feedback:    stats,
+		},
+	}, nil)
+	selection, _, err := svc.SelectProviderWithScheduler(ctx, &groupID, "", "", "gpt-5.5", nil, egress.OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	if selection.ReleaseFunc != nil {
+		t.Cleanup(selection.ReleaseFunc)
+	}
+	require.True(t, selection.AdvancedScheduler)
+	require.Equal(t, &policy.FeedbackConfig{ErrorRateAlpha: 0.5, TtftAlpha: 0.25}, selection.AdvancedSchedulerFeedback)
+
+	// Publish different coefficients after selection so completion can reveal a
+	// settings reread that would associate this request with the later values.
+	runtime.Store(policy.RuntimeSettings{
+		EwmaErrorRateAlpha: 0.9, EwmaErrorRateAlphaSet: true,
+		EwmaTTFTAlpha: 0.9, EwmaTTFTAlphaSet: true,
+	})
+	require.Equal(t, policy.FeedbackConfig{ErrorRateAlpha: 0.9, TtftAlpha: 0.9}, parameters.Effective(ctx, policy.GroupAdvancedSchedulerOverrides{}).Feedback)
+	svc.ReportOpenAIProviderScheduleResultForSelection(selection, providerID, "gpt-5.5", false, intPtrForTest(300))
+	afterFailure := stats.FeedbackSnapshot(providerID)
+	require.InDelta(t, 0.5, afterFailure.ErrorRate, 1e-12)
+	require.InDelta(t, 150, afterFailure.TTFT, 1e-12)
+	require.Equal(t, int64(2), afterFailure.ErrorSamples)
+	require.Equal(t, int64(2), afterFailure.TTFTSamples)
+
+	now := time.Now()
+	svc.modelTransient.RecordFailure(providerID, "gpt-5.5", now)
+	svc.modelTransient.RecordFailure(providerID, "gpt-5.5", now.Add(time.Millisecond))
+	require.True(t, svc.modelTransient.IsBlocked(providerID, "gpt-5.5", now.Add(2*time.Millisecond)))
+	svc.ReportOpenAIProviderScheduleResultForSelection(selection, providerID, "gpt-5.5", true, nil)
+	afterSuccess := stats.FeedbackSnapshot(providerID)
+	require.InDelta(t, 0.25, afterSuccess.ErrorRate, 1e-12)
+	require.InDelta(t, 150, afterSuccess.TTFT, 1e-12)
+	require.Equal(t, int64(3), afterSuccess.ErrorSamples)
+	require.Equal(t, int64(2), afterSuccess.TTFTSamples)
+	require.False(t, svc.modelTransient.IsBlocked(providerID, "gpt-5.5", now.Add(2*time.Millisecond)))
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky_ForceHTTP

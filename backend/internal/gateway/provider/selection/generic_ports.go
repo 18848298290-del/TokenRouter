@@ -241,8 +241,7 @@ func (s *Generic) genericSelector() (*schedulercore.GenericSelector, *projection
 			return s.setProviderError(ctx, id, message)
 		},
 		SchedulingConfig: func() schedulercore.FlowOptions {
-			v := s.schedulingConfig()
-			return schedulercore.FlowOptions{LoadBatchEnabled: v.LoadBatchEnabled, PreferSoonestReset: v.PreferSoonestReset, FallbackMaxWaiting: v.FallbackMaxWaiting, StickySessionMaxWaiting: v.StickySessionMaxWaiting, FallbackSelectionMode: v.FallbackSelectionMode, FallbackWaitTimeout: v.FallbackWaitTimeout, StickySessionWaitTimeout: v.StickySessionWaitTimeout}
+			return s.schedulingConfig()
 		},
 
 		CheckClaudeCodeRestriction: func(ctx context.Context, id *int64) (*schedulercore.FlowGroup, *int64, error) {

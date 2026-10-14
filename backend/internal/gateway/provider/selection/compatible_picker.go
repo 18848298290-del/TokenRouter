@@ -899,7 +899,7 @@ func (s *Compatible) ObserveOpenAIProviderHealthFailure(ctx context.Context, pro
 // the picker statistics.
 func (s *Compatible) ReportOpenAIProviderScheduleResultForSelection(selection *gatewayprovider.SelectionResult, providerID int64, model string, success bool, firstTokenMs *int) {
 	if selection != nil && selection.AdvancedScheduler && selection.AdvancedSchedulerFeedback != nil {
-		s.reportOpenAIProviderScheduleResultWithFeedback(providerID, model, success, firstTokenMs, *selection.AdvancedSchedulerFeedback)
+		s.reportOpenAIProviderScheduleResult(true, providerID, model, success, firstTokenMs, *selection.AdvancedSchedulerFeedback)
 		return
 	}
 	s.reportOpenAIProviderScheduleResult(selection != nil && selection.AdvancedScheduler, providerID, model, success, firstTokenMs)
@@ -907,9 +907,12 @@ func (s *Compatible) ReportOpenAIProviderScheduleResultForSelection(selection *g
 
 // reportOpenAIProviderScheduleResult clears successful model cooldown state
 // before optional advanced feedback. Basic observations finish after cleanup;
-// advanced observations use the shared picker when available and report
-// first-token milliseconds.
-func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerID int64, model string, success bool, firstTokenMs *int) {
+// advanced observations use the shared picker when available. Supplied feedback
+// coefficients apply to this observation, while absent coefficients use the
+// scheduler defaults and nil first-token latency skips the TTFT sample.
+func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerID int64, model string, success bool, firstTokenMs *int, feedback ...policy.FeedbackConfig) {
+	// Successful basic requests also recover provider-model eligibility, so clear
+	// the cooldown before deciding whether advanced performance statistics apply.
 	if success {
 		s.clearOpenAIProviderModelTransientState(providerID, providercore.NormalizeTransientModel(model))
 	}
@@ -920,22 +923,7 @@ func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerI
 	if scheduler == nil {
 		return
 	}
-	scheduler.ReportResult(providerID, success, firstTokenMs)
-}
-
-// reportOpenAIProviderScheduleResultWithFeedback clears successful transient
-// model state and reports picker feedback with supplied alphas. An unavailable
-// picker ends reporting, while the captured settings keep this observation
-// aligned with the selected request.
-func (s *Compatible) reportOpenAIProviderScheduleResultWithFeedback(providerID int64, model string, success bool, firstTokenMs *int, feedback policy.FeedbackConfig) {
-	if success {
-		s.clearOpenAIProviderModelTransientState(providerID, providercore.NormalizeTransientModel(model))
-	}
-	scheduler := s.ensureOpenAIProviderScheduler()
-	if scheduler == nil {
-		return
-	}
-	scheduler.ReportResult(providerID, success, firstTokenMs, feedback)
+	scheduler.ReportResult(providerID, success, firstTokenMs, feedback...)
 }
 
 // RecordOpenAIProviderSwitch records a picker switch when the compatible health

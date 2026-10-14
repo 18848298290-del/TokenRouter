@@ -115,8 +115,7 @@ func (s *compatiblePicker) platformSelector() (*schedulercore.PlatformSelector, 
 		},
 		BindSticky: s.service.BindStickySession, DeleteSticky: s.service.deleteStickySessionProviderID, GetSticky: s.service.getStickySessionProviderID, RefreshSticky: s.service.refreshStickySessionTTL, StickyTTL: s.service.SessionStickyTTL,
 		Options: func() schedulercore.FlowOptions {
-			v := s.service.schedulingConfig()
-			return schedulercore.FlowOptions{LoadBatchEnabled: v.LoadBatchEnabled, PreferSoonestReset: v.PreferSoonestReset, FallbackMaxWaiting: v.FallbackMaxWaiting, StickySessionMaxWaiting: v.StickySessionMaxWaiting, FallbackSelectionMode: v.FallbackSelectionMode, FallbackWaitTimeout: v.FallbackWaitTimeout, StickySessionWaitTimeout: v.StickySessionWaitTimeout}
+			return s.service.schedulingConfig()
 		},
 		GetSchedulable: func(ctx context.Context, id int64) (*schedulercore.FlowProvider, error) {
 			v, err := s.service.getSchedulableProvider(ctx, id)
