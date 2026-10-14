@@ -236,21 +236,6 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 	} else if input.Title != nil || input.Content != nil {
 		return nil, locale.ErrConflict
 	}
-	if input.Title != nil {
-		title := strings.TrimSpace(*input.Title)
-		// Base record title validation uses the trimmed byte length.
-		if title == "" || len(title) > 200 {
-			return nil, ErrAnnouncementInvalidTitle
-		}
-		a.Title = title
-	}
-	if input.Content != nil {
-		content := strings.TrimSpace(*input.Content)
-		if content == "" {
-			return nil, ErrAnnouncementContentRequired
-		}
-		a.Content = content
-	}
 	if input.Status != nil {
 		status := strings.TrimSpace(*input.Status)
 		if !isValidAnnouncementStatus(status) {
