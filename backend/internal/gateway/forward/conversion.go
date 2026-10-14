@@ -124,25 +124,7 @@ func AsResponses(ctx context.Context, p ConversionPorts, in ConversionInput, bod
 	defer resp.Close()
 
 	if resp.StatusCode >= 400 {
-		// Keep available body evidence even when reading fails. Health uses source
-		// status and selected model before generic output, recovery, or final
-		// client-status mapping consumes that captured failure information.
-		respBody, _ := p.ReadErrorBody()
-		upstreamMsg := p.ErrorMessage(respBody)
-		decision := p.Health(ctx, resp.StatusCode, respBody, mappedModel)
-
-		if decision.Generic {
-			p.Output().Error(500, "server_error", "Upstream gateway error")
-			return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
-		}
-
-		if decision.Failover {
-			p.FailoverNotice(resp.StatusCode, upstreamMsg)
-			return nil, p.FailoverError(resp.StatusCode, respBody, decision.RetrySameProvider)
-		}
-
-		p.Output().Error(MapStatus(resp.StatusCode), "server_error", upstreamMsg)
-		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+		return nil, handleConversionHTTPError(ctx, p, resp.StatusCode, mappedModel)
 	}
 
 	var result *Result
@@ -241,25 +223,7 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 	defer resp.Close()
 
 	if resp.StatusCode >= 400 {
-		// Keep available body evidence even when reading fails. Health uses source
-		// status and selected model before generic output, recovery, or final
-		// client-status mapping consumes that captured failure information.
-		respBody, _ := p.ReadErrorBody()
-		upstreamMsg := p.ErrorMessage(respBody)
-		decision := p.Health(ctx, resp.StatusCode, respBody, mappedModel)
-
-		if decision.Generic {
-			p.Output().Error(500, "server_error", "Upstream gateway error")
-			return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
-		}
-
-		if decision.Failover {
-			p.FailoverNotice(resp.StatusCode, upstreamMsg)
-			return nil, p.FailoverError(resp.StatusCode, respBody, decision.RetrySameProvider)
-		}
-
-		p.Output().Error(MapStatus(resp.StatusCode), "server_error", upstreamMsg)
-		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+		return nil, handleConversionHTTPError(ctx, p, resp.StatusCode, mappedModel)
 	}
 
 	reasoningEffort := p.Effort(body, true, mappedModel, originalModel)
@@ -290,6 +254,40 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 		result.Usage.Speed = "fast"
 	}
 	return result, handleErr
+}
+
+// handleConversionHTTPError returns the selected error after an upstream HTTP
+// failure. The caller supplies source status and the selected upstream model,
+// and keeps responsibility for closing the response. Available body bytes
+// remain the evidence for summary extraction, health classification, and
+// recovery even when reading reports an error.
+//
+// Generic output takes precedence when health also permits failover. A recovery
+// decision records its notice before constructing the error with the
+// same-provider retry flag; otherwise client output receives the mapped status
+// and extracted summary.
+func handleConversionHTTPError(ctx context.Context, p ConversionPorts, status int, mappedModel string) error {
+	// Keep available body evidence even when reading fails. Health uses source
+	// status and selected model before generic output, recovery, or final
+	// client-status mapping consumes that captured failure information.
+	respBody, _ := p.ReadErrorBody()
+	upstreamMsg := p.ErrorMessage(respBody)
+	decision := p.Health(ctx, status, respBody, mappedModel)
+
+	if decision.Generic {
+		p.Output().Error(500, "server_error", "Upstream gateway error")
+		return fmt.Errorf("upstream error: %d (not in custom error codes)", status)
+	}
+
+	if decision.Failover {
+		// Report the failure before returning its recovery signal, because the outer
+		// request loop can immediately begin the next provider attempt.
+		p.FailoverNotice(status, upstreamMsg)
+		return p.FailoverError(status, respBody, decision.RetrySameProvider)
+	}
+
+	p.Output().Error(MapStatus(status), "server_error", upstreamMsg)
+	return fmt.Errorf("upstream error: %d %s", status, upstreamMsg)
 }
 
 // AdaptResponsesClientToolsForAnthropic returns request bytes and the mapping

@@ -1,7 +1,10 @@
 package forward
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -20,6 +23,8 @@ import (
 // representations while selecting protocol-specific defaults. These tests
 // compare converted structures or serialized fields, including effort, media,
 // tool-history pairing, and option presence before execution resolves a provider.
+// HTTP-error fixtures record entrypoint callbacks and response closing while
+// health decisions consume the body evidence available after a partial read.
 
 // Shared conversion fixtures supply an unsigned thinking/tool turn and the
 // output-token floor used by request-budget assertions across both bridge paths.
@@ -34,6 +39,154 @@ const (
 	// minMaxOutputTokens is the expected 128-token floor used by protocol bridge assertions.
 	minMaxOutputTokens = 128
 )
+
+// conversionHTTPErrorPorts records conversion callbacks for one upstream HTTP failure.
+type conversionHTTPErrorPorts struct {
+	// ConversionPorts supplies unused methods, which remain unreachable for these
+	// non-OAuth requests ending at the ordinary upstream HTTP error decision.
+	ConversionPorts
+	t           *testing.T      // fixture assertion owner
+	ctx         context.Context // original attempt context
+	status      int             // source HTTP status
+	decision    ErrorDecision   // configured health decision
+	failoverErr error           // returned recovery signal
+	readErr     error           // error body read failure
+	// body is returned as shared evidence. Summary, health, and recovery callbacks
+	// assert that conversion passes this same storage after a read failure.
+	body         []byte
+	events       []string // callback invocation sequence
+	closeCalls   int      // response close count
+	clientStatus int      // emitted HTTP status
+	clientKind   string   // emitted error kind
+	clientMsg    string   // emitted error message
+}
+
+// conversionHTTPErrorOutput records the final error emitted by a conversion attempt.
+type conversionHTTPErrorOutput struct {
+	// Output supplies methods unreachable when an HTTP error ends the conversion
+	// attempt before any streaming or buffered response adapter begins output.
+	Output
+	ports *conversionHTTPErrorPorts // owning attempt fixture
+}
+
+// TestConversionHTTPErrorSequence sends ordinary upstream failures through both
+// conversion entrypoints. It protects callback order, partial body evidence,
+// Generic precedence, recovery flags, client errors, and deferred response cleanup.
+func TestConversionHTTPErrorSequence(t *testing.T) {
+	entrypoints := []struct {
+		name   string   // client protocol name
+		body   []byte   // valid request fixture
+		prefix []string // expected preparation callbacks
+
+		// forward selects the conversion attempt entrypoint.
+		forward func(context.Context, ConversionPorts, ConversionInput, []byte) (*Result, error)
+	}{
+		{
+			name:    "Responses",
+			forward: AsResponses,
+			body:    []byte(`{"model":"client-model","input":"hello"}`),
+			prefix: []string{
+				"normalize", "resolve", "effort", "thinking", "model_notice",
+				"cache", "credential", "build", "send",
+			},
+		},
+		{
+			name:    "Chat",
+			forward: AsChat,
+			body:    []byte(`{"model":"client-model","messages":[{"role":"user","content":"hello"}],"stream":true}`),
+			prefix:  []string{"resolve", "model_notice", "cache", "credential", "build", "send"},
+		},
+	}
+	cases := []struct {
+		name         string        // error decision scenario
+		status       int           // source HTTP status
+		decision     ErrorDecision // configured health decision
+		readErr      error         // error body read failure
+		clientStatus int           // expected HTTP status
+		clientMsg    string        // expected error message
+		errText      string        // expected returned error
+		tail         []string      // expected decision callbacks
+	}{
+		{
+			name:         "generic_precedes_failover_on_partial_read",
+			status:       503,
+			decision:     ErrorDecision{Generic: true, Failover: true, RetrySameProvider: true},
+			readErr:      io.ErrUnexpectedEOF,
+			clientStatus: 500,
+			clientMsg:    "Upstream gateway error",
+			errText:      "upstream error: 503 (not in custom error codes)",
+			tail:         []string{"output", "error", "close"},
+		},
+		{
+			name:     "failover_retries_same_provider_on_partial_read",
+			status:   429,
+			decision: ErrorDecision{Failover: true, RetrySameProvider: true},
+			readErr:  io.ErrUnexpectedEOF,
+			tail:     []string{"failover_notice", "failover_error", "close"},
+		},
+		{
+			name:     "failover_switches_provider",
+			status:   503,
+			decision: ErrorDecision{Failover: true},
+			tail:     []string{"failover_notice", "failover_error", "close"},
+		},
+		{
+			name:         "server_status_maps_after_partial_read",
+			status:       503,
+			readErr:      io.ErrUnexpectedEOF,
+			clientStatus: 502,
+			clientMsg:    "captured upstream failure",
+			errText:      "upstream error: 503 captured upstream failure",
+			tail:         []string{"output", "error", "close"},
+		},
+		{
+			name:         "client_status_is_retained",
+			status:       429,
+			clientStatus: 429,
+			clientMsg:    "captured upstream failure",
+			errText:      "upstream error: 429 captured upstream failure",
+			tail:         []string{"output", "error", "close"},
+		},
+	}
+	for _, entrypoint := range entrypoints {
+		t.Run(entrypoint.name, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					ctx := t.Context()
+					ports := &conversionHTTPErrorPorts{
+						t:           t,
+						ctx:         ctx,
+						status:      tc.status,
+						decision:    tc.decision,
+						failoverErr: errors.New("fixture recovery signal"),
+						body:        []byte("available upstream body"),
+						readErr:     tc.readErr,
+					}
+
+					result, err := entrypoint.forward(ctx, ports, ConversionInput{}, entrypoint.body)
+
+					require.Nil(t, result)
+					if tc.errText != "" {
+						require.EqualError(t, err, tc.errText)
+						require.Equal(t, tc.clientStatus, ports.clientStatus)
+						require.Equal(t, "server_error", ports.clientKind)
+						require.Equal(t, tc.clientMsg, ports.clientMsg)
+					} else {
+						require.Same(t, ports.failoverErr, err)
+						require.Zero(t, ports.clientStatus)
+						require.Empty(t, ports.clientKind)
+						require.Empty(t, ports.clientMsg)
+					}
+					expected := append([]string{}, entrypoint.prefix...)
+					expected = append(expected, "read_error_body", "error_message", "health")
+					expected = append(expected, tc.tail...)
+					require.Equal(t, expected, ports.events)
+					require.Equal(t, 1, ports.closeCalls)
+				})
+			}
+		})
+	}
+}
 
 // TestExtractCCReasoningEffortFromBody checks nested and flat Chat effort with
 // casing and x-high aliases. The fixtures also retain max for DeepSeek or
@@ -2802,4 +2955,145 @@ func ccChainToAnthropic(t *testing.T, ccReq *protocolopenai.ChatCompletionsReque
 	require.NoError(t, err)
 	assertAnthropicPairing(t, anthReq.Messages)
 	return anthReq.Messages
+}
+
+// NormalizeResponses records Responses preparation and returns the supplied bytes.
+// The unchanged flag keeps the valid fixture body as the entrypoint's input
+// before request conversion begins.
+func (p *conversionHTTPErrorPorts) NormalizeResponses(body []byte) ([]byte, bool, error) {
+	p.events = append(p.events, "normalize")
+	return body, false, nil
+}
+
+// ResolveModel checks the logical model and supplies the selected wire model.
+func (p *conversionHTTPErrorPorts) ResolveModel(ctx context.Context, model string) string {
+	require.Equal(p.t, p.ctx, ctx)
+	require.Equal(p.t, "client-model", model)
+	p.events = append(p.events, "resolve")
+	return "claude-sonnet-4-5"
+}
+
+// Effort records the Responses effort observation before the upstream exchange.
+// HTTP-error fixtures end Chat conversion before effort sampling, so reaching
+// this method with Chat syntax fails the calling-order assertion.
+func (p *conversionHTTPErrorPorts) Effort(_ []byte, chat bool, models ...string) *string {
+	require.False(p.t, chat)
+	require.Equal(p.t, []string{"claude-sonnet-4-5", "client-model"}, models)
+	p.events = append(p.events, "effort")
+	return nil
+}
+
+// ThinkingFallback records the model-specific observation after effort selection.
+// It returns the supplied effort so these fixtures can observe sampling order
+// independently of successful-response metadata handling.
+func (p *conversionHTTPErrorPorts) ThinkingFallback(effort *string, _ []byte, model string) *string {
+	require.Equal(p.t, "claude-sonnet-4-5", model)
+	p.events = append(p.events, "thinking")
+	return effort
+}
+
+// ModelNotice records the selected model before request preparation and exchange.
+func (p *conversionHTTPErrorPorts) ModelNotice(_, original, mapped string, _ bool) {
+	require.Equal(p.t, "client-model", original)
+	require.Equal(p.t, "claude-sonnet-4-5", mapped)
+	p.events = append(p.events, "model_notice")
+}
+
+// CacheLimit records preparation and returns the supplied Anthropic request bytes.
+// These fixtures retain the same bytes for Build because the error-path assertions
+// begin after request preparation has completed.
+func (p *conversionHTTPErrorPorts) CacheLimit(body []byte) []byte {
+	p.events = append(p.events, "cache")
+	return body
+}
+
+// Credential records successful credential preparation before the fixture request build.
+func (p *conversionHTTPErrorPorts) Credential(context.Context) error {
+	p.events = append(p.events, "credential")
+	return nil
+}
+
+// Build checks the converted model and upstream stream setting before exchange.
+// The supplied request becomes the returned wire body, and OAuth mimic eligibility
+// remains false for these fixtures.
+func (p *conversionHTTPErrorPorts) Build(_ context.Context, body []byte, model string, stream, mimic bool) ([]byte, error) {
+	require.Equal(p.t, "claude-sonnet-4-5", model)
+	require.True(p.t, stream)
+	require.False(p.t, mimic)
+	p.events = append(p.events, "build")
+	return body, nil
+}
+
+// Send supplies the configured HTTP failure and records later response cleanup.
+// Its Close callback counts each invocation so the entrypoint's deferred cleanup
+// can be compared with all decision callbacks.
+func (p *conversionHTTPErrorPorts) Send(context.Context) (Response, error) {
+	p.events = append(p.events, "send")
+	return Response{
+		StatusCode: p.status,
+		Close: func() {
+			p.events = append(p.events, "close")
+			p.closeCalls++
+		},
+	}, nil
+}
+
+// ReadErrorBody returns available evidence together with the configured read error.
+// Returned bytes share the fixture's storage so later callbacks can check that
+// a partial read retains that evidence.
+func (p *conversionHTTPErrorPorts) ReadErrorBody() ([]byte, error) {
+	p.events = append(p.events, "read_error_body")
+	return p.body, p.readErr
+}
+
+// ErrorMessage checks shared body evidence before returning the fixed upstream summary.
+func (p *conversionHTTPErrorPorts) ErrorMessage(body []byte) string {
+	require.Equal(p.t, p.body, body)
+	require.Same(p.t, &p.body[0], &body[0])
+	p.events = append(p.events, "error_message")
+	return "captured upstream failure"
+}
+
+// Health checks source evidence and returns the configured provider decision.
+func (p *conversionHTTPErrorPorts) Health(ctx context.Context, status int, body []byte, model string) ErrorDecision {
+	require.Equal(p.t, p.ctx, ctx)
+	require.Equal(p.t, p.status, status)
+	require.Equal(p.t, p.body, body)
+	require.Same(p.t, &p.body[0], &body[0])
+	require.Equal(p.t, "claude-sonnet-4-5", model)
+	p.events = append(p.events, "health")
+	return p.decision
+}
+
+// FailoverNotice checks the source status and extracted summary before recovery construction.
+func (p *conversionHTTPErrorPorts) FailoverNotice(status int, message string) {
+	require.Equal(p.t, p.status, status)
+	require.Equal(p.t, "captured upstream failure", message)
+	p.events = append(p.events, "failover_notice")
+}
+
+// FailoverError checks shared evidence and the health decision's retry permission.
+// It returns the fixture's exact error so the entrypoint can be checked for
+// recovery-signal identity as well as callback order.
+func (p *conversionHTTPErrorPorts) FailoverError(status int, body []byte, retry bool) error {
+	require.Equal(p.t, p.status, status)
+	require.Equal(p.t, p.body, body)
+	require.Same(p.t, &p.body[0], &body[0])
+	require.Equal(p.t, p.decision.RetrySameProvider, retry)
+	p.events = append(p.events, "failover_error")
+	return p.failoverErr
+}
+
+// Output supplies the writer that records the attempt's final client error.
+func (p *conversionHTTPErrorPorts) Output() Output {
+	p.events = append(p.events, "output")
+	return &conversionHTTPErrorOutput{ports: p}
+}
+
+// Error captures client status, kind, and message for the decision assertions.
+func (o *conversionHTTPErrorOutput) Error(status int, kind, message string) {
+	o.ports.events = append(o.ports.events, "error")
+	o.ports.clientStatus = status
+	o.ports.clientKind = kind
+	o.ports.clientMsg = message
 }
