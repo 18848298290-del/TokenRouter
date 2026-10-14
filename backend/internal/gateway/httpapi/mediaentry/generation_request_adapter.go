@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -493,7 +492,30 @@ func generationResultView(r *forwardcore.OpenAIResult) *gatewaymedia.GenerationR
 	}
 	// Copy mutable media observations before the loop retains them, so completion
 	// conversions can keep their own timing, size and header evidence across callbacks.
-	return gatewaymedia.CloneGenerationResult(&gatewaymedia.GenerationResult{RequestID: r.RequestID, ResponseID: r.ResponseID, Model: r.Model, BillingModel: r.BillingModel, UpstreamModel: r.UpstreamModel, Usage: r.Usage, Stream: r.Stream, Duration: r.Duration, FirstTokenMs: r.FirstTokenMs, ImageCount: r.ImageCount, VideoCount: r.VideoCount, VideoState: r.VideoState, VideoDurationSeconds: r.VideoDurationSeconds, ImageSize: r.ImageSize, ImageInputSize: r.ImageInputSize, ImageOutputSize: r.ImageOutputSize, ImageSizeSource: r.ImageSizeSource, VideoResolution: r.VideoResolution, ImageOutputSizes: r.ImageOutputSizes, ImageSizeBreakdown: r.ImageSizeBreakdown, Headers: http.Header(r.UpstreamHeaders).Clone(), ResponseHeaders: http.Header(r.ResponseHeaders).Clone()})
+	return gatewaymedia.CloneGenerationResult(&gatewaymedia.GenerationResult{
+		RequestID:            r.RequestID,
+		ResponseID:           r.ResponseID,
+		Model:                r.Model,
+		BillingModel:         r.BillingModel,
+		UpstreamModel:        r.UpstreamModel,
+		Usage:                r.Usage,
+		Stream:               r.Stream,
+		Duration:             r.Duration,
+		FirstTokenMs:         r.FirstTokenMs,
+		ImageCount:           r.ImageCount,
+		VideoCount:           r.VideoCount,
+		VideoState:           r.VideoState,
+		VideoDurationSeconds: r.VideoDurationSeconds,
+		ImageSize:            r.ImageSize,
+		ImageInputSize:       r.ImageInputSize,
+		ImageOutputSize:      r.ImageOutputSize,
+		ImageSizeSource:      r.ImageSizeSource,
+		VideoResolution:      r.VideoResolution,
+		ImageOutputSizes:     r.ImageOutputSizes,
+		ImageSizeBreakdown:   r.ImageSizeBreakdown,
+		Headers:              r.UpstreamHeaders,
+		ResponseHeaders:      r.ResponseHeaders,
+	})
 }
 
 // legacyGenerationResult converts a cloned media result into the OpenAI
@@ -502,9 +524,9 @@ func generationResultView(r *forwardcore.OpenAIResult) *gatewaymedia.GenerationR
 // and timing storage is copied through CloneGenerationResult before
 // construction.
 //
-// Both header maps are cloned again for the returned forwarding value. Image
-// output sizes and size breakdown come from the private clone, so the
-// returned view can be retained independently of the media loop's result.
+// Both header maps, image output sizes and size breakdown come from the
+// private clone, so the returned view can be retained independently of the
+// media loop's result. Nil and empty collections keep their observed shapes.
 // Text and WebSocket observations are absent because the generation schema
 // carries media execution evidence.
 func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenAIResult {
@@ -514,7 +536,30 @@ func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenA
 	// The forwarding view takes private media storage before copying fields, letting
 	// scheduling and completion consumers retain observations independently of the loop.
 	r = gatewaymedia.CloneGenerationResult(r)
-	return &forwardcore.OpenAIResult{RequestID: r.RequestID, ResponseID: r.ResponseID, Model: r.Model, BillingModel: r.BillingModel, UpstreamModel: r.UpstreamModel, Usage: r.Usage, Stream: r.Stream, Duration: r.Duration, FirstTokenMs: r.FirstTokenMs, ImageCount: r.ImageCount, VideoCount: r.VideoCount, VideoState: r.VideoState, VideoDurationSeconds: r.VideoDurationSeconds, ImageSize: r.ImageSize, ImageInputSize: r.ImageInputSize, ImageOutputSize: r.ImageOutputSize, ImageSizeSource: r.ImageSizeSource, VideoResolution: r.VideoResolution, ImageOutputSizes: r.ImageOutputSizes, ImageSizeBreakdown: r.ImageSizeBreakdown, UpstreamHeaders: http.Header(r.Headers).Clone(), ResponseHeaders: http.Header(r.ResponseHeaders).Clone()}
+	return &forwardcore.OpenAIResult{
+		RequestID:            r.RequestID,
+		ResponseID:           r.ResponseID,
+		Model:                r.Model,
+		BillingModel:         r.BillingModel,
+		UpstreamModel:        r.UpstreamModel,
+		Usage:                r.Usage,
+		Stream:               r.Stream,
+		Duration:             r.Duration,
+		FirstTokenMs:         r.FirstTokenMs,
+		ImageCount:           r.ImageCount,
+		VideoCount:           r.VideoCount,
+		VideoState:           r.VideoState,
+		VideoDurationSeconds: r.VideoDurationSeconds,
+		ImageSize:            r.ImageSize,
+		ImageInputSize:       r.ImageInputSize,
+		ImageOutputSize:      r.ImageOutputSize,
+		ImageSizeSource:      r.ImageSizeSource,
+		VideoResolution:      r.VideoResolution,
+		ImageOutputSizes:     r.ImageOutputSizes,
+		ImageSizeBreakdown:   r.ImageSizeBreakdown,
+		UpstreamHeaders:      r.Headers,
+		ResponseHeaders:      r.ResponseHeaders,
+	}
 }
 
 // MediaClassify diagnoses the retained request's model and capacity failure
