@@ -501,39 +501,95 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 	})
 }
 
-// TestOverrideFilesNeverReceiveImmutableCacheHeaders creates a disk file
-// bearing a bundle-style fingerprint name. Both override helpers must serve
-// that file while leaving Cache-Control empty, keeping replacement files
-// outside immutable caching.
+// TestOverrideFilesNeverReceiveImmutableCacheHeaders exercises disk replacements
+// through both frontend middleware entry points and an override-disabled server.
+// It checks response bytes, status, Gin termination, and embedded caching when
+// replacements are missing or directories.
 func TestOverrideFilesNeverReceiveImmutableCacheHeaders(t *testing.T) {
-	t.Parallel()
+	// ServeEmbeddedFrontend resolves overrides relative to the process working
+	// directory. A temporary working directory isolates disk fixtures for both entry points.
+	t.Chdir(t.TempDir())
 
-	overrideDir := t.TempDir()
-	cleanPath := "assets/index-AbCd1234.js"
+	distFS, err := fs.Sub(frontendFS, "dist")
+	require.NoError(t, err)
+	entries, err := fs.ReadDir(distFS, "assets")
+	require.NoError(t, err)
+	cleanPath := ""
+	for _, entry := range entries {
+		candidate := "assets/" + entry.Name()
+		if !entry.IsDir() && isFingerprintedEmbeddedAssetPath(candidate) {
+			cleanPath = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, cleanPath)
+	embeddedContents, err := fs.ReadFile(distFS, cleanPath)
+	require.NoError(t, err)
+
+	overrideDir := filepath.Join("data", "public")
 	filePath := filepath.Join(overrideDir, cleanPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(filePath), 0o755))
-	require.NoError(t, os.WriteFile(filePath, []byte("override"), 0o644))
+	server := &FrontendServer{
+		distFS:      distFS,
+		fileServer:  http.FileServer(http.FS(distFS)),
+		overrideDir: overrideDir,
+	}
+	disabledServer := &FrontendServer{
+		distFS:     distFS,
+		fileServer: http.FileServer(http.FS(distFS)),
+	}
 
-	t.Run("frontend_server_override", func(t *testing.T) {
-		t.Parallel()
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodGet, "/"+cleanPath, nil)
+	for _, entryPoint := range []struct {
+		name             string          // middleware entry label
+		middleware       gin.HandlerFunc // static response entry
+		overridesEnabled bool            // disk overrides enabled
+	}{
+		{"frontend_server", server.Middleware(), true},
+		{"direct_bundle", ServeEmbeddedFrontend(), true},
+		{"frontend_server_disabled", disabledServer.Middleware(), false},
+	} {
+		t.Run(entryPoint.name, func(t *testing.T) {
+			for _, candidateKind := range []string{"file", "missing", "directory"} {
+				t.Run(candidateKind, func(t *testing.T) {
+					require.NoError(t, os.RemoveAll(overrideDir))
+					switch candidateKind {
+					case "file":
+						require.NoError(t, os.MkdirAll(filepath.Dir(filePath), 0o755))
+						require.NoError(t, os.WriteFile(filePath, []byte("override"), 0o644))
+					case "directory":
+						require.NoError(t, os.MkdirAll(filePath, 0o755))
+					}
 
-		server := &FrontendServer{overrideDir: overrideDir}
-		assert.True(t, server.tryServeOverride(c, cleanPath))
-		assert.Empty(t, w.Header().Get("Cache-Control"))
-	})
+					nextCalled := false
+					aborted := false
+					router := gin.New()
+					router.Use(func(c *gin.Context) {
+						c.Next()
+						aborted = c.IsAborted()
+					})
+					router.Use(entryPoint.middleware)
+					router.GET("/"+cleanPath, func(c *gin.Context) {
+						nextCalled = true
+						c.String(http.StatusTeapot, "next handler")
+					})
 
-	t.Run("legacy_override", func(t *testing.T) {
-		t.Parallel()
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodGet, "/"+cleanPath, nil)
+					w := httptest.NewRecorder()
+					req := httptest.NewRequest(http.MethodGet, "/"+cleanPath, nil)
+					router.ServeHTTP(w, req)
 
-		assert.True(t, tryServeOverrideFile(c, overrideDir, cleanPath))
-		assert.Empty(t, w.Header().Get("Cache-Control"))
-	})
+					assert.Equal(t, http.StatusOK, w.Code)
+					assert.False(t, nextCalled)
+					assert.True(t, aborted)
+					if entryPoint.overridesEnabled && candidateKind == "file" {
+						assert.Equal(t, "override", w.Body.String())
+						assert.Empty(t, w.Header().Get("Cache-Control"))
+					} else {
+						assert.Equal(t, string(embeddedContents), w.Body.String())
+						assert.Equal(t, staticAssetsCacheControl, w.Header().Get("Cache-Control"))
+					}
+				})
+			}
+		})
+	}
 }
 
 // TestFrontendServer_Middleware routes injected pages, existing assets,

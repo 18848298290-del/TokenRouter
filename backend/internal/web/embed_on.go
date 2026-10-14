@@ -169,7 +169,7 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		if s.tryServeOverride(c, cleanPath) {
+		if tryServeOverrideFile(c, s.overrideDir, cleanPath) {
 			return
 		}
 
@@ -192,24 +192,6 @@ func (s *FrontendServer) fileExists(path string) bool {
 	// Existence probing owns this handle until the later HTTP server opens its
 	// own serving handle. Discard close errors while retaining the successful open observation.
 	_ = file.Close()
-	return true
-}
-
-// tryServeOverride serves a nondirectory disk path under the configured
-// override directory and aborts Gin processing. An empty overrideDir, a
-// directory-valued candidate, or stat failure returns false; normal middleware
-// checks bundle existence first and applies immutable headers afterward.
-func (s *FrontendServer) tryServeOverride(c *gin.Context, cleanPath string) bool {
-	if s.overrideDir == "" {
-		return false
-	}
-	filePath := filepath.Join(s.overrideDir, filepath.Clean("/"+cleanPath))
-	info, err := os.Stat(filePath)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	c.File(filePath)
-	c.Abort()
 	return true
 }
 
@@ -495,10 +477,10 @@ func addEmbeddedFrontendNegotiationHeaders(c *gin.Context) {
 	}
 }
 
-// tryServeOverrideFile serves a nondirectory disk override for the direct
-// bundle handler and aborts Gin processing. Its caller checks embedded path
-// existence first; an empty override directory or stat failure leaves embedded
-// serving selected.
+// tryServeOverrideFile serves a nondirectory disk override and aborts Gin
+// processing after writing the response. Callers check bundle existence first
+// and apply embedded cache headers after a false result. An empty overrideDir,
+// stat failure, or directory-valued candidate returns false.
 func tryServeOverrideFile(c *gin.Context, overrideDir, cleanPath string) bool {
 	if overrideDir == "" {
 		return false
