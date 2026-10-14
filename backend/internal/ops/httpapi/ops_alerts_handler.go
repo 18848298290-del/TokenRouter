@@ -18,11 +18,11 @@ import (
 )
 
 // Alert rule writes require name, metric, operator, and threshold members for
-// both creation and replacement. The raw-member decoder supplies defaults for
-// optional controls, and both handlers copy those values into a second,
-// complete rule decode. Replacing a rule therefore applies defaults to omitted
-// controls rather than preserving their saved values; body description and
-// filters come from the complete decode.
+// both creation and replacement. The body is decoded into raw members and a
+// complete rule before normalized controls are applied, retaining descriptions,
+// filters, and typed metadata. Replacing a rule applies defaults to omitted
+// controls. A present null boolean becomes false, while an omitted boolean
+// enables its control.
 //
 // Event listing combines optional dimensions with a paired time-and-ID cursor,
 // applying a time range only when the client supplies a nonblank time
@@ -95,12 +95,12 @@ var (
 	}()
 )
 
-// opsAlertRuleValidatedInput holds decoded rule values and raw member-presence
-// observations.
+// opsAlertRuleValidatedInput holds normalized required values and optional rule
+// controls.
 type opsAlertRuleValidatedInput struct {
 	// Name, MetricType, Operator, and Threshold come from required raw members.
-	// The handlers use these values to override the same fields in their complete
-	// typed rule decode.
+	// bindOpsAlertRule uses these values to override the corresponding fields from
+	// its complete typed rule decode.
 	Name       string  // trimmed rule display name
 	MetricType string  // validated evaluator indicator label
 	Operator   string  // validated numeric comparison operator
@@ -118,20 +118,10 @@ type opsAlertRuleValidatedInput struct {
 	CooldownMinutes  int // minutes
 
 	// Enabled and NotifyEmail default true when their raw members are absent. A
-	// present false or JSON null produces false, and both handlers apply that
-	// decoded value.
+	// present false or JSON null produces false. The binder applies these values
+	// after decoding the complete rule.
 	Enabled     bool // rule evaluation enable flag
 	NotifyEmail bool // firing email request flag
-
-	// WindowProvided, SustainedProvided, CooldownProvided, SeverityProvided,
-	// EnabledProvided, and NotifyProvided record member presence. CreateAlertRule
-	// and UpdateAlertRule read the decoded values but do not read these flags.
-	WindowProvided    bool // window member presence
-	SustainedProvided bool // sustained member presence
-	CooldownProvided  bool // cooldown member presence
-	SeverityProvided  bool // severity member presence
-	EnabledProvided   bool // enabled member presence
-	NotifyProvided    bool // notification member presence
 }
 
 // isPercentOrRateMetric reports whether an exact metric label uses the
@@ -162,10 +152,9 @@ func isPercentOrRateMetric(metricType string) bool {
 //
 // Missing optional controls select window one, sustained one, cooldown zero, P2
 // severity, and enabled/email true. Present null booleans decode as false,
-// while null severity selects P2. Presence flags are recorded alongside values,
-// but both handlers apply the values without consulting those flags. Unknown
-// raw members are ignored here and remain available to the complete typed rule
-// decode.
+// while null severity selects P2. Unknown raw members are ignored here and
+// remain available to the complete typed rule decode, which runs after this
+// validation succeeds.
 func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleValidatedInput, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("invalid request body")
@@ -227,7 +216,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	}
 
 	if v, ok := raw["severity"]; ok {
-		validated.SeverityProvided = true
 		var sev string
 		if err := json.Unmarshal(v, &sev); err != nil {
 			return nil, fmt.Errorf("severity must be a string")
@@ -248,7 +236,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	// false or null values; the typed rule decode alone cannot make that
 	// distinction.
 	if v, ok := raw["enabled"]; ok {
-		validated.EnabledProvided = true
 		if err := json.Unmarshal(v, &validated.Enabled); err != nil {
 			return nil, fmt.Errorf("enabled must be a boolean")
 		}
@@ -257,7 +244,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	}
 
 	if v, ok := raw["notify_email"]; ok {
-		validated.NotifyProvided = true
 		if err := json.Unmarshal(v, &validated.NotifyEmail); err != nil {
 			return nil, fmt.Errorf("notify_email must be a boolean")
 		}
@@ -266,7 +252,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	}
 
 	if v, ok := raw["window_minutes"]; ok {
-		validated.WindowProvided = true
 		if err := json.Unmarshal(v, &validated.WindowMinutes); err != nil {
 			return nil, fmt.Errorf("window_minutes must be an integer")
 		}
@@ -282,7 +267,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	}
 
 	if v, ok := raw["sustained_minutes"]; ok {
-		validated.SustainedProvided = true
 		if err := json.Unmarshal(v, &validated.SustainedMinutes); err != nil {
 			return nil, fmt.Errorf("sustained_minutes must be an integer")
 		}
@@ -295,7 +279,6 @@ func validateOpsAlertRulePayload(raw map[string]json.RawMessage) (*opsAlertRuleV
 	}
 
 	if v, ok := raw["cooldown_minutes"]; ok {
-		validated.CooldownProvided = true
 		if err := json.Unmarshal(v, &validated.CooldownMinutes); err != nil {
 			return nil, fmt.Errorf("cooldown_minutes must be an integer")
 		}
@@ -332,17 +315,10 @@ func (h *OpsHandler) ListAlertRules(c *gin.Context) {
 	response.Success(c, rules)
 }
 
-// CreateAlertRule validates raw rule members, decodes a complete rule, and
-// sends it to the service after monitoring checks. The raw validation requires
-// name, metric, operator, and threshold, and supplies defaults for optional
-// controls.
-//
-// Gin caches the body during the first decode so the second decode can retain
-// description and filters alongside typed rule fields. Validated values then
-// replace the corresponding fields, including omitted-control defaults.
-// Member-presence flags do not affect this mapping. JSON or validation errors
-// return bad request before creation, while service failures use the shared
-// application-error response.
+// CreateAlertRule creates a complete rule after service and monitoring checks.
+// Binding failures return bad request before the service receives a rule;
+// omitted controls use the same defaults as replacements. Service errors use
+// the shared HTTP mapping.
 // POST /api/v1/admin/ops/alert-rules
 func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 	if h.opsService == nil {
@@ -354,41 +330,12 @@ func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 		return
 	}
 
-	// Cache the request body while inspecting raw member presence, then decode the
-	// same bytes into the complete rule so description and filters remain
-	// available.
-	var raw map[string]json.RawMessage
-	if err := c.ShouldBindBodyWith(&raw, binding.JSON); err != nil {
-		response.BadRequest(c, "Invalid request body")
-		return
-	}
-	validated, err := validateOpsAlertRulePayload(raw)
-	if err != nil {
-		response.BadRequest(c, err.Error())
+	rule := bindOpsAlertRule(c)
+	if rule == nil {
 		return
 	}
 
-	var rule ops.OpsAlertRule
-	if err := c.ShouldBindBodyWith(&rule, binding.JSON); err != nil {
-		response.BadRequest(c, "Invalid request body")
-		return
-	}
-
-	// Apply the normalized values and defaults after the complete decode; raw
-	// presence flags do not preserve omitted controls during either write
-	// operation.
-	rule.Name = validated.Name
-	rule.MetricType = validated.MetricType
-	rule.Operator = validated.Operator
-	rule.Threshold = validated.Threshold
-	rule.WindowMinutes = validated.WindowMinutes
-	rule.SustainedMinutes = validated.SustainedMinutes
-	rule.CooldownMinutes = validated.CooldownMinutes
-	rule.Severity = validated.Severity
-	rule.Enabled = validated.Enabled
-	rule.NotifyEmail = validated.NotifyEmail
-
-	created, err := h.opsService.CreateAlertRule(c.Request.Context(), &rule)
+	created, err := h.opsService.CreateAlertRule(c.Request.Context(), rule)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -396,16 +343,10 @@ func (h *OpsHandler) CreateAlertRule(c *gin.Context) {
 	response.Success(c, created)
 }
 
-// UpdateAlertRule replaces the positive route-selected rule with a validated
-// complete request after checking monitoring. The route ID overrides any body
-// ID, and the same four core members required for creation are required here.
-//
-// The cached body is decoded as raw members and a full typed rule. Validated
-// controls overwrite decoded values, so missing enabled, notification, timing,
-// or severity members apply their defaults rather than retaining existing
-// storage. Presence flags are ignored. Description and filters use the second
-// decode; service lookup and write errors are mapped through the shared
-// response helper.
+// UpdateAlertRule replaces the positive route-selected rule after service and
+// monitoring checks. The route ID is validated before reading the body and
+// overrides its ID after binding; omitted controls use defaults for the
+// complete replacement. Service errors use the shared HTTP mapping.
 // PUT /api/v1/admin/ops/alert-rules/:id
 func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 	if h.opsService == nil {
@@ -423,30 +364,48 @@ func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 		return
 	}
 
-	// Cache the request body while inspecting raw member presence, then decode the
-	// same bytes into the complete rule so description and filters remain
-	// available.
+	rule := bindOpsAlertRule(c)
+	if rule == nil {
+		return
+	}
+
+	rule.ID = id
+	updated, err := h.opsService.UpdateAlertRule(c.Request.Context(), rule)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, updated)
+}
+
+// bindOpsAlertRule decodes a complete rule with validated controls for creation
+// or replacement. It writes a bad-request response and returns nil when either
+// binding or validation fails. The raw-member binding runs first so omitted
+// controls can select defaults and member errors precede typed-field errors.
+//
+// Gin caches the body for the second binding, which retains description,
+// filters, identity, and metadata from the request. Normalized controls then
+// replace the decoded values, including defaults for omitted members. Both
+// binding failures use the generic body message; validation uses its first
+// member error text.
+func bindOpsAlertRule(c *gin.Context) *ops.OpsAlertRule {
 	var raw map[string]json.RawMessage
 	if err := c.ShouldBindBodyWith(&raw, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request body")
-		return
+		return nil
 	}
 	validated, err := validateOpsAlertRulePayload(raw)
 	if err != nil {
 		response.BadRequest(c, err.Error())
-		return
+		return nil
 	}
 
 	var rule ops.OpsAlertRule
 	if err := c.ShouldBindBodyWith(&rule, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request body")
-		return
+		return nil
 	}
 
-	rule.ID = id
-	// Apply the normalized values and defaults after the complete decode; raw
-	// presence flags do not preserve omitted controls during either write
-	// operation.
 	rule.Name = validated.Name
 	rule.MetricType = validated.MetricType
 	rule.Operator = validated.Operator
@@ -458,12 +417,7 @@ func (h *OpsHandler) UpdateAlertRule(c *gin.Context) {
 	rule.Enabled = validated.Enabled
 	rule.NotifyEmail = validated.NotifyEmail
 
-	updated, err := h.opsService.UpdateAlertRule(c.Request.Context(), &rule)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, updated)
+	return &rule
 }
 
 // DeleteAlertRule deletes a positive decimal route identity after checking
