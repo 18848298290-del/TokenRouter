@@ -7,8 +7,8 @@
       <template #filters>
         <div class="space-y-2">
           <div class="flex flex-wrap items-start justify-between gap-2">
-            <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2">
-              <!-- 搜索框与价格管理共用尺寸和图标布局，提示随页签对应实际搜索对象。 -->
+            <!-- Give mobile filters a full row so action buttons cannot collapse the search input beneath its icon. -->
+            <div class="flex w-full min-w-0 flex-none items-center gap-2 sm:w-auto">
               <div class="input-icon-wrap min-w-0 flex-1 sm:w-64 sm:flex-none">
                 <Icon name="search" size="md" class="input-icon text-gray-400 dark:text-gray-500" />
                 <input
@@ -235,6 +235,16 @@ import { attributeCapabilities, type ModelAttributes } from '@/types/modelAttrib
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
+
+// Model attribute configurations apply ordered rules to selected groups, while
+// the defaults tab exposes catalog attributes for model lookup. The editor keeps
+// a separate draft for validation and route previews before saving the configuration.
+//
+// List requests share a sequence counter so a slow response cannot replace the
+// results of a newer tab or filter selection. Preview requests have their own
+// counter and are invalidated when the draft, group, or model changes. Reference
+// attributes are stored per rule and accepted only while the editor is open and
+// the selected reference model still matches the request.
 
 const { t, te } = useI18n()
 const activeTab = ref<'configs' | 'defaults'>('configs')
