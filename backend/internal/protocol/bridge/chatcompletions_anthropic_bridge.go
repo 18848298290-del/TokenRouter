@@ -522,7 +522,7 @@ func ChatCompletionsResponseToAnthropic(runtime Runtime, resp *ChatCompletionsRe
 		if len(resp.Choices) > 0 {
 			choice := resp.Choices[0]
 			out.Content = chatMessageToAnthropicBlocks(choice.Message)
-			out.StopReason = AnthropicStopReasonPtr(chatFinishReasonToAnthropicStopReason(choice.FinishReason, out.Content))
+			out.StopReason = AnthropicStopReasonPtr(chatFinishReasonToAnthropicStopReason(choice.FinishReason, containsAnthropicToolUseBlock(out.Content)))
 		}
 		if resp.Usage != nil {
 			out.Usage = chatUsageToAnthropicUsage(resp.Usage)
@@ -536,7 +536,7 @@ func ChatCompletionsResponseToAnthropic(runtime Runtime, resp *ChatCompletionsRe
 	// its modeled default from content rather than returning an empty stop
 	// string.
 	if AnthropicStopReasonString(out.StopReason) == "" {
-		out.StopReason = AnthropicStopReasonPtr(chatFinishReasonToAnthropicStopReason("", out.Content))
+		out.StopReason = AnthropicStopReasonPtr(chatFinishReasonToAnthropicStopReason("", containsAnthropicToolUseBlock(out.Content)))
 	}
 	// A source without identity still needs reply metadata. Generate its label
 	// through the injected callback while retaining supplied IDs when they exist.
@@ -600,32 +600,6 @@ func chatMessageToAnthropicBlocks(message ChatMessage) []AnthropicContentBlock {
 	}
 
 	return blocks
-}
-
-// chatFinishReasonToAnthropicStopReason selects max_tokens for exact length
-// and tool_use for exact tool_calls. Other reasons inspect every converted
-// block for ordinary tool use; its presence selects tool_use even before later
-// text.
-//
-// With no such block, stop/content_filter/unknown reasons use end_turn. The
-// helper does not preserve Chat's content_filter vocabulary or verify
-// successful source completion. This combination keeps first-choice finish
-// evidence separate from the converted block order, and callers retain
-// responsibility for source error classification.
-func chatFinishReasonToAnthropicStopReason(reason string, blocks []AnthropicContentBlock) string {
-	// Messages uses a different stop vocabulary. Exact length outranks tool
-	// observations, while other labels can still describe a retained tool continuation.
-	switch reason {
-	case "length":
-		return "max_tokens"
-	case "tool_calls":
-		return "tool_use"
-	default:
-		if containsAnthropicToolUseBlock(blocks) {
-			return "tool_use"
-		}
-		return "end_turn"
-	}
 }
 
 // chatUsageToAnthropicUsage separates Chat prompt input into
@@ -788,7 +762,7 @@ func FinalizeChatCompletionsAnthropicStream(runtime Runtime, state *ChatCompleti
 	events = append(events, closeCCAnthropicBlock(state)...)
 	events = append(events, finalizeCCAnthropicToolCalls(runtime, state)...)
 
-	stopReason := ccFinishReasonToAnthropicStopReason(state.FinishReason, state.HasToolCall)
+	stopReason := chatFinishReasonToAnthropicStopReason(state.FinishReason, state.HasToolCall)
 
 	events = append(events,
 		AnthropicStreamEvent{
@@ -1079,17 +1053,17 @@ func closeCCAnthropicBlock(state *ChatCompletionsToAnthropicStreamState) []Anthr
 	}}
 }
 
-// ccFinishReasonToAnthropicStopReason combines the final exact finish label
-// with any tool observation. Length selects max_tokens and tool_calls selects
-// tool_use independently of hasToolCall; stop and other labels consult that
-// flag.
+// chatFinishReasonToAnthropicStopReason combines an exact Chat finish label
+// with the caller's tool evidence. Length selects max_tokens before any tool
+// evidence is considered, and tool_calls selects tool_use. Other labels select
+// tool_use when hasToolCall is true and end_turn otherwise.
 //
-// The flag records accepted buffering, including an unnamed call or an
-// externally nil record, so it does not prove valid emitted tool arguments.
-// Without it, unrecognized/absent finish evidence uses end_turn. The helper
-// chooses Messages vocabulary rather than preserving Chat content-filter or
-// failure detail, which callers classify separately.
-func ccFinishReasonToAnthropicStopReason(reason string, hasToolCall bool) string {
+// Buffered responses derive the flag from converted tool_use blocks. Streaming
+// callers retain their accumulated observation flag, including calls whose name
+// has not arrived. These evidence sources determine continuation independently
+// of argument completeness. Source-failure classification remains the caller's
+// responsibility; this mapping selects the Messages stop vocabulary.
+func chatFinishReasonToAnthropicStopReason(reason string, hasToolCall bool) string {
 	// Messages uses a different stop vocabulary. Exact length outranks tool
 	// observations, while other labels can still describe a retained tool continuation.
 	switch reason {
@@ -1097,11 +1071,6 @@ func ccFinishReasonToAnthropicStopReason(reason string, hasToolCall bool) string
 		return "max_tokens"
 	case "tool_calls":
 		return "tool_use"
-	case "stop":
-		if hasToolCall {
-			return "tool_use"
-		}
-		return "end_turn"
 	default:
 		if hasToolCall {
 			return "tool_use"
