@@ -720,6 +720,311 @@ func TestGetConfigModelPricing_ReturnsCopy(t *testing.T) {
 	require.Equal(t, int64(100), result2.ID)
 }
 
+// TestGetConfigModelPricing_EntryPointLoadBehavior exercises both card lookups
+// with usable, absent, inactive, and failing configuration reads. It checks
+// returned cards, diagnostic messages, and read counts before and after cache
+// reuse.
+func TestGetConfigModelPricing_EntryPointLoadBehavior(t *testing.T) {
+	active := PricingConfig{
+		ID:       1,
+		Status:   StatusActive,
+		GroupIDs: []int64{10},
+		ModelPricing: []ModelPricingEntry{
+			{ID: 100, Models: []string{"model"}, InputPrice: testPtrFloat64(0)},
+		},
+	}
+	inactive := active
+	inactive.Status = StatusDisabled
+	loadErr := errors.New("price rows unavailable")
+	now := time.Date(2026, time.October, 14, 0, 0, 0, 0, time.UTC)
+
+	for _, method := range []struct {
+		// public lookup entry name
+		name string
+		// selected public card lookup
+		lookup func(*PricingConfigService, context.Context, int64, string) *ModelPricingEntry
+	}{
+		{name: "configured", lookup: (*PricingConfigService).GetConfigModelPricing},
+		{name: "effective", lookup: (*PricingConfigService).GetEffectiveConfigModelPricing},
+	} {
+		t.Run(method.name, func(t *testing.T) {
+			for _, scenario := range []struct {
+				name    string          // configuration read scenario name
+				configs []PricingConfig // repository configuration read rows
+				err     error           // injected repository read failure
+				wantID  int64           // expected returned card ID
+			}{
+				{name: "active", configs: []PricingConfig{active}, wantID: 100},
+				{name: "inactive", configs: []PricingConfig{inactive}},
+				{name: "missing", configs: nil},
+				{name: "unassociated", configs: []PricingConfig{{ID: 1, Status: StatusActive}}},
+				{name: "load_error", err: loadErr},
+			} {
+				t.Run(scenario.name, func(t *testing.T) {
+					reads := 0
+					clockReads := 0
+					var messages []string
+					var warningArgs [][]any
+					repo := &mockPricingConfigRepository{
+						listAllFn: func(context.Context) ([]PricingConfig, error) {
+							reads++
+							return scenario.configs, scenario.err
+						},
+					}
+					svc := NewPricingConfigService(repo, nil, PricingConfigOptions{
+						Now: func() time.Time {
+							clockReads++
+							return now
+						},
+						Warn: func(message string, args ...any) {
+							messages = append(messages, message)
+							warningArgs = append(warningArgs, args)
+						},
+					})
+
+					result := method.lookup(svc, context.Background(), 10, "model")
+					if scenario.wantID == 0 {
+						require.Nil(t, result)
+					} else {
+						require.NotNil(t, result)
+						require.Equal(t, scenario.wantID, result.ID)
+					}
+					require.Equal(t, 1, reads)
+					require.Equal(t, 1, clockReads)
+
+					if scenario.err == nil {
+						require.Empty(t, messages)
+					} else {
+						require.Equal(t, []string{
+							"failed to build pricing configuration cache",
+							"failed to load pricing configuration cache",
+						}, messages)
+						require.Equal(t, []any{"error", loadErr}, warningArgs[0])
+						require.Len(t, warningArgs[1], 4)
+						require.Equal(t, []any{"group_id", int64(10), "error"}, warningArgs[1][:3])
+						warnErr, ok := warningArgs[1][3].(error)
+						require.True(t, ok)
+						require.ErrorIs(t, warnErr, loadErr)
+						require.EqualError(t, warnErr, "list all price configurations: price rows unavailable")
+					}
+
+					// Reuse the published success or empty error snapshot at the same clock
+					// instant, making repeated repository reads and diagnostics observable.
+					again := method.lookup(svc, context.Background(), 10, "model")
+					require.Equal(t, result, again)
+					require.Equal(t, 1, reads)
+					require.Equal(t, 2, clockReads)
+					if scenario.err != nil {
+						require.Len(t, messages, 2)
+					} else {
+						require.Empty(t, messages)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestGetConfigModelPricing_EntryPointSelection compares configured and
+// effective lookup across exact and ordered wildcard cards. Blank cards and
+// explicit zero prices protect the eligibility difference between the two
+// public methods.
+func TestGetConfigModelPricing_EntryPointSelection(t *testing.T) {
+	for _, scenario := range []struct {
+		name             string              // price card selection scenario
+		cards            []ModelPricingEntry // configured card match order
+		model            string              // supplied complete model identity
+		wantConfiguredID int64               // expected configured card ID
+		wantEffectiveID  int64               // expected effective card ID
+	}{
+		{
+			name: "zero_exact_before_wildcard",
+			cards: []ModelPricingEntry{
+				{ID: 200, Models: []string{"model*"}, InputPrice: testPtrFloat64(5)},
+				{ID: 100, Models: []string{"model.2"}, InputPrice: testPtrFloat64(0)},
+			},
+			model: " MODEL.2 ", wantConfiguredID: 100, wantEffectiveID: 100,
+		},
+		{
+			name: "zero_request_exact_before_wildcard",
+			cards: []ModelPricingEntry{
+				{ID: 200, Models: []string{"model*"}, InputPrice: testPtrFloat64(5)},
+				{ID: 100, Models: []string{"model.2"}, BillingMode: BillingModePerRequest, PerRequestPrice: testPtrFloat64(0)},
+			},
+			model: "model.2", wantConfiguredID: 100, wantEffectiveID: 100,
+		},
+		{
+			name: "blank_exact_before_effective_wildcard",
+			cards: []ModelPricingEntry{
+				{ID: 200, Models: []string{"model*"}, InputPrice: testPtrFloat64(5)},
+				{ID: 100, Models: []string{"model.2"}},
+			},
+			model: "model.2", wantConfiguredID: 100, wantEffectiveID: 200,
+		},
+		{
+			name: "blank_wildcard_before_effective_wildcards",
+			cards: []ModelPricingEntry{
+				{ID: 100, Models: []string{"model*"}},
+				{ID: 200, Models: []string{"model*"}, InputPrice: testPtrFloat64(5)},
+				{ID: 300, Models: []string{"model.2*"}, InputPrice: testPtrFloat64(6)},
+			},
+			model: "model.2", wantConfiguredID: 100, wantEffectiveID: 200,
+		},
+		{
+			name: "effective_wildcards_in_configuration_order",
+			cards: []ModelPricingEntry{
+				{ID: 200, Models: []string{"model*"}, InputPrice: testPtrFloat64(5)},
+				{ID: 300, Models: []string{"model.2*"}, InputPrice: testPtrFloat64(6)},
+			},
+			model: "model.2", wantConfiguredID: 200, wantEffectiveID: 200,
+		},
+		{
+			name: "supported_modifier_exact",
+			cards: []ModelPricingEntry{
+				{ID: 100, Models: []string{"model.2"}, FastMultiplier: testPtrFloat64(2)},
+			},
+			model: "model.2", wantConfiguredID: 100, wantEffectiveID: 100,
+		},
+		{
+			name: "blank_exact_only",
+			cards: []ModelPricingEntry{
+				{ID: 100, Models: []string{"model.2"}},
+			},
+			model: "model.2", wantConfiguredID: 100,
+		},
+		{
+			name: "different_complete_identity",
+			cards: []ModelPricingEntry{
+				{ID: 100, Models: []string{"model.2"}, InputPrice: testPtrFloat64(5)},
+			},
+			model: "model-2",
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Direct rows admit legacy overlaps rejected by management validation,
+			// allowing these cases to exercise the configured order used by runtime
+			// wildcard matching.
+			repo := makeStandardRepo(PricingConfig{
+				ID: 1, Status: StatusActive, GroupIDs: []int64{10}, ModelPricing: scenario.cards,
+			}, nil)
+			svc := newTestPricingConfigService(repo)
+			for _, method := range []struct {
+				// public lookup entry name
+				name string
+				// selected public card lookup
+				lookup func(*PricingConfigService, context.Context, int64, string) *ModelPricingEntry
+				// expected returned card ID
+				wantID int64
+			}{
+				{name: "configured", lookup: (*PricingConfigService).GetConfigModelPricing, wantID: scenario.wantConfiguredID},
+				{name: "effective", lookup: (*PricingConfigService).GetEffectiveConfigModelPricing, wantID: scenario.wantEffectiveID},
+			} {
+				t.Run(method.name, func(t *testing.T) {
+					result := method.lookup(svc, context.Background(), 10, scenario.model)
+					if method.wantID == 0 {
+						require.Nil(t, result)
+					} else {
+						require.NotNil(t, result)
+						require.Equal(t, method.wantID, result.ID)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestGetConfigModelPricing_EntryPointNestedCopies mutates returned model,
+// amount, interval, and time-pricing values through both public lookups. Later
+// lookups and the repository fixture retain every seeded value and nullable
+// distinction.
+func TestGetConfigModelPricing_EntryPointNestedCopies(t *testing.T) {
+	card := ModelPricingEntry{
+		ID:                           100,
+		Models:                       []string{"model"},
+		BillingMode:                  BillingModeToken,
+		PriceMultiplier:              testPtrFloat64(1.2),
+		FastModeMultiplier:           testPtrFloat64(3),
+		FastMultiplier:               testPtrFloat64(4),
+		FlexMultiplier:               testPtrFloat64(0.5),
+		MaxReasoningEffortMultiplier: testPtrFloat64(2),
+		InputPrice:                   testPtrFloat64(1),
+		OutputPrice:                  testPtrFloat64(2),
+		CacheWritePrice:              testPtrFloat64(3),
+		CacheWrite1hPrice:            testPtrFloat64(0),
+		ImageInputPrice:              testPtrFloat64(4),
+		ImageOutputPrice:             testPtrFloat64(5),
+		PerRequestPrice:              testPtrFloat64(6),
+		Intervals: []PricingInterval{{
+			MaxTokens:            testPtrInt(1000),
+			TierLabel:            "standard",
+			InputPrice:           testPtrFloat64(7),
+			OutputPrice:          testPtrFloat64(8),
+			CacheWritePrice:      testPtrFloat64(9),
+			CacheWrite1hPrice:    testPtrFloat64(0),
+			CacheReadPrice:       testPtrFloat64(10),
+			PerRequestPrice:      testPtrFloat64(11),
+			InputMultiplier:      testPtrFloat64(1.1),
+			OutputMultiplier:     testPtrFloat64(1.2),
+			CacheWriteMultiplier: testPtrFloat64(1.3),
+			CacheReadMultiplier:  testPtrFloat64(1.4),
+		}},
+		TimePricing: &TimePricingConfig{
+			Timezone:     "UTC",
+			WeekdaysOnly: true,
+			Periods:      []TimePricingPeriod{{StartTime: "01:00", EndTime: "02:00", Multiplier: 2}},
+		},
+	}
+	for _, method := range []struct {
+		// public lookup entry name
+		name string
+		// selected public card lookup
+		lookup func(*PricingConfigService, context.Context, int64, string) *ModelPricingEntry
+	}{
+		{name: "configured", lookup: (*PricingConfigService).GetConfigModelPricing},
+		{name: "effective", lookup: (*PricingConfigService).GetEffectiveConfigModelPricing},
+	} {
+		t.Run(method.name, func(t *testing.T) {
+			repo := makeStandardRepo(PricingConfig{
+				ID: 1, Status: StatusActive, GroupIDs: []int64{10}, ModelPricing: []ModelPricingEntry{card},
+			}, nil)
+			svc := newTestPricingConfigService(repo)
+			result := method.lookup(svc, context.Background(), 10, "model")
+			require.NotNil(t, result)
+			require.Equal(t, card, *result)
+
+			result.ID = 999
+			result.Models[0] = "edited"
+			for _, amount := range []*float64{
+				result.PriceMultiplier, result.FastModeMultiplier, result.FastMultiplier,
+				result.FlexMultiplier, result.MaxReasoningEffortMultiplier,
+				result.InputPrice, result.OutputPrice, result.CacheWritePrice,
+				result.CacheWrite1hPrice, result.ImageInputPrice, result.ImageOutputPrice,
+				result.PerRequestPrice, result.Intervals[0].InputPrice, result.Intervals[0].OutputPrice,
+				result.Intervals[0].CacheWritePrice, result.Intervals[0].CacheWrite1hPrice,
+				result.Intervals[0].CacheReadPrice, result.Intervals[0].PerRequestPrice,
+				result.Intervals[0].InputMultiplier, result.Intervals[0].OutputMultiplier,
+				result.Intervals[0].CacheWriteMultiplier, result.Intervals[0].CacheReadMultiplier,
+			} {
+				*amount = -1
+			}
+			*result.Intervals[0].MaxTokens = 1
+			result.Intervals[0].TierLabel = "edited"
+			result.TimePricing.Timezone = "edited"
+			result.TimePricing.WeekdaysOnly = false
+			result.TimePricing.Periods[0].StartTime = "edited"
+			result.TimePricing.Periods[0].Multiplier = 9
+
+			again := method.lookup(svc, context.Background(), 10, "model")
+			require.NotNil(t, again)
+			require.Equal(t, card, *again)
+			require.Equal(t, []string{"model"}, card.Models)
+			require.Equal(t, 1.0, *card.InputPrice)
+			require.Equal(t, 1000, *card.Intervals[0].MaxTokens)
+			require.Equal(t, "UTC", card.TimePricing.Timezone)
+		})
+	}
+}
+
 // TestResolveGroupMapping_NoGroupPolicy queries a group with no fixture
 // policy reader and no pricing association. The result retains the requested
 // name, reports no mapping, and carries zero configuration ID.

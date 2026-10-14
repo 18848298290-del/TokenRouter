@@ -708,26 +708,7 @@ func (s *PricingConfigService) lookupGroupPricingConfig(ctx context.Context, gro
 // a load failure yields nil; load failures are observed through the optional
 // warning callback.
 func (s *PricingConfigService) GetConfigModelPricing(ctx context.Context, groupID int64, model string) *ModelPricingEntry {
-	lk, err := s.lookupGroupPricingConfig(ctx, groupID)
-	if err != nil {
-		// A failed configured-price load behaves as a missing override for this
-		// lookup, letting pricing consumers apply their next source after the
-		// diagnostic is recorded.
-		s.warn("failed to load pricing configuration cache", "group_id", groupID, "error", err)
-		return nil
-	}
-	if lk == nil {
-		return nil
-	}
-
-	modelLower := strings.ToLower(model)
-	pricing := lookupPricing(lk.cache, groupID, modelLower, false)
-	if pricing == nil {
-		return nil
-	}
-
-	cp := pricing.Clone()
-	return &cp
+	return s.getConfigModelPricing(ctx, groupID, model, false)
 }
 
 // GetEffectiveConfigModelPricing returns a cloned card accepted by
@@ -735,11 +716,18 @@ func (s *PricingConfigService) GetConfigModelPricing(ctx context.Context, groupI
 // skipped so a later wildcard may apply; absent configuration and observed load
 // failures yield nil.
 func (s *PricingConfigService) GetEffectiveConfigModelPricing(ctx context.Context, groupID int64, model string) *ModelPricingEntry {
+	return s.getConfigModelPricing(ctx, groupID, model, true)
+}
+
+// getConfigModelPricing reads the group's active configuration once and returns
+// a cloned card selected by lookupPricing. A true effective value filters cards
+// through HasEffectivePricing. Missing configurations and cards yield nil; load
+// errors are reported through the warning callback before yielding nil.
+func (s *PricingConfigService) getConfigModelPricing(ctx context.Context, groupID int64, model string, effective bool) *ModelPricingEntry {
 	lk, err := s.lookupGroupPricingConfig(ctx, groupID)
 	if err != nil {
-		// Effective-card lookup also yields no override on a load error, retaining
-		// the caller's ordinary default or catalog-price path after reporting the
-		// failure.
+		// Treat a failed configuration read as an absent price override so billing
+		// consumers can continue through their catalog or default pricing source.
 		s.warn("failed to load pricing configuration cache", "group_id", groupID, "error", err)
 		return nil
 	}
@@ -748,7 +736,7 @@ func (s *PricingConfigService) GetEffectiveConfigModelPricing(ctx context.Contex
 	}
 
 	modelLower := strings.ToLower(model)
-	pricing := lookupPricing(lk.cache, groupID, modelLower, true)
+	pricing := lookupPricing(lk.cache, groupID, modelLower, effective)
 	if pricing == nil {
 		return nil
 	}
