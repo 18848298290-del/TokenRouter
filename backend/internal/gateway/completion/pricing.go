@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -427,20 +426,10 @@ func IsGrokVideoBillingModel(model string) bool {
 }
 
 // IsGrokVideoUsageResult reports whether a nonnil result has positive VideoCount.
-// The candidate family scan does not change that result: renamed or unknown model
-// identities still qualify once a positive video quantity has been observed.
+// Positive video quantity also qualifies results whose billing model was renamed
+// or whose candidate names identify an unknown model family.
 func IsGrokVideoUsageResult(result *Result, billingModels []string) bool {
-	if result == nil || result.VideoCount <= 0 {
-		return false
-	}
-	// Positive video quantity remains authoritative after route-model renaming;
-	// the family scan and its final default both accept that same observed quantity.
-	candidates := append([]string{}, billingModels...)
-	candidates = append(candidates, result.BillingModel, result.Model, result.UpstreamModel)
-	if slices.ContainsFunc(candidates, IsGrokVideoBillingModel) {
-		return true
-	}
-	return true
+	return result != nil && result.VideoCount > 0
 }
 
 // IsUsagePricingUnavailableError recognizes the shared missing-price sentinel
