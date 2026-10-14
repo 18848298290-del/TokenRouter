@@ -194,8 +194,9 @@ func (s *ConcurrencyCacheSuite) TestLiveLease_CountsTowardRegularProviderAndUser
 }
 
 // TestProviderSlot_AcquireAndRelease fills two ordinary provider slots and
-// attempts a third request. It checks rejection at capacity, the observed
-// count and a reduced count after one release.
+// attempts a third request. It checks release counts, then combines the
+// remaining ordinary member with Live membership and prunes both expiration
+// windows through the batch entry.
 func (s *ConcurrencyCacheSuite) TestProviderSlot_AcquireAndRelease() {
 	providerID := int64(10)
 	reqID1, reqID2, reqID3 := "req1", "req2", "req3"
@@ -221,6 +222,46 @@ func (s *ConcurrencyCacheSuite) TestProviderSlot_AcquireAndRelease() {
 	cur, err = s.cache.GetProviderConcurrency(s.ctx, providerID)
 	require.NoError(s.T(), err, "GetProviderConcurrency after release")
 	require.Equal(s.T(), 1, cur, "expected 1 after release")
+
+	now, err := s.rdb.Time(s.ctx).Result()
+	require.NoError(s.T(), err)
+	slotKey := providerSlotKey(providerID)
+	liveKey := liveProviderSlotKey(providerID)
+	// Leave ten seconds beyond each cutoff so later Redis clock samples keep
+	// the seeded stale members expired under their respective activity windows.
+	expiredOrdinary := float64(now.Unix() - int64(s.rawCache.slotTTLSeconds) - 10)
+	expiredLive := float64(now.Unix() - liveLeaseTTLSeconds - 10)
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, slotKey,
+		redis.Z{Score: expiredOrdinary, Member: "expired-ordinary"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, liveKey,
+		redis.Z{Score: expiredLive, Member: "expired-live"},
+		redis.Z{Score: float64(now.Unix()), Member: "current-live"},
+	).Err())
+	// Give the seeded Live set its production lifetime in Redis seconds.
+	require.NoError(s.T(), s.rdb.Expire(s.ctx, liveKey, time.Duration(liveLeaseTTLSeconds)*time.Second).Err())
+
+	counts, err := s.cache.GetProviderConcurrencyBatch(s.ctx, []int64{providerID, providerID + 1, providerID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{providerID: 2, providerID + 1: 0}, counts)
+	ordinaryMembers, err := s.rdb.ZRange(s.ctx, slotKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{reqID2}, ordinaryMembers)
+	liveMembers, err := s.rdb.ZRange(s.ctx, liveKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"current-live"}, liveMembers)
+
+	// Age the surviving memberships by score so the batch must prune each set
+	// while the fixture keys still exist under their storage TTLs.
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, slotKey,
+		redis.Z{Score: expiredOrdinary, Member: reqID2},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, liveKey,
+		redis.Z{Score: expiredLive, Member: "current-live"},
+	).Err())
+	counts, err = s.cache.GetProviderConcurrencyBatch(s.ctx, []int64{providerID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{providerID: 0}, counts)
 }
 
 // TestProviderActiveIndex_AcquireAndRelease acquires one ordinary provider
@@ -403,8 +444,9 @@ func (s *ConcurrencyCacheSuite) TestUserSlot_TTL() {
 }
 
 // TestAPIKeySlot_TrackReleaseAndBatchCount tracks two request identities
-// beside an empty API-key set. It checks their batch counts, bounded TTL and
-// stepwise count reduction as tracked members are released.
+// beside an empty API-key set. It checks TTL and release counts, then combines
+// ordinary and Live membership while pruning their distinct expiration
+// windows.
 func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchCount() {
 	cache := s.apiKeyConcurrencyCache()
 	apiKeyID := int64(300)
@@ -431,6 +473,47 @@ func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchCount() {
 	counts, err = cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, counts[apiKeyID])
+
+	now, err := s.rdb.Time(s.ctx).Result()
+	require.NoError(s.T(), err)
+	liveKey := liveAPIKeySlotKey(apiKeyID)
+	// Leave ten seconds beyond each cutoff so subsequent Redis clock samples
+	// classify both stale fixture members using the ordinary and Live windows.
+	expiredOrdinary := float64(now.Unix() - int64(s.rawCache.slotTTLSeconds) - 10)
+	expiredLive := float64(now.Unix() - liveLeaseTTLSeconds - 10)
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, slotKey,
+		redis.Z{Score: expiredOrdinary, Member: "expired-ordinary"},
+		redis.Z{Score: float64(now.Unix()), Member: "current-ordinary"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, liveKey,
+		redis.Z{Score: expiredLive, Member: "expired-live"},
+		redis.Z{Score: float64(now.Unix()), Member: "current-live"},
+	).Err())
+	require.NoError(s.T(), s.rdb.Expire(s.ctx, slotKey, testSlotTTL).Err())
+	// Give the seeded Live set its production lifetime in Redis seconds.
+	require.NoError(s.T(), s.rdb.Expire(s.ctx, liveKey, time.Duration(liveLeaseTTLSeconds)*time.Second).Err())
+
+	counts, err = cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID, emptyAPIKeyID, apiKeyID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{apiKeyID: 2, emptyAPIKeyID: 0}, counts)
+	ordinaryMembers, err := s.rdb.ZRange(s.ctx, slotKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"current-ordinary"}, ordinaryMembers)
+	liveMembers, err := s.rdb.ZRange(s.ctx, liveKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"current-live"}, liveMembers)
+
+	// Age the surviving memberships by score so both expiration paths execute
+	// before storage TTL expiry could remove either fixture key instead.
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, slotKey,
+		redis.Z{Score: expiredOrdinary, Member: "current-ordinary"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, liveKey,
+		redis.Z{Score: expiredLive, Member: "current-live"},
+	).Err())
+	counts, err = cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{apiKeyID: 0}, counts)
 }
 
 // TestWaitQueue_IncrementAndDecrement fills a two-waiter user queue and

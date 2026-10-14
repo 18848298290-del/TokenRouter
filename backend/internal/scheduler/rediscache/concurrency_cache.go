@@ -823,63 +823,10 @@ func (c *concurrencyCache) GetProviderConcurrency(ctx context.Context, providerI
 }
 
 // GetProviderConcurrencyBatch returns combined ordinary and Live counts keyed
-// by provider ID, with an empty map for empty input. One Redis clock sample
-// supplies distinct ordinary-slot and sixty-second Live cutoffs.
-//
-// Each provider keeps both queued count commands beside its identity, so the
-// two observations sum into that provider's result. Pruning precedes counting
-// within the pipeline; the batch is an observation, not a transaction with
-// admission. Redis command failures abort the batch, while duplicate IDs
-// address the same provider keys and result entry.
+// by provider ID, with an allocated empty map for empty input. Duplicate IDs
+// share one result entry, using the last count observed for that provider.
 func (c *concurrencyCache) GetProviderConcurrencyBatch(ctx context.Context, providerIDs []int64) (map[int64]int, error) {
-	if len(providerIDs) == 0 {
-		return map[int64]int{}, nil
-	}
-
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	// Use one Redis clock observation with the ordinary lifetime; Live pruning
-	// below uses its shorter renewal window for the other counted set.
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
-
-	pipe := c.rdb.Pipeline()
-	// providerCmd pairs a provider identity with its ordinary and Live count
-	// commands.
-	type providerCmd struct {
-		// providerID, zcardCmd and liveCmd identify the same provider; the two
-		// count commands remain attached to that ID until ordinary and Live results
-		// are summed.
-		providerID int64         // associated provider count identity
-		zcardCmd   *redis.IntCmd // queued ordinary slot count
-		liveCmd    *redis.IntCmd // queued Live lease count
-	}
-	cmds := make([]providerCmd, 0, len(providerIDs))
-	for _, providerID := range providerIDs {
-		slotKey := providerSlotKeyPrefix + strconv.FormatInt(providerID, 10)
-		liveKey := liveProviderSlotKeyPrefix + strconv.FormatInt(providerID, 10)
-		// Prune both activity sets before queuing their counts so the result
-		// combines current ordinary and Live membership under their respective
-		// expiration windows.
-		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
-		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		cmds = append(cmds, providerCmd{
-			providerID: providerID,
-			zcardCmd:   pipe.ZCard(ctx, slotKey),
-			liveCmd:    pipe.ZCard(ctx, liveKey),
-		})
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("pipeline exec: %w", err)
-	}
-
-	result := make(map[int64]int, len(providerIDs))
-	for _, cmd := range cmds {
-		result[cmd.providerID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
-	}
-	return result, nil
+	return c.getConcurrencyBatch(ctx, providerIDs, providerSlotKeyPrefix, liveProviderSlotKeyPrefix)
 }
 
 // User slot operations
@@ -1072,16 +1019,23 @@ func (c *concurrencyCache) ReleaseLiveLease(ctx context.Context, providerID, use
 }
 
 // GetAPIKeyConcurrencyBatch returns ordinary-plus-Live statistics counts
-// keyed by API-key ID, with an empty map for empty input. One Redis time
-// sample supplies the ordinary and short Live pruning windows.
-//
-// Each API-key identity retains its two queued count commands until results
-// are assembled, keeping those counts attached to the corresponding result.
-// Pruning precedes counting in the pipeline, and command errors abort the
-// batch. This reports observed member counts; the dedicated ingress
-// connection keys are counted by their separate admission scripts.
+// keyed by API-key ID, with an allocated empty map for empty input. Duplicate
+// IDs share one statistics entry, using the last count observed for that key.
 func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error) {
-	if len(apiKeyIDs) == 0 {
+	return c.getConcurrencyBatch(ctx, apiKeyIDs, apiKeySlotKeyPrefix, liveAPIKeySlotKeyPrefix)
+}
+
+// getConcurrencyBatch returns counts for the ordinary and Live sets under the
+// supplied resource prefixes. Empty inputs return an allocated empty map before
+// Redis is called. Duplicate IDs each queue their own reads, and the last
+// observation for an ID supplies that map entry.
+//
+// One Redis TIME sample supplies both pruning cutoffs. The pipeline queues both
+// removals before the two counts for each input ID, retaining the count commands
+// with that ID until results are assembled. A pipeline error other than redis.Nil
+// discards the batch; redis.Nil permits assembly from the queued command values.
+func (c *concurrencyCache) getConcurrencyBatch(ctx context.Context, ids []int64, slotKeyPrefix, liveKeyPrefix string) (map[int64]int, error) {
+	if len(ids) == 0 {
 		return map[int64]int{}, nil
 	}
 
@@ -1094,38 +1048,40 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
 
 	pipe := c.rdb.Pipeline()
-	// apiKeyCmd pairs an API-key identity with its ordinary and Live statistics
-	// commands.
-	type apiKeyCmd struct {
-		// apiKeyID, zcardCmd and liveCmd identify the same API key; queued ordinary
-		// and Live results are combined into that identity's statistics entry.
-		apiKeyID int64         // associated API-key count identity
+	// resourceCountCmd associates a resource identity with its queued count commands.
+	type resourceCountCmd struct {
+		// id, zcardCmd and liveCmd address the same resource; keeping their count
+		// commands together associates both ordinary and Live results with that ID
+		// during map assembly.
+		id       int64         // associated resource count identity
 		zcardCmd *redis.IntCmd // queued ordinary slot count
 		liveCmd  *redis.IntCmd // queued Live lease count
 	}
-	cmds := make([]apiKeyCmd, 0, len(apiKeyIDs))
-	for _, apiKeyID := range apiKeyIDs {
-		slotKey := apiKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
-		liveKey := liveAPIKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
+	cmds := make([]resourceCountCmd, 0, len(ids))
+	for _, id := range ids {
+		slotKey := slotKeyPrefix + strconv.FormatInt(id, 10)
+		liveKey := liveKeyPrefix + strconv.FormatInt(id, 10)
 		// Prune both activity sets before queuing their counts so the result
 		// combines current ordinary and Live membership under their respective
 		// expiration windows.
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		cmds = append(cmds, apiKeyCmd{
-			apiKeyID: apiKeyID,
+		cmds = append(cmds, resourceCountCmd{
+			id:       id,
 			zcardCmd: pipe.ZCard(ctx, slotKey),
 			liveCmd:  pipe.ZCard(ctx, liveKey),
 		})
 	}
 
+	// If Redis reports redis.Nil for the batch, use the queued count values so
+	// callers still receive the resource map from that observation.
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("pipeline exec: %w", err)
 	}
 
-	result := make(map[int64]int, len(apiKeyIDs))
+	result := make(map[int64]int, len(ids))
 	for _, cmd := range cmds {
-		result[cmd.apiKeyID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
+		result[cmd.id] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
 	}
 	return result, nil
 }
