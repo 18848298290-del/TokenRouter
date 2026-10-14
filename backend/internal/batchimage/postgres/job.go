@@ -284,31 +284,9 @@ func (r *Repository) GetBatchImageJobByID(ctx context.Context, id int64) (*batch
 // an injected executor instead determines whether the transition and event
 // share a commit and rollback outcome.
 func (r *Repository) TransitionBatchImageJobStatus(ctx context.Context, batchID, toStatus string, opts batchimage.BatchImageTransitionOptions) error {
-	// An injected executor may already be a caller-owned transaction. Execute the
-	// transition through it directly so this wrapper neither opens a separate
-	// transaction nor finishes the caller's existing one.
-	if r.db == nil {
-		return r.transitionBatchImageJobStatusWithSQL(ctx, r.sql, batchID, toStatus, opts)
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Attempt rollback if validation, the status update, or its event fails before
-	// Commit. After database/sql starts the driver commit, the transaction is done
-	// and this defer cannot undo that commit, including after a commit error.
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if err := r.transitionBatchImageJobStatusWithSQL(ctx, tx, batchID, toStatus, opts); err != nil {
-		return err
-	}
-	// Commit after transition validation, its metadata update, and any event all
-	// succeed so readers receive that sequence as one pool-owned transaction
-	// outcome.
-	return tx.Commit()
+	return r.withTransaction(ctx, func(sqlq SQLExecutor) error {
+		return r.transitionBatchImageJobStatusWithSQL(ctx, sqlq, batchID, toStatus, opts)
+	})
 }
 
 // TouchBatchImageJobSubmitting refreshes updated_at for created or uploading
@@ -390,27 +368,9 @@ WHERE batch_id = $1`, batchID, providerOutputRef, time.Now())
 // An injected executor handles that sequence directly and owns its transaction
 // outcome, including any rollback.
 func (r *Repository) UpdateBatchImageJobProviderSubmit(ctx context.Context, params batchimage.UpdateBatchImageJobProviderSubmitParams) error {
-	if r.db == nil {
-		return r.updateBatchImageJobProviderSubmitWithSQL(ctx, r.sql, params)
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Attempt rollback if provider metadata or its event fails before Commit.
-	// Keeping those statements in this transaction pairs the submitted binding
-	// with its audit record and releases the row lock on rollback.
-	defer func() {
-		_ = tx.Rollback()
-	}()
-	if err := r.updateBatchImageJobProviderSubmitWithSQL(ctx, tx, params); err != nil {
-		return err
-	}
-	// Commit the provider binding and submission event after both succeed, keeping
-	// the worker-visible submitted identity paired with its audit record in the
-	// owned transaction.
-	return tx.Commit()
+	return r.withTransaction(ctx, func(sqlq SQLExecutor) error {
+		return r.updateBatchImageJobProviderSubmitWithSQL(ctx, sqlq, params)
+	})
 }
 
 // updateBatchImageJobProviderSubmitWithSQL locks the job row and validates its
@@ -496,28 +456,9 @@ WHERE batch_id = $1`, batchID, code, message, now)
 // with an injected executor, callers supply the transaction and decide its
 // commit or rollback outcome.
 func (r *Repository) MarkBatchImageJobSettled(ctx context.Context, params batchimage.MarkBatchImageJobSettledParams) error {
-	if r.db == nil {
-		return r.markBatchImageJobSettledWithSQL(ctx, r.sql, params)
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Attempt rollback on metadata or event failure before Commit. This transaction
-	// pairs completion with its audit record; funding capture belongs to the earlier
-	// billing operation and follows its own recovery rules.
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if err := r.markBatchImageJobSettledWithSQL(ctx, tx, params); err != nil {
-		return err
-	}
-	// Commit completed job metadata with its settlement event after both writes
-	// succeed. The caller's funding capture has a separate recovery path, so this
-	// transaction covers metadata completion.
-	return tx.Commit()
+	return r.withTransaction(ctx, func(sqlq SQLExecutor) error {
+		return r.markBatchImageJobSettledWithSQL(ctx, sqlq, params)
+	})
 }
 
 // markBatchImageJobSettledWithSQL completes a settling job whose stored
@@ -686,38 +627,16 @@ func (r *Repository) BulkCreateBatchImageItems(ctx context.Context, params []bat
 	if len(params) == 0 {
 		return nil
 	}
-	// An injected executor owns this insertion sequence and its transaction.
-	// A later row failure can leave earlier inserts applied with a plain pool;
-	// callers needing all rows together provide a transaction.
-	if r.db == nil {
+	return r.withTransaction(ctx, func(sqlq SQLExecutor) error {
+		// Insert in input order so the first failed row determines the returned
+		// error and the remaining item rows stay pending for the caller.
 		for _, param := range params {
-			if _, err := createBatchImageItemWithSQL(ctx, r.sql, param); err != nil {
+			if _, err := createBatchImageItemWithSQL(ctx, sqlq, param); err != nil {
 				return translatePersistenceError(err, nil, batchimage.ErrBatchImageItemExists)
 			}
 		}
 		return nil
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Attempt rollback when an item insert fails before Commit so this transaction
-	// can discard its earlier inserts. The caller can then retry the pending item
-	// set after an insertion failure.
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	for _, param := range params {
-		if _, err := createBatchImageItemWithSQL(ctx, tx, param); err != nil {
-			return translatePersistenceError(err, nil, batchimage.ErrBatchImageItemExists)
-		}
-	}
-	// Commit after every item insert succeeds so the pool-owned path publishes
-	// the full pending item set together, including its duplicate checks and
-	// generated row identities.
-	return tx.Commit()
+	})
 }
 
 // ReplaceBatchImageItemsForJob replaces indexed items and result counts for an
@@ -725,27 +644,42 @@ func (r *Repository) BulkCreateBatchImageItems(ctx context.Context, params []bat
 // executor determines the outcome of deleting old rows, inserting replacements,
 // and updating counts.
 func (r *Repository) ReplaceBatchImageItemsForJob(ctx context.Context, batchID string, items []batchimage.CreateBatchImageItemParams, counts batchimage.BatchImageCounts) error {
+	return r.withTransaction(ctx, func(sqlq SQLExecutor) error {
+		return r.replaceBatchImageItemsForJobWithSQL(ctx, sqlq, batchID, items, counts)
+	})
+}
+
+// withTransaction runs one metadata operation using the repository's selected
+// transaction ownership. An injected executor receives the operation directly,
+// and its caller decides whether to commit or roll back its surrounding work.
+// A configured pool begins a transaction with default options before any
+// operation statements execute.
+//
+// The owned transaction commits after the operation succeeds. Begin, operation,
+// and commit errors return in their execution order; cleanup rollback errors
+// are discarded so they cannot replace the operation's result. The callback
+// chooses SQL ordering and time sampling after its executor is selected.
+func (r *Repository) withTransaction(ctx context.Context, run func(SQLExecutor) error) error {
 	if r.db == nil {
-		return r.replaceBatchImageItemsForJobWithSQL(ctx, r.sql, batchID, items, counts)
+		return run(r.sql)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	// Attempt rollback on replacement failure before Commit so old-row deletion,
-	// replacement insertion, and count changes can be discarded together. The old
-	// indexed set remains available when that rollback succeeds.
+	// A failed operation can have already written metadata or acquired row locks.
+	// Attempt rollback on exit to release those changes, retaining the first error.
+	// Once database/sql starts driver commit, this attempt returns ErrTxDone.
 	defer func() {
 		_ = tx.Rollback()
 	}()
 
-	if err := r.replaceBatchImageItemsForJobWithSQL(ctx, tx, batchID, items, counts); err != nil {
+	if err := run(tx); err != nil {
 		return err
 	}
-	// Commit after replacement items and job counts both succeed, keeping the
-	// results used for settlement paired with the indexed rows under the owned
-	// transaction.
+	// Publish the operation's complete metadata sequence after its final statement
+	// succeeds, keeping all accepted writes and audit records in one transaction.
 	return tx.Commit()
 }
 
