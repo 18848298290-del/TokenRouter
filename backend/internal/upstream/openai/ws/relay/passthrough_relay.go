@@ -694,37 +694,18 @@ func Relay(
 			WroteDownstream: combinedWroteDownstream,
 		}
 	}
-	if hasSecondExit && !secondExit.graceful {
-		emitRelayTrace(onTrace, RelayTraceEvent{
-			Stage:           "relay_exit",
-			Direction:       relayDirectionFromStage(secondExit.stage),
-			Graceful:        false,
-			WroteDownstream: combinedWroteDownstream,
-			Error:           relayErrorString(secondExit.err),
-		})
-		return result, &RelayExit{
-			Stage:           secondExit.stage,
-			Err:             secondExit.err,
-			WroteDownstream: combinedWroteDownstream,
-		}
-	}
-	if options.FirstMessageSent {
-		emitRelayTrace(onTrace, RelayTraceEvent{
-			Stage:           "relay_client_closed",
-			Graceful:        true,
-			WroteDownstream: combinedWroteDownstream,
-		})
-		return result, nil
-	}
 	emitRelayTrace(onTrace, RelayTraceEvent{
-		Stage:           "relay_complete",
-		Graceful:        true,
+		Stage:           "relay_exit",
+		Direction:       relayDirectionFromStage(secondExit.stage),
+		Graceful:        false,
 		WroteDownstream: combinedWroteDownstream,
+		Error:           relayErrorString(secondExit.err),
 	})
-	// Release the client after aggregate observations are settled; a cleanup close
-	// error does not replace the selected successful relay completion.
-	_ = clientConn.Close()
-	return result, nil
+	return result, &RelayExit{
+		Stage:           secondExit.stage,
+		Err:             secondExit.err,
+		WroteDownstream: combinedWroteDownstream,
+	}
 }
 
 // runClientToUpstream forwards frames in read order and sends one exit signal
