@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	billingpostgres "github.com/TokenFlux/TokenRouter/internal/billing/postgres"
 	billingtestkit "github.com/TokenFlux/TokenRouter/internal/billing/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	sqlitetest "github.com/TokenFlux/TokenRouter/internal/testutil/sqlite"
 )
@@ -120,6 +121,286 @@ type resettingRevokeSubscriptionRepoStub struct {
 	// behavior. The monthly override changes that same stored row so self-revoke
 	// can reread its reset counter.
 	*revokeSubscriptionRepoStub // shared revoke fixture backing store
+}
+
+// subscriptionValidityRepoStub records attempted lifetime updates and injects
+// failures before changing its retained in-memory grant records.
+type subscriptionValidityRepoStub struct {
+	// SubscriptionRepository owns the initialized records and timeline index.
+	// Overrides retain its shallow-copy reads so the first target view keeps its
+	// old expiry while later writes change stored records.
+	*billingtestkit.SubscriptionRepository          // retained grant fixture storage
+	calls                                  []string // ordered repository operation names
+	// failAt and failure select one attempted repository operation to reject.
+	// The operation is recorded before returning failure, and its stored fields
+	// remain unchanged when that rejection is selected.
+	failAt  string // injected repository failure operation
+	failure error  // configured repository failure result
+	reads   int    // target lookup invocation count
+	// readContexts and writeContexts retain each synchronous target observation
+	// and mutation context. Tests inspect them after completion to distinguish
+	// surrounding transaction work from the nested persistence callback.
+	readContexts  []context.Context // recorded target lookup contexts
+	writeContexts []context.Context // recorded lifetime mutation contexts
+	chainContext  context.Context   // selected timeline query context
+}
+
+// subscriptionServiceTransactionsStub supplies selected contexts and live
+// plans for synchronous subscription service behavior tests.
+type subscriptionServiceTransactionsStub struct {
+	// SubscriptionMutations provides unused transaction operations with a nil
+	// persistence client. Lifetime and grant scenarios exercise the overrides
+	// below while keeping their records in the repository fixture.
+	*billingpostgres.SubscriptionMutations      // unused transaction adapter operations
+	persistent                             bool // reported persistence binding availability
+	// plan is returned directly by GetPlan. Template selection can retain its
+	// quota pointers, so tests keep the configured plan stable during issuance.
+	plan              *billing.SubscriptionPlan // configured live subscription plan
+	persistenceChecks int                       // observed binding probe count
+	planReads         int                       // observed live-plan lookup count
+	// selectedContexts retains each callback context in invocation order. Nested
+	// calls carry distinct markers so tests can observe which work owns each
+	// repository read and write after the service returns.
+	selectedContexts []context.Context // recorded transaction callback contexts
+	lockContexts     []context.Context // recorded subscription lock contexts
+}
+
+// subscriptionWorkContextKey identifies the selected callback in fixture contexts.
+type subscriptionWorkContextKey struct{}
+
+// TestSubscriptionValidityMutationsPreserveTimelineAndSelectedContexts changes
+// active, pending and elapsed grants through both public lifetime entry points.
+// It protects expiry calculations, later-chain movement, clock sampling,
+// selected write contexts and the final repository reread.
+func TestSubscriptionValidityMutationsPreserveTimelineAndSelectedContexts(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name       string // selected lifetime scenario name
+		setDays    bool   // absolute validity entry selection
+		startsIn   int    // initial start offset days
+		expiresIn  int    // initial expiry offset days
+		days       int    // requested lifetime day count
+		wantExpiry int    // expected expiry offset days
+		wantStatus string // expected target stored status
+	}{
+		{name: "extend active positive", startsIn: -2, expiresIn: 5, days: 2, wantExpiry: 7, wantStatus: billing.SubscriptionStatusActive},
+		{name: "extend active negative", startsIn: -2, expiresIn: 5, days: -2, wantExpiry: 3, wantStatus: billing.SubscriptionStatusActive},
+		{name: "extend pending", startsIn: 3, expiresIn: 8, days: 2, wantExpiry: 10, wantStatus: billing.SubscriptionStatusPending},
+		{name: "extend expired", startsIn: -10, expiresIn: -3, days: 2, wantExpiry: 2, wantStatus: billing.SubscriptionStatusActive},
+		{name: "extend zero delta", startsIn: -2, expiresIn: 5, wantExpiry: 5, wantStatus: billing.SubscriptionStatusActive},
+		{name: "extend expired zero days", startsIn: -10, expiresIn: -3, wantStatus: billing.SubscriptionStatusExpired},
+		{name: "set active", setDays: true, startsIn: -2, expiresIn: 5, days: 2, wantExpiry: 2, wantStatus: billing.SubscriptionStatusActive},
+		{name: "set pending", setDays: true, startsIn: 3, expiresIn: 8, days: 2, wantExpiry: 5, wantStatus: billing.SubscriptionStatusPending},
+		{name: "set expired", setDays: true, startsIn: -10, expiresIn: -3, days: 2, wantExpiry: 2, wantStatus: billing.SubscriptionStatusActive},
+		{name: "set zero delta", setDays: true, startsIn: -2, expiresIn: 5, days: 5, wantExpiry: 5, wantStatus: billing.SubscriptionStatusActive},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &subscriptionValidityRepoStub{SubscriptionRepository: billingtestkit.NewSubscriptionRepository()}
+			oldExpiry := now.AddDate(0, 0, tt.expiresIn)
+			repo.Seed(&billing.UserSubscription{
+				ID: 1, UserID: 7, PlanID: 9, StartsAt: now.AddDate(0, 0, tt.startsIn),
+				ExpiresAt: oldExpiry, Status: billing.SubscriptionStatusActive,
+			})
+			for _, id := range []int64{2, 3} {
+				startsAt := oldExpiry.AddDate(0, 0, int(id-2)*2)
+				repo.Seed(&billing.UserSubscription{
+					ID: id, UserID: 7, PlanID: 9, StartsAt: startsAt,
+					ExpiresAt: startsAt.AddDate(0, 0, 2), Status: billing.SubscriptionStatusPending,
+				})
+			}
+			transactions := &subscriptionServiceTransactionsStub{SubscriptionMutations: billingpostgres.NewSubscriptionMutations(nil), persistent: true}
+			clockCalls := 0
+			svc := billing.NewSubscriptionService(nil, repo, transactions, billing.DateRuntime{Now: func() time.Time {
+				clockCalls++
+				if clockCalls == 1 {
+					return now
+				}
+				// Advance the sibling observation past every shifted expiry so a
+				// reused target instant would produce a visibly different status.
+				return now.AddDate(0, 0, 90)
+			}})
+			var result *billing.UserSubscription
+			var err error
+			if tt.setDays {
+				result, err = svc.SetSubscriptionValidityDays(context.Background(), 1, tt.days)
+			} else {
+				result, err = svc.ExtendSubscription(context.Background(), 1, tt.days)
+			}
+			require.NoError(t, err)
+			require.Equal(t, now.AddDate(0, 0, tt.wantExpiry), result.ExpiresAt)
+			require.Equal(t, tt.wantStatus, result.Status)
+			require.Equal(t, "stored after status update", result.Notes)
+			wantCalls := []string{"read", "chain", "expiry"}
+			wantClockCalls := 1
+			if tt.wantExpiry != tt.expiresIn {
+				wantCalls = append(wantCalls, "shift", "shift")
+				wantClockCalls = 2
+			}
+			wantCalls = append(wantCalls, "status", "reread")
+			require.Equal(t, wantCalls, repo.calls)
+			require.Equal(t, wantClockCalls, clockCalls)
+			for _, id := range []int64{2, 3} {
+				later := repo.ByID[id]
+				wantStart := now.AddDate(0, 0, tt.wantExpiry+int(id-2)*2)
+				require.Equal(t, wantStart, later.StartsAt)
+				require.Equal(t, wantStart.AddDate(0, 0, 2), later.ExpiresAt)
+				wantLaterStatus := billing.SubscriptionStatusPending
+				if wantClockCalls == 2 {
+					wantLaterStatus = billing.SubscriptionStatusExpired
+				}
+				require.Equal(t, wantLaterStatus, later.Status)
+			}
+			require.Len(t, transactions.selectedContexts, 2)
+			require.Len(t, transactions.lockContexts, 1)
+			require.Same(t, transactions.selectedContexts[0], transactions.lockContexts[0])
+			require.Same(t, transactions.selectedContexts[0], repo.chainContext)
+			for _, readCtx := range repo.readContexts {
+				require.Same(t, transactions.selectedContexts[0], readCtx)
+			}
+			for _, writeCtx := range repo.writeContexts {
+				require.Same(t, transactions.selectedContexts[1], writeCtx)
+			}
+		})
+	}
+}
+
+// TestSubscriptionValidityMutationsStopAtFirstPersistenceError rejects each
+// repository phase through both public lifetime entry points. It checks the
+// first returned error and confirms that later writes and rereads stop.
+func TestSubscriptionValidityMutationsStopAtFirstPersistenceError(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	for _, setDays := range []bool{false, true} {
+		for _, tt := range []struct {
+			name  string   // rejected repository phase name
+			calls []string // expected attempted repository sequence
+		}{
+			{name: "read", calls: []string{"read"}},
+			{name: "chain", calls: []string{"read", "chain"}},
+			{name: "expiry", calls: []string{"read", "chain", "expiry"}},
+			{name: "shift", calls: []string{"read", "chain", "expiry", "shift"}},
+			{name: "status", calls: []string{"read", "chain", "expiry", "shift", "shift", "status"}},
+			{name: "reread", calls: []string{"read", "chain", "expiry", "shift", "shift", "status", "reread"}},
+		} {
+			name := "extend/" + tt.name
+			if setDays {
+				name = "set/" + tt.name
+			}
+			t.Run(name, func(t *testing.T) {
+				injected := errors.New("rejected " + tt.name)
+				repo := &subscriptionValidityRepoStub{
+					SubscriptionRepository: billingtestkit.NewSubscriptionRepository(), failAt: tt.name, failure: injected,
+				}
+				for _, id := range []int64{1, 2, 3} {
+					startsAt := now.AddDate(0, 0, int(id-1)*2)
+					repo.Seed(&billing.UserSubscription{
+						ID: id, UserID: 7, PlanID: 9, StartsAt: startsAt,
+						ExpiresAt: startsAt.AddDate(0, 0, 2), Status: billing.SubscriptionStatusActive,
+					})
+				}
+				transactions := &subscriptionServiceTransactionsStub{SubscriptionMutations: billingpostgres.NewSubscriptionMutations(nil), persistent: true}
+				svc := billing.NewSubscriptionService(nil, repo, transactions, billing.DateRuntime{Now: func() time.Time { return now }})
+				var result *billing.UserSubscription
+				var err error
+				if setDays {
+					result, err = svc.SetSubscriptionValidityDays(context.Background(), 1, 3)
+				} else {
+					result, err = svc.ExtendSubscription(context.Background(), 1, 1)
+				}
+				wantErr := injected
+				if tt.name == "read" {
+					wantErr = billing.ErrSubscriptionNotFound
+				}
+				require.ErrorIs(t, err, wantErr)
+				require.Nil(t, result)
+				require.Equal(t, tt.calls, repo.calls)
+			})
+		}
+	}
+}
+
+// TestAssignSubscriptionSelectsGrantTemplate supplies saved terms, fixture
+// terms and a live plan through the public grant entry point. It protects
+// defaults, quota pointer ownership and the provided-template persistence
+// short circuit before issuance.
+func TestAssignSubscriptionSelectsGrantTemplate(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	providedDaily, providedMonthly, planDaily, planWeekly, planMonthly := 5.0, 0.0, 20.0, 30.0, 40.0
+	for _, tt := range []struct {
+		name        string   // selected grant source name
+		provided    bool     // supplied snapshot selection flag
+		persistent  bool     // reported persistence binding availability
+		wantDays    int      // expected issued validity days
+		wantProbes  int      // expected persistence probe count
+		wantPlans   int      // expected live-plan read count
+		wantDaily   *float64 // expected daily quota pointer
+		wantWeekly  *float64 // expected weekly quota pointer
+		wantMonthly *float64 // expected monthly quota pointer
+	}{
+		{name: "provided template", provided: true, persistent: true, wantDays: 30, wantProbes: 1, wantDaily: &providedDaily, wantMonthly: &providedMonthly},
+		{name: "without persistence", wantDays: 30, wantProbes: 2, wantDaily: &providedDaily, wantMonthly: &providedMonthly},
+		{name: "current plan", persistent: true, wantDays: 14, wantProbes: 2, wantPlans: 1, wantDaily: &providedDaily, wantWeekly: &planWeekly, wantMonthly: &providedMonthly},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := billingtestkit.NewSubscriptionRepository()
+			transactions := &subscriptionServiceTransactionsStub{
+				SubscriptionMutations: billingpostgres.NewSubscriptionMutations(nil), persistent: tt.persistent,
+				plan: &billing.SubscriptionPlan{ID: 9, ValidityDays: 2, ValidityUnit: "weeks", DailyLimitUSD: &planDaily, WeeklyLimitUSD: &planWeekly, MonthlyLimitUSD: &planMonthly},
+			}
+			svc := billing.NewSubscriptionService(nil, repo, transactions, billing.DateRuntime{Now: func() time.Time { return now }})
+			result, err := svc.AssignSubscription(context.Background(), &billing.AssignSubscriptionInput{
+				UserID: 7, PlanID: 9, UseProvidedTemplate: tt.provided, DailyLimitUSD: &providedDaily, MonthlyLimitUSD: &providedMonthly,
+			})
+			require.NoError(t, err)
+			require.Equal(t, now.AddDate(0, 0, tt.wantDays), result.ExpiresAt)
+			require.Same(t, tt.wantDaily, result.DailyLimitUSD)
+			if tt.wantWeekly == nil {
+				require.Nil(t, result.WeeklyLimitUSD)
+			} else {
+				require.Same(t, tt.wantWeekly, result.WeeklyLimitUSD)
+			}
+			require.Same(t, tt.wantMonthly, result.MonthlyLimitUSD)
+			require.Equal(t, tt.wantProbes, transactions.persistenceChecks)
+			require.Equal(t, tt.wantPlans, transactions.planReads)
+			require.Equal(t, 1, repo.CreateCalls)
+		})
+	}
+}
+
+// TestAssignSubscriptionRejectsTemplateBeforeGrantWrite supplies negative
+// daily and weekly quotas through each template source. Daily validation must
+// win before issuance probes or repository writes can follow.
+func TestAssignSubscriptionRejectsTemplateBeforeGrantWrite(t *testing.T) {
+	negative := -1.0
+	for _, tt := range []struct {
+		name       string // selected grant source name
+		provided   bool   // supplied snapshot selection flag
+		persistent bool   // reported persistence binding availability
+		wantProbes int    // expected persistence probe count
+		wantPlans  int    // expected live-plan read count
+	}{
+		{name: "provided template", provided: true, persistent: true},
+		{name: "without persistence", wantProbes: 1},
+		{name: "current plan", persistent: true, wantProbes: 1, wantPlans: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := billingtestkit.NewSubscriptionRepository()
+			transactions := &subscriptionServiceTransactionsStub{
+				SubscriptionMutations: billingpostgres.NewSubscriptionMutations(nil), persistent: tt.persistent,
+				plan: &billing.SubscriptionPlan{ID: 9, ValidityDays: 7},
+			}
+			svc := billing.NewSubscriptionService(nil, repo, transactions)
+			result, err := svc.AssignSubscription(context.Background(), &billing.AssignSubscriptionInput{
+				UserID: 7, PlanID: 9, UseProvidedTemplate: tt.provided, DailyLimitUSD: &negative, WeeklyLimitUSD: &negative,
+			})
+			require.Error(t, err)
+			require.Equal(t, "PLAN_DAILY_LIMIT_INVALID", apperror.FromError(err).Reason)
+			require.Equal(t, "daily limit must be >= 0", apperror.Message(err))
+			require.Nil(t, result)
+			require.Equal(t, tt.wantProbes, transactions.persistenceChecks)
+			require.Equal(t, tt.wantPlans, transactions.planReads)
+			require.Zero(t, repo.CreateCalls)
+		})
+	}
 }
 
 // TestAssignSubscription_SamePlanCreatesPendingChain supplies a future-ending
@@ -1534,6 +1815,112 @@ func newSubscriptionServiceForTest(repo billing.UserSubscriptionRepository) *bil
 func subscriptionClockFixture() billing.DateRuntime {
 	calendar := timezone.NewCalendar(time.UTC)
 	return billing.DateRuntime{Now: func() time.Time { return time.Now().UTC() }, Calendar: &calendar}
+}
+
+// GetByID records target reads and rejects the configured read phase.
+// Success uses the backing fixture's shallow copy, so a final reread observes
+// stored scalar changes made after the initial target view was returned.
+func (r *subscriptionValidityRepoStub) GetByID(ctx context.Context, id int64) (*billing.UserSubscription, error) {
+	phase := "read"
+	if r.reads > 0 {
+		phase = "reread"
+	}
+	r.reads++
+	r.calls = append(r.calls, phase)
+	r.readContexts = append(r.readContexts, ctx)
+	if r.failAt == phase {
+		return nil, r.failure
+	}
+	return r.SubscriptionRepository.GetByID(ctx, id)
+}
+
+// ListByUserIDAndPlanID records the chain read before returning retained
+// timeline values. A configured chain failure propagates before persistence,
+// while the captured context identifies the work that selected those values.
+func (r *subscriptionValidityRepoStub) ListByUserIDAndPlanID(ctx context.Context, userID, planID int64) ([]billing.UserSubscription, error) {
+	r.calls = append(r.calls, "chain")
+	r.chainContext = ctx
+	if r.failAt == "chain" {
+		return nil, r.failure
+	}
+	return r.SubscriptionRepository.ListByUserIDAndPlanID(ctx, userID, planID)
+}
+
+// ExtendExpiry records the selected write context and attempts one target
+// deadline replacement. The configured failure returns before the retained
+// expiry changes, leaving earlier successful fixture mutations available for
+// assertions after the service stops.
+func (r *subscriptionValidityRepoStub) ExtendExpiry(ctx context.Context, id int64, expiresAt time.Time) error {
+	r.calls = append(r.calls, "expiry")
+	r.writeContexts = append(r.writeContexts, ctx)
+	if r.failAt == "expiry" {
+		return r.failure
+	}
+	r.ByID[id].ExpiresAt = expiresAt
+	return nil
+}
+
+// Update records one later-chain write before delegating to the retained
+// repository. A configured shift failure leaves that sibling unchanged and
+// allows tests to detect whether later siblings or target status still run.
+func (r *subscriptionValidityRepoStub) Update(ctx context.Context, sub *billing.UserSubscription) error {
+	r.calls = append(r.calls, "shift")
+	r.writeContexts = append(r.writeContexts, ctx)
+	if r.failAt == "shift" {
+		return r.failure
+	}
+	return r.SubscriptionRepository.Update(ctx, sub)
+}
+
+// UpdateStatus records the status write and mutates the retained target on
+// success. Its stored note marks completion so tests can distinguish the final
+// reread result from the earlier target view; injected failure precedes both
+// stored field changes.
+func (r *subscriptionValidityRepoStub) UpdateStatus(ctx context.Context, id int64, status string) error {
+	r.calls = append(r.calls, "status")
+	r.writeContexts = append(r.writeContexts, ctx)
+	if r.failAt == "status" {
+		return r.failure
+	}
+	r.ByID[id].Status = status
+	r.ByID[id].Notes = "stored after status update"
+	return nil
+}
+
+// HasPersistence counts binding probes and returns the configured selection.
+func (s *subscriptionServiceTransactionsStub) HasPersistence(context.Context) bool {
+	s.persistenceChecks++
+	return s.persistent
+}
+
+// Within records a distinct context for each call and executes the callback
+// synchronously. The fixture retains selected contexts so tests can distinguish
+// nested mutation work from the surrounding caller work after completion.
+func (s *subscriptionServiceTransactionsStub) Within(ctx context.Context, callback func(context.Context) error) error {
+	selected := context.WithValue(ctx, subscriptionWorkContextKey{}, len(s.selectedContexts)+1)
+	s.selectedContexts = append(s.selectedContexts, selected)
+	return callback(selected)
+}
+
+// GetPlan counts each live-plan read and returns the configured plan pointer.
+// Tests keep that plan stable during selection and inspect retained quota
+// pointers after issuance to check template ownership.
+func (s *subscriptionServiceTransactionsStub) GetPlan(context.Context, int64) (*billing.SubscriptionPlan, error) {
+	s.planReads++
+	return s.plan, nil
+}
+
+// LockGrantUser accepts grant serialization for these synchronous in-memory fixtures.
+func (s *subscriptionServiceTransactionsStub) LockGrantUser(context.Context, int64) error {
+	return nil
+}
+
+// LockSubscription records the selected context before the service reads its
+// target. It succeeds synchronously, leaving PostgreSQL user-first row locking
+// and rollback behavior to the separate container integration scenarios.
+func (s *subscriptionServiceTransactionsStub) LockSubscription(ctx context.Context, _ int64) error {
+	s.lockContexts = append(s.lockContexts, ctx)
+	return nil
 }
 
 // GetByID returns a shallow copy of the one retained matching grant or

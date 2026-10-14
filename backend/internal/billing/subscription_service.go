@@ -367,20 +367,10 @@ func (s *SubscriptionService) resolveGrantPlanTemplate(ctx context.Context, inpu
 	}
 
 	template := &GrantPlanTemplate{}
-	if input.UseProvidedTemplate {
-		template.ValidityDays = NormalizeAssignValidityDays(input.ValidityDays)
-		template.DailyLimitUSD = input.DailyLimitUSD
-		template.WeeklyLimitUSD = input.WeeklyLimitUSD
-		template.MonthlyLimitUSD = input.MonthlyLimitUSD
-		if err := ValidatePlanQuotas(template.DailyLimitUSD, template.WeeklyLimitUSD, template.MonthlyLimitUSD); err != nil {
-			return nil, err
-		}
-		return template, nil
-	}
-	// Without a persistence binding, fixtures use supplied terms directly. This
-	// path keeps quota pointers and normalizes the default duration before the
-	// same quota validation.
-	if !s.transactions.HasPersistence(ctx) {
+	// Resolve supplied snapshots before probing persistence. Both supplied and
+	// fixture terms validate here before issuance chooses its transaction, so an
+	// invalid quota cannot reach grant writes.
+	if input.UseProvidedTemplate || !s.transactions.HasPersistence(ctx) {
 		template.ValidityDays = NormalizeAssignValidityDays(input.ValidityDays)
 		template.DailyLimitUSD = input.DailyLimitUSD
 		template.WeeklyLimitUSD = input.WeeklyLimitUSD
@@ -990,33 +980,7 @@ func (s *SubscriptionService) extendSubscriptionLocked(ctx context.Context, subs
 		return nil, err
 	}
 
-	// Write target expiry before shifting later entries and updating status. Keep
-	// those mutations on selected transaction context so its owner can recover an
-	// incomplete sequence.
-	err = s.withSubscriptionMutationTx(ctx, func(txCtx context.Context) error {
-		if err := s.userSubRepo.ExtendExpiry(txCtx, subscriptionID, newExpiresAt); err != nil {
-			return err
-		}
-		if delta != 0 {
-			if err := s.ShiftLaterChain(txCtx, chain, sub, delta); err != nil {
-				return err
-			}
-		}
-
-		var status string
-		if !newExpiresAt.After(now) {
-			status = SubscriptionStatusExpired
-		} else if now.Before(sub.StartsAt) {
-			status = SubscriptionStatusPending
-		} else {
-			status = SubscriptionStatusActive
-		}
-		return s.userSubRepo.UpdateStatus(txCtx, subscriptionID, status)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return s.userSubRepo.GetByID(ctx, subscriptionID)
+	return s.persistSubscriptionExpiryChange(ctx, subscriptionID, sub, chain, newExpiresAt, delta, now)
 }
 
 // withSubscriptionMutationTx delegates the nonnil mutation callback to the
@@ -1072,10 +1036,32 @@ func (s *SubscriptionService) setSubscriptionValidityDaysLocked(ctx context.Cont
 		return nil, err
 	}
 
-	// Write expiry, then shift eligible siblings and derive stored status from
-	// the captured instant. Joined transaction ownership controls recovery of any
-	// already applied earlier update.
-	err = s.transactions.Within(ctx, func(txCtx context.Context) error {
+	return s.persistSubscriptionExpiryChange(ctx, subscriptionID, sub, chain, newExpiresAt, delta, now)
+}
+
+// persistSubscriptionExpiryChange writes a computed target deadline, moves its
+// later timeline and returns the repository's refreshed target. Callers supply
+// the captured target view, its selected chain, the computed delta and the
+// observation time after validating expiry. Persistent callers retain the user
+// and subscription locks around this work.
+//
+// The selected transaction callback writes expiry before moving siblings and
+// storing target status. The first failure stops the remaining operations. A
+// successful callback is followed by a reread on ctx, so joined transaction
+// owners decide recovery when that read fails.
+func (s *SubscriptionService) persistSubscriptionExpiryChange(
+	ctx context.Context,
+	subscriptionID int64,
+	sub *UserSubscription,
+	chain []UserSubscription,
+	newExpiresAt time.Time,
+	delta time.Duration,
+	now time.Time,
+) (*UserSubscription, error) {
+	// Keep the captured target view for sibling selection while the repository
+	// writes its new deadline. Transaction ownership determines recovery if a
+	// later update fails.
+	err := s.transactions.Within(ctx, func(txCtx context.Context) error {
 		if err := s.userSubRepo.ExtendExpiry(txCtx, subscriptionID, newExpiresAt); err != nil {
 			return err
 		}
