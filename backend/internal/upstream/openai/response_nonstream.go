@@ -135,19 +135,10 @@ func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstr
 	if originalModel != mappedModel {
 		body = wire.ReplaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	body, err = options.RestoreClientTools(body)
+	body, err = restoreBufferedResponseTools(body, options)
 	if err != nil {
-		return nil, fmt.Errorf("restore Grok Responses client tool response: %w", err)
+		return nil, err
 	}
-	body, err = options.RestoreOpenAITools(body)
-	if err != nil {
-		return nil, fmt.Errorf("restore OpenAI Responses client tool response: %w", err)
-	}
-	body, err = options.RestoreNamespace(body)
-	if err != nil {
-		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
-	}
-	body = options.RestoreToolNames(body)
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 
 	contentType := "application/json"
@@ -229,19 +220,10 @@ func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputC
 		// Correct the extracted final tool payload before restoring client schemas,
 		// namespaces, and reserved names, keeping the downstream identity transformations in their required order.
 		body = options.CorrectToolCalls(body)
-		restoredBody, restoreErr := options.RestoreClientTools(body)
+		restoredBody, restoreErr := restoreBufferedResponseTools(body, options)
 		if restoreErr != nil {
-			return nil, fmt.Errorf("restore Grok Responses client tool response: %w", restoreErr)
+			return nil, restoreErr
 		}
-		restoredBody, restoreErr = options.RestoreOpenAITools(restoredBody)
-		if restoreErr != nil {
-			return nil, fmt.Errorf("restore OpenAI Responses client tool response: %w", restoreErr)
-		}
-		restoredBody, restoreErr = options.RestoreNamespace(restoredBody)
-		if restoreErr != nil {
-			return nil, fmt.Errorf("restore OpenAI namespace response: %w", restoreErr)
-		}
-		restoredBody = options.RestoreToolNames(restoredBody)
 		body = restoredBody
 	} else {
 		terminalType, terminalPayload, terminalOK := wire.ExtractOpenAISSETerminalEvent(bodyText)
@@ -291,4 +273,26 @@ func ReadSSEAsJSON(ctx context.Context, resp *http.Response, c *upstream.OutputC
 		ImageOutputSizes: wire.CollectOpenAIImageOutputSizesFromSSEBody(bodyText),
 		SearchCount:      options.CountSSESearch(bodyText),
 	}, nil
+}
+
+// restoreBufferedResponseTools restores client tool identities on one JSON body.
+// The caller supplies the four callbacks in options; each receives its
+// predecessor's returned slice, and the first error stops restoration with
+// provider-specific context.
+func restoreBufferedResponseTools(body []byte, options NonStreamOptions) ([]byte, error) {
+	// Tool schemas can change the payload used by namespace and alias restoration,
+	// so pass each callback's returned bytes directly into the next callback.
+	body, err := options.RestoreClientTools(body)
+	if err != nil {
+		return nil, fmt.Errorf("restore Grok Responses client tool response: %w", err)
+	}
+	body, err = options.RestoreOpenAITools(body)
+	if err != nil {
+		return nil, fmt.Errorf("restore OpenAI Responses client tool response: %w", err)
+	}
+	body, err = options.RestoreNamespace(body)
+	if err != nil {
+		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
+	}
+	return options.RestoreToolNames(body), nil
 }
