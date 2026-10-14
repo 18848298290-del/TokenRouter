@@ -430,37 +430,15 @@ func replacementValueForRule(rule compiledUserPromptReplacementRule, now time.Ti
 // applyCompiledUserPromptReplacementRules applies compiled rules in input
 // order using the supplied clock instant. Callers provide normalized rules
 // with usable regexes and capture indices; each rule sees text produced by its
-// predecessor.
-//
-// Environment scope delegates literal-block isolation, while another scope
-// operates over the complete text. A replacement is inserted as a literal
-// value between the selected capture's surrounding bytes, avoiding regex
-// dollar expansion. Missing optional captures retain their original match.
-// TargetGroup zero selects the whole match, and every match for one time rule
-// uses the same supplied instant.
+// predecessor. Environment-scoped rules process complete literal blocks
+// independently, while other rules process the entire prompt.
 func applyCompiledUserPromptReplacementRules(text string, rules []compiledUserPromptReplacementRule, now time.Time) string {
 	for _, rule := range rules {
 		if rule.rule.Scope == UserPromptReplacementScopeEnvironmentContext {
 			text = applyEnvironmentContextScopedUserPromptReplacementRule(text, rule, now)
 			continue
 		}
-		replacement := replacementValueForRule(rule, now)
-		// Retain bytes around the selected capture and insert replacement literally,
-		// because administrator text containing dollar expressions is data rather
-		// than a regex expansion template.
-		text = rule.pattern.ReplaceAllStringFunc(text, func(match string) string {
-			ranges := rule.pattern.FindStringSubmatchIndex(match)
-			group := rule.rule.TargetGroup
-			if len(ranges) < group*2+2 {
-				return match
-			}
-			start := ranges[group*2]
-			end := ranges[group*2+1]
-			if start < 0 || end < start {
-				return match
-			}
-			return match[:start] + replacement + match[end:]
-		})
+		text = applySingleUserPromptReplacementRule(text, rule, now)
 	}
 	return text
 }
