@@ -1,6 +1,7 @@
 package modelcatalog
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,166 @@ func TestAttributeSupplementPreservesCatalog(t *testing.T) {
 	require.Equal(t, "Catalog preview", *attrs.DisplayName)
 	require.Equal(t, []string{"text"}, *attrs.OutputModalities)
 	require.Zero(t, *catalog.Entries["jev-preview"].Cost.Input)
+}
+
+// TestAttributeSupplementTracksAllFields supplies every optional attribute,
+// including false flags and empty values. Missing fields receive supplement
+// sources, while populated catalog fields retain their existing source labels.
+func TestAttributeSupplementTracksAllFields(t *testing.T) {
+	var supplement Attributes
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"display_name_localization": {},
+		"display_name": "",
+		"context": 100,
+		"input_limit": 80,
+		"output_limit": 20,
+		"input_modalities": [],
+		"output_modalities": [],
+		"reasoning": false,
+		"tool_call": false,
+		"structured_output": false,
+		"temperature": false,
+		"attachment": false,
+		"top_p": false,
+		"reasoning_options": [],
+		"interleaved": true,
+		"conditions": {},
+		"media": {}
+	}`), &supplement))
+	fields := []string{
+		"display_name_localization",
+		"display_name",
+		"context",
+		"input_limit",
+		"output_limit",
+		"input_modalities",
+		"output_modalities",
+		"reasoning",
+		"tool_call",
+		"structured_output",
+		"temperature",
+		"attachment",
+		"top_p",
+		"reasoning_options",
+		"interleaved",
+		"conditions",
+		"media",
+	}
+	filled := fillAttributeSupplement(Entry{}, supplement)
+	require.Equal(t, supplement, filled.Attributes)
+	require.Len(t, filled.AttributeSources, len(fields))
+	catalogSources := make(map[string]string, len(fields))
+	for _, field := range fields {
+		require.Equal(t, "local_supplement", filled.AttributeSources[field], field)
+		catalogSources[field] = "models.dev"
+	}
+	retained := fillAttributeSupplement(Entry{
+		Attributes:       supplement,
+		AttributeSources: catalogSources,
+	}, supplement)
+	require.Equal(t, supplement, retained.Attributes)
+	require.Equal(t, catalogSources, retained.AttributeSources)
+}
+
+// TestAttributeSupplementPreservesNilAndEmptyCollections compares unknown
+// fields with supplied nil and empty collections. Supplied collection pointers
+// block replacement and retain catalog sources even when their pointed
+// collections contain no values.
+func TestAttributeSupplementPreservesNilAndEmptyCollections(t *testing.T) {
+	supplement := Attributes{
+		InputModalities:  valuePointer([]string{"image"}),
+		OutputModalities: valuePointer([]string{"text"}),
+		ReasoningOptions: valuePointer([]ReasoningOption{{Type: "toggle"}}),
+		Conditions:       valuePointer(ParameterConditions{"temperature": {Thinking: valuePointer(true)}}),
+		Media:            &MediaCapabilities{ImageSizes: []string{"1K"}},
+	}
+	for name, known := range map[string]Attributes{
+		"unknown": {},
+		"nil_collections": {
+			InputModalities:  valuePointer([]string(nil)),
+			OutputModalities: valuePointer([]string(nil)),
+			ReasoningOptions: valuePointer([]ReasoningOption(nil)),
+			Conditions:       valuePointer(ParameterConditions(nil)),
+			Media:            &MediaCapabilities{},
+		},
+		"empty_collections": {
+			InputModalities:  valuePointer([]string{}),
+			OutputModalities: valuePointer([]string{}),
+			ReasoningOptions: valuePointer([]ReasoningOption{}),
+			Conditions:       valuePointer(ParameterConditions{}),
+			Media:            &MediaCapabilities{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			entry := Entry{Attributes: known}
+			wantSource := "local_supplement"
+			if name != "unknown" {
+				entry.AttributeSources = map[string]string{
+					"input_modalities":  "models.dev",
+					"output_modalities": "models.dev",
+					"reasoning_options": "models.dev",
+					"conditions":        "models.dev",
+					"media":             "models.dev",
+				}
+				wantSource = "models.dev"
+			}
+			filled := fillAttributeSupplement(entry, supplement)
+			if name == "unknown" {
+				require.Equal(t, supplement, filled.Attributes)
+			} else {
+				require.Equal(t, known.InputModalities, filled.Attributes.InputModalities)
+				require.Equal(t, known.OutputModalities, filled.Attributes.OutputModalities)
+				require.Equal(t, known.ReasoningOptions, filled.Attributes.ReasoningOptions)
+				require.Equal(t, known.Conditions, filled.Attributes.Conditions)
+			}
+			require.Equal(t, supplement.Media, filled.Attributes.Media)
+			require.Len(t, filled.AttributeSources, 5)
+			for _, field := range []string{"input_modalities", "output_modalities", "reasoning_options", "conditions", "media"} {
+				require.Equal(t, wantSource, filled.AttributeSources[field], field)
+			}
+		})
+	}
+}
+
+// TestAttributeSupplementOwnsMutableValues modifies catalog values, supplement
+// values, and sources in the returned entry. Both inputs retain their scalar
+// values and nested collections for subsequent catalog lookups and supplementation.
+func TestAttributeSupplementOwnsMutableValues(t *testing.T) {
+	entry := Entry{
+		Attributes: Attributes{
+			DisplayName:     valuePointer("catalog"),
+			InputModalities: valuePointer([]string{"text"}),
+		},
+		AttributeSources: map[string]string{
+			"display_name":     "models.dev",
+			"input_modalities": "models.dev",
+		},
+	}
+	supplement := Attributes{
+		DisplayName:      valuePointer("supplement"),
+		InputModalities:  valuePointer([]string{"image"}),
+		OutputModalities: valuePointer([]string{"text"}),
+		ReasoningOptions: valuePointer([]ReasoningOption{{Type: "effort", Values: []*string{valuePointer("high")}}}),
+		Conditions:       valuePointer(ParameterConditions{"temperature": {Efforts: []string{"none"}}}),
+		Media:            &MediaCapabilities{ImageSizes: []string{"1K"}, MaxReferenceImages: valuePointer(3)},
+	}
+	catalogBefore := entry.Attributes.Clone()
+	supplementBefore := supplement.Clone()
+	filled := fillAttributeSupplement(entry, supplement)
+	*filled.Attributes.DisplayName = "changed"
+	(*filled.Attributes.InputModalities)[0] = "pdf"
+	(*filled.Attributes.OutputModalities)[0] = "audio"
+	*(*filled.Attributes.ReasoningOptions)[0].Values[0] = "low"
+	(*filled.Attributes.Conditions)["temperature"].Efforts[0] = "high"
+	filled.Attributes.Media.ImageSizes[0] = "2K"
+	*filled.Attributes.Media.MaxReferenceImages = 9
+	filled.AttributeSources["display_name"] = "changed"
+	require.Equal(t, catalogBefore, entry.Attributes)
+	require.Equal(t, supplementBefore, supplement)
+	require.Equal(t, map[string]string{
+		"display_name":     "models.dev",
+		"input_modalities": "models.dev",
+	}, entry.AttributeSources)
 }
 
 // TestAttributeSupplementRejectsInvalidData supplies another provider's

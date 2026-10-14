@@ -144,9 +144,10 @@ func mergeMedia(base, patch *MediaCapabilities) *MediaCapabilities {
 	return &result
 }
 
-// fieldNames returns populated attribute JSON names for resolution source
-// tracking. Explicit false values and empty slices still contribute a name,
-// while nil fields inherit their existing sources during patching.
+// fieldNames returns populated attribute JSON names for supplement precedence
+// and resolution source tracking. Every non-nil field pointer contributes a
+// name, including pointers to nil collections, while nil fields inherit their
+// existing values and sources.
 func (a Attributes) fieldNames() []string {
 	var names []string
 	if a.DisplayNameLocalization != nil {

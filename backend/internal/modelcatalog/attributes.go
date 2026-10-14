@@ -59,18 +59,6 @@ type Presentation struct {
 	RouteDifferences       bool               `json:"route_differences,omitempty"` // differing requestable route attributes
 }
 
-// fields serializes populated attributes into separate JSON field values for
-// supplement precedence checks. The fixed scalar, string, slice, and map field
-// types are JSON encodable, so encoding and decoding errors are discarded here.
-func (a Attributes) fields() map[string]json.RawMessage {
-	// Compare JSON field presence so explicit false values and empty lists still
-	// block a supplement from replacing information supplied by the catalog.
-	body, _ := json.Marshal(a)
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(body, &fields)
-	return fields
-}
-
 // Merge applies populated patch fields and returns attributes whose mutable
 // values are copied from both inputs. Nil patch fields inherit their base
 // values, while explicit false values and empty lists replace them.
@@ -135,7 +123,7 @@ func Merge(base, patch Attributes) Attributes {
 // ApplyAttributeSupplement fills missing metadata from a validated supplement
 // and records local_supplement as each newly populated field's source. Catalog
 // false values and empty lists remain authoritative because their fields are
-// present in the serialized attributes.
+// supplied through non-nil attribute pointers.
 //
 // The supplement's provider must match an existing entry when specified.
 // Ambiguous bare names are skipped, while a matching public entry can still
@@ -173,16 +161,27 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 	return nil
 }
 
-// fillAttributeSupplement fills missing entry attributes and copies source
-// labels before updating them. Populated catalog fields keep their labels, and
-// the merged attributes are independently mutable by the returned entry.
+// fillAttributeSupplement fills absent catalog attributes from a local
+// supplement and returns independently mutable attributes and source labels.
+// A non-nil top-level pointer counts as supplied even when its slice or map
+// value is nil, so that field keeps its existing source label.
+//
+// Source labels are cloned before missing catalog fields receive the
+// local_supplement label. Merge receives the supplement as its base and the
+// catalog attributes as its patch, giving populated catalog fields precedence
+// while cloning mutable values from both inputs. Media child fields follow
+// Merge's separate per-field rules; their top-level source label still follows
+// the presence of the catalog Media pointer.
 func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
-	known := entry.Attributes.fields()
+	known := map[string]struct{}{}
+	for _, field := range entry.Attributes.fieldNames() {
+		known[field] = struct{}{}
+	}
 	entry.AttributeSources = maps.Clone(entry.AttributeSources)
 	if entry.AttributeSources == nil {
 		entry.AttributeSources = map[string]string{}
 	}
-	for field := range attributes.fields() {
+	for _, field := range attributes.fieldNames() {
 		if _, found := known[field]; !found {
 			entry.AttributeSources[field] = "local_supplement"
 		}
