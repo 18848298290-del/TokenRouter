@@ -64,14 +64,6 @@ type S3BackupStore struct {
 	uploadMode string
 }
 
-// contextAwareReader polls cancellation before reading an S3 upload spool source.
-type contextAwareReader struct {
-	// ctx is checked before invoking reader. Once a source read begins, reader's
-	// own cancellation or closing behavior determines whether blocked I/O can stop promptly.
-	ctx    context.Context // spool read admission context
-	reader io.Reader       // underlying upload byte source
-}
-
 // s3UploadProgressListener retains the latest cumulative total emitted by transfermanager.
 type s3UploadProgressListener struct {
 	// uploaded stores callback totals atomically, making reads safe during part work.
@@ -194,7 +186,7 @@ func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, 
 		_ = os.Remove(tmpPath)
 	}()
 
-	written, err := io.Copy(tmp, &contextAwareReader{ctx: ctx, reader: body})
+	written, err := io.Copy(tmp, &contextReader{ctx: ctx, reader: body})
 	if err != nil {
 		return 0, fmt.Errorf("spool backup upload: %w", err)
 	}
@@ -205,18 +197,6 @@ func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, 
 		return 0, err
 	}
 	return written, nil
-}
-
-// Read returns the context error when cancellation is observed before a source
-// read, otherwise delegating unchanged to reader. This polling cannot interrupt
-// a call already blocked inside reader, whose own cancellation behavior remains required.
-func (r *contextAwareReader) Read(p []byte) (int, error) {
-	select {
-	case <-r.ctx.Done():
-		return 0, r.ctx.Err()
-	default:
-		return r.reader.Read(p)
-	}
 }
 
 // UploadFile sends a file reader through configured transfermanager limits without
