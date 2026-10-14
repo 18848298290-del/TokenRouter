@@ -227,7 +227,7 @@ func TestRestoreSQLFailure(t *testing.T) {
 	// content.
 	path := t.TempDir()
 	settings := &backupSettings{values: map[string]string{}}
-	core := backup.New(settings, backup.Options{DatabaseName: "test_restore", LocalPath: path, Now: time.Now}, nil, nil, bp.NewLocalBackupStore(path), bp.NewArchive(dumper, 0), func(ctx context.Context) (func(), bool, error) {
+	core := backup.New(settings, backup.Options{LocalPath: path, Now: time.Now}, nil, nil, bp.NewLocalBackupStore(path), bp.NewArchive(dumper, 0), func(ctx context.Context) (func(), bool, error) {
 		return postgresinfra.TryAcquireDBAdvisoryLockWithError(ctx, db, postgresinfra.HashAdvisoryLockID("maintenance:database-heavy"))
 	})
 	// Stop the backup service before closing its SQL pool so any service

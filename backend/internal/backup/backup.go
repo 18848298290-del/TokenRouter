@@ -274,7 +274,7 @@ type BackupRecord struct {
 	// deletion rejects running, while best-effort metadata saves can leave stale recorded state.
 	Status     string `json:"status"`
 	BackupType string `json:"backup_type"` // PostgreSQL archive type
-	FileName   string `json:"file_name"`   // database and initial timestamp filename
+	FileName   string `json:"file_name"`   // recorded archive download filename
 	// StorageType is normalized before key inference when nonempty, with a
 	// whitespace value becoming local. Missing or unknown values infer S3 from
 	// legacy or part keys; remaining records use local storage.
@@ -354,7 +354,6 @@ type BackupService struct {
 
 	operationLifecycleMu sync.RWMutex      // admission and cleanup registry lock
 	settingRepo          SettingRepository // persisted configuration and record settings
-	databaseName         string            // archive filename database prefix
 	localPath            string            // injected local store root
 	// now supplies metadata and dated object keys. It can be called by concurrent
 	// workers and request setup; key construction samples it separately from initial record timestamps.
@@ -1077,7 +1076,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 // newBackupRecord creates running PostgreSQL metadata and its current and legacy
 // object keys. Positive expireDays adds calendar days to the initial clock sample;
 // nonpositive values leave expiration empty. The identifier is the first eight
-// characters of a fresh UUID, while the filename uses database name and timestamp.
+// characters of a fresh UUID, while the filename uses the tr prefix and timestamp.
 //
 // StartedAt, filename, and expiration share the initial time sample. Storage-key
 // construction samples the clock again for its date directory, so midnight can
@@ -1087,7 +1086,7 @@ func (s *BackupService) newBackupRecord(storageType string, s3Cfg *BackupS3Confi
 	now := s.now()
 	// Record lookup and HTTP paths use this short UUID-prefix identifier.
 	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.databaseName, now.Format("20060102_150405"))
+	fileName := fmt.Sprintf("tr_%s.sql.gz", now.Format("20060102_150405"))
 	// Key construction samples the clock again, allowing midnight to separate
 	// placement date from the filename and StartedAt sample already captured above.
 	storageKey := s.buildStorageKey(storageType, s3Cfg, fileName)

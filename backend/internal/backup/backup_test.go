@@ -59,7 +59,7 @@ func TestBackupInitialRecord(t *testing.T) {
 			archive := &backupRecordArchive{events: &events}
 			nowCalls := 0
 			start := time.Date(2026, 10, 11, 23, 59, 59, 0, time.UTC)
-			s := New(repo, Options{DatabaseName: "test", Now: func() time.Time {
+			s := New(repo, Options{Now: func() time.Time {
 				events = append(events, "now")
 				nowCalls++
 				// Advance in seconds so the second sample dates object placement in
@@ -86,8 +86,8 @@ func TestBackupInitialRecord(t *testing.T) {
 			}
 			require.Equal(t, BackupRecord{
 				ID: record.ID, Status: "running", BackupType: "postgres",
-				FileName: "test_20261011_235959.sql.gz", StorageType: BackupStorageTypeLocal,
-				StorageKey: "2026/10/12/test_20261011_235959.sql.gz", TriggeredBy: "manual",
+				FileName: "tr_20261011_235959.sql.gz", StorageType: BackupStorageTypeLocal,
+				StorageKey: "2026/10/12/tr_20261011_235959.sql.gz", TriggeredBy: "manual",
 				StartedAt: "2026-10-11T23:59:59Z", ExpiresAt: "2026-10-13T23:59:59Z", Progress: progress,
 			}, repo.records[0])
 			wantEvents := []string{settingKeyBackupStorageConfig, settingKeyBackupS3Config, "now", "now", settingKeyBackupContentConfig}
@@ -116,7 +116,7 @@ func TestBackupInitialRecordFailure(t *testing.T) {
 				repo.fail = true
 			}
 			archive := &backupRecordArchive{events: &events}
-			s := New(repo, Options{DatabaseName: "test", Now: func() time.Time {
+			s := New(repo, Options{Now: func() time.Time {
 				return time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 			}}, nil, nil, nil, archive, nil)
 			var record *BackupRecord

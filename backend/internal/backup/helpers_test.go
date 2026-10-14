@@ -79,5 +79,5 @@ func (a *runtimeArchive) Restore(context.Context, *BackupRecord, BackupObjectSto
 // inert archive fixtures. Storage and encryption are omitted because these
 // lifecycle scenarios operate on controlled settings and use New's no-op maintenance claimant.
 func runtimeBackup(repo *runtimeSettings, archive *runtimeArchive) *BackupService {
-	return New(repo, Options{DatabaseName: "test", Now: time.Now}, nil, nil, nil, archive, nil)
+	return New(repo, Options{Now: time.Now}, nil, nil, nil, archive, nil)
 }

@@ -31,9 +31,9 @@ type Options struct {
 	// Supplied callbacks avoid reentering service methods that acquire those same locks.
 	Log func(string, string, ...any)
 
-	// DatabaseName supplies archive filename prefixes; LocalPath is the root reported
-	// in storage settings. App binds the injected local store to this same path.
-	DatabaseName, LocalPath string // archive filename prefix; configured storage root
+	// LocalPath is the root reported in storage settings. App binds the injected
+	// local store to this same path when constructing the backup service.
+	LocalPath string
 	// EncryptionKeyConfigured authorizes persistence of newly supplied S3 secrets.
 	// It describes deployment key stability separately from the supplied encryptor implementation.
 	EncryptionKeyConfigured bool
@@ -114,7 +114,6 @@ func New(repo SettingRepository, options Options, encryptor SecretEncryptor, fac
 	return &BackupService{
 		log:                     options.Log,
 		settingRepo:             repo,
-		databaseName:            options.DatabaseName,
 		localPath:               options.LocalPath,
 		now:                     options.Now,
 		encryptor:               encryptor,

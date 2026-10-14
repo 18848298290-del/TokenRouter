@@ -42,7 +42,6 @@ func provideBackup(settings *settings.Store, cfg *config.Config, cipher identity
 	}
 	options := backup.Options{
 		Log:                     logging.LegacyPrintf,
-		DatabaseName:            d.DBName,
 		LocalPath:               path,
 		EncryptionKeyConfigured: cfg.Totp.EncryptionKeyConfigured,
 		Now:                     time.Now,

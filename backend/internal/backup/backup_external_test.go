@@ -413,7 +413,7 @@ func newTestBackupServiceWithEncryptionKey(t *testing.T, repo *mockSettingRepo, 
 	t.Helper()
 	path := t.TempDir()
 	factory := func(context.Context, *backup.BackupS3Config) (backup.BackupObjectStore, error) { return store, nil }
-	svc := backup.New(repo, backup.Options{DatabaseName: "testdb", LocalPath: path, EncryptionKeyConfigured: encryptionKeyConfigured, Now: time.Now}, &plainEncryptor{}, factory, bp.NewLocalBackupStore(path), &testArchive{dumper: dumper}, nil)
+	svc := backup.New(repo, backup.Options{LocalPath: path, EncryptionKeyConfigured: encryptionKeyConfigured, Now: time.Now}, &plainEncryptor{}, factory, bp.NewLocalBackupStore(path), &testArchive{dumper: dumper}, nil)
 
 	return svc
 }
