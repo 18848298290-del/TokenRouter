@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -41,6 +42,22 @@ type runtimeSettingReadFixture struct {
 	// budget, while contextErrors captures each call's earlier state.
 	contexts      []context.Context // retained read context references
 	contextErrors []error           // context errors captured during reads
+}
+
+// runtimeSettingBlockingFixture gates batch completion so cache-miss callers
+// can join one source read before publication.
+type runtimeSettingBlockingFixture struct {
+	RuntimeSettingSource // embedded unused setting source
+	// values supplies stored text. Tests change this map after all current Load
+	// callers finish, keeping each concurrent source read's input stable.
+	values map[string]string // configured stored setting text
+	// started signals each batch entry. Its buffer lets duplicate reads reach the
+	// release gate so the test can inspect their count while work is blocked.
+	started chan struct{} // source read entry signal
+	// release gates source completion. Closing it lets blocked reads finish
+	// before callers inspect their returned maps and publish the next value.
+	release chan struct{} // source completion release gate
+	batch   atomic.Int32  // batch source read count
 }
 
 // GetMultiple counts batch reads and returns a load-weight override of zero.
@@ -87,9 +104,9 @@ func TestSettingsRuntimePreservesFallbackAndIsolatesValues(t *testing.T) {
 }
 
 // TestSettingsRuntimeLoadsBatchAndFallback compares configured, missing, and
-// partly failed settings across batch and recovery reads. It checks values,
-// presence flags, lookup order, detached canceled-caller contexts, and their
-// shared two-second budget.
+// partly failed settings across batch and recovery reads. It checks cold and
+// cached values, presence flags, lookup order, detached canceled-caller contexts,
+// and their shared two-second budget.
 func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 	defaults := policy.RuntimeSettings{
 		EwmaErrorRateAlpha: 0.2,
@@ -232,6 +249,7 @@ func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 						startedAt := time.Now()
 						got := runtime.Load(ctx, source, defaults)
 						require.Equal(t, tt.want, got)
+						require.Equal(t, tt.want, runtime.Load(ctx, nil, policy.RuntimeSettings{}))
 						if fallback {
 							require.Equal(t, batchResult, got)
 						} else {
@@ -256,6 +274,154 @@ func TestSettingsRuntimeLoadsBatchAndFallback(t *testing.T) {
 		runtime := NewSettingsRuntime(Diagnostics{})
 		require.Equal(t, wantDefaults, runtime.Load(context.Background(), nil, defaults))
 	})
+}
+
+// TestSettingsRuntimeStoreRetainsFieldsAndRebuildsEscape publishes settings
+// with disagreeing scalar and composite escape values. It protects all fields,
+// empty-map normalization, map ownership, and expiration from the Store instant.
+func TestSettingsRuntimeStoreRetainsFieldsAndRebuildsEscape(t *testing.T) {
+	escape := policy.StickyEscapeConfig{Enabled: false, TtftMs: 6500, ErrorRate: 0.09}
+	composite := policy.StickyEscapeConfig{Enabled: true, TtftMs: 11000, ErrorRate: 0.76}
+	tests := []struct {
+		name        string                    // scenario subtest display name
+		weights     map[string]float64        // supplied weight map shape
+		wantWeights map[string]float64        // expected returned weight values
+		escape      policy.StickyEscapeConfig // supplied scalar escape values
+	}{
+		{
+			name:        "populated weights",
+			weights:     map[string]float64{"priority": 2, "load": 0},
+			wantWeights: map[string]float64{"priority": 2, "load": 0},
+			escape:      escape,
+		},
+		{name: "nil weights", escape: escape},
+		{name: "empty weights", weights: map[string]float64{}, escape: escape},
+		{name: "zero scalar escape"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				value := policy.RuntimeSettings{
+					StickyWeightedEnabled:       true,
+					SubscriptionPriorityEnabled: true,
+					LbTopKOverride:              11,
+					WeightOverrides:             tt.weights,
+					EwmaErrorRateAlpha:          0.41,
+					EwmaErrorRateAlphaSet:       false,
+					EwmaTTFTAlpha:               0.67,
+					EwmaTTFTAlphaSet:            true,
+					StickyEscapeEnabled:         tt.escape.Enabled,
+					StickyEscapeEnabledSet:      true,
+					StickyEscapeTTFTMs:          tt.escape.TtftMs,
+					StickyEscapeTTFTMsSet:       false,
+					StickyEscapeErrorRate:       tt.escape.ErrorRate,
+					StickyEscapeErrorRateSet:    true,
+					StickyEscape:                composite,
+				}
+				want := value
+				want.WeightOverrides = tt.wantWeights
+				want.StickyEscape = tt.escape
+				source := &runtimeSettingReadFixture{
+					values: map[string]string{SettingKeyAdvancedSchedulerWeightLoad: "8"},
+				}
+				runtime := NewSettingsRuntime(Diagnostics{})
+				runtime.Store(value)
+				if value.WeightOverrides != nil {
+					value.WeightOverrides["priority"] = 99
+				}
+				got := runtime.Load(context.Background(), source, policy.RuntimeSettings{})
+				require.Equal(t, want, got)
+				if got.WeightOverrides != nil {
+					got.WeightOverrides["caller"] = 7
+				}
+				require.Equal(t, want, runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+
+				// Test both sides of the lifetime cutoff using virtual time. A source read at
+				// exactly five seconds must replace the published Store value.
+				time.Sleep(5*time.Second - time.Nanosecond)
+				require.Equal(t, want, runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+				require.Empty(t, source.steps)
+				time.Sleep(time.Nanosecond)
+				require.Equal(t, policy.RuntimeSettings{WeightOverrides: map[string]float64{"load": 8}},
+					runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+				require.Equal(t, []string{"batch"}, source.steps)
+			})
+		})
+	}
+}
+
+// TestSettingsRuntimeSingleflightCallerWeightsAreIndependent delays a shared
+// read while four callers wait for its result. It protects each caller's map
+// ownership and the five-second lifetime starting after source completion.
+func TestSettingsRuntimeSingleflightCallerWeightsAreIndependent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		results := make([]policy.RuntimeSettings, 4)
+		loaded := make(chan struct{}, len(results))
+		source := &runtimeSettingBlockingFixture{
+			values: map[string]string{
+				SettingKeyAdvancedSchedulerWeightPriority: "2",
+				SettingKeyAdvancedSchedulerWeightLoad:     "0",
+			},
+			started: make(chan struct{}, len(results)),
+			release: make(chan struct{}),
+		}
+		runtime := NewSettingsRuntime(Diagnostics{})
+		// Keep the source blocked until every caller joins the cache miss. The
+		// completion signals order map inspection after all shared-read results return.
+		for i := range results {
+			go func() {
+				results[i] = runtime.Load(context.Background(), source, policy.RuntimeSettings{})
+				loaded <- struct{}{}
+			}()
+		}
+		<-source.started
+		synctest.Wait()
+		require.Equal(t, int32(1), source.batch.Load())
+		// Delay source completion by one virtual second so an expiry tied to the
+		// miss start becomes distinguishable from the cache's publication lifetime.
+		time.Sleep(time.Second)
+		close(source.release)
+		for range results {
+			<-loaded
+		}
+		want := policy.RuntimeSettings{WeightOverrides: map[string]float64{"priority": 2, "load": 0}}
+		for _, result := range results {
+			require.Equal(t, want, result)
+		}
+		results[0].WeightOverrides["load"] = 99
+		for i := 1; i < len(results); i++ {
+			require.Equal(t, want, results[i])
+			results[i].WeightOverrides["caller"] = float64(i)
+		}
+		for i := 1; i < len(results); i++ {
+			require.Equal(t, float64(i), results[i].WeightOverrides["caller"])
+		}
+		require.NotContains(t, results[0].WeightOverrides, "caller")
+		require.Equal(t, want, runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+		source.values[SettingKeyAdvancedSchedulerWeightLoad] = "8"
+
+		// Source completion occurs one second after the miss begins. Reuse through
+		// the next five seconds demonstrates that publication starts the cache lifetime.
+		time.Sleep(5*time.Second - time.Nanosecond)
+		require.Equal(t, want, runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+		require.Equal(t, int32(1), source.batch.Load())
+		time.Sleep(time.Nanosecond)
+		require.Equal(t, policy.RuntimeSettings{WeightOverrides: map[string]float64{"priority": 2, "load": 8}},
+			runtime.Load(context.Background(), source, policy.RuntimeSettings{}))
+		require.Equal(t, int32(2), source.batch.Load())
+	})
+}
+
+// GetMultiple records one source read and blocks until release is closed.
+// Tests keep values stable during each call and use started to place every
+// caller behind the same cache miss.
+func (f *runtimeSettingBlockingFixture) GetMultiple(context.Context, []string) (map[string]string, error) {
+	// Count the read before signaling entry so tests can distinguish source
+	// leaders while every source operation remains behind the release gate.
+	f.batch.Add(1)
+	f.started <- struct{}{}
+	<-f.release
+	return f.values, nil
 }
 
 // GetMultiple records copied batch keys, read order, context identity, and the

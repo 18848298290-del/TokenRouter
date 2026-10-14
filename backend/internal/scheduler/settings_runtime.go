@@ -104,42 +104,9 @@ type SettingsRuntime struct {
 // cachedAdvancedSchedulerSetting holds one published set of parsed overrides
 // and its expiration instant.
 type cachedAdvancedSchedulerSetting struct {
-	StickyWeightedEnabled       bool // weighted affinity switch value
-	SubscriptionPriorityEnabled bool // subscription preference switch value
-	LbTopKOverride              int  // positive sample size override
-	// WeightOverrides is copied before publication and when returned by Load.
-	// Cached readers leave this map unchanged while each caller receives separate
-	// mutable storage.
-	WeightOverrides map[string]float64 // parsed scoring weight overrides
-	// EwmaErrorRateAlpha and EwmaErrorRateAlphaSet carry the parsed error
-	// coefficient and successful-override presence together. A false presence
-	// flag lets effective settings inherit the process policy.
-	EwmaErrorRateAlpha    float64 // error sample blending coefficient
-	EwmaErrorRateAlphaSet bool    // valid error coefficient presence
-	// EwmaTTFTAlpha and EwmaTTFTAlphaSet carry the parsed TTFT coefficient and
-	// successful-override presence together. A false presence flag lets effective
-	// settings inherit the process policy.
-	EwmaTTFTAlpha    float64 // TTFT sample blending coefficient
-	EwmaTTFTAlphaSet bool    // valid TTFT coefficient presence
-	// StickyEscapeEnabled and StickyEscapeEnabledSet carry the parsed escape
-	// switch and successful-override presence together. A false presence flag
-	// lets effective settings inherit the process policy.
-	StickyEscapeEnabled    bool // parsed escape switch value
-	StickyEscapeEnabledSet bool // valid escape switch presence
-	// StickyEscapeTTFTMs and StickyEscapeTTFTMsSet carry the parsed latency
-	// threshold and successful-override presence together. A false presence flag
-	// lets effective settings inherit the process policy.
-	StickyEscapeTTFTMs    float64 // escape TTFT threshold milliseconds
-	StickyEscapeTTFTMsSet bool    // valid latency threshold presence
-	// StickyEscapeErrorRate and StickyEscapeErrorRateSet carry the parsed error
-	// fraction and successful-override presence together. A false presence flag
-	// lets effective settings inherit the process policy.
-	StickyEscapeErrorRate    float64 // escape error fraction threshold
-	StickyEscapeErrorRateSet bool    // valid error threshold presence
-	// StickyEscape records the published composite escape value. Load
-	// reconstructs its returned policy from the adjacent scalar escape fields
-	// rather than reading this cached field.
-	StickyEscape policy.StickyEscapeConfig // published composite escape configuration
+	// value holds parsed settings and presence flags. Publication copies its
+	// weight map, and cached readers treat the complete value as immutable.
+	value policy.RuntimeSettings // published parsed scheduler overrides
 	// expiresAt is the publication instant plus the cache lifetime. Load compares
 	// it with the current clock before reusing any cached setting.
 	expiresAt int64 // Unix nanoseconds
@@ -159,8 +126,8 @@ func NewSettingsRuntime(diagnostics Diagnostics) *SettingsRuntime {
 }
 
 // Load returns parsed scheduler overrides and a caller-owned weight map. Supply
-// a nonnil context when a source read may be needed. Fresh
-// cache entries are reused regardless of the supplied source or defaults, so
+// a nonnil context when a source read may be needed. Fresh cache entries are
+// reused regardless of the supplied source or defaults, so
 // callers share consistent process defaults for one runtime instance. An
 // expired or absent entry invokes one coalesced source read and caches its
 // recovered or default values.
@@ -174,46 +141,14 @@ func NewSettingsRuntime(diagnostics Diagnostics) *SettingsRuntime {
 func (s *SettingsRuntime) Load(ctx context.Context, repo RuntimeSettingSource, defaults policy.RuntimeSettings) policy.RuntimeSettings {
 	if cached, ok := s.cache.Load().(*cachedAdvancedSchedulerSetting); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
-			return policy.RuntimeSettings{
-				StickyWeightedEnabled:       cached.StickyWeightedEnabled,
-				SubscriptionPriorityEnabled: cached.SubscriptionPriorityEnabled,
-				LbTopKOverride:              cached.LbTopKOverride,
-				WeightOverrides:             CloneAdvancedSchedulerWeightOverrides(cached.WeightOverrides),
-				EwmaErrorRateAlpha:          cached.EwmaErrorRateAlpha,
-				EwmaErrorRateAlphaSet:       cached.EwmaErrorRateAlphaSet,
-				EwmaTTFTAlpha:               cached.EwmaTTFTAlpha,
-				EwmaTTFTAlphaSet:            cached.EwmaTTFTAlphaSet,
-				StickyEscapeEnabled:         cached.StickyEscapeEnabled,
-				StickyEscapeEnabledSet:      cached.StickyEscapeEnabledSet,
-				StickyEscapeTTFTMs:          cached.StickyEscapeTTFTMs,
-				StickyEscapeTTFTMsSet:       cached.StickyEscapeTTFTMsSet,
-				StickyEscapeErrorRate:       cached.StickyEscapeErrorRate,
-				StickyEscapeErrorRateSet:    cached.StickyEscapeErrorRateSet,
-				StickyEscape:                policy.StickyEscapeConfig{Enabled: cached.StickyEscapeEnabled, TtftMs: cached.StickyEscapeTTFTMs, ErrorRate: cached.StickyEscapeErrorRate},
-			}
+			return cloneAdvancedSchedulerRuntimeSettings(cached.value)
 		}
 	}
 
 	result, _, _ := s.sf.Do("advanced_scheduler_settings", func() (any, error) {
 		if cached, ok := s.cache.Load().(*cachedAdvancedSchedulerSetting); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
-				return policy.RuntimeSettings{
-					StickyWeightedEnabled:       cached.StickyWeightedEnabled,
-					SubscriptionPriorityEnabled: cached.SubscriptionPriorityEnabled,
-					LbTopKOverride:              cached.LbTopKOverride,
-					WeightOverrides:             CloneAdvancedSchedulerWeightOverrides(cached.WeightOverrides),
-					EwmaErrorRateAlpha:          cached.EwmaErrorRateAlpha,
-					EwmaErrorRateAlphaSet:       cached.EwmaErrorRateAlphaSet,
-					EwmaTTFTAlpha:               cached.EwmaTTFTAlpha,
-					EwmaTTFTAlphaSet:            cached.EwmaTTFTAlphaSet,
-					StickyEscapeEnabled:         cached.StickyEscapeEnabled,
-					StickyEscapeEnabledSet:      cached.StickyEscapeEnabledSet,
-					StickyEscapeTTFTMs:          cached.StickyEscapeTTFTMs,
-					StickyEscapeTTFTMsSet:       cached.StickyEscapeTTFTMsSet,
-					StickyEscapeErrorRate:       cached.StickyEscapeErrorRate,
-					StickyEscapeErrorRateSet:    cached.StickyEscapeErrorRateSet,
-					StickyEscape:                policy.StickyEscapeConfig{Enabled: cached.StickyEscapeEnabled, TtftMs: cached.StickyEscapeTTFTMs, ErrorRate: cached.StickyEscapeErrorRate},
-				}, nil
+				return cloneAdvancedSchedulerRuntimeSettings(cached.value), nil
 			}
 		}
 
@@ -260,27 +195,7 @@ func (s *SettingsRuntime) Load(ctx context.Context, repo RuntimeSettingSource, d
 			stickyEscapeErrorRate, stickyEscapeErrorRateSet = ParseAdvancedSchedulerRateOverride(values[SettingKeyAdvancedSchedulerStickyEscapeErrorRate], defaults.StickyEscape.ErrorRate)
 		}
 
-		// Publish an isolated weight map because later request-specific overrides mutate
-		// returned maps. Scalar settings and presence flags travel together in one cached value.
-		s.cache.Store(&cachedAdvancedSchedulerSetting{
-			StickyWeightedEnabled:       stickyWeightedEnabled,
-			SubscriptionPriorityEnabled: subscriptionPriorityEnabled,
-			LbTopKOverride:              lbTopKOverride,
-			WeightOverrides:             CloneAdvancedSchedulerWeightOverrides(weightOverrides),
-			EwmaErrorRateAlpha:          ewmaErrorRateAlpha,
-			EwmaErrorRateAlphaSet:       ewmaErrorRateAlphaSet,
-			EwmaTTFTAlpha:               ewmaTTFTAlpha,
-			EwmaTTFTAlphaSet:            ewmaTTFTAlphaSet,
-			StickyEscapeEnabled:         stickyEscapeEnabled,
-			StickyEscapeEnabledSet:      stickyEscapeEnabledSet,
-			StickyEscapeTTFTMs:          stickyEscapeTTFTMs,
-			StickyEscapeTTFTMsSet:       stickyEscapeTTFTMsSet,
-			StickyEscapeErrorRate:       stickyEscapeErrorRate,
-			StickyEscapeErrorRateSet:    stickyEscapeErrorRateSet,
-			StickyEscape:                policy.StickyEscapeConfig{Enabled: stickyEscapeEnabled, TtftMs: stickyEscapeTTFTMs, ErrorRate: stickyEscapeErrorRate},
-			expiresAt:                   time.Now().Add(advancedSchedulerSettingCacheTTL).UnixNano(),
-		})
-		return policy.RuntimeSettings{
+		settings := policy.RuntimeSettings{
 			StickyWeightedEnabled:       stickyWeightedEnabled,
 			SubscriptionPriorityEnabled: subscriptionPriorityEnabled,
 			LbTopKOverride:              lbTopKOverride,
@@ -296,14 +211,20 @@ func (s *SettingsRuntime) Load(ctx context.Context, repo RuntimeSettingSource, d
 			StickyEscapeErrorRate:       stickyEscapeErrorRate,
 			StickyEscapeErrorRateSet:    stickyEscapeErrorRateSet,
 			StickyEscape:                policy.StickyEscapeConfig{Enabled: stickyEscapeEnabled, TtftMs: stickyEscapeTTFTMs, ErrorRate: stickyEscapeErrorRate},
-		}, nil
+		}
+		// Publish an isolated weight map because later request-specific overrides mutate
+		// returned maps. Scalar settings and presence flags travel together in one cached value.
+		s.cache.Store(&cachedAdvancedSchedulerSetting{
+			value:     cloneAdvancedSchedulerRuntimeSettings(settings),
+			expiresAt: time.Now().Add(advancedSchedulerSettingCacheTTL).UnixNano(),
+		})
+		return settings, nil
 	})
 
 	settings, _ := result.(policy.RuntimeSettings)
 	// Singleflight shares its result among waiting callers. Copy the weight map here
 	// so one caller's group-specific changes cannot alter another caller's returned settings.
-	settings.WeightOverrides = CloneAdvancedSchedulerWeightOverrides(settings.WeightOverrides)
-	return settings
+	return cloneAdvancedSchedulerRuntimeSettings(settings)
 }
 
 // ParseAdvancedSchedulerAlphaOverride returns a valid finite coefficient and
@@ -456,21 +377,10 @@ func ParseAdvancedSchedulerWeightOverrides(values map[string]string) map[string]
 	return overrides
 }
 
-// CloneAdvancedSchedulerWeightOverrides copies weight-map entries into
-// caller-owned storage. A nil or empty source returns nil, and scalar float
-// values require no additional nested ownership handling.
-func CloneAdvancedSchedulerWeightOverrides(in map[string]float64) map[string]float64 {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]float64, len(in))
-	maps.Copy(out, in)
-	return out
-}
-
 // Store publishes prepared overrides with a copied weight map and a renewed
 // five-second lifetime. The caller keeps the input map stable during this
-// copy, then may modify its own storage independently.
+// copy, then may modify its own storage independently. Load rebuilds the returned
+// StickyEscape configuration from these settings' scalar escape fields.
 //
 // Forgetting the coalescing key permits a later expired load to start
 // separately from any earlier read. It does not cancel that read or reserve
@@ -483,21 +393,37 @@ func (s *SettingsRuntime) Store(value policy.RuntimeSettings) {
 	// reach its own cache store.
 	s.sf.Forget("advanced_scheduler_settings")
 	s.cache.Store(&cachedAdvancedSchedulerSetting{
-		StickyWeightedEnabled:       value.StickyWeightedEnabled,
-		SubscriptionPriorityEnabled: value.SubscriptionPriorityEnabled,
-		LbTopKOverride:              value.LbTopKOverride,
-		WeightOverrides:             CloneAdvancedSchedulerWeightOverrides(value.WeightOverrides),
-		EwmaErrorRateAlpha:          value.EwmaErrorRateAlpha,
-		EwmaErrorRateAlphaSet:       value.EwmaErrorRateAlphaSet,
-		EwmaTTFTAlpha:               value.EwmaTTFTAlpha,
-		EwmaTTFTAlphaSet:            value.EwmaTTFTAlphaSet,
-		StickyEscapeEnabled:         value.StickyEscapeEnabled,
-		StickyEscapeEnabledSet:      value.StickyEscapeEnabledSet,
-		StickyEscapeTTFTMs:          value.StickyEscapeTTFTMs,
-		StickyEscapeTTFTMsSet:       value.StickyEscapeTTFTMsSet,
-		StickyEscapeErrorRate:       value.StickyEscapeErrorRate,
-		StickyEscapeErrorRateSet:    value.StickyEscapeErrorRateSet,
-		StickyEscape:                value.StickyEscape,
-		expiresAt:                   time.Now().Add(advancedSchedulerSettingCacheTTL).UnixNano(),
+		value:     cloneAdvancedSchedulerRuntimeSettings(value),
+		expiresAt: time.Now().Add(advancedSchedulerSettingCacheTTL).UnixNano(),
 	})
+}
+
+// cloneAdvancedSchedulerRuntimeSettings returns a runtime value with independent
+// weight storage for publication or caller use. A nil or empty weight map becomes
+// nil; populated maps are copied while their input stays stable.
+//
+// StickyEscape is rebuilt from StickyEscapeEnabled, StickyEscapeTTFTMs, and
+// StickyEscapeErrorRate, including zero values and values whose presence flags
+// are false. This keeps the composite consistent with scalar escape settings
+// even when Store receives a different composite.
+func cloneAdvancedSchedulerRuntimeSettings(value policy.RuntimeSettings) policy.RuntimeSettings {
+	value.WeightOverrides = CloneAdvancedSchedulerWeightOverrides(value.WeightOverrides)
+	value.StickyEscape = policy.StickyEscapeConfig{
+		Enabled:   value.StickyEscapeEnabled,
+		TtftMs:    value.StickyEscapeTTFTMs,
+		ErrorRate: value.StickyEscapeErrorRate,
+	}
+	return value
+}
+
+// CloneAdvancedSchedulerWeightOverrides copies weight-map entries into
+// caller-owned storage. A nil or empty source returns nil, and scalar float
+// values require no additional nested ownership handling.
+func CloneAdvancedSchedulerWeightOverrides(in map[string]float64) map[string]float64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(in))
+	maps.Copy(out, in)
+	return out
 }
