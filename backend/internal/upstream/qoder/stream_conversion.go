@@ -1328,14 +1328,6 @@ func (a *QoderOpenAIToolCallAccumulator) bindUpstreamIndex(event SSEEvent, slot 
 	if a.slotByUpstreamIndex == nil {
 		a.slotByUpstreamIndex = make(map[int]int)
 	}
-	if existingSlot, ok := a.slotByUpstreamIndex[event.ToolCallIndex]; ok && existingSlot >= 0 && existingSlot < len(a.calls) && existingSlot != slot {
-		existingID := a.calls[existingSlot].ID
-		slotID := a.calls[slot].ID
-		if existingID != "" && slotID != "" && existingID != slotID {
-			a.slotByUpstreamIndex[event.ToolCallIndex] = slot
-			return
-		}
-	}
 	a.slotByUpstreamIndex[event.ToolCallIndex] = slot
 }
 
