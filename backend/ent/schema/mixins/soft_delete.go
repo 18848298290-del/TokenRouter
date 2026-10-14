@@ -128,7 +128,7 @@ func (d SoftDeleteMixin) Hooks() []ent.Hook {
 				d.applyPredicate(mx)
 				mx.SetOp(ent.OpUpdate)
 				mx.SetDeletedAt(time.Now())
-				return mutateWithClient(ctx, m, next)
+				return mutateWithClient(ctx, m)
 			})
 		},
 	}
@@ -149,13 +149,13 @@ func (d SoftDeleteMixin) applyPredicate(w interface {
 // Callers pass a non-nil context and generated mutation. Client() must return
 // the generated client, whose Mutate method accepts ctx and m. Missing methods
 // or unexpected argument and result counts return errors. A non-nil mutation
-// error is propagated, and a nil successful value is rejected.
+// error is propagated before checking the returned value. A nil result interface
+// is rejected; an interface containing a typed nil value is returned.
 //
 // Reflection keeps the mixins package independent of the generated client
-// package that imports it. The fallback argument is unused. Mutations with
-// incompatible method types can panic during the reflected calls; this helper
-// relies on the generated method types rather than checking their assignability.
-func mutateWithClient(ctx context.Context, m ent.Mutation, fallback ent.Mutator) (ent.Value, error) {
+// package that imports it. This helper expects the generated method types, so
+// mutations with incompatible method types can panic during reflected calls.
+func mutateWithClient(ctx context.Context, m ent.Mutation) (ent.Value, error) {
 	clientMethod := reflect.ValueOf(m).MethodByName("Client")
 	if !clientMethod.IsValid() || clientMethod.Type().NumIn() != 0 || clientMethod.Type().NumOut() != 1 {
 		return nil, fmt.Errorf("soft delete: mutation client method not found for %T", m)
@@ -188,9 +188,5 @@ func mutateWithClient(ctx context.Context, m ent.Mutation, fallback ent.Mutator)
 	if value == nil {
 		return nil, fmt.Errorf("soft delete: mutation client returned nil for %T", m)
 	}
-	v, ok := value.(ent.Value)
-	if !ok {
-		return nil, fmt.Errorf("soft delete: unexpected value type %T for %T", value, m)
-	}
-	return v, nil
+	return value, nil
 }
