@@ -164,12 +164,13 @@ function handleResize() {
 }
 
 onMounted(() => {
-  document.addEventListener('click', closeOutside)
+  // 外层弹窗会停止点击冒泡，捕获阶段仍可判断点击是否来自筛选面板。
+  document.addEventListener('click', closeOutside, true)
   window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', closeOutside)
+  document.removeEventListener('click', closeOutside, true)
   window.removeEventListener('resize', handleResize)
 })
 

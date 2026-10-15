@@ -24,7 +24,13 @@ export function useFloatingMotion(
       if (element.closest('.motion-collapse-moving')) frame = requestAnimationFrame(follow)
     }
     const update = () => {
-      const next = !!element.closest('[inert], [hidden]')
+      // v-show 通过内联样式隐藏祖先，class 也可能让整个区域退出布局。
+      let next = !!element.closest('[inert], [hidden]')
+      let current: HTMLElement | null = element
+      while (current && !next) {
+        next = getComputedStyle(current).display === 'none'
+        current = current.parentElement
+      }
       if (next && !blocked.value) close()
       blocked.value = next
       cancelFrame()
@@ -34,7 +40,7 @@ export function useFloatingMotion(
     // 观察当前触发器的祖先节点，节点属性变化时重新测量布局。
     let ancestor: HTMLElement | null = element
     while (ancestor) {
-      observer.observe(ancestor, { attributes: true, attributeFilter: ['inert', 'hidden', 'class'] })
+      observer.observe(ancestor, { attributes: true, attributeFilter: ['inert', 'hidden', 'class', 'style'] })
       ancestor = ancestor.parentElement
     }
     onCleanup(() => {
