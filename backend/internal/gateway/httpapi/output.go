@@ -22,6 +22,8 @@ import (
 // before that handoff completed. Later OutputState calls inspect status and
 // commitment through the writer's optional interfaces without accessing
 // headers, so those observations do not repeat the heartbeat handoff.
+// Upstream sinks bind the request's timing writer before emission. Local HTTP
+// errors use the ordinary writer directly and cannot establish upstream delivery.
 
 // MessagesOutput supplies synchronous HTTP output and request observations.
 // Executors read identity, routing, body, and funding state through execution.Request.
@@ -39,6 +41,18 @@ type MessagesOutput struct {
 // ResponseSink writes synchronous upstream events to the client and flushes when requested.
 type ResponseSink struct {
 	Writer http.ResponseWriter // required downstream HTTP writer
+	// timing identifies the final writer beneath optional HTTP wrappers. Nil
+	// disables source observation for requests outside HTTP text timing scope.
+	timing *timingWriter
+}
+
+// NewResponseSink binds upstream delivery to the current HTTP writer and timing.
+// Callers supply a live Gin context and emit synchronously. Writer wrappers stay
+// in place, so timing observes successfully delivered bytes after their rewrites.
+func NewResponseSink(c *gin.Context) ResponseSink {
+	value, _ := c.Get(requestTimingWriterKey)
+	writer, _ := value.(*timingWriter)
+	return ResponseSink{Writer: c.Writer, timing: writer}
 }
 
 // Begin copies response header value slices and writes the supplied status
@@ -57,7 +71,15 @@ func (s ResponseSink) Begin(head upstream.OutputHead) error {
 // It ignores the returned byte count, so a short write with nil error is not
 // detected here. A requested flush requires http.Flusher; callers retain event
 // storage and choose how a failed write affects upstream consumption.
+// The timing source scope lasts only for this emission; later local errors
+// cannot inherit it, even after an upstream write or flush fails.
 func (s ResponseSink) Emit(event upstream.OutputEvent) error {
+	if s.timing != nil {
+		// Source publication surrounds the existing writer chain rather than
+		// bypassing its transformations, capture, short-write handling or heartbeat locks.
+		s.timing.upstreamWrites.Add(1)
+		defer s.timing.upstreamWrites.Add(-1)
+	}
 	if len(event.Data) > 0 {
 		if _, err := s.Writer.Write(event.Data); err != nil {
 			return err

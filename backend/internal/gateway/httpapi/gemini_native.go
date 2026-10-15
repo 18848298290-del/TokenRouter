@@ -448,7 +448,7 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		},
 	}
 	output := &MessagesOutput{
-		ResponseSink:  ResponseSink{Writer: c.Writer},
+		ResponseSink:  NewResponseSink(c),
 		HTTP:          c,
 		Log:           reqLog,
 		StreamStarted: &streamStarted,

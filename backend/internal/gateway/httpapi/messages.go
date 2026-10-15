@@ -455,7 +455,7 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		Metadata: execution.RequestMetadata{ClaudeCode: isClaudeCodeClient},
 		Text:     execution.TextState{Kind: kind, Parsed: parsedReq, Platform: platform, BoundProviderID: sessionBoundProviderID, HasBoundSession: hasBoundSession, GeminiBody: call.GeminiBody, GeminiModel: call.GeminiModel},
 	}
-	output := &MessagesOutput{ResponseSink: ResponseSink{Writer: c.Writer}, HTTP: c, Log: reqLog, StreamStarted: &streamStarted}
+	output := &MessagesOutput{ResponseSink: NewResponseSink(c), HTTP: c, Log: reqLog, StreamStarted: &streamStarted}
 	// The bound executor is responsible for completion and terminal protocol
 	// output. This admission adapter supplies active HTTP output and discards
 	// the returned result and error after execution finishes.

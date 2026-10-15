@@ -32,7 +32,7 @@ func (p *OpenAIResponseOutput) ChatBuffered(
 	upstreamModel string,
 	startTime time.Time,
 ) (*forwardcore.OpenAIResult, error) {
-	result, err := openai.ReadChatBuffered(resp, upstream.NewDeferredOutputContext(ResponseSink{Writer: c.Writer}), p.ChatOptions(c, provider, resp, originalModel, billingModel, upstreamModel), originalModel, upstreamModel, startTime)
+	result, err := openai.ReadChatBuffered(resp, upstream.NewDeferredOutputContext(NewResponseSink(c)), p.ChatOptions(c, provider, resp, originalModel, billingModel, upstreamModel), originalModel, upstreamModel, startTime)
 	return gatewayprovider.ChatForwardResult(result, billingModel), err
 }
 
@@ -50,6 +50,6 @@ func (p *OpenAIResponseOutput) ChatStreaming(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*forwardcore.OpenAIResult, error) {
-	result, err := openai.ReadChatStreaming(resp, upstream.NewDeferredOutputContext(ResponseSink{Writer: c.Writer}), p.ChatOptions(c, provider, resp, originalModel, billingModel, upstreamModel), originalModel, upstreamModel, startTime, requestBodyLen)
+	result, err := openai.ReadChatStreaming(resp, upstream.NewDeferredOutputContext(NewResponseSink(c)), p.ChatOptions(c, provider, resp, originalModel, billingModel, upstreamModel), originalModel, upstreamModel, startTime, requestBodyLen)
 	return gatewayprovider.ChatForwardResult(result, billingModel), err
 }

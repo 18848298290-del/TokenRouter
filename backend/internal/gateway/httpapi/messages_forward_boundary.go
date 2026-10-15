@@ -102,7 +102,7 @@ func (b *MessageForwardBoundary) RequestHeaders() http.Header {
 // require a usable context and writer, and retain this request-local sink only
 // for the forwarding operation that owns them.
 func (b *MessageForwardBoundary) Sink() upstream.OutputSink {
-	return ResponseSink{Writer: b.context.Writer}
+	return NewResponseSink(b.context)
 }
 
 // SearchOutput returns search-tool output bound to the current Gin request.

@@ -46,7 +46,7 @@ func ForwardQoderAttempt(ctx context.Context, c *gin.Context, runtime *gatewayad
 		responseModel = strings.TrimSpace(qoder.GjsonString(body, "model"))
 	}
 	executor, input := runtime.PrepareQoderTarget(QoderRequestMetadata(c), value, body, wire, responseModel)
-	result, err := executor.Execute(ctx, input, ResponseSink{Writer: c.Writer})
+	result, err := executor.Execute(ctx, input, NewResponseSink(c))
 	if err != nil {
 		runtime.ObserveQoderFailure(ctx, value, err)
 		// Without both service and usage evidence, expose only the error to outer

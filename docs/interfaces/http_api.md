@@ -318,7 +318,7 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 `request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 是首次准入前互不重叠的毫秒时长，合计对应 `provider_slot_acquired_ms`。排队期间的容量查询耗时归入前置处理，两类等待只统计查询之间的排队时间。准入失败时，四项统计到请求结束，不产生成功准入时刻。`retry_provider_slot_wait_ms` 单列后续提供商排队，不包含上游耗时、容量查询或重试退避。
 
-`provider_slot_acquired_ms`、上游连接、发送、首字节、`upstream_first_event_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms` 都是距请求进入网关的事件时刻，不能相加。`upstream_first_sse_data_ms` 保留 SSE 专用含义，通用首事件也支持 Bedrock EventStream。有效输出包含正文、明文思考和工具调用，排除心跳、元数据、签名和密文；下游指标只观察成功写出及既有 Flush。
+`provider_slot_acquired_ms`、上游连接、发送、首字节、`upstream_first_event_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms` 都是距请求进入网关的事件时刻，不能相加。`upstream_first_sse_data_ms` 保留 SSE 专用含义，通用首事件也支持 Bedrock EventStream。有效输出包含正文、明文思考和工具调用，排除心跳、元数据、签名和密文；下游指标只观察上游输出通道成功写出及既有 Flush。网关本地产生的错误事件不建立交付指标；若此前已有成功写出但尚未刷新的上游事件，后续 Flush 仍会记录这些数据的首次刷新。
 
 数值 0 表示实测零毫秒。字段缺失时显示 `-`，不能据此判断事件没有发生。读取首个上游事件时优先使用 `upstream_first_event_ms`，缺失才回退到历史的 `upstream_first_sse_data_ms`，实测 0 不触发回退。前端在四项时长的标题旁显示合计，准入成功时注明它等于取得槽位的时刻；重试排队单独列出，不计入合计。历史记录没有四项时长，前端只显示事件时刻；同步请求不显示三项流式专属事件。`timing_admitted` 为 0 时，取得槽位一项显示“未取得槽位”。WebSocket、媒体、实时语音及异步任务不进入 HTTP 文本计时。
 

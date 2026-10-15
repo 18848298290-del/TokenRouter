@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // search_output.go writes serialized search events and JSON responses through
@@ -47,7 +49,7 @@ func (o SearchOutput) WriteEvent(event string, data []byte) error {
 	// The searchtools event builder has already marshaled JSON. Write those
 	// bytes verbatim in the SSE data line so escaped payload characters do not
 	// undergo another encoding pass.
-	if _, err := fmt.Fprintf(o.Context.Writer, "event: %s\ndata: %s\n\n", event, data); err != nil {
+	if err := NewResponseSink(o.Context).Emit(upstream.OutputEvent{Data: fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event, data)}); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
 	o.Context.Writer.Flush()

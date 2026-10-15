@@ -273,7 +273,7 @@ func (s *GrokExecutor) ChatResponses(
 	}
 	var sink upstream.OutputSink
 	if c != nil {
-		sink = ResponseSink{Writer: c.Writer}
+		sink = NewResponseSink(c)
 	}
 	nativeResult, err := (grok.ResponsesExecutor{}).Execute(upstreamCtx, upstream.AttemptInput{
 		Protocol: protocol.ProtocolOpenAIResponses,

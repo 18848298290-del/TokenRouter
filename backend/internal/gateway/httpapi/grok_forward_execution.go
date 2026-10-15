@@ -373,7 +373,7 @@ func (a *grokForwardAdapter) Sink() upstream.OutputSink {
 	if a.c == nil {
 		return nil
 	}
-	return ResponseSink{Writer: a.c.Writer}
+	return NewResponseSink(a.c)
 }
 
 // Effort returns a reasoning-effort pointer extracted from the OpenAI body.

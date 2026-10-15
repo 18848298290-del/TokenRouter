@@ -74,7 +74,7 @@ func (o GoogleOutput) Raw(status int, content string, body []byte) {
 
 // Sink exposes the current response writer through the synchronous upstream
 // interface.
-func (o GoogleOutput) Sink() upstream.OutputSink { return ResponseSink{Writer: o.Context.Writer} }
+func (o GoogleOutput) Sink() upstream.OutputSink { return NewResponseSink(o.Context) }
 
 // Commit records the protocol-response marker used by outer error handling.
 // It changes request state without writing or flushing bytes, so the marker

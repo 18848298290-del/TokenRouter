@@ -51,7 +51,7 @@ import (
 // closure and retry ordering stay with RunHTTP.
 func (s *OpenAIResponsesExecutor) nativeForwardHTTPOptions(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, input forward.HTTPInput, exchange openai.HTTPExchangeOptions, retryEncrypted func([]byte) ([]byte, bool, error), markLineage func([]byte)) forward.HTTPOptions {
 	return forward.HTTPOptions{
-		Exchange: exchange, Sink: ResponseSink{Writer: c.Writer},
+		Exchange: exchange, Sink: NewResponseSink(c),
 		StreamOptions: func() openai.StreamOptions {
 			return s.Output.StreamOptions(ctx, c, provider, input.ReasoningEffortValue)
 		},

@@ -131,7 +131,7 @@ func WriteOpenAICompactSSEBridge(c *gin.Context, statusCode int, finalResponse [
 	}
 	// Output is already claimed after framing selection. Flush the constructed
 	// terminal events and return ownership even if the client writer reported a failure.
-	_, _ = c.Writer.Write(payload)
+	_ = NewResponseSink(c).Emit(upstream.OutputEvent{Data: payload})
 	c.Writer.Flush()
 	return true
 }

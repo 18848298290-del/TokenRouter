@@ -146,7 +146,7 @@ func ExecutionErrorProvider(value *gatewayadapter.ExecutionProvider) *UpstreamEr
 // and the execution caller retains response-body cleanup while the reader
 // invokes synchronous request-bound output callbacks.
 func (p *OpenAIResponseOutput) ReadStreamObservation(ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayadapter.ExecutionProvider, started time.Time, original, mapped, effort string) (*openai.StreamingResult, error) {
-	return openai.ReadStreamingResponse(ctx, resp, upstream.NewOutputContext(ResponseSink{Writer: c.Writer}), p.StreamOptions(ctx, c, target, effort), started, original, mapped, effort)
+	return openai.ReadStreamingResponse(ctx, resp, upstream.NewOutputContext(NewResponseSink(c)), p.StreamOptions(ctx, c, target, effort), started, original, mapped, effort)
 }
 
 // NonStream delegates native Responses buffered reading and HTTP output for
@@ -154,5 +154,5 @@ func (p *OpenAIResponseOutput) ReadStreamObservation(ctx context.Context, resp *
 // c until callbacks finish; result and error are returned for the entry's
 // completion decision.
 func (p *OpenAIResponseOutput) NonStream(ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayadapter.ExecutionProvider, original, mapped string) (*openai.NonStreamingResult, error) {
-	return openai.ReadNonStreamingResponse(ctx, resp, upstream.NewOutputContext(ResponseSink{Writer: c.Writer}), p.NonStreamOptions(ctx, c, target), original, mapped)
+	return openai.ReadNonStreamingResponse(ctx, resp, upstream.NewOutputContext(NewResponseSink(c)), p.NonStreamOptions(ctx, c, target), original, mapped)
 }

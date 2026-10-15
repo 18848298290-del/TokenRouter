@@ -719,7 +719,7 @@ func (p *openAIMessagesExecutionAdapter) BindTurnState(ctx context.Context, key,
 // Sink binds synchronous upstream output to this HTTP request's response
 // writer.
 func (p *openAIMessagesExecutionAdapter) Sink() upstream.OutputSink {
-	return ResponseSink{Writer: p.c.Writer}
+	return NewResponseSink(p.c)
 }
 
 // ResponseOptions binds Responses-to-Messages reading callbacks to the current

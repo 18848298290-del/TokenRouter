@@ -340,7 +340,7 @@ func (h *OpenAITextHandler) executeText(c *gin.Context, call OpenAITextCall, kin
 
 		Text: execution.TextState{Kind: kind, Platform: call.Platform, SelectionContext: call.SelectionContext, Mapping: call.Mapping, SessionHashBody: call.SessionHashBody, ForwardModel: call.ForwardModel, PreviousResponseID: call.PreviousResponseID, ProviderLayerModel: call.ProviderLayerModel, PromptCacheKey: call.PromptCacheKey, NativeCompactionV2: call.NativeCompactionV2, LegacyCompact: call.LegacyCompact, RequireCompact: call.RequireCompact, RequiredCapability: call.RequiredCapability, RoutingStart: call.RoutingStart},
 	}
-	output := &MessagesOutput{ResponseSink: ResponseSink{Writer: c.Writer}, HTTP: c, Log: call.Log, StreamStarted: call.StreamStarted}
+	output := &MessagesOutput{ResponseSink: NewResponseSink(c), HTTP: c, Log: call.Log, StreamStarted: call.StreamStarted}
 	// Execution owns client output through this sink. The adapter discards its
 	// result and error, so the executor supplies any terminal rejection before returning.
 	_, _ = h.executor.Execute(c.Request.Context(), request, output)

@@ -583,7 +583,7 @@ func (h *CompatibleTextHandler) executeCompatible(c *gin.Context, call Compatibl
 
 		Text: execution.TextState{Kind: kind, Parsed: call.Parsed, Platform: call.RequestPlatform, SelectionContext: call.RequestContext, SelectionSessionHash: call.SelectionSessionHash, Mapping: call.Mapping, AlternateBudget: kind == execution.TextGenericChat && call.RequestPlatform == capability.PlatformGemini},
 	}
-	output := &MessagesOutput{ResponseSink: ResponseSink{Writer: c.Writer}, HTTP: c, Log: call.Log, StreamStarted: call.StreamStarted}
+	output := &MessagesOutput{ResponseSink: NewResponseSink(c), HTTP: c, Log: call.Log, StreamStarted: call.StreamStarted}
 	// The bound executor decides terminal output and completion for this call.
 	// Discard its result so another HTTP writer cannot repeat the response decision
 	// after synchronous execution has finished.

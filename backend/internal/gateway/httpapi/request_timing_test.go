@@ -23,6 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // timingFailedWriter models a disconnected client after response headers.
@@ -64,11 +65,11 @@ func TestTextRequestTimingWireMatrix(t *testing.T) {
 				require.NotNil(t, stages)
 				SetOpsRequestContext(c, "model", true)
 				MarkOpsProviderSlotAcquired(c)
-				upstream := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(": ping\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\ndata: " + payload + "\n\n"))}
-				timing.ObserveResponse(c.Request.Context(), upstream)
-				_, err := io.ReadAll(upstream.Body)
+				response := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(": ping\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\ndata: " + payload + "\n\n"))}
+				timing.ObserveResponse(c.Request.Context(), response)
+				_, err := io.ReadAll(response.Body)
 				require.NoError(t, err)
-				require.NoError(t, upstream.Body.Close())
+				require.NoError(t, response.Body.Close())
 				c.Header("Content-Type", "text/event-stream")
 				if name == "gemini_native" {
 					c.Header("Content-Type", "application/json")
@@ -77,12 +78,13 @@ func TestTextRequestTimingWireMatrix(t *testing.T) {
 				require.NoError(t, err)
 				c.Writer.Flush()
 				require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
-				_, err = c.Writer.WriteString("data: {\"type\":\"message_start\"}\n\n")
+				sink := NewResponseSink(c)
+				err = sink.Emit(upstream.OutputEvent{Data: []byte("data: {\"type\":\"message_start\"}\n\n")})
 				require.NoError(t, err)
 				require.NotContains(t, stages.Snapshot(), "first_visible_output_ms")
 				frame := "data: " + payload + "\n\n"
 				for _, b := range []byte(frame) {
-					_, err = c.Writer.Write([]byte{b})
+					err = sink.Emit(upstream.OutputEvent{Data: []byte{b}})
 					require.NoError(t, err)
 				}
 				c.Writer.Flush()
@@ -156,7 +158,8 @@ func TestTimingWriterEventNamesAndLegacyTools(t *testing.T) {
 			writer.frames.observe = writer.observe
 			writer.Header().Set("Content-Type", "text/event-stream")
 			frame := "event: " + tt.event + "\ndata: " + tt.data + "\n\n"
-			_, err := writer.WriteString(frame)
+			sink := ResponseSink{Writer: writer, timing: writer}
+			err := sink.Emit(upstream.OutputEvent{Data: []byte(frame)})
 			require.NoError(t, err)
 			writer.Flush()
 			_, visible := stages.Snapshot()["first_visible_output_ms"]
@@ -205,11 +208,57 @@ func TestTimingWriterFailureDoesNotPublishDelivery(t *testing.T) {
 	w := &timingWriter{ResponseWriter: timingFailedWriter{c.Writer}, stages: stages}
 	w.frames.observe = w.observe
 	w.Header().Set("Content-Type", "text/event-stream")
-	_, err := w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+	sink := ResponseSink{Writer: w, timing: w}
+	err := sink.Emit(upstream.OutputEvent{Data: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")})
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	w.Flush()
 	require.NotContains(t, stages.Snapshot(), "first_visible_output_ms")
 	require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
+	require.Zero(t, w.upstreamWrites.Load())
+	w.ResponseWriter = c.Writer
+	_, err = w.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\"}\n\n")
+	require.NoError(t, err)
+	w.Flush()
+	require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
+}
+
+// TestTimingOutputProvenanceSurvivesWriterWrappers distinguishes upstream output
+// from local errors even after admission. Partial SSE writes pass through model
+// restoration before observation, and a local terminal flush can deliver earlier
+// upstream bytes without requiring an upstream-parser timestamp to exist first.
+func TestTimingOutputProvenanceSurvivesWriterWrappers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		router := gin.New()
+		router.Use(TextRequestTiming())
+		var stages *timing.Stages
+		router.POST("/v1/responses", func(c *gin.Context) {
+			stages = timing.StagesFromContext(c.Request.Context())
+			SetOpsRequestContext(c, "model", true)
+			MarkOpsProviderSlotAcquired(c)
+			c.Writer = &CompositeModelResponseWriter{ResponseWriter: c.Writer, actualModel: "model", clientModel: "group/model"}
+			c.Header("Content-Type", "text/event-stream")
+			require.True(t, WriteResponsesFailedSSE(c, "server_error", "local", "local", "test", "model"))
+			require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
+			sink := NewResponseSink(c)
+			require.NoError(t, sink.Emit(upstream.OutputEvent{Data: []byte("data: {\"type\":\"response.output_text.delta\",\"model\":\"model\",\"delta\":\"hello\"}\n")}))
+			require.NotContains(t, stages.Snapshot(), "first_visible_output_ms")
+			time.Sleep(time.Second)
+			require.NoError(t, sink.Emit(upstream.OutputEvent{Data: []byte("\n")}))
+			require.Equal(t, int64(1000), stages.Snapshot()["first_visible_output_ms"])
+			require.NotContains(t, stages.Snapshot(), "upstream_first_event_ms")
+			require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
+			time.Sleep(time.Second)
+			require.True(t, WriteResponsesFailedSSE(c, "server_error", "local", "local", "test", "model"))
+			require.Equal(t, int64(2000), stages.Snapshot()["first_downstream_flush_ms"])
+			time.Sleep(time.Second)
+			require.NoError(t, sink.Emit(upstream.OutputEvent{Data: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"later\"}}]}\n\n"), Flush: true}))
+			require.Equal(t, int64(1000), stages.Snapshot()["first_visible_output_ms"])
+			require.Equal(t, int64(2000), stages.Snapshot()["first_downstream_flush_ms"])
+		})
+		out := httptest.NewRecorder()
+		router.ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
+		require.Contains(t, out.Body.String(), `"model":"group/model"`)
+	})
 }
 
 // TestTextRequestTimingConvertedChat verifies actual Chat readers and conversion
@@ -337,4 +386,24 @@ func TestTimingDataEventDistinguishesKeepaliveFrames(t *testing.T) {
 	require.False(t, timingDataEvent(`{"type":"ping"}`, "ping"))
 	require.True(t, timingDataEvent(`{"type":"response.output_text.delta","delta":"hello"}`, "ping"))
 	require.True(t, timingDataEvent(`{"type":"message_start"}`, "message_start"))
+}
+
+// TestTimingLocalFailureDoesNotFlushUpstream records a queue-only Responses failure.
+// The request never reaches a provider, so no upstream delivery event exists.
+func TestTimingLocalFailureDoesNotFlushUpstream(t *testing.T) {
+	router := gin.New()
+	router.Use(TextRequestTiming())
+	var stages *timing.Stages
+	router.POST("/v1/responses", func(c *gin.Context) {
+		stages = timing.StagesFromContext(c.Request.Context())
+		SetOpsRequestContext(c, "model", true)
+		c.Header("Content-Type", "text/event-stream")
+		_, err := c.Writer.WriteString(": ping\n\n")
+		require.NoError(t, err)
+		c.Writer.Flush()
+		require.True(t, WriteResponsesFailedSSE(c, "rate_limit_error", "concurrency_timeout", "queue timed out", "test", "model"))
+	})
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
+	require.NotContains(t, stages.Snapshot(), "upstream_first_event_ms")
+	require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
 }

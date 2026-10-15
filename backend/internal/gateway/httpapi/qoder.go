@@ -160,9 +160,9 @@ func (h *QoderChatHandler) ChatCompletions(c *gin.Context) {
 			h.fail(c, err, stream)
 			return
 		}
-		var output upstream.OutputSink = ResponseSink{Writer: c.Writer}
+		var output upstream.OutputSink = NewResponseSink(c)
 		if h.Observer != nil {
-			output = observedExecutionOutput{ResponseSink: ResponseSink{Writer: c.Writer}, ExecutionObserver: h.Observer(c, request)}
+			output = observedExecutionOutput{ResponseSink: NewResponseSink(c), ExecutionObserver: h.Observer(c, request)}
 		}
 		_, err = h.Executor.Execute(c.Request.Context(), request, output)
 		if err != nil {
@@ -175,7 +175,7 @@ func (h *QoderChatHandler) ChatCompletions(c *gin.Context) {
 		h.fail(c, err, stream)
 		return
 	}
-	output := &gateway.OutputTracker{Sink: ResponseSink{Writer: c.Writer}}
+	output := &gateway.OutputTracker{Sink: NewResponseSink(c)}
 	err = h.UseCase.Run(c.Request.Context(), request, ports, output)
 	if err != nil {
 		h.fail(c, err, stream)

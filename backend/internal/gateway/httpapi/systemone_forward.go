@@ -147,7 +147,7 @@ func (s *SystemOneExecutor) Forward(ctx context.Context, c *gin.Context, target 
 	if clientModel, _, composite := GetCompositeModelFromContext(c); composite {
 		responseModel = clientModel
 	}
-	result, err = (jev.Executor{}).Execute(ctx, upstream.AttemptInput{Protocol: protocol.ProtocolSystemOne, Body: body, ResponseModel: responseModel, Target: t}, ResponseSink{Writer: c.Writer})
+	result, err = (jev.Executor{}).Execute(ctx, upstream.AttemptInput{Protocol: protocol.ProtocolSystemOne, Body: body, ResponseModel: responseModel, Target: t}, NewResponseSink(c))
 	// Ops stores whole milliseconds, discarding submillisecond attempt timing.
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, result.Duration.Milliseconds())
 	if result.Served {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,10 @@ import (
 // before a later flush. Every platform shares the same request collector and
 // first-event rules, including protocol conversion at the HTTP boundary.
 
+// The request-local writer binding lets upstream sinks identify delivery through
+// intervening model-restoration and capture writers without bypassing those writers.
+const requestTimingWriterKey = "http_text_timing_writer"
+
 // timingResponseBody observes consumed response bytes without changing read ownership.
 type timingResponseBody struct {
 	io.ReadCloser               // original upstream response body
@@ -41,6 +46,9 @@ type timingWriter struct {
 	stages             *timing.Stages // shared request timing state
 	frames             timingFrames   // delivered event framing state
 	pending            bool           // unflushed response event data
+	// upstreamWrites scopes synchronous upstream sink emission. Heartbeat workers
+	// may read the counter concurrently, so source publication uses atomic access.
+	upstreamWrites atomic.Int32 // active upstream emission scopes
 }
 
 // timingFrames buffers one complete SSE frame or newline-delimited JSON object.
@@ -104,6 +112,7 @@ func TextRequestTiming() gin.HandlerFunc {
 		writer := &timingWriter{ResponseWriter: c.Writer, stages: stages}
 		writer.frames.observe = writer.observe
 		c.Writer = writer
+		c.Set(requestTimingWriterKey, writer)
 		defer func() {
 			stages.Finish()
 			// Publish directly to the request capture as well as the access log. This
@@ -132,6 +141,8 @@ func (r *timingResponseBody) Read(p []byte) (int, error) {
 }
 
 // Write observes complete successful writes while leaving error handling unchanged.
+// Only writes scoped by the upstream output sink can establish delivery. Local
+// error responses remain outside that scope, even when they use identical SSE.
 // Partial or failed writes cannot establish client delivery; their parser state
 // is discarded so subsequent writes cannot complete an undelivered frame.
 //
@@ -142,7 +153,7 @@ func (r *timingResponseBody) Read(p []byte) (int, error) {
 // call records delivery of pending response data.
 func (w *timingWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
-	if err == nil && n == len(p) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
+	if w.upstreamWrites.Load() > 0 && err == nil && n == len(p) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
 		w.frames.feed(p)
 	} else {
 		w.frames.reset()
@@ -155,7 +166,7 @@ func (w *timingWriter) Write(p []byte) (int, error) {
 // original byte count and error return unchanged to the response adapter.
 func (w *timingWriter) WriteString(s string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(s)
-	if err == nil && n == len(s) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
+	if w.upstreamWrites.Load() > 0 && err == nil && n == len(s) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
 		w.frames.feed([]byte(s))
 	} else {
 		w.frames.reset()
