@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// ws_events.go classifies WebSocket events, extracts envelope fields, and
+// merges response usage observations.
 // WebSocket forwarding uses event labels and literal byte markers to select
 // payloads worth inspecting for models, tools, or usage. Those gates identify
 // candidates rather than proving a field is present or that the complete

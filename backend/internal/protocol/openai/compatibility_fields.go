@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// compatibility_fields.go normalizes OAuth Responses input fields,
+// instructions, and model values for upstream preparation.
 // OAuth-compatible request preparation accepts prompt as an input source when
 // input is missing or null, then removes prompt and commands from the forwarded
 // shape. Existing nonnull input takes precedence even when its content is empty.

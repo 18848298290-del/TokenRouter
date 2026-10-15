@@ -7,10 +7,18 @@ import (
 	"strings"
 )
 
-// Server-managed execution credentials are reused by user, group, and manager
-// identity. Provisioning creates an active automatic-funding Key when that
-// lookup is missing, and a failed creation triggers one lookup retry to accept
-// a credential that another caller may have created.
+// managed_key.go provisions and reuses server-managed execution credentials by
+// user, group, and manager identity. Provisioning creates an active
+// automatic-funding Key when that lookup is missing, and a failed creation
+// triggers one lookup retry to accept a credential that another caller may
+// have created.
+//
+// The lookup, insertion, and recovery read can overlap another provisioner. A
+// successful recovery read returns the stored credential even when this caller
+// generated a different candidate secret. If that read fails or finds nothing,
+// the creation error remains the result. Storage supplies the uniqueness and
+// insertion behavior; this service chooses which result to return after those
+// operations.
 
 // ManagedKeyStore locates and creates server-provisioned credentials for a
 // named manager.

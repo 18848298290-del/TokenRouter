@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-// Gateway tests can record provider bindings by session hash and count removals.
-// The fixture ignores group IDs, cancellation, and TTL expiration, so tests using
-// it establish their own isolation and timing behavior separately. First-owner
-// methods accept every insertion and retain no ownership state.
+// sticky_cache.go records session-to-provider bindings and deletion counts for
+// gateway tests. The fixture ignores group IDs, cancellation, and TTL
+// expiration, so tests using it establish their own isolation and timing
+// behavior separately. First-owner methods accept every insertion and retain no
+// ownership state.
 
 // StickyCache records serial test bindings and removal counts by session hash.
 // SessionBindings and DeletedSessions are supplied mutable maps, accessed directly

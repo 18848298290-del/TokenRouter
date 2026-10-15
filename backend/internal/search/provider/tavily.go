@@ -9,6 +9,8 @@ import (
 	"net/http"
 )
 
+// tavily.go submits Tavily searches and converts supplier results into the
+// shared response shape.
 // Tavily receives credentials and query parameters together in a JSON POST
 // using basic search depth. Its content field supplies each normalized snippet;
 // the supplier score is decoded for response compatibility while the shared

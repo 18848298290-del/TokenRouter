@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// candidates.go adapts provider records into batch-image candidates with model
+// matching and execution binding.
 // Batch model discovery reuses prepared model mappings and eligibility rules
 // while routing checks use a captured provider snapshot. Candidate construction
 // retains the source provider record for account rules, attribute targets, and

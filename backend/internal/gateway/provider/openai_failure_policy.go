@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_failure_policy.go derives OpenAI failover, retry timing, and client
+// error metadata.
 // OpenAI failures carry provider-switch decisions, same-provider retry
 // windows, and client-facing status independently. Cyber and context failures
 // remain request conditions, capacity can use bounded replay, and structured

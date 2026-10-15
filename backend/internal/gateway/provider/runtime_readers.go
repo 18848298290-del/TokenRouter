@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// runtime_readers.go groups application services that supply execution-time
+// policy and configuration reads.
 // Execution adapters read live settings through app-owned services at the
 // point where each policy is needed. RuntimeReaders groups those service
 // references so request handling can use the same settings, quota, search, and

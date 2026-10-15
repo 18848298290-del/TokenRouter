@@ -7,6 +7,8 @@ import (
 	identitycore "github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// auth_projection.go adapts AuthState operations and stored identity entities
+// to the authentication service interfaces.
 // Authentication storage receives identity domain values while AuthState
 // persists Ent entities and account workflow writes. This facade delegates
 // those operations to one retained state instance, converting email identities

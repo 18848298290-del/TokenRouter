@@ -7,6 +7,8 @@ import (
 	"net/http"
 )
 
+// http_request.go builds regional Bedrock HTTP requests using bearer
+// credentials or SigV4 authentication.
 // Bedrock Invoke URLs choose streaming through their action path and carry the
 // routed model in that URL. Body preparation occurs upstream of these
 // builders, while bearer authentication or SigV4 is applied after JSON content

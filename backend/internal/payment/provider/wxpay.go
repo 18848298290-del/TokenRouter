@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// wxpay.go initiates official WeChat payments and translates signed
+// notifications, queries, cancellations, and refunds.
 // Official WeChat payment chooses JSAPI from a nonblank payer OpenID, H5 from
 // the mobile flag and required client address, or native QR otherwise. All
 // charge/refund amounts use CNY fen, while merchant order numbers remain

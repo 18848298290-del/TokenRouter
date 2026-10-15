@@ -10,20 +10,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// OpenAI-compatible requests can derive affinity from their initial user input or
-// share a cache identity through reusable instruction and tool fields. The general
-// content seed includes model and the first user anchor; an anchored wrapper
-// requires meaningful first-user content before returning that seed. The stable
-// prefix seed instead selects usable instructions, tools, and system/developer
-// content, with the caller adding its own model and API Key scope.
+// openai_content_seed.go derives OpenAI-compatible affinity seeds from initial
+// user input and reusable prompt fields. The general content seed includes
+// model and the first user anchor; an anchored wrapper requires meaningful
+// first-user content before returning that seed. The stable prefix seed instead
+// selects usable instructions, tools, and system/developer content, with the
+// caller adding its own model and API Key scope.
 //
-// Chat content seeds include leading system/developer messages before another role
-// closes that prefix. Responses content seeds include system/developer items across
-// the input array while capturing one user item. Stable-prefix seeds keep each
-// role label and JSON-encode values, distinguishing instruction text that contains
-// field delimiters. General content scanning remains tolerant of malformed JSON
-// and first duplicate fields, matching the existing reference fixtures rather
-// than validating request syntax.
+// Chat content seeds include leading system/developer messages before another
+// role closes that prefix. Responses content seeds include system/developer
+// items across the input array while capturing one user item. Stable-prefix
+// seeds keep each role label and JSON-encode values, distinguishing instruction
+// text that contains field delimiters. General content scanning remains
+// tolerant of malformed JSON and first duplicate fields, matching the existing
+// reference fixtures rather than validating request syntax.
 
 // These prefixes distinguish initial-input affinity from reusable-prefix cache identity,
 // so consumers can label the selected evidence before deriving their final scoped key.

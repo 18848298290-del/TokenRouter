@@ -12,6 +12,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending.go defines pending authentication records and validates their
+// browser binding, consumption state, and lifetimes.
 // Pending authentication keeps provider identity, browser binding and
 // completion credentials beside local decision state. A session lifetime and
 // an optional completion lifetime can both reject a snapshot, while any

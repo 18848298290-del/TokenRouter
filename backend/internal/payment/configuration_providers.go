@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// configuration_providers.go manages provider instance settings and checks
+// changes against unfinished payment references.
 // Provider configuration changes retain omitted secrets while protecting
 // recorded merchant identity for unfinished orders. Administrator listing
 // removes only the known sensitive keys for an exact provider key, and new

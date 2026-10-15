@@ -26,11 +26,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// prepare.go normalizes combined administrator settings and collects their
+// persistence values.
 // A combined Snapshot contains settings from multiple owning modules, whose
 // normalizers need to run before any key/value batch reaches storage. Preparation
-// visits those modules in a fixed order and copies each successful normalization
-// back into the caller's Snapshot, while collecting the strings produced for
-// later persistence by its update session.
+// visits those modules in a fixed order, updates selected Snapshot fields, and
+// collects strings for later persistence by the update session. Gateway
+// preparation contributes strings without copying its normalized value back;
+// initial scheduler normalization is copied back before its error is checked.
 //
 // An error can therefore leave the supplied Snapshot partly normalized even
 // though this preparation performs no write. OpenAI quota thresholds require a

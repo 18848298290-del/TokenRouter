@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// group_existence.go validates group references through batched existence
+// queries or individual reads.
 // Group references must resolve before another resource saves its associations.
 // Repositories that implement batched existence checks can validate all
 // requested IDs through one lookup call, while the common reader supplies a

@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// tls_router_handler.go serves TLS router administration and merges nullable
+// profile selections into update requests.
 // Dedicated token/reset profile patches distinguish omitted fields, explicit
 // null, and integer selection values. The custom nullable patch records
 // presence so null can clear these IDs, while ordinary scalar pointers and rule

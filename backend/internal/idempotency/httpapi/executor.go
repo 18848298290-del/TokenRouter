@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/idempotency"
 )
 
+// executor.go binds HTTP write handlers to their idempotency coordinator and
+// its retention settings.
 // HTTP write handlers share an injected coordinator for idempotency decisions.
 // Standalone HTTP fixtures can use a zero-value Executor to invoke callbacks
 // directly; production app wiring binds the coordinator before requests begin,

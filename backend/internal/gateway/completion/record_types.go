@@ -12,12 +12,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Completion captures observed work separately from the funds transaction that
-// charges it. Result contains protocol and media evidence, while Input supplies
-// the payer, actor, provider, routing choices, and distinct diagnostic and billing
-// identities needed after the request ends. Snapshot separates mutable inputs
-// before asynchronous processing; entrypoints decide which outcomes qualify for
-// submission, including partial failures and dedicated Cyber records.
+// record_types.go defines captured completion inputs and recorder dependencies
+// and dispatches records by usage representation. Completion captures observed
+// work separately from the funds transaction that charges it. Result contains
+// protocol and media evidence, while Input supplies the payer, actor, provider,
+// routing choices, and distinct diagnostic and billing identities needed after
+// the request ends. Snapshot separates mutable inputs before asynchronous
+// processing; entrypoints decide which outcomes qualify for submission,
+// including partial failures and dedicated Cyber records.
 //
 // Recorder dependencies bind price calculation, transactional settlement, analysis
 // writes, and post-commit effects. Record selects native bucket handling when a

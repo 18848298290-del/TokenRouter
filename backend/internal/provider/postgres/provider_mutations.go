@@ -10,18 +10,20 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Configuration writes combine field intent with the latest locked provider
-// record so administrator edits can coexist with runtime observations. The
-// merged record retains dedicated activity and health columns, while managed
-// Ollama Extra values are read under the row lock and carried forward
-// according to API-key and proxy identity.
+// provider_mutations.go saves provider configuration and credentials while
+// retaining applicable runtime observations. Configuration writes combine
+// field intent with the latest locked provider record so administrator edits
+// can coexist with runtime observations. The merged record retains dedicated
+// activity and health columns, while managed Ollama Extra values are read
+// under the row lock and carried forward according to API-key and proxy
+// identity.
 //
 // A locally owned Ent transaction contains the record change and its
 // scheduling event, and snapshot synchronization follows its commit. An Ent
-// transaction carried in context leaves final publication to the outer
-// caller. Credential-only replacement uses SQL to remove observations whose
-// identity becomes stale, while preserving current managed state when the
-// relevant identity remains unchanged.
+// transaction carried in context leaves final publication to the outer caller.
+// Credential-only replacement uses SQL to remove observations whose identity
+// becomes stale, while preserving current managed state when the relevant
+// identity remains unchanged.
 
 // Update writes the supplied provider configuration through the shared
 // mutation transaction. Nil input succeeds immediately; callers supplying an

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// refund_workflow.go coordinates refund preparation, provider submission,
+// compensation, and recovery finalization.
 // An external refund can complete while its local final state still needs
 // persistence, so refund progress is recorded before provider submission.
 // Preparation, compensation, and finalization use separate store transactions,

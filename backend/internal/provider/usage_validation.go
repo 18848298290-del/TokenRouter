@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage_validation.go compares usage-query identities and validates normalized
+// upstream usage responses.
 // An upstream usage response belongs to the provider identity and connection
 // settings that produced it. Query execution rereads that record before and
 // after the upstream call, rejecting changed credentials, status, proxy details,

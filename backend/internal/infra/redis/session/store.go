@@ -10,6 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// store.go stores OAuth session JSON and coordinates one-time consumption
+// markers in Redis.
 // OAuth session data remains readable after one caller claims its separate
 // consumption marker. The store trims IDs and shares a normalized prefix
 // across both keys, serializing data as JSON with a configured lifetime;

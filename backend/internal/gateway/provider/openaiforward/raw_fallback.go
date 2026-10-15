@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// raw_fallback.go forwards Messages and Responses requests through Chat-only
+// upstream endpoints and restores the client output format.
 // Messages and Responses clients can use a Chat-only upstream through different
 // conversion routes. Responses conversion saves client-tool names, tool-search
 // presence, and namespace mappings before lowering them to function tools,

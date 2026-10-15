@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// admin_settings.go normalizes site administrator settings into values for a
+// shared persistence batch.
 // Administrator site settings combine legacy display values with localized
 // content and login agreements. Preparation returns string values for one
 // settings write, normalizing agreement metadata and pagination choices before

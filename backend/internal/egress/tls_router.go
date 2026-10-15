@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// TLS router rules select a profile and outgoing client headers from a request
-// User-Agent. Unknown match-type text is normalized to contains, while regex
-// patterns are compiled during validation and later cached with the configured
-// case behavior for ordered runtime matching.
+// tls_router.go defines and validates User-Agent rules for TLS profile and
+// outgoing header selection. Unknown match-type text is normalized to contains,
+// while regex patterns are compiled during validation and later cached with the
+// configured case behavior for ordered runtime matching.
 
 // TLS router match types define substring, prefix, equality, and
 // regular-expression rules used during runtime User-Agent matching.

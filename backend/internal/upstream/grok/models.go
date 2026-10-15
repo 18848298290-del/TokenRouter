@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 )
 
+// models.go resolves Grok model defaults and publishes the runtime text-model
+// setting for callers.
 // Missing model IDs use different defaults for Responses normalization and
 // general text requests. Nonblank model IDs retain their full spelling after
 // trimming, while video pricing normalization lowercases the full ID. Runtime

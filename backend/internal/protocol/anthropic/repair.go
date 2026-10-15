@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// repair.go repairs empty text and incompatible thinking or tool history in
+// Claude requests.
 // Historical Claude content can contain empty text or reasoning blocks that
 // conflict with the next request's thinking configuration. Request preparation
 // and signature recovery use different repairs: empty-text cleanup leaves

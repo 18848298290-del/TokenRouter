@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_chat_attempts.go manages Chat attempt state, retry readiness and
+// completion capture.
 // Chat input is rebuilt from the admitted body for each selected provider,
 // using the current group mapping and prompt-cache identity. The bridge checks
 // client policy with the selected TLS route before sending, then retains result

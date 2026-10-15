@@ -9,6 +9,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// stream_contract.go defines observations and provider operations required to
+// relay one pooled WebSocket turn.
 // A pooled WS turn observes upstream model, tier, usage, risk, and image data
 // before preparing client output. Stream interfaces separate those observations
 // and provider-failure actions from client metadata restoration, letting

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// bucket.go defines scheduler bucket identities and validates publication
+// tokens and lifecycle leases.
 // A scheduler bucket identifies one group, platform filter, and selection
 // mode. Redis keys and outbox rebuilds use the same colon-separated identity,
 // while write tokens and lifecycle leases carry the epoch or owner needed to

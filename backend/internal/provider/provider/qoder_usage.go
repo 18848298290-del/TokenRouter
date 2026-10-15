@@ -15,18 +15,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder quota display combines site-specific authentication with legacy quota
-// field aliases. Global, CN PAT and QoderCN20 requests use COSY signing, while
-// legacy CN direct sessions use Bearer authentication. CN requests carry an
-// available organization ID as orgId, and a PAT authentication failure rebuilds
-// its session once before another query.
+// qoder_usage.go queries Qoder quota and builds active or saved-snapshot usage
+// displays. Qoder quota display combines site-specific authentication with
+// legacy quota field aliases. Global, CN PAT and QoderCN20 requests use COSY
+// signing, while legacy CN direct sessions use Bearer authentication. CN
+// requests carry an available organization ID as orgId, and a PAT
+// authentication failure rebuilds its session once before another query.
 //
 // Active responses are converted to provider display values with normalized
-// progress and second-or-millisecond expiry handling. Failure display can decode
-// the provider's last snapshot while retaining the current error classification
-// and reauthorization hint. The JSON snapshot round trip allocates display data
-// for this result, allowing its snapshot marker and missing timestamp repair
-// without mutating the stored snapshot representation.
+// progress and second-or-millisecond expiry handling. Failure display can
+// decode the provider's last snapshot while retaining the current error
+// classification and reauthorization hint. The JSON snapshot round trip
+// allocates display data for this result, allowing its snapshot marker and
+// missing timestamp repair without mutating the stored snapshot
+// representation.
 
 // QoderUsage binds sessions and transport; the provider core owns usage
 // caching and conditional health writes.

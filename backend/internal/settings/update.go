@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// update.go serializes combined settings sessions and runs runtime application
+// after persistence.
 // Combined settings updates hold an instance slot from the first storage read
 // through runtime application. Preparation can therefore compare one prior snapshot
 // with submitted values before a single batch is committed. Caller cancellation

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// snapshot_codec.go defines the provider encoding and timestamp operations
+// required by the Redis snapshot cache.
 // SnapshotCache stores a full provider payload beside the metadata used for
 // bucket selection, then merges a last-used side value after decoding. The
 // codec supplies those representations and time accessors while Redis key

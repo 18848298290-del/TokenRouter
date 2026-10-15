@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_moderation_wire.go registers moderation persistence, content
+// hashes, decisions, settings, and HTTP administration with Wire.
 // Gateway moderation and its administrator routes need the same assembled core
 // and settings reader. Persistence and content hashes join those dependencies
 // in Wire, so application consumers resolve moderation services through the

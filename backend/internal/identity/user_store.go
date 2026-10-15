@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// user_store.go defines account repository operations and field masks for
+// selected profile updates.
 // Account profile writes select an explicit field mask so a stale user
 // snapshot cannot replace unrelated funding or security values. Funding uses
 // separate billing operations, while avatars, provider identities, group

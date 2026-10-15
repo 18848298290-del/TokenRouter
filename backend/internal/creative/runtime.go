@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// runtime.go starts, resizes, and stops creative workers and their recovery
+// loops.
 // Creative workers share one runtime context but have separate stop channels
 // for pool resizing. Scaling down signals the newest active handles to drain
 // after their current task, while global shutdown cancels the shared context

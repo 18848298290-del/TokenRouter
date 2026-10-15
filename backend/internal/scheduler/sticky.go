@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// sticky.go manages current and legacy session bindings and evaluates provider
+// health escape decisions.
 // Session affinity is stored under a group and a platform-supplied prefix,
 // with current and optional legacy hashes naming the same logical session. A
 // successful current lookup wins; legacy lookup can recover a positive binding

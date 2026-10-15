@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// openai_response_diagnostics.go captures Codex rejection diagnostics and
+// writes structured upstream client errors.
 // Codex client-admission diagnostics describe the rejected request using a
 // fixed header whitelist and a hashed prompt-cache key. The captured query
 // remains the request's trimmed RawQuery, while final deterministic client

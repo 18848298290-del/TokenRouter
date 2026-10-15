@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// reasoning.go normalizes group reasoning controls and selects model-scoped
+// effort mappings.
 // Group reasoning policy maps a client's supplied effort before comparing its
 // ranked ceiling. OpenAI and Anthropic expose different declared effort sets,
 // and none is accepted as an OpenAI mapping choice while remaining outside the

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// refresh_failure.go captures attempted provider state and defines conditional
+// refresh-failure writes.
 // A failed exchange can make credentials unusable or leave a provider eligible
 // for another attempt after a cooldown. FailureVersion captures the attempted
 // identity and scheduling switch so storage can reject late failures after an

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// request_parse_log.go logs malformed request bodies using bounded, escaped
+// excerpts and the full byte length.
 // Invalid JSON can result from malformed values or a body cut off in transit.
 // Parse diagnostics retain the byte length and bounded beginning and ending
 // excerpts, escaping their contents so each field remains one log value.

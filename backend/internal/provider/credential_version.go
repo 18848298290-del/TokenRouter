@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// credential_version.go captures and compares provider authentication versions
+// for conditional credential writes.
 // Credential changes need the complete observed authentication identity so a
 // late exchange cannot overwrite reauthorization or a status update.
 // CredentialVersion carries the expected provider ID, platform, type, status,

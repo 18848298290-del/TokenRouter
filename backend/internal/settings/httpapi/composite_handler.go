@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 )
 
+// composite_handler.go assembles settings handler dependencies and reconciles
+// registered participants with broad writes.
 // Combined administrator updates can contain a setting key in both the broad
 // Snapshot write map and a module's registered prepared change. Commit rejects
 // duplicate written keys, while registered participants also decide whether an

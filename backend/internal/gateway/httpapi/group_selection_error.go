@@ -11,10 +11,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// group_selection_error.go presents group selection business errors and
+// filters model suggestions through the effective group configuration.
 // Group selection can fail because of a client restriction or a model
 // restriction. These failures become local feature-gate observations and
 // permission errors, with the effective group custom list limiting the model
 // alternatives shown to the client.
+//
+// The presenter recognizes the client-only restriction before looking for a
+// typed unsupported-model error. For the latter, it keeps the requested model
+// and rebuilds the available-model message when the effective group enables a
+// custom list. The shared filter intersects that configured list with the
+// error's available models, so the denial does not suggest targets hidden by
+// the group. Unrecognized errors return to the caller for other failure
+// handling.
 
 // WriteGroupSelectionBusinessError presents Claude-Code-only and unsupported
 // group model errors as business denials. It returns true after invoking

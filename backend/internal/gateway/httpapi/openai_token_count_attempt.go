@@ -10,6 +10,8 @@ import (
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 )
 
+// openai_token_count_attempt.go adapts compatibility token counting to
+// selected targets and HTTP observations.
 // Compatibility token counting selects one target and records preparation
 // latency before checking that selection's result. The adapter publishes
 // selected-provider observations, supplies the group-mapped body to the

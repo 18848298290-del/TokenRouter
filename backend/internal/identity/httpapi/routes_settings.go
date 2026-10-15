@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers administrator endpoints for reading,
+// regenerating, and deleting the management API key.
 // The stored management credential has separate status, regeneration, and
 // deletion endpoints under administrator settings. Route registration binds
 // those operations to one endpoint interface and relies on the settings group

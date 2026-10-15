@@ -20,11 +20,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Settings readers combine database values with startup options interpreted by
-// their owning modules. OAuth, signup grants, forwarded-IP trust, scheduler
-// defaults, gateway platform rules, and quota parsing receive their application
-// dependencies here while later read and publication timing stays with each
-// reader.
+// settings_defaults.go constructs module settings readers and administration
+// defaults from application configuration. Settings readers combine database
+// values with startup options interpreted by their owning modules. OAuth,
+// signup grants, forwarded-IP trust, scheduler defaults, gateway platform
+// rules, and quota parsing receive their application dependencies here while
+// later read and publication timing stays with each reader.
 
 // provideOAuthSettings supplies optional startup OAuth defaults and OIDC
 // metadata discovery. Nil cfg leaves defaults absent; configured platform

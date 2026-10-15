@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// batch_image_worker.go constructs batch image pricing, provider processing,
+// settlement, and recovery runtimes.
 // Batch image pricing snapshots read a group's base rate and its effective batch
 // discount and hold multipliers. Provider processing, settlement, and stale
 // funding recovery receive the same Funds service; optional authentication

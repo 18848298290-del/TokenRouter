@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// apply.go builds ordered runtime callbacks that share a committed settings
+// readback.
 // Post-commit modules need one readback value for the settings just saved. The
 // first generated callback loads that Snapshot, and each later callback reads the
 // same update-local pointer in the supplied module order. This shared state is

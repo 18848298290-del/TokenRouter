@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// options.go defines deployment options, observation interfaces, and callbacks
+// used to assemble Ops services.
 // Ops services receive deployment settings and read-only provider, user,
 // scheduler, and authentication observations from app. Realtime capacity
 // display uses configured concurrency while scheduler load reads use the copied

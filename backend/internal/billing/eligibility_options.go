@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// eligibility_options.go defines the funding snapshots, runtime options, and
+// readers consumed by eligibility checks.
 // Funding admission receives a paying user ID, a Key billing policy and an
 // optional selected subscription. Runtime options separate the live
 // minimum-balance reserve and date inputs from circuit-breaker settings

@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// header_eligibility.go checks header-override eligibility and resolves
+// enabled provider headers through egress filtering.
 // Provider Header overrides are available for selected platform and credential
 // types. The enabled flag is read as a boolean, then egress filters stored names
 // and values before a new request map is returned, keeping administrator

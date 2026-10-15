@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// factory.go constructs the payment adapter selected by a persisted provider
+// key.
 // Persisted payment instances identify one of five provider adapters by an
 // exact key. Construction delegates credential validation and configuration
 // ownership to that adapter, so callers receive its concrete provider or the

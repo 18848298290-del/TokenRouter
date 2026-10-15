@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/oauthpkce"
 )
 
+// oauth.go builds OAuth authorization values and selects User-Agent versions
+// and available endpoints.
 // OAuth uses cached startup credentials and a request-time User-Agent version
 // resolver. A resolver result is accepted only after trimming and
 // major.minor.patch validation, and invalid results select the startup version

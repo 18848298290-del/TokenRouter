@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// runtime_config.go interprets provider session, spending, RPM, and queue
+// settings for runtime consumers.
 // Anthropic session, spending, and RPM eligibility read scalar settings from
 // each provider's Extra map. Spending-window and RPM classifications share
 // the billing allowance values, letting consumers distinguish ordinary
@@ -18,7 +20,7 @@ import (
 //
 // Extra contains both current queue modes and a legacy enable flag. A
 // recognized current mode selects its policy, an invalid nonempty current
-// mode falls back to global configuration, and only an absent or empty
+// mode falls back to global configuration. An absent, empty, or non-string
 // current mode permits the legacy flag to select serialization. Numeric
 // readers also retain their own default rules: RPM activation requires a
 // positive base, while reserve calculation can honor a positive override even

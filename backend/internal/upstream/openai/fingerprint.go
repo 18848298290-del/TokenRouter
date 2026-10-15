@@ -12,6 +12,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// fingerprint.go derives Codex fingerprint identities and applies them
+// consistently to headers and request metadata.
 // Fingerprint modes choose how many Codex identities are shared for a provider.
 // Device mode replaces installation identity, session mode also shares a
 // provider session while retaining distinct client threads, and full mode

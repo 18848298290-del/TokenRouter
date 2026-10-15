@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// request_records.go tracks logical request records across WebSocket turns and
+// provider retries.
 // One client connection contains many logical requests, and one logical turn
 // can span replacement-provider attempts. Reusing the connection request ID for
 // every turn would merge those records, while allocating a new ID for each

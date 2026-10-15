@@ -2,6 +2,8 @@ package scheduler
 
 import "context"
 
+// user_rpm_cache.go defines user-wide and user-group RPM counter operations
+// for admission checks.
 // User RPM limits aggregate requests across API keys, with distinct counters
 // for a user and each user-group pair. RPMAdmission checks the effective group
 // allowance before incrementing the user-wide counter, so a group rejection

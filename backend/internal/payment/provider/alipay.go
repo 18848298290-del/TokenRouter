@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// alipay.go creates Alipay checkout links and QR payments and translates
+// query, refund, and notification results.
 // Official Alipay checkout chooses signed browser URLs or a precreate QR
 // according to request device flags and instance mode. WAP/page operations
 // build URLs through the pinned SDK, while precreate/query/refund/close

@@ -8,6 +8,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_tier.go handles single-provider and batch Google One tier refresh
+// requests.
 // Google One tier maintenance can target one loaded provider or a batch
 // selection. Batch JSON binding failures deliberately become an empty
 // selection, which the tier use case interprets as its Google One population

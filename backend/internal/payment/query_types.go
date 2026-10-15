@@ -1,5 +1,7 @@
 package payment
 
+// query_types.go defines payment order filters and dashboard results with
+// currency-keyed monetary totals.
 // Payment dashboards keep channel totals and user rankings keyed by
 // recorded currency, so their amounts retain distinct units. Current-day
 // summary values and current pending counts have different selection

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// proxy_dto.go defines proxy response shapes with separate ordinary and
+// administrator credential visibility.
 // Ordinary proxy responses exclude password JSON, while administrator responses
 // expose a separate password field. Both retain connection and expiration
 // metadata for display, and augmented administrator responses combine persisted

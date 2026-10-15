@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// refresh_managed.go coordinates administrator refresh callbacks against
+// current provider identity under shared refresh locks.
 // An administrator can refresh disabled OAuth, Setup Token or Qoder COSY
 // credentials, while Spark shadows delegate authentication to their parent. The
 // management entry point validates that provider role before registering work,

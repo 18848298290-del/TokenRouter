@@ -5,6 +5,8 @@ import (
 	"slices"
 )
 
+// validation.go validates saved native protocols, conversion targets, and
+// Responses image policies.
 // Saved protocol selections are checked against the platform and authentication
 // choices used by route resolution. Empty selections retain an intentional
 // disable, while conversion validation checks catalogue-supported targets and

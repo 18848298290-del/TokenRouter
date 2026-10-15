@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// gemini_ports.go connects Gemini scheduling callbacks to the execution
+// targets associated with each candidate.
 // Gemini scheduling ranks metadata while the gateway retains the provider
 // targets needed for quota checks and forwarding. A new scope per selection
 // associates each conversion with its source target, including hydrated records

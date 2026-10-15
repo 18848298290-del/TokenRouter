@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// refresh_errors.go classifies refresh failures for account rejection, shared
+// platform failure, and ambiguous Grok entitlement handling.
 // Refresh error labels can describe a shared platform configuration failure or
 // rejected credentials on one record. Qoder typed invalid-credential errors
 // take precedence over generic client or scope text, and Grok's coarse

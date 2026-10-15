@@ -14,10 +14,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Authentication callbacks can require a later decision to create, bind, or
-// adopt an account. Pending sessions retain the verified upstream identity,
-// browser binding, completion credential, and expiration until the identity
-// workflow records the final decision and consumes the session.
+// pending_auth_session.go defines authentication sessions awaiting account
+// creation, binding, or adoption decisions. Pending sessions retain the
+// verified upstream identity, browser binding, completion credential, and
+// expiration until the identity workflow records the final decision and
+// consumes the session.
 
 // pendingAuthIntents names the supported post-authentication decisions checked by
 // validatePendingAuthIntent when generated Ent builders validate a pending session.

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_raw_fallback_ports.go binds converted Messages and Responses requests
+// to Chat-only upstream execution.
 // Messages and Responses input can use a Chat-only upstream after conversion,
 // with their own client error formats and reasoning history. Shared attempt
 // state supplies the provider, TLS selection and request observations, while

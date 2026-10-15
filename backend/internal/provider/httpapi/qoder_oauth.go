@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// qoder_oauth.go handles Qoder device authorization generation, callback
+// exchange, and polling requests.
 // Qoder device authorization can finish from a copied browser callback or
 // through polling. Site validation runs before generating a session, while
 // exchange forwards optional state and code so the authorization service can

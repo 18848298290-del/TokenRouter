@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// dingtalk_department.go resolves DingTalk department ancestry into a
+// slash-separated profile attribute.
 // DingTalk department attributes show a hierarchy below its highest collected
 // ancestor. The directory API returns one parent at a time, so names are prepended
 // while traversal moves upward; blank names contribute no path component. A

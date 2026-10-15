@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// gemini_oauth.go handles Gemini authorization requests and derives callback
+// hints from HTTP request metadata.
 // Gemini authorization accepts three OAuth variants and defaults blank type
 // input to Code Assist. The HTTP callback hint is derived from Origin or
 // forwarded request fields, while authorization chooses its built-in or

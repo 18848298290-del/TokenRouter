@@ -1,5 +1,7 @@
 package policy
 
+// group_overrides.go defines optional group-level scheduler settings for
+// inheritance and explicit overrides.
 // Group scheduler overrides are sparse values: omitting a field inherits the
 // effective global setting, while a supplied false or zero remains meaningful.
 // Pointer fields preserve that distinction in stored JSON and when request

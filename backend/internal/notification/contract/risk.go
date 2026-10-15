@@ -2,6 +2,8 @@ package contract
 
 import "time"
 
+// risk.go defines moderation policy and event values consumed by risk
+// notifications.
 // Moderation notification inputs describe a recorded violation or session-risk
 // warning after its business action has been decided. The delivery adapter
 // formats identity, timestamps, category, and counters into template variables;

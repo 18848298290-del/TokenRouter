@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// public.go validates and submits batch-image jobs, lists owned resources, and
+// requests cancellation.
 // A submitted batch fixes its expanded custom IDs, routed model stages,
 // execution provider and funding settings before contacting the upstream
 // platform. The public API checks group permission, prices the normalized

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// gemini_authorization_sessions.go stores Gemini authorization sessions and
+// manages expiration cleanup through a stoppable worker.
 // Gemini authorization retains project, tier fallback, OAuth variant, and
 // redirect choices with its PKCE proof. A thirty-minute lookup lifetime
 // prevents a later exchange from reusing stale authorization setup even when

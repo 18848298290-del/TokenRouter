@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// job.go defines persistent batch-job records, item metadata, and permitted
+// lifecycle transitions.
 // A batch job keeps its selected provider, model identities and funding
 // snapshots while request authentication and live configuration continue
 // changing. The expanded custom IDs identify provider result lines; each item

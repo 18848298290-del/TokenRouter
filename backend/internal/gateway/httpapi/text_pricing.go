@@ -20,11 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// A text request can carry different requested, group-mapped and provider model
-// names. Price preflight checks the completion billing choice after resolving
-// this attempt's protocol, so a configured upstream or requested source cannot
-// borrow a price from another name in that chain. Image generation models use
-// the separate media admission rule.
+// text_pricing.go checks each text attempt's effective billing model before
+// forwarding to the selected provider. A text request can carry different
+// requested, group-mapped and provider model names. Price preflight checks the
+// completion billing choice after resolving this attempt's protocol, so a
+// configured upstream or requested source cannot borrow a price from another
+// name in that chain. Image generation models use the separate media admission
+// rule.
 //
 // Compact can replace the ordinary upstream name through provider or global
 // compaction settings, while passthrough and WebSocket completion supply

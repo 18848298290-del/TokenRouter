@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// requests.go builds Messages and counting requests using model attributes,
+// credentials, and selected endpoint policy.
 // Messages attributes are applied to the final upstream model before choosing
 // Anthropic or Vertex construction. Service accounts use provider project and
 // location values, while ordinary builders receive request headers, beta

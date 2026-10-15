@@ -1,5 +1,7 @@
 package scheduler
 
+// diagnostics.go forwards scheduler events and formatted messages to optional
+// application callbacks.
 // Scheduler diagnostics are delivered through callbacks supplied by
 // application assembly. Optional callbacks let the same scheduling operations
 // run in tests or instances without a logging sink, while retaining the event

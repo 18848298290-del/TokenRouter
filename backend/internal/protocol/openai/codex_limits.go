@@ -1,5 +1,7 @@
 package openai
 
+// codex_limits.go assigns primary and secondary quota observations to short and
+// long duration categories.
 // Primary and secondary quota fields do not determine which observation receives
 // the five-hour or seven-day label. Duration evidence maps each utilization
 // together with its corresponding reset and window fields, keeping measurements

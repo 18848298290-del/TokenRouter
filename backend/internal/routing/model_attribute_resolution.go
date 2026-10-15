@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// model_attribute_resolution.go resolves route attributes against catalogue
+// and group-profile snapshots retained for a request.
 // A request can retry providers or switch protocols while model metadata is
 // published independently. Its attribute session pins one catalogue View, reads
 // each group's profile once, and resolves later attempts against that retained

@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// oauth_profile.go converts verified email-provider profiles into identity
+// inputs and pending registration drafts.
 // Email OAuth profile data becomes both a stable local identity input and a
 // pending registration view. The provider subject identifies the account, while
 // verified email and display hints supply registration values. Draft creation

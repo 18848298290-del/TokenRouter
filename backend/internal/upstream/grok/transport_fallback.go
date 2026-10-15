@@ -13,6 +13,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// transport_fallback.go retries eligible Grok CLI access denials against the
+// public API while retaining failed response evidence.
 // Grok CLI requests carrying bearer authentication and CLI token identity can
 // receive a compatibility denial that the transport considers for public-API
 // replay. Eligibility checks the hostname, replayable body and HTTP 403 status

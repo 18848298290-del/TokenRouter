@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// redeem_dto.go defines redemption responses and decodes presence-aware expiry
+// updates.
 // Redeem responses expose entitlement amounts and the most recent successful
 // use, with ordinary users receiving notes for administrator adjustments.
 // Administrator responses add the full internal notes field. Batch expiry

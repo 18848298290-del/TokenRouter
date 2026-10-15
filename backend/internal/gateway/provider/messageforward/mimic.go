@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// mimic.go adapts system prompts, datelines, and metadata for Anthropic OAuth
+// conversion.
 // OAuth conversion can move a client system prompt into message history while
 // adding the selected model identity prefix. Dateline normalization has
 // separate provider eligibility, and metadata injection can defer to configured

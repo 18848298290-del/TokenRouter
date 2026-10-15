@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// user_attribute_handler.go handles administrator attribute definitions and
+// per-account attribute value requests.
 // Administrator attribute definitions describe input rules separately from the
 // per-account string values they validate. HTTP updates preserve optional
 // definition edits, translate ordered IDs to display positions, and format

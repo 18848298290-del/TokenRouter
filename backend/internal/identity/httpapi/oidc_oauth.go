@@ -18,6 +18,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// oidc_oauth.go handles OIDC authorization redirects, callback identity
+// resolution, and pending registration completion.
 // OIDC subjects belong to an issuer namespace, so callback resolution combines
 // the selected issuer with the stable subject instead of using provider email
 // as account ownership. Browser state carries login or current-user binding

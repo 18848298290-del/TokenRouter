@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_request_targets.go resolves protocol URLs and builds Chat and
+// Anthropic upstream requests.
 // Protocol targets follow the selected provider's configured base and
 // credentials. Raw Chat has a Grok-specific route, native Anthropic uses its
 // protocol base, and images choose generation or edit endpoints; each request

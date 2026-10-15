@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// plan_handler.go serves sale-plan offers and administrator plan creation,
+// updates, and deletion.
 // Sale plan offers and administrator records expose different representations
 // of the same service plan. Offers carry resolved display-language metadata,
 // feature arrays and copied group collections, while administrator responses

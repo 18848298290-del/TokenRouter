@@ -24,10 +24,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Identity challenges own verification codes while notification owns templates
-// and SMTP delivery. Application assembly binds the mailer back to the same
-// notification service, adds recipient-locale lookup from users, and adapts
-// subscription reminder readiness and localized plan text for billing.
+// notification.go constructs email delivery services and adapts identity
+// challenges, billing reminders, and Ops notifications. Identity challenges own
+// verification codes while notification owns templates and SMTP delivery.
+// Application assembly binds the mailer back to the same notification service,
+// adds recipient-locale lookup from users, and adapts subscription reminder
+// readiness and localized plan text for billing.
 
 // billingQuotaNotifyReader adapts stored provider data for billing quota
 // notifications.

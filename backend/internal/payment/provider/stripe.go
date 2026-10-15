@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// stripe.go creates hosted Stripe checkout sessions and resolves payment,
+// refund, notification, and document references.
 // Stripe checkout creates a customer before a hosted session and carries the
 // merchant order through metadata on customer, invoice and payment intent. The
 // two creations use separate order-derived idempotency keys, so a session

@@ -10,6 +10,8 @@ import (
 	ip "github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// session_binding.go attaches request binding observations and enforces
+// access-token binding at HTTP authentication.
 // Access-token binding depends on the client address and User-Agent used
 // during issuance. Request middleware resolves the security address once and
 // normalizes the header before adding a SessionBinding, so later issuance,
@@ -18,9 +20,9 @@ import (
 // Forwarded-address settings come from the gateway IP-restriction
 // configuration. Readers use the injected binding when present and the
 // trusted-proxy address otherwise. Binding enforcement accepts tokens with no
-// stored digest and rejects a changed digest after attempting refresh-family
-// revocation; revocation failure does not turn that rejected request into an
-// authenticated one.
+// stored digest or no current digest, and rejects differing nonempty digests
+// after attempting refresh-family revocation. Revocation failure does not turn
+// that rejected request into an authenticated one.
 
 // SessionBindingContext resolves client-address settings and injects
 // normalized binding data before downstream handlers run. Supply a nonnil

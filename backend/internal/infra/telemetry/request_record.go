@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 )
 
+// request_record.go captures logical request diagnostics and merges versioned
+// snapshots for storage.
 // One logical request can outlive its HTTP handler while upstream attempts
 // and detached completion work add diagnostics. Its capture serializes
 // mutations and ordinary observer publication under one mutex, assigning a

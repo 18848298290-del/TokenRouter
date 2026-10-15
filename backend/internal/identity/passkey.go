@@ -15,6 +15,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// passkey.go coordinates WebAuthn registration and login with temporary
+// ceremonies, account handles, and persisted credentials.
 // Passkey registration uses a stable account handle, while login discovers
 // the account from a credential and then checks its handle bytes and current
 // owner state. Begin operations save short-lived WebAuthn ceremony data

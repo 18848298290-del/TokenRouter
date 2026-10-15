@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// types.go defines Messages wire types and serializes required empty content
+// fields.
 // Messages conversions need to distinguish an unfinished response from a
 // stopped response and an empty initial content block from an absent field.
 // Response stop reasons use pointers so message_start can encode JSON null,

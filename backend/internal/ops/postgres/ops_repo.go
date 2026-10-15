@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo.go stores and queries Ops errors and system logs, including
+// resolution and cleanup audit records.
 // Ops error lists can display an upstream status even when the final client
 // request recovered successfully. The final status still controls ordinary
 // request-error admission, with the cyber_policy exception retaining streamed

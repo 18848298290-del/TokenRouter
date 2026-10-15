@@ -6,10 +6,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// runtime_group.go resolves an authorized runtime group and prepares its API
+// key view.
 // A runtime fallback target needs the Key's composite scope, an active group,
 // and the payer's binding permission before requests can use it. Successful
 // resolution returns a copied key view and reloads the payer's RPM override for
 // the selected group.
+//
+// The composite binding restriction is checked before loading the target. An
+// inactive or missing group rejects selection, and the payer is resolved
+// before group permission is tested. After acceptance, the key and payer views
+// are copied and the old group RPM override is cleared before attempting its
+// replacement lookup. This keeps the earlier request view available while the
+// selected target uses its own admission settings.
 
 // ResolveRuntimeGroup returns a copied Key bound to an active group the payer
 // can use. Composite keys restrict the target to their saved bindings; ordinary

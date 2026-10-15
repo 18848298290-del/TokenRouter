@@ -5,6 +5,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// errors.go defines team rejection errors and shares membership and
+// spending-limit identities with billing.
 // Team rejection reasons distinguish process availability, acting membership,
 // ownership and invitation/transfer state. Spending-limit and membership
 // errors share billing's sentinel values, allowing gateway quota checks and

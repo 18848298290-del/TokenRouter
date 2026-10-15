@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
+// outbox.go persists creative recovery actions and fences worker updates with
+// claim tokens.
 // Creative recovery actions remain in PostgreSQL while queue and funds
 // operations can fail independently. A row is unique by run and operation, and
 // a pending action becomes leased when a worker claims it. Completed or

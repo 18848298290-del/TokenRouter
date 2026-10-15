@@ -8,12 +8,14 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Grok credential acquisition failures can belong to one provider or to shared
-// refresh infrastructure. Classification selects both a diagnostic reason and
-// whether another provider may be tried, while permanent and transient flags
-// tell credential recovery which conditional state-update path to consider.
-// Provider eligibility, stored snapshots, and remaining request budgets are
-// still checked by the credential executor.
+// grok_credential_failure.go classifies Grok credential failures by scope,
+// recovery action, and diagnostic reason. Grok credential acquisition failures
+// can belong to one provider or to shared refresh infrastructure.
+// Classification selects both a diagnostic reason and whether another provider
+// may be tried, while permanent and transient flags tell credential recovery
+// which conditional state-update path to consider. Provider eligibility, stored
+// snapshots, and remaining request budgets are still checked by the credential
+// executor.
 //
 // Specific sentinel errors and stable text patterns precede broad transport
 // failures. Exhausted billing quotas select temporary recovery before the

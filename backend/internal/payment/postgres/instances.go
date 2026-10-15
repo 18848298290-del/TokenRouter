@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// instances.go reads payment provider instances and aggregates their recorded
+// daily payment amounts for selection.
 // Provider selection observes unfinished order money by instance and creation
 // time, while paid-usage reads follow confirmation time and a narrower status
 // set. Both aggregates use stored PayAmount values, so pending creation and

@@ -14,11 +14,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/backup"
 )
 
+// pg.go runs PostgreSQL export and restore processes and reports their stream
+// and process failures.
 // Restore input can fail after its earlier SQL has reached the database client.
 // Closing stdin then presents EOF, so the restore path requests process cancellation
-// before closing that pipe and joins copy, close, and exit failures. PostgreSQL 18
-// treats piped non-interactive input as a file action, allowing its single-transaction
-// option to cover the derived-table prefix and ordinary dump SQL together.
+// before closing that pipe and joins copy, close, and exit failures. The psql
+// command enables single-transaction execution and ON_ERROR_STOP while sending
+// the derived-table prefix and dump SQL through the same input pipe.
 //
 // Process exit remains separate from stream completion. Dump callers close the
 // returned stdout reader to wait for pg_dump and observe its exit error; restore

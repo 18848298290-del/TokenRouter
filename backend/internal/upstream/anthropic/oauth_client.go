@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/oauth"
 )
 
+// oauth_client.go discovers Claude organizations, obtains authorization codes,
+// and exchanges or refreshes OAuth credentials.
 // Claude cookie authorization discovers an organization, requests a redirect
 // containing an authorization code, and exchanges that code through the
 // platform token endpoint. These calls keep the session cookie in the two

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// prelude.go prepares Responses request bytes and selects the protocol and
+// transport path for a provider attempt.
 // Responses preparation can lower tool declarations and historical calls
 // differently according to provider protocol, Compact mode, and passthrough
 // policy. Admission runs against the request after any group image blocking,

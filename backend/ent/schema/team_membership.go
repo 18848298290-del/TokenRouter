@@ -15,8 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A user's team role and spending limits belong to a membership record.
-// The record retains calendar-period usage and an optional departure time, so
+// team_membership.go defines each user's team role and spending limits. The
+// record retains calendar-period usage and an optional departure time, so
 // leaving a team can end admission while historical usage remains associated
 // with the team's acting user.
 

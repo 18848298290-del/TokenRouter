@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// compatible_policy.go applies group model restrictions and shadow-parent
+// protocol checks during compatible selection.
 // Group model restrictions can target the client name, the group-mapped name,
 // or each provider's final upstream name. Compatible selection checks the first
 // two before candidate choice, then uses provider mapping and Compact rules for

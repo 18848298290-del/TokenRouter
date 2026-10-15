@@ -18,6 +18,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// wechat.go carries payment purchase context through WeChat OAuth and issues
+// signed checkout continuation tokens.
 // Payment OAuth obtains a WeChat payer OpenID and returns signed checkout
 // continuation through a frontend URL fragment. Start stores state, redirect,
 // purchase context and requested scope in four encoded HttpOnly cookies scoped

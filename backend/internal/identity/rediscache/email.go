@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// email.go stores email verification challenges, password-reset credentials,
+// and notification send limits in Redis.
 // Email challenge credentials, password-reset state, and recent-send markers
 // use separate Redis prefixes even when they refer to one address. Key construction
 // folds case while retaining the supplied address otherwise, matching the identity

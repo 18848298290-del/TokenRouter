@@ -9,12 +9,13 @@ import (
 	"sync"
 )
 
-// Startup and shutdown have different dependency orders. Start hooks run
-// serially in increasing StartOrder, while normal shutdown runs increasing
-// StopOrder and lets hooks at the same level run concurrently. A hook is
-// eligible for cleanup before its start callback runs because failed startup
-// can leave partially acquired resources. Hooks registered with no Start are
-// eligible as soon as registered.
+// manager.go orders application startup, shutdown, and rollback hooks and
+// coordinates their shared completion. Startup and shutdown have different
+// dependency orders. Start hooks run serially in increasing StartOrder, while
+// normal shutdown runs increasing StopOrder and lets hooks at the same level
+// run concurrently. A hook is eligible for cleanup before its start callback
+// runs because failed startup can leave partially acquired resources. Hooks
+// registered with no Start are eligible as soon as registered.
 //
 // The first Stop or Rollback owns one shared cleanup attempt and its context.
 // It waits for startup to finish before selecting eligible hooks; rollback

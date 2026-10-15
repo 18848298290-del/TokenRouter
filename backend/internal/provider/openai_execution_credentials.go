@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_execution_credentials.go resolves authentication values and modes for
+// OpenAI-compatible provider execution.
 // OpenAI-compatible execution can use a rotating OAuth token, a stored setup
 // token, an API key or an Agent Identity signature. A Spark shadow holds model
 // configuration while its parent owns authentication, so credential resolution

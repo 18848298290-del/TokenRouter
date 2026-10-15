@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// grok_observed_models.go fetches and persists observed Grok model lists
+// through the probe runtime.
 // Grok model discovery keeps the last saved model list until a nonempty
 // replacement is fetched. A parseable fetch timestamp younger than six hours
 // skips work, including a future timestamp accepted by that age comparison;

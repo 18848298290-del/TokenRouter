@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// oauth_usage_window_rules.go converts provider-specific quota observations
+// into usage windows and reset countdowns.
 // Usage-window display combines sampled fractions, absolute resets, relative
 // resets, and local statistics from different provider contracts. Passive
 // Extra converts fractions to percentage without clearing expired utilization,

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// group_routing_policy.go prepares group policy views and resolves model
+// mappings, restrictions, and feature overrides.
 // Group model permissions and mappings are read independently of shared price
 // configurations. A policy view copies a group's model rules, allowed
 // protocols, fallback routes, and enabled custom-list candidates before

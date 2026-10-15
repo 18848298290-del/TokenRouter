@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_responses_ingress_compat.go normalizes legacy Chat messages and
+// prompt aliases in Responses requests.
 // Legacy Responses ingress can contain Chat messages or a string prompt
 // alongside native Responses input. Nonnull input remains authoritative, so
 // conversion cannot silently replace its history or previous-response

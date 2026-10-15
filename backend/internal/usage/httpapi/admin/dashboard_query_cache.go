@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// dashboard_query_cache.go adapts dashboard query caches and shared HTTP
+// snapshot helpers for administrator handlers.
 // Administrator chart handlers translate query results into cache status
 // headers. Their adapters call the dashboard-owned query caches, while the
 // shared HTTP snapshot helper supplies composite snapshot storage, ETag

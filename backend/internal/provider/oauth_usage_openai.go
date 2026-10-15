@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// oauth_usage_openai.go builds OpenAI usage displays and conditionally
+// persists refreshed Codex quota observations.
 // OpenAI usage display begins with stored Codex windows and can augment them
 // with a regular or shadow quota probe. Missing windows, active rate limiting,
 // or eligible stale observations request probing, while separate row

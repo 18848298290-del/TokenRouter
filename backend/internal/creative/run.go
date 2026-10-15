@@ -14,6 +14,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// run.go defines creative task metadata, allowed state transitions, and public
+// response conversion.
 // Creative task rows distinguish public request identity, execution provider
 // identity, funding snapshots, and transient output metadata. User-facing
 // access pairs the owner with a normalized browser workspace; background

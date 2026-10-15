@@ -8,12 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// A key's billing mode chooses whether consumption uses balance, an available
-// subscription, or a specific subscription. Auto mode can use balance when
-// no usable subscription exists; an explicitly selected subscription retains
-// subscription funding even when it is unavailable. Availability queries can
-// therefore show the selected source before consumption admission decides
-// whether that source can fund a request.
+// funding.go resolves balance or subscription funding from an API key and its
+// selected group. A key's billing mode chooses whether consumption uses
+// balance, an available subscription, or a specific subscription. Auto mode can
+// use balance when no usable subscription exists; an explicitly selected
+// subscription retains subscription funding even when it is unavailable.
+// Availability queries can therefore show the selected source before
+// consumption admission decides whether that source can fund a request.
 //
 // Group coverage depends on the final selected group. Ordinary keys have one
 // such group, while composite model listings can run before a mapping is chosen.

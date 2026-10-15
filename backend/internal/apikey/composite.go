@@ -7,18 +7,19 @@ import (
 	"strings"
 )
 
-// A composite credential selects a group from the first segment of a client
-// model name. Prefix matching is case insensitive, while the remaining model ID
-// retains any further slashes for later protocol and model processing. The
-// request resolver returns the matched binding inside the Key's slice, so
-// callers treat that binding as input when creating an effective request view.
+// composite.go validates composite Key bindings and resolves model prefixes to
+// their routing groups. Prefix matching is case insensitive, while the
+// remaining model ID retains any further slashes for later protocol and model
+// processing. The request resolver returns the matched binding inside the
+// Key's slice, so callers treat that binding as input when creating an
+// effective request view.
 //
 // Creation and replacement validate the entire binding list before loading
-// group permissions. Duplicate group IDs and repeated lowercase prefixes are rejected,
-// and submitted order becomes SortOrder for storage and model enumeration.
-// Runtime scope checks allow ordinary keys to consider positive target IDs,
-// while composite keys require a saved binding; payer permission remains a
-// separate admission decision.
+// group permissions. Duplicate group IDs and repeated lowercase prefixes are
+// rejected, and submitted order becomes SortOrder for storage and model
+// enumeration. Runtime scope checks allow ordinary keys to consider positive
+// target IDs, while composite keys require a saved binding; payer permission
+// remains a separate admission decision.
 
 const (
 	// Composite configuration bounds constrain serialized authentication data

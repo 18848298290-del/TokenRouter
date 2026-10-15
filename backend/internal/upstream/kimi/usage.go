@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage.go queries Kimi coding quotas and wallet balances and converts them to
+// shared usage observations.
 // Kimi coding usage supplies a short window through the first limits entry with
 // a detail field and a weekly window through usage. The parser keeps those
 // windows in that order and derives each percentage from limit and remaining.

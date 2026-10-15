@@ -14,8 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A team is a single-level tenant whose owner funds its API usage. Stored team
-// settings govern availability and member admission, and new memberships copy
+// team.go defines tenant availability, member capacity, and default member
+// spending limits. A team's owner funds its API usage. New memberships copy
 // the team's default spending limits so later edits can leave existing member
 // limits intact.
 

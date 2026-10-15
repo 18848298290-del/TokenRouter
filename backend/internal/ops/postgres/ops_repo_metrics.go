@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_metrics.go stores system metrics and job heartbeats and reads their
+// latest observations.
 // System metrics distinguish an unavailable observation from an observed zero
 // through nullable scalar encoding. Most integer metrics, floats, and booleans
 // retain zero or false, while disk-size fields use the general integer encoder

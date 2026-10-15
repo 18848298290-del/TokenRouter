@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_ingress_reject_repo.go persists ingress-rejection count deltas and
+// queries their minute-and-dimension aggregates.
 // Ingress-rejection rows accumulate deltas under a unique minute-and-dimension
 // key. A PostgreSQL transaction spans all fixed-size input chunks, and conflict
 // updates add request counts while retaining the earliest and latest recorded

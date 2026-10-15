@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// plans.go prepares plan mutations and exposes plan queries through repository
+// adapters.
 // Plan text updates carry versioned localization alongside plain
 // fields used by existing display and checkout readers. When source
 // content is supplied, the service derives those plain fields from

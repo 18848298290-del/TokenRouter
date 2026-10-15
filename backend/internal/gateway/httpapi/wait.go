@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// wait.go connects HTTP capacity waits to scheduler admission and accounts for
+// SSE heartbeat output.
 // Waiting for user or provider capacity can commit SSE output before generation
 // begins. HTTP observers account for the bytes written as heartbeats, allowing
 // later error presentation to distinguish a body containing only recorded

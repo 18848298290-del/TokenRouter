@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_images_responses_execution.go executes OAuth image requests through
+// Responses and classifies image delivery failures.
 // OAuth image generation uses a fixed Responses main model and a separately
 // resolved image-tool model. Native conversion carries parsed prompts and
 // image inputs into that tool request, then returns Images JSON or

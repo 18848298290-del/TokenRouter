@@ -8,10 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Provider selection failures distinguish unavailable models, rate limits and
-// exhausted capacity. Admission diagnosis supplies a client-facing problem, and
-// HTTP mapping selects its status and category; concrete failure refinement
-// retains a customized fallback when its diagnosed kind remains unchanged.
+// selection_error.go converts provider selection diagnoses into HTTP failures
+// and refines existing responses with concrete attempt errors. Admission
+// diagnosis distinguishes unavailable models, rate limits and exhausted
+// capacity; the HTTP mapping assigns the corresponding status, category and
+// client message.
+//
+// Refinement reconstructs the diagnostic kind from the existing ModelNotFound
+// flag and asks admission to interpret the concrete failure. An unchanged kind
+// returns the original response, retaining its customized status and message.
+// A changed kind receives a newly mapped response. Callers can therefore
+// retain a specific unavailable response while still allowing a concrete
+// failure to change its classification.
 
 // SelectionErrorResponse holds the status, category, and message for a selection failure.
 type SelectionErrorResponse struct {

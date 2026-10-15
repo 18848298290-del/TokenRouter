@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// cache_identity.go derives scoped Grok prompt-cache identities from API keys,
+// model names, and conversation seeds.
 // A prompt-cache identity combines the downstream API Key, final model, and
 // selected conversation or content seed. Requests lacking a positive key,
 // requests marked compact, or requests with no model return an empty

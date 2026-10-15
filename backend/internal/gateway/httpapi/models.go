@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// models.go builds model lists from requestable group models, custom
+// visibility rules, and API-key aliases.
 // Model list entries describe names that pass configured group and provider
 // rules; they do not prove that an upstream account will accept a later
 // request. Custom lists intersect that eligible set, then Key mappings

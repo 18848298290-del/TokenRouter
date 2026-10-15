@@ -8,6 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// timezone.go initializes the process timezone used by application calendars.
 // Application calendars capture the process timezone after bootstrap. Loading
 // the configured location before publishing it leaves time.Local unchanged on
 // invalid names, while an empty setting selects Asia/Shanghai for subsequent

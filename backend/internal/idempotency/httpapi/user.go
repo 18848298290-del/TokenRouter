@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// user.go executes user write commands with actor-scoped fingerprints and
+// reports replay or retry state.
 // User write fingerprints include the authenticated actor alongside method,
 // route, and payload. Records are keyed by the supplied business scope and key
 // hash, so a different actor using that same pair produces a fingerprint conflict.

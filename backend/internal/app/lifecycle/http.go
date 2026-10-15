@@ -9,17 +9,18 @@ import (
 	"time"
 )
 
-// HTTP listening can end through a Serve error or through application
-// cancellation. The listener is acquired before the serving goroutine starts,
-// so address conflicts return directly. A buffered result channel lets the
-// serving goroutine publish its final error while the caller is shutting down
-// the server after cancellation.
+// http.go runs the HTTP listener and coordinates server shutdown when
+// application cancellation arrives. HTTP listening can end through a Serve
+// error or through application cancellation. The listener is acquired before
+// the serving goroutine starts, so address conflicts return directly. A
+// buffered result channel lets the serving goroutine publish its final error
+// while the caller is shutting down the server after cancellation.
 //
 // Cancellation starts a fresh five-second shutdown budget independent of the
 // cancelled context. A failed graceful shutdown invokes Close, then the caller
 // waits for Serve to return before combining errors. ErrServerClosed is the
-// expected HTTP termination result. Background service draining belongs to
-// the application after this HTTP phase, with its own budget.
+// expected HTTP termination result. Background service draining belongs to the
+// application after this HTTP phase, with its own budget.
 
 // Serve listens at server.Addr and runs HTTP until serving ends or ctx is
 // cancelled. Listener acquisition errors return before any serving goroutine

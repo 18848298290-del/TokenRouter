@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// download.go limits concurrent batch-image downloads through shared per-user
+// Redis counters.
 // Image and ZIP downloads consume the same active counter for one user.
 // Acquiring a permit checks the limit, increments the counter, and refreshes
 // its expiry in one Redis script, so simultaneous requests cannot each admit

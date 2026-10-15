@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// crs_proxy.go matches imported CRS proxy connections or creates records for
+// later items to reuse.
 // CRS imports can repeat the same proxy connection before later items finish
 // importing. Matching compares normalized supported protocol text with the exact
 // cached host, port, and credential values, using active records supplied by the

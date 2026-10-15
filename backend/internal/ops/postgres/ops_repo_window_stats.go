@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_window_stats.go reads raw usage, token, and final-client error
+// counts for bounded request windows.
 // Window statistics combine usage-row counts, consumed tokens, and final-client
 // errors for one requested range of at most twenty-four hours. Usage and error
 // reads execute separately, so the returned summary shares range endpoints

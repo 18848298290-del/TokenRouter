@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// provider.go encodes full provider records into cache JSON and reconstructs
+// their execution data after decoding.
 // Cached provider JSON carries execution credentials that public provider
 // JSON omits. Its group relations use provider field names and emit the
 // compatibility ProviderGroups member inside each group, while keeping nil

@@ -12,8 +12,8 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// An announcement has one read receipt per user, even when that user opens it
-// repeatedly. The site repository inserts receipts with conflict handling on the
+// announcement_read.go defines one persisted read receipt per announcement and
+// user. The site repository inserts receipts with conflict handling on the
 // announcement and user pair, so subsequent reads retain the first recorded
 // read time.
 

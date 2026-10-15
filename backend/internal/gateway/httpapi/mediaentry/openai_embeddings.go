@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// openai_embeddings.go adapts Embeddings provider attempts and captures
+// successful results with their model and funding identities.
 // Embedding attempts rebuild group-mapped forwarding bytes from the original
 // request for each selected provider. The adapter retains the
 // credential-bearing target while the media loop sees a provider snapshot and

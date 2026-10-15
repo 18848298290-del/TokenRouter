@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_auth.go registers public authentication endpoints and protected panel
+// session endpoints with their request guards.
 // Public login routes and protected session routes use different guard
 // sequences. Registration installs backend-mode and audit middleware on the
 // public group, then adds per-action rate limits; authenticated account

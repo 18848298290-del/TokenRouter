@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// responses.go configures Messages response reading, cache classification, and
+// stream observations.
 // Messages response readers use the current attempt tool map and query cache
 // classification as events arrive. Ordinary and passthrough output share stream
 // observations, but passthrough alone can request downstream cache-billing

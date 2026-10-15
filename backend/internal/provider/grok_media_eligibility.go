@@ -6,21 +6,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// grok_media_eligibility.go evaluates Grok media eligibility from
+// administrator overrides, billing observations, and subscription evidence.
 // New Grok media generation applies an OAuth billing gate, while text
 // forwarding and existing media queries apply their own eligibility rules. An
-// administrator
-// override is evaluated before OAuth billing evidence. OAuth accounts with
-// absent, forbidden, free, or inconclusive billing are excluded from this
-// generation decision, and non-OAuth Grok accounts pass its billing gate.
+// administrator override is evaluated before OAuth billing evidence. OAuth
+// accounts with absent, forbidden, free, or inconclusive billing are excluded
+// from this generation decision, and non-OAuth Grok accounts pass its billing
+// gate.
 //
 // Free classification combines several observations with defined precedence. A
 // nonempty tier returned by the current access-token parser decides
-// immediately.
-// Otherwise explicit paid evidence from billing, quota, or credentials
-// overrides free and inferred signals. A weekly observation lacking accepted
-// plan, percentage, or positive monthly-limit evidence supplies no accepted
-// quota signal by its window label alone. Accepted signal presence still needs
-// the separate forbidden and free checks.
+// immediately. Otherwise explicit paid evidence from billing, quota, or
+// credentials overrides free and inferred signals. A weekly observation
+// lacking accepted plan, percentage, or positive monthly-limit evidence
+// supplies no accepted quota signal by its window label alone. Accepted signal
+// presence still needs the separate forbidden and free checks.
 
 // GrokTierRules supplies platform parsers used to classify subscription
 // evidence.

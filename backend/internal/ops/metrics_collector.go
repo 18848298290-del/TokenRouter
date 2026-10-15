@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// metrics_collector.go collects and persists periodic system metrics under
+// monitoring and leadership controls.
 // System metrics combine the previous complete UTC minute of request records
 // with host and connection observations made during collection. Those reads
 // occur separately, so one stored row can contain values observed at different

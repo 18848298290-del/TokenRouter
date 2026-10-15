@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// guardian_affinity.go carries Guardian parent-session hashes and identifies
+// bindings that child selection should protect.
 // Guardian review requests can reuse their parent session's provider affinity.
 // Both current and legacy hashes identify that parent, so selection protects
 // matching parent bindings when a child would otherwise delete or replace a

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_analytics_queries.go builds filtered analytics sources and
+// reads multidimensional usage reports from them.
 // Multidimensional reports can use rollups only when every requested filter and
 // grouping exists in their stored dimensions. Provider, request-ID, compaction,
 // and unsupported model dimensions select raw-query handling, while compatible

@@ -5,6 +5,8 @@ import (
 	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// responses_namespace_policy.go selects namespace flattening and history
+// retention rules for the chosen Responses transport.
 // Namespace tool declarations and historical calls need compatible naming on
 // the selected Responses path. OAuth-like requests normally retain namespaces,
 // Compact selects flattened declarations and stripped history, and API Key

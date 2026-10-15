@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// response_forward_wire.go parses OpenAI SSE frames, repairs selected response
+// fields, and reconciles token usage across response formats.
 // OpenAI-compatible responses can split one JSON value across data lines,
 // repeat argument documents, or report usage under different envelopes and
 // event shapes. Frame parsing retains declared labels beside joined payloads

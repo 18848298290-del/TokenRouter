@@ -7,19 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Qoder requests can write keepalive bytes before an error occurs, including
-// whitespace for a buffered JSON client. The output path therefore checks
-// captured client stream intent as well as physical writer state before
-// choosing JSON or SSE, preserving buffered clients’ parseable response
-// format.
+// qoder_errors.go writes Qoder failures in the client endpoint's JSON or
+// streaming error format. Qoder requests can write keepalive bytes before an
+// error occurs, including whitespace for a buffered JSON client. The output
+// path therefore checks captured client stream intent as well as physical
+// writer state before choosing JSON or SSE, preserving buffered clients’
+// parseable response format.
 //
 // Streaming Responses errors first attempt response.failed, Chat errors use an
 // OpenAI error followed by DONE, and Messages errors use the Anthropic error
 // shape. If the Responses terminal helper declines output, the current code
 // falls through to the generic Anthropic SSE error path. A true helper result
 // means handled even when it recorded a serialization or write error; callers
-// cannot infer accepted bytes from that flag. Writers quote dynamic
-// fields when constructing frames, and callers retain error classification and
+// cannot infer accepted bytes from that flag. Writers quote dynamic fields
+// when constructing frames, and callers retain error classification and
 // semantic commitment responsibilities.
 
 // WriteQoderStreamError presents an endpoint-aware failure using observed

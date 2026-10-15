@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// stream.go adapts Messages SSE frames and collects usage while coordinating
+// scanner delivery and keepalives.
 // Messages SSE events can report prompt usage before content and final output
 // usage after a downstream client stops accepting writes. StreamResponse keeps
 // those observations separate from delivery, continuing to parse upstream usage

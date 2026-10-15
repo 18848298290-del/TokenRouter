@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// store.go delegates settings persistence and coordinates local update
+// notifications.
 // Setting values remain strings until their owning modules interpret them. The
 // store delegates persistence and lets those modules decide defaults, validation,
 // and runtime cache changes; successful writes themselves do not invoke subscribers.

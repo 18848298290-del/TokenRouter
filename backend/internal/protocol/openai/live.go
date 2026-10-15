@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// live.go defines and validates the SDP and session-object fields required to
+// create an OpenAI Live call.
 // Live call creation combines an SDP description with JSON session settings.
 // Validation requires nonblank SDP and a nonnull session object, including an
 // empty object; it checks the existing values without trimming stored SDP or

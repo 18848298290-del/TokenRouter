@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// responses_to_chatcompletions.go converts Responses replies and stream events
+// into Chat completions.
 // Responses tools have output indexes among messages and reasoning, while Chat
 // tool-call indexes count tools alone. Stream conversion records those index
 // pairs when calls are announced and uses them for later raw fragments,

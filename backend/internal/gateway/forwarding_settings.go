@@ -7,11 +7,13 @@ import (
 	"time"
 )
 
-// Forwarding settings combine exact-string toggles, prompt values, and the
-// selected TTFT interpretation into one cached snapshot. Missing fingerprint,
-// prompt-injection, and dateline toggles default to enabled; other switches are
-// disabled unless their value is exactly "true". Version bounds have a separate
-// cache because callers retrieve their minimum and maximum together.
+// forwarding_settings.go reads and publishes forwarding-policy snapshots and
+// paired Claude version bounds. Forwarding settings combine exact-string
+// toggles, prompt values, and the selected TTFT interpretation into one cached
+// snapshot. Missing fingerprint, prompt-injection, and dateline toggles default
+// to enabled; other switches are disabled unless their value is exactly "true".
+// Version bounds have a separate cache because callers retrieve their minimum
+// and maximum together.
 //
 // Shared refreshes use bounded reads that retain context values after request
 // cancellation. Storage failures temporarily publish default forwarding values

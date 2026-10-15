@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// assembly_billing_wire.go registers billing constructors and binds
+// settlement, subscription, and cache implementations for their consumers.
 // Request settlement and user subscriptions share billing services and storage
 // selected by the application. Wire binds the settlement store for gateway
 // completion and the subscription service for identity defaults, alongside the

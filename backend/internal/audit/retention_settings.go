@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// retention_settings.go reads and prepares audit retention settings for
+// workers and administrator views.
 // Audit cleanup interprets a zero retention period as indefinite storage. Settings
 // reads and administrator views share the same parser so missing or malformed
 // values choose the default period, while negative stored integers normalize to

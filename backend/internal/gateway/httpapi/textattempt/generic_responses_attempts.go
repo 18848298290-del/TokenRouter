@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// generic_responses_attempts.go executes generic Responses attempts using
+// retained selection context and prepared forwarding input.
 // Generic Responses dispatch receives the prepared forwarding bytes and
 // selection context retained when its bridge opens. Selection and platform
 // callbacks use that retained context, while capacity acquisition reads the

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// model_availability.go diagnoses provider-pool presence and configured model
+// support after selection failures.
 // A failed provider selection can mean either an unsupported model or
 // temporarily exhausted capacity. Availability diagnosis reads persistent group
 // candidates and delegates model support to the supplied provider checks,

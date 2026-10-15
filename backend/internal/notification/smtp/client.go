@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// client.go sends SMTP messages and tests connections with TLS negotiation and
+// context-bound transport lifetimes.
 // SMTP sending treats successful DATA acknowledgement as the acceptance point.
 // Cancellation or rejected QUIT after that point leaves success intact, while
 // failures before acceptance retain their transport error and any observed

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// gateway_message_attempts.go binds Messages-family platform callbacks,
+// selection, admission, and completion to the text attempt runtime.
 // Messages, compatible text, and Gemini attempts reuse one set of admission,
 // selection, and completion dependencies. Assembly binds each available
 // platform callback and retains the Forward recorder, while textattempt.Runtime

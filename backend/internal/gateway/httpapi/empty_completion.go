@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// empty_completion.go constructs failover errors and Ops observations for
+// empty OpenAI completion streams.
 // Chat silent refusal and empty Responses completion share the same failure
 // encoding while retaining different Ops explanations. The caller establishes
 // that output and usage are absent before invoking these constructors, which

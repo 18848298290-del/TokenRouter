@@ -23,18 +23,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Upstream model lists use different endpoints and identity fields across
-// API-key and OAuth services. OpenAI OAuth reads a Codex manifest, CN providers
-// query an OpenAI-format root, Grok can place protocol IDs in metadata, and Jev
-// names retain their complete path spelling.
+// model_catalogue.go fetches upstream model lists and extracts
+// platform-appropriate model identifiers. Upstream model lists use different
+// endpoints and identity fields across API-key and OAuth services. OpenAI
+// OAuth reads a Codex manifest, CN providers query an OpenAI-format root, Grok
+// can place protocol IDs in metadata, and Jev names retain their complete path
+// spelling.
 //
 // Requests resolve platform authentication and loaded proxy or TLS settings
 // before reading a bounded response. Generic model extraction chooses standard
 // ID, slug, then name, while Grok uses protocol fields before display labels.
 // Both supported object wrappers and top-level arrays feed sorted distinct
 // results. Typed synchronization errors distinguish configuration, unsupported
-// routes, and upstream failures, and non-success HTTP diagnostics report status
-// without copying the upstream response body into the error.
+// routes, and upstream failures, and non-success HTTP diagnostics report
+// status without copying the upstream response body into the error.
 
 // DefaultCodexModelsURL supplies the OAuth manifest endpoint configured for
 // administrative model synchronization and authenticated catalogue queries.

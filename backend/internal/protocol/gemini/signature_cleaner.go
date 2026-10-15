@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// signature_cleaner.go replaces Gemini thought signatures throughout decoded
+// request history for provider-switch recovery.
 // Gemini replay signatures belong to the upstream state that produced their
 // history. Provider-switch preparation can replace thoughtSignature fields
 // with a caller-selected placeholder, including fields nested inside arrays

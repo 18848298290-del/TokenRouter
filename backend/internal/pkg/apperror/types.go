@@ -1,5 +1,7 @@
 package apperror
 
+// types.go defines application error categories and their constructors and
+// predicates.
 // Application categories use HTTP-shaped numeric values so response adapters
 // and domain predicates can share error classifications. Constructors attach
 // the caller's reason and public message, and wrapper-aware predicates compare

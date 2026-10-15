@@ -2,6 +2,8 @@ package codeassist
 
 import "strings"
 
+// sanitize.go shortens inline base64 data and caps Code Assist diagnostic body
+// text for logging.
 // Code Assist failures can contain long inline data URLs that overwhelm log
 // messages. Body shortening replaces base64 tails before applying a
 // byte-length cap, while credential redaction remains the responsibility of

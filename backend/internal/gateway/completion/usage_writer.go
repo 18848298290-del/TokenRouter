@@ -8,11 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// Background usage contributes model and financial aliases to a request summary
-// that the entrypoint may already have finished. Matching capture updates therefore
-// leave its timing and terminal state intact. A different task ID instead receives
-// a related completion record through the bound observer, keeping polling traffic
-// separate from the task whose measured work is being logged.
+// usage_writer.go persists usage records and supplements request summaries with
+// completion evidence. Background usage contributes model and financial aliases
+// to a request summary that the entrypoint may already have finished. Matching
+// capture updates therefore leave its timing and terminal state intact. A
+// different task ID instead receives a related completion record through the
+// bound observer, keeping polling traffic separate from the task whose measured
+// work is being logged.
 //
 // Usage persistence follows the funds attempt. Best-effort rejection triggers one
 // synchronous Create call, using a fresh detached context when the earlier budget

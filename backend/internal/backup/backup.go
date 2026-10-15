@@ -18,6 +18,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// backup.go manages backup configuration, archive records, and synchronous or
+// asynchronous backup and restore operations.
 // An archive's destination is chosen before writing begins, while later reads
 // use its recorded storage type and object keys. Changing the active destination
 // leaves older records' kind and keys intact. Remote connection details come

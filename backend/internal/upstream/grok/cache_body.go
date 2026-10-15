@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// cache_body.go applies Grok cache identities and prepares native search
+// companions from retained tool intent.
 // Grok cache routing uses a Responses prompt_cache_key or a Chat conversation
 // header after callers derive a scoped identity. Free-tier tool preparation
 // needs the request's retained intent because earlier normalization can

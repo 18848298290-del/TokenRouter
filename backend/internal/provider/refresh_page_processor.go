@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// refresh_page_processor.go groups refresh candidates by platform and joins
+// worker results into page statistics.
 // A candidate page can contain providers from several platforms with different
 // failure state and shared admission limits. Eligibility and expiry are checked
 // before grouping, then each platform runs its own worker pool and reports

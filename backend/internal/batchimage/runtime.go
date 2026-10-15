@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// runtime.go manages the launch and shutdown of batch-image worker and cleanup
+// loops.
 // Background batch loops share one cancellation context and one completion
 // signal for their launched work. Startup publishes those handles under the
 // lifecycle mutex before callbacks begin, so a concurrent stop waits for the

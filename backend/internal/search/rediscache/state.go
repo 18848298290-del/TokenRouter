@@ -8,6 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// state.go stores search quota reservations and temporary proxy failure
+// markers in Redis.
 // Search reservations increment a Redis counter keyed by supplier type, and
 // configured proxy failures use separate expiring marker keys. Manager compares
 // the returned counter against its limit and owns compensation after rejection

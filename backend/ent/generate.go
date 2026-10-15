@@ -1,9 +1,9 @@
 package ent
 
-// Generated Ent clients expose the persistence schema as typed queries and
-// mutations. Generation enables upserts, interceptors, raw SQL execution, and
-// row locking so handwritten repositories can use those operations through the
-// generated client and transaction types.
+// generate.go configures generation of typed Ent queries and mutations from
+// the persistence schema. Generation enables upserts, interceptors, raw SQL
+// execution, and row locking so handwritten repositories can use those
+// operations through the generated client and transaction types.
 
 // sql/execquery generates ExecContext and QueryContext forwarding methods for raw
 // SQL in transactions.

@@ -8,15 +8,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Billing window tests read standard costs from usage fixtures, which may also
-// offer batch lookup. Production billing checks the adapter's method set to
-// decide whether it can obtain several provider observations together.
+// window_costs.go converts usage fixture statistics into billing window costs
+// while retaining optional batch reads. Production billing checks the adapter's
+// method set to decide whether it can obtain several provider observations
+// together.
 //
 // The wrapper retains the optional batch interface when present and otherwise
 // exposes individual reads. Converting results keeps nil collections and
 // individual missing entries visible to the billing cache's absence handling,
-// including when an error accompanies returned data. Nonnil results receive
-// new billing map or struct storage, with StandardCost copied from each usage
+// including when an error accompanies returned data. Nonnil results receive new
+// billing map or struct storage, with StandardCost copied from each usage
 // observation. A nil source returns a nil interface so unavailable fixture
 // storage stays distinguishable from an empty observation.
 

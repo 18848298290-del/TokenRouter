@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// provider_rpm.go checks provider RPM eligibility using prefetched or
+// individual observations and records later request increments.
 // Provider RPM gates classify a soft minute observation before a request is
 // recorded. Batch observations travel in the request context, and a missing
 // prefetched entry can be read individually. A successful individual read

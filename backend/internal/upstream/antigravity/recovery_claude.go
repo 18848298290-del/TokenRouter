@@ -14,6 +14,8 @@ import (
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// recovery_claude.go retries rejected Claude requests with staged signature
+// cleanup and thinking-budget correction.
 // A rejected Claude conversion can retry with less signature-sensitive content
 // before attempting a separate budget correction. Each signature stage starts
 // from the supplied request and its own copied message slice, so tool

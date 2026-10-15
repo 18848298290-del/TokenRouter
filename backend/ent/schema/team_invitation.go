@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A team invitation binds a token digest to a recipient email and expiration
-// time. Accepting the invitation records the joining user and acceptance time,
-// while persisted status distinguishes pending invitations from responses,
-// revocations, and expiry.
+// team_invitation.go defines invitations that bind token digests to recipient
+// emails and expiration times. Accepting the invitation records the joining
+// user and acceptance time, while persisted status distinguishes pending
+// invitations from responses, revocations, and expiry.
 
 // TeamInvitation stores a short-lived invitation bound to the recipient's email.
 type TeamInvitation struct {

@@ -10,9 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Control cancellation has to send a WebSocket close frame while the
-// connection's reader can still process the close handshake. Canceling the read
-// context first would let the transport end before that frame can be delivered.
+// client_read.go coordinates WebSocket client reads with control cancellation
+// and idle timeout closure. Control cancellation sends a close frame while the
+// reader can still process its handshake. Canceling the read context first
+// would let the transport end before that frame can be delivered.
 //
 // ReadClientMessageWithTimeoutStart starts one background reader and selects
 // its result against control cancellation and a separately armed idle timer. On

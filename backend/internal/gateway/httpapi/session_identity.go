@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// session_identity.go derives provider-affinity hashes and extracts validated
+// client session identifiers from HTTP requests.
 // Provider affinity and persisted client session correlation use different
 // input rules. Affinity can use explicit headers, a prompt cache key or
 // selected request content, while persistence reads validated session headers.

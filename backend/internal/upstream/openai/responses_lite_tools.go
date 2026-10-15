@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// responses_lite_tools.go normalizes Responses Lite tool placement and
+// validates declaration identity before moving namespace tools.
 // Responses Lite keeps ordinary function, custom, and tool-search declarations
 // at the top level while moving namespace tools into input.additional_tools.
 // Validation rejects unsupported hosted tools or conflicting definitions before

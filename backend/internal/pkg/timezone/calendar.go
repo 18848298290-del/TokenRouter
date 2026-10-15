@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// calendar.go calculates calendar boundaries and parses timestamps in
+// configured or user-selected locations.
 // Daily statistics and date inputs need a calendar location independent of the
 // machine's displayed clock. Calendar converts instants to its location before
 // constructing midnight, month start, and Monday week start, letting time.Date

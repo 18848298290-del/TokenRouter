@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// announcement_read_repo.go stores first-read announcement markers and
+// retrieves them for user and administrator views.
 // Read markers identify an announcement and user pair and retain its first
 // read time across repeated acknowledgements. Insert conflicts keep that timestamp,
 // while display queries return maps keyed by announcement or user for joining

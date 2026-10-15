@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// gateway_openai_text_http.go constructs OpenAI text handlers and shared
+// concurrency and image admission resources.
 // OpenAI text endpoints share user slots and a local image limiter with media
 // and WS handlers. Assembly keeps image admission options beside those
 // resources, then binds route planning, session ownership, prompt policy, and

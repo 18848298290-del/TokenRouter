@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_nonstream.go reads buffered JSON or SSE responses and restores
+// client model and tool identities before delivery.
 // Nonstreaming Responses output can arrive as JSON or buffered SSE from a
 // compatible upstream. Explicit SSE Content-Type applies to every provider;
 // OAuth also checks physical framing before JSON extraction, and other

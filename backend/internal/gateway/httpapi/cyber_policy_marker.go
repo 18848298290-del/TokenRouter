@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// cyber_policy_marker.go retains the first upstream cyber-policy observation
+// for an HTTP request or WebSocket turn.
 // Upstream policy evidence can appear in several events from one request or
 // WebSocket turn. Sequential publication retains the first saved marker until
 // reset, so later events cannot replace its captured token counts or explanation

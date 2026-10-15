@@ -11,11 +11,10 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// Gateway health fixtures exercise production cooldown and recovery services
-// using execution-provider stores. The adapter converts store results to
-// provider records, while the factory replaces clock and logging options and
-// can bind runtime settings readers so test inputs follow the same policy
-// decisions as execution.
+// health.go constructs gateway health observers backed by execution-provider
+// test stores. The adapter converts store results to provider records, while
+// the factory replaces clock and logging options and can bind runtime settings
+// readers so test inputs follow the same policy decisions as execution.
 
 // HealthInput supplies store, cache, options, and optional readers for health
 // fixtures.

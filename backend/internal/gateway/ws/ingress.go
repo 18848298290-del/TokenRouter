@@ -13,6 +13,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// ingress.go executes sequential Responses turns with connection affinity,
+// replay history, and recovery.
 // A Responses connection must retain the correct request history and upstream
 // connection while later turns refer to earlier response IDs. The first
 // normalized payload fixes HTTP-bridge versus pooled execution for this Run

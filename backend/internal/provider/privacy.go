@@ -9,18 +9,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// Privacy maintenance performs an upstream request before conditionally saving
-// the observed mode for the same provider identity. When a provider selects a
+// privacy.go performs upstream privacy maintenance and conditionally saves the
+// observed mode for the same provider identity. When a provider selects a
 // proxy, maintenance requires a usable URL for that proxy; failed lookup skips
-// the request. Existing modes can short-circuit ensure calls, while force calls
-// request a fresh upstream result.
+// the request. Existing modes can short-circuit ensure calls, while force
+// calls request a fresh upstream result.
 //
 // Registered requests share shutdown cancellation, and results returned after
 // cancellation are discarded before the conditional write. Identity conflicts
-// also discard the result. A write error can still return the observed mode, so
-// callers distinguish upstream observation from confirmed persistence. Successful
-// Antigravity writes copy the Extra map before applying the mode locally; OpenAI
-// ensure and refresh rely on persisted state, while force updates local Extra.
+// also discard the result. A write error can still return the observed mode,
+// so callers distinguish upstream observation from confirmed persistence.
+// Successful Antigravity writes copy the Extra map before applying the mode
+// locally; OpenAI ensure and refresh rely on persisted state, while force
+// updates local Extra.
 
 // Privacy operation kinds select existing-mode reuse and observation callbacks.
 // Force bypasses mode reuse, while refresh follows the background logging path.

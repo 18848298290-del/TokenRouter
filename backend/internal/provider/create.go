@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// create.go validates and persists new providers, binds their groups, and
+// registers OAuth privacy setup.
 // Provider creation validates configuration before saving a record, then binds
 // requested groups after the record has its database ID. These are separate
 // storage operations: a membership failure returns an error while the

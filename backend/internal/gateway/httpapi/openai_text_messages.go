@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// openai_text_messages.go admits Messages requests and prepares group mapping
+// and session isolation.
 // Messages protocol permission is checked before body reading and dependency
 // processing in this entry. Admission reads streaming preference through gjson
 // coercion, while Chat uses a stricter field parser; later Messages conversion

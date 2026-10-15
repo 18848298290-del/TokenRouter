@@ -9,16 +9,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex fingerprint convergence keeps an installation ID stable across requests
-// while allowing session modes to distinguish threads and turns. A configured
-// device ID takes precedence over the stored seed; otherwise the seed enters a
-// fixed UUID hash domain that determines the installation identity.
+// codex_fingerprint.go derives stable installation IDs and supplies provider
+// inputs for per-attempt Codex fingerprints. Codex fingerprint convergence
+// keeps an installation ID stable across requests while allowing session modes
+// to distinguish threads and turns. A configured device ID takes precedence
+// over the stored seed; otherwise the seed enters a fixed UUID hash domain
+// that determines the installation identity.
 //
 // The provider wrapper reads a seed before delegating attempt generation to
 // OpenAI's fingerprint rules. That helper controls which mode changes sessions
-// and threads, while this wrapper supplies the clock and fresh UUIDv7 turn IDs.
-// Callers reuse the returned object for both headers and request metadata so
-// one attempt presents consistent IDs.
+// and threads, while this wrapper supplies the clock and fresh UUIDv7 turn
+// IDs. Callers reuse the returned object for both headers and request metadata
+// so one attempt presents consistent IDs.
 
 // ConvergedInstallationID chooses the installation identity for a provider's
 // fingerprint attempt. A nil record returns an empty string, and a configured

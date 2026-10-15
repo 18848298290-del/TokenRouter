@@ -9,6 +9,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// group_links.go changes provider-group memberships through a caller-supplied
+// transaction executor.
 // Group edits and duplication change provider membership through the
 // transaction connection supplied by routing storage. Existing pairs are
 // retained on insertion conflicts, while copying filters deleted providers

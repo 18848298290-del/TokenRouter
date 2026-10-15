@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
+// tls_profiles.go converts selected egress fingerprints into transport
+// profiles with copied parameter lists.
 // TLS selection returns egress configuration values, while network dialers
 // consume tlsfingerprint profiles. Conversion copies every ordered list at this
 // handoff, giving the returned transport value separate mutable storage before

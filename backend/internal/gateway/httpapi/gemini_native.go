@@ -30,6 +30,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// gemini_native.go prepares native Gemini model actions, resolves session
+// affinity, and invokes selected text execution.
 // Native Gemini requests carry their model in the URL while conversation
 // identity comes from request content and client metadata. Prompt replacement
 // precedes moderation, digest matching and forwarding so those consumers

@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// dingtalk_oauth.go handles DingTalk authorization, browser continuation, and
+// registration completion.
 // DingTalk login uses unionID as the stable provider subject while
 // organization and staff data feed policy checks and profile hints. Browser
 // state preserves login or signed current-user binding intent, and callback

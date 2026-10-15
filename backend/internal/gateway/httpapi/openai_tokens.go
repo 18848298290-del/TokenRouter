@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// openai_tokens.go defines token-count HTTP handlers and their
+// protocol-specific error output.
 // Token-count HTTP entries read authenticated routing and funding state before
 // opening dedicated count attempts. The backend interface supplies synchronous
 // observation and selection adapters; the handler keeps generation completion

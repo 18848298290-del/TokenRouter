@@ -17,6 +17,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_raw_chat_ports.go binds raw Chat execution to platform policy and
+// Grok retry observations.
 // Native Chat execution applies fast-tier, Grok image/cache/effort and Ollama
 // compatibility policies before sending one selected provider request. The raw
 // adapter reuses fallback services for credentials and observations, while

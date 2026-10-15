@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// codex_bootstrap.go recognizes Codex bootstrap tool-output items and rewrites
+// them as user input messages.
 // Codex can inject delegation or automation bootstrap text using a
 // tool-output-shaped item without a call identifier. Recognized bootstrap items
 // are reclassified as user messages at their existing input positions,

@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// embed_off.go provides frontend server placeholders and unavailable responses
+// for builds without embedded assets.
 // An API-only build can use the same application wiring without shipping the
 // frontend bundle. PublicSettingsProvider and FrontendServer remain defined for
 // that build, but construction reports the missing frontend and the available

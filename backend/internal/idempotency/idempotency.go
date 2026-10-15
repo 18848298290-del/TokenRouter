@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// idempotency.go coordinates command claims, fingerprint conflicts, response
+// replay, and retryable outcomes.
 // A command key identifies one record within its business scope, while the
 // request fingerprint checks whether a retry still names the same actor, route,
 // method, and JSON payload. A retained record with another fingerprint rejects

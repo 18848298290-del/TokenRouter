@@ -9,6 +9,8 @@ import (
 	purepricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// calculator.go resolves billing prices and calculates or displays token,
+// request, and media charges.
 // A model price may come from a catalog entry or a configured card, and its
 // billing mode decides whether reported tokens, requests or media units form
 // the charge. Unified calculation resolves that choice before delegating

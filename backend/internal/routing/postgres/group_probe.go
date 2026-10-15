@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// group_probe.go persists probe leases and outcomes and aggregates group
+// availability history.
 // Availability probes use durable per-group leases so separate runner instances
 // can claim work. Claiming reconciles enabled active groups with schedule rows
 // before locking due rows and recording lease owners in one transaction. A

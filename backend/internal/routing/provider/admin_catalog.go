@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// admin_catalog.go supplies display metadata for configured administrative
+// model choices.
 // Administrator model choices already contain their request IDs before metadata
 // lookup. Display names fall back to those IDs, while OpenAI and Grok output
 // shapes add ownership fields and Grok supplies xai ownership for an

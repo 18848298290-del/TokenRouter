@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// cn_health.go applies CN concurrency, balance, and Coding Plan cooldowns to
+// runtime scheduling and stored provider state.
 // CN rejection handling keeps concurrency, balance, and Coding Plan pauses
 // distinct. A concurrency response uses the shared 403 cooldown length without
 // updating the forbidden-response counter. A balance response carries the

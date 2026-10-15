@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Qoder test targets retain one selected provider and emit typed results through
-// a TestRun. Request User-Agent and originator headers accompany that run, while
-// the executor prepares its site session and streaming payload; returned errors
-// include event-sink failures after the run context is cancelled.
+// qoder_test_target.go binds a selected Qoder provider to a TestRun that emits
+// typed probe results. Request User-Agent and originator headers accompany
+// that run, while the executor prepares its site session and streaming
+// payload; returned errors include event-sink failures after the run context
+// is cancelled.
 
 // qoderTestTarget borrows one provider record and its Qoder connection-probe
 // executor.

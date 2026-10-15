@@ -19,6 +19,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// download.go serves owned batch-image results as individual content streams
+// or ZIP archives.
 // Batch downloads read provider JSONL using indexed custom IDs and return
 // decoded images through the application. A single-item download validates
 // ownership, completed state and image index before opening output, then

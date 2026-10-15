@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// pending_projection.go adapts pending-session storage operations and Ent
+// records to identity domain values.
 // Pending authentication stores return Ent entities while identity flows
 // consume domain values. The repository facade delegates lifecycle and
 // consumption decisions to AuthPendingIdentityService, then maps fields into

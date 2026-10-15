@@ -14,6 +14,8 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// update_request.go defines the submitted JSON fields for combined
+// administrator settings updates.
 // Combined settings requests retain field presence alongside their decoded Go
 // values. The handler reads a raw JSON map before binding this struct, filters
 // omitted non-pointer fields after normalization, and merges many pointer fields

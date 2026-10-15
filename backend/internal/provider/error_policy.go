@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// error_policy.go classifies upstream failures under administrator policy and
+// applies authentication and overload health updates.
 // Administrator code lists and pool mode change which upstream failures request
 // failover or provider health updates. A custom-code skip suppresses switching,
 // while a matching code or temporary pause selects failover. Pool bypass

@@ -17,11 +17,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Background side effects can be created by different shutdown levels, so one
-// early task wait cannot establish that all later effects have finished.
-// Ordinary Tasks.Wait barriers follow selected producer and consumer phases
-// while leaving admission open for subsequent callbacks. Final task sealing is
-// registered separately by the application.
+// runtime_core.go registers shared maintenance workers, cache expiry,
+// connection cleanup, and background-task barriers. Background side effects can
+// be created by different shutdown levels, so one early task wait cannot
+// establish that all later effects have finished. Ordinary Tasks.Wait barriers
+// follow selected producer and consumer phases while leaving admission open for
+// subsequent callbacks. Final task sealing is registered separately by the
+// application.
 //
 // The timing wheel starts before cache maintenance is scheduled, and
 // cancellation waits for that recurring callback before the wheel closes.

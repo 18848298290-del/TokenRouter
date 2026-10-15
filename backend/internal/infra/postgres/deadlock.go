@@ -8,6 +8,7 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// deadlock.go retries operations that fail with PostgreSQL deadlock errors.
 // A PostgreSQL deadlock aborts the attempted statement or transaction, so
 // retrying requires a complete fresh operation. The helper permits two
 // retries with bounded jitter, reports retry activity, and stops a failed

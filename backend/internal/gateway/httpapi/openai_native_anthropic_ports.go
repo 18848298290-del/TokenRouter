@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// openai_native_anthropic_ports.go binds native Anthropic execution to
+// client-specific conversions and HTTP output.
 // Native Anthropic execution uses the selected provider's protocol key, model
 // policy and proxy while the client may speak Messages, Chat or Responses. The
 // adapter's kind selects client errors and output conversion, and shared

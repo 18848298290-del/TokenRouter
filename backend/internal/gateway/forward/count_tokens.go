@@ -11,11 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Count input can need the same selected model and OAuth cache/tool
-// normalization as generation, while unsupported count endpoints have a handled
-// 404 outcome that lets the client use its own estimate. API-key passthrough
-// takes its separate path before platform unsupported checks and requires the
-// acquired token to have the exact apikey kind.
+// count_tokens.go prepares and forwards token-count requests and handles
+// unsupported endpoints and signature repair. Count input can need the same
+// selected model and OAuth cache/tool normalization as generation, while
+// unsupported count endpoints have a handled 404 outcome that lets the client
+// use its own estimate. API-key passthrough takes its separate path before
+// platform unsupported checks and requires the acquired token to have the exact
+// apikey kind.
 //
 // The ordinary count path keeps logical bytes separate from its first wire
 // representation. A recognized signature failure permits one rebuilt request;

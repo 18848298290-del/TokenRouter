@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_stream.go reads Responses streams and coordinates first-output
+// staging, terminal handling, usage observation, and downstream delivery.
 // HTTP Responses progress, visible content, first-token policy, and client
 // commitment advance through different checks. Native OpenAI attempts can stage
 // initial SSE bytes and provider headers so pre-content failure remains

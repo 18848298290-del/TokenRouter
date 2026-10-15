@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// configuration.go translates stored payment settings into checkout
+// configuration and prepares partial updates.
 // Payment settings use string persistence while checkout consumes booleans,
 // numeric defaults, normalized methods and fee maps. Ordinary reads recognize
 // literal true and retain successfully parsed numeric values, while only

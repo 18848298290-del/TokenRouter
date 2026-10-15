@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// forbidden_health.go applies forbidden-response cooldowns and escalates
+// counted failures to authentication errors.
 // A classified non-HTML 403 can request a temporary pause or an account error
 // under administrator policy. Disabled cooldown handling enters the
 // authentication-failure command immediately. Enabled threshold accounting

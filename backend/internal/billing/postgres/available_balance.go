@@ -9,6 +9,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// available_balance.go deducts refundable funds up to the positive stored
+// balance.
 // Refund preparation needs a deduction capped by the user's positive stored
 // balance when the requested amount exceeds those funds. The SQL
 // locks a non-deleted user, updates that same row and returns the deducted

@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// openai_oauth.go handles OpenAI authorization, provider imports, and quota
+// actions for administrator HTTP requests.
 // OpenAI authorization returns exchange information, while provider imports
 // additionally create or edit administrative records and redact their response
 // credentials. Raw refresh input supports both refresh_token and rt, with

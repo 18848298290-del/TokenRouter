@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// antigravity_privacy.go applies Antigravity privacy settings and verifies the
+// resulting account state before returning a mode marker.
 // Antigravity privacy setup clears upstream user settings before fetching their
 // resulting state for the account's project. Both response checks treat absence
 // of telemetryEnabled as the privacy criterion, so unrelated settings may remain

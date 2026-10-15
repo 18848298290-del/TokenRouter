@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// repository.go persists raw settings and conditionally replaces batches after
+// checking prior values.
 // Settings keys store raw strings and distinguish a saved empty value from an
 // absent record on ordinary reads. Single and bulk upserts use the key conflict
 // target to replace values, with one captured update time for a bulk write.

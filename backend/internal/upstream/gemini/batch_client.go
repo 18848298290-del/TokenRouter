@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// batch_client.go uploads Gemini batch inputs, manages batch resources, and
+// opens authenticated output downloads.
 // Gemini image batches upload JSONL as a file resource and submit that
 // resource to a model action. Job observations retain the server state and
 // result references, while the task owner decides polling, cancellation, and

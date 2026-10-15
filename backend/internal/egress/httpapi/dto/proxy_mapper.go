@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// proxy_mapper.go converts egress proxy records into ordinary and
+// administrator HTTP response values.
 // Proxy response mapping chooses whether credentials are visible through
 // ordinary or administrator response types. Scalar values are copied, while
 // optional expiration, backup, notes, and cached numeric pointers retain source

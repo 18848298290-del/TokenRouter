@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// admin.go serves administrator announcement operations and converts request
+// schedules for the service.
 // Administrator announcement JSON carries Unix-second schedule values, while
 // the service uses optional time pointers for saved endpoints. Creation treats
 // nonpositive values as absent; updates reserve zero for clearing and retain

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// sessions.go tracks attempt sessions and publishes cache-billing decisions
+// during retries.
 // A sticky-bound request changing providers can require cache-aware billing for
 // the final native usage. The attempt bridge records that decision in its own
 // state and the HTTP request context, using the shared failover predicate to

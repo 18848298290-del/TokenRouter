@@ -7,6 +7,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// leader_lock.go acquires Redis job leases and releases them only for the
+// matching owner.
 // Periodic jobs contend on a namespaced Redis key whose value identifies the
 // admitted owner. SET NX chooses one claimant and the supplied TTL bounds its
 // lease; a caller using a zero TTL creates a key that has no expiry. Jobs

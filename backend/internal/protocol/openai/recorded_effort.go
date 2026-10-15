@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// recorded_effort.go selects request reasoning fields and normalizes their
+// values for usage-record reporting.
 // Request reasoning values and recorded effort use different vocabularies.
 // A request can supply none or minimal even though recorded effort keeps only
 // low, medium, high, xhigh, and max, so an empty reporting value alone cannot

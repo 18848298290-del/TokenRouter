@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// grok_sessions.go stores Grok OAuth proof and coordinates one-use session
+// claims across local and remote storage.
 // A Grok browser flow has one state proof and PKCE verifier, and completion
 // needs a matching one-use claim. Shared backend writes let different processes
 // retrieve and claim that flow. A failed remote write records the ID as

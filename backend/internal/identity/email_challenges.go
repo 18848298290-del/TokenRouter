@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// email_challenges.go issues, sends, verifies, and consumes email challenge
+// credentials.
 // Email verification and password reset each save credentials before requesting
 // a notification send. A failed send leaves the saved credential available
 // under its cache lifetime, and reset resends reuse any record the cache

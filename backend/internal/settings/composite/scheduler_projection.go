@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// scheduler_projection.go transfers configured scheduler overrides and their
+// presence flag through the snapshot.
 // Advanced scheduler parameters are stored as optional numeric text alongside
 // switches for selection behavior. The combined Snapshot passes that configured
 // text to scheduler normalization with its separate presence flag, then receives

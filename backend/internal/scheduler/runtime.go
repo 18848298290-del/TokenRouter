@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// runtime.go tracks scheduler workers and request operations through startup,
+// admission, and bounded shutdown.
 // Scheduler workers and request operations share a shutdown context and
 // admission lock. Start registers each worker before launching it, while Enter
 // registers request work before returning its context. Stop closes that

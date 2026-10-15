@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// tencent_captcha_service.go submits Tencent CAPTCHA tickets through a
+// per-call SDK client and returns provider verification results.
 // Tencent verification uses both cloud signing credentials and a CAPTCHA
 // application secret selected by the identity service. A fresh SDK client receives
 // that call's regional endpoint, and the returned code and message remain provider

@@ -2,10 +2,11 @@ package provider
 
 import "github.com/TokenFlux/TokenRouter/internal/provider"
 
-// Managed refreshes share token-cache namespaces with request and background
-// refreshes. Qoder COSY is recognized before the platform switch; OpenAI,
-// Gemini, Antigravity, and Grok use their platform keys, while remaining
-// records use the Claude token key.
+// managed_refresh_key.go selects the token-cache namespace for managed
+// provider refreshes. Managed refreshes share token-cache namespaces with
+// request and background refreshes. Qoder COSY is recognized before the
+// platform switch; OpenAI, Gemini, Antigravity, and Grok use their platform
+// keys, while remaining records use the Claude token key.
 
 // ManagedRefreshCacheKey selects the token-cache key for a nonnil provider
 // record. Qoder COSY takes precedence over the platform value, and unlisted

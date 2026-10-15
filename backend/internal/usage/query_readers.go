@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// query_readers.go discovers optional repository capabilities for scoped usage
+// reports and model dimensions.
 // Usage query repositories can expose unified filters or extra model dimensions
 // beyond the base interface. UsageService selects those capabilities at
 // construction and uses reduced-argument repository queries when a selected

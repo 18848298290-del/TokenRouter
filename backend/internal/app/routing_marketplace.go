@@ -16,11 +16,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Marketplace model display combines requestable routing data, current
-// capacity, attributes, and billing quotes. Its statistics adapter exposes
-// dashboard token/user totals, while price and modality calls delegate to
-// shared billing components so public presentation uses the assembled pricing
-// readers.
+// routing_marketplace.go assembles marketplace model display with shared
+// routing, capacity, pricing, and public statistics. Model presentation also
+// receives current attributes and availability probes. Its statistics adapter
+// exposes dashboard token/user totals, while price and modality calls delegate
+// to shared billing components so public presentation uses the assembled
+// pricing readers.
 
 // marketplacePrices adapts billing quotes and model modalities for marketplace
 // presentation.

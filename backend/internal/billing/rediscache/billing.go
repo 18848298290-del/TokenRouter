@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// billing.go caches user balances and API-key spending windows in Redis.
 // Balance and API Key spending caches receive post-settlement amount updates
 // while PostgreSQL remains the fund record. Missing keys stay absent during
 // Lua updates, allowing later reads to rebuild their snapshots. Balance

@@ -2,6 +2,8 @@ package modelcatalog
 
 import "strings"
 
+// qoder.go maps Qoder site-specific route keys to public identities and
+// execution capabilities.
 // Qoder public model names and route keys are matched within a selected site.
 // Global and CN routes can share a key while selecting different public
 // identities, so site qualification participates in aliasing, metadata lookup,

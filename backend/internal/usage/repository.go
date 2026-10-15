@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// repository.go defines persistence and reporting operations for recorded
+// usage.
 // Recorded usage supplies analytic rows and reports after completion writes,
 // with separate acting-user, billing-user, provider, and cost meanings.
 // Repository callers select their authorized scope; report totals describe

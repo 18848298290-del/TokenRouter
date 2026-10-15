@@ -20,6 +20,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go handles authenticated batch-image requests, model discovery, and
+// streamed download responses.
 // Batch image requests identify the job owner from the authenticated API key
 // and carry a separate billing-user choice into the use cases. JSON parsing
 // precedes owner lookup on submission, while model discovery expands available

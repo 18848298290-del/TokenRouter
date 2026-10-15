@@ -2,6 +2,8 @@ package transfer
 
 import "github.com/TokenFlux/TokenRouter/internal/egress"
 
+// crs.go defines CRS export response shapes used to import platform account
+// collections as providers.
 // CRS exports retain upstream account collection names even though
 // TokenRouter stores providers. Each collection selects the destination
 // platform and authentication type in CRSSync, and string source IDs become

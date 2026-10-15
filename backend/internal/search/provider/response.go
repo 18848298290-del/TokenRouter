@@ -1,5 +1,7 @@
 package provider
 
+// response.go defines supplier response limits and truncates diagnostic body
+// excerpts.
 // Supplier response readers retain at most one MiB before JSON decoding or
 // status reporting. Error status messages include a smaller two-hundred-byte
 // prefix and a truncation marker, which bounds logged supplier text even when

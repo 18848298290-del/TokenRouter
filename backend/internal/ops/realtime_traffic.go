@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// realtime_traffic.go queries short-window traffic summaries and raw count
+// windows for live monitoring consumers.
 // Realtime traffic volume combines saved usage rows and client-error
 // observations, including failures excluded from SLA. Cards use raw current,
 // peak, and average rates within one hour; short sampler and WebSocket queries

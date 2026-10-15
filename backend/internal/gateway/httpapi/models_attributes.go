@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// models_attributes.go retains route-aware model display attributes and
+// resolves aliases and Grok reasoning options for model lists.
 // Model display overrides are resolved against the eligible routes for a
 // group. Request-local storage keeps those values beside Grok-route flags,
 // allowing an eligible Key alias to reuse its target's attributes while the

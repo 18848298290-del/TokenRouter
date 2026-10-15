@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// qoder.go coordinates Qoder request admission, provider attempts, credential
+// refresh, and completion callbacks.
 // Qoder request execution keeps funding admission and resource leases around a
 // provider loop. A stream can continue collecting upstream usage after
 // downstream cancellation, so its request lease is released on completion;

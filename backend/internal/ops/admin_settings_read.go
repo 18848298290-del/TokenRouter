@@ -7,6 +7,8 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// admin_settings_read.go decodes stored monitoring preferences and quota
+// thresholds for administrator settings responses.
 // Administrator settings show stored Ops preferences even when deployment
 // options separately restrict execution. Monitoring switches default to
 // enabled, the metrics cadence uses the collector's accepted range, and

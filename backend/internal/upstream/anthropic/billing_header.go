@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// billing_header.go synchronizes Claude billing version markers with the
+// selected request User-Agent.
 // A Claude billing marker can outlive the User-Agent that originally supplied
 // its version. OAuth mimic chooses the runtime CLI header, while ordinary
 // fingerprint forwarding uses the provider's selected User-Agent, so request

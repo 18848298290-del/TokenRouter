@@ -9,6 +9,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// claude_authorization.go creates Claude authorization sessions, exchanges
+// codes, and refreshes credentials while tracking active operations.
 // Claude authorization keeps PKCE state, verifier, proxy, and scope together
 // until code exchange succeeds. Full OAuth and inference-only Setup Token URLs
 // share session storage, while cookie authorization obtains a code through the

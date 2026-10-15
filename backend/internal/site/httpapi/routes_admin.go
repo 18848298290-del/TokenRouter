@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator announcement management and
+// read-status endpoints.
 // Administrator announcement management uses a dedicated route group for writes,
 // publication queries, and reader inspection. The caller supplies its middleware
 // before registration, so every child route inherits the same administrator

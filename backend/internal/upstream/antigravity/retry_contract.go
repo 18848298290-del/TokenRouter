@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// retry_contract.go defines Antigravity retry budgets, shared capacity
+// deadline storage, and provider-switch errors.
 // Rate-limit recovery separates normal transport retries, short structured
 // waits, shared model-capacity retries, and bounded single-provider waits. The
 // constants fix attempt and wait budgets, while exhausted capacity stores a

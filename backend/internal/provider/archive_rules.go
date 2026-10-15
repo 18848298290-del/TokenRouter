@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
+// archive_rules.go validates imported provider records and fills missing OpenAI
+// credential identity from decoded token hints.
 // Provider archive entries can carry OpenAI ID tokens alongside explicitly
 // supplied identity settings. Decoding those tokens supplies hints for missing
 // credential keys; imported nonempty string values remain authoritative, and a

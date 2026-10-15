@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_endpoint_settings.go resolves Grok text endpoint defaults from runtime
+// mode settings.
 // Grok text defaults can select the public API, a named region, or the CLI
 // subscription endpoint. Mode normalization chooses the CLI endpoint for
 // unsupported settings, and a bound reader consults runtime settings each time

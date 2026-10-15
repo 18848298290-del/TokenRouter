@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// grok_oauth.go handles Grok authorization, provider imports, credential
+// reconciliation, and quota HTTP requests.
 // Grok authorization distinguishes browser sessions, raw refresh text and SSO
 // import material before provider persistence. The HTTP refresh path accepts a
 // legacy rt alias but requires a selected proxy to resolve successfully. Import

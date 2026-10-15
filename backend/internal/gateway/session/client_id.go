@@ -5,10 +5,10 @@ import (
 	"unicode/utf8"
 )
 
-// Client session IDs enter correlation storage and may later be placed in
-// headers. Validation rejects malformed UTF-8 before trimming, then rejects ASCII
-// controls inside the remaining value and applies the database limit in Unicode
-// characters.
+// client_id.go validates client session IDs and selects them from ordered
+// request headers. Validation rejects malformed UTF-8 before trimming, then
+// rejects ASCII controls inside the remaining value and applies the database
+// limit in Unicode characters.
 
 // MaxPersistedSessionIDLength sets the database correlation-column capacity in Unicode
 // characters; validation rejects longer values rather than storing a truncated identity.

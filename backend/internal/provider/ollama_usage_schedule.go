@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// ollama_usage_schedule.go calculates Ollama usage refresh deadlines and
+// validates persisted refresh settings.
 // Ollama periodic usage queries require activity after the snapshot's reference
 // attempt. Quiet activity schedules a debounce deadline, while continuous
 // activity is bounded by maximum wait; successful snapshots additionally

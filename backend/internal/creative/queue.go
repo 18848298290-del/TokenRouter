@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// queue.go defines creative queue leases, processing locks, and transient
+// media storage operations.
 // Creative task queue ownership is separate from user/workspace access to task
 // metadata. A reservation carries a run identifier and queue lease token for
 // acknowledgment, heartbeat, and requeue, while the job lock has its own

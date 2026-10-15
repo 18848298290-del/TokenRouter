@@ -12,10 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// Model attribute administration reads capability and attribute snapshots from
-// the catalog service and stores overrides through routing. Construction also
-// passes catalog storage and URL-security options from configuration; the
-// catalog lifecycle hooks perform initial loading and later synchronization.
+// model_catalog.go constructs the remote model catalog and connects its
+// snapshots to model attribute administration. Administration reads
+// capabilities and attributes from this service and stores overrides through
+// routing. Construction also passes catalog storage and URL-security options
+// from configuration; the catalog lifecycle hooks perform initial loading and
+// later synchronization.
 
 // provideModelAttributes supplies model attributes for administration and display.
 func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator, catalogue *routing.RequestableCatalogue) *routing.ModelAttributeService {

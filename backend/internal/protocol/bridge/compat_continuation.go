@@ -7,6 +7,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// compat_continuation.go trims compatibility input to a recent turn and its
+// required earlier tool calls.
 // Compatibility continuation can send the latest input suffix while retaining
 // calls needed by its tool outputs. The last item selects the initial suffix:
 // a user message includes immediately preceding outputs, and a final output

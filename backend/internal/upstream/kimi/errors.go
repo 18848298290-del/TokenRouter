@@ -2,6 +2,8 @@ package kimi
 
 import "strings"
 
+// errors.go recognizes the fixed Kimi concurrency-limit message for provider
+// health classification.
 // Kimi's concurrency-limit classification depends on one fixed message, matched
 // after trimming surrounding whitespace. Provider health handling uses this
 // predicate for Kimi responses, so changed wording or letter case leaves the

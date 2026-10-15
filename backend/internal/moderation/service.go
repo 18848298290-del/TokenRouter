@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// service.go evaluates moderation policy, runs synchronous and queued audits,
+// and records risk outcomes.
 // Ordinary admission combines process-local risk policy with current-turn
 // input, configured-order keyword checks, recorded hashes, sampling, and
 // external category scores. Keyword-only pre-block misses return before later

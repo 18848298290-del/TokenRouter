@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_messages.go converts Messages requests for Antigravity and
+// returns Claude responses with execution metadata.
 // Antigravity Messages resolves the thinking-qualified final model before
 // converting Claude input into v1internal Gemini bytes. The selected model is
 // retained as completion upstream metadata while the response uses the original

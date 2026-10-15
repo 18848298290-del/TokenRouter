@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// audit.go executes external moderation requests through the selected proxy
+// and decodes successful responses.
 // Moderation HTTP exchanges return response status separately from transport
 // and decoding failures. Proxy resolution precedes the request, failed
 // responses contribute a bounded diagnostic prefix, and successful bodies

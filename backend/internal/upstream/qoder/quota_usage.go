@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// quota_usage.go normalizes Qoder quota observations while distinguishing
+// explicit zero fields from missing capacity values.
 // Quota responses can report a field as zero or omit it entirely, and those
 // cases affect derived remaining capacity. QuotaProgress stores presence flags
 // beside numeric values so normalization can distinguish an explicit observation

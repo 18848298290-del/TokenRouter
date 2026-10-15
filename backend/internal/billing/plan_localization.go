@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// plan_localization.go validates plan display content and produces localized
+// plan views.
 // Plan display text is resolved from versioned content when available,
 // while legacy plans keep their existing text fields as the source.
 // Localization creates a shallow plan view for display, so group

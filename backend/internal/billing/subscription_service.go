@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// subscription_service.go issues and maintains subscription timelines, quota
+// windows and user-facing progress.
 // A user's grants for the same plan form a timeline: issuance can queue after
 // the latest future expiry, while revoke or validity changes shift later
 // slots. Persistent operations coordinate through recipient-first locks and

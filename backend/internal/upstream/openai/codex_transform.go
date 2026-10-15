@@ -13,6 +13,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// codex_transform.go normalizes Codex OAuth requests, tool history,
+// instructions, and image-generation controls for Responses.
 // Codex OAuth requests inline reasoning history under store=false, while tool
 // calls, call results, and item references use distinct identities. Request
 // transformation captures continuation intent before filtering, normalizes

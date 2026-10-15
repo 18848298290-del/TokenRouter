@@ -8,11 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// scheduler_score_projection.go builds administrative provider scores from
+// full candidate pools and shared load observations.
 // An administration page contains only some providers, but their relative
 // scores depend on a larger candidate pool. Base scores use the unpaginated
-// filter pool, and advanced group scores use each group's independently read
-// schedulable pool. The view returns group results only for IDs on the
-// requested page.
+// filter pool when available. An empty filter pool, including a missing reader
+// or failed query, uses the current page instead. Advanced group scores use
+// each group's independently read schedulable pool. The view returns group
+// results only for IDs on the requested page.
 //
 // Pools are collected before one deduplicated load read over their union, so
 // each scoring call receives the same load observations while retaining its

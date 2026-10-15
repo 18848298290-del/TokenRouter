@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// openai_response_timeout.go selects first-output timeout budgets and
+// constructs timeout failover evidence.
 // Native OpenAI streaming attempts can bound the wait for first semantic
 // output across header and stream phases. The base timeout enables that
 // budget, high reasoning efforts may override it, and timeout failures carry an

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// requestable.go resolves configured model candidates into requestable routes
+// and public pricing identities.
 // A visible request model is a finite configured candidate that survives group
 // policy and provider execution rules. Saved model lists, concrete mapping
 // names, and adapter-enumerated names supply candidates; metadata catalogue

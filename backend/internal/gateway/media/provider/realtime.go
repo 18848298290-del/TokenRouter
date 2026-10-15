@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// realtime.go opens Grok realtime sessions using captured URL, authorization,
+// header and dialing options.
 // Grok realtime connections are opened with bearer authorization and
 // provider-selected header policy. The adapter forwards dial and activity
 // callbacks to Grok, whose returned session keeps the connection and

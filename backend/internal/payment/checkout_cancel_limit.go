@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// checkout_cancel_limit.go checks cancellation audit counts against the
+// configured checkout admission window.
 // Repeated user order cancellations can restrict later checkout creation when
 // their audit count reaches the configured threshold. The check counts
 // ORDER_CANCELLED rows for the user operator at or after a threshold computed

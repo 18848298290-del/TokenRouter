@@ -12,6 +12,8 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// probe.go builds Claude and Gemini probes and executes them through
+// Antigravity retries.
 // Antigravity probes send minimal Claude or Gemini data through the same
 // project envelope and provider-local retry adapter as forwarding. A nonblank
 // first supplied prompt selects probe text, and response extraction joins

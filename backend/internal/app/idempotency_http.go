@@ -14,10 +14,11 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
-// Idempotent panel commands share an application coordinator across
-// their handler executors. Binding finishes before HTTP serving because the
-// executors store that coordinator pointer without synchronization; the
-// readiness marker makes Wire resolve these bindings before application startup.
+// idempotency_http.go binds the application idempotency coordinator to panel
+// command handlers before serving starts. Handler executors store the shared
+// coordinator pointer without synchronization, so binding finishes before HTTP
+// serving; the readiness marker makes Wire resolve these bindings before
+// application startup.
 
 // idempotencyHTTPReady marks assignment of the application coordinator to handler executors.
 type idempotencyHTTPReady struct{}

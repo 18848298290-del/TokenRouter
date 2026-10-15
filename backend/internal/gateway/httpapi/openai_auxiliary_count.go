@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_auxiliary_count.go executes Messages-compatible token counting
+// through OpenAI input_tokens or local compatibility estimates.
 // Messages-compatible counting converts Anthropic input to the Responses
 // counting format while retaining client, billing, and upstream model names in
 // preparation. Grok and CN targets instead estimate Anthropic input locally.

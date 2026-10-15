@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/bedrock"
 )
 
+// bedrock.go prepares Bedrock Messages routes, authentication, beta policy,
+// and response handling.
 // Bedrock model routing selects a source region and an exact upstream
 // identifier before attributes or credentials are prepared. Requests use either
 // an API key or a SigV4 signer, while the executor keeps the selected route

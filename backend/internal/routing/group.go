@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group.go defines routing groups and resolves their model-specific provider
+// preferences.
 // Preferred providers can be configured for an exact model or a trailing
 // wildcard. A populated exact entry takes precedence, while an empty exact
 // entry lets a matching pattern supply providers; the selected IDs retain their

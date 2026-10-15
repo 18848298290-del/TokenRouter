@@ -4,10 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Logout expires pending-login and current-user binding cookies alongside
-// provider callback state. Cookie writers use provider-specific paths, so
-// cleanup calls the same provider helpers with the request HTTPS decision to
-// expire the browser values at their matching paths.
+// logout_cookies.go expires pending-login, current-user binding, and provider
+// callback cookies during logout. Cookie writers use provider-specific paths,
+// so cleanup calls the same provider helpers with the request HTTPS decision
+// to expire the browser values at their matching paths.
 
 // ClearOAuthLoginCookies expires shared pending cookies and LinuxDo, OIDC, and
 // WeChat callback cookies for this browser. Secure attributes follow

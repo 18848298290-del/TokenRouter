@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// cloudflare.go detects Cloudflare challenges and extracts diagnostic ray
+// identifiers from response evidence.
 // Cloudflare challenge detection is limited to forbidden and rate-limited
 // responses. A mitigation header can establish a challenge before body
 // inspection, while recognized text markers also identify pages whose metadata

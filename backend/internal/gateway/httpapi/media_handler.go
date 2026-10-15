@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// media_handler.go prepares image and Grok video requests, including admission
+// and saved video ownership resolution.
 // Image generation keeps its parsed model and original body beside the group
 // route used for provider selection. Permission and moderation run before
 // local image admission; user admission then precedes the funding check and

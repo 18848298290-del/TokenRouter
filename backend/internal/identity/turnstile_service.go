@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// turnstile_service.go verifies Turnstile challenges and probes
+// administrator-supplied verification secrets.
 // Turnstile actions pass the selected secret and challenge token to an external
 // verifier. Challenge success determines authentication acceptance, while the
 // administrator secret probe examines invalid-input-secret specifically and

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// platform_basic_selection.go selects platform providers using basic ordering,
+// sticky reuse, and available capacity.
 // Basic platform selection can return a provider before any physical slot is
 // acquired. Auxiliary callers recheck current eligibility and use priority
 // plus last-use ordering, while request selection adds observed load, actual

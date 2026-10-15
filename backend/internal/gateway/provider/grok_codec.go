@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_codec.go constructs Grok body and media codecs with gateway encoding
+// and billing rules.
 // Grok body encoding needs generated request IDs, and media normalization
 // needs the same size rules used for billing. These constructors bind UUID
 // generation, upload limits, and image/video normalization to the upstream

@@ -7,10 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// A group fallback changes the group used by later attempts while earlier
-// request snapshots remain usable. Group storage and retrieval clone its
-// mutable policy collections, and the context carries the client protocol
-// alongside the selected model route.
+// routing.go captures selected groups, route plans, and client protocols in
+// request contexts. Group storage and retrieval clone the group's mutable
+// policy collections, and the context carries the client protocol alongside the
+// selected model route.
 //
 // The saved RoutePlan is retained by value when a derived context replaces its
 // group. That plan still identifies the group for which it was built, so

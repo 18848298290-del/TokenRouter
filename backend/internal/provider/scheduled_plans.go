@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// scheduled_plans.go defines recurring provider test plans, retained results,
+// and their storage interfaces.
 // A recurring provider test stores its next execution time separately from the
 // observations it produces. Plan eligibility depends on the enabled flag and a
 // due next-run time, while result history carries status, response text, and

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// protocol_routes.go maps extended gateway routes to protocol admission and
+// display metadata.
 // Extended gateway routes share admission metadata with the protocol display
 // catalogue. Matching checks methods and complete prefix segments, while core
 // text entries and upstream-only entries can carry display information without

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// codex_request.go prepares Codex request compatibility hints and inserts
+// Claude Code task guidance into Responses input.
 // Codex OAuth transformation uses gateway image-intent and Messages-bridge
 // hints while the upstream transformer owns request encoding. Exact Spark
 // identity disables image paths, and hosted image generation is distinguished

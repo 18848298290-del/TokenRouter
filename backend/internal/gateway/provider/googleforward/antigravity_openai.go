@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_openai.go converts Chat and Responses requests for Antigravity
+// and restores client output identities.
 // Antigravity OpenAI compatibility retains original client bytes beside an
 // intermediate Anthropic request. Final model family chooses native Gemini
 // conversion or Claude transformation, and final-route attributes read the

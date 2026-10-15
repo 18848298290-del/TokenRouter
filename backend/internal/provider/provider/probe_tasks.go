@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Unpersisted Agent Identity records have no database claim for task
-// registration. Tests and model previews share one ProbeTasks mutex for those
-// records, while the task coordinator handles persisted provider claims; each
-// Ensure call copies options before installing that mutex.
+// probe_tasks.go binds probe task registration to the shared coordinator and
+// an unpersisted-record mutex. Tests and model previews share one ProbeTasks
+// mutex for those records, while the task coordinator handles persisted
+// provider claims; each Ensure call copies options before installing that
+// mutex.
 
 // ProbeTasks shares task-registration dependencies between provider tests and
 // model previews.

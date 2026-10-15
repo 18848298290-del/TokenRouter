@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// proxy.go defines proxy connection records and constructs their authenticated
+// URLs and expiration checks.
 // Proxy records retain network address, authentication, and expiration policy
 // for outgoing requests and administration. A URL is built with escaped
 // credentials only when both authentication fields are populated, while

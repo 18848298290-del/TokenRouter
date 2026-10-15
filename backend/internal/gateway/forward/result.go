@@ -7,10 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Messages forwarding needs both the model requested for execution and any
-// model declared in the upstream response. Results retain those observations
-// separately with usage and timing so later protocol conversion can restore
-// client metadata while completion resolves the configured billing model.
+// result.go defines Messages forwarding results with separate request,
+// upstream, and response model observations. Messages forwarding needs both the
+// model requested for execution and any model declared in the upstream
+// response. Results retain those observations separately with usage and timing
+// so later protocol conversion can restore client metadata while completion
+// resolves the configured billing model.
 
 // Result holds forwarding observations passed between protocol adapters and completion.
 type Result struct {

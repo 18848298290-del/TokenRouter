@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// request_patch.go prepares Grok request fields, tools, and replay history for
+// the selected model.
 // Grok Responses requests can contain client-tool declarations, replayed history
 // and reasoning controls with shapes that differ from the selected upstream's
 // accepted input. Preparation keeps the complete upstream model identity, adapts

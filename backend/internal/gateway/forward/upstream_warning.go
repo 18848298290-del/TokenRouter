@@ -4,10 +4,12 @@ import (
 	"errors"
 )
 
-// Policy warnings can accompany a successful transport exchange and still
-// require refusal handling. Error-chain extraction retains the warning's
-// captured body and message for HTTP and completion callers, which separately
-// decide policy classification, client output, settlement, and cleanup.
+// upstream_warning.go extracts captured policy warnings from error chains and
+// copies their response bodies. Policy warnings can accompany a successful
+// transport exchange and still require refusal handling. Error-chain extraction
+// retains the warning's captured body and message for HTTP and completion
+// callers, which separately decide policy classification, client output,
+// settlement, and cleanup.
 
 // ErrCyberPolicyForwarded marks the refusal-handling outcome so execution callers
 // can perform error cleanup after that output path has been selected.

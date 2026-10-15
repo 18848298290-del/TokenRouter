@@ -10,19 +10,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Operational producers and aggregation stop before their persistent log sink.
-// The sink is installed after it starts and detached before its stop callback
-// drains. Future sink lookups then find no sink; a log call that already
-// captured the old sink can still reach WriteLogEvent, whose admission lock
-// rejects writes after StopContext seals the queue. Producers with context-free
-// Stop retain their own waiting behavior under the manager's outer budget.
+// runtime_ops.go registers operational producers, aggregation, and log-sink
+// lifecycle callbacks. Operational producers and aggregation stop before their
+// persistent log sink. The sink is installed after it starts and detached
+// before its stop callback drains. Future sink lookups then find no sink; a log
+// call that already captured the old sink can still reach WriteLogEvent, whose
+// admission lock rejects writes after StopContext seals the queue. Producers
+// with context-free Stop retain their own waiting behavior under the manager's
+// outer budget.
 //
-// Ingress aggregation receives an additional post-stop check of pending
-// batches and rows. A nonzero pending-batch count becomes a hook error instead
-// of a successful drain event. Dashboard aggregation and runtime-settings
-// refresh have separate stop levels, and the returned readiness marker
-// indicates only registration; these callbacks run during later lifecycle
-// startup and shutdown.
+// Ingress aggregation receives an additional post-stop check of pending batches
+// and rows. A nonzero pending-batch count becomes a hook error instead of a
+// successful drain event. Dashboard aggregation and runtime-settings refresh
+// have separate stop levels, and the returned readiness marker indicates only
+// registration; these callbacks run during later lifecycle startup and
+// shutdown.
 
 // opsRuntimeReady marks registration of operational producers, aggregation,
 // and log-sink lifecycle hooks.

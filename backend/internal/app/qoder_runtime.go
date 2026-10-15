@@ -28,12 +28,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder Chat selection builds an executable target together with its route,
-// release, and wait callbacks. A refreshed session produces another target for
-// the same selection, but its earlier acquired-slot flag and release callback
-// are cleared because the prior attempt has already finished its resource
-// lease. When no original wait plan exists, the refreshed target gets a
-// thirty-second wait that bypasses queue counting.
+// qoder_runtime.go adapts Qoder Chat routing, selection, session recovery, and
+// completion recording for the gateway executor. Qoder Chat selection builds an
+// executable target together with its route, release, and wait callbacks. A
+// refreshed session produces another target for the same selection, but its
+// earlier acquired-slot flag and release callback are cleared because the prior
+// attempt has already finished its resource lease. When no original wait plan
+// exists, the refreshed target gets a thirty-second wait that bypasses queue
+// counting.
 //
 // Each completion callback captures provider, Key, payer, usage, and price
 // mapping before creating worker work. Pool submission follows that capture;

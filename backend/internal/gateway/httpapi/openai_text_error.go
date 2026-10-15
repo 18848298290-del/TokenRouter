@@ -11,11 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// openai_text_error.go writes text-admission failures using the active
+// protocol and output state.
 // Text admission can fail before JSON output or after a wait/Compact stream
 // has already committed a format. These handler bindings use the configured
 // heartbeat-aware output for OpenAI routes and Anthropic-specific output for
 // Messages, while panic recovery logs the captured state used to decide its
 // final response.
+//
+// When a Compact heartbeat has committed output, request-error writing stops
+// it, records the intended failure and tries a failed Responses event with
+// request metadata. JSON remains the fallback when that event cannot be
+// written. Messages panic recovery writes a final error only before its shared
+// started flag indicates streaming.
 
 // openAITextMaxBytesError extracts a body-limit error through the supplied
 // error chain. Callers use the boolean to select HTTP 413 and retain the

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// projection.go defines batch provider operations and resolves the image-batch
+// protocol for provider records.
 // Gemini API keys and Vertex service accounts use the same image-batch route
 // selection, then execute through platform adapters. The adapter interface keeps
 // submission, polling, cancellation, result reading, and cleanup tied to a

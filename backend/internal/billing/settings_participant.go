@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares supplied billing settings for coordinated
+// persistence.
 // Administrator updates can supply one billing setting while leaving the
 // remaining stored values in place. Decoding that field map into AdminSettings
 // introduces zero values for omitted fields, and PrepareAdminSettings encodes

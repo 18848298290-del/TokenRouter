@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_raw_chat.go forwards raw Chat responses and converts Chat output
+// into Responses or Messages protocols.
 // Raw Chat streams observe usage, service tier, refusal evidence, and terminal
 // signals before delivery repairs change the client line. Large-request refusal
 // detection can hold lines before headers, while downstream write failure

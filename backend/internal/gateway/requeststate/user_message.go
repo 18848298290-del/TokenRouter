@@ -2,9 +2,10 @@ package requeststate
 
 import "github.com/tidwall/gjson"
 
-// The Anthropic serial queue distinguishes a new user turn from a tool-result
-// reply. The final message supplies this content classification; earlier tool
-// results leave a later ordinary user turn eligible for that content check.
+// user_message.go classifies the final Anthropic message as a user turn or
+// tool-result reply. The final message supplies this content classification;
+// earlier tool results leave a later ordinary user turn eligible for that
+// content check.
 
 // IsRealUserMessage reports whether the final captured message is an exact
 // user-role object suitable for ordinary serial-queue input. Missing requests,

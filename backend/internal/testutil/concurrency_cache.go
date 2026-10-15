@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// concurrency_cache.go provides fixed concurrency and load observations for
+// scheduler fixtures.
 // Scheduler tests can reach provider selection and forwarding without
 // installing a backing concurrency cache. StubConcurrencyCache accepts
 // admissions and releases with fixed success results and returns zero counts or

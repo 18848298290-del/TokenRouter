@@ -9,10 +9,12 @@ import (
 	keyhttp "github.com/TokenFlux/TokenRouter/internal/apikey/httpapi"
 )
 
-// OpenAI-compatible entry points can select providers from several platforms
-// according to their protocol capabilities. Dedicated route middleware can
-// constrain that selection with a forced platform; ordinary API Key group data
-// leaves the platform unspecified.
+// request_platform.go resolves route-forced platform restrictions for
+// OpenAI-compatible provider selection. OpenAI-compatible entry points can
+// select providers from several platforms according to their protocol
+// capabilities. Dedicated route middleware can constrain that selection with a
+// forced platform; ordinary API Key group data leaves the platform
+// unspecified.
 
 // OpenAICompatibleRequestPlatform returns an unspecified platform for
 // capability-based provider selection.

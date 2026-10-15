@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// execution_fast_policy.go binds request settings and provider scope to Fast
+// tier evaluation.
 // Fast request rules can be scoped to the authenticated payer and override
 // global rules while retaining configuration order within each scope.
 // Execution evaluation reads a context settings pointer when present or

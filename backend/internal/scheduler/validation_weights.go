@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// validation_weights.go loads current global score weights for administrative
+// group validation.
 // Administrative group validation needs coefficients read from persistence at
 // the time of the update. Its batch read bypasses the request-side settings
 // cache, so a cached hot-path recovery result cannot stand in for the current

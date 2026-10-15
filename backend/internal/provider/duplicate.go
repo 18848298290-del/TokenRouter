@@ -13,6 +13,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// duplicate.go creates disabled provider copies and recovers completed
+// duplication requests by operation identity.
 // A duplicate reuses static provider configuration while beginning with clean
 // runtime observations and disabled scheduling. Credentials and Extra pass
 // through JSON encoding and decoding before normalization, isolating supported

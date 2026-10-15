@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go executes Bedrock attempts and reports Messages output, usage, and
+// timing observations.
 // Bedrock attempts use a regional Invoke request and return either JSON or AWS
 // EventStream adapted to Messages output. The request model remains distinct
 // from the client response model, while server payloads supply observed model

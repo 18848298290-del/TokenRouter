@@ -19,6 +19,8 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// team.go assembles team persistence, identity lookups, and notification
+// dependencies.
 // Team persistence shares SQL participants for membership, Key lifecycle, and
 // member usage reporting. Identity users are narrowed to invitation/ownership
 // snapshots, and the service receives notification delivery plus optional

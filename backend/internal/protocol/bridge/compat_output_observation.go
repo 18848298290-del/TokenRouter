@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// compat_output_observation.go detects semantic output and completion evidence
+// in compatibility responses.
 // Converted outputs use Messages, Responses, or Chat event shapes even when
 // they originate from the same Gemini execution path. Output observation reads
 // their recognized fields and labels before the caller decides how content and

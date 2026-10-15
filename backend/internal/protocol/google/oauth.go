@@ -1,5 +1,7 @@
 package google
 
+// oauth.go defines Google OAuth token responses and the client credentials and
+// scopes used for authorization.
 // Google OAuth exchanges return credential lifetime and scopes separately from
 // the client configuration used to request them. EffectiveOAuthConfig resolves
 // blank credential pairs to the built-in CLI client and normalizes configured

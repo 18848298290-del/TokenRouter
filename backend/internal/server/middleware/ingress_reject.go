@@ -11,6 +11,8 @@ import (
 	identityhttp "github.com/TokenFlux/TokenRouter/internal/identity/httpapi"
 )
 
+// ingress_reject.go records marked ingress rejections with route and client
+// identity metadata.
 // Admission failures can finish before gateway execution has an authenticated
 // key in context. A request marker carries the expected rejection reason until
 // Logger observes the completed request, then the installed recorder receives a

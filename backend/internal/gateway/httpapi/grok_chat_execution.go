@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_chat_execution.go executes eligible Grok Chat requests through
+// Responses transport and converts output for Chat clients.
 // A Grok Chat request can use Responses transport while returning Chat JSON or
 // SSE to its client. The bridge selects that path from the provider's resolved
 // model, cache identity and image input, returning handled=false when native

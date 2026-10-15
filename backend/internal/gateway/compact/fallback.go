@@ -12,11 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Compact recovery can change the model once on the same provider when an
-// explicit compact request encounters a recognized model or context-window
-// failure. Provider compact mappings take precedence over the global model,
-// and an alternative is usable only when it differs from the current request
-// model and the body rewrite actually changes that model.
+// fallback.go selects and applies a replacement model for eligible Compact
+// failures on the current provider. Compact recovery can change the model once
+// on the same provider when an explicit compact request encounters a recognized
+// model or context-window failure. Provider compact mappings take precedence
+// over the global model, and an alternative is usable only when it differs from
+// the current request model and the body rewrite actually changes that model.
 //
 // The caller owns the retry window and output state. After a recovery decision,
 // ApplySignal observes the rejected response, closes its resources, and updates

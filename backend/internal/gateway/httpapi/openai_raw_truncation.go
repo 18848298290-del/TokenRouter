@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_raw_truncation.go records truncated Chat streams and constructs their
+// failover errors.
 // A raw Chat stream ending before a terminal chunk becomes a retry signal only
 // while the execution reader still permits another attempt. Ops retains the
 // upstream request identifier and transport cause, while the failover body

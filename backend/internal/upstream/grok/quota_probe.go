@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// quota_probe.go sends an active Grok quota probe and records response
+// evidence before status handling.
 // An active quota request records its response headers before interpreting
 // HTTP status. This retains a probe attempt even when no quota headers
 // arrive, and treats 429 as an observed outcome. The request uses a caller-

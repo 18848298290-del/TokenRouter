@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated profile, identity binding,
+// notification email, and authentication-factor endpoints.
 // User profile and authentication-factor operations share an authenticated
 // panel group. Email and provider binding, notification recipients, TOTP, and
 // Passkey endpoints all use that account context; public Passkey login is

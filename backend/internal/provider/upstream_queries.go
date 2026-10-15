@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// upstream_queries.go coalesces upstream usage queries while enforcing
+// identity checks, execution capacity, and shutdown tracking.
 // An upstream usage observation belongs to the credentials and query settings
 // that produced it. A preflight provider read chooses the adapter and
 // fingerprint used to join shared work. The shared operation rereads identity

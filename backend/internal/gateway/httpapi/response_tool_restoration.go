@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// response_tool_restoration.go associates tool mappings with HTTP requests and
+// WebSocket turns and restores client tool names in response payloads.
 // Tool lowering can rename reserved functions or flatten namespace declarations
 // before upstream execution. Output restoration needs the mapping that belongs
 // to that request or turn, while later WebSocket session updates can carry a

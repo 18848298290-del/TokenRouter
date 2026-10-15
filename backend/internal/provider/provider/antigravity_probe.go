@@ -13,10 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity connection tests address one selected OAuth provider through the
-// same platform retries used by forwarding. Credentials, project and final
-// model permission are resolved before a minimal request is built; the platform
-// probe reads the bounded response and releases the application attempt gate.
+// antigravity_probe.go prepares an authenticated Antigravity connection test
+// and binds the platform retry adapter. Antigravity connection tests address
+// one selected OAuth provider through the same platform retries used by
+// forwarding. Credentials, project and final model permission are resolved
+// before a minimal request is built; the platform probe reads the bounded
+// response and releases the application attempt gate.
 
 // AntigravityProbe runs a selected-provider probe through platform retries and
 // the application attempt gate.

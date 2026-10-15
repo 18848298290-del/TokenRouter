@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// body.go parses gateway request fields and maintains their raw byte ranges
+// across body replacement.
 // Gateway request parsing keeps forwarding bytes alongside scalar fields and
 // raw ranges into the same body. Body replacement can change field offsets, so
 // parsed state refreshes those ranges before system, messages, or Responses

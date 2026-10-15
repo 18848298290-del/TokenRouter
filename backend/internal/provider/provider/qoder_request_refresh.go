@@ -9,17 +9,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// A Qoder request failure can race with another worker rotating the same
-// provider credentials. The refresh adapter hashes the identity used by the
-// failed request, asks the shared coordinator to exchange only that matching
-// identity, and invalidates cached sessions when a resulting record is accepted.
+// qoder_request_refresh.go recovers Qoder sessions after request failures
+// through identity-checked refresh coordination. A Qoder request failure can
+// race with another worker rotating the same provider credentials. The refresh
+// adapter hashes the identity used by the failed request, asks the shared
+// coordinator to exchange only that matching identity, and invalidates cached
+// sessions when a resulting record is accepted.
 //
-// Lock contention follows a stricter return path: storage is reread immediately
-// and then polled for a changed credential hash within the core wait budget.
-// Non-contention results can return the coordinator's record, a fresh storage
-// read, or the supplied record after read failure. These paths distinguish
-// observed rotation from best-effort recovery rather than promising that every
-// successful return contains different credentials.
+// Lock contention follows a stricter return path: storage is reread
+// immediately and then polled for a changed credential hash within the core
+// wait budget. Non-contention results can return the coordinator's record, a
+// fresh storage read, or the supplied record after read failure. These paths
+// distinguish observed rotation from best-effort recovery rather than
+// promising that every successful return contains different credentials.
 
 // QoderRequestRefresh binds failed-request credential exchange to storage and
 // cached-session invalidation.

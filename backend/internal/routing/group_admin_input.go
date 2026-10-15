@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// group_admin_input.go defines create and update inputs for group settings and
+// provider copying.
 // New groups default to shared text admission when AllowedProtocols is omitted.
 // Updates keep omitted values and use pointer presence or non-nil collections
 // for selected clears, including nonpositive fallback IDs and empty provider

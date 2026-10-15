@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// wait_loop.go waits for request capacity and transfers admitted user
+// resources to request leases.
 // A request can wait for user or provider capacity while the HTTP adapter
 // synchronously emits begin and heartbeat events. Slot polling, heartbeat
 // timing, request cancellation, runtime shutdown, and the wait deadline

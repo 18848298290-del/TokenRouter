@@ -6,6 +6,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// provider_usage_store.go publishes provider changes after quota increments
+// and resets.
 // Provider usage statement results determine when scheduler change events are
 // requested. Total quota crossing triggers an optional Changed callback, while
 // reset requests change publication and then optional direct snapshot

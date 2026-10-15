@@ -11,18 +11,19 @@ import (
 	keycore "github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// An invalidation row can be delayed, claimed, retried or awaiting its safety
-// pass. Claim uses one PostgreSQL update with SKIP LOCKED candidates and an
-// elapsed-lease predicate so workers can distribute available records while
-// retaining recovery for abandoned claims. Candidate order favors earlier IDs,
-// but the returned update rows carry no final ordering guarantee.
+// invalidation_outbox.go claims durable cache-invalidation records and
+// persists their retry and delivery progress. Claim uses one PostgreSQL update
+// with SKIP LOCKED candidates and an elapsed-lease predicate so workers can
+// distribute available records while retaining recovery for abandoned claims.
+// Candidate order favors earlier IDs, but the returned update rows carry no
+// final ordering guarantee.
 //
-// Every completion transition checks its row ID and claim owner before changing
-// or deleting it. A second-pass transition also requires the initial stage,
-// while retry increments its durable attempt count and releases the claim.
-// Health queries include all retained records, including delayed and claimed
-// events, and derive their oldest creation and most recently scheduled stored
-// error observations.
+// Every completion transition checks its row ID and claim owner before
+// changing or deleting it. A second-pass transition also requires the initial
+// stage, while retry increments its durable attempt count and releases the
+// claim. Health queries include all retained records, including delayed and
+// claimed events, and derive their oldest creation and most recently scheduled
+// stored error observations.
 
 // AuthCacheInvalidationOutboxRepository persists leased delivery progress using
 // a shared PostgreSQL handle.

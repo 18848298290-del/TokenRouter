@@ -10,6 +10,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// long_session_model.go validates later WebSocket turn models against the
+// connection's selected provider and group policy.
 // A WebSocket connection keeps its selected provider across turns, so a later
 // model must fit that provider's current route and runtime state. Client model
 // restrictions run before group mapping; the resulting routing name then goes

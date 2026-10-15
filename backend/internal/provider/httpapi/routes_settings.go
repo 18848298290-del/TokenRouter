@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers administrator routes for provider cooldown and
+// stream-timeout policies.
 // Provider health policy endpoints share the administrator settings group with
 // authentication and auditing installed by the caller. Each GET displays an
 // effective policy and each PUT delegates validation and storage to its

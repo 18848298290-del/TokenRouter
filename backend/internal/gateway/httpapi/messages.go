@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// messages.go prepares Messages requests for policy checks, user admission,
+// session selection, and text execution.
 // Messages admission keeps the client model and rewritten body available while
 // preparing provider execution. Prompt replacement precedes parsing,
 // moderation and session hashing; client-group resolution and reasoning policy

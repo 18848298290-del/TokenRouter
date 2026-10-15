@@ -15,6 +15,8 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// settings_views.go defines the JSON response fields for combined
+// administrator settings reads.
 // Administrator responses show current control values alongside saved editor
 // content and computed runtime parameters. Secret configuration is represented
 // by presence flags, while public IDs and connection details remain visible for

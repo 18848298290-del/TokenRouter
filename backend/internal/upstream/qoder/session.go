@@ -12,6 +12,7 @@ import (
 	"fmt"
 )
 
+// session.go constructs encrypted COSY sessions and request identity payloads.
 // COSY authentication places a JSON identity inside AES-CBC ciphertext and
 // encrypts the temporary AES key with the server's RSA key. The resulting Info
 // and CosyKey strings travel together in Gateway signatures, while the request

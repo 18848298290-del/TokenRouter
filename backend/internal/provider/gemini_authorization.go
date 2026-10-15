@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// gemini_authorization.go exchanges and refreshes Gemini OAuth credentials
+// with project and account-tier discovery.
 // Gemini authorization stores PKCE proof with its OAuth variant, proxy,
 // project, and selected tier. Code Assist and Google One use the built-in CLI
 // client, while AI Studio requires custom client configuration and uses its

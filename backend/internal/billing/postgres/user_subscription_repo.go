@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// user_subscription_repo.go persists subscription grants and queries their
+// effective status and group coverage.
 // Grant rows retain issued lifetime and quota snapshots, while plan mappings
 // determine which current groups those grants cover. Ordinary Ent reads filter
 // soft deletion; restoration and administrator revocation history deliberately

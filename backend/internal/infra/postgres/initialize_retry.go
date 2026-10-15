@@ -10,6 +10,8 @@ import (
 	"github.com/lib/pq"
 )
 
+// initialize_retry.go retries database initialization when PostgreSQL reports
+// temporary connection failures.
 // A PostgreSQL instance can still be starting when application initialization
 // begins. Initialization retries connection-class SQLSTATEs and
 // cannot_connect_now with capped exponential delays; the supplied initializer

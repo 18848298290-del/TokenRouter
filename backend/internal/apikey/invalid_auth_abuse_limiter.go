@@ -6,19 +6,20 @@ import (
 	"time"
 )
 
-// Invalid credential failures are tracked by client identity up to a fixed
-// total capacity. Existing clients retain their own temporary blocks, while
-// failures from new clients at capacity share an overflow bucket. That choice
-// bounds retained client entries during random-credential scans while allowing
-// one busy overflow population to affect other untracked clients.
+// invalid_auth_abuse_limiter.go tracks invalid credential failures and
+// temporarily blocks clients within a fixed tracking capacity. Existing
+// clients retain their own temporary blocks, while failures from new clients
+// at capacity share an overflow bucket. That choice bounds retained client
+// entries during random-credential scans while allowing one busy overflow
+// population to affect other untracked clients.
 //
 // Each shard mutex protects its entries and failure windows; an atomic
 // reservation count keeps concurrent insertions within total capacity. At
 // capacity, a timed compare-and-swap permits one rotating shard cleanup scan,
-// reclaiming expired entries without scanning every shard per request. Overflow
-// counters use their own mutex. Health counters are sampled independently, and
-// the bound clock callback is configured before concurrent checks or failure
-// recording.
+// reclaiming expired entries without scanning every shard per request.
+// Overflow counters use their own mutex. Health counters are sampled
+// independently, and the bound clock callback is configured before concurrent
+// checks or failure recording.
 
 // KeyInvalidAuthAbuseShardCount spreads client identities across lock-protected
 // maps while total capacity and cleanup scheduling remain shared.

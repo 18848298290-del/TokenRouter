@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_attributes.go validates batch-image preferences against resolved
+// attributes for the selected provider target.
 // Image size, aspect ratio and reference limits may be supplied by the model
 // attribute resolver for the selected upstream model. Submission checks only
 // attributes that were resolved, so an absent media description leaves the

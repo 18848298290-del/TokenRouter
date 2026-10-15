@@ -6,11 +6,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// A Gin request can retain a loaded Key for failed-authentication diagnostics
-// before it has an admitted credential. Separate context names let Ops read
-// that loaded identity while handlers use the authenticated Key name, and
-// forced platform middleware publishes its entry choice to both Gin and
-// standard request contexts.
+// context.go provides Gin context accessors for authenticated Keys, diagnostic
+// Keys, and forced platform choices. Separate context names let Ops read a Key
+// loaded during a failed authentication attempt while handlers use the
+// authenticated Key name, and forced platform middleware publishes its entry
+// choice to both Gin and standard request contexts.
 
 // Gin context names keep admitted Key access, diagnostic lookup data and
 // forced platform choice available to their distinct gateway and Ops readers.

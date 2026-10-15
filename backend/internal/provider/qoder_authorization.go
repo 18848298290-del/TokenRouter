@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// qoder_authorization.go coordinates Qoder browser authorization sessions,
+// completion claims, and cached token results.
 // Qoder device authorization keeps a prepared site flow until its browser proof
 // can be completed. Concurrent polls for the same state share one completion
 // claim; successful token info remains replayable until the session expires,

@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// httptrace.go captures HTTP transport-stage timestamps and counters across
+// upstream attempts.
 // One request can perform preflight HTTP work before the first upstream
 // attempt, then retry across several connections. Trace state keeps the
 // first retained timestamp for each transport stage and cumulative event counts,

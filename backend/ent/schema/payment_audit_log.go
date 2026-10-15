@@ -11,10 +11,11 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// Payment actions use audit rows to retain order events and refund recovery
-// metadata. The refund writer can revise an existing order-action record and
-// store earlier JSON details in its history, so recovery data follows the
-// current attempt while retaining prior recorded attempts.
+// payment_audit_log.go defines order-action audit records used for payment
+// history and refund recovery. The refund writer can revise an existing
+// order-action record and store earlier JSON details in its history, so
+// recovery data follows the current attempt while retaining prior recorded
+// attempts.
 
 // PaymentAuditLog stores order action details and mutable refund recovery records.
 // Audit records are hard-deleted when their rows are removed.

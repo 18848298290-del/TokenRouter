@@ -8,17 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
 )
 
-// Catalog data is initialized before scheduled synchronization begins.
-// Startup uses two hooks because an initialization failure permits the
-// application to continue while preventing the catalog update loop from
-// starting. The earlier hook publishes catalogReady after Initialize succeeds;
-// the later hook reads that flag before calling Start.
+// runtime_model_catalog.go coordinates initial catalog loading with conditional
+// startup of scheduled synchronization. Startup uses two hooks because an
+// initialization failure permits the application to continue while preventing
+// the catalog update loop from starting. The earlier hook publishes
+// catalogReady after Initialize succeeds; the later hook reads that flag before
+// calling Start.
 //
 // The lifecycle manager runs start hooks serially in StartOrder, so the flag
 // belongs to that ordered startup sequence. A nil catalog skips both loading
 // and synchronization. The registered stop callback signals a supplied catalog
 // and waits for its update work, including when the loading hook failed. That
-// callback delegates to Service.Stop, which has no cancellation-context parameter.
+// callback delegates to Service.Stop, which has no cancellation-context
+// parameter.
 
 // modelCatalogRuntimeReady marks registration of catalog loading and synchronization lifecycle hooks.
 type modelCatalogRuntimeReady struct{}

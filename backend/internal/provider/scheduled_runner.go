@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// scheduled_runner.go executes due provider test plans and coordinates result
+// recording, recovery, and shutdown.
 // Scheduled provider tests read due plans after a tick offset, then execute them
 // with a five-minute round context. Each round admits up to ten tests at once
 // and waits for every admitted worker before finishing. Per-minute callbacks can

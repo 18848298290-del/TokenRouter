@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// proxy_admin.go administers proxy records and combines connectivity and
+// target-quality probe results for display.
 // Proxy administration writes connection records before scheduling optional
 // background latency probes. Connectivity and target-quality observations share
 // a cache value, letting later latency-only checks retain the earlier quality

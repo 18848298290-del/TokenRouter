@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// realtime_relay.go relays Grok Voice frames in both directions and reports
+// observed audio when either direction ends.
 // Realtime Voice audio can arrive from either the client or the upstream
 // connection, and metering needs evidence even when the connection ends with an
 // error. Each relay direction records recognized audio before attempting

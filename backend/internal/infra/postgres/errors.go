@@ -8,6 +8,7 @@ import (
 	"github.com/lib/pq"
 )
 
+// errors.go classifies wrapped database errors for repository callers.
 // Storage callers need to distinguish duplicate writes, deadlocks, and absent
 // rows after errors have been wrapped. PostgreSQL SQLSTATE supplies typed
 // decisions where available; selected message compatibility checks support

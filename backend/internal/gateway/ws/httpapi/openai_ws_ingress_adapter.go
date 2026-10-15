@@ -17,8 +17,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// Pooled Responses sessions retain continuation state and replay input while
-// concrete HTTP adapters own credential, header and frame operations. The
+// openai_ws_ingress_adapter.go adapts HTTP forwarding callbacks, pooled
+// connection leases, and replay codecs to gateway ingress interfaces. The
 // gateway core chooses when to reconnect or rebuild input; these adapters
 // expose the selected pool lease and upstream payload algorithms with their
 // distinct empty, unsafe and shared-storage results.

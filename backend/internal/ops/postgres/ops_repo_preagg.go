@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// ops_repo_preagg.go refreshes hourly and daily Ops aggregates from request
+// observations and saved hourly summaries.
 // Hourly Ops metrics retain separate global, platform, and platform-plus-group
 // rows. Usage observations supply success, token, and latency measurements;
 // saved error observations supply classification counts after count-token

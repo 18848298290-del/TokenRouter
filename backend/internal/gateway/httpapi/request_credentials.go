@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// request_credentials.go binds credential resolution to a shared HTTP request
+// budget and records classified authentication failures.
 // Grok credential recovery shares one time budget across attempts belonging to
 // an HTTP request. Gin stores that budget for text, media and WebSocket
 // adapters, and classified credential failures are associated with the request

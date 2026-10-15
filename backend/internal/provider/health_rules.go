@@ -7,18 +7,19 @@ import (
 	"time"
 )
 
-// Configured temporary pauses match an HTTP status and keyword against a
-// bounded response prefix. Matching retains parsed rule order, and handling
-// stops at the first rule whose trigger returns true. A supplied model
-// narrows non-401 failures to a model cooldown; authentication failures still
-// use provider-wide health.
+// health_rules.go matches configured temporary-pause rules and applies
+// stream-timeout threshold actions. Configured temporary pauses match an HTTP
+// status and keyword against a bounded response prefix. Matching retains
+// parsed rule order, and handling stops at the first rule whose trigger
+// returns true. A supplied model narrows non-401 failures to a model cooldown;
+// authentication failures still use provider-wide health.
 //
 // Provider-wide triggers notify runtime blocking before storage and publish
 // cached pause metadata afterward. These steps can fail separately, so a false
-// result can follow an installed runtime block. Stream timeouts first select an
-// enabled action and compare shared counts with its threshold; unavailable
-// counting contributes one failure, while counter reset is attempted only after
-// the primary health write succeeds.
+// result can follow an installed runtime block. Stream timeouts first select
+// an enabled action and compare shared counts with its threshold; unavailable
+// counting contributes one failure, while counter reset is attempted only
+// after the primary health write succeeds.
 
 // TempUnschedBodyMaxBytes and TempUnschedMessageMaxBytes cap response
 // inspection and retained diagnostics separately when temporary pause rules are

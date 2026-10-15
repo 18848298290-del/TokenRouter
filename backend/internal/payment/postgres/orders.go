@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// orders.go reads payment orders, paid history, pending counts, plan names,
+// and audit entries through Ent.
 // Past payment eligibility depends on confirmed payment time and positive
 // gateway money, so a refunded or unfinished entitlement order can still
 // qualify. That eligibility read can join an Ent transaction carried by

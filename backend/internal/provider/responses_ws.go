@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// responses_ws.go normalizes Responses WebSocket connection settings and
+// converts legacy provider flags.
 // Responses WebSocket enablement comes from the provider protocol set, while
 // connection mode controls pooled versus per-session connections. An explicit
 // mode takes precedence over legacy flags. Legacy passthrough selects

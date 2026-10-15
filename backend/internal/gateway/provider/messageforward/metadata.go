@@ -13,6 +13,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// metadata.go generates Anthropic OAuth metadata from provider identity and
+// stable conversation seeds.
 // OAuth metadata combines provider identity with a session UUID, and the
 // session seed must remain stable as later conversation messages arrive. Parsed
 // requests use the client IP, normalized user agent, and API key discriminator;

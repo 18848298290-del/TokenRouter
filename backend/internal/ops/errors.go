@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// errors.go queries error trends and distributions using the selected data
+// source and SLA exclusions.
 // Error charts separate client-failure totals from SLA-countable failures and
 // recorded provider statuses. Each service query resolves the current
 // exclusions and source preference first, then can repeat an automatic-mode

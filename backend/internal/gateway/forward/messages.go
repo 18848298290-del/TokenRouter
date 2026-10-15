@@ -14,12 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// A Messages attempt retains its client's logical model while preparing a
-// provider-mapped, platform-normalized request. Every selected ordinary rewrite
-// reparses shared request state before the next preparation step. Alternate
-// emulation, API-key passthrough, and Bedrock paths return before this sequence;
-// OAuth mimicry is gated by client-format evidence and controls system/cache and
-// tool-name handling independently of those alternate paths.
+// messages.go prepares and executes a Messages attempt and returns usage or
+// classified failure evidence. A Messages attempt retains its client's logical
+// model while preparing a provider-mapped, platform-normalized request. Every
+// selected ordinary rewrite reparses shared request state before the next
+// preparation step. Alternate emulation, API-key passthrough, and Bedrock paths
+// return before this sequence; OAuth mimicry is gated by client-format evidence
+// and controls system/cache and tool-name handling independently of those
+// alternate paths.
 //
 // HTTP handling finishes before acceptance and response reading. Later stream
 // errors combine body evidence, health policy, byte progress, and writer

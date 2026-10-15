@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// request_passthrough.go builds passthrough Responses requests with selected
+// authentication and scoped client session headers.
 // Passthrough requests keep prepared body bytes while selecting new
 // authentication and provider-specific identity headers. Client authentication
 // headers are removed before the selected assertion or bearer headers are

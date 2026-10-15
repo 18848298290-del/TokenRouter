@@ -24,6 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// service.go renders notification templates, applies recipient preferences,
+// and coordinates source-backed email delivery.
 // Notification delivery renders event-specific placeholders using recipient
 // language and stored template overrides. HTML variables are escaped except for
 // the operations-report field admitted through a separate trusted map. Optional

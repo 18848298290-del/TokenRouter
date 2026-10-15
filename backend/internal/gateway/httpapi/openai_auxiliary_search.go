@@ -30,6 +30,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_auxiliary_search.go executes AlphaSearch through standalone search or
+// PAT Responses requests and captures per-call usage.
 // Standalone Alpha Search and PAT hosted search produce client search output
 // through different upstream protocols. Provider mapping supplies the upstream
 // model while the requested name remains available for completion. PAT

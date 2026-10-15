@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// test_payload.go builds streaming Anthropic probe payloads with CLI-style
+// system and metadata values.
 // Administrative Anthropic probes use the package's CLI-style system prompt and
 // metadata format alongside a streaming user message. Random device and session
 // identifiers keep each prepared probe self-contained, while a trimmed prompt

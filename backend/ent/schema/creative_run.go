@@ -12,10 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// A creative run retains request identity, funding, and recovery metadata while
-// its prompt and image payloads live in temporary Redis storage. Recorded
-// provisioning steps and provider outcomes let the creative workflow resume
-// unfinished work and distinguish successful generation from later result delivery.
+// creative_run.go defines creative-run identity, funding, and recovery
+// metadata, with prompt and image payloads held separately in temporary Redis
+// storage. Recorded provisioning steps and provider outcomes let the creative
+// workflow resume unfinished work and distinguish successful generation from
+// later result delivery.
 
 // CreativeRun stores asynchronous creative task metadata and its funding snapshot.
 type CreativeRun struct {

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// resource_manager.go discovers an active Google Cloud project and ranks
+// returned projects for Code Assist authorization.
 // Code Assist project discovery can fall back to Resource Manager when account
 // metadata omits a project. Only ACTIVE entries with a nonblank identifier
 // qualify, and selection prefers companion names, then default names, then the

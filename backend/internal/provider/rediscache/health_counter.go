@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// health_counter.go stores provider health failure counts in Redis with fixed
+// observation windows.
 // Provider health counters retain the fixed expiry established by the first
 // failure, so repeated errors within that window accumulate without
 // continually moving its end. Separate namespaces keep Antigravity INTERNAL

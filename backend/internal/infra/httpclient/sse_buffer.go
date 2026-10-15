@@ -2,6 +2,7 @@ package httpclient
 
 import "sync"
 
+// sse_buffer.go supplies reusable initial buffers for SSE line scanners.
 // Streaming parsers repeatedly need an initial byte buffer while reading SSE
 // lines. A shared pool reuses fixed 64 KiB storage; borrowers retain that
 // storage until their scanner finishes, then return it with its previous

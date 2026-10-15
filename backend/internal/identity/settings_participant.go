@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares selected authentication settings for
+// coordinated administrator updates.
 // Authentication settings updates carry only selected JSON fields, while
 // their normalizers operate on complete provider models. Defaulted neighbors
 // and cross-field credential fallbacks can therefore appear in a prepared

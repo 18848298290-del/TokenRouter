@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// catalog_query.go looks up catalog prices and derives compatibility modality
+// lists.
 // Model price lookup uses complete identity candidates in their supplied order.
 // Stored catalog entries remain shared read-only objects, and a caller-provided
 // candidate generator can constrain the model identities before lookup;

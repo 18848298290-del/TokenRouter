@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// balance.go persists user balance credits, redemption adjustments and
+// administrator replacements.
 // Balance mutations distinguish general credits, redemption floors and
 // administrator adjustments. Positive UpdateBalance credits also increase
 // cumulative recharges used by percentage notifications; AddBalance and the

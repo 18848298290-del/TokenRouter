@@ -9,11 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// balance_notifications.go selects balance and provider-quota alerts and
+// dispatches their email notifications.
 // Balance and quota notices are selected after funds or provider usage have
 // changed. Balance checking compares the supplied previous funds with the
 // deducted amount, while quota checking reconstructs earlier usage by
-// subtracting the increment from committed totals. Each event needs its global
-// switch and usable verified recipients before delivery is scheduled.
+// subtracting the increment from committed totals. Global switches control both
+// paths. Provider quota dispatch also requires a nonempty verified recipient list;
+// balance dispatch passes the filtered recipient list to the sender.
 //
 // A transaction quota result takes precedence over rereading usage, but
 // provider dimensions still determine which thresholds apply. When that result

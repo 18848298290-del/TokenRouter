@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// passthrough.go runs dedicated WebSocket sessions and coordinates turn
+// admission with terminal delivery.
 // A dedicated WebSocket relays client frames and upstream events concurrently.
 // Completion and delivery consume request metadata at different points when a
 // bare error waits for later settlement evidence. PassthroughSession queues

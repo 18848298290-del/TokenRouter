@@ -17,11 +17,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
+// panel_rate_limit.go applies user and public-address rate limits to panel
+// requests.
 // Panel access uses separate fixed-window buckets for each authenticated user,
 // each heavy query scope, and each eligible public client address. Cached
 // settings decide whether a bucket applies; missing dependencies, disabled
 // limits, administrator exemptions, and counter errors leave the handler chain
 // available.
+//
+// User buckets require an authenticated positive user ID and select global or
+// heavy limits independently. Public buckets use the security client address
+// and bypass local or unusable addresses, which can identify shared ingress. A
+// denied counter result aborts with the panel response and a rounded retry
+// delay; storage errors are logged before allowing the handler chain to
+// continue.
 
 // panelRateLimitWindow supplies the one-minute counter window for both
 // user-scoped and public-address panel buckets.

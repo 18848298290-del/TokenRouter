@@ -11,11 +11,19 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_warning.go detects cyber-policy warnings and carries their evidence
+// alongside forwarding errors.
 // Cyber-policy failures can appear as structured error events or as upstream
 // warning text. Detection feeds both retry exclusion and policy recording,
 // while the error wrapper keeps structured warning evidence alongside the
 // underlying failure. Client message extraction sanitizes query secrets and
 // limits its selected text before delivery.
+//
+// Warning wrapping copies the response bytes before attaching the warning to
+// the underlying error, so later changes to the supplied byte slice cannot
+// replace that evidence. Unwrap retains ordinary error-chain inspection.
+// Structured policy events also retain available token counts for moderation
+// recording; absent usage leaves those counts zero in the resulting mark.
 
 // This interface assertion keeps the warning wrapper available to forwarding
 // consumers that extract structured upstream warning evidence from an error.

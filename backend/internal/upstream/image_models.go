@@ -2,6 +2,8 @@ package upstream
 
 import "strings"
 
+// image_models.go recognizes Gemini, GPT, and Grok image model families for
+// upstream routing decisions.
 // Image request consumers recognize model families before selecting a platform
 // image path. Gemini names accept a models/ prefix and family suffixes, while
 // GPT and Grok names use their own trimmed prefix or exact-name checks for

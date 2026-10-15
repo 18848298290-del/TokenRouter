@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// turn_error.go classifies WebSocket turn failures and retains current-turn
+// replay bytes for provider replacement.
 // A pooled turn can fail before output, after output, or because its
 // continuation response disappeared. The stored stage and downstream-write flag
 // let ingress separate reconnectable read/write failures from cancellation and

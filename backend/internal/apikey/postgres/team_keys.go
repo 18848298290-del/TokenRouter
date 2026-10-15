@@ -12,11 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// Team Key administration returns the stored credential to its caller so
-// successful mutations can invalidate authentication afterward. Owner
-// disablement is a separate persisted lock beside status, and team deletion
-// saves a tombstone and soft-delete time together after locking the targeted
-// row.
+// team_keys.go reads and mutates team credentials and returns their secrets
+// for authentication-cache invalidation. Owner disablement is a separate
+// persisted lock beside status, and team deletion saves a tombstone and
+// soft-delete time together after locking the targeted row.
 //
 // Standalone administration uses the shared SQL handle, while member removal,
 // rejoin and team teardown accept a caller-owned transaction. An optional

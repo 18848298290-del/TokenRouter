@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// attributes.go merges model attribute sources and computes capabilities
+// shared by requestable routes.
 // Model attributes distinguish an unknown capability from an explicit false or
 // empty value. Supplements fill missing fields, while administrator patches
 // replace populated fields and return copies for request and display consumers.

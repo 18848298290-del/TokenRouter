@@ -2,6 +2,8 @@ package provider
 
 import "context"
 
+// refresh_request.go defines and evaluates Antigravity one-time refresh
+// requests and their clearing fields.
 // Antigravity can carry a one-time server request to refresh its OAuth
 // credentials before ordinary expiry checks require it. Success and permanent
 // failure clear its flag, reason and timestamp together through storage that

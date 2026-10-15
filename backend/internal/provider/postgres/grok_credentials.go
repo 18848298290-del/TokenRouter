@@ -9,6 +9,8 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// grok_credentials.go conditionally writes Grok credential failures, refreshed
+// credentials, and temporary pauses.
 // Grok credential failures and refresh results are conditional on the
 // identity that produced the request. Complete JSONB credentials protect refreshed
 // tokens; refresh and request-containment paths also compare nullable proxy IDs.

@@ -22,9 +22,10 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// OpenAI authorization, quota management, and execution credentials share token
-// refresh and cached provider reads. Agent identity changes invalidate shared
-// WS connections, quota actions have an early stop hook, and optional parent or
+// provider_openai_tokens.go assembles OpenAI authorization, quota management,
+// and cached execution credentials. These consumers share token refresh and
+// cached provider reads. Agent identity changes invalidate shared WS
+// connections, quota actions have an early stop hook, and optional parent or
 // token sources are exposed according to the dependencies supplied during
 // assembly.
 

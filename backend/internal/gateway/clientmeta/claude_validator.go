@@ -7,11 +7,13 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// Claude Code identification affects request mimicry and client restrictions,
-// so ordinary Messages requests need matching payload and header features as
-// well as the CLI User-Agent. Auxiliary count-token and marked Haiku probes
-// use a smaller set of checks because they can omit the ordinary system prompt.
-// These features are supplied by the requester and classify its format.
+// claude_validator.go recognizes Claude Code request formats from User-Agent,
+// headers, and payload features. Claude Code identification affects request
+// mimicry and client restrictions, so ordinary Messages requests need matching
+// payload and header features as well as the CLI User-Agent. Auxiliary
+// count-token and marked Haiku probes use a smaller set of checks because they
+// can omit the ordinary system prompt. These features are supplied by the
+// requester and classify its format.
 //
 // System-prompt recognition accepts identity-template similarity, billing
 // attribution with an entrypoint, or a structured security-monitor prompt.

@@ -14,15 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Automatic OpenAI probes apply the same client restrictions and outbound
-// identity priorities as gateway requests. Preparation reads the chosen
-// User-Agent, supplies credential-owner defaults for OAuth, pairs the
-// originator, and records the TLS router match before credential execution
-// begins.
+// openai_test_policy.go prepares automatic OpenAI probe admission and applies
+// outbound identity and TLS routing choices. Automatic OpenAI probes apply the
+// same client restrictions and outbound identity priorities as gateway
+// requests. Preparation reads the chosen User-Agent, supplies credential-owner
+// defaults for OAuth, pairs the originator, and records the TLS router match
+// before credential execution begins.
 //
 // Router-provided outbound agents win over record agents and forced CLI or
-// browser replacement. Browser agents can use a dynamic configured value or the
-// supplied default, while passthrough normalization depends on whether the
+// browser replacement. Browser agents can use a dynamic configured value or
+// the supplied default, while passthrough normalization depends on whether the
 // earlier identity was a browser. TLS selection uses the recorded preparation
 // flag to choose automatic or manual profile services, keeping the route
 // decision and fingerprint source aligned for a probe. Callers configure

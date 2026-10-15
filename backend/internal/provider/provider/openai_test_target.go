@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// OpenAI prepared tests apply automatic client policy before obtaining
-// execution credentials. The target creates per-run headers for the selected
-// User-Agent and originator, carries the requested text protocol, and sends
-// preparation failures through the same event output as execution errors.
+// openai_test_target.go prepares OpenAI test runs and applies automatic client
+// policy before credential execution. The target creates per-run headers for
+// the selected User-Agent and originator, carries the requested text protocol,
+// and sends preparation failures through the same event output as execution
+// errors.
 
 // openaiTestTarget retains an OpenAI executor and provider record for prepared
 // probe execution.

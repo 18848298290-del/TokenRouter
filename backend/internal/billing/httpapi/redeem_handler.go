@@ -8,6 +8,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// redeem_handler.go handles authenticated redemption and redemption-history
+// requests.
 // User redemption and history requests derive the recipient from the
 // authentication subject placed in Gin context. Binding and service errors
 // become HTTP responses, while successful credentials pass through the user

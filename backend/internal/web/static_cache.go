@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// static_cache.go recognizes fingerprinted embedded assets and applies their
+// immutable browser-cache policy.
 // Bundle assets whose filenames contain an eight-character fingerprint can be
 // reused under a long immutable cache lifetime. The recognizer checks the
 // assets path and suffix spelling, and callers apply this policy after disk

@@ -19,6 +19,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go parses creative submissions and serves task metadata, image
+// content, and acknowledgments.
 // Creative HTTP requests use the authenticated user and browser workspace as
 // separate task-access inputs. Model and upload-capability reads need the
 // user, while task creation, history, content, and acknowledgment also require

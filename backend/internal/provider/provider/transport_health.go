@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// transport_health.go records transport activity and applies local and durable
+// pauses after persistent transport failures.
 // A classified persistent transport failure can pause OpenAI and Grok
 // scheduling before its durable cooldown is written. Those platforms receive an
 // immediate ten-minute local block, and a separate five-second context permits

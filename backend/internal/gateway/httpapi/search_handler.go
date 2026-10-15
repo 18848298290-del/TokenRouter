@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// search_handler.go admits standalone Web and X search requests, executes
+// searches and writes their completion results.
 // Standalone Web and X search share a JSON entry flow that rejects malformed
 // or blank input before authentication. The request type name appears in JSON
 // type errors, while trimmed query selection and a separately normalized

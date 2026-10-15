@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// values.go maps creative image options to provider wire values and supplies
+// bounded response decoding.
 // Creative image tiers and aspect-ratio labels need concrete wire values for
 // each provider. OpenAI combines the tier and orientation into fixed pixel
 // dimensions, while Grok receives one of its resolution strings and a

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// parse.go parses proxy URLs and derives normalized connection-pool
+// identities.
 // Proxy input accepts four supported schemes and treats blank text as direct
 // access. Parsing retains credentials needed for routing and normalizes the
 // SOCKS5 alias to SOCKS5H; pool-key normalization then removes path, query,

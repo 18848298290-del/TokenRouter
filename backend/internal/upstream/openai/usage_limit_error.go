@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// usage_limit_error.go extracts quota reset times and plan metadata from
+// recognized usage-limit error responses.
 // Usage-limit responses can report an absolute Unix reset timestamp, a relative
 // seconds offset, or an OpenCode Go readable duration. Recognized error types
 // gate those interpretations, and absolute reset evidence takes precedence

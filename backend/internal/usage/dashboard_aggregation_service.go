@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// dashboard_aggregation_service.go schedules usage aggregation, advances
+// historical coverage, and repairs buckets after deletions.
 // Live aggregation revisits the recent usage window while historical coverage
 // advances backward through completed UTC hours. Manual backfill has its own
 // target and cursor, and state updates use field-specific changes so a later

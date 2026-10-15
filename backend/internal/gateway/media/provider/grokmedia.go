@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grokmedia.go binds prepared Grok image and video requests to native media
+// execution.
 // Grok image and video execution receive a prepared authenticated request and
 // media-specific response callbacks. The adapter binds a native target; native
 // execution validates image output before transformation, writes retained

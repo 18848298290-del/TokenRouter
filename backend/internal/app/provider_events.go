@@ -22,10 +22,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// Provider persistence emits scheduler events and reloads current records for
-// snapshot publication. The application installs that event adapter before
-// returning the provider store, and billing usage receives the same publication
-// capability while retaining its chosen SQL executor for event writes.
+// provider_events.go binds provider persistence events to scheduler outbox
+// writes and current-record snapshot publication. The application installs that
+// event adapter before returning the provider store, and billing usage receives
+// the same publication capability while retaining its chosen SQL executor for
+// event writes.
 
 // providerRecordsReader supplies stored provider data for scheduler snapshot
 // publication.

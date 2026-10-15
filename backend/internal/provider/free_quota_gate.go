@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// free_quota_gate.go filters Grok Free OAuth candidates using cached local
+// token-budget observations.
 // Explicit Grok Free OAuth providers can reach a local token budget before
 // upstream requests report exhaustion. Selection uses cached usage to remove
 // only eligible providers whose known count reaches the configured fraction

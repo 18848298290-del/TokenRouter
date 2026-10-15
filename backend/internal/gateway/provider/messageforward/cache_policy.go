@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// cache_policy.go selects Anthropic cache TTL injection and response usage
+// classification.
 // Anthropic cache TTL injection and usage classification answer different
 // questions: eligible OAuth requests can receive a one-hour request TTL while
 // returned cache usage is classified into the five-minute bucket. Provider

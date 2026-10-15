@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares supplied monitoring and quota preferences
+// for combined settings updates.
 // A combined settings update may supply one Ops field while leaving the other
 // monitoring preferences absent. The JSON decoder represents absent switches as
 // false, so preparation tracks supplied field names and removes entries created

@@ -2,6 +2,8 @@ package ops
 
 import "time"
 
+// alert_models.go defines stored alert rules, observed events, scope silences,
+// and event-list filters.
 // Alert evaluation stores the observed value and threshold in an event so
 // administrators can inspect the firing comparison after editing its rule.
 // Consecutive evaluations and the latest fire time control event creation,

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// redeem_code.go defines redemption credentials and derives their capacity and
+// effective status.
 // Redeem credentials can be used once, a fixed number of times or without a
 // lifetime use cap. The latest recipient fields summarize one successful
 // grant, while usage records retain each recipient/time for history and

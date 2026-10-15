@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_request_builders.go builds Responses requests with selected targets,
+// model attributes and identity callbacks.
 // Responses builders resolve the selected provider's protocol target before
 // adding credentials and caller metadata. Ordinary and passthrough requests
 // share dynamic identity, session, and header callbacks; the upstream builders

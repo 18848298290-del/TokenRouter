@@ -10,6 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// fixed_window.go counts requests in Redis expiry windows and decides whether
+// each request stays within its rate limit.
 // Each rate-limit key counts every request until its Redis expiry, including
 // requests already over the caller's limit. A Lua script increments and
 // examines TTL atomically, starting the window on the first count and

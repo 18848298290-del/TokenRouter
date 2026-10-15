@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/contact"
 )
 
+// user.go defines local account state and implements password, role, and
+// account eligibility checks.
 // Local account state is distinct from its external sign-in identities and
 // transient authentication observations. Stored email and password hash feed
 // the session credential fingerprint, while group lists govern account binding

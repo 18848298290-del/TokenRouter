@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity quota responses can represent verification requirements or policy
-// violations as well as remaining model capacity. The options connect the
-// provider quota reader to bounded upstream queries and typed forbidden errors,
-// with platform parsers supplying the corresponding display category and URL.
+// antigravity_quota.go supplies upstream clients and forbidden-response
+// classifiers to provider quota queries. Antigravity quota responses can
+// represent verification requirements or policy violations as well as
+// remaining model capacity. The options connect the provider quota reader to
+// bounded upstream queries and typed forbidden errors, with platform parsers
+// supplying the corresponding display category and URL.
 
 // AntigravityQuotaOptions supplies upstream quota clients and
 // forbidden-response parsing.

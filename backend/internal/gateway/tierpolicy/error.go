@@ -1,9 +1,9 @@
 package tierpolicy
 
-// A blocked Fast decision carries one client-facing message to the protocol
-// adapter. Keeping that message in a distinct error type lets HTTP and
-// WebSocket callers recognize a policy refusal and format it using their own
-// response envelope.
+// error.go represents blocked Fast policy decisions as errors carrying
+// client-facing messages. Keeping that message in a distinct error type lets
+// HTTP and WebSocket callers recognize a policy refusal and format it using
+// their own response envelope.
 
 // BlockedError carries the client-facing message for a service tier policy
 // rejection.

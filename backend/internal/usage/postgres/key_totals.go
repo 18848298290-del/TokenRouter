@@ -9,6 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// key_totals.go reads recent charged-usage totals for API-key lists.
 // API-key list rows show recent charges even for keys with no matching usage.
 // Each requested key starts with a zero total, and the reader chooses covered
 // analytics or one raw query over the same captured thirty-day range. The

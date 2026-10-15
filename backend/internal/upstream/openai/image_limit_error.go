@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// image_limit_error.go recognizes image capability and throttling errors and
+// parses upstream cooldown hints.
 // Image-specific throttling is distinguished from ordinary text rate limits by
 // a 429 response containing image markers. A separate 400 predicate recognizes
 // loss of a declared image_generation tool, allowing gateway-built image

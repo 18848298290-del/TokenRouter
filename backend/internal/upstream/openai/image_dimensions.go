@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+// image_dimensions.go detects image dimensions from encoded headers and
+// reconciles reported result sizes.
 // Image billing metadata can carry auto dimensions even after image bytes have
 // a concrete size. Dimension probing reads bounded Base64 headers and
 // recognizes WebP layouts directly, while registered JPEG and PNG decoders

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// refresh_tuning.go resolves refresh limits, retry delays, and attempt budgets
+// relative to lock leases.
 // Background refresh budgets must fit both configured work limits and a
 // distributed lock's finite lease. Accessors default absent or nonpositive
 // settings, cap administrator limits, and keep total cycle work distinct from

@@ -17,6 +17,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// create.go creates upstream Live calls and saves their ownership records
+// under persistent concurrency leases.
 // Creating a Live call transfers concurrency accounting from ordinary request
 // slots to a persistent session lease. The caller holds its user slot while
 // selection supplies an acquired provider slot; model and client qualification

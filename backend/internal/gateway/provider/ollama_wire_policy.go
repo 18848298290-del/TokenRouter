@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
+// ollama_wire_policy.go selects Ollama Cloud Chat compatibility and applies
+// request and response normalization.
 // Ollama Cloud compatibility applies to OpenAI API Key targets whose resolved
 // upstream text protocol is Chat. Saved usage metadata or a recognized cloud
 // base URL identifies those targets, and the same gate controls request,

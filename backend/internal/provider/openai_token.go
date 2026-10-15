@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// openai_token.go selects OpenAI access tokens through cache lookup, refresh
+// coordination, and stored-credential recovery.
 // An OpenAI OAuth request can use a cached token, refresh near expiry or
 // continue with captured credentials according to its error policy. A nonempty
 // cache hit wins before stored expiry checks. PAT mode skips expiry-triggered

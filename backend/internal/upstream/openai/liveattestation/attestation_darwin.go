@@ -18,6 +18,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// attestation_darwin.go generates macOS Live attestation headers from
+// DeviceCheck tokens and bounded host signals.
 // macOS Live attestation uses the Node runtime and DeviceCheck native module
 // found inside a ChatGPT application bundle. Runtime resolution requires Apple
 // Silicon, checks the candidate bundle paths and module files, and reads an

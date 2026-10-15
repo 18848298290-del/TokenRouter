@@ -27,10 +27,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Immediate, scheduled, and group availability tests share production provider
-// targets and typed test events. Test assembly captures operator URL policy and
-// platform credentials, while administrator Qoder probes own a separate session
-// provider whose stop hook runs after periodic test producers stop.
+// provider_testing.go assembles provider test targets, scheduled runners, and
+// shared agent identity preparation. Immediate, scheduled, and group
+// availability tests share production provider targets and typed test events.
+// Test assembly captures operator URL policy and platform credentials, while
+// administrator Qoder probes own a separate session provider whose stop hook
+// runs after periodic test producers stop.
 
 // provideAgentTaskCoordinator constructs shared process-local agent
 // registration coordination for persisted providers.

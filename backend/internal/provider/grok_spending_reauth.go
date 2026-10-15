@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// grok_spending_reauth.go reads Grok reauthorization signals, clears stored
+// flags, and selects spending-limit reset times.
 // Grok spending-limit failures can require reauthorization or another check at
 // the billing period end. Stored error text and Extra flags drive that display
 // decision; successful credential replacement uses a bounded best-effort patch

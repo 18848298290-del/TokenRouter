@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gateway_models.go constructs model-list HTTP handlers and adapts selected
+// Gemini providers for model-resource reads.
 // Model HTTP display combines requestable routing data with catalog metadata.
 // Gemini resource reads use a selected provider and return its status, headers,
 // and body, while catalog absence is represented as a nil reader interface for

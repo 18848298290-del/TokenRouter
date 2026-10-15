@@ -6,6 +6,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_quota_snapshot.go converts Codex usage snapshots into raw and
+// normalized provider Extra fields.
 // Codex usage observations carry primary and secondary window measurements whose
 // labels can differ from five-hour and seven-day categories. Extra updates keep
 // the raw window fields alongside normalized fields, including supplied zero

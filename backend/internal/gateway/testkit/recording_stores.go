@@ -10,18 +10,18 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Completion tests need to observe attempted writes even when storage rejects
-// them or returns a duplicate result. Log and settlement fixtures capture
-// pointer inputs and the context's error at call time, while configured
-// outcomes drive the production recorder's next decision.
+// recording_stores.go captures completion storage calls and returns configured
+// or synthesized billing outcomes. Log and settlement fixtures capture pointer
+// inputs and the context's error at call time, while configured outcomes drive
+// the production recorder's next decision.
 //
 // A settlement error wins before preset or default results. With no configured
 // result, the fixture synthesizes an applied result and assigns the command's
-// billable amount to its selected balance or subscription source. Log
-// insertion flags, quota updates and rate observations remain separately
-// controlled. These serial recorders retain log, command, provider and
-// configured result pointers, so tests arrange ownership and ordering when
-// inspecting or mutating them.
+// billable amount to its selected balance or subscription source. Log insertion
+// flags, quota updates and rate observations remain separately controlled.
+// These serial recorders retain log, command, provider and configured result
+// pointers, so tests arrange ownership and ordering when inspecting or mutating
+// them.
 
 // BestEffortUsageLogStore captures both log write paths with separate
 // configured errors.

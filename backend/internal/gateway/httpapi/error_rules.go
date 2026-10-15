@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// error_rules.go serves administrative HTTP operations for stored upstream
+// error passthrough rules.
 // Final upstream error rules are administered as complete stored values, but
 // HTTP updates accept partial JSON fields. Creation supplies enabled and
 // passthrough defaults, while updating starts from the loaded rule so omitted

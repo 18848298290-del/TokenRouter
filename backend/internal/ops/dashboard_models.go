@@ -2,6 +2,8 @@ package ops
 
 import "time"
 
+// dashboard_models.go defines dashboard filters, traffic summaries, latency
+// measurements, and histogram response shapes.
 // Dashboard totals distinguish observed usage rows, client-visible error rows,
 // and the subset countable for SLA. Rates use fractional encoding for SLA and
 // errors, while latency summaries use nullable integer milliseconds; optional

@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// session_attempts.go tracks logical provider attempts and applies their final
+// outcomes to session retention.
 // Provider resources may be released before a request has its final service
 // outcome. Session retention therefore follows logical attempt completion, so
 // a billable partial result can keep its idle registration even after physical

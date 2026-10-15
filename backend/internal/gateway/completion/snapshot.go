@@ -7,11 +7,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// snapshot.go copies mutable completion inputs before asynchronous processing.
 // A queued completion can outlive the mutable result, key, and provider records
-// used by the request. Capture therefore separates pointer values and collection
-// storage before workers normalize usage or resolve settlement settings. The
-// subscription snapshot intentionally keeps its ID and plan group rates, because
-// the funds transaction reloads eligibility and allocations from persistent state.
+// used by the request. Capture therefore separates pointer values and
+// collection storage before workers normalize usage or resolve settlement
+// settings. The subscription snapshot intentionally keeps its ID and plan group
+// rates, because the funds transaction reloads eligibility and allocations from
+// persistent state.
 //
 // SnapshotResult separates usage metadata, and SnapshotKey copies mutable price
 // pointers while retaining the immutable time.Location reference. Notification

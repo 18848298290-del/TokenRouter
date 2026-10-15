@@ -20,10 +20,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// Gemini provider tests share a streaming event reader but prepare different
-// credential routes. API keys use the AI Studio model action, OAuth uses Code
-// Assist when a project is stored and AI Studio otherwise, and service accounts
-// use a Vertex project/location URL with their access token.
+// gemini_test_execution.go builds and executes streaming Gemini probes across
+// API-key, OAuth, and service-account routes. Gemini provider tests share a
+// streaming event reader but prepare different credential routes. API keys use
+// the AI Studio model action, OAuth uses Code Assist when a project is stored
+// and AI Studio otherwise, and service accounts use a Vertex project/location
+// URL with their access token.
+//
+// An explicit test type takes precedence over model-based image detection, so
+// a text selection remains text even for an image-named model. API-key and
+// service-account mappings choose the model before payload construction. Code
+// Assist wraps the same payload with its project and model identifiers, while
+// the other routes send the payload directly to their model-action endpoint.
 
 // GeminiProviderTest probes Gemini using provider credentials and a shared
 // transport.

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// oauth_client.go exchanges OAuth authorization codes and refresh tokens
+// through the selected transport and client identity.
 // OAuth code exchange and refresh submit form-encoded requests to the
 // configured token endpoint. A supplied TLS profile selects the shared
 // provider-aware HTTP transport; requests with only a User-Agent option keep

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// target.go dispatches creative image execution through callbacks bound to the
+// selected provider.
 // Creative platform requests obtain credentials and transport from a target
 // bound to one selected provider. OpenAI image retrieval has its own download
 // callback, while authenticated generation callbacks prepare requests and

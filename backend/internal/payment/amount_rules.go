@@ -6,6 +6,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// amount_rules.go calculates credited recharge amounts and proportional
+// gateway refunds using their respective rounding rules.
 // A balance recharge can credit a different reasoning-point amount from
 // the external payment because its configured multiplier applies before
 // credit rounding. Subscription currency conversion has a separate rate:

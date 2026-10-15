@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// drive_client.go fetches Google Drive storage limits and usage with bounded
+// retries and cancellable waits.
 // Drive quota observations report decimal byte counts as JSON strings. Missing
 // or invalid counts remain zero, allowing authorization callers to classify
 // storage plans from the decoded limit while the technical client reports

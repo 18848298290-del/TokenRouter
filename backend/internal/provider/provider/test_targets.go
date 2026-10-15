@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// test_targets.go loads provider records and selects the platform executor for
+// administrative tests.
 // Provider test handles use the stored platform to choose execution after
 // loading the requested provider ID. Jev, Qoder, Gemini, Grok, OpenAI, CN, and
 // Antigravity have explicit routes; remaining platforms enter the Anthropic

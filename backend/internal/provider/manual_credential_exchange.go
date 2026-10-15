@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// manual_credential_exchange.go exchanges platform credentials and merges
+// refresh results with stored provider configuration.
 // Manual renewal receives a provider snapshot and produces merged credentials
 // for the management coordinator to persist. Platform token builders return
 // different metadata shapes, so the merge retains existing settings and

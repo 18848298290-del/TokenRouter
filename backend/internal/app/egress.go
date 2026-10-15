@@ -19,6 +19,8 @@ import (
 	schedulerpostgres "github.com/TokenFlux/TokenRouter/internal/scheduler/postgres"
 )
 
+// egress.go constructs proxy administration, probes, transfers, expiry checks,
+// and TLS services.
 // Proxy edits can affect linked providers and scheduler visibility. The proxy
 // store receives transaction participants for those changes, while probing,
 // administrative tasks, and TLS collection use configured network policy and

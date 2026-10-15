@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// auth_storage.go delegates authentication persistence and grant participation
+// to the configured storage adapter.
 // Authentication writes use storage participants for registered users,
 // invitation claims, identity ownership and first-bind grants. The service
 // forwards prepared inputs, while the adapter chooses transaction or savepoint

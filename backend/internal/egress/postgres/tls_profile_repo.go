@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// tls_profile_repo.go persists TLS fingerprint profiles and converts stored
+// optional lists for administrator reads.
 // Stored TLS profiles expose arrays to administrator responses even when
 // database fields are absent. Creation omits empty optional lists, update
 // clears them, and entity conversion fills absent arrays with present empty

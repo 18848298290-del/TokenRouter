@@ -5,6 +5,8 @@ import (
 	"slices"
 )
 
+// group_routing_policy.go defines group model policy and copies its supported
+// nested feature values.
 // Authentication snapshots reuse group model policy after the administrative
 // request finishes. Model mappings, allowlists, and JSON-shaped feature values
 // need separate mutable storage so later edits cannot alter a retained

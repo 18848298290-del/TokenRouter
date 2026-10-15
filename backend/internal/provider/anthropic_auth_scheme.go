@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// anthropic_auth_scheme.go selects the API-key authentication header scheme for
+// Anthropic and CN provider records.
 // API-key Messages authentication can use x-api-key or a bearer header for
 // Anthropic and CN providers. Provider Extra selects the scheme for those
 // API-key records; other configurations keep the x-api-key result returned by

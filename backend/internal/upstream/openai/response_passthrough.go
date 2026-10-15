@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_passthrough.go forwards passthrough Responses output while
+// repairing lifecycle events, terminal output, and client identities.
 // Passthrough Responses streams keep provider framing while normalizing
 // lifecycle payloads, tool identity, model spelling, and reconstructed terminal
 // output. Preamble lines wait until content or a selected failure starts

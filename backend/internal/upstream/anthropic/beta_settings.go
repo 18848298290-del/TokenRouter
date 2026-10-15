@@ -1,5 +1,7 @@
 package anthropic
 
+// beta_settings.go defines beta policy settings and the default model
+// whitelist for context-1m requests.
 // Beta policy defaults permit the context-1m token for the listed Sonnet 5
 // spellings and filter it for other models. The table includes direct, Vertex,
 // and Bedrock forms; delimiter-specific patterns keep similarly named model

@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending_decisions.go selects pending registration and account-choice
+// transitions from provider ownership, email matches, and local requirements.
 // Pending registration first distinguishes a provider identity owner from an
 // account found by normalized email. Those observations select account
 // creation or existing-account choice, while a mismatched identity email is

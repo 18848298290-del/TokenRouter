@@ -11,6 +11,8 @@ import (
 	infra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// keys.go queries the latest nonempty usage IP address for each requested API
+// key.
 // A key's recent IP is the latest retained usage row with a nonempty ip_address,
 // ordered by creation time and row ID. PostgreSQL probes once for each requested
 // key through a lateral subquery; other dialects rank matching rows before

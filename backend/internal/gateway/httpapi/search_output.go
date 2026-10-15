@@ -7,6 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// search_output.go writes serialized search events and JSON responses through
+// the active Gin response writer.
 // Search tool emulation presents serialized events through the forwarding
 // request's Gin writer. Stream setup prepares status and buffering headers,
 // each accepted event write flushes, and the JSON path sends an already

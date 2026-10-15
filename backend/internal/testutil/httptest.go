@@ -2,6 +2,8 @@ package testutil
 
 import "github.com/gin-gonic/gin"
 
+// httptest.go sets Gin's process-wide test mode when the fixture package
+// initializes.
 // Packages importing these HTTP test helpers share Gin's process-wide mode
 // setting. Initialization selects TestMode before those packages create test
 // routers, suppressing Gin's normal debug output during handler fixtures and

@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// messages_gemini_attempts.go executes Gemini-backed Messages attempts and
+// captures their original client attribution and usage.
 // Forced Gemini-backed Messages retains its own mapped model and body beside
 // original client input. Provider selection uses sticky identity without the
 // Anthropic session-limit inputs, and forwarding chooses native Gemini or

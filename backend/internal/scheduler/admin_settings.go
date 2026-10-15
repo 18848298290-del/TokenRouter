@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// admin_settings.go validates scheduler overrides and prepares their stored
+// text and presence flags.
 // Administrative scheduler input keeps numeric overrides as text so an empty
 // value can inherit a process default. Normalization validates each supplied
 // value, then resolves the weight set to reject combinations whose base or

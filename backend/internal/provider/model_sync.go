@@ -5,6 +5,8 @@ import (
 	"slices"
 )
 
+// model_sync.go fetches live model catalogues using copied provider records
+// and tracked request lifetimes.
 // Administrator model previews fetch a live catalogue using a provider snapshot
 // whose credentials can be mutated by the adapter. The service copies that
 // input before fetching and copies the returned model slice before handing it

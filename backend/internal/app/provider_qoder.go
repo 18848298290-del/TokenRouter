@@ -14,10 +14,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder authorization resolves supplied proxy IDs from persistence and uses an
-// empty proxy URL when no ID is supplied. Execution tokens use a separate
-// session cache bound to transport and TLS profiles; the composite invalidator
-// connects that cache with access-token cache invalidation.
+// provider_qoder.go constructs Qoder authorization and execution session
+// sources with shared credential invalidation. Qoder authorization resolves
+// supplied proxy IDs from persistence and uses an empty proxy URL when no ID is
+// supplied. Execution tokens use a separate session cache bound to transport
+// and TLS profiles; the composite invalidator connects that cache with
+// access-token cache invalidation.
 
 // provideQoderAuthorizationHTTP constructs the HTTP adapter for Qoder authorization operations.
 func provideQoderAuthorizationHTTP(source *provideradapter.QoderAuthorization) *providerhttp.QoderOAuthHandler {

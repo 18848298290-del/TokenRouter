@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// config.go validates and persists search configuration, publishes Manager
+// generations, and supplies isolated configuration views.
 // Search settings contain secrets and optional quota dates, while the running
 // Manager retains a copied execution configuration. Cache reads, administrator
 // views, and published candidates receive separate slices and integer pointers

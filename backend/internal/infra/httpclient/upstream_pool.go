@@ -27,6 +27,8 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// upstream_pool.go shares upstream HTTP clients and tracks request
+// reservations through response-body closure.
 // An upstream client's connection identity depends on provider/proxy
 // isolation, pool settings, the caller's protocol variant, and any raw TLS
 // profile identity. Acquisition reserves an entry while its request is in

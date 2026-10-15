@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// openai_token_ports.go defines controlled token-count targets and binds
+// counting admission services.
 // Token counting exposes controlled provider targets separately from diagnostic
 // snapshots. HTTP adapters bind an effective-key copy, route plan, funding
 // reader, and request-local body cache, then use the dedicated count loops to

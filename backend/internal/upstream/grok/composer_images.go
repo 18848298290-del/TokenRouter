@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// composer_images.go replaces Composer image inputs with ordered descriptions
+// and returns the auxiliary usage observations.
 // Composer requests can contain inline images that need textual descriptions
 // before the selected Composer model receives its conversation. Image URLs are
 // collected in encounter order, and each auxiliary description uses that same

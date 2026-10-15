@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// bootstrap.go decides whether observed account counts permit initial
+// administrator creation.
 // Initial installation creates an administrator only after the user counts
 // identify an empty database. Existing users block this setup path even when
 // none has the admin role, so bootstrap cannot create a privileged account in

@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers audit-history listing, detail, and clearing
+// endpoints under the administrator router.
 // Audit history is exposed through the administrator router's existing protection.
 // Listing and detail routes use the shared group middleware, while clearing also
 // verifies fresh TOTP inside the handler so its authorization is checked on each

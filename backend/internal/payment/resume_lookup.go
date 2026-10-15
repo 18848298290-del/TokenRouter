@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// resume_lookup.go matches signed continuation claims against stored order
+// identity before recovering payment state.
 // A signed resume token identifies a known local order and can constrain its
 // saved buyer, instance, provider, and visible method. Historical snapshot
 // pins take precedence during those comparisons, keeping recovery tied to

@@ -7,6 +7,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// relay_contract.go defines relay callbacks and results used to connect
+// terminal observation with client delivery.
 // Responses terminal observation and client delivery can finish at different
 // points. Immediately settled terminals report their turn before client
 // writing, while a bare error can be forwarded before later evidence settles

@@ -2,6 +2,8 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/identity"
 
+// identity_projection.go transfers identity administrator settings and
+// secret-presence flags through the combined snapshot.
 // Identity settings supply registration defaults, challenge credentials, and
 // OAuth choices to the combined administrator Snapshot. The update value selects
 // fields used by identity preparation, while readback additionally includes

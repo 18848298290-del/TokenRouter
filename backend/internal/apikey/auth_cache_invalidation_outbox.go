@@ -12,12 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Database invalidation records survive a failed direct cache notification and
-// are claimed under a lease for delivery. Each record first deletes shared
-// state and publishes its hash, then waits for a second pass that can remove a
-// stale in-flight cache refill. Stage completion requires the current claim
-// owner, so successful Redis work can be repeated when acknowledgement fails or
-// a lease is reclaimed.
+// auth_cache_invalidation_outbox.go delivers durable authentication-cache
+// invalidations through leased records and a delayed safety pass. Each record
+// first deletes shared state and publishes its hash, then waits for a second
+// pass that can remove a stale in-flight cache refill. Stage completion
+// requires the current claim owner, so successful Redis work can be repeated
+// when acknowledgement fails or a lease is reclaimed.
 //
 // The worker processes a bounded claimed batch concurrently and waits for
 // started record handlers before returning. Redis failures are retried with

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// images.go builds and sends Gemini image generation requests and selects a
+// decoded image result.
 // Creative Gemini image requests embed reference bytes in generation parts and
 // select API-key, OAuth, or service-account endpoints from caller options.
 // Project-bearing OAuth adds the Code Assist envelope, while service accounts

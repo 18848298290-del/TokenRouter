@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// antigravity_gemini.go starts native Gemini forwarding through a selected
+// Antigravity provider.
 // Native Antigravity Gemini forwarding retains the original model and client
 // stream mode while the shared flow prepares the selected upstream request.
 // Optional group/session values supply sticky deletion context, and each call

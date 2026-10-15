@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pricing_settings.go merges partial billing settings and validates the
+// resulting prices and peak windows.
 // Billing settings updates distinguish an omitted optional price, a cleared
 // override, and an explicit free amount. PriceUpdate carries presence
 // separately from its amount pointer, while ordinary pointer settings allow

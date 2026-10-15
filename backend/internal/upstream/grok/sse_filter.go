@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// sse_filter.go converts recognized Grok billing ping frames to SSE comments
+// while preserving other stream frames.
 // Grok billing gateways can insert event: ping frames into a Responses stream,
 // and strict clients may interpret that event as an unsupported application
 // message. A recognized ping becomes an SSE comment, which retains keepalive

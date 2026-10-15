@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// max_tokens.go resolves Ollama output caps and clamps supplied numeric token
+// limits before forwarding.
 // Ollama output caps are resolved from provider configuration using the model
 // catalog's shared numeric rules. Request clamping changes supplied numeric
 // output-limit fields when their integer interpretation exceeds a positive cap,

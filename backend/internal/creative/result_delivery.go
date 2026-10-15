@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// result_delivery.go records billable provider outcomes before saving
+// generated images for temporary delivery.
 // A generated image becomes billable provider work before its bytes become
 // available for client retrieval. Delivery first records provider identity,
 // success timing, output metadata, and settlement recovery through

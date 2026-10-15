@@ -1,5 +1,7 @@
 package transport
 
+// options.go defines connection-pool, header-timeout, and OpenAI HTTP/2
+// configuration consumed by the transport client.
 // Transport settings distinguish an absent configuration from explicit zero
 // limits. The generic pool, platform header waits, and OpenAI HTTP/2 policy
 // each apply their own defaults before the client combines them with per-

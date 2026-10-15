@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// admin.go queries provider records and performs administrative deletion,
+// recovery, scheduling, and quota-reset operations.
 // Provider deletion and manual recovery can finish some writes before a later
 // operation fails. Administration therefore exposes the storage error while
 // leaving completed shadow deletions or recovery steps in place, and callers

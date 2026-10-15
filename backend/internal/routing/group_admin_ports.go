@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_admin_ports.go wires group administration dependencies and validates
+// effective scheduler weight overrides.
 // Group administration reads provider identity and Key membership through
 // injected readers before writing group settings. Transaction and cache
 // callbacks are supplied by the application, so the administrative service can

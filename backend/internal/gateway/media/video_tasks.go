@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// video_tasks.go stores video task ownership and creation billing snapshots
+// and manages polling billing claims.
 // A Grok video task is bound to user, API key, group and provider so later
 // status/content polling can recover its execution owner. Creation
 // snapshots separately retain model, resolution, duration and creation

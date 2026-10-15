@@ -13,10 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex invitation and reset-credit requests use OAuth credentials with their
-// own User-Agent and TLS settings. A shared token source can refresh the token
-// before client construction, while a blank token falls back to the record's
-// stored access token; the proxy is read separately from its ID.
+// codex_invite.go constructs invitation and reset-credit clients with provider
+// authentication and transport settings. Codex invitation and reset-credit
+// requests use OAuth credentials with their own User-Agent and TLS settings. A
+// shared token source can refresh the token before client construction, while
+// a blank token falls back to the record's stored access token; the proxy is
+// read separately from its ID.
 //
 // An enabled TLS router can override the invitation User-Agent and token TLS
 // profile. A missing router profile resolves through the record's request TLS

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// oauth_usage_qoder_policy.go evaluates Qoder cache reuse and scheduling
+// pauses from quota-cycle observations.
 // Qoder cached display data is reusable only for matching credentials and a
 // still-fresh observation. Success cache is bypassed when a live provider rate
 // limit matches the quota cycle, allowing another query to reconsider

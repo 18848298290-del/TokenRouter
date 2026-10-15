@@ -9,20 +9,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// A 401 on a Spark shadow can belong to its credential parent, so account
-// handling resolves that owner before choosing recovery. Failed or incompatible
-// parent resolution retains the supplied record for this command. OpenAI
-// revocation and permanent-unauthorized classifications select account error
-// before OAuth token invalidation or refresh-pause handling.
+// health_unauthorized.go resolves credential ownership and selects
+// account-error or refresh-pause handling for unauthorized responses. A 401 on
+// a Spark shadow can belong to its credential parent, so account handling
+// resolves that owner before choosing recovery. Failed or incompatible parent
+// resolution retains the supplied record for this command. OpenAI revocation
+// and permanent-unauthorized classifications select account error before OAuth
+// token invalidation or refresh-pause handling.
 //
 // Other OAuth records first attempt optional token invalidation. Missing
 // refresh credentials select account error; usable refresh credentials choose
 // a temporary pause whose production write leaves status unchanged. Active
 // records can therefore remain candidates for refresh maintenance.
 // Antigravity's force-refresh Extra write precedes its pause independently and
-// updates the request record only when that write succeeds. Runtime notification
-// precedes temporary persistence, and logged invalidation/Extra/pause failures
-// retain the selected handled result. These
+// updates the request record only when that write succeeds. Runtime
+// notification precedes temporary persistence, and logged
+// invalidation/Extra/pause failures retain the selected handled result. These
 // writes use provider IDs; identity-conditioned refresh publication belongs to
 // its separate coordinator.
 

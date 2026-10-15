@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// error_classification.go classifies request failures by phase, SLA
+// eligibility, owner, source, and severity.
 // An HTTP error can carry local policy markers and upstream observations
 // together, so its response type alone cannot establish who caused the failure
 // or whether it counts for SLA. Normalization accepts a finite type vocabulary

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// model_attributes.go exposes administrative attribute profiles, catalogue
+// queries, and route previews over HTTP.
 // Model attribute profiles use the HTTP route to choose the record being
 // saved. A create request resets the decoded body ID to zero, and an update
 // replaces it with the positive route ID before service validation and

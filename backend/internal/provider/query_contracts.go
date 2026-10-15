@@ -1,5 +1,7 @@
 package provider
 
+// query_contracts.go defines provider listing filters and refresh-page
+// metadata used by storage and background scans.
 // Background refresh selects provider IDs before loading their complete records
 // and associations. Records can disappear between those reads, so page metadata
 // retains the highest selected ID and whether the original ID page filled its

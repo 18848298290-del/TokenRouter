@@ -12,10 +12,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A user can exclude a public group from their otherwise available groups.
-// Exclusions use a user-group pair as the row identity and record when the
-// choice was persisted; exclusive-group grants are represented separately by
-// UserAllowedGroup.
+// user_disabled_public_group.go defines user-specific exclusions from
+// otherwise available public groups. Exclusions use a user-group pair as the
+// row identity and record when the choice was persisted; exclusive-group
+// grants are represented separately by UserAllowedGroup.
 
 // UserDisabledPublicGroup records one user's exclusion of a non-exclusive group.
 type UserDisabledPublicGroup struct {

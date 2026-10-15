@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares partial creative administrator settings
+// updates while retaining request-field presence.
 // Creative administrator requests can update one field while keeping the
 // other stored settings. Encoding a partial Fields map into AdminSettings gives
 // omitted fields their Go zero values, and preparation expands that typed

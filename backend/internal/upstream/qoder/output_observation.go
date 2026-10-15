@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// output_observation.go records Qoder semantic-output timing and downstream
+// write failures around the execution sink.
 // Output observation measures the first semantic event before the downstream
 // write is attempted. Failed Begin or Emit calls mark a client disconnect while
 // the stream converter can continue reading upstream usage, so completion

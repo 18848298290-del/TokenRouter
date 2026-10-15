@@ -2,6 +2,8 @@ package payment
 
 import "time"
 
+// checkout_types.go defines purchase inputs and the order or OAuth
+// continuation returned to checkout clients.
 // Checkout can return either a newly created local order or a WeChat
 // OAuth step required before creating it. Monetary fields describe the
 // base or credited entitlement and the separate channel amount, while

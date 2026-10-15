@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// group_rate_store.go defines user-group multiplier and RPM override records
+// and persistence operations.
 // Billing multipliers and RPM overrides share one user/group row but have
 // independent unset values. A nil override maps to SQL NULL, and
 // synchronization can replace one kind while retaining the other, so

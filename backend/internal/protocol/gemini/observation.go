@@ -2,6 +2,8 @@ package gemini
 
 import "github.com/tidwall/gjson"
 
+// observation.go extracts independent usage, content, and completion evidence
+// from Gemini response payloads.
 // Gemini execution can report usage without content, and candidate output can
 // arrive before a finish reason. Independent observations let completion code
 // distinguish those cases: explicit zero counters establish usage presence,

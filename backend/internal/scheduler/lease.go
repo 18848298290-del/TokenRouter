@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// lease.go coordinates request and attempt cleanup across resource
+// registration, completion, and cancellation.
 // Request cleanup can race with cancellation and with acquiring another
 // resource. A lease accepts callbacks while open, closes before detaching its
 // callback list, and immediately cleans up resources offered after closure.

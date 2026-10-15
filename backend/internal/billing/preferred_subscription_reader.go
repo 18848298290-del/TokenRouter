@@ -2,6 +2,8 @@ package billing
 
 import "context"
 
+// preferred_subscription_reader.go resolves a payer's pinned subscription for
+// task funding.
 // Pinned task funding needs the selected subscription belonging to the
 // payer and applicable to the final group. Invalid identities and read
 // failures produce an unavailable subscription for the batch submission

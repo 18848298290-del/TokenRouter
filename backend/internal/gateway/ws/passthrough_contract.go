@@ -7,6 +7,8 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 )
 
+// passthrough_contract.go defines provider operations and session inputs for
+// dedicated WebSocket forwarding.
 // A passthrough session filters each client turn before using one dedicated
 // upstream socket, then observes completion through a bidirectional relay. The
 // adapter supplies provider credentials, protocol rewriting, handshake failure

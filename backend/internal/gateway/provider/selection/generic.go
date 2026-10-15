@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// generic.go selects gateway providers, validates hydrated records, and
+// records scheduling outcomes and rejection evidence.
 // A gateway request selects providers from its admitted group after client,
 // protocol, model, quota, and runtime eligibility checks. Group mapping
 // produces the model the provider layer resolves, while forced-platform input

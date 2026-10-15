@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// observed_models.go fetches advisory Grok model IDs and deduplicates the
+// returned names for catalogue callers.
 // Model observations are advisory: a nil response or HTTP error status
 // produces no model IDs, while transport and body-read errors remain errors.
 // OAuth CLI targets receive subscription identity headers, and response IDs

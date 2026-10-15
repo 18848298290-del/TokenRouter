@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// compact_keepalive.go coordinates SSE heartbeats with response takeover and
+// tracks heartbeat bytes for retry decisions.
 // Compact JSON upstream work can leave an SSE client idle before any model
 // output arrives. The first heartbeat waits one interval, then commits HTTP 200
 // and sends a comment; later errors consequently need stream-compatible output.

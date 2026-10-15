@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// data_management_service.go reports retired data-management agent
+// availability and rejects agent operations.
 // Data-management health remains queryable after the agent RPC feature is
 // retired. The service reports a disabled status and the configured socket path
 // for diagnosis, while command entry points return the deprecation error before

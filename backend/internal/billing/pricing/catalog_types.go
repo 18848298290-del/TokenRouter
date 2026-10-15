@@ -6,6 +6,8 @@ import (
 	"slices"
 )
 
+// catalog_types.go defines catalog representations, clones price records and
+// decodes nested context prices.
 // Catalog JSON uses optional numeric fields, while calculation records mostly
 // use numeric amounts. Parsing carries presence flags alongside those amounts
 // so supplied zero can remain a free price and an absent text bucket can keep

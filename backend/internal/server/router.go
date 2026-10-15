@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// router.go assembles middleware and module routes on a shared Gin engine.
 // Public health and setup-status endpoints remain available alongside module
 // routes. App supplies one ordered middleware chain and an optional frontend
 // handler, then module registration callbacks add their endpoints to the same

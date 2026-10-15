@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// update.go selects release assets for updates and requested rollbacks, then
+// delegates binary installation.
 // Installing a selected version depends on available update or rollback candidates.
 // The service delegates release selection to the shared query object, then passes
 // only the selected asset metadata to its installer. Local previous-binary rollback

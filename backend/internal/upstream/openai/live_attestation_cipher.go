@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+// live_attestation_cipher.go encrypts and decrypts stored Live attestation
+// values using a server-derived AES-GCM key.
 // Stored Live attestation is encrypted under a key derived from the server
 // secret and a versioned domain string. Each encryption creates a fresh AES-GCM
 // nonce and stores it before the authenticated ciphertext, letting later

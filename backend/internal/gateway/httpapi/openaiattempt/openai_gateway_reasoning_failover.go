@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_gateway_reasoning_failover.go derives attempt bodies when reasoning
+// replay crosses passthrough modes.
 // Encrypted reasoning replay can be valid for a passthrough provider while
 // being unsuitable for a later managed conversion. A request remembers whether
 // any passthrough attempt occurred, so every subsequent non-passthrough attempt

@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// embeddings.go executes authenticated embedding requests and collects
+// response usage and delivery evidence.
 // Embedding attempts send the prepared model request with bearer authentication
 // and emit the upstream JSON synchronously. Model aliases and the selected
 // upstream model remain separate in the result, while usage and served output

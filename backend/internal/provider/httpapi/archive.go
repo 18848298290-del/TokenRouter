@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// archive.go handles provider archive import and export requests with filter
+// parsing and response idempotency.
 // Provider backup exports contain raw upstream credentials and can include the
 // selected proxies, so route registration protects export with step-up
 // authentication. Explicit IDs override list filters; otherwise filter parsing

@@ -10,18 +10,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex quota headers become Extra snapshots for display and quota evaluation.
-// Observing a snapshot does not itself install a provider rate limit; the
-// caller decides whether the record, including a quota shadow, should
-// contribute an observation.
+// codex_usage_observer.go dispatches throttled writes of Codex quota-header
+// snapshots into provider Extra. Codex quota headers become Extra snapshots
+// for display and quota evaluation. Observing a snapshot does not itself
+// install a provider rate limit; the caller decides whether the record,
+// including a quota shadow, should contribute an observation.
 //
-// The observer builds a value patch before reserving the shared write throttle,
-// then dispatches persistence with an independent five-second budget. Throttle
-// reservations survive failed writes and rejected background admission, so
-// repeated observations do not force another attempt inside the interval. A
-// configured runner owns background tracking; its absence starts a goroutine
-// directly. Store errors are discarded because the observation is best effort
-// and the request has already received its upstream result.
+// The observer builds a value patch before reserving the shared write
+// throttle, then dispatches persistence with an independent five-second
+// budget. Throttle reservations survive failed writes and rejected background
+// admission, so repeated observations do not force another attempt inside the
+// interval. A configured runner owns background tracking; its absence starts a
+// goroutine directly. Store errors are discarded because the observation is
+// best effort and the request has already received its upstream result.
 
 // CodexUsageObserver schedules throttled Extra writes for caller-approved Codex
 // quota observations.

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings.go resolves and persists runtime aggregation controls within
+// deployment permissions.
 // Preaggregation runtime settings can disable work that deployment options
 // permit, while deployment-disabled tasks stay unavailable. One JSON setting holds
 // usage and Ops controls, and missing fields inherit deployment defaults before

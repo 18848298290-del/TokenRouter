@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// upstream_clients_wire.go binds provider authorization and upstream transport
+// interfaces to platform clients in Wire.
 // Platform adapters depend on provider interfaces for Claude OAuth, Grok
 // authorization, and Gemini CodeAssist requests. The set binds those interfaces
 // to platform clients and binds QoderTransport to the gateway transport client,

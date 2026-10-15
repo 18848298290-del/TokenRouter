@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// media_http_adapter.go binds media HTTP admission and request factories to
+// shared runtime services and effective key state.
 // Media HTTP admission reads authenticated Key and subject data while the
 // Runtime retains shared application services. Route planning produces a
 // context carrying group mapping; image entry installs it immediately, while

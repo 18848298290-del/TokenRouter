@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// dashboard_service.go serves dashboard statistics and coordinates cached
+// snapshot refresh with aggregation freshness reporting.
 // Dashboard statistics can be available from a serialized cache even when
 // their refresh age has exceeded the freshness interval. GetDashboardStats
 // returns that stored snapshot and attempts background replacement, while a

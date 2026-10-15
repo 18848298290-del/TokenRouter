@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// client.go sends signed Qoder Gateway requests and normalizes wrapped JSON,
+// stream events, and error evidence.
 // Gateway responses can carry effective status and JSON inside an outer
 // envelope, while inference streams mix choice deltas and Anthropic-like event
 // shapes. Parsing converts these representations into SSEEvent values before

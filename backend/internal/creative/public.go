@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// public.go lists available creative models and validates, prices, and
+// provisions personal image tasks.
 // Personal image submission checks current group access and one concrete
 // configured model before creating a task. User discovery reads administrator
 // allowlist entries directly, while administrator candidate discovery combines

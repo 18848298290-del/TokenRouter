@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// alpha_search_headers.go builds authenticated requests for standalone Alpha
+// Search and its Responses search alternative.
 // Standalone Alpha Search uses search-specific authentication headers even when
 // the caller arrived through a Responses-compatible client. Provider overrides
 // run before Responses-only headers are removed, so an override cannot

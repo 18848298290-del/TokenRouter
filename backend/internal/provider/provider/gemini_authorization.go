@@ -10,10 +10,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
-// Gemini authorization uses distinct CLI and AI Studio callback addresses and
+// gemini_authorization.go binds Gemini callback addresses, OAuth
+// configuration, and platform operations to provider authorization. Gemini
+// authorization uses distinct CLI and AI Studio callback addresses and
 // effective OAuth client settings. The provider workflow receives the dynamic
 // configuration reader alongside platform PKCE, authorization URL and project
-// discovery operations, resolving those inputs when its authorization steps run.
+// discovery operations, resolving those inputs when its authorization steps
+// run.
 
 // GeminiAuthorizationOptions binds OAuth configuration and platform
 // authorization operations.

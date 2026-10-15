@@ -2,6 +2,8 @@ package openai
 
 import "strings"
 
+// encrypted_replay.go removes encrypted reasoning and compaction state from
+// mutable Responses input for recovery retries.
 // Recovery retries remove encrypted_content from reasoning items and discard
 // encrypted compaction items as complete objects. Plaintext summaries and other
 // remaining reasoning attributes stay available unless cleanup leaves a type-only

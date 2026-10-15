@@ -2,6 +2,8 @@ package upstream
 
 import "context"
 
+// http_profile.go carries upstream HTTP profiles and destination-policy
+// markers through request contexts.
 // Provider-specific transports read context markers when selecting HTTP pool
 // settings and destination restrictions. Each marker travels with the request;
 // the shared transport applies the profile or redirect policy when

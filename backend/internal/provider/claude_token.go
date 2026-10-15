@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// claude_token.go selects Claude request credentials from cache, refresh
+// results, and current repository versions.
 // Claude request credentials prefer a populated access-token cache over the
 // expiry stored in the request record. OAuth refresh policy decides whether
 // failure returns an error or the record token, while service-account records

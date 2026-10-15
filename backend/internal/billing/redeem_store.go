@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// redeem_store.go defines redemption repository operations, advisory cache
+// operations and batch update inputs.
 // Redemption coordinates an advisory cache with durable credential and usage
 // records. Repository locks and per-user usage checks protect grant-state
 // decisions, while history queries use individual recipient/time observations

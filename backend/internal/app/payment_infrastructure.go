@@ -14,10 +14,12 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Encrypted payment configuration uses a configured persistent TOTP key, so an
-// automatically generated key does not become a payment encryption identity.
-// Payment handlers share the registry, instance selector, configuration, and
-// plans assembled for checkout and administration.
+// payment_infrastructure.go constructs payment configuration, provider
+// selection, encryption keys, and HTTP handlers. Encrypted payment
+// configuration uses a configured persistent TOTP key, so an automatically
+// generated key does not become a payment encryption identity. Payment handlers
+// share the registry, instance selector, configuration, and plans assembled for
+// checkout and administration.
 
 // providePaymentHTTP binds checkout and plan reads to user payment HTTP.
 func providePaymentHTTP(runtime *payment.Runtime, cfg *payment.ConfigService, plans *billing.Plans) *paymenthttp.PaymentHandler {

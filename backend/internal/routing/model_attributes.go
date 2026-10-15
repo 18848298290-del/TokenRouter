@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// model_attributes.go validates and saves group attribute profiles and builds
+// route-aware model presentations.
 // A group attribute profile can override the same outbound model differently
 // for distinct services or protocols. Rule identifiers also attach translations
 // to a rule, so saving edited model patterns needs to retain an existing

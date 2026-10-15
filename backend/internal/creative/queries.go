@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// queries.go reads creative tasks and delivers or acknowledges their outputs
+// within the caller's workspace.
 // Creative task queries combine authenticated ownership with the browser
 // workspace UUID before reading public metadata or image bytes. The feature
 // callback gates these operations independently from worker recovery, and

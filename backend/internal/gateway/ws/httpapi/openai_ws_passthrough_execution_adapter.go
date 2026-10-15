@@ -28,6 +28,8 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
+// openai_ws_passthrough_execution_adapter.go adapts dedicated WebSocket
+// requests and upstream failures to provider execution policy.
 // Dedicated Responses WS sessions prepare provider-scoped request frames
 // before forwarding them and inspect failure events before client delivery.
 // Authentication headers are refreshed for each dial attempt, while the

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// fulfillment.go assembles payment fulfillment and lifecycle fixtures with
+// supplied entitlement services and audit logging.
 // Ordinary payment audits are recorded through an errorless callback, so
 // failed observation writes are logged while the state operation retains its
 // result. Recovery scenarios combine this audit policy with supplied grant

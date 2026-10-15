@@ -9,6 +9,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// silent_refusal.go detects empty stop completions for large Chat requests and
+// decides when buffered client output can be released.
 // A large Chat-compatible request can finish with stop while providing no
 // output or accounting evidence. One detector per attempt records content,
 // tools, reasoning, usage, errors, and the latest nonblank finish reason so

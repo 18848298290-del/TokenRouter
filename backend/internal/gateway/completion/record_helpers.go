@@ -12,11 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// A completion can record the requested model, outbound model, raw response
-// model, and requested or executed effort at the same time. Display normalization
-// keeps absent observations nullable, and mismatch checking compares the actual
-// outbound identity with upstream evidence so a client alias does not establish
-// a false model discrepancy. ClientModel updates only the requested display name.
+// record_helpers.go resolves completion model metadata, funding rates, and
+// billing settings. A completion can record the requested model, outbound
+// model, raw response model, and requested or executed effort at the same time.
+// Display normalization keeps absent observations nullable, and mismatch
+// checking compares the actual outbound identity with upstream evidence so a
+// client alias does not establish a false model discrepancy. ClientModel
+// updates only the requested display name.
 //
 // Funding selection separates subscription-plan rates from balance user overrides.
 // Peak factors apply according to the final price mode, while the preliminary

@@ -9,6 +9,8 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// timing.go instruments Redis commands and pipelines with request-scoped
+// timing hooks.
 // Redis commands contribute timing only when their request context carries a
 // collector. Hooks observe command and pipeline execution even when it fails,
 // recording the whole pipeline interval with its command count while

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/internal/googleauth"
 )
 
+// service_account.go parses Vertex service-account credentials and builds
+// Gemini and Claude request URLs and bodies.
 // Vertex endpoints encode project, location, and publisher model identity in
 // their paths. Credential parsing pins token exchange to Google, while
 // separate Gemini and Claude builders retain their different action names,

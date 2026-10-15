@@ -11,12 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// runtime.go coordinates backup startup, operation admission, shutdown, and
+// cleanup context lifetimes.
 // Backup operations can continue after their HTTP request returns, so shutdown
 // needs to account for admitted setup and launched workers together. Admission
-// and wait-group registration share the lifecycle lock with the stop transition,
-// preventing a worker from being registered after shutdown begins waiting for
-// the existing operation set. Operation contexts also observe the service's
-// background cancellation independently of their request context.
+// registers setup in the wait group under the lifecycle lock. An admitted setup
+// can register its worker after shutdown begins waiting, but retains its own
+// count until that registration finishes. This handoff keeps the operation set
+// from reaching zero between setup and worker execution. Operation contexts also
+// observe service cancellation independently of their request context.
 //
 // Startup and stop each have one shared completion signal. Stop records the
 // first initiating caller's result after cron and tracked work finish or that

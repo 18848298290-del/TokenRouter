@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
+// queue.go coordinates creative queue admission, reservation, recovery, and
+// job locking in Redis.
 // Redis ready work, active ownership, and inflight admission need to move
 // together when a task is reserved. The reserve script pops one ready ID and
 // publishes its active timestamp and new lease in one operation, while enqueue

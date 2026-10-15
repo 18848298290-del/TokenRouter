@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// pages.go reads localized Markdown pages and resolves permitted image paths
+// beneath page storage.
 // Markdown and image assets live beneath data/pages, with translated Markdown
 // in slug/locale.md and shared source content in slug.md. Markdown reads try
 // language candidates before source content, while images use a language

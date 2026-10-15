@@ -5,10 +5,17 @@ import (
 	"time"
 )
 
+// lease.go selects a maintenance lease backend and returns its release action.
 // Periodic maintenance skips a round when the leader backend reports a held
 // lease. A missing or failing leader backend permits the advisory alternative,
 // and an installation with neither backend still performs maintenance, so
 // backend failure and contention have different admission outcomes.
+//
+// A successful leader acquisition returns cleanup using a separate two-second
+// background context, allowing release after the maintenance context is
+// cancelled. The advisory callback supplies its own release function and
+// admission result. Without either backend, the returned release function is a
+// no-op and maintenance proceeds.
 
 // AcquireSingletonLease returns an admission flag and a release callback for
 // singleton maintenance. Nil ctx uses Background; leader contention returns

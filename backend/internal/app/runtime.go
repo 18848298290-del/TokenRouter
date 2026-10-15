@@ -2,8 +2,8 @@ package app
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 
-// Application construction depends on registration of subsystem lifecycle
-// hooks and HTTP idempotency bindings. The readiness arguments make Wire
+// runtime.go requires subsystem lifecycle registration and HTTP idempotency
+// binding before application construction. The readiness arguments make Wire
 // resolve those constructors before provideApplication receives its runtime
 // marker; creating the marker itself starts no subsystem.
 

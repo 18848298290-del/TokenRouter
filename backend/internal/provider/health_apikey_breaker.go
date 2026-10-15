@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// health_apikey_breaker.go counts OpenAI pool API Key failures and publishes
+// breaker pauses after successful storage.
 // Pool API Key failures can accumulate across instances even when individual
 // requests use the upstream pool's retry policy. Eligible OpenAI pool records
 // consult the runtime breaker setting and shared rolling counter; disabled

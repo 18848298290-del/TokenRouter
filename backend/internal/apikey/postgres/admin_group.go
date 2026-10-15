@@ -8,16 +8,17 @@ import (
 	keycore "github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// Administrative binding to an exclusive group can require a permission grant
-// and a Key configuration update together. A configured Ent client opens one
-// transaction for both writes, and optional UsersInTx binds the identity writer
-// to that connection so a failed Key update can roll back the grant.
+// admin_group.go grants exclusive-group permission and updates selected Key
+// fields through an optional owned Ent transaction. A configured Ent client
+// opens one transaction for both writes, and optional UsersInTx binds the
+// identity writer to that connection so a failed Key update can roll back the
+// grant.
 //
 // Without a client, the configured users and Key writers run sequentially and
 // an observer can report the skipped transaction. That path can retain the
 // permission grant when the following Key write fails. The caller publishes
-// cache invalidation after this operation succeeds; this helper owns commit and
-// rollback only for a transaction it starts.
+// cache invalidation after this operation succeeds; this helper owns commit
+// and rollback only for a transaction it starts.
 
 // GroupAccessWriter grants identity group permission during an administrative
 // Key binding write.

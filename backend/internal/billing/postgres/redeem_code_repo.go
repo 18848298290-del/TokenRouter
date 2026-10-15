@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// redeem_code_repo.go persists redemption credentials and reconstructs
+// per-user usage history.
 // A multi-use redemption credential has a current usage summary and separate
 // per-user history rows. Administrator reads evaluate expiry and capacity for
 // display, while history reconstruction replaces the summary's latest user and

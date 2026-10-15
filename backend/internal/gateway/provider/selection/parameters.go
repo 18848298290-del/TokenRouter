@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// parameters.go resolves request-group overrides for effective advanced
+// scheduler settings.
 // Advanced scheduler overrides apply to the request's final group after
 // admission. Valid group context takes precedence over repository lookup, and a
 // missing group supplies empty overrides so Parameters can resolve global

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
+// ports.go defines search storage and execution dependencies and copies
+// supplier configurations for Manager ownership.
 // Supplier configuration is copied before a Manager retains it, including its
 // optional subscription and expiration pointers. Quota storage records
 // attempted supplier calls and proxy failure markers, while execution returns

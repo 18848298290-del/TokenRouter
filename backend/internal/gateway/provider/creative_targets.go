@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// creative_targets.go binds image download and generation callbacks to
+// selected providers.
 // Creative image tasks need downloaded image bytes even when ordinary API
 // response backfill is disabled. Target binding supplies separate public-image
 // download and authenticated generation operations, using the selected

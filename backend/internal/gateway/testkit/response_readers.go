@@ -5,17 +5,17 @@ import (
 	"sync"
 )
 
-// Cancellation tests sometimes need a response body that emits a known prefix
-// and then remains blocked until cleanup closes it. The reader holds
-// caller-provided bytes and a close channel, so the test can observe
-// completion after the production executor releases the body.
+// response_readers.go provides response bodies that block until closure or
+// record cleanup attempts. The reader holds caller-provided bytes and a close
+// channel, so the test can observe completion after the production executor
+// releases the body.
 //
 // Read offset advances serially and is not synchronized, while Close uses
 // sync.Once to signal waiting readers exactly once. Closing does not erase a
-// remaining prefix: a subsequent Read still drains those bytes before
-// returning EOF. A separate wrapper records that the executor attempted body
-// closure. Tests serialize its flag inspection after the close path returns
-// and provide any other io.Reader behavior themselves.
+// remaining prefix: a subsequent Read still drains those bytes before returning
+// EOF. A separate wrapper records that the executor attempted body closure.
+// Tests serialize its flag inspection after the close path returns and provide
+// any other io.Reader behavior themselves.
 
 // BlockingReadCloser emits the supplied bytes, then waits for Close to test
 // cancellation and cleanup.

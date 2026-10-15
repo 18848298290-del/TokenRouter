@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// refresh_contracts.go defines OAuth refresh dependencies and constructs the
+// shared refresh coordinator.
 // OAuth refresh reads the current provider before exchange and checks separate
 // storage capabilities before saving the result. Executors decide platform
 // eligibility and expiry, the optional cache supplies distributed locking, and

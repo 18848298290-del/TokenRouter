@@ -1,5 +1,7 @@
 package pricing
 
+// default_catalog.go classifies catalog billing units and defines
+// administrator default-price rows.
 // Administrator price rows need a unit classification even when a catalog
 // entry has no usable charge amount. DefaultBillingMode checks declared video
 // dimensions before image dimensions or an eligible flat image amount, then

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
+// codex_identity.go resolves Codex client identity and pairs outgoing
+// User-Agent, originator, and version headers.
 // Codex OAuth requests pair the originator header with the leading identity in
 // the outgoing User-Agent. A routed or client-supplied official identity can
 // remain recognizable, while invalid candidates fall back through the

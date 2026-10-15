@@ -26,10 +26,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// OAuth login, binding, pending completion, and session HTTP share the same
-// identity services and settings readers. WeChat payment authorization reuses
-// credential exchange but returns payment token data, and DingTalk profile
-// completion runs through the application's tracked background tasks.
+// identity_http.go assembles login, binding, pending-session, and WeChat
+// payment authorization handlers. These handlers share identity services and
+// settings readers. WeChat payment authorization reuses credential exchange but
+// returns payment token data, and DingTalk profile completion runs through the
+// application's tracked background tasks.
 
 // identityVerificationDelivery combines verification mail delivery with
 // identity challenge generation.

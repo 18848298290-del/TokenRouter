@@ -15,6 +15,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// forward_conversion_output.go delivers converted JSON and SSE responses and
+// records handling of terminal output.
 // Protocol conversion can finish with a complete JSON result, a terminal SSE
 // frame or an explicit error path. A handled-output marker lets the outer
 // forwarder know when this adapter has completed the relevant output step. For

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// concurrency_cache.go stores request slots, renewable connection leases, wait
+// counts, and load observations in Redis.
 // Ordinary provider/user slots and renewable Live leases share admission
 // capacity but use different sorted sets and expiration windows. Request IDs
 // identify ordinary members, Live lease IDs occupy provider/user/API-key

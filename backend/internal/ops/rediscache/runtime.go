@@ -9,11 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// Ops lease keys store an instance owner so a delayed release can distinguish
-// its own lease from one acquired after expiry. Claim uses Redis SETNX with the
-// caller-selected lifetime, and jobs choose whether to skip or attempt another
-// lock when a command fails. A successful claim has a finite lifetime when its
-// supplied TTL is positive.
+// runtime.go implements Redis ownership leases and string storage for Ops
+// background jobs.
+// Ops lease keys store an instance owner so a delayed release leaves a lease
+// acquired by a different owner after expiry intact. Reusing the same owner
+// string does not distinguish successive acquisitions. Claim uses Redis SETNX
+// with the caller-selected lifetime, and jobs choose whether to skip or attempt
+// another lock when a command fails. A successful claim has a finite lifetime
+// when its supplied TTL is positive.
 //
 // Release executes the owner comparison and deletion in one script, preventing
 // another Redis command from acquiring the key between those two operations.

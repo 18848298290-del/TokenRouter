@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// endpoint_intent.go classifies endpoint paths and methods for funding bypass
+// and non-consuming request admission.
 // Existing batch resources and usage reads have different admission needs from
 // new inference. Path and method classifiers identify those operations before
 // consumption checks, while the batch-model catalog still requires funding eligibility

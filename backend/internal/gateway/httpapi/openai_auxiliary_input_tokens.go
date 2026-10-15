@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_auxiliary_input_tokens.go executes native Responses input-token
+// preflight and supplies local estimates for unsupported counting paths.
 // Native input_tokens preflight returns the upstream count payload for
 // supported OpenAI targets and estimates locally for selected compatibility
 // targets. Preparation retains the requested model alongside provider mapping,

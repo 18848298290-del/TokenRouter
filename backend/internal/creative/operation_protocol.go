@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// operation_protocol.go maps creative operations to protocol gates and derives
+// each platform's allowed operations.
 // Creative operations use the image protocol gates of their selected platform.
 // Gemini generation and editing share GenerateContent, while OpenAI and Grok
 // separate generation from edits; explicit group permissions filter the

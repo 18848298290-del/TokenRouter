@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// responses_to_anthropic.go converts Responses replies and stream events into
+// Messages content and usage.
 // Responses replies store reasoning, text, calls, and hosted search in
 // separate items. Messages conversion retains supported traversal order,
 // transfers encrypted reasoning into signatures, and subtracts cache

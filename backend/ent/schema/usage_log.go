@@ -14,9 +14,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Completed request records retain execution, usage, and funding facts for
-// statistics and administrator audits. User-side funding amounts can differ
-// from the provider pricing base, and separate request and billing
+// usage_log.go defines completed request records containing execution, usage,
+// and funding facts for statistics and audits. User-side funding amounts can
+// differ from the provider pricing base, and separate request and billing
 // identifiers keep query correlation distinct from financial deduplication.
 
 // UsageLog declares historical request attribution, measured usage, and calculated billing facts.

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
+// snapshot_reader.go converts scheduler snapshot results into provider records
+// for execution adapters.
 // Execution adapters need provider Records after SnapshotService has applied
 // cache lookup, database fallback and bucket rules. The reader unwraps the
 // codec's snapshot values and forwards the service's result flag, copying

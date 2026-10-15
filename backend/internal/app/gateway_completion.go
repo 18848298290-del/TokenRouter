@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 )
 
+// gateway_completion.go converts completion queue configuration into
+// worker-pool options and binds completion telemetry.
 // Completion recording uses configured queue capacity, task budgets, and
 // overflow handling. Assembly starts from worker-pool defaults, applies fields
 // according to their zero-value rules, and normalizes the result before binding

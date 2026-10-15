@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// vertex_token.go constructs service-account cache identities and coordinates
+// Vertex token acquisition.
 // Vertex tokens can be shared by service-account identity across provider
 // rows. Email and key ID are delimited before hashing, while unavailable
 // parsed identity falls back to the provider ID for both token and

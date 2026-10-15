@@ -11,6 +11,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// response_forward_wire.go reconstructs Responses terminal output from
+// completed items or accumulated stream fragments.
 // A Responses terminal event may contain less output than the preceding
 // completed-item events. Retaining each raw completed item keeps its reported
 // identity, content structure, and extension fields available for rebuilding

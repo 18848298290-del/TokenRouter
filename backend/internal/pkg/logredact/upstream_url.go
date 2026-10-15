@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// upstream_url.go removes or masks credential-bearing URL suffixes in
+// diagnostic output.
 // Upstream diagnostic messages can include query credentials embedded in URLs.
 // SafeUpstreamURL removes whole query and fragment suffixes for endpoint
 // display, while SanitizeUpstreamQueries masks a fixed set of query assignments

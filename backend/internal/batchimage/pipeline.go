@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// pipeline.go selects provider progression or funding settlement from the
+// persisted batch-job stage.
 // A settling task has already finished provider polling and indexing, so its
 // next queue visit is a funding operation. PipelineProcessor reads persisted
 // status before selecting settlement or provider progression, allowing the

@@ -23,10 +23,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
-// CN API-key probes derive a platform default model when the supplied name is
-// blank, then apply one provider mapping. The record's protocol selects
-// Messages, Responses, or Chat request construction and matching stream
-// parsing, with allowed header overrides applied after authentication.
+// cn_test_execution.go constructs and executes fixed-protocol CN API-key
+// probes with a mapped test model. CN API-key probes derive a platform default
+// model when the supplied name is blank, then apply one provider mapping. The
+// record's protocol selects Messages, Responses, or Chat request construction
+// and matching stream parsing, with allowed header overrides applied after
+// authentication.
 
 // CNProviderTest prepares fixed and adaptive native-protocol probes for CN
 // API-key records.

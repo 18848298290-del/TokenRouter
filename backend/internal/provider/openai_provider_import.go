@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// openai_provider_import.go creates OpenAI providers from authorization
+// results and refreshes imported provider credentials.
 // OAuth provider creation exchanges a PKCE session before asking the
 // administrator service to create its record. Successful exchange has already
 // removed that session when later creation or group binding fails. A positive

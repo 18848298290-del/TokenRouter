@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// proxy_latency_cache.go stores proxy probe snapshots in Redis and restores
+// their identities during batch reads.
 // Proxy probe snapshots are serialized as one JSON value per proxy ID and read
 // in batches for administrator listings. MGet returns a sequence corresponding
 // to requested keys, so decoding uses each response position to recover the

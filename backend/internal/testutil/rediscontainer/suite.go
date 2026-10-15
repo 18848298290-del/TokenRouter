@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// suite.go shares one Redis server across suite tests and creates a namespaced
+// client per test.
 // Redis suite tests reuse one container while each test client receives a new
 // key prefix. SetupTest resets the context and namespaced client for that test,
 // and the registered testing cleanups remove its keys and close its pool before

@@ -9,10 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
-// Ollama Cloud usage comes from a fixed browser settings fetch with managed
-// cookies. The adapter forwards the captured proxy, provider ID, and
-// concurrency to the shared sender, while the upstream fetcher receives a
-// context that blocks redirects and a stable unavailable error.
+// ollama_usage.go binds provider transport to the managed-cookie Ollama Cloud
+// usage fetcher. The upstream fetcher reads a fixed browser settings page. The
+// adapter forwards the captured proxy, provider ID, and concurrency to the
+// shared sender, while the upstream fetcher receives a context that blocks
+// redirects and a stable unavailable error.
 
 // OllamaUsageFetcher returns a cookie-based usage fetch callback backed by the
 // supplied sender. A nil sender returns the unavailable error; requests pass

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// dashboard_handler.go serves administrator dashboard statistics, filtered
+// charts, and batch usage reports.
 // Administrator dashboard charts parse optional scopes before using
 // dashboard-owned result caches. A supplied request category takes precedence
 // over legacy stream text for trend, model and group charts, while user

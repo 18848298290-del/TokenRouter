@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// alpha_search_codec.go converts Alpha Search requests and Responses event
+// streams between their search representations.
 // A PAT search fallback sends the Alpha Search command description as a
 // Responses user message with a hosted web_search tool. Each embedded JSON
 // section has its own byte cap, while supported search settings also populate

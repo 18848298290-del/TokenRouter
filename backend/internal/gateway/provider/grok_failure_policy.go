@@ -13,12 +13,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_failure_policy.go classifies Grok failover and same-provider retry
+// eligibility from response evidence.
 // Grok response failures separate request-content refusal, temporary model
 // capacity, exhausted quota, and provider endpoint compatibility.
 // Same-provider retries use platform classification before pool defaults, with
 // a single explicit retry cap for capacity. Idle-stream errors carry replay
 // eligibility separately from provider-health scope so the caller can budget
 // recovery after empty output.
+//
+// Custom handled error codes prevent same-provider retry before capacity and
+// pool rules are considered. A capacity rejection with status 429 permits a
+// bounded retry even outside the pool rule, while billing, Free usage, and
+// compatibility failures do not. Retry metadata carries its delay and deadline
+// separately so the outer provider loop can apply its request budget.
 
 // GrokContentPolicyClientMessage extracts and sanitizes upstream text before
 // applying Grok content-refusal wording.

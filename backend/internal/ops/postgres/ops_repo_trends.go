@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_trends.go queries throughput and error trends and fills their
+// requested timelines with continuous buckets.
 // Throughput charts combine usage observations, final client failures, and
 // saved switch events as separate quantities. Tokens come from usage rows,
 // request totals add usage and failed client observations, and switches count

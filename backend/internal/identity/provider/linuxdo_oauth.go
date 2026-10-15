@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// linuxdo_oauth.go exchanges LinuxDo authorization codes and extracts stable
+// subjects and profile suggestions from provider replies.
 // LinuxDo code exchange accepts JSON and form-encoded token replies, while
 // userinfo can vary in where it places identity fields. Configured gjson paths
 // precede common field names, and the subject is checked before it can participate

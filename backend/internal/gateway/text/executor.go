@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Messages HTTP entry needs the result of the most recently forwarded attempt
-// after the provider loop ends. Observation wraps request-local operations to
+// executor.go runs Messages and Gemini text sessions while capturing their
+// latest forwarding evidence. Observation wraps request-local operations to
 // retain selected provider, route and invocation count while the adapter
 // controls output and completion.
 //

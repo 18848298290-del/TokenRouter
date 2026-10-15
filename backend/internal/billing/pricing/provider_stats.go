@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// provider_stats.go selects provider statistics rules and calculates their
+// independent costs.
 // Provider statistics prices define an independent cost base for provider
 // reporting. Rule selectors match either provider or group, and the supplied
 // rule order determines the first calculable cost for each complete model name,

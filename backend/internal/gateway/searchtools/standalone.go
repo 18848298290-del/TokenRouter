@@ -7,18 +7,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// Standalone search chooses a provider, acquires its resources and retains
-// them through the caller's response/completion handling. A replayable failure
-// releases that attempt early before another candidate is selected.
+// standalone.go selects providers, acquires attempt resources, and retries
+// standalone search execution. A replayable failure releases that attempt early
+// before another candidate is selected.
 //
 // The request lease owns each attached attempt lease, including successful or
 // terminal-error execution; callers release that parent on request exit. Four
 // selection iterations bound this orchestration, including rejected
-// acquisition, while initial selection/concurrency failures retain their
-// stage. Later selection/acquisition failures can leave earlier execution
-// evidence for final error handling. Search request fields are retained by
-// value with shared slices/pointers, and forwarding policy decides whether an
-// error permits switching.
+// acquisition, while initial selection/concurrency failures retain their stage.
+// Later selection/acquisition failures can leave earlier execution evidence for
+// final error handling. Search request fields are retained by value with shared
+// slices/pointers, and forwarding policy decides whether an error permits
+// switching.
 
 // Selection contains a captured provider and its acquired/waiting resource
 // evidence.

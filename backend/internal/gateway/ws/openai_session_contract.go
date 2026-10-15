@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// openai_session_contract.go defines OpenAI turn hooks and completion captures
+// shared by HTTP execution adapters.
 // HTTP execution adapters retain per-turn request identity while exposing
 // OpenAI-specific completion results to their callers. OpenAIIngressHooks
 // carries the group policy and callback inputs shared by bridge, pooled, and

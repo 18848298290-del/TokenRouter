@@ -10,18 +10,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// clone.go copies provider records and supported mutable values, reconnecting
+// memoized record links and JSON-container references.
 // Provider records and their JSON-shaped maps are passed between storage,
 // request snapshots, and caches, where mutable data needs a separate owner.
 // Copying through JSON would change numeric representations and reject cycles
 // before the owning validation step can report them.
 //
-// Map and []any traversal memoizes each supported container before descending,
-// retaining repeated references and cycles inside the copied graph. Slice
-// identity includes length because different views can share the same first
-// element. Record traversal has a separate memo table so a membership that
-// points to its provider root points to the copied root. Unsupported dynamic
-// values and injected function values remain shared, so callers still treat
-// those retained references as immutable.
+// map[string]any and []any traversal memoizes each of those containers before
+// descending, retaining their repeated references and cycles within one value
+// copy. Slice identity includes length because different views can share the
+// same first element. Record traversal has a separate memo table so a membership
+// that points to its provider root points to the copied root. Other supported
+// maps and slices are copied independently on each occurrence. Unsupported
+// dynamic values and injected function values remain shared, so callers still
+// treat those retained references as immutable.
 
 // sliceIdentity identifies one slice view during recursive JSON-container
 // copying.

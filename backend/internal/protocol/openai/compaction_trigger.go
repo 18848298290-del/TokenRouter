@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// compaction_trigger.go detects Responses compaction requests and moves or
+// collapses their triggers behind conversation input.
 // Remote compaction detection uses a compaction_trigger in the Responses input
 // array, alongside the caller's path and streaming policy. Request preparation
 // can place one trigger after all conversation items while retaining the order

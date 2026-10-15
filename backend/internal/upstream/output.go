@@ -6,6 +6,8 @@ import (
 	"net/http"
 )
 
+// output.go adapts synchronous output sinks to response writers with deferred
+// headers and per-event commitment markers.
 // A codec can prepare response metadata before it writes bytes, while a
 // waiting HTTP heartbeat can already commit the underlying response. Output
 // contexts keep their own header map and sample optional initial sink state so

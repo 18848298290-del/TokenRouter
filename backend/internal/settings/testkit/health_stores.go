@@ -8,6 +8,8 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// health_stores.go provides in-memory settings storage with injectable read
+// failures for tests.
 // Settings reader tests need controllable storage errors and observable read
 // counts while their runtime caches can progress concurrently. This fixture
 // protects saved strings and read-count changes with one mutex, returning copied

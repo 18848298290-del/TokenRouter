@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// aggregation_state.go merges usage-aggregation progress changes while
+// detecting superseded manual backfill work.
 // Live aggregation and administrator backfill requests can update the same
 // progress row between reads. Each change kind owns a subset of fields, so a
 // live watermark update keeps the current manual target and a manual request

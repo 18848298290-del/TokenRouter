@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// antigravity.go decodes Antigravity account, tier, and model metadata and
+// selects subscription and privacy observations.
 // Antigravity discovery combines project identity, registered tiers, credit
 // balances, and model quota observations. Tier responses accept both ID strings
 // and objects; string decoding updates the identifier alone, while object

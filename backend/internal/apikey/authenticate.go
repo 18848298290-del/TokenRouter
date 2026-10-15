@@ -5,19 +5,19 @@ import (
 	"fmt"
 )
 
-// Credential authentication checks identity before the gateway decides whether
-// a request may spend funds. Expired and quota-exhausted states can still
-// produce an identity view for retrieval endpoints, while disabled credentials,
-// inactive users, invalid team relationships and rejected IP addresses stop
-// authentication. A loaded Key can accompany an error so diagnostics can retain
-// ownership information.
+// authenticate.go validates credential identity and builds the access record
+// used by gateway admission. Expired and quota-exhausted states can still
+// produce an identity view for retrieval endpoints, while disabled
+// credentials, inactive users, invalid team relationships and rejected IP
+// addresses stop authentication. A loaded Key can accompany an error so
+// diagnostics can retain ownership information.
 //
 // The resulting access record separates credential creator, hydrated payer and
-// acting member. Consumers check the authentication error before admitting that
-// record, then perform final group, protocol and funding checks at the gateway.
-// The same loaded-key validator serves later connection turns after storage
-// reauthorization; it keeps failure-stage information for HTTP adapters to
-// choose the corresponding response shape.
+// acting member. Consumers check the authentication error before admitting
+// that record, then perform final group, protocol and funding checks at the
+// gateway. The same loaded-key validator serves later connection turns after
+// storage reauthorization; it keeps failure-stage information for HTTP
+// adapters to choose the corresponding response shape.
 
 // Failure stages let HTTP adapters select status, protocol error text and
 // observation callbacks after the same ordered identity checks in authentication.

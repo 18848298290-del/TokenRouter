@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// ollama_usage_values.go defines Ollama usage settings, fetch inputs,
+// snapshots, and administrator state.
 // Ollama browser usage snapshots keep the latest attempt and the last
 // successful display observation separately. Failed attempts can retain older
 // plan and window data while carrying their own status and retry deadline, and

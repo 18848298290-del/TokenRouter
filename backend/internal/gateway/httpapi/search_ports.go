@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// search_ports.go connects standalone search admission, selected-provider
+// execution and completion recording to HTTP request state.
 // Standalone search executes through a retained credential-bearing target
 // while the search loop carries provider IDs and slot evidence separately.
 // Successful selection replaces that target; execution and completion then

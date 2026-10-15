@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers combined settings and preaggregation endpoints
+// on the administrator route group.
 // Administrator settings combine broad configuration GET/PUT with dedicated
 // preaggregation controls on the same authenticated route group. The mounting
 // caller supplies authentication and audit middleware before these paths are

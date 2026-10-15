@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// billing.go converts frozen batch-job funding snapshots into reservation,
+// capture, and release commands.
 // A batch job reserves funds before provider submission and later captures or
 // releases that reservation through billing.Funds. Separate action prefixes
 // distinguish those operations while the task reference keeps the original

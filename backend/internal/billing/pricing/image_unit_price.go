@@ -5,6 +5,7 @@ import (
 	"math"
 )
 
+// image_unit_price.go resolves and validates fixed image reservation prices.
 // A fixed image reservation needs a price whose value does not depend on
 // unknown token context. Configured image and per-request cards retain explicit
 // zero prices, while catalog lookup supplies missing image dimensions only

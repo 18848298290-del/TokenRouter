@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// email.go decodes notification recipients from current records or legacy
+// address lists.
 // Notification recipients are stored as JSON, with both legacy address arrays
 // and records carrying verification and delivery flags still accepted. Object
 // records keep their supplied addresses and flags. Legacy strings are trimmed and

@@ -6,13 +6,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// managed_reauthorization.go applies administrator-selected OAuth credentials
+// and performs subsequent provider cleanup.
 // Administrative reauthorization replaces credentials before optional Extra and
 // health cleanup. Once an existing record is supplied, legacy switch
 // normalization and deprecated-key removal mutate Extra before the OAuth-kind
 // check, so rejection there can leave that caller-owned map changed. Request-ID
-// validation follows; credential saving
-// starts after those checks succeed. A missing existing record or non-OAuth
-// target is rejected.
+// validation follows; credential saving starts after those checks succeed.
+// A missing existing record or non-OAuth target is rejected.
 //
 // After the configuration update succeeds, Extra merging, Grok marker reset,
 // error cleanup and optional token invalidation each have separate outcomes.

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_messages_stream.go converts native Gemini payloads into Messages
+// events and delivery signals.
 // Native Messages clients receive indexed content blocks and separate HTTP
 // flush or first-token signals from each Gemini payload. All nonempty text
 // parts use the visible text channel here, including thought-marked parts,

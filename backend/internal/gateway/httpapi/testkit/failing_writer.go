@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// failing_writer.go injects write failures after a configured number of
+// delegated writes in streaming tests.
 // Client write failures need to occur after a chosen number of output attempts
 // in streaming tests. The wrapper counts Write calls and returns an injected
 // error at its limit, while the embedded Gin writer continues supplying

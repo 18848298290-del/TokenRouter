@@ -7,6 +7,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// metadata_userid.go formats Claude metadata identities according to the
+// selected CLI version.
 // Claude metadata.user_id holds device, account, and session identifiers in
 // either a delimited string or a JSON object encoded as text. Outbound
 // formatting selects the shape from the client version so the same components

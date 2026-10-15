@@ -12,6 +12,8 @@ import (
 	paymentadapter "github.com/TokenFlux/TokenRouter/internal/payment/provider"
 )
 
+// configuration.go assembles payment configuration readers and provider
+// validation for tests using production storage adapters.
 // Payment configuration scenarios reuse the production instance and billing
 // plan readers with their test settings. This helper also reads process
 // environment overrides and validates provider drafts through the production

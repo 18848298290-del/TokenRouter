@@ -2,6 +2,8 @@ package scheduler
 
 import "context"
 
+// selection_context.go carries select-only and sticky-binding preservation
+// flags through scheduler request contexts.
 // Auxiliary requests can choose providers while leaving request slots and
 // session registration untouched. Selection markers travel with the request
 // context. A separate marker lets advanced selection temporarily escape an

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// diagnostic_ports.go converts provider and group records into scheduler
+// diagnostics while retaining their per-invocation identities.
 // Diagnostic scoring can read several provider or group records with the same
 // persisted ID during one call. Each conversion allocates a separate invocation
 // identifier, keeping the record used by a filtering callback associated with

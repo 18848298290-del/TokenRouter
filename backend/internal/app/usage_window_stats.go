@@ -8,6 +8,8 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// usage_window_stats.go adapts stored provider window totals for billing
+// admission checks.
 // Anthropic window-cost selection uses standard usage cost rather than user
 // charge or provider cost. The adapter keeps absent totals as nil for both
 // single and batch reads, returning only the StandardCost field consumed by

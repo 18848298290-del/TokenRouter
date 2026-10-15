@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// exchange_passthrough.go executes passthrough requests and synchronizes
+// prepared bytes before provider-local retries.
 // Passthrough requests can acquire beta-sanitized wire bytes during
 // construction. When parsed input is present, those bytes are published before
 // sending so the caller's request representation follows the payload actually

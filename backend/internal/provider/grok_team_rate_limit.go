@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// grok_team_rate_limit.go shares process-local Grok model cooldowns among
+// providers with matching team fingerprints.
 // A Grok OAuth team can share model quota across several providers. Team
 // cooldowns therefore use a case-folded, truncated team fingerprint with a
 // normalized model, allowing those providers to consult one process-local

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// query_cache.go constructs administrator usage-statistics cache keys and loads
+// shared results.
 // Administrator usage statistics share a thirty-second snapshot by an encoded
 // subset of their query filters. UTC RFC3339 strings make equivalent offsets
 // share time keys at second precision, while nil time bounds remain empty and

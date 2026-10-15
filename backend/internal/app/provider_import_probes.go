@@ -12,10 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok import schedules quota observations using a provider routing snapshot
-// captured after the import write. The queue has its own three-worker,
-// twenty-five-second probe options and registered shutdown, while import-side
-// tasks use the application tracker and proxy reads retain lookup errors.
+// provider_import_probes.go constructs Grok import probing and connects
+// imported provider snapshots to its queue. Grok import schedules quota
+// observations using a provider routing snapshot captured after the import
+// write. The queue has its own three-worker, twenty-five-second probe options
+// and registered shutdown, while import-side tasks use the application tracker
+// and proxy reads retain lookup errors.
 
 // grokQuotaImportProbe narrows shared Grok quota queries into import summaries.
 type grokQuotaImportProbe struct {

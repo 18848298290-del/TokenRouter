@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// reauthenticate.go reloads authorization for a connection while checking that
+// its credential and funding identities still match.
 // A long-lived connection keeps its original credential and billing identity
 // while later turns need current authorization. Reauthentication bypasses
 // positive caches and compares the loaded record ID, creator, team, payer and

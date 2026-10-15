@@ -11,10 +11,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// Batch job processing appends milestone events with optional JSON payloads.
-// Events without a supplied hash can recur; the schema provides a partial
-// unique index for nonempty job-scoped hashes when a writer supplies one,
-// alongside indexes for chronological history and event-type lookup.
+// batch_image_event.go defines batch-job milestone records with optional JSON
+// payloads. Events without a supplied hash can recur; the schema provides a
+// partial unique index for nonempty job-scoped hashes when a writer supplies
+// one, alongside indexes for chronological history and event-type lookup.
 
 // BatchImageEvent stores recorded milestones and payload metadata for batch jobs.
 type BatchImageEvent struct {

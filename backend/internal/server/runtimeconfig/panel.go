@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// panel.go stores panel rate-limit settings and supplies cached values to
+// request middleware.
 // Panel middleware needs limits on every request, while administrator reads
 // need the stored value directly. Cached reads reuse an unexpired snapshot or
 // join one singleflight load. A failed load briefly republishes the entry

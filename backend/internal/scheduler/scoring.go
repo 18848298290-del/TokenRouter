@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// scoring.go records provider feedback and ranks eligible candidates for
+// weighted Top-K selection.
 // Advanced selection ranks eligible metadata using priority, load, queue
 // pressure, provider feedback, reset windows, and optional quota observations.
 // Missing load and optional signals use neutral factors, while an unobserved

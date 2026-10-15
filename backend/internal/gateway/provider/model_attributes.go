@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
 
+// model_attributes.go resolves final-route capabilities and applies request
+// parameter policy.
 // Final-route attributes decide request sampling, reasoning controls, output
 // limits, and image-tool options after model mapping. Resolution reuses a
 // request catalogue session and group context, keeping each attempt on the

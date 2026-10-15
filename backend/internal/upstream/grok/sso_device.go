@@ -16,8 +16,9 @@ import (
 	"time"
 )
 
-// A web SSO token becomes a Build OAuth grant through a device authorization
-// sequence. The flow keeps SSO, session, and CSRF cookies in a private jar
+// sso_device.go converts a Grok Web SSO token into a Build OAuth grant through
+// device authorization.
+// The flow keeps SSO, session, and CSRF cookies in a private jar
 // while validating each exposed redirect before the next request. Device and
 // user codes retain different roles: the user code verifies and approves the
 // grant, while the device code retrieves its tokens.

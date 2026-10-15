@@ -1,5 +1,7 @@
 package contract
 
+// quota.go defines quota observations and thresholds supplied to notification
+// rendering.
 // Quota alerts carry the chosen provider dimension and its configured limit
 // and threshold into notification rendering. The business caller supplies the
 // observed usage, and the renderer displays remaining quota and either a

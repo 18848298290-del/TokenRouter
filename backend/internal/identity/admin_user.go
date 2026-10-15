@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// admin_user.go applies administrator account and balance changes and enriches
+// account queries.
 // Administrator funding updates use atomic delta or replacement operations
 // before a refreshed account is returned. A later account read can fail after
 // funding persistence, while profile updates use a selected field mask before

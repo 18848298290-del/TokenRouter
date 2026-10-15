@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// model_state.go tracks current Live model aliases and restores client-facing
+// model metadata in server frames.
 // A Live client can change its declared model through sideband frames while
 // server events arrive on another forwarding direction. Response restoration
 // needs one current client label and its internal model set, so the state

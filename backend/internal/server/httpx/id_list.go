@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// id_list.go normalizes request identifier lists into sorted, unique positive
+// IDs.
 // Resource-ID collections can include duplicates and nonpositive entries from
 // request payloads. Batch handlers receive positive unique identifiers in a
 // stable numeric order, with an originally empty collection represented by nil

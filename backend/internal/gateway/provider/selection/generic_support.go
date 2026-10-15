@@ -9,6 +9,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// generic_support.go reads and updates generic session bindings and checks
+// whether retained affinity should be cleared.
 // Sticky billing and provider selection can reuse a prefetched group binding
 // when it belongs to the current request. Provider unschedulability and an
 // active model cooldown decide whether a binding should be cleared, while cache

@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// responses.go prepares and executes Grok Responses requests while retaining
+// client tools and model identities.
 // Grok Responses requests can carry client tools and cache metadata that need
 // different vendor representations. Preparation keeps the caller model for
 // output, maps a billing model to the upstream model, and records client-tool

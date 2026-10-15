@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// admin_contracts.go defines administrator account inputs and the services
+// used to apply them.
 // Administrator account input distinguishes omitted pointers from explicit
 // zero or empty selections. Funding changes use dedicated balance operations,
 // while provider binding carries a stable type/key/subject tuple and optional

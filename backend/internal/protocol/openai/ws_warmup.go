@@ -6,6 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// ws_warmup.go recognizes nongenerating Responses warmups and constructs their
+// created and completed response events.
 // A Responses WebSocket warmup asks for generate=false before a business turn
 // continues from the returned response ID. Local HTTP bridges answer that
 // warmup with an empty created/completed pair, leaving replay history and

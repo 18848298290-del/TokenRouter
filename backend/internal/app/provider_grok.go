@@ -20,10 +20,12 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// Grok authorization can store browser sessions in Redis when that application
-// resource is available. Quota probing reuses operator URL policy, execution
-// transport, and local usage statistics, while request-side token refresh
-// shares the same coordinator and cached credentials.
+// provider_grok.go constructs Grok authorization, token refresh, and quota
+// probing from shared application resources. Grok authorization can store
+// browser sessions in Redis when that application resource is available. Quota
+// probing reuses operator URL policy, execution transport, and local usage
+// statistics, while request-side token refresh shares the same coordinator and
+// cached credentials.
 
 // provideGrokAuthorization constructs password policy and authorization session
 // storage. With Redis supplied it stops the constructor's existing store before

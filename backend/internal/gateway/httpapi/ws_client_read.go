@@ -10,6 +10,8 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 )
 
+// ws_client_read.go adapts WebSocket client reads and control-driven close
+// errors to the gateway read controller.
 // Client reads need a live transport reader while a control event delivers a
 // close handshake. The gateway read controller owns timeout arming,
 // cancellation and reader joining; the HTTP adapter translates its integer

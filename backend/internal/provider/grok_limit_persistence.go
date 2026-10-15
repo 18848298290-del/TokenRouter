@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// grok_limit_persistence.go persists Grok rate-limit observations and requests
+// conditional recovery of observed windows.
 // Grok rate-limit observations can arrive after the originating request is
 // cancelled or after another request has extended the pause. Persistence uses a
 // detached write budget and optional later-only updates; recovery asks the

@@ -4,6 +4,8 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// admin_settings_read.go decodes stored routing settings for administrative
+// responses.
 // Administrative settings responses parse the same routing keys written by the
 // settings participant. Missing model strings use platform defaults, the
 // fallback flag requires the literal true value, and observation windows are

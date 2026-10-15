@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/contact"
 )
 
+// user_summary.go defines billing user snapshots and delegates saved
+// notification-address parsing.
 // Entitlement queries need balances, request limits and alert preferences from
 // a user snapshot. This representation carries those values across billing
 // services and persistence adapters, while notification address parsing

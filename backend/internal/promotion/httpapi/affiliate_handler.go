@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// affiliate_handler.go handles administrator affiliate edits and filtered
+// audit queries.
 // Administrator edits can change an invitation code and a rebate override
 // through separate persistent calls. Code replacement happens before a rate
 // edit; clearing settings removes the rate before generating a replacement

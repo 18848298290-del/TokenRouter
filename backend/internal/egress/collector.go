@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// collector.go defines TLS capture sessions, collected handshake records, and
+// the collector control interface.
 // Capture sessions expose a temporary URL and certificate authority so an
 // administrator can direct a client handshake to the collector. Stored records
 // pair the offered ClientHello lists with negotiated protocol and selected

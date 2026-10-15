@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// outbox.go defines persisted scheduler change events and the repository
+// operations used to consume and clean them.
 // Provider and group changes reach scheduler rebuilds through persisted outbox
 // events. Event identity and payload distinguish broad membership rebuilds
 // from lightweight last-used updates, while repository methods expose ordered

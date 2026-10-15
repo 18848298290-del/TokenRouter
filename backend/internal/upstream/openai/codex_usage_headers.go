@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// codex_usage_headers.go parses Codex quota headers into independently present
+// usage observations.
 // Codex rate-limit headers expose primary and secondary windows before the
 // quota layer assigns daily or weekly meaning. Each successfully parsed field
 // remains independently observable, so a partial header set can still update

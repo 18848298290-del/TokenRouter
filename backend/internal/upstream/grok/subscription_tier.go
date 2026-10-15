@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// subscription_tier.go resolves Grok plan labels from billing amounts,
+// reported tiers, and fresh quota signals.
 // A reported tier can be ambiguous even when billing and quota observations
 // are available. Recognized monthly cent limits determine a plan first, while
 // explicit Free and SuperGrok Lite, Plus, and Heavy tiers retain their own

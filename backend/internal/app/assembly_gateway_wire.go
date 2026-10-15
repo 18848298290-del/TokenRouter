@@ -11,6 +11,8 @@ import (
 	gatewaysession "github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// assembly_gateway_wire.go registers gateway handlers, execution adapters,
+// completion resources, and error-rule dependencies with Wire.
 // Text, media, and live requests reach platform execution through handlers
 // assembled around shared request activity and completion records. Persisted
 // error rules and their Redis cache join the same graph, connecting gateway

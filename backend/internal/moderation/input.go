@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// input.go extracts current-turn moderation content and selects audit units
+// while retaining source positions.
 // Current-turn auditing starts after the latest assistant or model
 // contribution, so prior conversation turns are excluded while later user and
 // tool units remain. Responses tool calls also act as model separators.

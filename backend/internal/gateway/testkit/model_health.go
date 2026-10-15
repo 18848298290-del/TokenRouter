@@ -11,11 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// A missing-model response can trigger either model-specific cooldown or
-// provider-wide temporary exclusion. The fixture records both operations and
-// supplies an active OpenAI API Key provider with a ten-minute 404 rule,
-// allowing tests to distinguish the production health decision through its
-// observed writes.
+// model_health.go supplies a missing-model provider fixture and records model
+// or provider cooldown writes. The provider fixture is an active OpenAI API Key
+// provider with a ten-minute 404 rule, allowing tests to distinguish the
+// production health decision through its observed writes.
 
 // ModelHealthStore records model cooldowns and supports injected write errors.
 type ModelHealthStore struct {

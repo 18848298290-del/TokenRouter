@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// catalog.go builds and publishes model catalogs with pricing and attribute
+// supplements.
 // Catalog publication combines one downloaded body with custom and embedded
 // supplements. Model fields keep catalog values first, custom missing-field
 // additions second, and embedded additions last; operation defaults start with

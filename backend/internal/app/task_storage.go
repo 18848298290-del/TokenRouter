@@ -12,6 +12,8 @@ import (
 	creativeredis "github.com/TokenFlux/TokenRouter/internal/creative/rediscache"
 )
 
+// task_storage.go configures Redis queues, transient creative storage, and
+// batch-image download limits.
 // Creative and batch-image queues keep task reservation and locking names
 // beside their lease lifetimes. Assembly supplies those Redis options from
 // startup configuration, while transient creative data and batch downloads

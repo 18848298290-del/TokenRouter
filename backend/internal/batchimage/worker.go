@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// worker.go processes reserved batch-image jobs while coordinating lease
+// renewal and queue outcomes.
 // Each worker visit begins with a Redis reservation and then acquires the job
 // lock before reading or advancing persistent task state. Queue activity and
 // lock renewal keep the visit owned during long provider work; the held lock

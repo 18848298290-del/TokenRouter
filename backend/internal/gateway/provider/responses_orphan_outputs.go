@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// responses_orphan_outputs.go removes tool outputs that lack retained
+// continuation or matching local call context.
 // Tool outputs can refer to calls outside the supplied input when
 // previous_response_id names retained upstream history. Without that
 // continuation identity, the request needs a matching local call or item

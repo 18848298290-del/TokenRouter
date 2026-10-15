@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_analytics.go splits report ranges across raw usage and covered
+// analytics buckets and combines dashboard and batch-cost results.
 // A report can start before continuous analytics coverage and end after the live
 // watermark. The query window keeps those unaggregated edges as raw records
 // while the covered middle uses UTC hourly buckets and a date-based daily span
@@ -23,10 +25,10 @@ import (
 // endpoint differs from the raw tail's starting instant. Rounding during UTC's
 // final hour can include the current date in the daily span, while live daily
 // rebuilding handles closed dates. Daily date parameters are kept separate from
-// hourly timestamps to preserve PostgreSQL's inferred types. User dashboards and batch cost reports then combine each source's
-// metrics while retaining actor/team ownership, independently chosen today
-// ranges, and raw recent-rate reads. Missing usable coverage asks callers to
-// choose a complete raw query.
+// hourly timestamps to preserve PostgreSQL's inferred types. User dashboards
+// and batch cost reports then combine each source's metrics while retaining
+// actor/team ownership, independently chosen today ranges, and raw recent-rate
+// reads. Missing usable coverage asks callers to choose a complete raw query.
 
 // usageAnalyticsWindow describes report instants, covered bucket bounds, and raw
 // edges.

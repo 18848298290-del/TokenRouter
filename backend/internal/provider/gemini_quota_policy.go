@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// gemini_quota_policy.go assembles Gemini quota policies from tier defaults
+// and ordered configuration overrides.
 // Gemini quota policy starts with local tier defaults, then applies static
 // tier overrides, static policy JSON, and dynamic settings in that order. New
 // quota-rule objects supersede legacy tier objects when their rule map is

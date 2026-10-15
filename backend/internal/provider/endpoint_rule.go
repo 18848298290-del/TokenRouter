@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// endpoint_rule.go evaluates OpenAI-compatible endpoint eligibility from
+// provider protocols, authentication, and workload settings.
 // Endpoint eligibility combines a provider protocol set with type-specific
 // capability rules and workload configuration. An empty requested capability
 // means no extra restriction, while named capabilities require OpenAI-compatible

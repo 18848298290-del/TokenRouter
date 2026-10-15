@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// postgres.go starts a dedicated PostgreSQL test container and applies
+// application migrations.
 // PostgreSQL storage fixtures apply the application's embedded migrations
 // before domain records are read or written. New starts a dedicated container,
 // obtains a UTC connection, and registers cleanup so the SQL pool closes before

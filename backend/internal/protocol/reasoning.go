@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// reasoning.go defines ordered reasoning effort vocabularies and normalizes
+// supported Claude output-effort values.
 // Reasoning effort labels are exchanged as strings, but the comparable sets
 // differ between OpenAI and Messages requests. Claude normalization accepts
 // xhigh and max as separate levels; none is an administrator mapping value

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// group_protocols.go normalizes group protocol admission and rebuilds legacy
+// permission mirrors.
 // A group's protocol set is the saved admission policy, and compatibility
 // booleans are derived views consumed by existing execution paths. Empty
 // selections close client entries; legacy switches patch a supplied selection

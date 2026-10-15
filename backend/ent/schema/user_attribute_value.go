@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Custom user values are stored as text even when their definitions describe
-// numbers, dates, or selections. The identity application validates and
-// interprets that text using the definition; each user has at most one value
-// for each attribute.
+// user_attribute_value.go defines text storage for custom user attributes,
+// including numbers, dates, and selections. The identity application validates
+// and interprets that text using the definition; each user has at most one
+// value for each attribute.
 
 // UserAttributeValue stores one user's text value for a custom attribute.
 type UserAttributeValue struct {

@@ -2,6 +2,8 @@ package migrations
 
 import "embed"
 
+// migrations.go embeds SQL migration scripts for database initialization and
+// upgrades.
 // Deployment carries migration SQL inside the application binary. Bootstrap and
 // maintenance pass this embedded filesystem to the PostgreSQL runner, which
 // orders migration filenames and checks stored checksums before applying the

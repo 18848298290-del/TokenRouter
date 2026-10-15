@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator endpoints for moderation
+// configuration and review.
 // Risk-control management shares the protected administrator route group
 // assembled by app. Full input and image retrieval, key tests, unban commands,
 // and hash mutations inherit that group middleware when these endpoints are

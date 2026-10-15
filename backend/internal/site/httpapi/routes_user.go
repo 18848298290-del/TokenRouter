@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated announcement listing and read
+// acknowledgements.
 // Logged-in users query announcements and acknowledge visible records through
 // the same authenticated route family. app prepares authentication, rate limiting,
 // and auditing on the supplied parent group before these handlers are bound,

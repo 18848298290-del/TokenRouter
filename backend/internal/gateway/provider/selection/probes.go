@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// probes.go selects availability-probe targets and passes the group-mapped
+// model to provider testing.
 // Group availability probes choose an eligible provider using the client model,
 // but provider testing accepts the group-mapped identity. Passing a client alias
 // directly to that test would skip the group mapping; mapping an intermediate

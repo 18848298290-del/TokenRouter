@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// pricing_config.go defines shared pricing configurations and copies their
+// editable price graphs.
 // A shared pricing configuration associates several groups with the same model
 // cards and billing settings. Model cards retain optional amount presence, and
 // cloned configurations separate mutable price pointers and collections before

@@ -1,5 +1,7 @@
 package telemetry
 
+// context.go defines context keys for request identity and gateway timing
+// observations.
 // Request identity and transport-stage observations travel with the request
 // context so middleware and detached completion work can read the same
 // values. The compatibility ClientRequestID constant shares RequestID's key;

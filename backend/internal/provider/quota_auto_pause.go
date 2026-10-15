@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// quota_auto_pause.go evaluates OpenAI quota pauses from configured thresholds
+// and observed Codex windows.
 // OpenAI quota pauses compare Codex window percentages with provider-specific
 // ratios or inherited defaults. Each window can be disabled independently,
 // and a positive five-hour match takes precedence over a seven-day match. A

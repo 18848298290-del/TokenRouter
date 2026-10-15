@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// subscription.go derives subscription status, quota availability and
+// quota-window timing.
 // Subscription status depends on deletion and its effective time interval,
 // with suspension retained only after the interval checks pass. Stored labels
 // and wall-clock helpers answer different questions: IsActive requires an

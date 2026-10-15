@@ -7,6 +7,8 @@ import (
 	"text/template"
 )
 
+// openai_instruction_template.go renders forced Codex instructions and applies
+// nonempty template output to requests.
 // Forced Codex instructions are rendered with request model names and existing
 // instructions supplied as template data. Empty output leaves the request
 // untouched, and trimmed matching instructions avoid an unnecessary

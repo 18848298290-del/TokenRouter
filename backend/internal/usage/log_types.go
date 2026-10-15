@@ -2,6 +2,8 @@ package usage
 
 import "time"
 
+// log_types.go defines usage query filters and report values with separate
+// user-charge and provider-cost fields.
 // Usage reports separate user charges from standard costs and provider costs,
 // while grouping records by model, endpoint, group, payer or key. Query
 // filters carry actor and team visibility separately from those reporting

@@ -11,6 +11,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// passthrough.go executes Anthropic API Key passthrough with request-local
+// Messages hooks.
 // API Key passthrough retains the Anthropic client response shape while using
 // the Messages attempt orchestration. The adapter resolves the provider proxy
 // and passes wire, response, and stream observations through hooks belonging to

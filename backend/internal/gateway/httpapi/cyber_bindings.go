@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// cyber_bindings.go binds HTTP cyber markers, session lookups, and terminal
+// error output to the cyber handler.
 // HTTP cyber handling reads refusal evidence from request context and asks the
 // session core to match blocked identity. Its output callbacks stop heartbeat
 // generation and record intended error status before attempting a terminal

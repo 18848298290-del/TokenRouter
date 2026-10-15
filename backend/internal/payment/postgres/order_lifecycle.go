@@ -13,6 +13,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// order_lifecycle.go selects orders for recovery and expiration and commits
+// forced expiration together with its audit record.
 // Background recovery first reads order IDs and later rereads selected
 // processing rows, so status changes can remove candidates before provider
 // queries. Fulfillment candidates require payment confirmation time and an

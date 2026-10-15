@@ -2,6 +2,8 @@ package scheduler
 
 import "context"
 
+// rpm_cache.go defines provider request-count reads and increments for
+// scheduler RPM admission.
 // Provider RPM admission reads a soft count for the current minute and records
 // requests through a separate increment. The Redis adapter uses its server
 // clock so all instances address the same minute bucket for each observation.

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// proxy_service.go defines proxy repository operations for administration,
+// provider bindings, and expiration maintenance.
 // Proxy administration uses one repository for connection records, provider
 // associations, and expiration sweeps. Repository methods supply counts and
 // optional filtering for the admin service, while connection changes and

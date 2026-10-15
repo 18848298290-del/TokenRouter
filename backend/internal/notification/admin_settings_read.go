@@ -4,6 +4,8 @@ import (
 	"strconv"
 )
 
+// admin_settings_read.go reads SMTP settings and password presence for
+// administrator responses.
 // Administrator SMTP reads need connection parameters together with a separate
 // password-present flag for masked settings responses. Stored ports are parsed
 // as decimal integers, with a failed parse selecting the submission-port default

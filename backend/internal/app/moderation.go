@@ -26,10 +26,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Moderation storage combines risk records with identity status changes through
-// transaction participants. Runtime adapters provide narrow user, group, and
-// proxy reads, while external audit, media snapshots, error classification, and
-// tracked background work are bound for content review.
+// moderation.go assembles content moderation with identity risk commands,
+// storage, media capture, and notification delivery. Moderation storage
+// combines risk records with identity status changes through transaction
+// participants. Runtime adapters provide narrow user, group, and proxy reads,
+// while external audit, media snapshots, error classification, and tracked
+// background work are bound for content review.
 
 // moderationUsers adapts identity risk-status commands for content moderation
 // consumers.

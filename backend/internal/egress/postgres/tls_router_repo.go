@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// tls_router_repo.go persists TLS routers and converts their rules and
+// dedicated profile selections.
 // Stored TLS routers keep ordered User-Agent rules alongside dedicated token
 // and reset identity settings. Entity mapping supplies an empty Rules array for
 // administrator responses when storage is absent, while update clears omitted

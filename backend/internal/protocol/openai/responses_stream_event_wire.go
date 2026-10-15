@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// responses_stream_event_wire.go encodes Responses stream events with the
+// fields and empty values required by each event kind.
 // Responses deltas need zero-valued position indexes, and newly opened items
 // need empty argument strings or arrays before content arrives. Ordinary
 // omitempty tags would remove these fields, so event-kind selection constructs

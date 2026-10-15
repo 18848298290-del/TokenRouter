@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// promo.go persists registration promotion controls and queries their
+// redemption receipts.
 // Administrator code edits can start from a snapshot read before another user
 // redeems the same promotion. Update writes the editable grant controls while
 // leaving used_count to its additive redemption update, so saving that

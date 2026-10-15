@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// admin_transactions.go prepares administrator identity binding, account
+// deletion, and group replacement operations.
 // Administrator account deletion collects Key identifiers and credential text
 // before its transaction request. Successful mutation requests optional
 // invalidation from those observations, while a failed listing or transaction

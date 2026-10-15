@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go runs Gemini attempts and collects usage, output, model identity,
+// and timing observations.
 // A Gemini attempt can return explicit zero usage, semantic output, and an
 // observed upstream model as independent facts. Client response identity
 // remains the requested response model, while the selected target model

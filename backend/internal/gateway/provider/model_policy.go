@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// model_policy.go resolves provider model identities for execution, listing,
+// billing, and scheduling.
 // A model request can have a group-mapped billing name and a different
 // provider-specific outbound name. Provider mapping executes one hop, while
 // Bedrock regions, Anthropic Vertex IDs, Qoder site aliases, and Antigravity

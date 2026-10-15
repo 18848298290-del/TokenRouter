@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// refresh_loop.go runs periodic credential maintenance and coordinates startup
+// with shutdown.
 // Background credential maintenance starts with an immediate cycle and then runs
 // cycles sequentially on a ticker. Concurrent StartContext calls compete for one
 // start flag, and StopContext permanently closes startup even when the loop was

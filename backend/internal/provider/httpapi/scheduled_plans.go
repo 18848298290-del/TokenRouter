@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// scheduled_plans.go handles scheduled provider-test plan administration and
+// result-history requests.
 // Scheduled provider tests expose plan and result values directly as JSON on
 // successful administration calls. Creation enables a plan by default, update
 // retains values for omitted optional booleans and empty strings, and the

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// gateway_cache.go provides gateway cache stubs and constructs a
+// miniredis-backed session cache for tests.
 // Gateway session tests can choose between fixed empty cache observations and a
 // miniredis-backed adapter. The stub keeps session affinity, ownership, and
 // pending billing data absent while accepting claims; NewRedisGatewayCache

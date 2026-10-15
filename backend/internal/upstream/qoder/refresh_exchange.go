@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// refresh_exchange.go refreshes Qoder credentials through the selected site and
+// authentication workflow.
 // Saved credentials identify both a Qoder site and a refresh workflow, while PAT
 // credentials rebuild their session from the original personal token.
 // RefreshExchange chooses that workflow and returns identity, machine, and

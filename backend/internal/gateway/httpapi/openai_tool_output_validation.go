@@ -11,10 +11,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// HTTP Responses tool outputs need enough surrounding input to associate
-// results with their originating calls. Validation accepts supplied
-// continuation or call context, otherwise requires call IDs and matching item
-// references before writing an OpenAI invalid-request response.
+// openai_tool_output_validation.go validates HTTP tool-output context before
+// Responses execution. Tool results need an association with their originating
+// calls, and the protocol helper reports which supporting input is present.
+// Requests containing no function-call output pass through this check, leaving
+// other request validation to the entry handler.
+//
+// A nonblank previous response ID or existing tool-call context admits the
+// request before standalone-output checks. Remaining outputs require call IDs
+// first, then item references covering every call ID. Missing IDs and missing
+// references produce distinct diagnostic reasons and HTTP 400 messages, so
+// callers can identify which association information the request lacks.
+// Validation leaves the supplied body intact for subsequent execution.
 
 // ValidateOpenAIFunctionCallOutput reports whether HTTP tool outputs pass its
 // call-context checks. Requests without function_call_output pass immediately.

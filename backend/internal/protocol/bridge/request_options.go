@@ -1,5 +1,7 @@
 package bridge
 
+// request_options.go defines caller-selected sampling and effort options for
+// request conversion.
 // Conversion options apply target-specific sampling and effort decisions
 // after the caller resolves its model policy. The converters read these flags
 // directly, so an opaque model name receives the same field treatment as a

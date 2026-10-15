@@ -11,11 +11,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Gateway administration stores forwarding switches, client version overrides,
-// and prompt policies as string-valued settings. Preparation validates the
-// constrained TTFT and prompt-block values before producing that representation,
-// while a participant removes omitted fields so partial updates retain their
-// persisted values.
+// admin_settings.go prepares forwarding switches, client version overrides, and
+// prompt policies for string-valued settings storage. Preparation validates the
+// constrained TTFT and prompt-block values before producing that
+// representation, while a participant removes omitted fields so partial updates
+// retain their persisted values.
 //
 // A decoded administration object gives omitted fields the same zero values
 // as explicitly supplied false or empty values. The participant therefore

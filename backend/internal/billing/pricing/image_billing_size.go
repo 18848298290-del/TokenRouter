@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// image_billing_size.go selects image billing tiers while retaining input and
+// output size evidence.
 // An upstream response may report several image dimensions that differ from the
 // requested size. Billing uses the highest recognized output tier for the
 // request, while display retains the first nonempty output spelling so recorded

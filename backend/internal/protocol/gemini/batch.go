@@ -1,5 +1,7 @@
 package gemini
 
+// batch.go defines Gemini upload and batch-job response records, including
+// alternate result field spellings.
 // Gemini batch outputs can identify a result file through destination or
 // response fields, with camelCase and snake_case variants. The batch-image
 // adapter reads these alternatives in precedence order, while inline-response

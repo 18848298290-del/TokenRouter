@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// platform_selection_values.go carries flow-record associations through
+// scoring, acquisition, and provider rechecks.
 // Platform scoring borrows request-scoped flow records while the shared scorer
 // operates on smaller ScoreProvider values. Newly allocated score pointers
 // retain an invocation-local lookup to the exact originating flow record,

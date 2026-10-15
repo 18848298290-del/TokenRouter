@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// usage_merge.go merges Anthropic usage observations into disjoint prompt and
+// cache accounting buckets.
 // Anthropic-compatible responses can describe prompt work as uncached tokens,
 // a total prompt count, or separate cache hit and miss buckets. Converted
 // Messages streams need disjoint input and cache buckets for billing, even

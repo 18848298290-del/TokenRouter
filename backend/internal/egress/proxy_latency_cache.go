@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// proxy_latency_cache.go defines cached proxy connectivity and quality
+// observations and their storage interface.
 // Proxy connectivity observations and quality assessments share one cached
 // result keyed by proxy ID. A later latency-only update can retain the earlier
 // quality details, allowing administrator listings to show connection success

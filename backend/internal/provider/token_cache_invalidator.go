@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// token_cache_invalidator.go invalidates platform token cache identities and
+// Qoder credential sessions after provider changes.
 // A token cached before project or account discovery can remain under a
 // provider-ID key after the current snapshot selects a more specific identity.
 // Gemini, Antigravity and Grok invalidation therefore covers both the

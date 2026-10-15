@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
+// service.go records request errors and publishes runtime monitoring
+// preferences for Ops readers.
 // Ops request ingestion uses the supplied mutable error entry through
 // preparation and persistence. Monitoring gates can skip recording, while
 // preparation defaults required fields, selects retained provider-auth

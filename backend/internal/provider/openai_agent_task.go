@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+// openai_agent_task.go coordinates OpenAI Agent Identity task registration and
+// credential publication.
 // Agent Identity requests sign with a registered task ID instead of an OAuth
 // access token. Several application consumers share one coordinator, so a
 // provider's task registration is serialized within the process and reread

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
+// jwt_auth.go authenticates panel JWT requests against current account and
+// session-binding state.
 // Panel JWTs are checked against a current user before a request receives
 // authenticated Gin values. A valid signature alone is insufficient when the
 // account is inactive, the credential fingerprint changed, or the configured

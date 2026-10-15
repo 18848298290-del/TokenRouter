@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// calculate.go calculates usage charges and builds display prices from
+// resolved pricing.
 // Token amounts depend on the selected context range, service tier, cache
 // detail, and reported image subsets. A request can contain overlapping
 // representations, such as image input inside aggregate input or TTL details

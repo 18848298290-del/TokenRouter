@@ -6,10 +6,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// group_assignment.go enforces group assignment after key authentication while
+// allowing eligible composite-key requests.
 // Group-consuming routes need a selected group after authentication and
 // composite selection. Some composite endpoints intentionally work with no
 // selected group, so admission combines loaded-key state with that exception
 // before invoking the protocol error writer.
+//
+// The middleware advances when authentication has not supplied a key, leaving
+// that earlier admission layer to handle missing identity. A loaded key is
+// rejected only when it lacks both an assigned group and the composite
+// no-group exception. That exception requires a composite key and presence of the
+// request marker; ordinary keys cannot gain it from the marker alone.
+// Rejection records the optional observation before writing and aborting the
+// request.
 
 type (
 	// GroupAssignmentAccess represents the selected-group eligibility checked during HTTP request admission.

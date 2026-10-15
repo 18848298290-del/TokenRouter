@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
+// signer.go signs prepared Bedrock requests with AWS credentials and a payload
+// digest.
 // AWS SigV4 signs the same payload bytes and request headers that Bedrock
 // receives. The signer keeps caller-supplied credentials and source region,
 // while the AWS SDK mutates the prepared request in place using a SHA-256

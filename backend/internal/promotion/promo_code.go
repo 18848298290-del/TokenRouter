@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/contact"
 )
 
+// promo_code.go represents registration promotion controls and evaluates their
+// current eligibility.
 // A registration Promo grant is eligible only while its code is active, its
 // deadline has not passed, and its positive total-use limit has remaining
 // capacity. A deadline equal to the supplied time still permits use, and a

@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// Runtime router matching uses an immutable local snapshot with precompiled
-// patterns and preserves stored rule order. The first enabled matching rule
-// supplies the profile choice and outgoing client headers, while missing,
-// disabled, and unmatched routers retain the metadata useful for request
-// diagnostics.
+// tls_router_service.go manages stored TLS routers and matches requests against
+// immutable snapshots with precompiled patterns in stored rule order. The first
+// enabled matching rule supplies the profile choice and outgoing client
+// headers, while missing, disabled, and unmatched routers retain the metadata
+// useful for request diagnostics.
 //
 // Database writes normalize configuration and refresh local and distributed
 // snapshots with an independent three-second context. Each publication clones

@@ -13,10 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog/postgres"
 )
 
-// Request records use application SQL storage for batch writes and diagnostics.
-// Lifecycle registration starts the writer and invokes its shutdown drain with
-// the manager's stop context, while administrator query routes receive
-// authentication, audit, and rate middleware through their route group.
+// request_log.go constructs request recording, registers its writer lifecycle,
+// and mounts administrator lookup routes. Request records use application SQL
+// storage for batch writes and diagnostics. Lifecycle registration starts the
+// writer and invokes its shutdown drain with the manager's stop context, while
+// administrator query routes receive authentication, audit, and rate middleware
+// through their route group.
 
 // provideRequestLog constructs request recording over the supplied SQL pool
 // and registers its Start and Stop hooks. The pool stays owned by the

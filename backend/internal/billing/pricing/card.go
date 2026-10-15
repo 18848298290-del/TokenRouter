@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// card.go defines, validates, clones and matches configured model price cards.
 // Model cards select billing units and hold optional amounts, so a nil price
 // can inherit another source while an explicit zero remains free. Context
 // ranges use (min,max] endpoints; request and media tiers can also select

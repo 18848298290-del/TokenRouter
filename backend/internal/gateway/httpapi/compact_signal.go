@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// compact_signal.go carries native compaction markers into Codex headers and
+// adapts captured failures for HTTP error handling.
 // Native compaction is recognized from request content before outbound headers
 // are built. Its saved marker requires the remote_compaction_v2 feature even
 // when ordinary OAuth defaulting would leave a client-supplied feature list alone.

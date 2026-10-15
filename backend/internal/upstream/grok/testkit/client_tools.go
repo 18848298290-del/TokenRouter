@@ -2,6 +2,8 @@ package testkit
 
 import "fmt"
 
+// client_tools.go supplies a Grok request fixture containing client tools and
+// matching replay history.
 // Client-tool round trips need replayed calls and outputs that still match their
 // declarations after conversion. The shared fixture combines custom patch input,
 // client tool search and a namespaced function with matching historical call

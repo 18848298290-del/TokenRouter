@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
+// search_runtime.go binds search-tool emulation to shared search
+// configuration, group policy, and event logging.
 // Search-tool emulation reads the current search manager from the shared
 // configuration registry and group policy from routing. Missing runtime or
 // group-policy dependencies remain optional, so the emulator can apply its own

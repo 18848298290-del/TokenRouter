@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// tls_profile_cache.go caches TLS profiles locally and in Redis and manages
+// update subscriptions.
 // TLS profiles can be reused locally while Redis stores a serialized collection
 // and delivers refresh notifications across instances. The Redis entry has a
 // twenty-four-hour lifetime, but an installed local collection has no

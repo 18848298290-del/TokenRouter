@@ -8,6 +8,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// management_list.go loads provider administration pages and enriches them
+// with runtime usage and scheduling observations.
 // Provider administration first selects a sorted page, then adds observations
 // for those provider records. Ollama resolution can fail the page read, while
 // optional scheduling scores and runtime counters are assembled through their

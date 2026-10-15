@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// authorized_group.go validates the selected group against admitted request
+// state and resolves its current policy.
 // A selector receives a group that entry admission has already authorized. A
 // matching route plan and request group constrain the requested ID before any
 // repository read, including when the request group is only partially hydrated.

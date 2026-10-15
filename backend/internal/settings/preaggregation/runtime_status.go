@@ -2,6 +2,8 @@ package preaggregation
 
 import "time"
 
+// runtime_status.go defines the aggregation task observations returned by the
+// settings API.
 // Usage and Ops expose different aggregation observations through the settings
 // API. Usage supplies coverage and watermark fields from persisted analytics state,
 // while Ops supplies hourly-job heartbeat results; absent observations remain nil

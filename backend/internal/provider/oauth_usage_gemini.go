@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// oauth_usage_gemini.go builds Gemini daily and minute quota displays from
+// local usage totals.
 // Gemini local quota display separates daily and fixed-minute observations and
 // combines Pro with Flash only for positive shared limits. Per-class windows
 // otherwise retain their own requests, tokens, and provider cost; nonpositive

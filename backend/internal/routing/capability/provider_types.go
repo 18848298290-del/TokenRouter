@@ -1,5 +1,7 @@
 package capability
 
+// provider_types.go defines authentication identifiers and matches policy
+// scopes against authentication flags.
 // Provider authentication types participate in native protocol eligibility
 // separately from platform names. Scoped rules use the caller's OAuth and
 // Bedrock classification, and unrecognized saved scope values continue to match

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_cache_identity.go collects Grok cache identity inputs and resolves
+// client-tool cache opt-in precedence.
 // Grok prompt-cache routing depends on the caller's session signal, API Key
 // and final upstream model. The HTTP adapter collects the available headers
 // and supplies content-seed callbacks to platform identity resolution, which

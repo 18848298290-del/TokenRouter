@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// runtime_settings.go loads, validates, and stores provider health settings
+// and caches API key breaker policy.
 // Provider health policies use separate persisted settings keys and different
 // normalization rules. Missing or malformed cooldown settings select their
 // owning defaults, while valid decoded values can still require range

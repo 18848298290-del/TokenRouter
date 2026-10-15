@@ -11,6 +11,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// refund_prepare.go validates refund eligibility and plans local entitlement
+// recovery separately from gateway repayment.
 // Refund requests and administrative execution have different eligibility
 // checks: user requests need an owned completed balance order and
 // AllowUserRefund, while execution planning reads RefundEnabled and additional

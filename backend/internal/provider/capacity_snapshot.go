@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// capacity_snapshot.go builds scalar provider capacity snapshots from runtime
+// configuration and observed quota-pause decisions.
 // Group capacity queries read concurrency and runtime limits together with quota
 // observations at one supplied time. ProjectObservedCapacity delegates pause
 // evaluation to the platform quota rules, then returns scalar capacity values

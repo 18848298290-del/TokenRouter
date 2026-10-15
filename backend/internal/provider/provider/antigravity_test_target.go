@@ -8,10 +8,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity provider tests report the selected OAuth probe through typed test
-// events. Explicit image tests fail before probing; text probes use a default
-// model when omitted, publish any returned text, and finish through TestRun so
-// sink errors and cancellation are retained for the caller.
+// antigravity_test_target.go emits typed test events for a selected
+// Antigravity OAuth probe. Explicit image tests fail before probing; text
+// probes use a default model when omitted, publish any returned text, and
+// finish through TestRun so sink errors and cancellation are retained for the
+// caller.
 
 // AntigravityProviderTest reports OAuth probe results as test events.
 type AntigravityProviderTest struct {

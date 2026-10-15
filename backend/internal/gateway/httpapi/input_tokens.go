@@ -17,10 +17,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// input_tokens.go validates Responses input-token requests and prepares mapped
+// counting input after funding admission.
 // Responses input-token preflight checks a request without generating an answer
 // or submitting usage completion. Funding eligibility precedes group route
 // planning here, and the original requested model remains separate from the
 // mapped routing name passed into the counting attempt adapter.
+//
+// A nonempty mapped model rewrites the counting body and supplies
+// RoutingModel, while Model retains the trimmed client name for subsequent
+// error presentation. Session hashing uses those prepared bytes after mapping,
+// matching the body passed to the count adapter. The handler binds the same
+// route plan in request context before constructing that adapter, so
+// downstream selection can interpret the mapped payload with the group
+// decision that produced it.
 
 // InputTokensCall retains requested and routed identity for Responses counting
 // execution.

@@ -2,6 +2,8 @@ package scheduler
 
 import "context"
 
+// snapshot_publisher.go publishes committed provider records to the cache and
+// removes deleted providers.
 // Committed provider changes can update their cached records immediately
 // before background bucket rebuilds catch up. SnapshotPublisher reads the
 // committed records and attempts cache publication, logging failures so the

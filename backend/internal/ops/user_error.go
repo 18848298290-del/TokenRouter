@@ -2,6 +2,8 @@ package ops
 
 import "time"
 
+// user_error.go converts internal error records and classifications into
+// user-facing request summaries and details.
 // User error responses copy a fixed set of request fields from internal error
 // logs and translate stored classifications into frontend category codes.
 // Ownership is checked by GetUserErrorRequestDetail before conversion; the

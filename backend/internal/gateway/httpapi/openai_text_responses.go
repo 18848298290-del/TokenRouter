@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_text_responses.go admits Responses requests while retaining canonical
+// session and mapped attempt input.
 // Responses admission keeps canonical session input separate from
 // effort/bootstrap rewrites and group-mapped attempt bytes. Prompt replacement
 // follows Compact normalization, and the resulting bytes are retained for

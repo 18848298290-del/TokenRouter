@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// voice.go runs voice provider attempts with bounded candidate selection and
+// successful audio completion.
 // Voice recovery selects at most four candidates and excludes a provider
 // after its adapter permits another attempt. Forwarding owns protocol
 // errors and output, while candidate-exhaustion results carry the last

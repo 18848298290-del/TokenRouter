@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// catalog.go provides an embedded catalog view and editable model fixtures for
+// tests.
 // Tests can share the embedded catalog when they need real metadata, or use
 // an editable fixture for controlled model identities. The shared view is
 // built once with attribute supplements, while fixture entries and versions

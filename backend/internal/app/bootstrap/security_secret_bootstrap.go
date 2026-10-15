@@ -15,6 +15,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// security_secret_bootstrap.go resolves and persists the JWT signing secret
+// shared by application instances.
 // Multiple application instances need the same persisted JWT signing value
 // even when their configured or generated candidates differ. Bootstrap trims
 // the configured value, inserts a candidate only when its key is absent, then

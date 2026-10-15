@@ -18,6 +18,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// count_tokens_selected.go dispatches token counts to the selected platform
+// and translates Gemini results into Messages count responses.
 // Messages count clients receive input_tokens even when the selected provider
 // uses Gemini's native totalTokens response. Provider dispatch can instead write
 // a local estimate or an unsupported response, so a handled nil error does not

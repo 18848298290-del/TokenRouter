@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// request_headers.go builds Responses HTTP requests with ordered
+// authentication, session isolation, and provider identity handling.
 // Responses request identity depends on authentication, client headers,
 // credential scoping, and optional fingerprint policy. Incoming turn state is
 // filtered before Codex session headers are rebuilt, so known failover state

@@ -19,11 +19,22 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// http.go executes upstream HTTP requests with provider isolation, platform
+// transport settings, and destination checks.
 // Upstream requests carry platform transport profiles alongside provider,
 // proxy, and optional TLS identity. Client translates those values into pool
 // options, checks destinations before exchange, and derives request-specific
 // redirect behavior while egress owns proxy HTTP/2 recovery state and the
 // technical pool owns connection reuse.
+//
+// Provider concurrency replaces the three connection limits only in provider
+// or provider_proxy isolation mode. Platform-specific header waits then
+// override the generic timeout. Redirect policy is applied to a copied HTTP
+// client: disabling redirects takes precedence over public-host checks, while
+// public-host checks run before any existing redirect callback. HTTP/2
+// compatibility failures exclude timeouts before updating the shared proxy
+// recovery policy, so timeout evidence alone cannot activate that recovery
+// path.
 
 const (
 	// Pool defaults govern cached clients and connection limits when supplied

@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// chat_bridge_eligibility.go checks whether Grok Chat requests can use
+// Responses conversion without losing supported request intent.
 // A Chat request can use the Grok Responses bridge when the shared converter can
 // represent its supplied fields and message history faithfully. Unknown fields,
 // non-null stop or effort controls, legacy function controls and token caps

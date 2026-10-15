@@ -10,6 +10,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// oauth.go builds Claude authorization URLs and generates PKCE and session
+// values.
 // Claude authorization uses separate browser, token exchange, and callback
 // endpoints with PKCE S256 proof. Random state, verifier, and session strings
 // supply URL-safe inputs, while the selected scope determines which permissions

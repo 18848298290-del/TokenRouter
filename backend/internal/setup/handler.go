@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go serves setup probes and serializes HTTP installation before
+// requesting restart.
 // An installation request can wait while another HTTP request finishes setup
 // and writes its configuration. installWithRestart holds a process-local mutex,
 // then repeats NeedsSetup before binding and validating inputs, keeping later

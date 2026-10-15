@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// response_owner_context.go stores and retrieves the authenticated user and
+// API Key identifiers used for Responses ownership checks.
 // Responses continuation authorization needs both an authenticated user ID and
 // API Key ID from the HTTP request. They are retained as a value pair so later
 // ownership checks can reject missing or invalid identity independently of

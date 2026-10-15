@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_search_wire.go registers search configuration, registry, runtime,
+// and HTTP constructors with Wire.
 // Configuration loading publishes the active search Manager through a shared
 // Registry. The HTTP handler manages that ConfigService, and lifecycle
 // registration initializes it before the server accepts requests and waits

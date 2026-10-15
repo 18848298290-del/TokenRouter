@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// remote.go fetches bounded catalog bodies with conditional HTTP requests and
+// configured proxy policy.
 // A configured catalog proxy can fail during client construction before any
 // HTTP request is sent. Construction represents that failure as a client that
 // reports it on every fetch unless the configured policy permits replacing

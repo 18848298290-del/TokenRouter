@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// pagination.go normalizes pagination sizes and sort directions and computes
+// page metadata and slices.
 // Pagination consumers need the same effective size when computing offsets and
 // page counts. Limit supplies a default for nonpositive sizes and caps large
 // sizes, while slice pagination returns a view into the caller's existing

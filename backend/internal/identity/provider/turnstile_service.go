@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// turnstile_service.go submits Turnstile challenge proofs and decodes
+// verification responses for the identity service.
 // Turnstile sends challenge decisions as JSON after a form-encoded verification
 // request. The adapter returns that decision even when success is false; the
 // identity service interprets rejection and secret-key probe results using the

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// dashboard_snapshot_v2_handler.go assembles selected administrator dashboard
+// sections into a cached HTTP snapshot.
 // Administrator snapshot requests choose chart sections before a shared
 // loader runs. Parsed filters, range values and inclusion flags form the
 // cache identity and become loader inputs, allowing the HTTP waiter to

@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// pricing.go supplies shared model lookup candidates to gateway pricing and
+// catalogue consumers.
 // Pricing and catalogue consumers use complete model identities, including
 // provider qualifiers and version suffixes. The pricing package supplies
 // ordered lookup candidates and Google resource normalization, while gateway

@@ -11,11 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
-// A Key model alias redirects one request name to one concrete target before
-// group and provider mapping. Validation trims configured names and permits one
-// trailing wildcard on the source, while runtime resolution gives exact names
-// priority and then chooses the longest matching wildcard. Targets are returned
-// once, so an alias pointing at another source is not resolved again.
+// model_mapping.go validates Key model aliases, resolves request names, and
+// enumerates aliases for available targets. Key aliases apply before group and
+// provider model mapping. Validation trims configured names
+// and permits one trailing wildcard on the source, while runtime resolution
+// gives exact names priority and then chooses the longest matching wildcard.
+// Targets are returned once, so an alias pointing at another source is not
+// resolved again.
 //
 // Model lists expose exact aliases only when their concrete targets appear in
 // the supplied available models. Wildcard sources stay out of enumeration

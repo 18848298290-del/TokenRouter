@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
+// systemone_forward.go executes SystemOne decisions through Jev providers and
+// classifies upstream failures for retries or final HTTP output.
 // SystemOne decisions resolve provider mapping and billing-model pricing
 // before a Jev exchange begins. An answer can be served with valid or unknown
 // usage independently of client delivery success, so completion consumes the

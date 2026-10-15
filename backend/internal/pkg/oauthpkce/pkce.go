@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 )
 
+// pkce.go generates OAuth PKCE verifiers and derives URL-encoded S256
+// challenges.
 // OAuth exchanges use random verifier text and an S256 digest encoded for a
 // URL. Ordinary integrations request unpadded base64url verifiers, while the
 // OpenAI OAuth wrapper requests the longer hexadecimal form before deriving its

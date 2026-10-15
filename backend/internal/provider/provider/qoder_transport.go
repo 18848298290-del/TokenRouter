@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder token exchange and inference requests use the provider's loaded proxy
-// and selected TLS profile. The request doer resolves those choices once when
+// qoder_transport.go binds Qoder token and inference requests to the provider
+// proxy and TLS profile. The request doer resolves those choices once when
 // bound, then forwards each request through the shared transport with the
 // provider's current ID and concurrency value.
 

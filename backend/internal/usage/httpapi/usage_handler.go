@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// usage_handler.go serves authenticated user usage history, rankings, error
+// records, and dashboard reports.
 // User usage reports bind visibility to the authenticated actor and include
 // its owned team's records through repository scope. Direct record detail is
 // stricter: the stored actor must match the requester before request metadata

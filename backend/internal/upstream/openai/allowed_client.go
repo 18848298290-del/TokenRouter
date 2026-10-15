@@ -2,6 +2,8 @@ package openai
 
 import "strings"
 
+// allowed_client.go matches configured client presets against request
+// originator and User-Agent headers.
 // A configured Codex client preset needs both a matching originator and all
 // required User-Agent markers. Blank requirements reject the preset, so a
 // stored allowlist cannot accidentally reduce client admission to a single

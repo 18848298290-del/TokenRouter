@@ -6,6 +6,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// group_access_delete.go deletes account grants and denials referencing a
+// group during its removal.
 // Group deletion removes both exclusive-access grants and administrator
 // public-group denials before its owner completes the database deletion. Both
 // tables can reference the removed group, so the participant processes them

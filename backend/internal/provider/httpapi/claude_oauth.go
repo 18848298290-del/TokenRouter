@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// claude_oauth.go handles Claude OAuth and Setup Token authorization requests,
+// including cookie exchanges.
 // Claude OAuth and Setup Token creation share session exchange but choose
 // different scopes when authorization starts. Cookie authentication accepts the
 // frontend's code field as a session key, and URL generation treats every JSON

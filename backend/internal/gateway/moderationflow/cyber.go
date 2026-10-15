@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// cyber.go captures cyber-policy evidence and dispatches usage recording,
+// session blocking and Ops entries.
 // An upstream cyber warning can produce usage recording, session blocking
 // and an Ops entry after the request has ended. Dispatch copies completion
 // and metadata evidence before task submission, then supplies a detached

@@ -5,11 +5,10 @@ import (
 	"strings"
 )
 
-// Some Claude client auxiliary requests have fixed local answers, allowing
-// their caller to proceed without an upstream exchange. Single-token Haiku
-// probes require a validated Claude client and take precedence; suggestion and
-// warmup recognition inspect structured message and system text after a quick
-// raw-body marker check.
+// interception.go classifies Claude auxiliary requests that can receive fixed
+// local answers. Single-token Haiku probes require a validated Claude client
+// and take precedence; suggestion and warmup recognition inspect structured
+// message and system text after a quick raw-body marker check.
 //
 // Suggestion recognition considers the first text block of the final request
 // message when its role is user, while warmup scans all text blocks for title

@@ -20,6 +20,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// trace.go captures gateway request identity summaries and optional header and
+// body snapshots for debugging.
 // Gateway diagnostics compare inbound and outbound Messages requests using
 // compact identity lines or complete file snapshots. Authorization and
 // x-api-key values are redacted; other header values, request bodies, and selected

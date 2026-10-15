@@ -10,6 +10,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// gateway_systemone.go constructs SystemOne decision execution with transport,
+// pricing checks, and request activity.
 // SystemOne decisions use the common transport, provider health, and pricing
 // preflight. Destination policy and read limits come from startup
 // configuration, with the allowed-host slice copied into the executor and

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// video_completion.go merges video status observations with creation snapshots
+// and claims delayed billing work.
 // Grok status extraction requires done state and nonblank video.url
 // evidence before returning video billing units. PrepareCompletion accepts
 // already classified observations, then uses creation snapshots to fill

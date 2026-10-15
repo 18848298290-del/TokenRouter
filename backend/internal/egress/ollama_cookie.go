@@ -7,6 +7,8 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
+// ollama_cookie.go validates pasted Ollama Cookie headers and retains
+// recognized session cookies in input order.
 // Ollama cloud usage forwards selected session cookies from a pasted Cookie
 // header, which may also contain unrelated tracking values. Every pair is
 // validated before filtering, so a malformed tracking pair, repeated name, or

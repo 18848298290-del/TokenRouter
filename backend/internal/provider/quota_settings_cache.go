@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// quota_settings_cache.go caches OpenAI quota pause defaults and refreshes
+// expired settings observations.
 // OpenAI quota defaults live inside the wider Ops advanced-settings JSON, so
 // selection reads can reuse a small threshold value without waiting for
 // storage. Cold reads return zero thresholds and stale reads return their

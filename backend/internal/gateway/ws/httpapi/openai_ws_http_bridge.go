@@ -37,8 +37,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// A Responses WebSocket conversation can execute turns over HTTP while
-// returning the upstream SSE data as WS events. HTTP conversion removes the
+// openai_ws_http_bridge.go executes Responses WebSocket turns over HTTP and
+// converts upstream SSE data into client events. HTTP conversion removes the
 // continuation anchor after ingress rebuilds input, and function-tool
 // adaptation retains declarations and name mappings for later turns that omit
 // tools. Local generate=false warmups publish matching created and completed

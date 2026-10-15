@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gateway_messages_http.go constructs Messages, compatible text, and Gemini
+// HTTP handlers with shared preparation dependencies.
 // Messages and Gemini HTTP handlers share prompt policy, route planning, and
 // concurrency helpers. Their execution options differ for partial failure and
 // cancellation, so each handler constructs the appropriate text loop around the

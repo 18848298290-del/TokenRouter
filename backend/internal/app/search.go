@@ -14,7 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Search configurations combine stored provider settings with proxy URLs and
+// search.go assembles search configuration, shared registry, proxy lookup, and
 // optional Redis quota tracking. The application initializes configuration
 // before HTTP startup and asks the runtime to wait for in-flight searches and
 // quota cleanup during shutdown; handlers and gateway consumers share its

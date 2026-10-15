@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_ws_stream_adapter.go supplies protocol observation and provider error
+// handling for pooled WebSocket turns.
 // Pooled WS output keeps observed upstream model and tier separate from the
 // outbound request's billing inputs. The session core chooses retry and drain
 // behavior; this adapter supplies protocol parsing, provider health, client

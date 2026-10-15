@@ -8,6 +8,8 @@ import (
 	"unicode"
 )
 
+// errors.go selects localized error messages from public error details and the
+// embedded catalog.
 // An English error may already contain a specific public message, while
 // historical errors can contain Chinese text. ErrorText keeps a nonblank
 // English message with no Han characters, then selects catalog messages by

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// team.go queries team usage records, summaries, and member histories from
+// scoped SQL sources.
 // Team usage reports select recorded actor and key ownership within the caller's
 // time range. Member reports combine current memberships with actors found in
 // daily usage, so a departed member can remain visible and a current member can

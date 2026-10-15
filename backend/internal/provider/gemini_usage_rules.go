@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// gemini_usage_rules.go groups Gemini usage by model class and calculates
+// local daily quota windows.
 // Gemini local quota views group model usage into Pro and Flash classes. Flash
 // or lite substrings select Flash, and remaining model names select Pro,
 // allowing quota readers to sum requests, tokens, and provider costs under

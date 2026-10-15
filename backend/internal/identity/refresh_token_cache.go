@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// refresh_token_cache.go defines refresh credential records and the cache
+// operations used for rotation and revocation.
 // Refresh credential records are addressed by digest, while user and family
 // sets supply candidates for wider revocation. SessionService saves the record
 // before adding those indexes, so failed index writes can leave a usable record

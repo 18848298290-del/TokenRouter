@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// readers.go defines lookup interfaces and callback adapters used by usage HTTP
+// handlers.
 // Usage HTTP handlers need current key ownership, user suggestions and
 // persisted request observations alongside usage rows. These reader
 // interfaces and function adapters supply those lookups, while the handler

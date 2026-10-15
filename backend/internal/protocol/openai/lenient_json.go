@@ -2,6 +2,8 @@ package openai
 
 import "fmt"
 
+// lenient_json.go removes a leading BOM and escapes control bytes inside
+// request strings under a normalized-size limit.
 // Some request bodies include a leading UTF-8 BOM or raw control bytes inside
 // quoted strings. Compatibility normalization removes the BOM and escapes those
 // bytes while retaining the surrounding request spelling; the pass does not

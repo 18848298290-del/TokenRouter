@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// codex_import.go validates Codex session import requests and delegates
+// accepted entries through response idempotency.
 // Codex session imports accept token text or structured session entries,
 // including Agent Identity material. The handler removes retired Extra values
 // before response idempotency, rejects invalid numeric options and empty parsed

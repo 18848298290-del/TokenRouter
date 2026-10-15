@@ -8,6 +8,8 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 )
 
+// ws_frames.go adapts coder/websocket connections to the gateway frame
+// transport interface.
 // Gateway WebSocket orchestration uses integer frame and close codes at its
 // transport interface. The coder/websocket adapter converts those values while
 // preserving synchronous read, write and close results, so the controller can

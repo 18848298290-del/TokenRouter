@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// messages_fixed_execution.go opens protocol-specific text attempt state and
+// converts forwarding observations into shared loop results.
 // Messages execution opens fresh attempt state while retaining
 // application-bound services. The selected text kind determines which bridge
 // receives parsed client input, mapped Gemini bytes or protocol-specific

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// configuration_limits.go aggregates available payment-method limits,
+// currencies, fees, and display names across eligible instances.
 // Visible payment limits describe the widest configured purchase range across
 // eligible merchant instances. A missing/unreadable channel limit entry
 // removes every bound for that method, while a zero value in a present entry

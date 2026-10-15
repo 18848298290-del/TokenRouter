@@ -1,5 +1,7 @@
 package usageview
 
+// grok_grok.go defines Grok billing summaries and quota-window values for usage
+// displays.
 // Grok billing data can expose weekly progress, monthly included-credit
 // spending, and prepaid or on-demand dollar amounts at the same time. Display
 // values retain those sources separately so a monthly billing date cannot

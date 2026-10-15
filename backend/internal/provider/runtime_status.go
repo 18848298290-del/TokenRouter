@@ -5,10 +5,11 @@ import (
 	"time"
 )
 
-// Administrative provider status combines a copied record with optional live
-// observations. OpenAI quota display is recalculated from dynamic defaults,
-// while Anthropic OAuth and Setup Token records read spending, retained
-// sessions, and RPM only when their corresponding provider limits are active.
+// runtime_status.go builds administrative runtime status from a copied provider
+// record and optional live counters. OpenAI quota display is recalculated from
+// dynamic defaults, while Anthropic OAuth and Setup Token records read spending,
+// retained sessions, and RPM only when their corresponding provider limits are
+// active.
 
 // RuntimeStatusOptions supplies optional counter, spending, clock, and quota
 // readers for provider administration.

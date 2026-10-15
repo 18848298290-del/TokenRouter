@@ -6,6 +6,8 @@ import (
 	"net/http"
 )
 
+// ws_dial_error.go defines WebSocket acquisition failures and retains
+// handshake evidence with the underlying dial error.
 // WebSocket acquisition failures distinguish a full queue from an unavailable
 // explicitly selected connection. Handshake failures retain HTTP status,
 // headers, and captured body alongside the dial cause, allowing recovery code

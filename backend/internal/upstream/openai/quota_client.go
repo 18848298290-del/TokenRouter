@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// quota_client.go sends authenticated quota requests and replays them once
+// after invalid Agent Identity task recovery.
 // Quota exchanges authenticate each request with bearer or Agent Identity
 // credentials and retain the task ID used for signing. If a 401 response
 // identifies an invalid task, recovery can replace that task and replay the

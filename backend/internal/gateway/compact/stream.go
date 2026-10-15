@@ -10,11 +10,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Legacy compact exchanges return one JSON response even when the downstream
-// client requests Responses streaming. The bridge emits an output-item event
-// for each object in output, followed by a completed event containing the full
-// response. Unknown JSON fields remain in the completed response and copied
-// output objects.
+// stream.go converts a completed Compact JSON response into Responses SSE
+// events. Legacy compact exchanges return one JSON response even when the
+// downstream client requests Responses streaming. The bridge emits an
+// output-item event for each object in output, followed by a completed event
+// containing the full response. Unknown JSON fields remain in the completed
+// response and copied output objects.
 //
 // SSE data occupies one line, so JSON is compacted before event framing. A
 // missing or unusable response ID is replaced through the caller's generator,

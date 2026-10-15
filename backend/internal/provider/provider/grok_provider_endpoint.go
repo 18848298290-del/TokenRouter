@@ -5,10 +5,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok endpoint selection gives saved provider addresses precedence over platform
-// defaults. OAuth text normally uses the CLI endpoint, API keys use the public
-// API, and OAuth media selection replaces an official CLI host with the media
-// API while retaining custom endpoint routing.
+// grok_provider_endpoint.go selects Grok text and media endpoints using saved
+// provider addresses and platform defaults. OAuth text normally uses the CLI
+// endpoint, API keys use the public API, and OAuth media selection replaces an
+// official CLI host with the media API while retaining custom endpoint
+// routing.
 
 // GrokProviderBaseURL selects a text endpoint for the Grok provider kind.
 // Nil or non-Grok records return empty. OAuth selects the CLI default and other

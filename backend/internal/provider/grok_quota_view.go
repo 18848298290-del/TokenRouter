@@ -11,6 +11,8 @@ import (
 	upstreamusageview "github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grok_quota_view.go builds Grok usage displays from billing, quota snapshots,
+// and credential hints.
 // Grok quota display combines official billing, rolling windows, and stored
 // credential hints that can disagree in age or authority. Billing status
 // initially supplies authentication or forbidden state; a successful active

@@ -12,10 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder execution tests need real request construction and stream parsing
-// around controlled response bytes. The client captures each attempted request
-// and copies its body before either returning an injected error, supplying a
-// successful response stream, or calling the provided request doer.
+// qoder.go captures submitted requests and provides stream clients for Qoder
+// execution tests. The client captures each attempted request and copies its
+// body before either returning an injected error, supplying a successful
+// response stream, or calling the provided request doer.
 
 // QoderClient captures requests and supplies response fixtures to the
 // production executor.

@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// usage_observation.go captures usage observation versions and constructs
+// cache identities for conditional health updates.
 // Usage observations can complete after credentials, shadow ownership or health
 // windows have changed. Captured versions supply identity and old-window
 // comparisons to conditional writers, while cache identities select observations

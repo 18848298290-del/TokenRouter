@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// visible_selection.go resolves visible Alipay and WeChat sources before
+// delegating payment instance selection.
 // A visible Alipay or WeChat method can be supplied by official or EasyPay
 // instances. This wrapper resolves that source before the underlying selector
 // chooses an instance, retaining cross-provider behavior when configuration

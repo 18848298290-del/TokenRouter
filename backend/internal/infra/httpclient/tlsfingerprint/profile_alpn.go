@@ -8,6 +8,8 @@ import (
 	utls "github.com/refraction-networking/utls" //nolint:revive // The package is named tls; the alias distinguishes it from crypto/tls.
 )
 
+// profile_alpn.go determines HTTP/2 profile support and constructs HTTP/1-only
+// profile variants.
 // HTTP/2 selection needs both an ALPN extension and an h2 protocol entry in
 // the effective TLS profile. Empty protocol lists mean HTTP/1.1, and a custom
 // extension order omitting ALPN prevents HTTP/2 selection even when a

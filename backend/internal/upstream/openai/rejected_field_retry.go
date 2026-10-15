@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// rejected_field_retry.go repairs explicitly rejected Responses fields and
+// coordinates body novelty with a shared retry budget.
 // Responses compatibility repair follows explicit upstream 400 evidence instead
 // of removing optional request fields before they fail. Recognized rejection
 // codes, indexed parameters, and message paths select narrow repairs;

@@ -20,10 +20,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAI usage probes can obtain quota observations from headers even when the
-// inference endpoint returns an error. The provider record selects bearer or
-// Agent Identity authentication, and the final User-Agent determines the
-// accompanying Codex identity headers before transport runs.
+// oauth_usage.go issues OpenAI and Anthropic usage requests with provider
+// authentication and transport settings. OpenAI usage probes can obtain quota
+// observations from headers even when the inference endpoint returns an error.
+// The provider record selects bearer or Agent Identity authentication, and the
+// final User-Agent determines the accompanying Codex identity headers before
+// transport runs.
 //
 // A shared transport carries provider proxy, concurrency, and optional TLS
 // fingerprint settings; callers without it use a pooled HTTP client.

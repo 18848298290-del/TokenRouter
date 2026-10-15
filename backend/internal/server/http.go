@@ -12,6 +12,8 @@ import (
 	middleware2 "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// http.go constructs the Gin router and HTTP server from resolved server
+// options.
 // Generation streams and large uploads can outlive short HTTP calls. Server
 // construction therefore limits header reads and idle connections while leaving
 // whole-body and response deadlines to request owners. App's resolved options

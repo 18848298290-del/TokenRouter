@@ -7,6 +7,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// oauth_usage_cache.go stores OAuth usage observations and exposes
+// platform-specific shared query groups.
 // Usage cache entries retain platform results while their consumers decide
 // identity and freshness. API responses and local totals contain scalar data
 // and are copied by value; Antigravity and Qoder display results use

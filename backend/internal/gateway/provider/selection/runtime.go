@@ -16,6 +16,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// runtime.go constructs generic, compatible, Gemini, and diagnostic selectors
+// from application-owned dependencies.
 // Provider selection combines persistent group data with application-owned
 // caches and scheduling observations. Constructors bind those instances to
 // generic, compatible, Gemini, and diagnostic entry points; compatible runtimes

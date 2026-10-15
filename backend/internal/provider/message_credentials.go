@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// message_credentials.go selects authentication credentials and downstream
+// authentication labels for Messages forwarding.
 // Messages forwarding uses provider type to choose both an authentication value
 // and the label expected by downstream adapters. Bedrock returns the bedrock
 // label with an empty credential so its forwarder can supply SigV4 signing or

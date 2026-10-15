@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grok_quota.go queries Grok billing and active quota observations and
+// combines their partial results.
 // Grok quota queries can obtain official billing data, active response headers,
 // or both. Accepted billing signals end the query early; otherwise an active
 // probe can supply rolling windows while the available billing result remains

@@ -10,6 +10,8 @@ import (
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 )
 
+// ws_close_diagnostics.go extracts WebSocket close evidence for diagnostic
+// logs and ingress termination attribution.
 // WebSocket diagnostics and termination attribution read two kinds of close
 // evidence. Network-library close errors supply numeric log status, while
 // gateway control errors retain the selected instruction and cancellation cause

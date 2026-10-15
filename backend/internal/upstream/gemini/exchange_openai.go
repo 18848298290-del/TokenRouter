@@ -11,6 +11,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// exchange_openai.go retries Gemini requests for OpenAI-compatible clients and
+// returns the selected response for conversion.
 // OpenAI-compatible Gemini requests retry before their output adapter starts
 // conversion. Error-policy matches stop before ordinary status retry
 // selection, and recognized insufficient-scope failures retain a readable

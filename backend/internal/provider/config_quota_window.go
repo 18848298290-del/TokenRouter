@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// config_quota_window.go translates provider quota settings into billing window
+// calculations and updates their reset timestamps and usage fields.
 // Fixed quota configuration needs both the next reset shown to administrators
 // and the current window used for stored consumption. These dates share a
 // timezone and calendar configuration but have different eligibility rules:

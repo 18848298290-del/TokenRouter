@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// affiliate.go binds inviters, calculates eligible rebates, and exposes
+// affiliate quota operations.
 // An invitation binds one account to another account by user ID, so later
 // invitation-code edits keep that relationship intact. Rebate accrual applies
 // the inviter's custom percentage before the global percentage and checks the

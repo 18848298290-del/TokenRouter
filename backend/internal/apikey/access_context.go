@@ -4,10 +4,16 @@ import (
 	"context"
 )
 
-// An authenticated request can replace its effective key or Fast policy after
-// group admission. Context updates copy the access record and its TeamID so
-// those scalar decisions stay local, while the request-owned key pointer
-// remains available to later gateway processing.
+// access_context.go stores and updates authenticated request identity,
+// effective Key views, and Fast policy in contexts. Context updates copy the
+// access record and its TeamID so those scalar decisions stay local, while the
+// request-owned key pointer remains available to later gateway processing.
+//
+// WithRuntimeAPIKey accepts a replacement only when its ID matches the saved
+// access record. A replacement with a hydrated user refreshes the payer ID
+// while retaining the owner and actor IDs already established for the request.
+// This check keeps later group admission from attaching an unrelated
+// credential to the authenticated identity.
 
 // accessSnapshotContextKey identifies authenticated access values in standard
 // request contexts.

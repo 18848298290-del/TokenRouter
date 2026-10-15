@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// management_ports.go defines provider instance queries and partial updates
+// used by payment configuration management.
 // Payment instances retain credentials and merchant identity needed by orders,
 // so management checks unfinished and force-expired references before
 // deletion. Storage filters and optional replacement fields express the

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// method_localization.go prepares EasyPay custom-method translations while
+// matching prior content by stable method identity.
 // Custom payment methods need stable content IDs so changing list
 // order or display text keeps translations tied to the same entry.
 // Older entries without an ID use their payment type as that identity

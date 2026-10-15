@@ -15,6 +15,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// session_service.go issues and validates access credentials, rotates refresh
+// credentials, and revokes stored sessions.
 // Access credentials carry signed account claims, while refresh credentials
 // carry random text whose digest addresses cache state. Pair issuance uses the
 // refresh family as access-token sid, allowing family cleanup and administrator

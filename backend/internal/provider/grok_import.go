@@ -11,6 +11,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// grok_import.go creates Grok providers from OAuth and SSO input and refreshes
+// imported credentials.
 // Grok SSO imports create providers independently and report partial success.
 // Single and list inputs are split, normalized, and deduplicated before at most
 // three workers receive indexed jobs. Each worker owns a distinct result slot,

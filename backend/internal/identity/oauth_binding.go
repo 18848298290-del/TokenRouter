@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// oauth_binding.go signs and verifies local account identifiers carried
+// through OAuth binding redirects.
 // OAuth binding cookies carry a decimal local user ID and a signature so the
 // callback can recover its target after a browser redirect. The ID remains
 // readable, while HMAC-SHA256 detects changes to the exact decimal payload using

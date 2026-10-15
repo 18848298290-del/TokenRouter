@@ -1,5 +1,7 @@
 package contract
 
+// types.go defines search requests, normalized results, and supplier
+// configuration exchanged by search components.
 // Search quota counts supplier calls, while search results contain the links
 // and excerpts returned by that supplier. Persisted provider settings carry
 // optional subscription and expiration timestamps; resolved proxy addresses

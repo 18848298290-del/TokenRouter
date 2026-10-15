@@ -2,6 +2,7 @@ package modelidentity
 
 import "strings"
 
+// openai.go selects the billing model identity used for completion usage.
 // Settlement needs one billing identity even when a forward result carries
 // several model names. The selected billing model wins when present; otherwise
 // the first nonempty alternate supplies the identity, with versions, prefixes,

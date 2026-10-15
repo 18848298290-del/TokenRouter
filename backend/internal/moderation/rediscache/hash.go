@@ -9,6 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 )
 
+// hash.go stores and queries flagged-input hashes in a shared Redis set.
 // Flagged-input hashes share one Redis set across recording, request checks,
 // and administrator removal. Set operations trim members but do not validate
 // hexadecimal form; the service validates administrator deletion input

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// pool.go arbitrates WebSocket leases, connection compatibility, capacity,
+// prewarming, and provider pool shutdown.
 // A provider can reuse an upstream WebSocket only when destination, proxy, TLS,
 // beta features, and selected fingerprint identity agree. Routing hints express
 // preference among compatible sockets; explicit continuation can require one

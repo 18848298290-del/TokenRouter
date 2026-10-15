@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// request.go defines usage-query inputs and the adapter interface that consumes
+// them.
 // Usage queries carry forwarding credentials and optional wallet or team
 // identity hints alongside their transport callbacks. JSON excludes those hints
 // and callbacks. Request pointers implement fixed ordinary and Go-style string

@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// grok_model_quota_block.go stores provider-and-model Grok cooldowns and
+// distinguishes long quota pauses from transient blocks.
 // Grok exhaustion can affect one model while other models on the same provider
 // remain usable. Local blocks therefore key a normalized model together with
 // provider ID. Long quota pauses and short capacity pauses apply distinct

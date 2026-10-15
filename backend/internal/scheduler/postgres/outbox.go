@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// outbox.go stores scheduler change events in PostgreSQL and coordinates
+// polling, deduplication release, and cleanup.
 // Scheduler events stay in PostgreSQL until a poller advances its Redis
 // watermark. Pending idempotent events share a deduplication key, and
 // selecting a batch releases that key in the same SQL statement so a later

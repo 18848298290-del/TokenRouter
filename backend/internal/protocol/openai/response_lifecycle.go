@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// response_lifecycle.go normalizes Responses lifecycle envelopes and terminal
+// labels while tracking sequence and completed-response identity.
 // HTTP Responses streams can carry bare Response objects beside SSE lifecycle
 // headers or legacy response.done events with status-specific outcomes.
 // Normalization repairs those representations before the HTTP readers decide

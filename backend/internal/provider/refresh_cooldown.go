@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// refresh_cooldown.go captures credential identity and temporary pause fields
+// for conditional refresh cleanup.
 // Successful refresh may clear a temporary pause that was observed before the
 // exchange. Capturing its deadline and reason alongside authentication identity
 // lets storage leave a newer administrator pause in place, even when the

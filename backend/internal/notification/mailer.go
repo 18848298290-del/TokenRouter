@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// mailer.go loads SMTP settings and delegates message delivery, connection
+// tests, and event notifications.
 // Mail delivery resolves SMTP configuration when invoked, so language-dependent
 // sender names and stored connection changes apply to the current call. Event
 // wrappers use a shared notification service for template and recipient choices;

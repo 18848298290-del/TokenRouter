@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// test_run.go coordinates probe output, cancellation after sink failures, and
+// shared execution flags.
 // Provider probes emit events while upstream execution can still be in
 // progress. The first sink failure is retained and cancels the run, so
 // execution can stop even when an output call does not directly return its

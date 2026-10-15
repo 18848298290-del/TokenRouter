@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// output_openai_anthropic_output_adapter.go binds Anthropic response readers
+// to HTTP headers, tool restoration and observations.
 // Native Anthropic and converted OpenAI output share request-level header
 // filtering and tool restoration. The option adapters supply synchronous HTTP
 // callbacks while their platform readers own buffering, terminal detection and

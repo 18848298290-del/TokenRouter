@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// input_helpers.go classifies Responses input items and image signals and
+// normalizes compatibility seed JSON.
 // Responses input cleanup removes call_id from message, reasoning, and image
 // output items that do not participate in tool-call pairing. Image detection and
 // empty-data checks recognize specific request shapes, while seed normalization

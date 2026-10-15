@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// quota_observation.go derives Gemini rate-limit reset observations from daily
+// quota messages and retry delay evidence.
 // Google quota responses can carry a daily-limit message, a structured
 // duration, or a human-readable retry hint. The caller supplies the
 // calendar-specific daily reset, and this parser uses it when the message

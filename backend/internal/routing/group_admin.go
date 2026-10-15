@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_admin.go validates and applies administrative group mutations and
+// provider membership changes.
 // Group settings and provider memberships form one administrative mutation when
 // creation or replacement copying is requested. Validation and source-provider
 // reads occur before the transaction callback, while saving the group and

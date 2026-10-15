@@ -17,6 +17,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// resume.go signs payment continuation claims, verifies tokens, and constructs
+// canonical order return URLs.
 // Payment continuation carries a local order session or a WeChat
 // payer/purchase context through a signed two-part token. JSON payload bytes
 // are base64url encoded and that encoded text is HMAC-SHA256 signed;

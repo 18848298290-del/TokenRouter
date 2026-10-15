@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// user_rpm_cache.go increments and reads user-wide and user-group request
+// counts in Redis minute buckets.
 // User-wide and user/group RPM use separate Redis-clock minute counters,
 // allowing admission to compare each recorded count with its own limit. Key
 // selection reads TIME before writing, and each INCR/EXPIRE transaction

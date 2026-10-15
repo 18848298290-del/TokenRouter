@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// promo_dto.go converts promotion codes and redemption receipts into HTTP
+// response objects.
 // Promo responses expose the grant controls separately from usage receipts,
 // whose amount records the value at redemption. Conversion allocates response
 // containers while retaining optional time pointers; recipient conversion

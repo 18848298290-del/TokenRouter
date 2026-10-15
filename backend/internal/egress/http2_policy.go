@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// http2_policy.go selects outbound transport modes and tracks temporary OpenAI
+// HTTP/2 compatibility fallbacks.
 // OpenAI requests normally select HTTP/2 when enabled, while HTTP and HTTPS
 // proxies can temporarily select HTTP/1 after repeated compatibility failures.
 // Grok and other upstream profiles retain their separate transport mode

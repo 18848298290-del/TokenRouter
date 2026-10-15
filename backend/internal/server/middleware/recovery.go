@@ -13,6 +13,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// recovery.go converts recoverable handler panics into an HTTP error response.
 // A panic can occur before a response is committed or after a handler has
 // already written it. Recovery uses Gin's panic diagnostics, then emits the
 // public 500 envelope only for an unwritten response; broken connections and

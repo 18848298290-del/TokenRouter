@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_model_sync.go handles live model queries for saved providers and
+// unsaved credential previews.
 // Live model queries use the model-sync use case for stored or temporary
 // credentials. The HTTP layer distinguishes local configuration failures from
 // upstream failures and sends sanitized messages; preview constructs an unsaved

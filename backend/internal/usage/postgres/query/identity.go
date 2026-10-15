@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// identity.go orders identity queries by usage activity and reads users' latest
+// usage timestamps.
 // User activity reads come from usage_user_activity, whose timestamps are
 // maintained with usage-record changes. Identity ordering joins that summary so
 // users without usage activity participate with null values, while a batch

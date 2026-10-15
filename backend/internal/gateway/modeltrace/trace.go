@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// trace.go tracks model redirects across request stages and restores known
+// client model metadata in responses.
 // An API Key redirect can replace a client model before group routing and
 // upstream execution add further names. Response restoration needs the
 // original client name and the internal names observed at those later stages,

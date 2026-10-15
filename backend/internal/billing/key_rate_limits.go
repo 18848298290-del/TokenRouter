@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// key_rate_limits.go defines API-key spending windows and computes their
+// effective usage.
 // API-key spending windows use elapsed durations of five hours, one day,
 // and seven days. Reading effective usage treats an absent or expired
 // start as zero consumption, while reset inputs separately choose

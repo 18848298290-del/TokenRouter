@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// passkey_handler.go exposes Passkey login, registration, and credential
+// management through HTTP handlers.
 // Passkey HTTP requests keep short-lived ceremony tokens separate from
 // persisted credentials. Anonymous login begin verifies enabled action CAPTCHA
 // before asking the Passkey service for discovery options, while registration

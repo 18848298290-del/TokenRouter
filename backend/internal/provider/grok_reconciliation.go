@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// grok_reconciliation.go plans and applies paginated Grok credential
+// reconciliation with per-provider outcomes.
 // Grok OAuth reconciliation pages active providers in increasing ID order and
 // separates planned actions from apply outcomes. Missing renewal credentials
 // choose blocking, while incomplete access data or near expiry chooses refresh.

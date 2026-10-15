@@ -13,8 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// A successful Grok Chat response needs positive aggregate token usage before
-// ordinary billing and client delivery can proceed. Missing usage becomes a
+// grok_missing_usage.go records and constructs a Grok failover failure when
+// Chat output lacks billable usage.
+// Grok Chat paths requiring billable usage need positive aggregate token counts
+// before ordinary billing and client delivery can proceed. Missing usage becomes a
 // stable failover error with an upstream request ID, and Ops records the same
 // reason for the selected provider.
 

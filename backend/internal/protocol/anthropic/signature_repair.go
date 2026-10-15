@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// signature_repair.go downgrades signature-sensitive Claude history for staged
+// recovery attempts.
 // Antigravity signature recovery first tries readable conversation history with
 // structured tool calls intact, then can downgrade both tool calls and results
 // to text when the narrower retry fails. Both stages disable top-level thinking

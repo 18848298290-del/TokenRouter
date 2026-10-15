@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// parameters.go resolves scheduler scoring parameters from process defaults,
+// runtime settings, and group policy.
 // Advanced selection uses process weights until dynamic settings supply
 // individual replacements. A valid merged set becomes the global scoring
 // baseline, while an invalid set falls back as a whole to process weights.

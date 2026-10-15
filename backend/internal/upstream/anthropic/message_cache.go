@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// message_cache.go removes message cache markers and inserts breakpoints at
+// selected conversation positions.
 // Message history grows as conversations continue, so retaining every earlier
 // cache marker would accumulate breakpoints. Preparation can clear message
 // markers and rebuild them for the final message and, after four messages, the

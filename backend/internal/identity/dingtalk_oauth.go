@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// dingtalk_oauth.go builds DingTalk identity claims and pending account-choice
+// decisions.
 // DingTalk authorization uses the global unionID for the canonical identity
 // while retaining organization-local staff information as separate profile
 // and audit observations. A missing directory profile can therefore leave

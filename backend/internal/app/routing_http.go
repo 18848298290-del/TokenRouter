@@ -15,10 +15,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Group administration responses combine current capacity with calendar-based
-// usage summaries and Key display data. The HTTP adapter narrows dashboard
-// totals and Key/group DTOs while the Live capability callback invokes the
-// attestation provider's current availability check.
+// routing_http.go constructs group administration HTTP resources from capacity,
+// usage, rate, and Key readers. Group administration responses combine current
+// capacity with calendar-based usage summaries and Key display data. The HTTP
+// adapter narrows dashboard totals and Key/group DTOs while the Live capability
+// callback invokes the attestation provider's current availability check.
 
 // provideGroupRateAdmin binds user-group multiplier administration and API-Key
 // invalidation.

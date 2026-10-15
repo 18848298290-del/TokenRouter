@@ -2,6 +2,8 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/site"
 
+// site_projection.go transfers site display and content settings through the
+// combined administrator snapshot.
 // Site settings collect display text, legal documents, and navigation JSON
 // for administrator reads and updates. Extraction passes those values to site
 // preparation, then normalization assigns the selected result back into the

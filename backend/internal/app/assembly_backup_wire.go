@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_backup_wire.go registers backup and data-management administration
+// constructors with Wire.
 // Backup HTTP operations use the application backup service and its archive
 // resources. Data-management HTTP constructs a separate service; grouping both
 // constructors lets the administration routes resolve their respective

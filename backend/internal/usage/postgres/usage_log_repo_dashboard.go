@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_dashboard.go calculates administrator, user, and API-key
+// dashboard counters and recent request rates.
 // Dashboard counters combine current entity state with retained usage and recent
 // request rates. User-visible scope includes the acting user's records and
 // current owned-team usage, excluding owner records from the team branch so one

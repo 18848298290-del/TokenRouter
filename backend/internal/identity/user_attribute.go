@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// user_attribute.go defines custom account attribute schemas, stored values,
+// and repository operations.
 // Custom attributes store user values as text alongside separate definitions.
 // The definition selects requiredness, byte-length checks, numeric bounds,
 // pattern checks and allowed selections, while its display fields help account

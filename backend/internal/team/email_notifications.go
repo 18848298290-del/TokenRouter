@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// email_notifications.go adapts team invitations and ownership-transfer
+// notices to the configured mail sender.
 // Invitation greetings begin with the sender's mailbox-derived name, then a
 // usable account lookup can supply a trimmed username and recipient identity.
 // Lookup failure keeps the initial greeting and zero identity so configured

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// site.go resolves Qoder site profiles and formats machine platform and address
+// metadata.
 // Global and CN credentials select different authorization and Gateway endpoints
 // even when the client versions match. Profile normalization starts from one
 // validated site and fills omitted overrides, letting tests replace endpoints

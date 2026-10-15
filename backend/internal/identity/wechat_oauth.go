@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// wechat_oauth.go builds WeChat pending authentication drafts and defines
+// channel-specific provider identity inputs.
 // WeChat browser login can use open-platform or official-account
 // configuration under one canonical provider key. Compatibility lookups
 // retain the older key, while account-choice payloads keep provider subjects

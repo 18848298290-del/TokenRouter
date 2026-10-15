@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// models_unified.go writes a unified model list with group display overrides
+// and Grok-specific effort metadata.
 // An unrestricted model list presents admitted IDs in one OpenAI envelope
 // even when their eligible routes cross platforms. Catalogue display metadata
 // is combined with request-local group attributes, and a nonnil display-name

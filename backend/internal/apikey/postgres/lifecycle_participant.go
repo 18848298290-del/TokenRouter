@@ -8,8 +8,8 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
-// User and group lifecycle changes can delete or migrate Keys within the same
-// Ent transaction as their owning operation. The participant retains that
+// lifecycle_participant.go binds Key deletion and group migration to the Ent
+// transaction supplied by a lifecycle operation. The participant retains that
 // transaction and its client, supplies a tombstone for deletion, and leaves
 // final commit or rollback to its caller.
 

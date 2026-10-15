@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// Provider fingerprints and masked session IDs use separate Redis keys and
-// expiration periods. Fingerprints are JSON snapshots with a seven-day write
-// TTL; masked sessions store text with a fifteen-minute idle TTL renewed by
-// request fingerprint handling.
+// fingerprint.go stores provider fingerprints and masked session identifiers
+// in separate Redis key namespaces. Fingerprints are JSON snapshots with a
+// seven-day write TTL; masked sessions store text with a fifteen-minute idle
+// TTL renewed by request fingerprint handling.
 
 // Fingerprint and masked-session namespaces keep provider identity values
 // separate, while their TTLs determine expiration after each successful Redis

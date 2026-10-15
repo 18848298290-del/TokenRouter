@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_foundation_wire.go registers shared database, Redis, calendar,
+// storage, and counter-cache resources with Wire.
 // Ent and direct SQL consumers share the pool initialized during database
 // bootstrap. The same graph supplies Redis and a Calendar captured after
 // timezone initialization, so modules use common storage resources and date

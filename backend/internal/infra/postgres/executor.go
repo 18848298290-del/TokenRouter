@@ -5,6 +5,8 @@ import (
 	"database/sql"
 )
 
+// executor.go defines the SQL execution interface shared by database and
+// transaction callers.
 // Repository operations choose whether SQL runs on a shared database, a
 // reserved connection, or a transaction. The small executor surface carries
 // that choice through ExecContext and QueryContext; callers retain

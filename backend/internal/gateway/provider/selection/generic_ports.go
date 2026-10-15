@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// generic_ports.go associates scheduler metadata with execution records and
+// binds generic selection callbacks.
 // A scheduler can see several records with one persisted provider ID during a
 // single selection: a lightweight candidate, a fresh record, and a database
 // recheck. Each conversion receives a separate per-call identifier, so

@@ -8,6 +8,8 @@ import (
 	identitycore "github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// concurrency.go persists direct and redemption-based changes to account
+// concurrency allowances.
 // Redemption can increase or decrease an account concurrency allowance. Direct
 // adjustments add the supplied delta, while redeem-specific SQL floors the
 // stored value at zero and filters soft-deleted accounts; both choose an Ent

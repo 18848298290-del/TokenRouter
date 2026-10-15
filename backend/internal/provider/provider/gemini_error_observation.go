@@ -10,10 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Gemini 429 recovery depends on whether the provider uses a Google quota
-// route, a third-party endpoint or a shared pool. The configured status filter
-// runs before observation, and ordinary pool responses leave request retries
-// to their caller instead of installing a local cooldown.
+// gemini_error_observation.go selects recovery deadlines and health handling
+// for Gemini upstream failures. Gemini 429 recovery depends on whether the
+// provider uses a Google quota route, a third-party endpoint or a shared pool.
+// The configured status filter runs before observation, and ordinary pool
+// responses leave request retries to their caller instead of installing a
+// local cooldown.
 //
 // For remaining providers, third-party endpoints use a generic configured
 // duration. Official routes first use a parsed response deadline, then select

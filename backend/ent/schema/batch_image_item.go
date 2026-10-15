@@ -11,10 +11,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A batch result is indexed by its submitted custom ID so users can list
-// outcomes separately from the provider's output file. Stored metadata identifies
-// successful images or item errors and retains optional source locations for
-// the result readers.
+// batch_image_item.go defines batch-result metadata indexed by each submitted
+// custom ID within its owning job. Stored metadata identifies successful
+// images or item errors and retains optional source locations for the result
+// readers.
 
 // BatchImageItem stores searchable result metadata for one submitted batch item.
 type BatchImageItem struct {

@@ -9,6 +9,8 @@ import (
 	serverhttp "github.com/TokenFlux/TokenRouter/internal/server/httpapi"
 )
 
+// assembly_http_wire.go registers HTTP server construction, route mounts, and
+// runtime settings readers with Wire.
 // Panel, authentication, payment, and gateway routes are mounted on the
 // application HTTP server. The graph resolves each mount with its handlers and
 // supplies runtime panel settings, forwarded-header settings, and request

@@ -26,6 +26,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// user_profile_identity_repo.go persists provider identities, channel
+// identities, profile-adoption decisions, and avatar records.
 // Provider account identity uses a canonical type/key/subject tuple, with
 // separate channel tuples for application-scoped subjects. Binding can reuse
 // compatible WeChat keys while retaining stored row IDs, and profile adoption

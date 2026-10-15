@@ -2,10 +2,17 @@ package ops
 
 import "sort"
 
-// Client-status exclusions distinguish an absent policy from an intentionally
-// empty policy. Nil input selects the default authentication statuses, while an
-// empty slice disables status exclusions; normalization sorts and deduplicates
-// supplied integers for query construction and policy comparison.
+// ignored_status.go normalizes client-status exclusions for SLA queries and
+// policy comparisons. Nil input selects the default authentication statuses,
+// 401 and 403, while an allocated empty slice disables status exclusions.
+// Nonempty input retains every supplied integer, sorted and deduplicated for
+// query construction.
+//
+// Normalization allocates a result before sorting, so comparisons and SQL
+// construction can use a stable ordering without rearranging caller input.
+// The default status list is also freshly allocated for each call. Validation
+// of permitted status values belongs to settings updates; normalization accepts
+// integers outside the usual HTTP status range.
 
 // DefaultOpsIgnoredStatusCodes allocates the default client-status exclusions
 // for Ops SLA queries.

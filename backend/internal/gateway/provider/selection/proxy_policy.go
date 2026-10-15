@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// proxy_policy.go applies request-local proxy quarantine bypass and
+// rate-limits its diagnostic warnings.
 // Proxy stream quarantine can exclude several OpenAI providers sharing the same
 // proxy. A retry may bypass that quarantine through a copied request execution
 // hint, while the circuit retains its observed failure state for later

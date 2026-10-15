@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator affiliate and registration promotion
+// endpoints.
 // Affiliate administration exposes relationship, rebate, and transfer records
 // together with per-user code and rate edits. Promo administration manages
 // registration grant codes and their receipts; both route groups inherit

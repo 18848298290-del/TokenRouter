@@ -14,11 +14,10 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// A Responses WebSocket turn uses shared request builders, output policy, and
-// connection resources while reading its own parameter snapshot. Runtime
-// updates affect later turns; the executor retains the injected services so
-// HTTP bridging and pooled or dedicated WS execution observe the same provider
-// and session data.
+// openai_ws_executor.go constructs the Responses WebSocket executor and
+// captures per-turn parameter snapshots. Runtime updates affect later turns;
+// the executor retains the injected services so HTTP bridging and pooled or
+// dedicated WS execution observe the same provider and session data.
 
 // OpenAIWSOptions names the turn parameters consumed by WebSocket execution.
 // A dependency with nil Options uses each adapter's documented defaults unless

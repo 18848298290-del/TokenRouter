@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// message_queue_wait.go waits for serialization locks and spacing delays while
+// reporting progress to request observers.
 // Serialization admission includes waiting for a provider lock and spacing work
 // after acquisition. The lock enters a completion lease before the delay, so
 // cancellation during that preparation can return ownership before an acquired

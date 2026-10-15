@@ -8,9 +8,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// A supported routing model can still lack a billable price. Text admission
-// checks the selected billing model before contacting the provider and shares
-// the settlement resolver, accepting explicit zero prices while rejecting
+// pricing.go rejects text admission when the selected billing model has no
+// usable price. It checks before contacting the provider and shares the
+// settlement resolver, accepting explicit zero prices while rejecting
 // multiplier-only configuration with no base price.
 
 // ModelPricingUnavailableMessage directs clients to an administrator who can

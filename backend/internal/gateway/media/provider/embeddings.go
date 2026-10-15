@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// embeddings.go binds embedding request credentials, headers and response
+// callbacks to native OpenAI execution.
 // Embedding requests use a caller-selected destination, credentials and
 // prepared byte payload. This adapter binds native execution callbacks; the
 // native executor builds the POST, reads usage/result evidence and closes

@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// alert_evaluator_service.go evaluates alert thresholds, maintains firing
+// events, and dispatches admitted email notifications.
 // Alert evaluation combines stored system samples and returned availability
 // with raw request windows and process-local consecutive-breach counts. Missing
 // observations reset those counts and leave firing events unchanged. A valid

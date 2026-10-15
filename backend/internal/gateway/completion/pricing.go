@@ -8,11 +8,13 @@ import (
 	"time"
 )
 
-// Observed media counts do not by themselves select the charge mode. An effective
-// configured token card can charge image or video usage as tokens, while ordinary
-// media cards charge image units or video seconds. The OpenAI path selects dedicated
-// Alpha Search and audio operations before general token-plus-search handling;
-// the native path gives positive image usage its own first decision.
+// pricing.go selects charge modes and calculates costs from captured token,
+// media, and search usage. Observed media counts do not by themselves select
+// the charge mode. An effective configured token card can charge image or video
+// usage as tokens, while ordinary media cards charge image units or video
+// seconds. The OpenAI path selects dedicated Alpha Search and audio operations
+// before general token-plus-search handling; the native path gives positive
+// image usage its own first decision.
 //
 // OpenAI token pricing tries the supplied candidates in order, then reports the
 // last failure if none produces a cost. The production candidate selector normally

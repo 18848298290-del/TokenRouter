@@ -8,11 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Privacy queries use platform authorization clients while provider services
-// track cancellation and conditional persistence. Antigravity privacy is
-// available from its authorization options, and OpenAI privacy is installed
-// when a client factory is supplied; administration logs use the same provider
-// privacy options.
+// privacy.go connects OpenAI and Antigravity authorization clients to provider
+// privacy maintenance. Antigravity privacy is available from its authorization
+// options, and OpenAI privacy is installed when a client factory is supplied;
+// administration logs use the same provider privacy options.
 
 // PrivacyOptions supplies platform privacy calls and administrative log
 // callbacks to the provider service. A nil factory leaves the OpenAI callback

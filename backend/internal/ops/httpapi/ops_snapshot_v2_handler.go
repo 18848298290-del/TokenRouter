@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_snapshot_v2_handler.go serves cached dashboard snapshots with
+// conditional ETag responses.
 // Dashboard snapshot responses pair a payload with a JSON-derived ETag. A
 // matching request condition produces a bodyless 304 only when the service
 // reports a cache hit; a newly loaded response is sent even when its generated

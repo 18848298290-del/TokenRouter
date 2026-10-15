@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// credential_builder.go builds Qoder sessions from PAT or imported credentials
+// and fills site-specific identity metadata.
 // Provider credentials can contain a PAT or an already exchanged COSY token set.
 // PAT construction exchanges the selected site's identity first, while imported
 // tokens need a saved machine ID and a user or account identifier before an
@@ -20,7 +22,7 @@ import (
 // Identity metadata is filled before the session becomes available to the
 // provider cache. Organization lookup is best effort and uses the provider
 // transport when supplied, so missing descriptive metadata does not reject
-// otherwise usable credentials. CN machine reconstruction keeps its UUID-style
+// otherwise usable credentials. CN machine reconstruction retains its machine
 // ID and clears legacy token and type fields; global reconstruction fills
 // missing machine fields for older saved credentials.
 

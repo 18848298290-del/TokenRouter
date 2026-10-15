@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// configuration.go adapts combined test configuration rows into separate
+// production pricing and group-policy readers.
 // Combined test fixtures carry prices and group policy in one value, while
 // production reads those inputs separately. Adapters expose fixture prices to
 // cache building and fixture policy to group lookup, retaining production model

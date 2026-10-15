@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// observers.go registers local Live observers and coordinates their
+// cancellation and completion during shutdown.
 // Live observers can enter while application shutdown starts, so registration
 // and stopping must agree on which tasks belong to the wait count. Begin holds
 // the manager lock while installing cancellation and increasing that count,

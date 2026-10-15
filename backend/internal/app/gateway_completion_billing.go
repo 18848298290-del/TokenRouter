@@ -22,10 +22,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// gateway_completion_billing.go constructs gateway completion recorders and
+// resolves credential ownership for provider statistics.
 // Messages and OpenAI completion use separate rate readers with shared pricing,
 // funds, and usage storage. OpenAI additionally resolves credential-parent
 // providers and clears forbidden counters, while both recorders send settlement
 // side effects through the application task tracker.
+//
+// Credential resolution starts from the completion snapshot identifier and
+// parent reference. When the resolver returns that input record, the existing
+// snapshot is returned intact so fields absent from the temporary record
+// remain available. A resolved parent receives its own projected snapshot.
+// Lookup errors stop the conversion, preventing statistics from silently using
+// a different credential owner after an unsuccessful read.
 
 // GatewayCompletionRecorders holds the two recorders bound to platform attempt
 // runtimes.

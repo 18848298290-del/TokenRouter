@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// gemini_precheck.go checks Gemini daily and minute request usage before
+// admitting provider candidates.
 // Gemini local quota admission compares recorded request totals with the
 // policy selected for each provider and requested model class. Daily checks
 // run before minute checks, and exhaustion skips the provider without writing

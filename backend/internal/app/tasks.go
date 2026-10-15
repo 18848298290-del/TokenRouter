@@ -21,6 +21,8 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
+// tasks.go assembles creative managed-key access and batch-image HTTP,
+// download, and cleanup services.
 // Creative managed keys receive generated identifiers and timestamps through
 // the object passed to KeyStore.CreateManagedKey. The adapter copies that object
 // before creation and copies it back afterward, including when the store returns

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// adapters.go queries and normalizes Sub2API, New API, and Zivv usage
+// responses.
 // Gateway usage responses can describe a wallet, a key quota, or subscription
 // windows using superficially similar amounts. Sub2API normalization selects
 // the reported mode and checks agreement between redundant quota values, while

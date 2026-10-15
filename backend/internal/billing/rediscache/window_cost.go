@@ -9,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// window_cost.go caches provider cost observations and maps batch reads to
+// provider identities.
 // Provider selection can reuse a short-lived standard-cost observation by
 // provider ID before reading usage storage. Single reads distinguish a miss
 // from a usable zero amount, while batch reads omit missing or unsupported

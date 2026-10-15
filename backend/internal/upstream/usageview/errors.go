@@ -2,6 +2,7 @@ package usageview
 
 import infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 
+// errors.go defines application errors for upstream usage-query failures.
 // Usage-query callers need a stable reason when credentials, response content,
 // or transport operations fail. Shared application errors keep provider-key
 // failures separate from wallet-token failures and carry status categories

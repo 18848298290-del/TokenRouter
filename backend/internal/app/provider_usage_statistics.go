@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Provider quota display adapts local usage totals without combining provider
-// cost and user charges. Paired-window and batch capabilities are preserved
-// when the usage source supports them, with missing pair support returned as an
-// error so provider-owned querying can fall back to individual windows.
+// provider_usage_statistics.go adapts local usage totals and optional batch
+// reads for provider quota displays. Provider cost and user charges remain
+// separate fields in the converted totals. Paired-window and batch capabilities
+// are preserved when the usage source supports them, with missing pair support
+// returned as an error so provider-owned querying can fall back to individual
+// windows.
 
 // providerLocalStats adapts local usage records for provider quota display
 // totals.

@@ -7,12 +7,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// Upstream model and service-tier declarations answer different completion
-// questions. Model evidence is retained before protocol conversion changes the
-// client's visible metadata, while tier evidence is reconciled later with the
-// tier sent upstream. Typed nonterminal Responses events can echo a requested
-// tier, so OpenAI tier observation accepts terminal or untyped payloads that
-// also contain a usable model declaration.
+// response_observer.go collects upstream model declarations and reconciles
+// service-tier observations for each attempt or turn. Upstream model and
+// service-tier declarations answer different completion questions. Model
+// evidence is retained before protocol conversion changes the client's visible
+// metadata, while tier evidence is reconciled later with the tier sent
+// upstream. Typed nonterminal Responses events can echo a requested tier, so
+// OpenAI tier observation accepts terminal or untyped payloads that also
+// contain a usable model declaration.
 //
 // Terminal tier declarations take precedence over earlier nonterminal values.
 // Conflicting nonterminal tiers leave no selected tier until terminal evidence

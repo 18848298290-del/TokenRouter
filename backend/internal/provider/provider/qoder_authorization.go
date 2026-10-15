@@ -9,16 +9,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder device authorization keeps a site-specific machine identity together
-// with its authorization URL, nonce and PKCE verifier. The adapter copies the
-// request's machine_id into the stored flow so later completion uses the same
-// identity that was advertised to the browser, including CN's UUID-only shape.
+// qoder_authorization.go prepares site-specific device authorization flows and
+// binds their exchange and polling operations. Qoder device authorization
+// keeps a site-specific machine identity together with its authorization URL,
+// nonce and PKCE verifier. The adapter copies the request's machine_id into
+// the stored flow so later completion uses the same identity that was
+// advertised to the browser, including CN's UUID-only shape.
 //
 // The core owns session expiry, completion claims and replayed token results.
-// Preparation resolves the selected proxy once and retains its URL in the flow;
-// later exchange and polling use that creation-time proxy. The client factory
-// is selected during construction, while preparation returns both the private
-// flow and public session proof without starting session cleanup itself.
+// Preparation resolves the selected proxy once and retains its URL in the
+// flow; later exchange and polling use that creation-time proxy. The client
+// factory is selected during construction, while preparation returns both the
+// private flow and public session proof without starting session cleanup
+// itself.
 
 // QoderAuthorization adapts site device flows to the core authorization
 // session service.

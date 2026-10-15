@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// checkout.go persists checkout drafts and recharge codes transactionally,
+// then records external payment responses in separate updates.
 // Checkout needs a committed local order before external payment initiation
 // and an order-owned redeem credential for later balance delivery. Creation
 // therefore saves the numeric order identity, writes its recharge code, and

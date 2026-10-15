@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// contracts.go defines batch submission inputs, provider observations, and
+// public response values.
 // Batch submission expands each requested repetition into a separate custom
 // ID before a provider receives it. These input and public response values
 // carry the request, normalized provider observation and client-visible

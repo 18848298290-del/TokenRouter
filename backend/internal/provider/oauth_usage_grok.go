@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
+// oauth_usage_grok.go combines Grok billing probes, stored quota observations,
+// and local usage windows.
 // Grok quota display can use authoritative billing windows or rolling
 // free-account local usage. Billing authority is decided from current summary
 // fields, while freshness and retry timestamps choose whether an OAuth account

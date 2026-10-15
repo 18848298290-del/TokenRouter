@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// openai_response_metadata.go binds response identifiers to owners and
+// providers and presents protocol errors.
 // HTTP Responses continuation needs both provider affinity and downstream
 // ownership for a response identifier. Binding records those two observations
 // independently, and a storage failure is logged while response delivery

@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// read.go interprets stored module settings into a combined administrator
+// snapshot.
 // One raw settings batch supplies the combined administrator Snapshot, while
 // each owning module interprets its keys with the appropriate startup defaults.
 // The batch map is copied for later revision checks, and module results provide

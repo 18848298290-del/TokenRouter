@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// claude_types.go defines Claude request and response shapes used by
+// conversation adapters.
 // Claude conversation adapters retain raw JSON for polymorphic system and
 // message content while decoding generation settings and tool declarations.
 // Standard and custom tools place their schemas at different JSON locations,

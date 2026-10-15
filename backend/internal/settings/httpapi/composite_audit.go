@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// composite_audit.go computes changed settings labels and emits the
+// administrator update audit event.
 // Settings audit records list submitted or changed field names after the
 // combined update has committed. Ordinary fields compare the prior readback with
 // the prepared Snapshot; credential labels instead reflect nonempty submitted

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage_parser.go extracts Ollama Cloud usage windows, balances, plans, and
+// model counters from settings HTML.
 // Ollama settings pages place percentages, reset times, and model counters in
 // neighboring DOM elements rather than a single JSON record. Window parsing
 // starts from a recognized label and searches bounded ancestor blocks so a

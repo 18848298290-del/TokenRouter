@@ -10,10 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// API-Key, identity administration, and subscription display read different
-// group views from the same routing repository. Key conversion uses apikey's
-// group copying rules, identity selects administrator fields, and subscription
-// display resolves group text in the request's language.
+// routing_consumers.go adapts routing groups for API-Key policy, identity
+// administration, and localized subscription display. These consumers read
+// different views from the same routing repository. Key conversion uses
+// apikey's group copying rules, identity selects administrator fields, and
+// subscription display resolves group text in the request's language.
 
 // keyGroups adapts routing group reads for API-Key policy consumers.
 type keyGroups struct {

@@ -4,6 +4,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// forward_usage.go extracts and combines token observations from Responses,
+// embeddings, and image results for forwarded accounting.
 // Responses, embeddings, and image results can report usage in different field
 // layouts. Forwarded accounting retains input, output, cache, and image counts
 // separately, while each extraction path chooses which observations are

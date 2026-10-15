@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
+// apikey_http.go constructs API key HTTP handlers and enriches their group
+// responses with capacity and model data.
 // Available key groups include capacity and localized display data assembled
 // from routing services. Model lists are resolved when requested by the HTTP
 // caller, and attribute lookup errors are logged while the remaining group

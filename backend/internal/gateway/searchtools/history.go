@@ -12,13 +12,13 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// Emulated search history contains server-tool identities that ordinary replay
-// targets may not accept. ToolUseIDPrefix distinguishes those synthetic
-// call/results from upstream-issued search identities, while retained summary
-// text keeps their readable context.
+// history.go removes emulated or selected upstream search blocks from replayed
+// message history. ToolUseIDPrefix distinguishes those synthetic call/results
+// from upstream-issued search identities, while retained summary text keeps
+// their readable context.
 //
-// Filtering removes synthetic pairs, or all supported server-search blocks
-// when callers select stripAll for mapped-model rules. Empty messages receive
+// Filtering removes synthetic pairs, or all supported server-search blocks when
+// callers select stripAll for mapped-model rules. Empty messages receive
 // role-specific text to retain their conversation positions. Declined and
 // failed rewrites return supplied bytes; changed messages use encoding/json
 // float64 decoding, so numbers inside that replaced messages array can lose

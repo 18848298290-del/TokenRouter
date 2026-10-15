@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// image_upload.go represents multipart image uploads and converts their
+// payloads to moderation or forwarding data URLs.
 // Multipart image parts retain their field names, filenames, declared content
 // types, and byte payloads for image forwarding and moderation. Moderation
 // includes nonempty uploads labelled as images, while forwarding encodes any

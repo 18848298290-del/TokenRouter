@@ -19,6 +19,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_passthrough_options.go configures passthrough readers with
+// HTTP headers, keepalives and terminal-error callbacks.
 // Passthrough readers retain Responses framing while sharing HTTP health and
 // terminal-error decisions with ordinary output. Their stream bindings carry
 // the current provider and request observations, and their nonstream binding

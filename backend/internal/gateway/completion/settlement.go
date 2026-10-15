@@ -9,11 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// User funding and provider quota use different cost bases. The transaction
-// command carries the financial key, payer and actor identities, funding policy,
-// and measured usage together so billing can deduplicate and allocate one request.
-// An explicitly present provider-statistics cost, including zero, replaces total
-// model cost when calculating upstream quota consumption.
+// settlement.go builds usage billing commands and applies committed allocations
+// and effects to completion records. User funding and provider quota use
+// different cost bases. The transaction command carries the financial key,
+// payer and actor identities, funding policy, and measured usage together so
+// billing can deduplicate and allocate one request. An explicitly present
+// provider-statistics cost, including zero, replaces total model cost when
+// calculating upstream quota consumption.
 //
 // Apply detaches settlement from request cancellation, then waits for the store's
 // result before changing the analysis row or running committed effects. A newly

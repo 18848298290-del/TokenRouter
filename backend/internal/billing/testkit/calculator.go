@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// calculator.go constructs billing calculators from supplied catalogs or
+// embedded regression prices.
 // Billing regression tests need known historical token amounts alongside media
 // fixture prices. An omitted catalog and price map select those embedded
 // fixtures, while a supplied catalog keeps its existing full-name entries

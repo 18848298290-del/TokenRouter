@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder can report an agent limit inside a typed API error even when the outer
-// stream began successfully. Health observation extracts that error from the
-// chain, chooses its reset deadline or a short temporary window, and writes
-// state with a budget detached from the failed request.
+// qoder_error_observation.go converts typed Qoder API failures into rate-limit
+// or overload observations. Qoder can report an agent limit inside a typed API
+// error even when the outer stream began successfully. Health observation
+// extracts that error from the chain, chooses its reset deadline or a short
+// temporary window, and writes state with a budget detached from the failed
+// request.
 
 // QoderHealthStore persists provider-wide limit and overload deadlines from
 // failed attempts.

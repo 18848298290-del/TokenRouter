@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_media.go restores Grok video ownership and submits image or claimed
+// video usage for completion.
 // A video status request needs the provider and group that accepted its task,
 // even after a composite Key loses that group mapping. The adapter restores
 // saved ownership into a request-local Key view and delegates completion

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// pool_wait.go reserves and releases WebSocket queue slots while retaining
+// waiter compatibility and elapsed timing.
 // One waiter records a single queue reservation and start time while
 // acquisition can retry selection after several pool-change wakeups. General
 // reservations are counted by compatibility key, while forced continuation

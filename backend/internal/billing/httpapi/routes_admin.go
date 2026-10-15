@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator redemption and subscription HTTP
+// endpoints.
 // Administrator billing routes expose credential management and subscription
 // maintenance below the group supplied by app wiring. Subscription lookup also
 // mounts plan/user-specific paths, and revocation retains both POST and DELETE

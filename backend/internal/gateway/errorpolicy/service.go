@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// Final error matching reads a published priority-sorted snapshot instead of
-// loading rules for every response. Administrative writes, startup loads, and
+// service.go manages final error-response rules and matches errors against a
+// published priority-sorted snapshot. Administrative writes, startup loads, and
 // notification refreshes share one cancellable update gate so a database read
 // admitted before a write cannot publish its earlier snapshot after that
 // write's refresh.

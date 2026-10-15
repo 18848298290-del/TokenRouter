@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_output.go binds Responses readers to shared policy services
+// and request-local observations.
 // Responses readers report observed usage, model and service tier separately
 // from final completion decisions. The HTTP output binding supplies
 // request-local observations and app-owned health, tool and session services

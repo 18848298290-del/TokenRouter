@@ -11,17 +11,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// Search emulation executes a user query through the current external manager
-// and presents Anthropic-shaped output. Its structured Result leaves
-// TokenUsage zero while wire responses contain a summary-length estimate,
-// keeping display numbers distinct from vendor token observations.
+// emulator.go evaluates search emulation policy and executes queries through
+// the current external search manager. Its structured Result leaves TokenUsage
+// zero while wire responses contain a summary-length estimate, keeping display
+// numbers distinct from vendor token observations.
 //
 // Policy requires a manager, one search tool and the global gate before
 // provider mode. Enabled mode bypasses group lookup; disabled mode declines;
 // default requires the group feature. Search rereads the current manager, so
-// configuration can change after the policy check. OnAccepted runs before
-// query validation/search to release serial ownership, while output builders
-// handle the successful response's JSON or event sequence.
+// configuration can change after the policy check. OnAccepted runs before query
+// validation/search to release serial ownership, while output builders handle
+// the successful response's JSON or event sequence.
 
 // Searcher executes external search with manager-owned vendor selection and
 // quota reservation. Success supplies a nonnil response for synthetic output.

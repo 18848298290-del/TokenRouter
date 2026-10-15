@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// output_openai_messages.go binds buffered Messages reading and stream-error
+// recording to HTTP request state.
 // Buffered Messages compatibility reads collect terminal response data before
 // producing a unary client result. HTTP options connect tool-name restoration
 // and model/tier observation to request state, while stream failures retain

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// public_handler.go builds public API-key usage responses from funding context,
+// key limits, and optional usage statistics.
 // API-key usage responses show the funding source selected during gateway
 // authentication beside optional analysis summaries. A resolved subscription
 // source stays in its subscription response branch even when the selected

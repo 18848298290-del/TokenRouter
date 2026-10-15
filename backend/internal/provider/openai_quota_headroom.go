@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// openai_quota_headroom.go calculates scheduler headroom from recent primary
+// and secondary Codex quota observations.
 // Scheduler headroom uses recent Codex utilization while missing or reset
 // observations contribute the neutral factor. Primary measurement wins over
 // its seven-day compatibility field, and a live secondary or five-hour window

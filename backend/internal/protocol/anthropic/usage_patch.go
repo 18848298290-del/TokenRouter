@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// usage_patch.go extracts and applies presence-aware usage patches from
+// Messages stream events.
 // Messages streams report initial prompt usage at message_start and can revise
 // usage in later message_delta events. The initial event establishes prompt
 // counters even when fields are absent, whereas delta prompt and output totals

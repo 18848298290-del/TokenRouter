@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// responses_input_namespace.go removes disallowed namespace fields from direct
+// Responses history items.
 // Namespace fields can remain on ordinary Responses history items even when
 // forwarding policy accepts them only on tool calls. Cleanup examines direct
 // input objects and keeps the caller-selected call types; tool declarations

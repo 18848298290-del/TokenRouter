@@ -1,5 +1,7 @@
 package payment
 
+// runtime.go exposes the assembled payment use cases and their shared resume
+// signer to HTTP handlers.
 // Payment HTTP handlers call the use cases assembled by the application
 // through one runtime value. Embedded service pointers expose checkout, order
 // reads, refunds, recovery, and provider resolution, while resume lookup

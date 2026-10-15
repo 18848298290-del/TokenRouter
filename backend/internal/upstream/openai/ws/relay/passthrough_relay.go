@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// passthrough_relay.go relays WebSocket frames bidirectionally and settles
+// response usage, identity, and timing across disconnects.
 // A Responses connection can lose its client reader while upstream usage and
 // terminal identity are still arriving. Graceful client closure switches the
 // upstream worker into a bounded drain that observes text events and drops

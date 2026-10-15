@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ipmatch"
 )
 
+// pool.go constructs and caches HTTP clients with optional host validation and
+// request timing.
 // Shared HTTP clients cache supplied construction options, including proxy
 // text and timing or connection settings, and callers keep the published
 // client immutable. Optional host validation checks DNS before sending a

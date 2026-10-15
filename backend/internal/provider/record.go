@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// record.go represents provider configuration and runtime observations and
+// evaluates their routing and scheduling rules.
 // A provider record carries both administrator configuration and runtime
 // observations consumed by scheduling, forwarding, and management display. Its
 // accessors interpret stored JSON representations while retaining distinctions

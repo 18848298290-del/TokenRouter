@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes.go registers buyer, public recovery, webhook, and administrative
+// payment endpoints with their supplied guards.
 // Payment routes expose authenticated buyer operations, anonymous recovery and
 // provider callbacks under separate groups. RegisterRoutes applies the
 // supplied buyer and administrator guard sequences, while public recovery

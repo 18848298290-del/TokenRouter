@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// managed_recovery.go coordinates conditional recovery of Antigravity
+// missing-project errors across persistent and runtime state.
 // An Antigravity missing-project error is recovered through five ordered
 // managed-refresh writes. Every step compares credential identity and error
 // text; window, quota-scope, model-limit and temporary-pause steps additionally

@@ -7,6 +7,8 @@ import (
 	"syscall"
 )
 
+// failure_classification.go classifies transport errors for callers deciding
+// whether a provider failure is persistent.
 // Transport errors can provide wrapped errno or DNS details, or only a
 // proxy's diagnostic text. Classification gives routing callers a
 // persistent-failure indication from those available signals; callers apply

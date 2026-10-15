@@ -2,6 +2,8 @@ package modelidentity
 
 import "github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 
+// thinking.go resolves model signature policy and gates Anthropic thinking
+// repair filters.
 // Historical thinking blocks require the rules of the model receiving the
 // Anthropic body. Catalogue signature modes distinguish strict Anthropic
 // validation from upstreams that need unchanged passback, and unknown modes

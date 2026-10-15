@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// openai_model_attributes.go resolves model capabilities for selected
+// providers before request conversion.
 // Model attributes are resolved against the selected execution provider and the
 // request's protocol before platform conversion. Request-sensitive resolution
 // can also inspect serialized parameters, while missing attribute readers let

@@ -2,10 +2,10 @@ package egress
 
 import "github.com/TokenFlux/TokenRouter/internal/egress/urlpolicy"
 
-// URL validation is shared with the urlpolicy package so callers in egress use
-// the same scheme, host, and port rules. These forwarding functions return its
-// normalized text or error; callers arrange DNS-address checks when
-// establishing requests.
+// url_policy.go delegates outbound URL validation to the shared urlpolicy
+// package. Callers can select HTTPS-only checks, configurable HTTP permission,
+// or format-only validation. These forwarding functions return normalized text
+// or an error; callers arrange DNS-address checks when establishing requests.
 
 // ValidationOptions names the shared allowlist and literal-address validation
 // settings from urlpolicy.

@@ -9,6 +9,8 @@ import (
 	sitepostgres "github.com/TokenFlux/TokenRouter/internal/site/postgres"
 )
 
+// assembly_site_wire.go registers public site, page, announcement, audience,
+// and expiry dependencies with Wire.
 // Announcement audience checks read users and active billing subscriptions
 // through application adapters. Public site information reuses shared settings
 // and OAuth settings, while announcement persistence and expiry constructors

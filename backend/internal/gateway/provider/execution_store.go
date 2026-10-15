@@ -7,6 +7,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// execution_store.go defines the provider reads and state writes required by
+// gateway execution.
 // Gateway execution reads hydrated provider targets and writes activity,
 // credentials, and health through an app-owned store. Eligibility queries
 // exclude current persistent and transient scheduling failures, while

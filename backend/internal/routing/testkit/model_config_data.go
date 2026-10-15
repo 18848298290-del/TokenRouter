@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// model_config_data.go converts flattened model fixtures into pricing
+// configurations and group policies.
 // Flattened model fixtures key prices and mappings by group, platform, and
 // model, while production pricing and group policy use group-wide model rules.
 // Building the service combines those fixture inputs into configuration rows,

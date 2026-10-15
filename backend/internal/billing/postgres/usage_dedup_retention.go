@@ -7,6 +7,8 @@ import (
 	infra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// usage_dedup_retention.go archives billing deduplication records in bounded
+// batches.
 // Completed billing keys remain needed for replay detection after their
 // active-table rows age out. Archiving moves each selected batch into the
 // archive and removes its active rows in one SQL statement, so a failed insert

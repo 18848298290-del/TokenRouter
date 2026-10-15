@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// proxy_store.go persists proxy changes, coordinates provider invalidation,
+// and applies expiration reassignments.
 // Proxy connection changes can invalidate stored Ollama usage observations
 // attached to providers that use that proxy. The storage adapter locks the
 // proxy connection identity, writes the proxy, updates affected provider

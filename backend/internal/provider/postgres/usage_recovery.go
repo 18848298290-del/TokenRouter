@@ -7,9 +7,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// A successful usage query can recover an errored provider only while the
-// failed identity and error message still match. The single update compares
-// complete credentials and proxy identity, allowing a concurrent
+// usage_recovery.go restores active status after a successful usage query when
+// the failed identity and error message still match. The single update
+// compares complete credentials and proxy identity, allowing a concurrent
 // reauthorization or administrator edit to retain its newer state.
 //
 // Recovery sets active status and clears the message but retains the

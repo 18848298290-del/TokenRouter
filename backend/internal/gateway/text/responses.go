@@ -11,8 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Responses execution separates recovery before first output from ordinary
-// provider switching and same-provider retries. Partial native output and
+// responses.go runs Responses attempts with separate first-output recovery,
+// same-provider retry, and switching budgets. Partial native output and
 // observed partial images can still reach completion, while pricing rejection
 // and closed replay windows end execution.
 //

@@ -10,10 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Upstream usage and privacy results are tied to the identity observed before
-// the remote request. Their SQL predicates compare platform, provider type,
-// status, credentials, proxy, shadow parent, and quota dimension; clearing
-// health additionally compares all recorded rate-limit and overload windows.
+// usage_observation.go conditionally persists usage and privacy observations
+// against the identity captured before the remote request. Their SQL
+// predicates compare platform, provider type, status, credentials, proxy,
+// shadow parent, and quota dimension; clearing health additionally compares
+// all recorded rate-limit and overload windows.
 //
 // Extra changes delegate to the JSONB patch transaction and turn a version
 // conflict into an unapplied result. Rate-limit changes write health through

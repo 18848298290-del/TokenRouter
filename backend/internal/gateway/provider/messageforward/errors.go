@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// errors.go connects Anthropic error presentation with retained response bytes
+// and provider health decisions.
 // An upstream error body is inspected by health policy and HTTP presentation
 // during the same attempt. The adapter retains captured bytes and can rebuild
 // the response reader so later consumers see the diagnostic evidence after the

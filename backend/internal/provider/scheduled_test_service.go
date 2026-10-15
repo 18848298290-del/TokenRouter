@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// scheduled_test_service.go manages recurring provider test plans and saves
+// results before pruning retained history.
 // Recurring provider tests need a calculated next-run time before their plan is
 // stored. Creation validates cron and supplies a retention default, while
 // updates recalculate the schedule using the caller's retention value. The

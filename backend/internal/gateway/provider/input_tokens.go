@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// input_tokens.go prepares counting requests while retaining client, billing,
+// and upstream model names.
 // Input-token queries can count a provider-mapped model while the caller still
 // needs the client's requested identity. Preparation retains both names before
 // replacing the counting request's model, so diagnostics and later request

@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// grok_voice_execution.go executes Grok Voice HTTP requests and adapts
+// upstream WebSocket connections for Realtime relay.
 // Grok Voice endpoints return audio or resource JSON with their own response
 // headers. HTTP execution passes those representations through shared provider
 // transport and health handling, while Realtime connection adapters preserve

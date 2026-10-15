@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// admin_settings.go prepares routing settings updates for the shared settings
+// service.
 // Routing settings writes encode model fallback choices alongside bounded
 // marketplace observation windows. The settings participant converts supplied
 // fields through AdminSettings, applies window normalization, and keeps the

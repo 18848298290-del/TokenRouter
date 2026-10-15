@@ -11,6 +11,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// run.go starts Redis containers with listening-port and readiness-log checks.
 // A container listener can appear before Redis announces readiness for command
 // handling. Run delegates startup to Testcontainers with both a listening-port
 // wait and the readiness-log wait, giving fixture callers one returned

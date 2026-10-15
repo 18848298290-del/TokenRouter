@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// responses_ws.go upgrades authenticated Responses requests and hands
+// validated first frames to session entry.
 // An authenticated HTTP request reserves an ingress connection allowance
 // before upgrading to Responses WebSocket. The allowance can renew
 // independently of the client transport and cancel the control context when

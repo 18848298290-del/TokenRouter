@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// collector_sessions.go stores temporary TLS capture sessions and maintains
+// their expiration and bounded record lists.
 // A temporary capture session owns a bounded sequence of retained record
 // pointers and an expiration timestamp. Reads and writes prune sessions only
 // after the clock passes expiration, so a session remains readable at the exact

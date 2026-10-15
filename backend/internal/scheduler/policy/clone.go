@@ -1,5 +1,7 @@
 package policy
 
+// clone.go copies sparse group scheduler overrides into independently mutable
+// pointer values.
 // A group configuration snapshot contains pointers so it can distinguish
 // inheritance from explicit values. Copying the struct alone would retain
 // those shared addresses; cloning allocates supplied values again so request

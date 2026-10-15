@@ -16,10 +16,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 )
 
+// ws_errors.go presents Responses WebSocket failures as error events or close
+// instructions and records their intended HTTP status.
 // An upgraded Responses connection cannot receive a new HTTP status line when
 // execution fails. Errors become protocol text events or WebSocket close
 // instructions, while Ops records the intended HTTP status separately;
 // permission, capacity and service failures retain distinct presentation.
+//
+// Credential failures take precedence over upstream status when choosing the
+// final close instruction. Otherwise rate limits and temporary server failures
+// request a later retry, while authentication statuses select a policy
+// violation. Moderation and session-isolation paths write bounded-time text
+// events on an existing connection. The termination classifier considers
+// explicit normal closure and cancellation separately from error presentation
+// so ingress can attribute the connection ending.
 
 // ResponsesWSFailure holds the error details shown to the client after a WebSocket upgrade.
 type ResponsesWSFailure struct {

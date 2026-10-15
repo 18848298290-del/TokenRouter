@@ -8,6 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// redeem.go stores failed redemption counts and temporary code locks in Redis.
 // Redemption failures are counted by user, while a separate key excludes
 // concurrent attempts for one exact code string. Each failed-attempt increment
 // also renews its twenty-four-hour expiry through a pipeline, so the counter

@@ -4,6 +4,8 @@ package liveattestation
 
 import "context"
 
+// attestation_unsupported.go supplies the non-macOS Live attestation provider
+// that reports unsupported platform operations.
 // Non-macOS builds provide a Live attestation implementation that reports the
 // unsupported-platform sentinel. Both prerequisite checking and generation
 // return that same error, letting callers handle unavailable platform support

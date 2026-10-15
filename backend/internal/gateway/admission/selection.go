@@ -10,11 +10,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// An empty provider selection can mean either unavailable capacity or a model
-// that the group's configured providers do not support. Reporting missing model
-// configuration requires a nonempty provider pool as well as absent model
-// support; an empty pool stays a temporary-unavailability response. Diagnosis
-// uses the routing model, while messages show the client's display model.
+// selection.go classifies provider selection failures using model support and
+// scheduler rate-limit evidence. An empty provider selection can mean either
+// unavailable capacity or a model that the group's configured providers do not
+// support. Reporting missing model configuration requires a nonempty provider
+// pool as well as absent model support; an empty pool stays a
+// temporary-unavailability response. Diagnosis uses the routing model, while
+// messages show the client's display model.
 //
 // A later scheduler error can refine temporary unavailability into rate
 // limiting when its diagnostic count is positive. Missing-model diagnosis takes

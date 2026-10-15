@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+// legacy_config.go maps retired configuration keys to current fields while
+// honoring configured precedence.
 // Deployment files and environment variables can still contain retired field
 // names that describe provider pools or scheduling values. Alias binding checks
 // the new environment name before the old name, and normal Viper precedence

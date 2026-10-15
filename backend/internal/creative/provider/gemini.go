@@ -10,6 +10,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gemini.go builds Gemini creative image requests and delegates execution to
+// the shared GenerateContent adapter.
 // Gemini creative requests use GenerateContent for generation and
 // reference-image edits. Prompt and source controls are adapted to the shared
 // image request builder, while the selected upstream model is supplied

@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// visible_output.go detects nonempty content in buffered and streamed Responses
+// output for HTTP observation and timing.
 // HTTP Responses visible-output observation checks content fields so empty
 // lifecycle or item events can remain unobserved. Stream readers also use this
 // classifier when the configured TTFT mode is visible; other timing modes

@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// errors.go distinguishes Grok content refusals, provider access failures,
+// decoder incompatibilities, and spending-limit errors.
 // An xAI HTTP 403 can describe refused content or loss of provider access, and
 // those outcomes lead the gateway to different retry decisions. Account and
 // entitlement text or structured markers take precedence over content-policy

@@ -7,6 +7,8 @@ import (
 	coderws "github.com/coder/websocket"
 )
 
+// ws_close_error.go represents a selected WebSocket close instruction together
+// with its underlying termination cause.
 // Control-driven WebSocket termination carries a chosen status and reason
 // alongside its underlying cancellation or timeout error. Keeping the
 // instruction separate lets callers present closure and still use wrapped-error

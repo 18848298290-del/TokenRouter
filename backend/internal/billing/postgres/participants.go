@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// participants.go binds billing entitlement operations to caller-owned Ent
+// transactions.
 // Payment, promotion and identity flows can change billing entitlements inside
 // an Ent transaction they already own. These participants bind balance,
 // subscription and redemption operations to that transaction client, leaving

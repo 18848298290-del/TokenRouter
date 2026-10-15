@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// auth_email_binding.go validates mailbox ownership and replaces local email
+// credentials for account binding.
 // Binding a local mailbox uses its own email challenge even when ordinary
 // registration verification is disabled. The current account's mailbox
 // determines whether binding accepts a newly selected password or requires

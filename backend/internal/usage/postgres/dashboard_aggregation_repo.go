@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// dashboard_aggregation_repo.go rebuilds dashboard buckets and active-user
+// membership and manages usage retention and partitions.
 // Dashboard active-user counts depend on distinct user membership per hour and
 // per calendar day. Membership rows are inserted before numeric totals read
 // their counts, so repeatedly aggregating a range can add late users. Cleanup

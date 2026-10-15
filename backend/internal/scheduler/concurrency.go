@@ -17,6 +17,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// concurrency.go manages provider and user request slots, WebSocket ingress
+// leases, and shared load observations.
 // Provider and user request slots remain owned until their acquired release
 // handles finish cache cleanup. Runtime registration starts before cache I/O
 // and transfers to successful cleanup, so shutdown can wait for resources

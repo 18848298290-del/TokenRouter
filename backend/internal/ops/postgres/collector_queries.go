@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// collector_queries.go queries raw request counts, error classifications,
+// provider switches, and latency samples for metrics collection.
 // Minute metric collection reads usage records and error observations directly
 // from their business tables. Usage-row counts and consumed tokens supply
 // rates, while error totals distinguish final client failures, business

@@ -16,11 +16,11 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// Manual and background token refresh share one credential coordinator and
-// platform-specific exchange implementations. Background registration provides
-// both eligibility and execution for six platforms, while application hooks
-// stop accepted coordinator work before the later provider clients and storage
-// are released.
+// provider_refresh_runtime.go assembles manual and background credential
+// refresh around one shared coordinator. Both paths use platform-specific
+// exchange implementations. Background registration provides both eligibility
+// and execution for six platforms, while application hooks stop accepted
+// coordinator work before the later provider clients and storage are released.
 
 // providerRefreshRegistrations contains platform eligibility and exchange
 // entries for background maintenance.

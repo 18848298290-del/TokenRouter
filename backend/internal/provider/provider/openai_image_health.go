@@ -10,17 +10,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Image rate limits carry several possible recovery signals that can disagree
-// with account-wide quota windows. Image reset selection first accepts a future
-// Retry-After value, then a future Codex quota reset, then a future reset in
-// the response body.
+// openai_image_health.go selects image recovery deadlines and forwards image
+// capability-loss classifications to provider health. Image rate limits carry
+// several possible recovery signals that can disagree with account-wide quota
+// windows. Image reset selection first accepts a future Retry-After value,
+// then a future Codex quota reset, then a future reset in the response body.
 //
-// An image-specific try-again duration supplies the next choice, and one minute
-// supplies the final recovery window when no signal can establish a future
-// deadline. Provider health rules decide whether the response qualifies before
-// storing that deadline under the image capability key. Capability-loss errors
-// use a separate classification so an image denial can be handled independently
-// of rate-limit parsing.
+// An image-specific try-again duration supplies the next choice, and one
+// minute supplies the final recovery window when no signal can establish a
+// future deadline. Provider health rules decide whether the response qualifies
+// before storing that deadline under the image capability key. Capability-loss
+// errors use a separate classification so an image denial can be handled
+// independently of rate-limit parsing.
 
 // openAIImageResetAt selects a future deadline from image response headers and
 // body. Retry-After wins over Codex quota resets, which win over a usage-limit

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// anthropic_direct_output.go delivers native Anthropic output while collecting
+// model and usage observations.
 // Native Anthropic output can forward body bytes while independently collecting
 // model and usage evidence for completion. Buffered output validates the
 // response as JSON before optional cache classification and tool restoration.

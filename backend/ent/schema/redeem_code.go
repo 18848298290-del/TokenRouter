@@ -14,10 +14,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// A redeem code describes the entitlement granted to each eligible recipient.
-// Use counters, expiration, and recipient receipts let RedeemService check
-// availability before issuing balance, concurrency, or subscription benefits,
-// while the code retains its latest recipient and redemption time.
+// redeem_code.go defines redemption credentials and the entitlement granted to
+// each eligible recipient. Use counters, expiration, and recipient receipts
+// let RedeemService check availability before issuing balance, concurrency, or
+// subscription benefits, while the code retains its latest recipient and
+// redemption time.
 
 // RedeemCode stores entitlement definitions and their current redemption availability.
 // Deletes physically remove code rows; this entity has no soft-delete mixin.

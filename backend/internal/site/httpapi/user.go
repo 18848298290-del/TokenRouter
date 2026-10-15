@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// user.go serves announcement lists and read acknowledgements for the
+// authenticated user.
 // Announcement lists use the authenticated account's balance, plans, language,
 // and first-read markers to select and display records. Read acknowledgements
 // use that same account identity, so route parameters select the announcement

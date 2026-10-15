@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// video_billing_resolution.go normalizes video resolution labels and billable
+// durations.
 // Video billing recognizes three output-resolution tiers and uses a supported
 // duration from one through fifteen seconds. Submission and settlement share
 // duration normalization, with eight seconds for a missing duration and 480p

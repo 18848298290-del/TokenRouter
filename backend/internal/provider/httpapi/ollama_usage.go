@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ollama_usage.go handles Ollama Cloud usage settings, browser sessions, and
+// manual refresh requests.
 // Ollama Cloud administration exposes managed browser-session state through
 // dedicated usage endpoints. Provider selections require positive decimal IDs,
 // session text remains an input to the core service, and auto-refresh uses a

@@ -18,10 +18,10 @@ import (
 	opspostgres "github.com/TokenFlux/TokenRouter/internal/ops/postgres"
 )
 
-// Historical ingress classification identifies old Ops rows eligible for
-// cleanup before an operator-supplied RFC3339 cutoff. The command defaults to
-// scanning and reporting matches, requires an execute flag for deletion, and
-// prints a classifier digest with the result counts.
+// main.go runs historical ingress-log cleanup with an operator-supplied
+// RFC3339 cutoff. The command defaults to scanning and reporting matches,
+// requires an execute flag for deletion, and prints a classifier digest with
+// the result counts.
 
 // main runs historical ingress cleanup and logs any returned failure.
 // A failed run exits with status one after run releases its database resources,

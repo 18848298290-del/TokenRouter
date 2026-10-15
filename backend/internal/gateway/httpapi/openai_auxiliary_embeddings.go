@@ -30,6 +30,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_auxiliary_embeddings.go executes selected-provider Embeddings
+// requests and returns usage with client, billing, and upstream model
+// identities.
 // Embedding requests can use a client alias while the selected provider
 // requires a different model and protocol base. The payload uses the mapped,
 // normalized model; completion data keeps the original client name, billing

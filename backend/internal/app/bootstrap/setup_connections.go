@@ -16,6 +16,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// setup_connections.go probes setup database and Redis connections and
+// initializes the target schema and administrator.
 // Setup tests the PostgreSQL maintenance database before accessing a target
 // that may not exist. It checks for the target name, creates the database when
 // absent, closes the maintenance pool, and opens the target to verify its

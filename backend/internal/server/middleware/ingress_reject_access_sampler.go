@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// ingress_reject_access_sampler.go limits ingress rejection access events and
+// counts suppressed log entries.
 // An admission-rejection storm can create more access events than the logger
 // should emit. One process-wide sampler spends a fixed budget across all
 // requests, regardless of client address or API key, while the aggregate

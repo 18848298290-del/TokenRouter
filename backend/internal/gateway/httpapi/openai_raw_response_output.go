@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_raw_response_output.go configures raw Chat response readers with
+// platform repairs and usage observations.
 // Raw Chat output keeps native Chat payloads while applying provider-specific
 // response repairs and request observations. The response reader invokes bound
 // callbacks for missing Grok usage, truncation and reasoning caching, so those

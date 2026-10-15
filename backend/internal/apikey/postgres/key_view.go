@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Key repository reads construct identity and group views from the Ent
-// relationships selected by each query. Unselected fields stay at their entity
-// zero values, and several returned slices and pointers retain entity storage
-// until authentication snapshot conversion performs its own copying.
+// key_view.go converts selected Ent user and group fields into views consumed
+// by Key repository reads. Unselected fields stay at their entity zero values,
+// and several returned slices and pointers retain entity storage until
+// authentication snapshot conversion performs its own copying.
 
 // SQLExecutor supplies the SQL operations used by Key count and presentation
 // reads.

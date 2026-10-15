@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// text_route.go selects the upstream OpenAI text protocol from administrator
+// mode and client preference.
 // Text routing combines an administrator mode with the caller's preferred
 // OpenAI text protocol. A forced mode selects its endpoint regardless of that
 // preference. Preserving the preference chooses Chat only for the exact Chat

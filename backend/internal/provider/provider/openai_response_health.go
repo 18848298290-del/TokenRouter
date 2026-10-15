@@ -13,20 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Response health distinguishes failures caused by the request from failures
-// that make a provider or model unsuitable for scheduling. Content rejection
-// exits first, and request-scoped failures exit unless an administrator's
-// custom-code policy matches; account access errors and self-built image
-// denials have separate handling before general policy.
+// openai_response_health.go selects provider and model health actions for
+// failed OpenAI responses. Response health distinguishes failures caused by
+// the request from failures that make a provider or model unsuitable for
+// scheduling. Content rejection exits first, and request-scoped failures exit
+// unless an administrator's custom-code policy matches; account access errors
+// and self-built image denials have separate handling before general policy.
 //
 // Explicit pool and custom-code choices precede image, model, temporary-rule,
-// and Spark cooldown observations. Default 429 handling can be suppressed after
-// the more precise model branches, and default health processing receives a
-// clone with model observation cleared to avoid applying that branch again.
-// Runtime blocks are shared with scheduling, while changed Credentials and
-// Extra from the default path are copied back to the caller's record. API-key
-// transient streaks apply only after provider-level handling leaves the record
-// eligible and pool retry rules permit that recording.
+// and Spark cooldown observations. Default 429 handling can be suppressed
+// after the more precise model branches, and default health processing
+// receives a clone with model observation cleared to avoid applying that
+// branch again. Runtime blocks are shared with scheduling, while changed
+// Credentials and Extra from the default path are copied back to the caller's
+// record. API-key transient streaks apply only after provider-level handling
+// leaves the record eligible and pool retry rules permit that recording.
 
 // OpenAIResponseHealth orders response observations and updates runtime health
 // shared with scheduling.

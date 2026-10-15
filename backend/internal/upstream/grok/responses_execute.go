@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// responses_execute.go executes Grok Responses attempts and returns output and
+// usage observations from the response reader.
 // Grok Responses readers report usage and output commitment independently, and
 // either observation can accompany a read error. The executor keeps those facts
 // together in one attempt result while activity registration, provider-local

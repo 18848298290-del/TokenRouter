@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// platform.go applies platform capability patches and protocol adapter
+// restrictions to resolved routes.
 // Model metadata and request encoding rules have different sources. Catalog
 // attributes describe the complete model, while platform patches supply
 // service-specific sampling conditions, authentication restrictions, thinking

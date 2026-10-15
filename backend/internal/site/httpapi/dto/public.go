@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
+// public.go defines the public settings response with localized navigation and
+// server timezone fields.
 // Browser settings carry typed navigation arrays and localized display values
 // using the public API's JSON field names. Timezone labels and the current
 // offset accompany those values so the browser can identify server-local times

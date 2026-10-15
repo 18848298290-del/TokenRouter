@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+// image_bytes.go decodes base64 image payloads, detects supported image
+// signatures, and reads bounded response bodies.
 // Image responses may encode their bytes with or without base64 padding.
 // Decoding tries both standard forms, then assigns PNG, JPEG, or WebP from a
 // short signature check; unknown bytes retain the PNG default used by image

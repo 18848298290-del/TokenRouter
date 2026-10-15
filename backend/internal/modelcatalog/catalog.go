@@ -15,6 +15,8 @@ import (
 	"strings"
 )
 
+// catalog.go parses model catalogs and resolves qualified, public, and
+// ambiguous model identities.
 // Catalog providers can offer the same bare model with different prices and
 // capabilities. Qualified keys retain each provider's complete entry, while a
 // bare key prefers one identified first party record and otherwise remains

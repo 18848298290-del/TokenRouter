@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// log_runtime.go reads and changes effective logging configuration while
+// coordinating saved overrides, restoration, and audit callbacks.
 // Live logging and its saved runtime override are separate state changes.
 // Updates apply the normalized request before persistence, and reset applies
 // deployment settings before removing the override. Persistence failure

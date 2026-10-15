@@ -7,14 +7,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic error handling needs the upstream status for policy and a separate
-// client-facing status for display. Health decisions run before display rules,
-// so a status or message override cannot turn a rejected exchange into a retry
-// decision or undo its provider-health effects.
+// anthropic_error_contract.go defines error-handling adapter operations and
+// applies client display overrides. Anthropic error handling needs the upstream
+// status for policy and a separate client-facing status for display. Health
+// decisions run before display rules, so a status or message override cannot
+// turn a rejected exchange into a retry decision or undo its provider-health
+// effects.
 //
 // Matching display rules start with the upstream status and extracted message,
-// then apply optional code and body overrides independently. No matching rule
-// retains the caller's defaults. A matching monitoring exclusion marks the
+// then apply optional code and body overrides independently. When no rule
+// matches, the caller's defaults remain. A matching monitoring exclusion marks the
 // request through the adapter, leaving final observation processing with its
 // owner rather than changing provider recovery. Body readers and diagnostics
 // remain adapter operations so the retry path can replace a consumed reader

@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// dateline.go normalizes date sentences in system instructions and message
+// reminder segments.
 // Dateline punctuation is normalized within system text and complete
 // system-reminder segments in message text. Separate patterns recognize
 // all-hyphen or all-slash dates with selected apostrophes, keeping mixed

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// display_settings.go reads localized site names, frontend links, and
+// configured menu JSON.
 // Display names follow the context language, while frontend links and custom
 // menus come from current stored settings. Reads occur when consumers request a
 // value, so construction leaves storage and the deployment URL callback untouched.

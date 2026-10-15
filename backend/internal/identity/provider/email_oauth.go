@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// email_oauth.go exchanges GitHub and Google authorization codes and retrieves
+// profiles with verified email addresses.
 // Email OAuth profiles identify users by provider subject and require verified
 // email before local account decisions. GitHub userinfo supplies the numeric
 // subject, but its separate email endpoint supplies verification and primary-email

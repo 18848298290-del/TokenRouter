@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok.go builds and sends Grok creative image requests and decodes their
+// generated output.
 // Grok creative edits submit reference bytes in JSON data URLs, with one
 // source in image and multiple sources in images. Generation and edits use
 // separate xAI endpoints but share the requested resolution, ratio, quality,

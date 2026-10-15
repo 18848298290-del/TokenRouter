@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpconfig"
 )
 
+// cors.go applies configured browser cross-origin permissions and answers
+// preflight requests.
 // Cross-origin permissions depend on the normalized origin list and whether
 // credentials may accompany requests. An exact origin is echoed with Vary:
 // Origin; a wildcard grants every origin and disables the credentials header.

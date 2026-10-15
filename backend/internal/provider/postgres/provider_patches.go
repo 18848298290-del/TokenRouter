@@ -14,18 +14,19 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Extra patches merge JSONB keys into current database values so independent
-// observations can coexist. Scheduler-relevant keys join their outbox event
-// in an Ent transaction; neutral observation keys still trigger a fresh
-// provider snapshot outside a context transaction so cached credentials and
-// other concurrent fields are read together.
+// provider_patches.go applies Extra and bulk configuration patches to current
+// provider rows. Extra patches merge JSONB keys into current database values
+// so independent observations can coexist. Scheduler-relevant keys join their
+// outbox event in an Ent transaction; neutral observation keys still trigger a
+// fresh provider snapshot outside a context transaction so cached credentials
+// and other concurrent fields are read together.
 //
 // Bulk patches combine common fields with per-provider protocol changes. SQL
-// evaluates existing credential and proxy values when deciding which Ollama
-// or CN observations become stale, and retains a valid stored Codex
-// fingerprint seed when identity creation is requested. The dedicated CN
-// snapshot path compares updated_at and inserts its scheduling event with the
-// matching update.
+// evaluates existing credential and proxy values when deciding which Ollama or
+// CN observations become stale, and retains a valid stored Codex fingerprint
+// seed when identity creation is requested. The dedicated CN snapshot path
+// compares updated_at and inserts its scheduling event with the matching
+// update.
 
 // These seed constraints recognize the canonical nonzero UUID retained as an
 // OpenAI OAuth client fingerprint across concurrent configuration and Extra writes.

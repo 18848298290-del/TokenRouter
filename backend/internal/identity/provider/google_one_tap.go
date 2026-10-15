@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// google_one_tap.go verifies Google ID tokens and extracts the subject and
+// profile claims used for One Tap login.
 // Google One Tap credentials need a verified signature and application identity
 // claims before they can identify a local login subject. The official validator
 // checks the token, then the payload check requires a Google issuer, the selected

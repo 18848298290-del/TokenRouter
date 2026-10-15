@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images_apikey_response.go forwards API-key image responses while collecting
+// image counts, dimensions, usage, and stream timing.
 // API-key image streams can contain SSE events or a plain JSON response despite
 // being requested as streams. Raw lines reach the client as they arrive, while
 // event payloads feed usage and completed-image accounting independently of

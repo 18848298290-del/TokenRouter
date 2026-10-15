@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// jev.go validates Jev API Key credentials and resolves the configured or
+// default endpoint.
 // Jev decision requests use API Key credentials and a TypeSafe endpoint when no
 // custom base URL is stored. Shared protocol normalization invokes Jev
 // validation, while forwarding and model queries validate the selected URL

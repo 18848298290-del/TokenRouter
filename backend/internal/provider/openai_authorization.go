@@ -10,6 +10,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_authorization.go exchanges OpenAI authorization codes and refreshes
+// credentials with account metadata enrichment.
 // OpenAI code exchange binds a submitted state value to the PKCE verifier and
 // client parameters captured for its authorization URL. Invalid or expired
 // sessions and mismatched state are rejected before upstream exchange. A

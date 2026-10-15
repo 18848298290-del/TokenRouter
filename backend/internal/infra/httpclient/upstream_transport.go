@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
+// upstream_transport.go defines the gateway interface for ordinary and
+// fingerprinted upstream requests.
 // Gateway transport callers supply the selected proxy, provider identity, and
 // optional TLS profile for each request. Implementations reserve their
 // connection-pool entry through the response lifetime, so a successful caller

@@ -7,10 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Antigravity Gemini forwarding retains both the entry model and its selected
-// provider mapping while sending the internal project/model wrapper. Retry and
-// recovery operate on request-scoped execution data, with response hooks deciding
-// error handling before normal stream output or collection continues.
+// gemini_contract.go defines Antigravity Gemini execution inputs, response
+// hooks, and adapter operations. Antigravity Gemini forwarding retains both the
+// entry model and its selected provider mapping while sending the internal
+// project/model wrapper. Retry and recovery operate on request-scoped execution
+// data, with response hooks deciding error handling before normal stream output
+// or collection continues.
 
 // GeminiInput supplies entrypoint model, body, session, and provider preparation state.
 type GeminiInput struct {

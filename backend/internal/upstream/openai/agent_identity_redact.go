@@ -2,6 +2,8 @@ package openai
 
 import "strings"
 
+// agent_identity_redact.go removes known agent credentials and generated
+// assertion tokens from diagnostic response bodies.
 // Agent diagnostics can contain stored credentials or a freshly generated
 // AgentAssertion value. Redaction replaces known credential substrings and then
 // scans assertion tokens independently, so a per-request signature can be

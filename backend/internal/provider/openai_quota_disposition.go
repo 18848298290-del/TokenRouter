@@ -6,6 +6,8 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_quota_disposition.go classifies exhausted Codex windows while
+// preserving exhaustion without reset timing.
 // Codex quota exhaustion can be known even when no reset time is supplied. The
 // normalized seven-day window has precedence over five hours; the resulting
 // disposition lets retry callers distinguish known exhaustion from a transient

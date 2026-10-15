@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// model_transient.go tracks transient failure streaks and cooldowns for
+// provider-model pairs.
 // Transient upstream failures accumulate per provider and normalized model, so
 // one failing model does not block other models on the account. The first failure
 // records a streak, the second starts a short cooldown, and subsequent failures

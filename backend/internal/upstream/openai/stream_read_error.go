@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// stream_read_error.go classifies upstream stream interruptions and wraps
+// their causes with stable client error details.
 // Stream interruption after output begins can leave usage incomplete and still
 // require a stable client error. Typed wrappers retain the internal cause while
 // exposing fixed messages for HTTP/2 failure, ordinary interruption, or clean

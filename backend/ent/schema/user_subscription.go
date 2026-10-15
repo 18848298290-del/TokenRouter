@@ -15,10 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Issued subscription duration and quotas belong to a user's entitlement
-// record. Each record can begin immediately or wait behind another grant, while
-// independent usage windows track consumption and the plan relationship supplies
-// group eligibility for later billing checks.
+// user_subscription.go defines issued subscription entitlements with their own
+// duration and quota fields. Each record can begin immediately or wait behind
+// another grant, while independent usage windows track consumption and the
+// plan relationship supplies group eligibility for later billing checks.
 
 // UserSubscription stores issued entitlement periods, quota limits, and window usage.
 type UserSubscription struct {

@@ -11,6 +11,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// exchange_native.go retries native Gemini requests and selects final
+// responses or eligible local token estimates.
 // Native Gemini retries can return a local count estimate after transport or
 // eligible status attempts are exhausted. Error policy and recognized scope
 // failures stop before that fallback, leaving the caller to handle their

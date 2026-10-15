@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// ws_payload.go classifies token events, rewrites WebSocket response models,
+// and exposes request and usage payloads.
 // Gateway WebSocket streaming and its HTTP bridge start first-token timing from
 // an accepted token-event label. The classifier reads no payload content, so
 // an accepted empty delta or output annotation can start that timing. The

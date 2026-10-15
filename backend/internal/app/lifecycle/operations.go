@@ -7,11 +7,13 @@ import (
 	"sync"
 )
 
-// Operation admission and shutdown share a count of calls that have not
-// released their slots. The idle channel starts closed, becomes a new open
-// channel for the first admitted call, and closes again when the last call
-// releases. A stop seals admission before capturing that channel, preventing a
-// new operation from replacing the group being drained.
+// operations.go tracks admitted operations and seals admission while shutdown
+// waits for callers to release their slots. Operation admission and shutdown
+// share a count of calls that have not released their slots. The idle channel
+// starts closed, becomes a new open channel for the first admitted call, and
+// closes again when the last call releases. A stop seals admission before
+// capturing that channel, preventing a new operation from replacing the group
+// being drained.
 //
 // The first stop records its result after the captured group becomes idle or
 // its context expires. Repeated stops observe that stored result after its

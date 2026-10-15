@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// antigravity_subscription.go combines registered tier and eligibility warnings
+// into Antigravity subscription display fields.
 // Antigravity tier discovery can return paid status together with eligibility
 // warnings. Normalization keeps a paid plan visible, marks the subscription
 // abnormal, and surfaces the first warning while an absent response supplies

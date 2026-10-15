@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 )
 
-// Identity challenges use configured encryption and verifier implementations
-// supplied during application construction. TOTP receives identity email
-// challenges and their queue, passkeys receive the WebAuthn settings, and CAPTCHA
-// services receive runtime settings with the application's logging observer.
+// identity_security.go constructs encryption, TOTP, passkey, and CAPTCHA
+// services for identity challenges. TOTP receives identity email challenges and
+// their queue, passkeys receive the WebAuthn settings, and CAPTCHA services
+// receive runtime settings with the application's logging observer.
 
 // provideSecretEncryptor constructs identity secret encryption from cfg's
 // hexadecimal TOTP key. Bootstrap validates the decoding and required key

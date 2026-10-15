@@ -1,9 +1,10 @@
 package failover
 
-// OpenAI OAuth 429 failures can consume several complete provider retry
-// windows before the outer loop stops. Grok OAuth uses a different rule: the
-// first eligible 429 schedules one final attempt, and a later failed attempt
-// stops even when it has another status or provider category.
+// budgets.go limits OAuth rate-limit recovery and first-output provider
+// switches. OpenAI OAuth 429 failures can consume several complete provider
+// retry windows before the outer loop stops. Grok OAuth uses a different rule:
+// the first eligible 429 schedules one final attempt, and a later failed
+// attempt stops even when it has another status or provider category.
 //
 // The caller supplies category flags and an already counted failed switch
 // total, keeping platform identification outside this budget. A request-local

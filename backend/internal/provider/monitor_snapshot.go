@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// monitor_snapshot.go defines stored CN usage-monitor snapshots with separate
+// successful observations and attempt failures.
 // CN usage monitoring retains the last accepted balance and limit observations
 // when a later query fails. CNUsageMonitor separates its most recent attempt
 // status from successful data, and snapshot identity/version checks prevent

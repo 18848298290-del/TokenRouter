@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// easypay.go signs EasyPay checkout requests, verifies callbacks, and
+// translates payment and refund responses.
 // EasyPay hosted checkout signs a browser URL, while API checkout posts the
 // same merchant identity and retrieves payment references. Callback processing
 // validates one value per accepted field before checking its signature; a

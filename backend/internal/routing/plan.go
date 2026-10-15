@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// plan.go captures request routing policy and resolves provider-specific
+// protocol and model identities.
 // A request's final group and client protocol remain fixed while provider
 // attempts can choose different upstream protocols and model mappings. Group
 // policy collections are copied when the plan is built, keeping later

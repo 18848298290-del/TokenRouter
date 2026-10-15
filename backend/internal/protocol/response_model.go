@@ -6,6 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// response_model.go collects upstream model declarations and selects the
+// observed name retained for an attempt or turn.
 // Upstream responses can declare a model before generation and repeat it when
 // the request reaches a terminal event. Administrator audits need the model
 // reported by that upstream payload before conversion rewrites the client's

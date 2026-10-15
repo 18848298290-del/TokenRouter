@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// model_settings.go normalizes creative model allowlists and intersects their
+// operations with available provider routes.
 // Creative model settings identify exact group and model pairs, with
 // operations stored in a stable product order. Validation trims model names,
 // normalizes operation spelling, and rejects repeated pairs before JSON is

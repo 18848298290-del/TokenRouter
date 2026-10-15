@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 )
 
+// profile_cache_key.go hashes configured TLS profile fields into transport
+// cache keys.
 // Transport reuse follows the configured TLS profile identity, including its
 // name and ordered handshake lists. JSON serialization retains
 // nil-versus-empty list distinctions before SHA-256 hashing, so raw profile

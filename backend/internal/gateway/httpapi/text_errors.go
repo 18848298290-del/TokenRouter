@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// text_errors.go presents gateway streaming errors and translates billing
+// failures into HTTP status, message and retry details.
 // Gateway errors may occur after a wait heartbeat has committed a streaming
 // response. Final output then uses the inbound protocol's error event, while
 // funding and rate failures retain a safe status, code and message and can

@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// Gateway session stores supply sticky routing, first-group ownership, and optional
-// capabilities used by Responses, Live, and asynchronous video completion. The
-// interfaces expose storage results so callers can distinguish a miss, an
-// unavailable store, and an ownership comparison that rejected a stale claimant.
+// stores.go defines gateway cache interfaces for routing affinity, session
+// ownership, and protocol-specific continuation state. The interfaces expose
+// storage results so callers can distinguish a miss, an unavailable store, and
+// an ownership comparison that rejected a stale claimant.
 
 // ErrReasoningContentNotFound identifies an absent reasoning item so conversion
 // callers can continue with other history evidence when this cache has no text.

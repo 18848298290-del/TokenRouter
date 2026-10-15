@@ -24,6 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// conversion.go adapts Anthropic exchanges for Chat and Responses output and
+// retains error evidence.
 // Chat and Responses conversion consume Anthropic events even for a buffered
 // client reply. The adapter retains request-local credentials, tool state, and
 // response handles while gateway/forward joins or emits those events using the

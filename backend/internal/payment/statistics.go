@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// statistics.go builds payment dashboard totals, calendar series, purchase
+// distributions, and currency-specific user rankings.
 // Payment dashboard history uses paid_at and the paid, recharging or completed
 // states, while current-day cards are queried separately from the requested
 // historical range. Calendar buckets use the range timezone and advance by

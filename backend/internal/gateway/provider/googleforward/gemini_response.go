@@ -7,6 +7,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gemini_response.go binds Gemini response readers to HTTP output and attempt
+// observations.
 // Gemini response callbacks connect native readers and compatibility converters
 // to the same request output. Bounded body reading and header filtering remain
 // HTTP operations, while the attempt receives image observations and restores

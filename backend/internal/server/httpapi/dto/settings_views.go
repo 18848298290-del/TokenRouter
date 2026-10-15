@@ -1,5 +1,7 @@
 package dto
 
+// settings_views.go defines the JSON response for administrator panel
+// rate-limit settings.
 // Administrators edit panel request limits as one JSON object. Read and update
 // handlers return the same five fields so the settings page can display the
 // stored limits and administrator exemption after a save.

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// selection_errors.go presents text selection failures using authenticated
+// group data and client-visible model names.
 // Selection error diagnosis needs the authenticated group and client-visible
 // model while compatible attempts may have different execution targets. HTTP
 // adapters mark model and feature denials locally, retain request context when

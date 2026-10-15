@@ -2,6 +2,8 @@ package provider
 
 import "maps"
 
+// credentials_redact.go classifies credential secrets, merges redacted edits,
+// and removes temporary login material.
 // Administrator credential objects omit secrets before reaching the UI, so
 // submitting one back requires a distinction between an omitted secret and a
 // supplied empty value. The shared key list identifies fields for redaction and

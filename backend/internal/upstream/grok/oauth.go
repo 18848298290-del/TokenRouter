@@ -14,6 +14,8 @@ import (
 	wiregrok "github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// oauth.go resolves and validates Grok OAuth endpoints, builds API URLs, and
+// parses authorization input.
 // OAuth endpoints and API forwarding URLs use different local policies.
 // Authorization and token endpoints normally require trusted x.ai hosts,
 // while general base URLs permit HTTPS destinations after literal-host

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// basic_selection.go filters and orders basic scheduler candidates using
+// priority, load, reset windows, and recent use.
 // Basic scheduling applies priority, observed load, active reset windows, and
 // recent use as successive preferences. Smaller numeric priorities and lower
 // load rates keep their candidates available for later tie decisions. Reset

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// validation.go validates normalized usage amounts, windows, and subscription
+// data before publication.
 // Normalized usage needs enough observed data for its selected display mode
 // before provider orchestration publishes it. Missing pointers differ from
 // reported zero values: a quota amount can supply any observed component,

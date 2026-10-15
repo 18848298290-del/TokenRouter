@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_forward_execution.go adapts Grok preparation and response observations
+// to request-local HTTP execution state.
 // Grok platform preparation needs request-local HTTP observations beside
 // selected provider state. The adapter carries the resolved token and proxy
 // into transport, derives model and cache identities through shared rules, and

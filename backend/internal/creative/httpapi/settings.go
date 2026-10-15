@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// settings.go serves administrator reads of creative model candidates and
+// worker status.
 // Creative candidate discovery and worker status have independent service
 // dependencies. Each administration handler reports a missing dependency as a
 // server error, while candidate lookup failures use the common typed error

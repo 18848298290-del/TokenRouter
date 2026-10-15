@@ -15,16 +15,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder connection tests build a COSY stream request for the provider's selected
-// site and model route. PAT records can invalidate cached sessions before the
-// probe, and Global tests query user info before streaming; CN tests use their
-// site session directly. The public test_start model remains the requested
-// spelling while the payload and x-model-key use the resolved upstream route.
+// qoder_test_execution.go executes COSY connection probes using the selected
+// Qoder site and model route. PAT records can invalidate cached sessions
+// before the probe, and Global tests query user info before streaming; CN
+// tests use their site session directly. The public test_start model remains
+// the requested spelling while the payload and x-model-key use the resolved
+// upstream route.
 //
 // An injected client can supply fixture behavior, while platform Client values
 // are rebuilt for the selected site. Shared transport is used when the client
-// supports the doer-aware interface, and user-info queries can fill missing UID
-// or name on the obtained session identity. The stream adapter closes the
+// supports the doer-aware interface, and user-info queries can fill missing
+// UID or name on the obtained session identity. The stream adapter closes the
 // successful response body after emitting typed test events.
 
 // qoderProviderTestSessionProvider obtains the provider session used by

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// load_balancer.go selects payment instances using supported methods, observed
+// daily usage, channel limits, and selection strategy.
 // Instance channel limits compare the requested amount with single-order
 // bounds and creation-day usage that includes pending/provider-processing
 // orders. If every eligible instance exceeds those limits, selection

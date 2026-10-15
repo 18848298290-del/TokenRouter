@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// quota_credits.go parses reset-credit response variants while retaining count
+// presence, list presence, and eligible expiry details.
 // Reset-credit responses can expose their count and list through several
 // compatible field spellings. Parsing preserves the distinction between an
 // absent list and an explicitly empty list, while the first supplied nonnull

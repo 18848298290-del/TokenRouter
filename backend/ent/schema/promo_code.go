@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
-// Signup promotions credit a user's balance and retain a global use counter.
-// The promotion service checks activation, expiry, and the configured total
-// limit when applying a code, while per-user usage records enforce one grant
-// per user for that code.
+// promo_code.go defines signup promotion credits, availability settings, and
+// global use counters. The promotion service checks activation, expiry, and
+// the configured total limit when applying a code, while per-user usage
+// records enforce one grant per user for that code.
 
 // PromoCode stores signup balance grants and their availability controls.
 //

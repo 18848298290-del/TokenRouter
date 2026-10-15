@@ -2,9 +2,10 @@ package requeststate
 
 import "sync"
 
-// A Responses bridge can apply provider health effects before the HTTP output
-// adapter handles the terminal error. The adapter consumes recorded evidence to
-// avoid applying the same observed effects during that handoff.
+// response_failure.go records and consumes provider health effects during
+// Responses error handling. A Responses bridge can apply health effects before
+// the HTTP output adapter handles its terminal error. The adapter consumes
+// recorded evidence to avoid applying those effects again.
 //
 // The mutex protects one latest status/disabled pair and a separate presence
 // flag. Store overwrites any pending pair, and Consume clears presence while

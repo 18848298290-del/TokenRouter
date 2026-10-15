@@ -9,6 +9,8 @@ import (
 	"slices"
 )
 
+// capabilities.go encodes optional capabilities and intersects reasoning
+// controls and request conditions.
 // Capability lists can be unknown or explicitly empty, and JSON must retain
 // that difference when administrator rules are stored and returned. Media list
 // encoding restores empty arrays omitted by ordinary omitempty serialization;

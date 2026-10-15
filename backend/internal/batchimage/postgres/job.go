@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// job.go stores batch-image jobs, indexed items, lifecycle transitions, and
+// their events in PostgreSQL.
 // Batch image jobs retain provider bindings, model identities, pricing, funding,
 // and lifecycle timestamps while their item rows describe indexed output.
 // The SELECT column lists and scanners share positional order, so changing one

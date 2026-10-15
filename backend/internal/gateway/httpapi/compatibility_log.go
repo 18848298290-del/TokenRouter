@@ -6,8 +6,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// Session compatibility metrics can be observed from both text and count-token
-// entries. A process-wide sampling counter limits snapshot reads and log output,
+// compatibility_log.go samples session compatibility metrics across text and
+// token-count requests.
+// A process-wide sampling counter limits snapshot reads and log output,
 // while the supplied reader owns the counters and hit-rate calculation included
 // in each sampled event.
 

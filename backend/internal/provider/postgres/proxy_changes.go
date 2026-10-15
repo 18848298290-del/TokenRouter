@@ -7,10 +7,12 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
-// Proxy updates can invalidate an Ollama usage observation even when the
-// provider's API key remains unchanged. Expiration may also move a provider
-// to a backup or direct connection while retaining the original proxy ID for
-// restoration; records already in fallback keep their existing origin.
+// proxy_changes.go invalidates proxy-dependent observations and reassigns
+// providers while retaining their fallback origin. Proxy updates can
+// invalidate an Ollama usage observation even when the provider's API key
+// remains unchanged. Expiration may also move a provider to a backup or direct
+// connection while retaining the original proxy ID for restoration; records
+// already in fallback keep their existing origin.
 //
 // These operations use the egress caller's executor and return the IDs
 // requiring subsequent publication. They remove stale managed snapshots as

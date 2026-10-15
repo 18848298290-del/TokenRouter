@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// oauth_start.go checks action CAPTCHA for anonymous OAuth starts and sends
+// authorization destinations.
 // Anonymous OAuth start requests share CAPTCHA fields with password and
 // Passkey actions. POST responses return an authorize URL for browser code to
 // navigate, while accepted GET starts redirect; current-user bind starts use

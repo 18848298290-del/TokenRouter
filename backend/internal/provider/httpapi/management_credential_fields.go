@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_credential_fields.go binds batch credential-field edits and
+// formats their per-provider update results.
 // Credential-field maintenance validates each selected provider before applying
 // per-provider patches. The HTTP layer permits the declared string or boolean
 // fields and reports partial write failures as item results, while a missing

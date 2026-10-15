@@ -32,11 +32,12 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// Provider usage presentation combines platform queries with local statistics
-// and shared display caching. OAuth queries register service activity shutdown,
-// CN and Ollama monitors receive singleton coordination, and platform adapters
-// keep credential preparation, TLS, and destination policy attached to
-// application resources.
+// provider_oauth_usage.go assembles platform usage queries, local usage
+// statistics, and periodic quota monitors. Provider usage presentation combines
+// platform queries with local statistics and shared display caching. OAuth
+// queries register service activity shutdown, CN and Ollama monitors receive
+// singleton coordination, and platform adapters keep credential preparation,
+// TLS, and destination policy attached to application resources.
 
 // provideCNUsageMonitor binds stored providers and upstream queries with
 // instance-specific singleton coordination. Nil cfg starts from its half-unit

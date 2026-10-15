@@ -6,6 +6,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// token_stats.go validates model-statistics requests and selects leading-model
+// or paginated repository queries.
 // Model statistics can return either leading models or a paginated ranking, and
 // positive requests for both modes are rejected. Monitoring and time validation
 // precede those limits; pagination defaults are written into the supplied

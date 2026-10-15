@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// registration_email_alias.go normalizes mailbox aliases and builds candidate
+// probes for account email deduplication.
 // Mailbox alias checks compare a normalized identity while retaining the user's
 // stored address for login and delivery. Plus suffixes collapse across domains,
 // while Gmail and googlemail also share local-part dot removal and one canonical

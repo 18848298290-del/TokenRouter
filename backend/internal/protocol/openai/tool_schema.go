@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 )
 
+// tool_schema.go repairs supported tool-schema patterns and parameter types
+// through bounded edits to request JSON bytes.
 // Tool schemas can need small compatibility repairs while request numeric
 // literals, key ordering, and unrelated data keep their existing spelling. A
 // structural parser records byte spans rather than decoding and rebuilding the

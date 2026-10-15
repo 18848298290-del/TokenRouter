@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// selection.go acquires provider capacity and rechecks candidate eligibility
+// before transferring resources to execution.
 // A ranked candidate still needs a physical provider slot and current
 // eligibility before execution. Selection acquires capacity first, then asks
 // the adapter for fresh metadata and a database recheck. Snapshot load

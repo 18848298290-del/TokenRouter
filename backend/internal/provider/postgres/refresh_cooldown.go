@@ -6,16 +6,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Refresh recovery clears a temporary window only when its deadline, reason and
-// observed authentication identity still match. The conditional SQL update
-// leaves a newer pause intact, then a successful clear attempts an outbox event
-// and invokes configured snapshot synchronization.
+// refresh_cooldown.go conditionally clears a refresh cooldown when its
+// deadline, reason, and authentication identity still match. The conditional
+// SQL update leaves a newer pause intact, then a successful clear attempts an
+// outbox event and invokes configured snapshot synchronization.
 //
-// The predicate includes parent selection and quota dimension, because recovery
-// must refer to the same provider role as the exchange. Failure to enqueue the
-// event is logged after the health update rather than returned as a failed
-// clear. Post actions use the true result to clear their local pause before
-// later scheduler publication.
+// The predicate includes parent selection and quota dimension, because
+// recovery must refer to the same provider role as the exchange. Failure to
+// enqueue the event is logged after the health update rather than returned as
+// a failed clear. Post actions use the true result to clear their local pause
+// before later scheduler publication.
 
 // ClearRefreshCooldownIfUnchanged clears the deadline and reason for the exact
 // observed identity and window. A comparison miss returns false and leaves a

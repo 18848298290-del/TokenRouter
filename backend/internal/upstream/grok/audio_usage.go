@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// audio_usage.go recognizes realtime audio events and estimates Grok Voice
+// usage in endpoint-specific billing units.
 // Voice endpoints meter millions of TTS characters, STT hours, and realtime
 // session minutes after callers confirm audio observation. An audio event
 // requires a nonempty string payload and an audio

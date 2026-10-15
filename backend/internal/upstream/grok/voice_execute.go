@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// voice_execute.go executes Grok Voice HTTP requests and returns response
+// output with estimated audio usage.
 // Grok Voice HTTP operations can return audio bytes or JSON, but usage depends
 // on the selected base endpoint. Response policy runs before body output and
 // audio estimation, so handled HTTP errors produce no local meter while accepted

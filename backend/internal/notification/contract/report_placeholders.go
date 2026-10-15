@@ -1,5 +1,7 @@
 package contract
 
+// report_placeholders.go provides the shared placeholder names for operations
+// report summaries.
 // Operations reports can expose summary metrics individually in administrator
 // templates. The shared placeholder names let report producers provide those
 // values while notification validation and previews recognize the same names

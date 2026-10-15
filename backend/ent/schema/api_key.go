@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// An API key authenticates requests and carries group, funding, and admission
-// settings. Personal ownership and optional team scope stay separate from the
-// payer resolved for a request, while quotas and spending windows retain the
-// key's recorded charges and task reservations.
+// api_key.go defines stored API credentials, ownership, routing choices, and
+// admission settings. Personal ownership and optional team scope stay separate
+// from the payer resolved for a request, while quotas and spending windows
+// retain the key's recorded charges and task reservations.
 
 // APIKey stores access credentials, routing choices, and per-key admission settings.
 type APIKey struct {

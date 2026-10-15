@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// platform_selection.go selects platform providers using previous-response
+// affinity, session policy, ranked candidates, and capacity checks.
 // A previous OpenAI response can require the same provider even when session
 // affinity is weighted. The selector checks that result against the admitted
 // group, requested capability, and transport before accepting its capacity. A

@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// compact_models.go binds provider and global model rules to compact recovery.
 // Legacy compact failures can select a provider-specific replacement or a
 // configured global model. The attempt adapter reads the selected provider's
 // compact rules first and maps a global fallback through its ordinary upstream

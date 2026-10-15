@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// order_lifecycle_ports.go binds fulfillment, resume signing, observation
+// callbacks, and recovery storage for order lifecycle operations.
 // Recovery workers need persisted candidates while user cancellation and late
 // callbacks can change the same orders. LifeStore supplies those reads and
 // conditional closing operations, and OrderLifecycle shares the fulfillment

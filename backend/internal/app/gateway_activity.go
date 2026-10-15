@@ -2,6 +2,8 @@ package app
 
 import "github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
 
+// gateway_activity.go registers the shared gateway operation barrier with
+// application shutdown.
 // Gateway requests and attempts can still enqueue completion work while HTTP
 // shutdown is underway. Registering their operation barrier before completion
 // and storage shutdown makes the lifecycle manager wait for that work before

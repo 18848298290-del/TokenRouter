@@ -14,6 +14,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// usage_client.go fetches Claude OAuth usage through the configured HTTP or
+// TLS fingerprint transport.
 // OAuth usage queries carry the selected access token, beta Header, and
 // provider fingerprint User-Agent. A configured TLS profile and transport
 // select the fingerprint path; other queries use the shared HTTP client with a

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// antigravity_quota.go fetches Antigravity model quotas and assembles
+// utilization, subscription, and credit observations for display.
 // Antigravity model quota display combines available-model responses with
 // best-effort subscription and paid-tier AI Credits. Forbidden protocol
 // failures become account-state display data, while other model fetch errors

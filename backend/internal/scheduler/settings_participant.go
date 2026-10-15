@@ -7,10 +7,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Scheduler settings participate in the shared administrative update flow
-// through a known set of JSON fields. Preparation validates the supplied
-// scheduler object against process defaults, then filters the generated
-// key/value map to the fields present in that update.
+// settings_participant.go prepares partial scheduler settings updates while
+// retaining which fields the administrator supplied. Preparation converts the
+// request's JSON field map into AdminSettings, validates that typed value
+// against process defaults, and returns persisted strings for the supplied
+// keys. Omitted fields acquire Go zero values during decoding, so the typed
+// object alone cannot distinguish omission from an intentional false value.
+//
+// The participant records escape-switch presence before preparing the complete
+// settings map, allowing a supplied false switch to be encoded as false. It
+// then removes every prepared key absent from the request. That final filter
+// prevents normalization defaults and omitted zero values from overwriting
+// settings outside the administrator's partial update. Validation errors return
+// before any prepared change reaches the settings owner.
 
 // SettingsParticipant returns the scheduler's field list and pure update
 // preparation callback. Empty input prepares no changes; the callback

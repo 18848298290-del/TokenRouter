@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// generic_selection_routes.go selects provider execution data from model
+// routes, session bindings, and the ordinary group pool.
 // A model route supplies a preferred provider list inside the already admitted
 // group. When that list has no eligible provider, basic selection can use the
 // group's ordinary list, ordered by global priority and last-used time.

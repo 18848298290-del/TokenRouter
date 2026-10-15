@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_write.go handles provider creation, duplication, and
+// configuration updates through administrator HTTP requests.
 // Provider creation can finish before response idempotency storage succeeds.
 // Creation and duplication use the shared executor, while duplication also
 // passes its administrator operation identity to durable storage so the handler

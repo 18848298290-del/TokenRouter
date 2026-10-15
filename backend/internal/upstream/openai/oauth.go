@@ -13,6 +13,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// oauth.go constructs OpenAI OAuth authorization parameters and decodes
+// imported ID-token metadata.
 // OpenAI OAuth authorization sends a PKCE challenge with Codex client defaults
 // and optional redirect customization. State and session identifiers are random
 // hex strings, while ID-token payload readers extract metadata from JWT content

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go executes Messages attempts and combines response usage, output,
+// and timing observations.
 // A Messages attempt reports usage presence, semantic output, and elapsed data
 // arrival separately. Explicit zero-token usage is observable, and an upstream
 // model declaration is recorded before downstream rewriting can restore the

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// checkout_draft.go builds order snapshots and validates pending-count and
+// daily-purchase limits before persistence.
 // Checkout stores the credited or plan Amount separately from gateway
 // PayAmount and the principal used by its current purchase-limit check. Draft
 // construction records buyer, provider, display, billing, and optional plan

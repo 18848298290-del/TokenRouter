@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_ws_session_preemption.go registers eligible pooled OAuth connections
+// for session replacement and clears displaced affinity.
 // A pooled OpenAI OAuth session can be replaced by a newer connection using
 // the same group, Key and session hash. Entry owns its registration across
 // provider attempts, and nested forwarding calls recognize the armed context

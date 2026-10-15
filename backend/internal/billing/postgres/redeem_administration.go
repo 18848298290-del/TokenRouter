@@ -7,6 +7,8 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
+// redeem_administration.go runs redemption administration callbacks in joined
+// or owned transactions.
 // Code administration can join a caller's Ent transaction, while
 // adjustment-history recording starts its own transaction through the
 // configured client. Callback writes use the selected transaction context so

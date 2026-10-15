@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// refresh_token.go stores refresh credentials and their user and family
+// indexes in Redis.
 // Refresh credentials are stored by digest, while separate user and family sets
 // provide candidates for bulk revocation. SessionService stores a credential before
 // adding those indexes and logs indexing failures, so the sets can omit a stored

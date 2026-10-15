@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// tencent_captcha_service.go validates Tencent CAPTCHA configuration and
+// browser proofs before interpreting the verifier result.
 // Tencent challenge verification couples the application credentials, browser
 // proof and regional server endpoint. VerifyTicket reads one settings batch
 // before dispatch, while AuthService can supply its own selected snapshot to

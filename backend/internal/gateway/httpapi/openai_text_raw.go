@@ -11,6 +11,8 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
+// openai_text_raw.go dispatches native and converted requests to Chat-only
+// upstream runners.
 // Chat-only upstream routes can serve native Chat input or converted Messages
 // and Responses requests. The client protocol kind selects the runner and
 // error writer, while returned observations are captured in HTTP request state

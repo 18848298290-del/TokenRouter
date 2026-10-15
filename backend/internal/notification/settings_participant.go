@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares administrator SMTP settings and maps
+// submitted fields to persisted setting keys.
 // SMTP administrator updates separate connection normalization from preparing
 // the submitted storage keys. A blank next host can retain the previous
 // connection and sender configuration, while a nonempty password alone selects

@@ -13,6 +13,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// oauth_lookup.go resolves compatible OAuth account matches and repairs WeChat
+// runtime identity bindings.
 // Provider email hints can match a local account without proving that account
 // belongs to the external subject. Compatibility lookups normalize email text,
 // reject synthetic addresses, and report ambiguous rows so pending flows can

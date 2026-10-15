@@ -12,6 +12,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_ws_forwarder_support.go resolves previous-response provider affinity
+// and returns an acquired slot or wait plan.
 // A previous OpenAI response binds continuation to the provider that created
 // its state. Response lookup is group-scoped and uses the already resolved
 // routing model; provider mapping, endpoint capability, privacy, parent health,

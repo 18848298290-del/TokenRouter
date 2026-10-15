@@ -32,6 +32,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// user_service.go manages account profiles, provider identity summaries,
+// notification recipients, and activity observations.
 // Account profile changes can affect separate avatar records, selected user
 // columns, sign-in relationships and authentication snapshots. The profile
 // helper records a field mask and passes the runner's context to its selected

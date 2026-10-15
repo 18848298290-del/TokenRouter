@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// subscription.go implements in-memory subscription repository fixtures and
+// their timeline index.
 // Subscription fixtures keep grant records by ID and a separate owner/plan
 // timeline index used by renewal tests. Mutating a record through Seed,
 // Create, Update or Restore rebuilds that index, ordering starts and creation

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// candidate_policy.go evaluates compatible provider candidates against request
+// policy and platform quota constraints.
 // Compatible candidates need both their protocol route and the request's
 // admitted group to remain eligible. The candidate context records a sticky
 // provider so Anthropic window-cost and RPM checks can apply their sticky

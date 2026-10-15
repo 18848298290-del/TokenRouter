@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin.go executes administrator write commands through idempotency
+// coordination and renders replay or degraded responses.
 // Administrator write commands identify retries by scope, actor, method, route,
 // key, and payload through the shared coordinator. JSON helpers return replay
 // and retry-delay headers and return storage errors by default. An administrator

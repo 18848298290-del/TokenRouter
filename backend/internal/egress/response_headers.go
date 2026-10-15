@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// response_headers.go compiles response header permissions and applies removal
+// and framing exclusions.
 // Response forwarding uses default membership for content metadata, rate limits,
 // redirects, and request identifiers. Enabled configuration can add names or
 // request their removal. Forced removal wins over default and additional

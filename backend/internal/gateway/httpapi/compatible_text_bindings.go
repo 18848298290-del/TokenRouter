@@ -15,8 +15,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Generic Responses and Chat entries reuse Messages admission operations while
-// selecting their own image and moderation behavior. Group mapping supplies the
+// compatible_text_bindings.go binds generic Responses and Chat preparation to
+// Messages admission and protocol-specific image checks.
+// Each entry selects its image and moderation behavior. Group mapping supplies the
 // model checked for image eligibility, and bound HTTP functions carry the
 // prepared body and request observations into execution. Inherited Eligibility
 // calls the Messages funding binding with empty platform and afterWait=false.

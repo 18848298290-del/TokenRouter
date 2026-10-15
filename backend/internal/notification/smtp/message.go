@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// message.go builds MIME messages and their SMTP envelope addresses from
+// sender and recipient inputs.
 // SMTP envelopes need bare addresses even when display headers carry names.
 // Message preparation parses those representations once, builds encoded UTF-8
 // headers and a quoted-printable HTML body, and returns the envelope values

@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// request_id_header.go validates and reads the configured upstream response
+// header used for request-ID capture.
 // Provider request-ID recording reads one administrator-selected response Header
 // from the direct upstream. An absent or blank setting disables capture; saving
 // validates Header token syntax and size before replacing the Extra value used

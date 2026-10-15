@@ -11,6 +11,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// tool_rewrite.go rewrites tool names across request declarations and history,
+// then restores response aliases.
 // CLI-mimicked tools need the same alias in their declarations, named choices,
 // and historical calls. Request-local mappings pair outbound aliases with
 // response replacements, while server-defined tool types keep their declared

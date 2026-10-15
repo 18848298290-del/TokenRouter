@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// localization.go prepares and resolves localized site text and revisioned
+// legal documents.
 // Configured site text distinguishes a saved empty string from a field with
 // no localized content. Editor reads fill missing fields from legacy source
 // keys, while prepared writes retain omitted fields and validate changes

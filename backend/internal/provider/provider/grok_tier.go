@@ -5,10 +5,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok media admission and quota display use the same subscription-tier parsing
-// rules. The provider core receives JWT tier extraction, canonical tier names and
-// free-window detection from the platform implementation, allowing those consumers
-// to interpret stored credentials and quota observations consistently.
+// grok_tier.go supplies shared subscription-tier parsing rules for Grok media
+// admission and quota display. The provider core receives JWT tier extraction,
+// canonical tier names and free-window detection from the platform
+// implementation, allowing those consumers to interpret stored credentials and
+// quota observations consistently.
 
 // GrokTierRules supplies platform tier parsers to provider admission and quota
 // consumers.

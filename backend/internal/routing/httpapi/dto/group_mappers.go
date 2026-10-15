@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_mappers.go converts routing groups into administrative and localized
+// user response values.
 // Group responses carry requestable model choices and effective protocol
 // admission alongside stored product settings. Administrative mapping adds
 // editable policy and provider counts, while optional language resolution

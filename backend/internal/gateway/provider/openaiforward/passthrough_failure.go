@@ -2,6 +2,8 @@ package openaiforward
 
 import "net/http"
 
+// passthrough_failure.go decides whether captured passthrough failures qualify
+// for provider failover.
 // Passthrough failures can overlap content, context, credential, capacity, and
 // server classifications. Content and context rejections stop failover before
 // any retryable category is considered, while access-state, payload-size, pool-

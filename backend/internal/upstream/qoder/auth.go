@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// auth.go exchanges Qoder Center credentials and prepares machine identities
+// and encoded authentication requests.
 // Center authentication sends JSON inside a string-valued envelope and then
 // applies COSY encoding to the complete body. PAT exchange and token refresh
 // share that request shape, while refresh carries the existing security token so

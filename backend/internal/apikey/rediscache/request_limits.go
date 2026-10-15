@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
+// request_limits.go reserves, renews, and releases API key request capacity
+// with Redis scripts.
 // Request admission uses two Redis sorted sets per Key ID: active leases expire
 // after two minutes, while RPM members retain their first admission time for
 // sixty seconds. Both sets share a hash tag so one Lua operation can prune

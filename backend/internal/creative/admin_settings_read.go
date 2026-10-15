@@ -1,5 +1,7 @@
 package creative
 
+// admin_settings_read.go decodes stored creative settings for administrator
+// responses.
 // Administrator reads interpret the feature flag independently from model
 // admission. Missing worker counts use the pool default, while missing or
 // malformed model settings yield an empty allowlist that closes the creative

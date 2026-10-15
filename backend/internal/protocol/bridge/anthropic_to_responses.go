@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// anthropic_to_responses.go converts Anthropic requests and conversation
+// blocks into Responses input.
 // Anthropic history combines text, tool results, images, and signed thinking
 // inside message blocks. Responses stores calls and results as separate input
 // items, so conversion preserves call IDs while grouping supported text and

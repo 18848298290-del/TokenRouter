@@ -6,6 +6,8 @@ import (
 	"errors"
 )
 
+// scan.go scans the first query result and combines scanning and row-cleanup
+// errors.
 // Transaction adapters can supply QueryContext rows without constructing
 // sql.Row. Single-row scanning consumes the first result and then closes the
 // obtained rows, combining cleanup failures with scan or iteration errors;

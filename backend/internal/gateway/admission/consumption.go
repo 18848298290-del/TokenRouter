@@ -8,11 +8,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Consumption admission checks the authenticated key before its selected
-// funding source. A rejected key cannot consume a subscription even if that
-// subscription has remaining quota, and balance is consulted only when no
-// subscription was selected. Failures retain their cause so each HTTP protocol
-// can choose its own status and client-facing message.
+// consumption.go checks consumption eligibility for an authenticated key and
+// its selected funding source. A rejected key cannot consume a subscription
+// even if that subscription has remaining quota, and balance is consulted only
+// when no subscription was selected. Failures retain their cause so each HTTP
+// protocol can choose its own status and client-facing message.
 //
 // Subscription validation can clear expired usage counters in the supplied
 // object and request window maintenance. Admission persists that maintenance,

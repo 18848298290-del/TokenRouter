@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// catalog.go adapts provider records and prepared routing rules for creative
+// model discovery.
 // Creative model discovery evaluates the same prepared provider mappings and
 // protocol routes used by gateway selection. Provider records retain their
 // current scheduling flags, while captured model and protocol rules determine

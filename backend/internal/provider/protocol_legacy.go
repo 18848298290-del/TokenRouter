@@ -8,18 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Legacy protocol settings express text routing and workloads separately from
-// native selections. CN adaptive mode enumerates available native protocols,
-// while fixed variants produce one text identifier. OpenAI API-key workload and
-// endpoint settings filter its native options before that selection is saved.
+// protocol_legacy.go translates legacy protocol settings and preserves
+// endpoint selections during credential updates. Legacy protocol settings
+// express text routing and workloads separately from native selections. CN
+// adaptive mode enumerates available native protocols, while fixed variants
+// produce one text identifier. OpenAI API-key workload and endpoint settings
+// filter its native options before that selection is saved.
 //
-// A legacy edit to an already unified provider replaces text protocols and, when
-// workload keys are supplied, embeddings. Independent media selections remain
-// present. A credential replacement with no legacy keys carries forward omitted
-// unified protocols and endpoint slots; supplied values, including nil, express
-// caller intent. Endpoint migration copies fixed CN base addresses into missing
-// slots before removing old fields, so the saved set and its addresses survive
-// the representation change together.
+// A legacy edit to an already unified provider replaces text protocols and,
+// when workload keys are supplied, embeddings. Independent media selections
+// remain present. A credential replacement with no legacy keys carries forward
+// omitted unified protocols and endpoint slots; supplied values, including
+// nil, express caller intent. Endpoint migration copies fixed CN base
+// addresses into missing slots before removing old fields, so the saved set
+// and its addresses survive the representation change together.
 
 // LegacyUpstreamProtocols returns a new selection derived from legacy settings
 // for a nonnil record. CN modes use exact enum matching: adaptive uses all native

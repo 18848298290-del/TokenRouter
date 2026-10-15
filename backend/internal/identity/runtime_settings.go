@@ -9,6 +9,8 @@ import (
 	"strconv"
 )
 
+// runtime_settings.go reads authentication switches and account defaults and
+// manages the administrator API key.
 // Authentication feature checks interpret persisted text each time they run.
 // Most switches enable a feature only for the exact value true and select
 // disabled after a store failure, while numeric account limits use their own

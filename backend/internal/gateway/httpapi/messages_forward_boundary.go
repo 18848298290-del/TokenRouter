@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// messages_forward_boundary.go supplies HTTP output, headers, and diagnostics
+// to native and converted Messages forwarding.
 // Messages forwarding can expose native Anthropic output or convert it into
 // Chat and Responses envelopes. The HTTP boundary supplies the current writer,
 // request headers and diagnostic state to the shared runtime, while retaining

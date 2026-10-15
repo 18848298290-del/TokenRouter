@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// ingress_reject.go aggregates ingress rejection counts and queues their
+// deltas for persistent batch delivery.
 // Ingress rejections are counted by captured UTC minute and bounded caller
 // dimensions before reaching PostgreSQL. Distinct dimensions consume a budget
 // shared across all shards, with one slot reserved for an anonymous overflow

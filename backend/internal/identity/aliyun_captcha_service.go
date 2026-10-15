@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// aliyun_captcha_service.go verifies Aliyun CAPTCHA challenges and probes
+// administrator-supplied credentials.
 // Aliyun challenge checks use a scene and regional endpoint together with cloud
 // access credentials. Authentication supplies a configuration snapshot and
 // accepts the action only when the external verifier returns a successful

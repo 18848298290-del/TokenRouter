@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// gemini_refresh.go adapts Gemini token exchange and expiry checks to
+// background credential refresh.
 // Gemini background refresh accepts OAuth records with a parseable expiry
 // inside the caller supplied window. The exchanger builds platform fields and
 // merges them with existing credentials, allowing omitted metadata to remain

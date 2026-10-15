@@ -6,6 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// sse_data.go accumulates SSE data lines and emits joined JSON values or
+// separate compatibility payloads.
 // A standard SSE event can split one JSON value across several data lines,
 // while compatible streams can place independent values on successive lines.
 // Accumulation waits for a blank line or an explicit flush before deciding

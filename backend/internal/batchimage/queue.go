@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// queue.go defines batch-image queue reservations, lease operations, and queue
+// failure categories.
 // Queue reservations identify persistent tasks by their public batch IDs. The
 // queue coordinates ready, delayed and active records while a separate lease
 // admits a worker's progression visit; PostgreSQL continues to own the

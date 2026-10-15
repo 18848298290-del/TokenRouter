@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// apikey_middleware.go binds authenticated API key and group views to gateway
+// request contexts.
 // Gateway authorization publishes key snapshots to Gin and a hydrated group
 // to the typed request context. A supplied group needs a positive ID, a
 // hydration marker, and status text before it can replace that context's

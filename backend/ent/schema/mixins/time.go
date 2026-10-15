@@ -9,10 +9,10 @@ import (
 	"entgo.io/ent/schema/mixin"
 )
 
-// Entity timestamps are assigned by the application process when Ent creates or
-// updates a record. The creation time is immutable after insertion, while the
-// update time receives a fresh default for mutations using the generated Ent
-// update builders.
+// time.go defines application-assigned creation and update timestamps for Ent
+// entities. The creation time is immutable after insertion, while the update
+// time receives a fresh default for mutations using the generated Ent update
+// builders.
 
 // TimeMixin supplies automatic creation and update times for persisted entities.
 type TimeMixin struct {

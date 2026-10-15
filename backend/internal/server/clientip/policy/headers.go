@@ -8,6 +8,8 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
+// headers.go validates and canonicalizes the ordered list of configured
+// client-IP headers.
 // Configured client-IP header names are stored in an ordered, canonical form.
 // Normalization rejects invalid HTTP field names and limits distinct sources,
 // while case-insensitive deduplication keeps the first configured position for

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// clock.go supplies billing services with observation clocks and calendars for
+// date-based decisions.
 // Billing timestamps and calendar resets need separate inputs: a clock
 // chooses the observation time, while a calendar chooses local date
 // boundaries. Injected values support service-specific time and timezone

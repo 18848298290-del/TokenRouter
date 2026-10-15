@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images_request.go builds authenticated image requests from prepared bodies
+// and their JSON or multipart content types.
 // Image request bodies can be JSON or multipart, so construction receives their
 // existing content type with prepared bytes. Selected authentication precedes
 // allowed inbound headers, User-Agent selection, and provider overrides,

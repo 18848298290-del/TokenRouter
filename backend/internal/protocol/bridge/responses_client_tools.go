@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// responses_client_tools.go lowers Responses client tools and restores their
+// identities in buffered and streamed replies.
 // Function-only upstreams cannot directly express freeform client input,
 // client-executed discovery, or a tool's namespace/name pair. Lowering
 // converts declarations, history, and choice together and records the client

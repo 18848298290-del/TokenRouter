@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// pages.go serves authorized Markdown pages, lists page slugs, and delivers
+// public page images.
 // Markdown page bodies require a logged-in role, while permitted page images
 // are served publicly. Body responses expose the selected language and preserve
 // page-specific errors; image lookup failures collapse to an empty 404 response.

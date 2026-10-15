@@ -12,11 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Provider notification and scheduling settings are stored as strings but
-// edited through typed administrator fields. Notification recipients retain
-// their delivery flags through the contact encoder, while scheduling thresholds
-// are validated before a supplied map is serialized. Reads expose default
-// thresholds when stored threshold JSON cannot be decoded.
+// admin_settings.go converts provider notification and scheduling settings
+// between typed administrator inputs and stored strings.
+// Notification recipients retain their delivery flags through the contact
+// encoder, while scheduling thresholds are validated before a supplied map is
+// serialized. Reads expose default thresholds when stored threshold JSON cannot
+// be decoded.
 //
 // The settings participant receives a partial field map. Decoding that map into
 // AdminSettings introduces zero values for omitted fields, so preparation

@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// order_queries.go exposes buyer-owned and administrative order reads, lists,
+// and audit history.
 // Order reads apply the supplied buyer identity at the user entry
 // point, while administrator reads rely on caller authorization. Both
 // single-order helpers map storage failures to not-found; paginated

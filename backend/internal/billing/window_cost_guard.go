@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// window_cost_guard.go checks provider spending admission and prefetches cost
+// observations for scheduling.
 // Provider window admission uses standard cost and distinguishes new
 // scheduling from an existing sticky session's reserve. Prefetched and
 // shared-cache values are keyed by provider ID alone; stored window bounds

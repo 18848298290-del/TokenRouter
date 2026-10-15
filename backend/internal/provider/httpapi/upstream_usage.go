@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// upstream_usage.go validates API-key usage query selections and serializes
+// results with individual failures.
 // API-key upstream usage is returned as normalized display data, with batch
 // successes and errors encoded separately. This handler requires positive
 // provider IDs, limits the supplied batch to one hundred entries before

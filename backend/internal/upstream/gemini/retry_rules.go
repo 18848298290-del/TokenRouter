@@ -11,6 +11,8 @@ import (
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// retry_rules.go classifies Gemini recovery signals, applies retry backoff,
+// and estimates tokens from prompt text.
 // Gemini exchanges use retry classification and local token estimates when an
 // upstream operation needs recovery. The retry delay adds jitter to the capped
 // exponential base, while text estimation reads ordinary prompt text as an

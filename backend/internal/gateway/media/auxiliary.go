@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// auxiliary.go derives media billing units and request predicates for audio,
+// image, video and search operations.
 // Media completion depends on the operation and observed units: realtime
 // requires audio and positive elapsed time, immediate image recording
 // requires image output, and asynchronous video creation defers completion.

@@ -10,10 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder refresh results need to retain saved credential metadata while replacing
-// the exchanged identity and its expiry. The adapter binds provider transport to
-// a copy of the site exchange options, converts the returned identity, and asks
-// the core merge helper to produce credentials for conditional persistence.
+// qoder_refresh.go exchanges Qoder tokens and builds merged credentials for
+// conditional persistence. The adapter binds provider transport to a copy of
+// the site exchange options, converts the returned identity, and asks the core
+// merge helper to retain saved metadata while replacing the exchanged identity
+// and expiry.
 
 // QoderRefreshOptions supplies site exchange callbacks and optional credential
 // conversion for refresh.

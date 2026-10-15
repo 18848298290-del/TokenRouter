@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// order_lifecycle.go reconciles provider payment state and coordinates
+// cancellation, expiration, and unfinished fulfillment recovery.
 // A pending local order can be paid upstream while cancellation or timeout is
 // deciding its terminal state. Cancellation queries the bound merchant first,
 // applies accepted payment progress, and requeries once after a failed channel

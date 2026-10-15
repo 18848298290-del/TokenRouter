@@ -37,20 +37,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// An upgraded connection keeps its authenticated Key and subject while the
-// gateway admits later turns against current identity and funding data. The
-// refreshed Key is published separately for request allowance checks; routing
-// and completion continue to use the connection's original Key and
-// subscription references. An accepted request's background completion
-// therefore needs a turn-specific request ID and capture context even when
-// several turns share one Gin request.
+// entry_bindings.go binds WebSocket entry operations to HTTP authentication,
+// routing, admission, and completion services. Later turns reauthenticate
+// against current identity and funding data. The refreshed Key is published
+// separately for request allowance checks; routing and completion continue to
+// use the connection's original Key and subscription references. An accepted
+// request's background completion therefore needs a turn-specific request ID
+// and capture context even when several turns share one Gin request.
 //
 // Provider selection binds its execution target to the same provider and
 // scheduler observations. The target checks model pricing after routing
 // eligibility, translates per-turn hooks between gateway and HTTP
-// representations, and captures completion before submission. Logger
-// adaptation lets detached completion errors use retained log fields while
-// turn settlement obtains its own request record and payload snapshot.
+// representations, and captures completion before submission. Logger adaptation
+// lets detached completion errors use retained log fields while turn settlement
+// obtains its own request record and payload snapshot.
 
 // Bindings connects WebSocket entry, admission, provider execution and completion
 // to services owned by app. The adapters retain the supplied callback and service

@@ -9,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// provider_migration.go renames legacy provider runtime keys and records
+// resumable migration progress.
 // Provider runtime keys use a new entity name while existing Redis values and
 // remaining TTLs need to survive upgrade. Each known prefix is scanned and
 // matching :account: segments are renamed with an atomic collision check; a

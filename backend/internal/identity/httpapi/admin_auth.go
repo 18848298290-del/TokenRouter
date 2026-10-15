@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
+// admin_auth.go authenticates administrator requests using management keys or
+// current-account JWTs.
 // Administrator requests can authenticate with a configured management key or
 // a JWT tied to a current administrator account. Browser WebSocket upgrades
 // first read a jwt. subprotocol entry; other requests prefer x-api-key over

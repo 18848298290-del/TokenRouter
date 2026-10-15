@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// diagnostic_service.go calculates administrative provider scores and explains
+// eligibility, ranking, and affinity decisions.
 // Diagnostic probabilities describe the candidate pool for an administrator's
 // supplied model and provider IDs. The service reads an unpaged provider list
 // for exclusion counts and a schedulable list for scoring, then applies group

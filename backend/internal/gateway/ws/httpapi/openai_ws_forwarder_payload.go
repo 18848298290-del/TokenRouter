@@ -22,18 +22,17 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// WebSocket handshakes derive their endpoint, Codex identity, routing hint,
-// and continuation headers from the selected provider and normalized turn. Raw
-// client session values remain available in the returned resolution for
-// diagnostics; the outgoing Codex headers use the Key and provider namespace
-// shared with HTTP requests.
+// openai_ws_forwarder_payload.go builds WebSocket endpoints and handshake
+// headers and selects store-recovery policy. Raw client session values remain
+// available in the returned resolution for diagnostics; the outgoing Codex
+// headers use the Key and provider namespace shared with HTTP requests.
 //
 // Endpoint preparation validates configured API Key base URLs before changing
 // their schemes for WebSocket dialing. OAuth-like setup tokens use Codex
 // endpoints and store-disabled affinity rules, while ordinary bearer paths
-// require a token. Store recovery permission belongs to provider
-// configuration; the ingress mode accessor currently selects strict affinity
-// for all callers that ask it for a mode.
+// require a token. Store recovery permission belongs to provider configuration;
+// the ingress mode accessor currently selects strict affinity for all callers
+// that ask it for a mode.
 
 // validateOpenAIWSBearerToken rejects a missing provider or blank token on
 // bearer-authenticated paths. Agent Identity accepts an empty token because

@@ -14,6 +14,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// payload.go prepares Antigravity request envelopes, identity instructions,
+// schemas, and token-limit overrides.
 // Antigravity generation payloads carry a project and internal model route
 // outside the Gemini request object. The envelope supplies a new agent request
 // ID and fixed client identity, while preparation retains the distinction

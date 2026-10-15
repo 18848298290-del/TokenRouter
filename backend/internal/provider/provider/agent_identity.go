@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Agent Identity requests authenticate a runtime and its registered task with a
-// signed assertion. Provider credentials hold the signing key and task
-// identifier; registration returns a task for the coordinator to persist, while
-// response redaction can resolve a shadow back to the credential owner.
+// agent_identity.go prepares signing credentials, registers tasks, and redacts
+// responses for OpenAI Agent Identity requests. Agent Identity requests
+// authenticate a runtime and its registered task with a signed assertion.
+// Provider credentials hold the signing key and task identifier; registration
+// returns a task for the coordinator to persist, while response redaction can
+// resolve a shadow back to the credential owner.
 
 // AgentIdentityKey parses the Ed25519 private key and trimmed runtime and task
 // IDs. A nil record, invalid key, or missing runtime ID returns an error; an

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// operations.go runs update, rollback, and restart actions under maintenance
+// leases and tracks accepted work through shutdown.
 // Accepted binary maintenance runs under an acquired lease rather than the HTTP
 // request's cancellation lifetime. Admission registers work before releasing its
 // mutex, so shutdown can wait for both acquisition and later operation completion.

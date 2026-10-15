@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_stream_options.go configures streaming Responses readers
+// with staged headers and recovery callbacks.
 // Native OpenAI streaming holds its first output while headers and failure
 // events can still belong to a discarded attempt. Header preparation therefore
 // returns a pending map for staged output and relays directly for other

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// completion_submission.go submits HTTP completion tasks with entry-specific
+// overflow and panic observation policies.
 // Usage completion can outlive the HTTP request that produced its observations.
 // The submission layer passes request values to completion's snapshot wrapper,
 // then lets the configured pool choose ordinary overflow behavior. Constructors

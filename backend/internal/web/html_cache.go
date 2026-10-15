@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+// html_cache.go caches rendered language pages and rejects publication from an
+// invalidated settings generation.
 // A language page can finish rendering after public settings invalidate the
 // cache. Snapshot returns its entry and generation under one read lock, and
 // Publish stores a render only when that observed generation still matches.

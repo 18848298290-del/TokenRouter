@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
-// Health tests observe provider error, cooldown, credential, and runtime-block
-// writes through serial fixtures. Permissive base operations let each test
+// health_stores.go records provider health writes and supplies permissive
+// storage fixtures for serial tests. Permissive base operations let each test
 // override the decisions it needs, while recorders keep counters and latest
 // inputs for assertions against the production health service.
 

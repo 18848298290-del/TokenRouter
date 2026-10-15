@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_usage_wire.go registers usage storage, reporting, dashboards,
+// aggregation, cleanup, and HTTP constructors with Wire.
 // Usage records feed user reports, administrator reports, and cached
 // dashboards. The application passes shared aggregation settings into
 // dashboard and background aggregation constructors, so those consumers make

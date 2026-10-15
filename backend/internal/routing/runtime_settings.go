@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// runtime_settings.go reads runtime model-fallback settings and supplies
+// platform defaults when needed.
 // Model fallback reads the stored enable flag and platform-specific model when
 // a request needs them. Read failures disable the flag or select the built-in
 // platform model, keeping unavailable settings from producing an empty fallback

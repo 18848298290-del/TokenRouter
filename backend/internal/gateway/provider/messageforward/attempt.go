@@ -26,6 +26,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// attempt.go binds Messages preparation and execution to one provider and its
+// tool restoration state.
 // A Messages attempt can rewrite tool names before building its upstream
 // request, and response restoration needs the mapping chosen for that same
 // attempt. RewriteTools saves the selected mapping and BindTools exposes it

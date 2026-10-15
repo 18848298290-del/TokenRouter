@@ -8,8 +8,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Image-job funding fields are written inside the billing caller's SQL
-// transaction. Reservation amounts and subscription allocations are persisted
+// funding.go writes batch-job reservation amounts and allowance markers within
+// the billing caller's SQL transaction.
+// Reservation amounts and subscription allocations are persisted
 // together, while the allowance flag is another participant update whose commit
 // or rollback remains with that transaction's owner.
 

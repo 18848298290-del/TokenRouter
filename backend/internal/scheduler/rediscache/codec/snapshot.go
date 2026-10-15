@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// snapshot.go produces full provider payloads and filtered metadata for
+// scheduler cache readers.
 // Snapshot buckets read slim provider metadata before an execution adapter
 // obtains the full credential-bearing record. Metadata keeps the protocol,
 // model, quota and session inputs used before hydration, including selected

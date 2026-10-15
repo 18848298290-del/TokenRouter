@@ -8,18 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Provider protocol reads distinguish a missing native set from an explicit
-// empty selection. Missing sets derive legacy defaults, while malformed present
-// sets produce empty read results. Parsing checks representation; saving also
-// rejects duplicated, unknown, and platform-incompatible protocol identifiers.
+// protocols.go reads and normalizes provider native protocol selections,
+// distinguishing missing sets from explicit empty selections. Missing sets
+// derive legacy defaults, while malformed present sets produce empty read
+// results. Parsing checks representation; saving also rejects duplicated,
+// unknown, and platform-incompatible protocol identifiers.
 //
 // Save normalization orders the selection through the shared capability
-// catalogue before interpreting OpenAI WebSocket compatibility settings. A legacy
-// bridge can remove WebSocket from that validated selection. Credentials and
-// Extra are updated in memory before persistence, so a later normalization error
-// can leave partial record changes for the caller to discard. Legacy endpoint
-// migration follows successful WebSocket normalization, retaining endpoint slots
-// before removing the input fields that supplied them.
+// catalogue before interpreting OpenAI WebSocket compatibility settings. A
+// legacy bridge can remove WebSocket from that validated selection.
+// Credentials and Extra are updated in memory before persistence, so a later
+// normalization error can leave partial record changes for the caller to
+// discard. Legacy endpoint migration follows successful WebSocket
+// normalization, retaining endpoint slots before removing the input fields
+// that supplied them.
 
 // UpstreamProtocolsKey stores the provider's selected native protocol array.
 // Presence suppresses legacy defaults, including an explicit empty selection

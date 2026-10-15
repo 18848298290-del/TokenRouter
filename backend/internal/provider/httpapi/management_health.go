@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_health.go exposes provider health recovery and temporary-pause
+// inspection through administrator endpoints.
 // Provider recovery updates runtime conditions independently of the
 // administrator scheduling switch. The recovery endpoint rereads the provider
 // for presentation after completing recovery; temporary-block display treats a

@@ -1,5 +1,6 @@
 package modelmap
 
+// action.go selects a model-scoped action and its paired rejection message.
 // A model-scoped rule pairs its primary action with one rejection message and
 // its unmatched action with another. The absence of whitelist entries applies
 // the primary action to every model, while a populated list restricts that

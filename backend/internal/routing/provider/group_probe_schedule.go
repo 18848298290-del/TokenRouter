@@ -7,6 +7,8 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// group_probe_schedule.go schedules availability-probe callbacks through cron
+// and exposes callback completion on shutdown.
 // Availability probes run on minute boundaries in the caller's selected
 // timezone. Cron owns job dispatch and completion tracking; the routing runner
 // guards repeated startup and overlapping probe rounds, because adding a

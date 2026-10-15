@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// public_values.go converts persisted batch jobs and items into client-visible
+// responses.
 // A public batch identifies the client model and mapped lifecycle state while
 // internal provider resources remain in the stored job. Item failures expose
 // a stable category, optional origin and scrubbed message, so result listings

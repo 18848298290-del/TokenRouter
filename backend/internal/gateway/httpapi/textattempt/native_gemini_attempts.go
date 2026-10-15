@@ -24,11 +24,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// Gemini-native attempts can carry thought signatures whose ownership belongs
-// to a previous provider. Selection checks that history before execution and
-// rewrites the retained request when ownership changed or is initially unknown.
-// The client action and mapped model remain separate from provider credentials
-// and group pricing input.
+// native_gemini_attempts.go executes native Gemini attempts with
+// provider-aware thought signature cleanup and usage capture. Gemini-native
+// attempts can carry thought signatures whose ownership belongs to a previous
+// provider. Selection checks that history before execution and rewrites the
+// retained request when ownership changed or is initially unknown. The client
+// action and mapped model remain separate from provider credentials and group
+// pricing input.
 //
 // Capacity waiting and final forwarding use the HTTP request context, while
 // generation preflight prices each selected attempt before upstream execution.

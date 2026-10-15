@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// messages.go converts Messages requests through Responses and manages cache
+// identity, continuation, and provider-local recovery.
 // Messages conversion needs a cache identity that can survive tool and
 // instruction rewriting across turns. The selected provider and downstream key
 // scope digest-prefix reuse and saved Responses continuation, while Grok can

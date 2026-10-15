@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// selection.go records provider and method selections in a load-balancer
+// fixture for visible-routing tests.
 // Visible payment routing chooses which provider key reaches the underlying
 // selector. CaptureLoadBalancer records that key and payment method, then
 // returns a minimal selection, so scenarios can inspect routing decisions

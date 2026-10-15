@@ -19,6 +19,8 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// apikey.go constructs API key storage and services with billing, routing,
+// team, and concurrency dependencies.
 // API key authentication needs group policy, user funding, and live concurrency
 // information from other services. Application construction supplies those
 // readers and cache settings before lifecycle startup creates authentication

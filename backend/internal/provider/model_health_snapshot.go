@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// model_health_snapshot.go reads model cooldown scopes and evaluates admission
+// with Antigravity overage exceptions.
 // Model cooldown windows live under exact scope keys in provider Extra. Readers
 // parse the stored reset and compare it with the record's clock, treating
 // missing or invalid observations as inactive. SetModelRateLimitSnapshot changes

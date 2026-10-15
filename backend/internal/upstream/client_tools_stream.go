@@ -14,6 +14,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// client_tools_stream.go restores Responses client tools while rebuilding SSE
+// event metadata and frame delimiters.
 // Responses tool restoration can suppress an upstream event or expand it into
 // several client events. SSE metadata belongs to the resulting frames, so an
 // event line needs to agree with the restored payload type. Metadata is held

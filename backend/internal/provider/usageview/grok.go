@@ -4,6 +4,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grok.go exposes shared Grok usage display types and their copying functions.
 // Grok billing and rolling quota observations use the upstream usage display
 // types throughout the provider module. These aliases keep the JSON
 // representation shared with upstream decoding, while copying delegates to

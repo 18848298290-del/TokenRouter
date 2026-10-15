@@ -7,6 +7,8 @@ import (
 	purepricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// provider_stats.go resolves provider reporting costs from configured rules
+// and catalog prices.
 // Provider cost statistics can use configured cost cards independently
 // of the user's charge. A custom rule can deliberately return a
 // zero cost, while nil leaves the usage consumer to use its ordinary

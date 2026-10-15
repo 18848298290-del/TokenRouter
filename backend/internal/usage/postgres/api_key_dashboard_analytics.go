@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// api_key_dashboard_analytics.go calculates API-key dashboard totals from
+// analytics coverage and retained raw usage.
 // Public API-key summaries cover the key's currently retained raw history,
 // including records dated after the observed current time. The initial raw
 // minimum supplies the cumulative lower bound; a missing minimum returns zero

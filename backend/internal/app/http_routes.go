@@ -24,10 +24,12 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi"
 )
 
-// Panel routes share authentication, backend-mode policy, limits, and audit
-// instances assembled once by the application. Gateway registration uses the
-// engine directly for protocol paths, while authentication, user,
-// administrator, payment, and page registrars receive the /api/v1 group.
+// http_routes.go mounts panel and gateway route families with their shared
+// security middleware. Panel routes share authentication, backend-mode policy,
+// limits, and audit instances assembled once by the application. Gateway
+// registration uses the engine directly for protocol paths, while
+// authentication, user, administrator, payment, and page registrars receive the
+// /api/v1 group.
 
 // httpRouteSecurity carries the assembled guards and limiters used by route
 // families.

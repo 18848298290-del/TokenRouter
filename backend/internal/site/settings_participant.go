@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares submitted site settings and prior-value
+// checks for the shared update batch.
 // Site updates share one persistence batch with other settings participants.
 // Preparation interprets only submitted fields and returns data, leaving the
 // registry and update session to decide when storage becomes visible. Localized

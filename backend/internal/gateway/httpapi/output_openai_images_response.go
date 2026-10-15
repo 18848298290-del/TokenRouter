@@ -13,6 +13,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// output_openai_images_response.go binds image response readers to HTTP
+// limits, diagnostics and output observations.
 // Image response readers need HTTP-specific body limits, error presentation
 // and output observations while parsing stays in the native image
 // implementation. Bound callbacks retain this request's writer and context,

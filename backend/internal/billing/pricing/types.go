@@ -2,6 +2,8 @@ package pricing
 
 import "time"
 
+// types.go defines token usage, calculation inputs, resolved amounts and
+// display price records.
 // Token usage contains image and cache details that need different treatment
 // from independent token buckets. Ordinary calculation splits image input from
 // aggregate input and removes image output from text output, while cache TTL

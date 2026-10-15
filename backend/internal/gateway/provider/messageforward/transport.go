@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// transport.go classifies Messages transport failures and applies provider
+// scheduling feedback.
 // An upstream transport error is recorded before forwarding decides whether the
 // caller should retry. Client cancellation returns its source error, while an
 // upstream deadline with a live request context remains eligible for provider

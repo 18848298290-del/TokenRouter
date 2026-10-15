@@ -7,6 +7,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_batch.go handles batch provider deletion, refresh, and error
+// recovery with per-provider results.
 // Administrative batches can succeed for some providers and fail for others, so
 // the response includes counters and per-provider messages. Deletion receives
 // normalized positive IDs; refresh and error recovery receive the supplied

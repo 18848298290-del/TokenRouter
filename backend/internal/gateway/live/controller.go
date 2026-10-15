@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// controller.go coordinates Live sideband proxying, background observation,
+// lease renewal and final call cleanup.
 // A Live call can move between background observation and a client sideband
 // proxy while its persistent concurrency lease continues. Controller labels in
 // the call store decide who opens a control connection, and polling lets an

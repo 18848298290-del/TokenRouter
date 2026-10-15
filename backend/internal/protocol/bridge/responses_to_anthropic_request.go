@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// responses_to_anthropic_request.go converts Responses requests into Messages
+// history with repaired tool pairing.
 // Responses history can separate a function call from its output with
 // developer instructions or other turns. Messages history represents calls
 // inside assistant blocks and expects their results in adjacent user content,

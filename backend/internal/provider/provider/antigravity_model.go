@@ -7,16 +7,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity model admission uses the identity that reaches the upstream request.
-// A configured alias is resolved once before the optional Sonnet thinking suffix
-// is applied, and the final whitelist is checked against that resulting name.
-// An alias chain therefore cannot grant access through an intermediate target,
-// and enabling thinking can change whether an otherwise allowed name is admitted.
+// antigravity_model.go resolves and checks the final model identity sent in an
+// Antigravity request. A configured alias is resolved once before the optional
+// Sonnet thinking suffix is applied, and the final whitelist is checked
+// against that resulting name. An alias chain therefore cannot grant access
+// through an intermediate target, and enabling thinking can change whether an
+// otherwise allowed name is admitted.
 //
 // The record and prepared-rules entry points follow the same order. Request
 // normalization removes a leading models/ prefix before trimming whitespace;
-// missing records, blank names, and denied final targets return an empty string.
-// Callers use that empty result to reject the attempted route before forwarding.
+// missing records, blank names, and denied final targets return an empty
+// string. Callers use that empty result to reject the attempted route before
+// forwarding.
 
 // resolveAntigravityModel resolves one provider mapping after normalizing the
 // request.

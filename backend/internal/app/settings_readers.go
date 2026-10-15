@@ -15,10 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Shared settings storage supplies readers for each domain's flags and
-// defaults. Assembly passes the missing-setting sentinel to readers that
-// distinguish absent values, while panel caching, backend-mode warnings, and
-// per-request creative reads remain with the corresponding reader
+// settings_readers.go constructs domain settings readers over the shared
+// application settings store. Assembly passes the missing-setting sentinel to
+// readers that distinguish absent values, while panel caching, backend-mode
+// warnings, and per-request creative reads remain with the corresponding reader
 // implementation.
 
 // providePanelSettings binds panel request-limit policy to shared settings

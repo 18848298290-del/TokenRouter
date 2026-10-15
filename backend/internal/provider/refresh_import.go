@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// refresh_import.go refreshes imported credentials under shared locks and
+// conditional persistence checks.
 // Imported credentials can retain an explicitly disabled or errored provider
 // status and supplied token-version metadata. The import entry point therefore
 // uses its selected persisted identity, shared refresh locks and shutdown

@@ -6,10 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Provider attempts can map the same client payload to different upstream
-// models. A request-local cache keeps each replacement result by target model,
-// so serial retries reuse encoded bytes while an unmapped attempt continues
-// using the supplied body.
+// model_body.go selects group-mapped models and caches request body
+// replacements by target model. Serial retries reuse encoded bytes for the same
+// target, while an unmapped attempt continues using the supplied body. Callers
+// keep the source and returned slices stable throughout the cache lifetime.
 
 // ModelBodyReplacer encodes a supplied model into a caller-owned request body.
 type ModelBodyReplacer func([]byte, string) []byte

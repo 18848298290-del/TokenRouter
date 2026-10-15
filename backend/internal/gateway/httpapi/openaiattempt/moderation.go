@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 )
 
+// moderation.go records Cyber warning evidence from provider responses and
+// forwarding errors.
 // Attempt errors can carry upstream Cyber warning evidence independently of
 // HTTP status and retry classification. Support copies the key and projects
 // provider identity before delegating moderation, while the error-chain adapter

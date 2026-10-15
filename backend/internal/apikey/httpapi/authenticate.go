@@ -16,15 +16,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// HTTP credential parsing selects either the generic or Google compatibility
-// rules before loading Key identity. Abuse and header-size checks run first,
-// and a loaded access record can still describe a failed attempt for telemetry
-// and Ops. The adapter returns success after identity checks; group, protocol
-// and funding admission remain the gateway caller's next decisions.
+// authenticate.go extracts HTTP credentials, invokes identity authentication,
+// and formats generic or Google-compatible failures. Abuse and header-size
+// checks run first, and a loaded access record can still describe a failed
+// attempt for telemetry and Ops. The adapter returns success after identity
+// checks; group, protocol and funding admission remain the gateway caller's
+// next decisions.
 //
-// Failure kinds preserve the rejection stage while the adapter selects response
-// status, public text and observation callbacks. Google failures use their
-// nested protocol shape; generic failures use the shared error response.
+// Failure kinds preserve the rejection stage while the adapter selects
+// response status, public text and observation callbacks. Google failures use
+// their nested protocol shape; generic failures use the shared error response.
 // Principal publication occurs through SetAccessPrincipal after the caller's
 // admission checks, so diagnostic ownership updates alone cannot establish an
 // authenticated request.

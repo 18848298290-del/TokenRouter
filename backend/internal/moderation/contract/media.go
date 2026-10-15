@@ -2,6 +2,8 @@ package contract
 
 import "time"
 
+// media.go defines retained moderation image records and their snapshot
+// outcomes.
 // Administrator image review retains snapshot outcomes even when retrieval
 // fails. Records keep the submitted reference and original item position so a
 // failed image can still be associated with its ordinary audit or Cyber

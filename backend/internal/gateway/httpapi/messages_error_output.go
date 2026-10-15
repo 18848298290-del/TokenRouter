@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// messages_error_output.go writes Messages and compatible protocol failures
+// using failover evidence and existing output state.
 // An HTTP writer can contain heartbeat or partial stream bytes before a
 // Messages attempt has communicated its final result. Fallback presentation
 // therefore checks semantic commitment separately from physical writes, and

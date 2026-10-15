@@ -12,17 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Gemini conversation identity separates ordered content digests from request-source
-// identity. System parts and message parts produce role-labelled digest components;
-// user, credential, client source, platform, and model produce a prefix hash. The
-// memory store combines that prefix with the selected group when matching a
-// conversation's longer transcript against stored prefixes.
+// gemini_digest.go derives Gemini conversation digests, request-source hashes,
+// and serialized sticky-session values. System parts and message parts produce
+// role-labelled digest components; user, credential, client source, platform,
+// and model produce a prefix hash. The memory store combines that prefix with
+// the selected group when matching a conversation's longer transcript against
+// stored prefixes.
 //
-// Serialized session values retain UUID text by splitting their provider suffix at
-// the last colon. Sticky session keys use only the first eight bytes of prefix
-// and UUID, while the prefix hash itself keeps twelve SHA-256 bytes. These compact
-// representations serve routing identity and can collapse distinct full inputs;
-// callers keep complete digest and binding values where those are needed.
+// Serialized session values retain UUID text by splitting their provider suffix
+// at the last colon. Sticky session keys use only the first eight bytes of
+// prefix and UUID, while the prefix hash itself keeps twelve SHA-256 bytes.
+// These compact representations serve routing identity and can collapse
+// distinct full inputs; callers keep complete digest and binding values where
+// those are needed.
 
 // geminiDigestSessionKeyPrefix labels digest-derived sticky keys so provider routing
 // can distinguish these compact Gemini session values from other client session identifiers.

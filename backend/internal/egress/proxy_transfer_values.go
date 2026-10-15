@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// proxy_transfer_values.go defines proxy transfer records and normalizes their
+// comparison keys and restored statuses.
 // Proxy backup records carry credentials and expiration policy across instances
 // whose local database IDs differ. Transfer comparison keys join trimmed
 // connection values with pipe delimiters; no escaping or hashing separates

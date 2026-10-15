@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// gateway_cyber_http.go constructs Cyber-policy HTTP handling with session
+// blocks, moderation, completion recording, and Ops reporting.
 // Cyber-policy handling uses the OpenAI recorder and shared session-block
 // state. Ops reporting is attached when both its service and queue are
 // available, and the moderation handler receives the application task tracker

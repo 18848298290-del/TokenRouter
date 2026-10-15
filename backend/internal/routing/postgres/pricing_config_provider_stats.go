@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// pricing_config_provider_stats.go reads and replaces ordered provider-cost
+// rules with their nested prices and intervals.
 // Provider-cost rules contain their own model-price rows and context intervals,
 // separate from customer price rows. Rule order is retained through sort_order
 // and ID so pricing consumers can choose the first applicable rule. Batch

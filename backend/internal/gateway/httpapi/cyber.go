@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// cyber.go rejects blocked cyber sessions and records upstream policy evidence
+// for warning and completion processing.
 // Cyber handling distinguishes a locally blocked session from newly observed
 // upstream policy evidence. Session rejection checks availability, runtime
 // settings, and group scope before lookup; a found block writes the selected

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// token_provider_policy.go defines platform policies for refresh errors, lock
+// contention, and stored-token reuse.
 // Refresh failures have different request outcomes across OAuth platforms.
 // Claude and OpenAI permit a stored-token response with a policy-selected
 // cache lifetime, while Gemini, Antigravity and Grok return exchange failures.

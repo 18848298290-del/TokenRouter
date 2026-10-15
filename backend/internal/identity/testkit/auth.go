@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// auth.go assembles authentication test fixtures with PostgreSQL participation
+// and optional service adapters.
 // Authentication fixtures need the same account persistence participation as
 // production use cases. Auth attaches an Ent-backed AuthState and discovers
 // optional email/domain capabilities from the supplied user repository, while

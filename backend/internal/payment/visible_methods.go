@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// visible_methods.go resolves enabled visible payment methods to official or
+// EasyPay provider sources.
 // Visible Alipay and WeChat methods can be supplied by official adapters or
 // EasyPay instances, so an enabled method alone does not determine its
 // provider key. Official adapters infer their own method from blank

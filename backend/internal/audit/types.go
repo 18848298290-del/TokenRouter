@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// types.go defines management audit records, query filters, and the repository
+// operations used to store and inspect them.
 // Management audit records retain the actor and the request outcome together so
 // administrators can inspect sensitive operations after they finish. List queries
 // omit captured bodies, while detail queries expose the already redacted body and

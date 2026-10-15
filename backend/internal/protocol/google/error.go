@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// error.go decodes Google error responses and extracts diagnostic messages from
+// nested or top-level error fields.
 // Google error diagnostics can include typed detail objects for activation
 // links or disabled-service reasons. Raw detail entries let Code Assist readers
 // inspect metadata and help-link forms independently, while the message reader

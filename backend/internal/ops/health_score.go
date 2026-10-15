@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// health_score.go calculates dashboard health scores from traffic errors,
+// latency, infrastructure measurements, and job heartbeats.
 // Dashboard health scoring combines a selected traffic window with
 // independently collected system samples and job heartbeats. An interval with
 // no positive request or client-error counts receives one hundred immediately,

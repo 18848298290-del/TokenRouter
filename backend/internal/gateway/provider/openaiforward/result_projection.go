@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// result_projection.go converts forwarding result records between package,
+// gateway, and compatibility reader types.
 // Forwarding results carry measured usage alongside caller, billing, and vendor
 // identities for completion processing. Conversion allocates a destination
 // record and copies values, while headers, mutable collections, and pointer

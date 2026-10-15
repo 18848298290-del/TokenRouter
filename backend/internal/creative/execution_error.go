@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// execution_error.go classifies creative execution failures for public
+// messages and worker retry decisions.
 // Creative execution failures carry a public message and a worker retry
 // decision. HTTP failures replace supplied upstream text with status-class
 // messages, while image retrieval failures end generation attempts so a failed

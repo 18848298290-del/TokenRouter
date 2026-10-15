@@ -5,10 +5,11 @@ import (
 	"fmt"
 )
 
-// A successful upstream HTTP status can still carry an undecodable response
-// body. Forwarding classifies that protocol failure as 502 for health policy,
-// retains the original status in diagnostics, and lets the adapter choose a
-// generic parse error or a provider failover signal.
+// invalid_json.go classifies undecodable successful upstream responses for
+// health policy and failover. A successful upstream HTTP status can still carry
+// an undecodable response body. Forwarding classifies that protocol failure as
+// 502 for health policy, retains the original status in diagnostics, and lets
+// the adapter choose a generic parse error or a provider failover signal.
 
 // InvalidJSONInput carries a failed decode and captured metadata from a 2xx exchange.
 type InvalidJSONInput struct {

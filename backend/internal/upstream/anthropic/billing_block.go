@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// billing_block.go builds Claude billing attribution text from CLI version and
+// user-message bytes.
 // Claude billing text carries a CLI version together with a suffix derived from
 // selected bytes of the first user message. String content and text-block
 // arrays supply that text, while absent bytes contribute ASCII zero to the hash

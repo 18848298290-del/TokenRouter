@@ -29,11 +29,12 @@ import (
 	routeusageadmin "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
-// Administrator routes inherit administrator authentication, panel limits,
-// audit, and provider terminology handling before module registration.
-// Sensitive provider, proxy, backup, data-management, and team operations
-// additionally receive the shared step-up guard at the registrar or individual
-// route that requires it.
+// http_routes_admin.go mounts administrator endpoints and assigns their shared
+// and operation-specific guards. Administrator routes inherit administrator
+// authentication, panel limits, audit, and provider terminology handling before
+// module registration. Sensitive provider, proxy, backup, data-management, and
+// team operations additionally receive the shared step-up guard at the
+// registrar or individual route that requires it.
 
 // provideAdminRouteMount returns administrator registration under /api/v1/admin
 // using constructed handlers. The callback installs administrator, panel,

@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Deferred provider activity tests need to observe batched timestamps after
-// the production timer flushes them. The repository records the last persisted
-// timestamp per provider in sync.Map, and the fixture registers service
-// shutdown so buffered activity is flushed during test cleanup.
+// deferred_activity.go builds a deferred activity recorder and captures
+// provider timestamps written during tests. The repository records the last
+// persisted timestamp per provider in sync.Map, and the fixture registers
+// service shutdown so buffered activity is flushed during test cleanup.
 
 // deferredActivityRepository captures persisted activity timestamps for
 // gateway assertions.

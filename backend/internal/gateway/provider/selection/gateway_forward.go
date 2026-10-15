@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// gateway_forward.go applies group model restrictions at the requested,
+// group-mapped, or upstream model stage.
 // Group restrictions select their model stage separately from provider routing.
 // Requested and group-mapped names can be checked before selection, while
 // upstream restrictions need one group mapping followed by the chosen

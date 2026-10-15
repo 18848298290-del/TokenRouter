@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// cleanup_service.go runs bounded expiry cleanup and coordinates worker
+// startup and shutdown.
 // Expired command records are deleted in one bounded batch per cleanup round.
 // The worker starts with an immediate round, then uses its configured interval,
 // so a restart can begin reducing accumulated expiry before the first timer tick.

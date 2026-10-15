@@ -2,6 +2,8 @@ package contract
 
 import "context"
 
+// provider.go defines the shared search interface implemented by Brave and
+// Tavily adapters.
 // Brave and Tavily return the same query and result shapes even though their
 // HTTP requests use different authentication fields. A Provider uses an already
 // configured client, so proxy selection happens in the executor before this

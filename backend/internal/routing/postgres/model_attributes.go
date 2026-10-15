@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_attributes.go stores group attribute profiles and replaces their
+// associations transactionally.
 // Attribute profiles bind ordered JSON rules to groups, and the association
 // table gives each group at most one profile. Saving a profile replaces its
 // complete association set within the same transaction as its rules. A name

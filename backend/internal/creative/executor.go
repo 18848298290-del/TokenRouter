@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// executor.go selects a creative provider and prepares an execution target
+// with validated model attributes.
 // A queued creative run keeps its public model name while provider selection
 // reads current group permissions. Preparation applies one group mapping, then
 // resolves the selected provider model and rechecks the upstream restriction

@@ -8,6 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// oauth_token.go stores OAuth access tokens and exposes Redis refresh-lease
+// acquisition and release.
 // OAuth token values and refresh leases occupy separate Redis key families,
 // both extended by the platform-specific cache identity supplied by callers. A
 // lease is a SETNX value with caller-selected expiry, and releasing it deletes

@@ -6,6 +6,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// responses_observation.go defines the usage, commitment, timing, and
+// disconnect evidence returned by Responses readers.
 // A Responses reader reports usage, output timing, and client-write failures
 // alongside its parser result. Platform executors transfer these observations
 // into attempt results, keeping HTTP commitment, retry commitment, and

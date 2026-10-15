@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// group_availability_probe_config.go validates enabled probe settings and
+// normalizes their default values.
 // Enabled group probes require a model, prompt, a User-Agent without control
 // bytes, and bounded scheduling values. Disabled configuration is discarded,
 // while a missing legacy retry count becomes three additional attempts and an

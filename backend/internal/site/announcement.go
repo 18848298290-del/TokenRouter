@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// announcement.go evaluates announcement targeting and publication schedules
+// and validates targeting expressions.
 // Announcement visibility combines publication state, a half-open schedule,
 // and targeting based on account balance and active subscription plans. A
 // targeting expression is an OR of groups, with each nonempty group requiring

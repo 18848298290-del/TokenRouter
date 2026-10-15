@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// rpm_admission.go enforces group and user RPM limits using effective
+// overrides and shared request counters.
 // User RPM admission first resolves the group allowance, including an
 // authentication-snapshot override, then checks the user-wide count. A
 // nonpositive supplied override disables group counting but leaves a positive

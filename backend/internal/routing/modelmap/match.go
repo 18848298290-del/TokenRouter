@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// match.go resolves one-step model mappings with deterministic wildcard
+// precedence.
 // Model rewrites apply one selected mapping so an alias does not recursively
 // follow its target through the same table. Resolve gives an exact key
 // precedence, while MatchWildcard chooses overlapping matches by longest byte

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_forward_transform_adapter.go binds Responses transformations to model
+// capabilities and request identity policies.
 // Responses conversion resolves model attributes for the selected endpoint
 // before applying image, Codex and fast-tier policies. Compact changes the
 // attribute target endpoint and can reuse the request's attribute session, so

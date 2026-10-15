@@ -22,6 +22,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// payload.go converts Chat, Responses, and Messages requests into Qoder
+// payloads with paired tool history and model controls.
 // Client requests encode instructions and tool history differently across Chat,
 // Messages, and Responses. Conversion keeps control roles in Qoder system text,
 // pairs tool calls with their results, and selects a session source before

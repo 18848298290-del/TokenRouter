@@ -10,11 +10,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Passthrough needs a first-output budget while an accepted request is waiting,
-// a separate silence budget after qualifying output, and no upstream deadline
-// between turns. Terminal labels end the active deadline, while the configured
-// output-label predicate chooses when that first budget becomes the active-read
-// budget.
+// deadline.go manages first-output and active-read deadlines for upstream
+// WebSocket turns. Terminal labels end the active deadline, while the fixed
+// StartsSemanticOutput predicate chooses when the first-output budget becomes
+// the active-read budget.
 //
 // DeadlineConn publishes armed state under a mutex and coalesces changes onto a
 // notification channel watched by the outstanding read. Each arm advances a

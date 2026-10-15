@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search"
 )
 
+// gateway_search_tools.go constructs search-tool emulation and standalone Grok
+// search execution and HTTP handling.
 // Standalone Grok search selects a provider and carries its acquisition,
 // waiting, and release data into HTTP orchestration. Search-tool emulation
 // separately shares configuration and group policy, while both paths reuse

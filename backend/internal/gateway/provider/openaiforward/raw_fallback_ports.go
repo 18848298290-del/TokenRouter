@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// raw_fallback_ports.go defines conversion, model policy, transport, and
+// output callbacks for Chat-only upstream attempts.
 // Chat-only targets need Messages or Responses conversion before exchange and
 // matching conversion after response reading. The fallback bindings retain
 // mapped models, outgoing reasoning controls, saved plaintext reasoning, and

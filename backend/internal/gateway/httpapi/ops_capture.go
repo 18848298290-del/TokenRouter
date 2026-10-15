@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// ops_capture.go captures HTTP and SSE failure evidence and submits attributed
+// Ops records.
 // An upstream stream can fail while its HTTP status remains 200, and a terminal
 // error can be split across writes or exceed the captured-body prefix. Bounded
 // line/frame probes retain enough terminal evidence to classify that failure

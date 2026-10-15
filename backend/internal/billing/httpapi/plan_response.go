@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// plan_response.go maps subscription plans to administrator response records.
 // Administrator plan responses combine editable sale terms with versioned
 // display content. PlanContent supplies stored localization or a source
 // revision from legacy text, while the record response retains the plan's

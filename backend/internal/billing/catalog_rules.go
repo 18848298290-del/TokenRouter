@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// catalog_rules.go selects configured or catalog operation prices and applies
+// catalog time schedules.
 // Operation rates distinguish an absent amount from an explicitly configured
 // zero. Catalog defaults supply an unset search or audio price, while a
 // missing default remains unavailable and is logged by selection. Catalog time

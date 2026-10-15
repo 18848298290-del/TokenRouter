@@ -4,11 +4,11 @@ import (
 	"context"
 )
 
-// Credential, owner and group changes invalidate the local authentication
-// entries and broadcast their hashed cache identities to other instances.
-// Service invalidation joins the operation gate during shutdown, and failed
-// list reads or cache calls leave recovery to later cache expiry or durable
-// outbox delivery.
+// auth_cache_invalidate.go invalidates authentication entries for credential,
+// owner, and group changes. Each credential is hashed before local deletion
+// and shared-cache notification. Service invalidation joins the operation gate
+// during shutdown, and failed list reads or cache calls leave recovery to
+// later cache expiry or durable outbox delivery.
 
 // InvalidateAuthCacheByKey deletes and broadcasts one credential's
 // authentication cache identity while service work is admitted. Nil or stopping

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// wait.go admits user and provider waiters and attaches cleanup to confirmed
+// counter ownership.
 // Wait queues use shared counts for a user or provider, rather than one stored
 // member for each request. An admission error can leave the increment
 // unconfirmed, so the scheduler permits that request with uncertain ownership

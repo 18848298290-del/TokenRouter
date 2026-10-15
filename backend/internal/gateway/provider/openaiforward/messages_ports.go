@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// messages_ports.go defines the request, session, conversion, and output
+// callbacks used by Messages forwarding.
 // Messages conversion can reuse a prompt-cache prefix or a saved response ID
 // under the selected provider and downstream key. Request bindings keep those
 // identities with converted effort, session headers, and response observations

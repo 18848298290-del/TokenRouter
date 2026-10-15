@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// runtime.go coordinates combined settings preparation, reads, and ordered
+// runtime application.
 // Combined administrator updates prepare module values before one Store session
 // persists them, then read committed data for runtime application. Runtime holds
 // the readers, defaults, and ordered application steps used by that flow, while

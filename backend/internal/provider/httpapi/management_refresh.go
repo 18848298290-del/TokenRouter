@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_refresh.go handles manual credential refresh and reauthorization
+// through managed provider maintenance.
 // Manual credential refresh and reauthorization share ManagedRefreshService,
 // which owns platform eligibility, persistence and recovery. The HTTP wrapper
 // maps a temporary Antigravity project-discovery warning to a message response;

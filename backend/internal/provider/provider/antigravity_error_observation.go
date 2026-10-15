@@ -13,17 +13,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity failures can name a limited model, omit that identity, or describe
-// shared model capacity. Model metadata is interpreted before general provider
-// health: a short model delay asks the caller to wait, a longer delay records
-// model windows and requests a switch, and capacity exhaustion stays with the
+// antigravity_error_observation.go classifies Antigravity failures into model
+// retry, model switching, and provider health actions. Antigravity failures
+// can name a limited model, omit that identity, or describe shared model
+// capacity. Model metadata is interpreted before general provider health: a
+// short model delay asks the caller to wait, a longer delay records model
+// windows and requests a switch, and capacity exhaustion stays with the
 // platform retry loop.
 //
 // A generic 429 derives its limit key from the request's final mapped and
-// thinking-adjusted name, then uses the normalized request when that resolution
-// is empty. Only a missing model key reaches the provider-wide writer. This
-// keeps model limits on the same identities consulted by scheduling, while
-// unrecognized 503 responses leave ordinary provider health unchanged.
+// thinking-adjusted name, then uses the normalized request when that
+// resolution is empty. Only a missing model key reaches the provider-wide
+// writer. This keeps model limits on the same identities consulted by
+// scheduling, while unrecognized 503 responses leave ordinary provider health
+// unchanged.
 
 // AntigravityModelLimitResult tells retry callers how model-specific handling
 // classified a failure.

@@ -17,6 +17,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// fast_policy.go applies API Key Fast policy to Anthropic speed and beta
+// signaling.
 // Forced Fast mode depends on trusted Key policy and the selected group's
 // effective price capability. Anthropic rewriting treats body speed and beta
 // headers as one requested mode: force-off removes Fast signaling, while

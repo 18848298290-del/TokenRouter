@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// fingerprint_config.go parses Codex fingerprint modes and checks whether
+// provider configuration requires a seed.
 // OpenAI OAuth and Setup Token providers can select which outgoing Codex
 // identifiers are tied to a provider seed. Missing, malformed, or unknown mode
 // values select off, so a saved provider stays on client identifiers until

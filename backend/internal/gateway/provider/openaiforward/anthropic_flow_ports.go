@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// anthropic_flow_ports.go defines the request and output operations used for
+// Anthropic-compatible forwarding.
 // Anthropic-compatible providers accept one Messages exchange while clients may
 // request Messages, Responses, or Chat output. The request adapter supplies
 // protocol credentials and preparation rules, and the chosen output options

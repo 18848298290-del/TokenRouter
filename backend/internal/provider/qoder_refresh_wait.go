@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// qoder_refresh_wait.go waits for observable Qoder credential changes after
+// refresh-lock contention.
 // A Qoder request can encounter a refresh lock owned by another worker before
 // that worker commits new credentials. An immediate reread followed by short
 // polls distinguishes an observed credential change from merely waiting until

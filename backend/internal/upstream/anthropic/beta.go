@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// beta.go selects Anthropic beta headers and applies authentication-specific
+// header defaults.
 // Anthropic beta headers depend on authentication, client tokens, and whether
 // the request imitates Claude Code. Messages mimic selects a fixed set, while
 // CountTokens mimic also keeps client tokens and adds the counting token before

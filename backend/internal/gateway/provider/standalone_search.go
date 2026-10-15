@@ -6,6 +6,8 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// standalone_search.go builds Grok Web and X search bodies and converts
+// extracted sources into search results.
 // Standalone Grok Web and X search build Responses requests through distinct
 // upstream encoders. The gateway adapter transfers the search API's filters
 // and media-understanding options, then converts extracted sources to search

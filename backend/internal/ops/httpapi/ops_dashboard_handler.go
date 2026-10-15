@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_dashboard_handler.go parses historical dashboard requests and serves
+// overview, trend, histogram, and token-ranking responses.
 // Historical dashboard charts share a requested time window and optional
 // platform and group filters. Most endpoints use the common Ops time parser
 // with a one-hour default, while model token statistics accept a finite preset

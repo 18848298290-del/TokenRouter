@@ -2,6 +2,8 @@ package provider
 
 import "strings"
 
+// openai_pat_credentials.go normalizes PAT authentication markers and removes
+// incompatible OAuth credential fields.
 // A PAT can retain stale OAuth refresh and expiry fields when imported into an
 // existing credential map. Normalization removes those fields after merging
 // and marks both accepted authentication-mode keys as PAT, while preserving

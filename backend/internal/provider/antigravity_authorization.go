@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// antigravity_authorization.go exchanges and refreshes Antigravity credentials
+// and discovers account metadata using stored authorization proof.
 // Antigravity authorization binds a Google code to stored state, verifier, and
 // proxy before credential exchange. Successful exchange consumes that session
 // before best-effort email, project, subscription, and privacy discovery, so

@@ -16,11 +16,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Public site settings expose selected authentication and usage choices from
-// one raw settings snapshot. OAuth, team, and ranking parsers interpret their
-// own values before the site service receives its display shape, while
-// announcement eligibility adapts active subscription plan IDs and page storage
-// uses the configured data directory.
+// site_public.go assembles public site settings, page storage, and announcement
+// subscription eligibility. Public site settings expose selected authentication
+// and usage choices from one raw settings snapshot. OAuth, team, and ranking
+// parsers interpret their own values before the site service receives its
+// display shape, while announcement eligibility adapts active subscription plan
+// IDs and page storage uses the configured data directory.
 
 // siteBillingSubscriptions narrows active subscriptions to announcement plan
 // eligibility data.

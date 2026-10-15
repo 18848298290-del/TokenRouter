@@ -14,18 +14,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Parsed requests can identify a session through Anthropic metadata, an ephemeral
-// cache marker, or visible text. Those sources have different scope: metadata
+// hash.go derives gateway session affinity from request metadata, cache-marked
+// content, and visible text. Those sources have different scope: metadata
 // returns its parsed session ID, marked content hashes alone, and the text path
-// includes client-source fields when SessionContext is present. A supplied context
-// can therefore produce a hash even when there is no message text.
+// includes client-source fields when SessionContext is present. A supplied
+// context can therefore produce a hash even when there is no message text.
 //
-// Messages and Gemini fallback hashing includes all extracted message text, so a
-// longer transcript can change the hash. Responses uses leading instruction text
-// and the first user or input-text anchor when no message text was appended,
-// keeping later turns out of that seed. Text is concatenated without delimiters
-// between content pieces, and roles or nontext media do not enter this fallback.
-// HTTP callers apply their own explicit-session and platform-specific priority rules.
+// Messages and Gemini fallback hashing includes all extracted message text, so
+// a longer transcript can change the hash. Responses uses leading instruction
+// text and the first user or input-text anchor when no message text was
+// appended, keeping later turns out of that seed. Text is concatenated without
+// delimiters between content pieces, and roles or nontext media do not enter
+// this fallback. HTTP callers apply their own explicit-session and
+// platform-specific priority rules.
 
 // GrokPreviousResponseSeed labels a recognized previous_response_id for Grok routing.
 // Blank input, message IDs, and unknown formats return empty. The classifier

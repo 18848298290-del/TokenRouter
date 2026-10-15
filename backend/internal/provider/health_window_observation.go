@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// health_window_observation.go maintains Anthropic exhausted-window limits,
+// session windows, and passive usage observations.
 // Anthropic's provider-wide exhausted windows and Fable-only exhausted window
 // require different cooldown scopes. A future provider reset is written when it
 // extends the supplied record's live window or replaces an absent or expired

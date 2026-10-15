@@ -11,9 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// Responses request preparation often needs scalar fields before it needs a
-// decoded object. The byte view retains the first occurrence of each recognized
-// field and can read a useful prefix even when later JSON remains incomplete.
+// openai_view.go extracts Responses request fields and applies queued edits to
+// retained JSON bytes. The byte view retains the first occurrence of each
+// recognized field and can read a useful prefix even when later JSON remains
+// incomplete.
 //
 // Full Decode applies complete-document validation and retains interface-held
 // numbers as json.Number. Simple edits are queued against the original bytes

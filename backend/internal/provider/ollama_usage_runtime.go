@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// ollama_usage_runtime.go coordinates periodic Ollama usage scans with tracked
+// manual operations and shutdown.
 // Ollama usage maintenance starts with an immediate scan and then repeats after
 // one-minute ticks. Manual usage work can register in the same activity tracker
 // so shutdown waits for both paths, including work that continues after its

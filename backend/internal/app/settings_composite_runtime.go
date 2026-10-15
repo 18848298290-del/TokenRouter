@@ -30,11 +30,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Combined settings save through one runtime with module-owned preparers and
-// application callbacks. The application supplies their publication order and
-// shared instances, including WS parameters before gateway settings, site
-// notifications before dynamic worker changes, and payment provider refresh
-// through the participant registry.
+// settings_composite_runtime.go assembles combined settings preparation and the
+// ordered application callbacks used after saving. One runtime receives
+// module-owned preparers and callbacks that publish WS parameters before
+// gateway settings and notify site readers before dynamic worker changes. The
+// participant registry supplies payment provider refresh.
 
 // provideCompositeSettingsHTTP joins combined settings and module-specific
 // administration capabilities.

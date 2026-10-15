@@ -9,6 +9,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// user_entity.go converts stored account entities into identity values and
+// defines the SQL executor used by account storage.
 // Stored account entities are converted into identity values before HTTP or
 // authentication consumers read them. Scalar fields and optional pointers pass
 // through directly, while the stored notification-recipient JSON is decoded

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// group_capacity.go aggregates provider limits and runtime counters into group
+// capacity summaries.
 // Group capacity combines configured provider limits with runtime occupancy,
 // sessions, and request counts. A provider shared by several groups contributes
 // its limits and complete observed usage to each group, so group summaries

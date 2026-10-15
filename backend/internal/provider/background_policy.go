@@ -1,5 +1,7 @@
 package provider
 
+// background_policy.go maps refresh lock contention and already-refreshed
+// records to skipped or successful worker outcomes.
 // Lock contention and an already fresh provider both finish background work
 // without exchanging credentials. The selected skip policy converts each case
 // into either ErrRefreshSkipped or success, which determines how page workers

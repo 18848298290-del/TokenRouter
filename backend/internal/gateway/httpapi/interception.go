@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
+// interception.go writes local Messages responses for intercepted Claude Code
+// probes in JSON or SSE form.
 // Claude Code probes can be answered locally before provider forwarding begins.
 // Synthetic Messages responses retain message IDs, stop fields and usage shape
 // expected by the client; streaming emits the same staged block lifecycle while

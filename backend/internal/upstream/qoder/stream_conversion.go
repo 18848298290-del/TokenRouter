@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// stream_conversion.go converts Qoder response events into Chat, Messages, and
+// Responses output while accumulating tool calls and usage.
 // A tool invocation can arrive as structured deltas or as XML, JSON, or DSML
 // text split across SSE events. The text transformer holds unfinished markers,
 // while the call accumulator uses IDs and upstream positions to keep parallel

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// qoder_compatible_backend.go binds compatible Qoder admission and captures
+// completion input before asynchronous recording.
 // Qoder compatible execution forwards a group-mapped body but records the
 // original client input and requested model. Route planning installs that
 // mapping on request context, while unconfigured execution retains the

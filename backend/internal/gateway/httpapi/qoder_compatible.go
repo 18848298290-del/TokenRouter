@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// qoder_compatible.go admits compatible Qoder requests and manages their
+// user-capacity lifetime.
 // Qoder compatible Messages and Responses requests retain client body and
 // model alongside the group-mapped attempt body. Funding admission runs before
 // user-slot acquisition, and the runtime bridge later chooses the client wire

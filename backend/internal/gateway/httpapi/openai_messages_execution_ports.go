@@ -31,6 +31,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_messages_execution_ports.go binds Messages and Chat conversion
+// runners to request preparation and response services.
 // Messages conversion needs cache and continuation identities that follow the
 // selected provider and downstream key across turns. The adapter binds those
 // identities to the same HTTP request used for model and error observation,

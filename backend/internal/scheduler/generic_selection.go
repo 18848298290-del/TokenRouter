@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// generic_selection.go selects providers and acquires capacity for requests
+// within an admitted group.
 // A generic request selects within the group already admitted by the gateway.
 // Model routes form a preferred pool, while session bindings, model and quota
 // gates, and physical capacity determine whether a candidate can serve the

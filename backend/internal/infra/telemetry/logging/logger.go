@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logevent"
 )
 
+// logger.go constructs, publishes, and reconfigures structured loggers and
+// their output bridges.
 // Structured logging splits accepted lower-severity entries to stdout and
 // warning-or-higher entries to stderr, with optional rotating file output.
 // Initialization normalizes settings and builds output cores before

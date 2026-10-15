@@ -14,6 +14,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// ws_payload.go constructs WebSocket replay payloads and checks continuation
+// identity, request compatibility, and tool-call context.
 // WebSocket continuation can carry delta input tied to a previous response or a
 // self-contained replay for another provider. Replay assembly compares input
 // prefixes, removes unanswered historical calls, and verifies that tool outputs

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// provider_availability.go builds provider availability details and group or
+// platform totals from status and hold observations.
 // Provider availability badges combine saved status, scheduling enablement, and
 // observed hold deadlines. Error status clears rate-limit and overload badges
 // before counting, while temporary holds still exclude availability. A positive

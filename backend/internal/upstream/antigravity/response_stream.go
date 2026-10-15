@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_stream.go reads Antigravity SSE for streaming output or buffered
+// response collection.
 // Antigravity generation arrives as Gemini data inside v1internal SSE lines,
 // even for buffered client requests. Streaming adapters observe raw lines
 // before output and keep reading after a client write failure when the

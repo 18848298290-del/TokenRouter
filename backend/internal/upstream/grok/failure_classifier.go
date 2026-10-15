@@ -11,6 +11,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// failure_classifier.go classifies Grok upstream failures and recommends
+// failover, cooldown, and model scope to callers.
 // Grok quota messages can survive a proxy's rewritten HTTP status, so failure
 // classification combines message text, structured codes and the observed
 // status. Free usage exhaustion wins before billing, compatibility, empty

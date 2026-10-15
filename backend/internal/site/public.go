@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// public.go resolves public site settings, legal consent revisions, and
+// browser injection data.
 // Browser settings resolve site copy and navigation for the request language
 // while authentication and ranking readers supply their interpreted capability
 // values. Configured text keys remain visible as overrides even when their

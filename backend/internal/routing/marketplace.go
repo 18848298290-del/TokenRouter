@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// marketplace.go assembles public group model listings with quotes, route
+// attributes, and optional observations.
 // Public groups must have active provider counts and requestable model
 // definitions before prices or observations are assembled. Group visibility
 // follows saved exclusivity and the resolved catalog, while the repository's

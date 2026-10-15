@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// fulfillment_values.go resolves historical notification identities and
+// derives purchased reasoning-point quantities for rebates.
 // Payment recovery compares notifications with historical channel
 // identity even when the registry's current payment-type binding changes.
 // The order snapshot can supply that recorded provider key, while an

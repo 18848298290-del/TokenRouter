@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// error.go maps application errors and HTTP status codes to response
+// representations.
 // Wrapped application errors carry the numeric response code, reason, and
 // message selected by their owner. Mapping extracts that same entity through
 // wrappers and copies its string metadata for the response, while unrecognized

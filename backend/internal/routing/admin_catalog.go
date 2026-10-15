@@ -4,6 +4,8 @@ import (
 	"sort"
 )
 
+// admin_catalog.go builds administrative model lists from configured provider
+// candidates and display metadata.
 // Administrative model lists start from IDs supplied by a provider's configured
 // candidate callback. The catalog sorts that slice, filters candidates, and
 // deduplicates accepted IDs before metadata lookup, so display records reflect

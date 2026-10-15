@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// test_compaction.go builds native and legacy compaction probes and detects
+// compaction output in their responses.
 // Native compaction probes use a streaming Responses request whose last input
 // item is compaction_trigger. Legacy probes use a separate unary request
 // without that trigger, and each form retains its own session identifier shape

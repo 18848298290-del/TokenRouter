@@ -16,6 +16,8 @@ import (
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 )
 
+// media_response.go writes media HTTP responses and handles image errors after
+// JSON heartbeat commitment.
 // Image JSON errors can arrive after whitespace has already committed HTTP
 // status 200. The image writer consults the heartbeat-adjusted byte count
 // before deciding whether a JSON error can still be appended; a reported

@@ -14,10 +14,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Announcements store editable content separately from each user's read receipt.
-// Publication status and optional display times let the site repository select
-// active messages, while creation and update timestamps support administration
-// and optimistic checks when an administrator edits a message.
+// announcement.go defines persisted site announcements and their publication
+// settings. Publication status and optional display times let the site
+// repository select active messages, while creation and update timestamps
+// support administration and optimistic checks when an administrator edits a
+// message.
 
 // Announcement describes persisted site messages and their publication settings.
 type Announcement struct {

@@ -1,5 +1,7 @@
 package provider
 
+// client_restriction.go evaluates OpenAI OAuth client-access policy and reports
+// the first matching admission reason.
 // OpenAI OAuth providers select unrestricted, Codex, or TLS-router client access.
 // Unrestricted access bypasses matching; restricted policies first honor the
 // configured ForceCLI override. TLS-router policy then checks a bound router and

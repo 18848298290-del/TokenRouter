@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// models_ports.go binds authenticated key, billing, and model eligibility
+// readers to model-list HTTP handlers.
 // Model HTTP requests use authenticated Key data and a configured candidate
 // resolver before producing catalogue metadata. Effective request Keys carry
 // any current group changes, while middleware Keys are copied for callers

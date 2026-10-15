@@ -9,6 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// test_events.go encodes provider-test events as flushed JSON SSE frames.
 // Provider tests emit one JSON payload per SSE data frame and flush each
 // completed event. Stream preparation can defer the first flush so local
 // validation still controls HTTP response commitment, while event-write errors

@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// redeem_update_builder.go builds complete redemption record updates from
+// supplied snapshots.
 // Management edits and registration compensation restore the redemption
 // record's supplied fields as one update builder. Optional recipient, usage
 // time, plan and expiry pointers use set-or-clear operations, so a nil

@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// document.go retrieves Stripe payment documents from saved invoice links or
+// the resolved order provider.
 // Stripe orders can retain hosted invoice and PDF links, while legacy
 // PaymentIntent orders may need a provider receipt lookup. Document
 // queries prefer usable stored links and ask the order's provider when

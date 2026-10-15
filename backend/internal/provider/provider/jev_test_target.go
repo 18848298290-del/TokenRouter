@@ -13,16 +13,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
-// Jev probes send native SystemOne decision questions through the shared upstream
-// executor. A supplied decision body keeps its state, questions, and extensions
-// while model replacement applies the provider's mapped target; absent
-// structured input creates a minimal Noul availability question.
+// jev_test_target.go executes native SystemOne decision probes through the
+// shared Jev upstream executor. A supplied decision body keeps its state,
+// questions, and extensions while model replacement applies the provider's
+// mapped target; absent structured input creates a minimal Noul availability
+// question.
 //
-// Credentials and the configured root are validated before committing output or
-// making the request. The target retains the provider for allowed header
+// Credentials and the configured root are validated before committing output
+// or making the request. The target retains the provider for allowed header
 // overrides and transport parameters, then emits the returned decision JSON as
-// content and includes usage validity in completion data. This gives manual and
-// automatic probes the same native request and event representation while
+// content and includes usage validity in completion data. This gives manual
+// and automatic probes the same native request and event representation while
 // preserving the response model reported by upstream.
 
 // JevProviderTest prepares native SystemOne probes through the shared upstream

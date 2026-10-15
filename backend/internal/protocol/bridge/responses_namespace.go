@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// responses_namespace.go flattens namespaced Responses tools and restores
+// namespace identities in replies.
 // A Responses namespace gives a tool two identity components, while function-
 // only upstreams accept one name. Flattening joins the namespace and child
 // name, checks ambiguous results before request mutation, and returns the

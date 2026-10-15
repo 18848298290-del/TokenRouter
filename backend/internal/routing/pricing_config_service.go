@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// pricing_config_service.go validates shared pricing changes and publishes
+// indexed snapshots for group-model lookups.
 // Shared prices use a group association and complete normalized model identity,
 // while group routing policy is read separately. Published snapshots contain
 // cloned configuration graphs, exact indexes, and configuration-ordered

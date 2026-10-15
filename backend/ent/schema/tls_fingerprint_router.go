@@ -12,10 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// Inbound User-Agent rules can select a provider's outbound TLS profile and
-// headers. A stored router retains the ordered rules alongside separate token
-// and invitation-reset settings, so those special requests can choose their
-// transport identity independently of ordinary model requests.
+// tls_fingerprint_router.go defines stored User-Agent rules for selecting
+// outbound TLS profiles and headers. A stored router retains the ordered rules
+// alongside separate token and invitation-reset settings, so those special
+// requests can choose their transport identity independently of ordinary model
+// requests.
 
 // TLSFingerprintRouter stores User-Agent rules and special-request TLS overrides.
 type TLSFingerprintRouter struct {

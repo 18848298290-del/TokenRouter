@@ -10,6 +10,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// chat_image_tools.go removes redundant view_image declarations from eligible
+// Grok Chat requests while honoring tool selection.
 // A final user Chat message containing an inline image can make an automatic
 // view_image declaration unnecessary for that turn. Historical images do not
 // establish that condition, and a named view_image selection still requires the

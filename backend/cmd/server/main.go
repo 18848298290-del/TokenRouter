@@ -29,18 +29,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/web"
 )
 
-// Process startup selects version output, terminal setup, web setup, or the full
-// application before handing serving to lifecycle. Bootstrap logging exists
+// main.go selects version output, terminal setup, web setup, or full
+// application startup and hands serving to lifecycle. Bootstrap logging exists
 // before configuration can be read. Entry paths that end before an application
 // owns resources therefore still need a bounded attempt to flush their logs,
 // and a flush timeout remains part of the error returned to main.
 //
 // The setup and full-server paths each assume log-cleanup ownership before
-// their caller returns. Named errors let deferred cleanup join its failure with
-// the startup or serving cause. Signal cancellation and the Linux restarter
-// share the same serving context; closing the restarter retires pending work
-// before the deferred signal-stop call runs. main decides the process exit
-// status after these return paths finish their cleanup attempts.
+// their caller returns. Named errors let deferred cleanup join its failure
+// with the startup or serving cause. Signal cancellation and the Linux
+// restarter share the same serving context; closing the restarter retires
+// pending work before the deferred signal-stop call runs. main decides the
+// process exit status after these return paths finish their cleanup attempts.
 
 var (
 	// embeddedVersion stores the build-time VERSION contents used when the

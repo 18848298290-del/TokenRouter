@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
+// archive.go exports provider and proxy records and imports them with
+// transfer-key resolution and per-entry results.
 // Provider backups identify proxies by transfer keys rather than local database
 // IDs. Export builds those keys from the selected proxy records and attaches
 // matching keys to provider entries; import resolves them to local IDs before

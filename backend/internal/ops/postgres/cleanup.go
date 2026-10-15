@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// cleanup.go executes retention cleanup through table truncation or throttled
+// batches of old-row deletions.
 // Retention cleanup removes whole targets or old rows using separate statements
 // rather than one transaction spanning the run. Batched deletes select physical
 // rows in timestamp and ID order, accumulate returned affected counts, and

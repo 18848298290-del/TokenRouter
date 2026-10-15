@@ -16,6 +16,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// replacement.go applies configured regex replacements to user text in
+// Messages, Responses and Gemini request bodies.
 // Prompt replacement changes one selected regex group inside protocol user
 // text while retaining the surrounding match. Built-in rules set timezone and
 // current date within environment_context blocks using Asia/Tokyo; scoped

@@ -5,6 +5,8 @@ import (
 	"regexp"
 )
 
+// validation.go validates setup connection fields, administrator email, and
+// transport selections.
 // Setup connection fields are later interpolated into PostgreSQL DSNs and a
 // target database creation statement. These validators restrict host and
 // identifier characters plus byte lengths before CLI or HTTP probes run, while

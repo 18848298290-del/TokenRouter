@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// test_streams.go converts platform test streams into content, error, and
+// completion events.
 // Provider test streams expose platform content through one typed event sink,
 // but their completion rules differ. Gemini and ordinary Anthropic accept EOF
 // as success, Qoder accepts EOF after a parsed event, and Responses requires a

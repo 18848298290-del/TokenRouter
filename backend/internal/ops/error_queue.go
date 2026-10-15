@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// error_queue.go queues request-error observations and coordinates bounded
+// admission, batch workers, and shutdown.
 // Request error observations wait in a bounded channel and use an additional
 // estimated payload-byte budget. Workers release queue reservations as they
 // take jobs into local batches, so the budget measures waiting payloads rather

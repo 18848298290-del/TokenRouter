@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// observability.go records process-wide idempotency counters and emits
+// contextual audit events.
 // Idempotency diagnostics count claims, replays, conflicts, and store failures
 // across every coordinator in the process. Counters are updated independently,
 // while observer messages add route and scope context using sorted attributes.

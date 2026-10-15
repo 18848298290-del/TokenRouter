@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A ClientHello template records the ordered TLS parameters used for an
-// outbound connection. Stored profiles let egress construct a fingerprint for
+// tls_fingerprint_profile.go defines stored ClientHello templates with ordered
+// TLS parameters. Stored profiles let egress construct a fingerprint for
 // providers or router selections, using cipher suites, groups, and extensions
 // supplied by administrators.
 

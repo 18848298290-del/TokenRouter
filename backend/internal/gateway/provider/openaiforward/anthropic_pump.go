@@ -7,11 +7,13 @@ import (
 	"time"
 )
 
+// anthropic_pump.go delivers scanned Anthropic lines to conversion readers and
+// detects idle intervals.
 // Anthropic conversion readers wait for scanner lines while a separate
 // goroutine can block in the upstream body. A timer measures the consumer's
 // interval between accepted events, beginning at construction and continuing
 // while each event is processed; disabled intervals leave the consumer waiting
-// on scanner completion alone.
+// for scanner events without an idle timeout.
 //
 // The event channel carries both line data and scanner failures, and closure
 // marks scanner completion after queued events. Stop releases a goroutine blocked

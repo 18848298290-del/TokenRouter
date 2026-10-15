@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// openai_refresher.go adapts OpenAI authorization to background credential
+// refresh eligibility and update assembly.
 // Background refresh uses the same provider-ID cache identity as request-side
 // OpenAI token retrieval. Shadows retain credentials with their parent and are
 // excluded from adapter eligibility. PATs and records lacking a nonblank

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// concurrency_sequence.go supplies ordered admission results and records
+// synchronized slot-store observations for gateway tests.
 // User and provider wait tests consume configured admission results one attempt
 // at a time. A scheduler may retry acquisition while cancellation independently
 // releases a prior slot, so sequence consumption and observed counters share a

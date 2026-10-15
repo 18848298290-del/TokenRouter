@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// contracts.go defines Google forwarding dependencies and tracks attempt-local
+// tool and image observations.
 // Google forwarding can observe the same images in several cumulative response
 // payloads. The attempt counter retains the largest single-payload count so
 // repeated cumulative chunks do not become additional images in completion

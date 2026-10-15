@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// qoder_compatible_resources.go derives Qoder session affinity and manages
+// provider-slot waiting and cleanup.
 // Qoder sticky selection first uses an explicit request identity, then a
 // parsed-content fallback when execution is configured. Fallback hashes
 // receive a seed prefix so the generated digest differs from the same text

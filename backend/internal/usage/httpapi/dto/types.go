@@ -10,6 +10,8 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
+// types.go defines user and administrator usage-response fields and
+// cleanup-task DTOs.
 // User usage responses display client model names and charged amounts
 // alongside measured token and image details. AdminUsageLog embeds that
 // response and adds outbound model observations, provider cost inputs and

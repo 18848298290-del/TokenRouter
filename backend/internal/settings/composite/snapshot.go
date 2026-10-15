@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// snapshot.go defines the combined settings value used for administrator reads
+// and updates.
 // Administrator reads and partial updates need raw values, normalized module
 // fields, and selected presence metadata at the same time. A Snapshot keeps its
 // stored batch for revision checks while the owning readers interpret display

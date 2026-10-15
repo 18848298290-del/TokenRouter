@@ -6,6 +6,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// group_openai_fast_policy.go resolves named group acceleration policies and
+// legacy force-priority input.
 // Group acceleration stores one named policy for request-controlled, forced, or
 // disabled service tiers. Legacy ForceOpenAIFast input is interpreted only when
 // the named input is absent or blank, so administrative writes and request

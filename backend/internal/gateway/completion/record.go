@@ -9,11 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Observed usage is recorded after entrypoints decide that an outcome qualifies
-// for completion. These routines accept that captured work, including caller-selected
-// partial failures and zero-usage records, and interpret either separate native
-// input/cache buckets or inclusive OpenAI input. They do not infer network success
-// from the presence of usage or repeat a provider attempt after a price failure.
+// record.go calculates charges, applies settlement, and writes analysis records
+// for captured completion work. Observed usage is recorded after entrypoints
+// decide that an outcome qualifies for completion. These routines accept that
+// captured work, including caller-selected partial failures and zero-usage
+// records, and interpret either separate native input/cache buckets or
+// inclusive OpenAI input. They do not infer network success from the presence
+// of usage or repeat a provider attempt after a price failure.
 //
 // Calculated user charges and provider statistics use distinct model and rate
 // choices. Financial Apply runs before WriteUsage: committed allocations replace

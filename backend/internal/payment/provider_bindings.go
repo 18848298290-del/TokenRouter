@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// provider_bindings.go resolves payment providers from saved order identity
+// and refreshes current registry bindings.
 // An order's saved instance and merchant snapshot identify which payment
 // account receives its later query, callback or refund. Provider construction
 // reads that instance's current configuration, so historical identity is

@@ -13,12 +13,13 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Responses image checks use the group-resolved routing model even when the
-// wire request names a different provider model. Broad image intent supplies
-// accounting state, while explicit client intent governs group permission
-// checks; Grok's broad check ignores passive tool declarations. Inspection
-// bytes remain separate from the actual provider request selected for
-// forwarding.
+// openai_ws_forwarder_ingress.go binds client forwarding, image-intent
+// inspection, and downstream write lifetimes to WebSocket ingress. Image
+// inspection uses the group-resolved routing model even when the provider
+// request names another model. Broad image intent supplies accounting state,
+// while explicit client intent governs group permission checks; Grok's broad
+// check ignores passive tool declarations. Inspection bytes remain separate
+// from the actual provider request selected for forwarding.
 //
 // Downstream writes select the original client lifetime independently of
 // ingress lease control. Losing capacity ownership can therefore leave frame

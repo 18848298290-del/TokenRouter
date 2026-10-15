@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// session_limit_cache.go provides empty session-limit and billing-window
+// observations for test fixtures.
 // Session-limit fixtures sometimes need scheduling to proceed while omitting
 // stored active sessions and cost windows. StubSessionLimitCache accepts
 // registration and cleanup, reports no active session, and makes cost lookups

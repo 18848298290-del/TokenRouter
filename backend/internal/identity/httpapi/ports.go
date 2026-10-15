@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ports.go defines the account, settings, session, and observation interfaces
+// consumed by authentication middleware.
 // Authentication middleware reads current account and runtime settings through
 // small caller interfaces. Binding-mismatch events carry the verified user
 // details together with the observed request, while distinct Gin middleware

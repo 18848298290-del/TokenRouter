@@ -4,6 +4,8 @@ import (
 	"strconv"
 )
 
+// admin_settings_read.go builds administrator promotion settings from stored
+// string values.
 // Administrator settings display depends on the exact stored boolean text:
 // Promo remains enabled unless its value is false, while other switches
 // require true. Numeric fields use their own parse defaults and bounds when

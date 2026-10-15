@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_responses_execution.go dispatches Responses attempts and maintains
+// request representations during encrypted recovery.
 // A Responses attempt separates prelude dispatch from full native HTTP
 // transformation, so raw Chat, Grok, Anthropic and passthrough routes retain
 // their own execution behavior. The native branch keeps original client,

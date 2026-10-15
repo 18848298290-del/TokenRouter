@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// connections.go owns lazy WebSocket pool and dialer initialization and
+// serializes pool updates with shutdown.
 // WebSocket resources create their shared pool on first use instead of starting
 // workers during construction. Shutdown records the closed state before
 // stopping an existing pool, so later access can return that same stopped pool

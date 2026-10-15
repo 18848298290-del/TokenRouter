@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// model_routing.go resolves Bedrock model aliases and inference profiles
+// against source-region rules.
 // Bedrock source regions identify both the HTTP endpoint and signing region,
 // while inference-profile prefixes identify where model execution can route.
 // The static per-model rules record exact profile IDs and source-region

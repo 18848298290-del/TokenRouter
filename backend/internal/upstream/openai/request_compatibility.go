@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// request_compatibility.go normalizes Responses request bodies for replay,
+// storage mode, Compact, and image compatibility.
 // OpenAI replay cleanup depends on the destination and storage mode. Cross-mode
 // retry removes an entire reasoning item whenever encrypted_content is present,
 // while API-key store=false replay requires a usable ciphertext string and

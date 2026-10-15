@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// passthrough_ports.go defines the callbacks for Responses passthrough
+// preparation, transport, recovery, and output observations.
 // Responses passthrough prepares body bytes with provider credentials, client
 // tools, fingerprints, and image controls while retaining the client's output
 // protocol. Request-bound callbacks supply platform policy and response

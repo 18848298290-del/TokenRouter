@@ -1,5 +1,7 @@
 package google
 
+// service_account.go defines service-account key fields and token-exchange
+// responses used by Vertex authentication.
 // Vertex service-account parsing requires project, email, and private-key text
 // before token exchange. That parser overwrites the supplied token URI with
 // Google's fixed endpoint, while the lower-level exchange reads the resulting

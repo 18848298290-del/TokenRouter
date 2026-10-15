@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// error_rule_binding.go binds administrator error rules to requests and
+// applies matched status, message, and monitoring choices.
 // Administrator error rules are resolved through a service bound to the HTTP
 // request. An unmatched request retains its caller's default response tuple;
 // a match chooses upstream or configured values and can mark ordinary Ops

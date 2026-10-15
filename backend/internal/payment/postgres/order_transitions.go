@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// order_transitions.go applies conditional payment-state updates and claims
+// fulfillment using status and timestamp predicates.
 // Payment observations and fulfillment owners can update the same order, so
 // transitions compare accepted current status and optional timestamp version
 // before staging changes. Failure clearing and supplied detail writes occur in

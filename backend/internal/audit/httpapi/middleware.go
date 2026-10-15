@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// middleware.go captures management request outcomes and restores inspected
+// request bodies for downstream handlers.
 // Audit capture surrounds management handlers so the stored event can include
 // the final status and handler-supplied actor overrides. Mutating methods are
 // captured by default; selected reads receive fixed actions, and credential-bearing

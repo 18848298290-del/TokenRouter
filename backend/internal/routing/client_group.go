@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// client_group.go follows client-restriction fallback groups and detects
+// cycles before provider selection.
 // A Claude Code restriction can move a request through configured fallback
 // groups before provider selection. Reading each group first keeps client
 // detection tied to its current policy, and unrestricted groups stop the chain

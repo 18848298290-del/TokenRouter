@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// default_catalog.go builds administrator price displays from catalog rates
+// and the charging arithmetic.
 // Administrator catalog display needs unit prices that follow the same token
 // and service-tier arithmetic as charging. Synthetic token usage selects
 // long-context rules, and the resulting input cost is normalized back to one

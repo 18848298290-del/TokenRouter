@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// upstream_errors.go decodes stored attempt arrays and translates historical
+// provider identity keys before typed decoding.
 // Stored attempt arrays can still use account_id and account_name from the
 // earlier provider vocabulary. Readers translate those keys to provider_id and
 // provider_name while keeping a supplied current key authoritative, including

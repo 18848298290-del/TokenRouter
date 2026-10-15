@@ -10,6 +10,7 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// key_usage.go persists API-key quota consumption and spending-window usage.
 // API Key quotas and five-hour, one-day and seven-day spending windows need
 // updates based on stored usage. Quota state updates can mark a positive
 // ceiling exhausted as usage reaches it, while window updates replace

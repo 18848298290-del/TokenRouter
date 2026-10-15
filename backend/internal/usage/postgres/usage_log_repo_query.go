@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_query.go queries and paginates usage records and loads their
+// current display associations.
 // Usage listings read retained analytical rows and apply authorization scopes
 // chosen by their callers. An owned-team scope uses separate user and team
 // branches, excluding owner rows from the team branch so records belong to the

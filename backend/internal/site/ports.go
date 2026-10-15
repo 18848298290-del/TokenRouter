@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// ports.go defines announcement persistence operations and user observations
+// required for targeting.
 // Announcement writes validate copy, state, notification mode, schedule, and
 // targeting before storage. User-facing eligibility additionally reads account
 // balance and active plan identifiers through focused adapters, while a separate

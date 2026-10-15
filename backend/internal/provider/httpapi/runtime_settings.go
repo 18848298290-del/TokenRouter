@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// runtime_settings.go binds provider health-policy HTTP requests and returns
+// effective settings after updates.
 // Runtime health settings are validated and stored before the administrator
 // receives their effective display values. Most update endpoints reread
 // settings after persistence, so a readback failure can return an error after

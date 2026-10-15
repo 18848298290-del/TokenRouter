@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// chatcompletions_responses_bridge.go converts Responses requests to Chat and
+// restores Responses identities in Chat replies.
 // A Responses call can carry a namespace, freeform custom input, or client
 // tool-search identity that the Chat function shape does not retain directly.
 // Request conversion collects effective declarations, lowers those call

@@ -7,10 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Gemini automatic probes can specify a User-Agent for one run without updating
-// the shared test executor. The target creates a TestRun and a shallow executor
-// copy, assigns that run's automatic override, and returns the combined execution
-// and event-output result after cancelling its context.
+// gemini_test_target.go binds prepared Gemini probes to an executor copy with
+// per-run User-Agent settings. The target creates a TestRun and a shallow
+// executor copy, assigns that run's automatic override, and returns the
+// combined execution and event-output result after cancelling its context.
 
 // geminiTestTarget borrows a provider record and the shared Gemini probe executor.
 type geminiTestTarget struct {

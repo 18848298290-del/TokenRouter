@@ -11,6 +11,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// openai_requests.go defines shared OpenAI request services and validates
+// configured upstream URLs.
 // OpenAI request construction applies startup URL and header permissions to an
 // already selected provider. The same request service supplies protocol
 // builders with credential, transport, session, and client-policy dependencies

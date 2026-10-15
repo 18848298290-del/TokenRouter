@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// user_msg_queue_cache.go stores provider serialization locks, completion
+// times, and cleanup indexes in Redis.
 // Provider message serialization uses an owner-valued lock and a recent
 // completion timestamp under the same provider hash tag. The lock script
 // admits a free key or renews the same request, and release writes Redis's

@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// compatible_text.go prepares generic Responses and Chat requests for
+// admission and synchronous text execution.
 // OpenAI-shaped clients can enter the generic text executor while HTTP
 // preparation shares Messages admission services. Prompt replacement and
 // reasoning policy precede route planning and moderation. User-slot waiting

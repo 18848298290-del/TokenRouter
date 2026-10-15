@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// managed_refresh.go coordinates managed credential exchange, conditional
+// publication, and platform maintenance.
 // Managed refresh validates the target before entering the application's
 // credential coordinator, then captures expected identity before exchange. A
 // successful exchange supplies copied credentials for conditional configuration

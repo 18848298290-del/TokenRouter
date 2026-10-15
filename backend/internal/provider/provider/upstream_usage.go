@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/zhipu"
 )
 
+// upstream_usage.go registers usage adapters and dispatches provider usage
+// queries through their prepared requests.
 // Native usage queries select a named adapter and bind its technical request
 // before execution. The registry installs the seven catalogued adapters for
 // fixed platform or relay protocols, while provider services own shared query

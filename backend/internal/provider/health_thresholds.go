@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// health_thresholds.go applies usage-threshold pauses to providers or the
+// Anthropic Fable model family.
 // Usage thresholds can pause an entire provider or only Anthropic's Fable model
 // family. The provider path compares an existing structured pause before
 // deciding whether the selected record remains eligible for a new write, so the

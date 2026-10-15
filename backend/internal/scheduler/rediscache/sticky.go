@@ -8,6 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// sticky.go stores provider bindings and session owner groups under separate
+// Redis key namespaces.
 // Provider stickiness is scoped to a group and session hash, while session
 // ownership is scoped to a user, source and hash. Separate Redis prefixes let
 // bindings be replaced and ownership claims be acquired with SETNX. Writes

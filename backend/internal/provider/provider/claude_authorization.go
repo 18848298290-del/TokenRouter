@@ -8,10 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/oauth"
 )
 
-// Claude authorization distinguishes full OAuth, API-key creation and inference
-// scopes when preparing provider sessions. The core authorization workflow receives
-// the platform's PKCE and URL operations together with those scope choices,
-// standard logging and the supplied proxy resolver for later exchanges.
+// claude_authorization.go supplies scope choices and platform PKCE operations
+// to Claude provider authorization. Claude authorization distinguishes full
+// OAuth, API-key creation and inference scopes when preparing provider
+// sessions. The core authorization workflow receives the platform's PKCE and
+// URL operations together with those scope choices, standard logging and the
+// supplied proxy resolver for later exchanges.
 
 // ClaudeAuthorizationOptions supplies platform OAuth scopes and authorization
 // primitives.

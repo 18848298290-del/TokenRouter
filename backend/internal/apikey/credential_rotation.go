@@ -6,17 +6,16 @@ import (
 	"time"
 )
 
-// Credential rotation replaces the secret on the existing Key record so
-// subsequent clients must use the returned value. The storage compare against
-// the old credential prevents a racing replacement from winning twice, and
-// successful persistence is followed by invalidation of both old and generated
-// cache keys.
+// credential_rotation.go replaces the secret on an existing Key for subsequent
+// client requests. The storage compare against the old credential prevents a
+// racing replacement from winning twice, and successful persistence is
+// followed by invalidation of both old and generated cache keys.
 //
 // Managed or differently owned records appear missing to user callers. Team
-// keys first hydrate the assigned member context according to the existing team
-// rules. Cleanup uses a bounded context detached from client cancellation after
-// the write, while database triggers provide durable invalidation delivery when
-// the direct cache calls fail.
+// keys first hydrate the assigned member context according to the existing
+// team rules. Cleanup uses a bounded context detached from client cancellation
+// after the write, while database triggers provide durable invalidation
+// delivery when the direct cache calls fail.
 
 // RotateCredential generates and persists a replacement credential for an owned
 // user-visible Key. Missing, managed or differently owned records return a

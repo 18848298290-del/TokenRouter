@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// live.go creates Live sessions from HTTP offers and authorizes their sideband
+// WebSocket connections.
 // Live creation accepts an SDP offer and a JSON session object, then applies
 // Key model redirects before moderation and funding. An enabled group and an
 // immediate ordinary user slot are required before upstream creation; the

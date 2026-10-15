@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage_values.go defines provider usage-query values, metrics, and structured
+// service errors.
 // Administrator usage responses separate wallet balances, key quotas and
 // subscription windows. Provider orchestration reuses the upstream normalized
 // value types and adds provider identity, observation time and structured

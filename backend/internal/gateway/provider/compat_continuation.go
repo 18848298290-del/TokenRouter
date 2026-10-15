@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// compat_continuation.go gates compatible continuation and classifies
+// previous-response errors.
 // Previous-response recovery needs to distinguish an unavailable continuation
 // ID from an unsupported continuation parameter. Compatible API Key requests
 // enable continuation only for selected model identities and saved support

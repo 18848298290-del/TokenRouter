@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// group_models_list.go normalizes ordered custom model lists and reports
+// whether they are usable.
 // Custom model lists preserve the administrator's selected order and
 // distinguish a disabled list from a configured list with usable names.
 // Normalization trims blank entries and removes exact duplicates before catalog

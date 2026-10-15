@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// billing.go builds and submits creative reservation, capture, and release
+// commands from saved run funding data.
 // Creative tasks reserve estimated funds before their inputs enter the worker
 // queue. Capture and release address the same reservation through a task
 // reference, while each action has its own stable billing request identifier.

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// output_openai_chat_completions.go converts eligible buffered Chat read
+// failures into classified failover errors.
 // Buffered Chat conversion can lose its upstream stream before a complete
 // client response exists. Only eligible transport interruptions enter stream
 // policy: scanner-line limits, excluded body-size errors and request

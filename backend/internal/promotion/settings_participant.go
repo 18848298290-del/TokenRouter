@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares partial administrator promotion settings
+// for persistence.
 // Partial administrator requests distinguish an omitted promotion setting
 // from an explicitly supplied zero or false value. Decoding into
 // AdminSettings supplies zero values for omitted fields, so normalization and

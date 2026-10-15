@@ -22,11 +22,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder compatibility handlers reuse generic provider selection and the
-// request-side session refresh adapter. Selection carries acquired-slot and
-// waiting data into HTTP orchestration, while completion capture converts the
-// selected provider, Key, usage, and pricing fields into the shared recorder
-// input.
+// qoder_compatible.go adapts provider selection and Qoder execution for
+// compatibility HTTP handlers. Qoder compatibility handlers reuse generic
+// provider selection and the request-side session refresh adapter. Selection
+// carries acquired-slot and waiting data into HTTP orchestration, while
+// completion capture converts the selected provider, Key, usage, and pricing
+// fields into the shared recorder input.
 
 // qoderCompatibleExecution binds Qoder selection, routing, refresh, and
 // completion dependencies.

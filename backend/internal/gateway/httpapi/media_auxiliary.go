@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// media_auxiliary.go prepares Embeddings, AlphaSearch, Voice, and Realtime
+// requests for their media execution loops.
 // Embeddings and AlphaSearch reserve user capacity before their funding
 // check, then delegate provider attempts through request-local adapters.
 // AlphaSearch retains original input beside its mapped forwarding body, so

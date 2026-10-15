@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// creative_public.go constructs creative submission and result services and
+// adapts stored users, providers, groups, and moderation results.
 // Creative submissions and result delivery share task funding, transient
 // storage, and usage recording. Stored groups are adapted with localized
 // display text and cloned routing policies, while price and subscription

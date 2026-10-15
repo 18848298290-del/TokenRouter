@@ -10,6 +10,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// repository.go stores idempotent command records and conditionally reclaims
+// eligible execution slots.
 // Command records use a unique scope and key hash so retries encounter one
 // stored request fingerprint and outcome. Creating a claim returns the generated
 // row ID to the coordinator; conflicting inserts leave the existing record for

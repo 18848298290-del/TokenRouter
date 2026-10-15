@@ -7,11 +7,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder Global exchanges use machine_id, machine_token and machine_type, while
-// CN keeps machine_id alone. Imported CN credentials can retain the additional
-// Global fields, so preparation removes them before later builders assemble the
-// site-specific session. A supplied nonblank machine_id stays on the record
-// even when the helper fills other missing Global fields.
+// qoder_machine.go prepares site-specific Qoder machine credentials for Global
+// and CN exchanges. Qoder Global exchanges use machine_id, machine_token and
+// machine_type, while CN keeps machine_id alone. Imported CN credentials can
+// retain the additional Global fields, so preparation removes them before
+// later builders assemble the site-specific session. A supplied nonblank
+// machine_id stays on the record even when the helper fills other missing
+// Global fields.
 //
 // PAT input may create a missing ID; direct-token preparation starts when a
 // security token and machine_id are already present. The helper edits

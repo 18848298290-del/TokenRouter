@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/kimi"
 )
 
+// upstream_health.go classifies upstream errors and applies provider, model,
+// and quota health policies.
 // Provider health depends on request intent as well as upstream status and
 // body. Workspace deactivation reaches the shared team handler before
 // configured policy can return, while custom-code and pool decisions determine

@@ -15,6 +15,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// qoder_compatible_attempt.go manages compatible Qoder attempts, refresh
+// recovery and provider-capacity release.
 // A compatible Qoder attempt retains its selected target and acquired slot
 // across serial Select, Acquire and Forward calls. Forward releases the slot
 // before reporting selection feedback, then returns independent observations
@@ -26,7 +28,7 @@ import (
 // changed for that attempt. A ready refresh replaces the target, pending
 // refresh produces retry guidance, and failed refresh leaves no ready result.
 // Partial completion bypasses success binding, while known failures or changed
-// output stop replay through the bridge’s Failure result.
+// output stop replay through the bridge's Failure result.
 
 // qoderCompatibleAttemptBridge retains mutable request state for serial Qoder
 // compatibility attempts.

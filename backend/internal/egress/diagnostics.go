@@ -1,5 +1,7 @@
 package egress
 
+// diagnostics.go forwards egress diagnostic messages to an optional
+// application logger.
 // Diagnostic messages carry a component name and printf arguments to the logger
 // supplied by the application. A zero Diagnostics value discards messages,
 // allowing policy and service helpers to use the same logging call when no sink

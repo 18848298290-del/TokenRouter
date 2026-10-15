@@ -15,6 +15,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// cleanup_service.go schedules retention cleanup and coordinates cron
+// replacement, maintenance ownership, and shutdown.
 // Ops cleanup schedules observation deletion from deployment values overlaid
 // with saved retention preferences. A valid decoded advanced record can disable
 // scheduling and set zero-day clearing even when fields were omitted, while a

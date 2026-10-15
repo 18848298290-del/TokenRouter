@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// quota.go parses Grok quota headers into request, token, retry, and
+// subscription observations.
 // Quota evidence can arrive as request limits, token limits, retry timing, or
 // tier and entitlement headers independently. Passive parsing omits responses
 // with none of those signals, while active observations retain status and

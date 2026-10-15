@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// composite_settings.go prepares monitoring settings and merges or reads quota
+// thresholds within advanced-settings JSON.
 // Combined settings requests store monitoring switches as scalar strings while
 // quota thresholds live inside the advanced-settings JSON. Preparing those
 // values preserves the interval's nonpositive omission rule. Replacing quota

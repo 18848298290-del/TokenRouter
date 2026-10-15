@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// model_mapping.go resolves configured provider model mappings and platform
+// defaults for forwarding.
 // Provider mappings use configured string targets as a complete replacement for
 // platform defaults. Antigravity supplies defaults when credentials contain no
 // usable string mapping, including a present map whose values all have other

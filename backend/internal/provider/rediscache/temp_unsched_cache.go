@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// temp_unsched_cache.go stores temporary provider pauses and counts OpenAI API
+// key failures in Redis.
 // Temporary provider suspension records an absolute deadline with its complete
 // error observation. Redis expiry uses the remaining whole-second lifetime,
 // and a Lua comparison retains an existing state when a

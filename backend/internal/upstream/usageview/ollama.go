@@ -2,6 +2,7 @@ package usageview
 
 import "time"
 
+// ollama.go defines Ollama usage windows, model counts, and fetch observations.
 // Ollama settings HTML can expose percent windows, model request counts, and a
 // textual account balance together. Parsed display values keep reset text
 // beside any parsed timestamp, while fetch observations separately report

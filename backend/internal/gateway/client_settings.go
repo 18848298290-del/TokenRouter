@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// Outbound client identities are read from persisted overrides and reused until
-// their process-local cache entries expire. Antigravity versions pass through
-// an application-supplied normalizer and dynamic default; Codex User-Agent
+// client_settings.go reads and caches outbound client identities and the Claude
+// Codex plugin permission. Antigravity versions pass through an
+// application-supplied normalizer and dynamic default; Codex User-Agent
 // overrides are trimmed and use a fixed default when absent. The Claude Codex
 // plugin permission is a separate exact-string toggle with a disabled default.
 //

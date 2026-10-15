@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
+// public_types.go defines resolved browser settings and the legal-document
+// types shared by site consumers.
 // Browser settings expose resolved site copy alongside the feature choices
 // supplied by authentication and usage readers. Navigation remains stored JSON
 // at this service layer so API and HTML adapters can apply their respective

@@ -12,10 +12,12 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// Ops observes a narrowed provider and user view rather than request execution
-// credentials. Provider conversion includes health deadlines and lightweight
-// group display, then clones that result before returning; user conversion
-// keeps the identity and concurrency fields needed by reports and sampling.
+// ops_projections.go adapts provider and user records into the views consumed
+// by operational queries. Ops observes a narrowed provider and user view rather
+// than request execution credentials. Provider conversion includes health
+// deadlines and lightweight group display, then clones that result before
+// returning; user conversion keeps the identity and concurrency fields needed
+// by reports and sampling.
 
 // opsProviderReader adapts shared provider queries into operations observation
 // data.

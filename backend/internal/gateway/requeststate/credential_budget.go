@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// Grok credential acquisition shares one deadline across a request's provider
-// attempts. The first acquisition starts the fifteen-second budget, so
-// switching providers continues spending that same time allowance while each
-// acquired context also respects its parent deadline.
+// credential_budget.go shares one credential-acquisition deadline across a
+// request's provider attempts. An unset deadline starts a fifteen-second
+// allowance on first acquisition; later contexts reuse that deadline and remain
+// subject to their parent deadlines.
 
 // CredentialBudget carries one request-owned deadline reused by serial Grok
 // credential acquisitions. Callers may supply an existing deadline before

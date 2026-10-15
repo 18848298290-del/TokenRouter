@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// refund_contract.go defines refund plans, recovery receipts,
+// transaction-bound entitlement operations, and workflow dependencies.
 // Refund orchestration retains entitlement intent separately from the gateway
 // currency amount and the recorded recovery quantities. A prepared receipt ties
 // those actual deductions to the local order version and operation identity,

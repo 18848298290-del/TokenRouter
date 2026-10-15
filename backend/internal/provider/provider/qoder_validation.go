@@ -9,12 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder creation and editing prepare machine identity before validating the
-// provider's site and authentication form. Supported credential containers are
-// cloned in
-// the hook so preparation and validation work on the selected record, while
-// PAT verification chooses CN20 or Global exchange with the provider's proxy
-// and TLS request doer.
+// qoder_validation.go prepares credential hooks for validating Qoder sites,
+// authentication forms, and PAT exchanges. Qoder creation and editing prepare
+// machine identity before validating the provider's site and authentication
+// form. Supported credential containers are cloned in the hook so preparation
+// and validation work on the selected record, while PAT verification chooses
+// CN20 or Global exchange with the provider's proxy and TLS request doer.
 
 // qoderCredentialValidator combines site PAT verification with provider
 // credential preparation hooks.

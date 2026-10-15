@@ -6,6 +6,8 @@ import (
 	"maps"
 )
 
+// errors.go represents application failures and extracts client-facing status
+// while retaining diagnostic error causes.
 // Application failures carry a stable category and reason alongside the text
 // exposed to clients. Unknown failures receive a generic message while their
 // cause remains available to internal logging through the error chain.

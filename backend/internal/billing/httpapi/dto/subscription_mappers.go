@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// subscription_mappers.go converts billing subscriptions and hydrated plan or
+// user records into JSON response values.
 // Subscription JSON contains both grant snapshots and hydrated plan/user data.
 // Mapping copies group collections and contact records selectively while
 // retaining several optional pointers, so response consumers need to keep

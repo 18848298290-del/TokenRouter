@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// historical_ingress_cleanup.go classifies historical ingress rejection
+// candidates and optionally deletes matching batches.
 // Historical ingress cleanup selects a fixed set of local rejection codes and
 // message patterns from stored error observations. The store determines
 // candidate eligibility and provides increasing primary-key pages; the

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
 )
 
+// error_passthrough_cache.go caches error rules in Redis and local memory and
+// manages update subscriptions.
 // Error-rule instances share a Redis JSON value and update notifications while
 // each cache adapter keeps its own local rule copy. Set acknowledges the
 // shared write before publishing local data, whereas Invalidate clears the

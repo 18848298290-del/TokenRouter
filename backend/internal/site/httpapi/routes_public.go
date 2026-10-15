@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_public.go registers public settings and legal-document reads on the
+// supplied route group.
 // Public browser initialization reads display settings and legal copy through
 // the settings route family. app supplies the shared public group with rate
 // limiting already attached, and both reads inherit that policy when registered.

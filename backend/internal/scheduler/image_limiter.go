@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// image_limiter.go admits image requests through a process-local capacity
+// limit and bounded waiting queue.
 // Image requests have a process-local capacity gate in addition to provider
 // Redis slots. Active requests and waiters share one mutex, and returning
 // capacity closes the current notification channel so every waiter on that

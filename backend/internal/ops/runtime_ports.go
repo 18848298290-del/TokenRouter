@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// runtime_ports.go defines cache, locking, notification, and cleanup
+// dependencies used by Ops background services.
 // Background Ops jobs coordinate through named cache leases, database lock
 // attempts, and the shared pre-aggregation settings reader. Each job chooses
 // its recovery policy when storage is unavailable. Email callbacks connect

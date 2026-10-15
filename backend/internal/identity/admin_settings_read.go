@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/authconfig"
 )
 
+// admin_settings_read.go builds privileged authentication settings views from
+// stored values and startup defaults.
 // Administrator settings can display a secret and its presence flag together,
 // so this view belongs to privileged settings readback. Raw CAPTCHA presence
 // differs from provider credential fallback, and a displayed enabled flag

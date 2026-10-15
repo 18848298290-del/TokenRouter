@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// vertex.go submits Vertex image batches through managed GCS resources and
+// handles their results and cleanup.
 // Vertex image batches upload input to a managed GCS object and submit its URI
 // with an output prefix derived from the same batch identity. The job request
 // names key as the instance identifier, keeping result rows attributable to

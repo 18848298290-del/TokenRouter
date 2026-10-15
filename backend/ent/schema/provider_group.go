@@ -12,10 +12,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A provider participates in a routing group through a distinct membership
-// row. Provider and group identities form its primary key, while a creation
-// timestamp records when that association was persisted and a group index
-// supports enumerating its providers.
+// provider_group.go defines each provider-to-routing-group membership as a
+// distinct row. Provider and group identities form its primary key, while a
+// creation timestamp records when that association was persisted and a group
+// index supports enumerating its providers.
 
 // ProviderGroup represents one provider's membership in a configured routing group.
 type ProviderGroup struct {

@@ -9,10 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Task cleanup, creative and batch workers, and CN usage monitoring are
-// started at lifecycle order 980. Their common stop level is 20, so the
-// manager invokes those stops concurrently after earlier request barriers;
-// each service owns its draining behavior.
+// runtime_jobs.go registers task cleanup, creative and batch workers, and CN
+// monitoring lifecycle hooks. These services start at lifecycle order 980.
+// Their common stop level is 20, so the manager invokes those stops
+// concurrently after earlier request barriers; each service owns its draining
+// behavior.
 
 // jobsRuntimeReady marks registration of task-worker and CN monitoring
 // lifecycle hooks.

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// health_options.go defines stream-timeout and overload policies and the
+// shared timeout-counter interface.
 // Stream timeout policy decides whether observed failures are counted and how a
 // reached threshold affects provider health. The timeout detector supplies the
 // failure itself; these values govern temporary pauses, account errors or a

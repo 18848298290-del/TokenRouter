@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// oidc_oauth.go builds OIDC compatibility identifiers and pending account
+// choices from issuer, subject, and profile observations.
 // OIDC identities retain issuer and subject as distinct observations even
 // when legacy accounts use a derived placeholder email. The compatibility
 // seed normalizes issuer text separately from case-sensitive subject text,

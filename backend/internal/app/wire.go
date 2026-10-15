@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
+// wire.go declares the application dependency graph used to generate runtime
+// initialization.
 // Initialize passes its lifecycle manager, restarter, and task tracker to
 // application construction. Wire uses those objects with the supplied context
 // and configuration while resolving subsystem constructors, then returns an

@@ -11,11 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// Successful token refresh can trigger privacy checks, identity-matched error
-// or cooldown clearing, and cache publication. The application binds those
-// provider-owned post actions to shared state, adding token invalidation,
-// snapshot writes, and cooldown deletion only when their capabilities are
-// available.
+// provider_refresh_post_actions.go binds post-refresh cleanup and publication
+// to shared provider storage and caches. Successful token refresh can trigger
+// privacy checks, identity-matched error or cooldown clearing, and cache
+// publication. The application binds those provider-owned post actions to
+// shared state, adding token invalidation, snapshot writes, and cooldown
+// deletion only when their capabilities are available.
 
 // provideRefreshPostActions assembles post-refresh handling around shared
 // provider storage. Error and cooldown clearing use observed identity versions;

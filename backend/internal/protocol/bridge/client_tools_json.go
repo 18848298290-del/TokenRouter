@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// client_tools_json.go adapts Responses client tools in JSON requests and
+// returns attempt-specific identity mappings.
 // Tool lowering can replace custom, namespace, and search declarations while
 // response restoration needs the mapping associated with that attempt. The
 // byte adapter decodes numbers as json.Number before invoking the map adapter,

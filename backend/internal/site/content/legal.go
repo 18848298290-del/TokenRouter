@@ -2,6 +2,8 @@ package content
 
 import "github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 
+// legal.go defines localized login-agreement documents and their stable
+// identifiers.
 // Login agreements keep a stable document ID while administrators edit language
 // versions of their title and Markdown body together. Read responses carry the
 // selected copy and language resolution, while updates carry localization edits.

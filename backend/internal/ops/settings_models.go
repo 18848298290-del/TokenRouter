@@ -2,6 +2,8 @@ package ops
 
 import providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 
+// settings_models.go defines the stored Ops preferences consumed by alerting,
+// reporting, logging, and dashboard readers.
 // Ops stores mail, logging, alert runtime, and advanced preferences as separate
 // JSON settings with different readers. Report recipients can fall back to an
 // administrator, while alert mail requires configured addresses. Display

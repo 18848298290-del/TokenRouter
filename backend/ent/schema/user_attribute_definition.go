@@ -12,10 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Administrators describe custom user attributes separately from users' stored
-// values. A definition supplies form presentation, value type, and validation
-// rules; soft deletion lets a later definition reuse the key while retained
-// definitions remain distinguishable by their numeric identities.
+// user_attribute_definition.go defines administrator-configured user
+// attributes separately from their stored values. A definition supplies form
+// presentation, value type, and validation rules; soft deletion lets a later
+// definition reuse the key while retained definitions remain distinguishable
+// by their numeric identities.
 
 // UserAttributeDefinition stores presentation and validation rules for user attributes.
 type UserAttributeDefinition struct {

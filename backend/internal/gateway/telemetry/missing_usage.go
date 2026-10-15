@@ -13,17 +13,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// A successful terminal response can carry no positive input, output, or image
-// output tokens. Diagnostics count every eligible observation but emit at most
-// one sampled message per minute for the process. Cache-only counts do not exclude
-// a response from this diagnostic check, and client disconnect evidence is logged
-// as context rather than changing eligibility.
+// missing_usage.go counts successful terminal responses without positive token
+// usage and samples their diagnostic logs. Diagnostics count every eligible
+// observation but emit at most one sampled message per minute for the process.
+// Cache-only counts do not exclude a response from this diagnostic check, and
+// client disconnect evidence is logged as context rather than changing
+// eligibility.
 //
 // The sampler locks its timestamp and counters together. The first observation
-// logs immediately; the next interval's accepted observation reports accumulated
-// suppression and resets that suppression count. SuccessMissingUsage publishes
-// the returned total to a separate atomic diagnostic value after sampling, so
-// concurrent callers can publish totals out of observation order.
+// logs immediately; the next interval's accepted observation reports
+// accumulated suppression and resets that suppression count.
+// SuccessMissingUsage publishes the returned total to a separate atomic
+// diagnostic value after sampling, so concurrent callers can publish totals out
+// of observation order.
 
 // openAIMissingUsageLogInterval controls the earliest next sampled diagnostic
 // while every eligible observation still increments the sampler count.

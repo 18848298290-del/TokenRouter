@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// group_admin_rules.go filters administrative model choices and validates or
+// sanitizes saved group controls.
 // Custom model choices can include names that current provider and group rules
 // cannot serve. Administrative candidates intersect the requestable patterns
 // with a normalized custom list, keeping the administrator's selected order.

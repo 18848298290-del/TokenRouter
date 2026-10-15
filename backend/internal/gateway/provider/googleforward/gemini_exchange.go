@@ -12,6 +12,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gemini_exchange.go binds retry policy and protocol-specific error
+// presentation for Gemini exchanges.
 // Gemini retry uses one exchange configuration for Messages, native Google, and
 // OpenAI output. The selected mode chooses request-building and terminal error
 // presentation, while provider policy, status retry checks, and default health

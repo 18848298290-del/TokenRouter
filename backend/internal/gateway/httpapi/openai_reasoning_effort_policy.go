@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_reasoning_effort_policy.go selects group reasoning-effort policy and
+// retains the client's requested effort.
 // Group effort limits apply only when the selected Ops platform matches the
 // policy platform. A group can still have an applicable policy after its
 // invalid maximum or unexpressible mappings have been discarded, so

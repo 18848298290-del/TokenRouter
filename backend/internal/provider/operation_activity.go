@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// operation_activity.go tracks provider-operation cancellation and completion
+// across service shutdown.
 // A provider operation can stop waiting before the shared work it started has
 // finished. Each accepted caller or shared task registers its own cancellation
 // function, and completion removes that registration, so shutdown can wait for

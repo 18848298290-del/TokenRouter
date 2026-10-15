@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// bucket_lock.go acquires Redis bucket locks and releases them only when their
+// owner token still matches.
 // A bucket lock can expire while its original rebuilder is still finishing.
 // Each acquisition writes a random owner token into the shared sched:v4 lock
 // key with the caller's TTL, and release compares that token before deleting

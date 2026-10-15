@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// usage_config.go resolves and validates provider usage-query settings and
+// platform-selected adapters.
 // Administrator usage settings describe a fixed adapter and optional query root,
 // with credentials stored separately on the provider. Absent configuration
 // inherits platform defaults, while malformed objects or unsupported choices

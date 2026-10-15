@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// batch_jsonl.go encodes validated image-generation items into Vertex batch
+// JSONL requests.
 // Vertex batch image results carry a key used to associate each result with
 // its submitted item. Input keys and prompts are trimmed before encoding, and
 // repeated normalized keys are rejected so two input spellings cannot claim

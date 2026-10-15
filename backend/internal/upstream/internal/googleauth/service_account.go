@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// service_account.go signs Google service-account assertions and exchanges
+// them for access tokens with cache lifetimes.
 // Google service accounts exchange an RSA-signed JWT assertion for an access
 // token. The exchange reports a shortened cache lifetime to provider
 // orchestration, while its HTTP client records dependency timing and uses the

@@ -15,6 +15,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// totp_service.go manages TOTP enrollment, account verification, temporary
+// login challenges, and session step-up grants.
 // TOTP enrollment caches a plaintext secret and setup token before storing
 // the account's encrypted secret. Enabling the account follows that secret
 // write separately, while the ciphertext round-trip check produces

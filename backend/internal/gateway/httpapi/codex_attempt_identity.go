@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex request identity follows the provider whose credentials an attempt
-// uses, including the parent of a shadow provider. Successful later preparation
-// replaces staged identity so session isolation and body metadata are derived from
-// its credential source. Resolution errors return before publishing new identity.
+// codex_attempt_identity.go stages credential-source identity and
+// provider-matched fingerprints for Codex attempts. Codex request identity
+// follows the provider whose credentials an attempt uses, including the parent
+// of a shadow provider. Successful later preparation replaces staged identity
+// so session isolation and body metadata are derived from its credential
+// source. Resolution errors return before publishing new identity.
 //
 // Fingerprint IDs are a separate staged object used by both headers and body
 // rewriting. Nil staging clears earlier IDs, and reads accept an object only

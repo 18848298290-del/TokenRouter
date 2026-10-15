@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// results.go settles creative outcomes, releases failed-task reservations, and
+// reconciles recovery work.
 // Creative provider work, image delivery, and funds completion advance
 // independently after generation. Results records the provider outcome before
 // transient saving, then captures successful-output cost before checking

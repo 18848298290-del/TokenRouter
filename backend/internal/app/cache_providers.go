@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/rediscache"
 )
 
+// cache_providers.go registers provider error counters and the shared Redis
+// leader lock with Wire.
 // Provider internal-error counters and leader election use Redis resources
 // from the application graph. The CN usage monitor receives the shared leader
 // lock through its own interface, while provider consumers receive the counter

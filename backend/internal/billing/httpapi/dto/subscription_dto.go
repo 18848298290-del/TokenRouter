@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// subscription_dto.go defines subscription plans, granted entitlements, and
+// administrator assignment response shapes.
 // Subscription responses keep the issued quota and validity separate from the
 // plan's editable sale template. Hydrated plans show group coverage and
 // labels, while administrator wrappers include assignment metadata and batch

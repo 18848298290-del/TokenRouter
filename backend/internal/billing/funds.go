@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// funds.go exposes request settlement and task reservation, capture, and
+// release through a shared storage adapter.
 // Request settlement and asynchronous task funding share a storage adapter
 // that applies their complete financial operation. Task calls require a
 // registered scope and original reservation identity so the adapter can

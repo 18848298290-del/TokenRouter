@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
+// navigation.go prepares revisioned navigation translations and resolves
+// public navigation copy.
 // Navigation translations match stored entries by ID, so menu labels and footer
 // captions can change without selecting another entry's localization state.
 // Prepared writes clear response resolution metadata, reject repeated IDs, and

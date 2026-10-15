@@ -11,6 +11,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// user_attribute_service.go validates attribute definitions and submitted
+// account values before requesting persistence.
 // Attribute edits use a definition's current rules to validate the submitted
 // text before requesting a value write. Requiredness applies to supplied
 // inputs, byte limits use Go string length, numeric values use integer parsing,

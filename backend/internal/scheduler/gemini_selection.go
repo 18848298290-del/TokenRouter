@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// gemini_selection.go chooses Gemini flow providers using group eligibility,
+// session affinity, and basic or advanced ordering.
 // Gemini selection uses the admitted group and optional forced platform to
 // build an eligible provider pool. Basic groups compare numeric priority,
 // unused status, authentication kind among unused peers, and exact recency.

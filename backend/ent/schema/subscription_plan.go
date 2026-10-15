@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// A subscription plan describes an editable product that can be purchased or
-// issued as an entitlement. Grant services copy duration and quota limits into
-// UserSubscription records, while the plan retains product presentation, price,
-// and group coverage used by its current consumers.
+// subscription_plan.go defines editable subscription products available for
+// purchase or entitlement issuance. Grant services copy duration and quota
+// limits into UserSubscription records, while the plan retains product
+// presentation, price, and group coverage used by its current consumers.
 
 // SubscriptionPlan stores administrator-managed product and entitlement template settings.
 // Deleting a plan removes its stored product row.

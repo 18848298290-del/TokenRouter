@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_count_tokens.go prepares Messages-compatible token counting and
+// serves standalone Grok estimates in the Messages count shape.
 // Messages-shaped counts route the client model through the effective group's
 // plan before querying the selected platform. The original requested name
 // remains available for diagnostics while the provider-layer name and mapped

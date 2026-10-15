@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// gateway_group_fallback.go resolves authorized fallback groups and traverses
+// client-restricted group chains.
 // A text request can move to another configured group after the current group
 // rejects its client. Each destination is resolved through API-Key
 // authorization before its protocol, funding, and session isolation are

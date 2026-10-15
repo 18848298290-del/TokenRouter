@@ -15,6 +15,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// tool_corrector.go corrects Codex tool names and argument keys in Chat
+// payloads while retaining their JSON representations.
 // Codex-style Chat tool calls can use names and argument keys that differ from
 // OpenCode declarations. Correction selects known function locations in a JSON
 // payload, applies name mappings first, then uses the mapped tool name to

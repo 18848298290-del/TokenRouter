@@ -10,6 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// dashboard.go stores and retrieves serialized dashboard snapshots in Redis.
 // Dashboard snapshots share one versioned Redis key within the configured
 // prefix. The adapter stores serialized text verbatim, leaving freshness
 // metadata to DashboardService and translating a missing key into the usage

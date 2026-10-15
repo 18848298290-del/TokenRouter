@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// histograms.go validates latency bucket thresholds and requests histogram
+// data for dashboard filters.
 // Latency histograms use five ordered millisecond thresholds to form six
 // displayed ranges. Empty input selects the shared defaults, invalid thresholds
 // fail before storage runs, and returned boundary metadata has its own slice so

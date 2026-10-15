@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
+// service.go serves usage-history and reporting queries through the configured
+// repository and optional readers.
 // Usage records populate user history, administrator diagnostics, and chart
 // summaries after gateway completion writes them. Query methods use the
 // injected repository, while optional readers carry richer filter shapes and

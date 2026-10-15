@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Qoder COSY sessions can be built from a PAT or a stored direct token identity.
-// This adapter selects credential strings and provider transport for the site
-// builder, while the core session service controls credential generations,
-// shared builds, cancellation and cached session expiry.
+// qoder_tokens.go adapts provider credentials and transport to cached Qoder
+// COSY session construction. Qoder COSY sessions can be built from a PAT or a
+// stored direct token identity. This adapter selects credential strings and
+// provider transport for the site builder, while the core session service
+// controls credential generations, shared builds, cancellation and cached
+// session expiry.
 
 // errQoderSessionBuildInvalidated aliases the core error returned when a
 // shared build loses its credential generation.

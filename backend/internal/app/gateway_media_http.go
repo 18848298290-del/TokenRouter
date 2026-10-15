@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// gateway_media_http.go constructs media and auxiliary HTTP runtimes from
+// shared OpenAI attempts and platform execution callbacks.
 // Media HTTP requests use the shared OpenAI attempt bindings and concurrency
 // resources. Platform callbacks are installed when Responses execution is
 // present, combining image, video, voice, embeddings, search, and Realtime

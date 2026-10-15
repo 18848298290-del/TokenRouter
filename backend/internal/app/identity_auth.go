@@ -18,11 +18,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Authentication rules and persistence share one dependency value containing
-// user, entitlement, email, and session services. AuthState receives the
-// constructed AuthService as its Rules callback target, while settings adapters
-// obtain promotion flags and DingTalk registration policy from their owning
-// readers.
+// identity_auth.go constructs authentication rules and persistence with shared
+// identity dependencies. AuthState receives the constructed AuthService as its
+// Rules callback target, while settings adapters obtain promotion flags and
+// DingTalk registration policy from their owning readers.
 
 // identityAuthSettings combines the owning readers used by authentication
 // rules.

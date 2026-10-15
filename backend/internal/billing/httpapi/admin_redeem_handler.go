@@ -18,6 +18,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin_redeem_handler.go handles administrator redemption-code queries,
+// mutations, exports, and create-and-redeem requests.
 // Administrator redemption requests distinguish expiry omission, clearing and
 // future timestamps, while generation accepts either absolute seconds or
 // relative UTC days. List and CSV export share Unicode search normalization

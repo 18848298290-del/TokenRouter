@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// admin_settings_read.go reads moderation switches and session lifetime for
+// administrator settings.
 // Combined administrator settings display risk control and Cyber session
 // blocking from the same supplied map. Switch parsing uses exact stored
 // strings, while an absent, malformed, or nonpositive session lifetime displays

@@ -10,6 +10,8 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
+// jwt_identity.go constructs database-backed user lookup and JWT signing for
+// maintenance commands.
 // Maintenance token generation needs user lookup and access-token signing from
 // the bootstrapped database. The command owns that database pool, while
 // the constructed identity helpers use process token settings and the current

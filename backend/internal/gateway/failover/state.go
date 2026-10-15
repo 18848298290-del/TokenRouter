@@ -7,11 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// A retryable upstream failure can keep the same provider, exclude it for
-// reselection, or end the request when the switch budget is spent.
-// Same-provider eligibility combines a retry opt-in with an optional time deadline
-// and an error-specific count cap; a deadline alone replaces the ordinary
-// provider count window.
+// state.go tracks request-local retry budgets and decides whether to retry,
+// switch providers, or stop. Same-provider eligibility combines a retry opt-in
+// with an optional time deadline and an error-specific count cap; a deadline
+// alone replaces the ordinary provider count window.
 //
 // Retry counts and exclusions stay local to one request loop. A bound session
 // changes cache billing when the next attempt switches provider, while an

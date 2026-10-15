@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// usage_meta.go tracks passthrough session model defaults and accepted request
+// accounting metadata.
 // Bidirectional passthrough needs a session model default while each accepted
 // turn keeps its own usage metadata. A session.update can replace that default,
 // and a later response.create can omit model without losing the client

@@ -7,6 +7,8 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// responses_effort.go reconciles explicit Messages max effort with converted
+// effort and final-model capability.
 // A Messages request can explicitly ask for max effort even when conversion
 // produced another spelling. Reconciliation considers that client intent
 // together with final-model capability, so a converter default does not erase

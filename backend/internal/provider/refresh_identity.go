@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// refresh_identity.go captures authentication identities and prepares refresh
+// failure notices for conditional publication.
 // A failure can be recorded after an administrator has replaced credentials or
 // cleared a runtime block. Its notice therefore carries the authentication
 // identity captured before persistence, and the observer captures its clear

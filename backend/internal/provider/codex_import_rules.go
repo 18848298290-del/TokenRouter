@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// codex_import_rules.go parses Codex import payloads and resolves credential
+// identity, expiry, and merge rules for each entry.
 // Codex import accepts raw token lines, JSON objects, nested arrays, and
 // consecutive JSON values while preserving entry order. Normalization keeps
 // explicit account hints ahead of decoded JWT metadata, ignores browser

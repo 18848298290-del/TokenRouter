@@ -2,12 +2,13 @@ package forward
 
 import "context"
 
-// Anthropic OAuth requests can carry a rewritten system prefix and
-// provider-specific metadata in the same body. The following normalizer needs
-// to know whether the system rewrite path ran so it can retain that path's
-// system cache annotations while still applying metadata and other OAuth
-// normalization. The body passes through cache policy after those identity
-// choices have been made.
+// mimic.go applies Anthropic OAuth system, metadata, cache, and tool-name
+// preparation in order. Anthropic OAuth requests can carry a rewritten system
+// prefix and provider-specific metadata in the same body. The following
+// normalizer needs to know whether the system rewrite path ran so it can retain
+// that path's system cache annotations while still applying metadata and other
+// OAuth normalization. The body passes through cache policy after those
+// identity choices have been made.
 //
 // Tool-name rewriting can also require request-local state to reverse names in
 // the response. A successful rewrite is bound to that state; when no rewrite

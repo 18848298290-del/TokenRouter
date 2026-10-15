@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_attribute_errors.go replaces server error details when request-local
+// model attribute configuration is unavailable.
 // Model attribute lookup failure can surface through several protocol error
 // writers. A request-local unavailable marker replaces server-error details
 // with a shared configuration-unavailable response, while client errors and

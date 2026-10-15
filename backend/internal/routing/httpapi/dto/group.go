@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// group.go defines user and administrator group response structures for the
+// HTTP API.
 // User-facing group JSON exposes protocol admission and product limits while
 // administrator responses add scheduling policy and provider counts. Image
 // and Live compatibility flags stay internal, so JSON clients read the

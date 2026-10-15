@@ -20,10 +20,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Provider import and export share administration, proxy transfer, privacy, and
-// deferred quota probing. Archive callbacks use application task tracking,
-// while Codex imports validate agent private keys and CRS synchronization
-// reuses the platform authorization and refresh coordinator.
+// provider_archive.go constructs provider import, export, Codex invite reset,
+// and CRS synchronization services. Provider import and export share
+// administration, proxy transfer, privacy, and deferred quota probing. Archive
+// callbacks use application task tracking, while Codex imports validate agent
+// private keys and CRS synchronization reuses the platform authorization and
+// refresh coordinator.
 
 // grokImportQuotaProbe narrows Grok quota results for deferred archive import
 // checks.

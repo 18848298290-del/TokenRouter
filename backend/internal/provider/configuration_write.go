@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// configuration_write.go merges selected administrator configuration fields
+// into current provider records and dispatches conditional storage updates.
 // Administrator edits can begin from a provider snapshot that predates token
 // refresh, billing increments, or maintenance observations. Applying that
 // entire snapshot would replace data those other writers have already updated.

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// response_transformer.go converts wrapped or direct Gemini responses to
+// Claude responses with generated identifiers.
 // Antigravity response conversion accepts wrapped or direct Gemini JSON and
 // delegates content/usage mapping to the shared Anthropic processor. Absent
 // inner candidates select the direct shape when an otherwise decoded envelope

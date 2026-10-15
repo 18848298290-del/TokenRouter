@@ -7,8 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Console Key responses combine saved credential configuration with live-count
-// observations and current spending-window display values. The response
+// key.go builds console Key responses from saved configuration, live-count
+// observations, and current spending-window display values. The response
 // includes group DTOs chosen by its supplied mapper, while payer user objects
 // stay outside this format so team credentials do not expose the owner's
 // account assets. Callers authorize the console operation before exposing the

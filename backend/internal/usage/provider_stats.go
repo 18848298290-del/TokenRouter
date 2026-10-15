@@ -1,5 +1,7 @@
 package usage
 
+// provider_stats.go defines provider request, token, and cost totals for
+// reporting.
 // Provider reports keep execution cost, unmultiplied standard cost, and user
 // charges as distinct measures. The same request and token counts accompany
 // those amounts, so filtering by provider does not change the meaning of the

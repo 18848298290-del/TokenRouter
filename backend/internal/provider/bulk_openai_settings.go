@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// bulk_openai_settings.go validates bulk OpenAI capability and routing changes
+// against requested settings and existing provider support.
 // Bulk OpenAI edits can submit capability, route, and continuation settings
 // before any target provider has been loaded. Presence flags keep a requested
 // change separate from its normalized value, allowing target validation to

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response.go reads buffered Messages responses and prepares client-visible
+// models, tools, and cache usage.
 // Buffered Messages responses carry cache counts used both for billing and
 // client-visible usage. Ordinary processing resolves compatible cached_tokens
 // aliases and cache TTL classification, then restores a matching mapped model

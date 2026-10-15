@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_policy.go resolves creative model candidates through group
+// restrictions, provider mappings, and operation capabilities.
 // Creative directory names come from finite configuration candidates rather
 // than the entire model metadata catalogue. Group mappings and provider rules
 // resolve each candidate to a concrete upstream image route, with restrictions

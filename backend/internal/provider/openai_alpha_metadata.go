@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// openai_alpha_metadata.go fills missing ChatGPT account metadata for
+// PAT-backed Alpha Search requests.
 // Alpha Search authentication needs a ChatGPT account identity that older PAT
 // imports may lack. A PAT without that identity is validated through the
 // authorization callback, and returned token metadata is merged with its

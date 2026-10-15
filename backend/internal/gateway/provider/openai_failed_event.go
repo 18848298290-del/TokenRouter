@@ -10,10 +10,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_failed_event.go builds Responses failure events from available
+// upstream error evidence.
 // Responses failures need a protocol event even when an upstream body lacks a
 // complete Response object. Event construction chooses a response ID and error
 // message, retains available code/type evidence, and emits a failed Response
 // in an SSE data frame.
+//
+// A supplied response ID is trimmed and reused, while a missing ID is
+// generated for the failed response. Error codes prefer the top-level error
+// and then the nested response error; the type comes from the top-level
+// error. Missing messages and codes receive defaults so the output
+// remains a usable failure event even when the upstream payload is incomplete.
 
 // BuildOpenAIResponseFailedSSE encodes a failed Response event with trimmed
 // model and response identity. A missing ID is generated, message extraction

@@ -8,11 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
-// Administrative group binding can add exclusive permission and update a Key
-// together, while public targets require the credential creator's existing
-// binding permission. Composite credentials reject this administrative path
-// before either binding changes or window resets, and an omitted group with no
-// reset returns the loaded record directly.
+// admin.go applies administrative Key group-binding edits and spending-window
+// resets. Exclusive targets can receive a permission grant with the Key
+// update, while public targets require the creator's existing binding
+// permission. Composite credentials reject this administrative path before
+// either binding changes or window resets, and an omitted group with no reset
+// returns the loaded record directly.
 //
 // Selected configuration and explicit usage-reset masks protect counters owned
 // by billing from unrelated edits. Exclusive grants delegate transaction

@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// compatible_picker.go coordinates compatible provider scheduling, affinity
+// preferences, admission retries, and outcome feedback.
 // Compatible requests can prefer a prior response provider, a session provider,
 // or group model-routing candidates while still meeting protocol and runtime
 // eligibility. The admitted group's mode selects either the basic core or an
@@ -34,9 +36,8 @@ import (
 // Exhaustion with active OpenAI proxy quarantine permits one request-local
 // bypass pass for an unbypassed branch; the circuit retains its observations.
 // Advanced results capture their feedback alphas, while the picker shares
-// performance statistics,
-// counters, and a separately published Grok soft-quota cache across
-// invocations.
+// performance statistics, counters, and a separately published Grok soft-quota
+// cache across invocations.
 
 // Compatible decision-layer values identify load-based choices and
 // guardian-parent affinity in gateway diagnostics and selection metrics.

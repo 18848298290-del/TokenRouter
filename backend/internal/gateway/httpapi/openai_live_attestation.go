@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// openai_live_attestation.go pairs Live attestation headers with encrypted
+// credentials for saved reconnects.
 // Live creation needs an issued DeviceCheck header and an encrypted
 // representation of that same header for saved control reconnects. Generation
 // and encryption therefore succeed together before the caller receives either

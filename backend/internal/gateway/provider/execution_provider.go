@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// execution_provider.go constructs execution targets and supplies provider
+// views for routing, protocol handling, and completion.
 // A selected provider has persistent configuration and a route resolved for
 // one request attempt. ExecutionProvider keeps those values together, while
 // the adapter functions choose which fields a protocol, scheduler, or

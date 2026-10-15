@@ -8,6 +8,8 @@ import (
 	"slices"
 )
 
+// registry.go validates module setting ownership and prepares isolated
+// participant changes.
 // A combined request can touch settings owned by several modules, and each
 // preparer needs its submitted fields and saved values before storage changes.
 // Registration declares module names, flat request fields, and writable setting

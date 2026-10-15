@@ -2,6 +2,8 @@ package provider
 
 import "context"
 
+// credential_persistence.go persists ordinary credential replacements through
+// field-specific or whole-record storage.
 // Ordinary credential writes can use a field-specific store or a whole-record
 // store, while Spark shadows keep credentials with their parent.
 // PersistCredentials replaces the caller record before storage and reports that

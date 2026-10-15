@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// health_recovery.go clears recoverable provider health state and reconstructs
+// temporary-pause status for display.
 // Provider recovery clears error status, global windows, platform scopes, model
 // limits and temporary pauses through ordered store calls. A later primary
 // failure can leave earlier successful production writes in place, while error

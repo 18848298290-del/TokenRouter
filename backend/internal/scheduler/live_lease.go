@@ -2,6 +2,8 @@ package scheduler
 
 import "context"
 
+// live_lease.go defines the cache operations used to acquire, renew, and
+// release Live connection capacity.
 // Live sessions occupy lease memberships for a provider, user, and API key
 // while their connection remains active. The cache supports acquisition,
 // renewal, and removal of those memberships, including transfer from

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// admin_contracts.go defines provider administration dependencies and
+// constructs the service that retains them.
 // Provider administration borrows application-owned storage and callbacks;
 // NewAdmin copies the options value while retaining its references. Each
 // operation uses its configured dependencies, with ConfigurationWriter providing

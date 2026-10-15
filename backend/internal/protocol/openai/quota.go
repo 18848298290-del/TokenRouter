@@ -1,5 +1,7 @@
 package openai
 
+// quota.go defines OpenAI quota windows, account usage observations, and
+// reset-credit results for provider queries.
 // OpenAI quota observations carry primary and optional secondary windows with
 // their own utilization, duration, and reset metadata. The reduced usage value
 // also retains account identity and feature-specific limits, while provider-side

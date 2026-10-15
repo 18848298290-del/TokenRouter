@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator dashboard, usage-query, and
+// cleanup-task HTTP routes.
 // Administrator dashboard and usage routes expose statistics, searches and
 // persisted cleanup tasks through separate path groups. The application
 // supplies their authentication, rate limiting and audit middleware on the

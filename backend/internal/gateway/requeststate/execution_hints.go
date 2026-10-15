@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// execution_hints.go stores request execution observations in context values
+// and exposes their presence-aware accessors.
 // Execution hints capture entry-time identity and selection decisions for later
 // provider attempts. Context derivation copies scalar hint values, so an
 // attempt can replace its own flags while the parent request retains the

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// composer.go describes images through an auxiliary Grok Responses request and
+// returns the description usage.
 // Composer turns an image into text through an auxiliary Responses exchange on
 // a fixed vision model. The description and its token usage return to the main-
 // request preparation step, while health observations and HTTP failure

@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// generation_request_adapter.go connects media generation attempts to provider
+// selection, output observations, and completion capture.
 // A media attempt keeps its credential-bearing selected target inside
 // request-local state and passes a separate provider snapshot to the media
 // loop. Selection installs that target before acquisition, forwarding,

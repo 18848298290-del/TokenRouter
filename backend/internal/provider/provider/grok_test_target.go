@@ -7,9 +7,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Grok test targets carry the selected provider into a synchronous probe with
-// request User-Agent and originator metadata. TestRun records event-sink failures
-// and cancels execution after an output failure; the target returns that recorded
+// grok_test_target.go binds a selected Grok provider to a synchronous probe
+// with request identity headers. TestRun records event-sink failures and
+// cancels execution after an output failure; the target returns that recorded
 // error together with the probe result and releases its run context.
 
 // grokTestTarget borrows the selected provider and its Grok probe event executor.

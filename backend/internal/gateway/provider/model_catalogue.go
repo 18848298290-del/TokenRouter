@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// model_catalogue.go adapts provider configuration into protocol-aware
+// catalogue candidates and attribute targets.
 // Model catalogues enumerate saved provider configuration and then check each
 // candidate against execution routes. Attribute lookup must keep the client
 // protocol separate from the chosen upstream protocol, especially when Compact

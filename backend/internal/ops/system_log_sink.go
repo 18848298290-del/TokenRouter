@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// system_log_sink.go queues accepted log events and batches them into the
+// system-log repository.
 // Indexed system logs retain accepted event pointers until one worker prepares
 // their stored representation. Admission selects warning/error levels plus
 // access/audit components, with an explicit boolean skip marker taking

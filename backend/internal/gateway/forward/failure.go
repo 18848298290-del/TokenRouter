@@ -11,11 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 )
 
-// Provider failover combines the upstream outcome with retry instructions and
-// the caller's remaining attempt and output window. An explicit stop action
-// ends provider switching, while the zero action keeps legacy retry permission.
-// Credential failures additionally name their scope so a shared configuration
-// problem can stop switching without being classified as one provider's inference failure.
+// failure.go carries classified upstream failures and translates their retry
+// instructions for the failover state. Provider failover combines the upstream
+// outcome with retry instructions and the caller's remaining attempt and output
+// window. An explicit stop action ends provider switching, while the zero
+// action keeps legacy retry permission. Credential failures additionally name
+// their scope so a shared configuration problem can stop switching without
+// being classified as one provider's inference failure.
 //
 // RetryFailure transfers budget-relevant values to the request's failover
 // state, leaving display overrides and post-write output eligibility with their

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// content.go prepares localized content edits and resolves reviewed
+// translations for display.
 // A translation is eligible for display only when its review revision equals
 // the current source revision. Content edits keep an overall revision for
 // optimistic persistence checks and a separate source revision for translation

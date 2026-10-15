@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// alpha_search.go runs Alpha Search provider attempts with bounded retries,
+// capacity ownership and completion callbacks.
 // An Alpha Search attempt can retry the same provider before selecting
 // another, but an observed output change closes that window. Same-provider
 // counts belong to provider IDs, while a separate switch count limits new

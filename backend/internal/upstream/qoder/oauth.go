@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/oauthpkce"
 )
 
+// oauth.go prepares Qoder device authorization and exchanges tokens while
+// normalizing expiry and identity representations.
 // Device authorization keeps a PKCE verifier and nonce while the browser
 // completes a site-specific login. Global and CN use different nonce and
 // machine-ID shapes, and the selected profile remains with the request so

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// views.go converts loaded usage associations into nested account, key, group,
+// and provider responses.
 // Usage rows carry account, key and group data loaded for display. HTTP
 // conversion passes that data to the owning modules' DTO mappers, which apply
 // their own field selection and language handling before the nested response

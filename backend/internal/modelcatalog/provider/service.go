@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// service.go manages model catalog initialization, scheduled refreshes, and
+// retained publication reads.
 // Catalog prices, attributes, and operation defaults are retained together
 // between updates. Initialization loads a cached or embedded publication;
 // optional remote synchronization and supplement watching subsequently build

@@ -8,10 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// API-key passthrough retains the input model for result metadata while the
-// selected provider receives its mapped model and filtered request body. A
-// shared parsed request can receive those body changes before exchange so later
-// body views and request hashes consult the forwarding representation.
+// anthropic_passthrough_contract.go defines the inputs and adapter operations
+// for Anthropic API-key passthrough. API-key passthrough retains the input
+// model for result metadata while the selected provider receives its mapped
+// model and filtered request body. A shared parsed request can receive those
+// body changes before exchange so later body views and request hashes consult
+// the forwarding representation.
 
 // APIKeyInput supplies body, model, timing, and parsed-state values for passthrough.
 type APIKeyInput struct {

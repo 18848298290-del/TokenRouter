@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/backup"
 )
 
+// archive.go writes compressed database archives to object storage and
+// restores single-object or segmented archives.
 // A compressed database dump is produced while storage consumes the gzip stream.
 // Successful storage alone does not establish successful export: the producer
 // also closes the dumper, whose process exit can report a failure after its output

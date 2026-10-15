@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_retry.go binds retries while transferring updated provider
+// extras between retry and execution records.
 // Antigravity platform retry receives a provider record view while transport
 // and health callbacks use the execution target. A callback can replace Extra
 // on that target, so the retry view needs the resulting reference before it

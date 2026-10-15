@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// usage_handler.go handles administrator usage searches, statistics, timing
+// enrichment, and cleanup commands.
 // Administrator usage queries combine record selectors with optional
 // retained-history request identity lookup. List accepts independent time
 // bounds, while Stats uses both explicit dates together or a period default,

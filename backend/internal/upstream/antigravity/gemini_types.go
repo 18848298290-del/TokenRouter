@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// gemini_types.go defines Antigravity request and response envelopes around
+// shared Gemini wire types.
 // Antigravity v1internal adds project, model, request identity, and request
 // type around shared Gemini wire data. Response envelopes carry generation
 // data plus optional outer identifiers, while conversion callers select how

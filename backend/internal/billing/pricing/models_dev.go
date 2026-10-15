@@ -8,6 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// models_dev.go converts models.dev entries into billing catalog price JSON.
 // models.dev quotes prices in USD per million tokens, while settlement consumes
 // USD per token. Conversion retains optional-value presence so a declared zero
 // remains distinct from a missing text, cache, or Fast price, including within

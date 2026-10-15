@@ -6,10 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// Group checks distinguish authorization from availability. An authenticated
-// request can have permission to use a group that was disabled or deleted, so
-// handlers apply both checks and translate availability reasons into their
-// protocol's error response.
+// group.go checks whether an API key can use its loaded group and whether that
+// group remains available. An authenticated request can have permission to use
+// a group that was disabled or deleted, so handlers apply both checks and
+// translate availability reasons into their protocol's error response.
 
 // GroupAllowed reports whether the key's user may bind its loaded group.
 // Missing key, group ID, user, or group data returns true; authentication callers

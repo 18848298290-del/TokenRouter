@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// worker.go processes leased creative tasks through provider execution, result
+// recording, and funds recovery.
 // Creative queue processing owns an active lease and a separate job lock while
 // provider work progresses. User and provider capacity are acquired before the
 // task enters running, and their release precedes output recording and funding

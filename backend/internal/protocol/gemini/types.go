@@ -2,6 +2,8 @@ package gemini
 
 import "encoding/json"
 
+// types.go defines Gemini request and response values and encodes reasoning
+// controls with explicit budget presence.
 // Gemini reasoning settings can select a level or a numeric budget, with an
 // explicit zero budget different from an omitted control. The custom codec
 // records budget presence and emits one selected control, giving a nonempty

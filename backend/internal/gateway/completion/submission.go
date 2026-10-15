@@ -5,10 +5,12 @@ import (
 	"time"
 )
 
-// Completion queue rejection can occur because capacity is exhausted or because
-// the pool is stopping. Mandatory work retries either rejection inline, while an
-// ordinary task follows the configured overflow policy unless its entrypoint opts
-// into stopped-pool fallback. A missing pool also executes directly in the caller.
+// submission.go submits completion tasks and applies caller-selected inline
+// policies when submission is rejected. Completion queue rejection can occur
+// because capacity is exhausted or because the pool is stopping. Mandatory work
+// retries either rejection inline, while an ordinary task follows the
+// configured overflow policy unless its entrypoint opts into stopped-pool
+// fallback. A missing pool also executes directly in the caller.
 //
 // Correlation values are captured before submission. Inline execution gets a
 // ten-second context detached from source cancellation, optionally retaining all

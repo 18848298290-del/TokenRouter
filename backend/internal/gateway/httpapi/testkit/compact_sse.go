@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// compact_sse.go parses compact SSE test output into event names and data
+// strings for assertions.
 // Compact output fixtures use one event line and one JSON data line per block.
 // Parsing keeps that deliberately narrow shape visible to assertions, rejecting
 // extra lines or missing prefixes so malformed synthetic output cannot silently

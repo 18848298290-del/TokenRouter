@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// qoder.go admits Qoder Chat requests and presents execution failures in the
+// client format.
 // Qoder Chat admission validates JSON model and stream fields before preparing
 // a platform request. A missing stream field permits buffered output, while
 // null or another field type is rejected. A configured Executor takes

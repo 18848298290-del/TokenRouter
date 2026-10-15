@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// local.go stores and retrieves backup archives beneath a configured
+// filesystem directory.
 // Local archive keys are resolved beneath one configured directory before file
 // access begins. Lexical checks reject escaping paths, and symlink resolution
 // permits targets inside that directory while rejecting resolved targets outside

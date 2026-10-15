@@ -17,10 +17,11 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// Responses WS option refresh updates the same lazily created connection pool
-// used by execution. The refresh hook stops at level nine before connections
-// close at level ten, and Codex turn origins receive the selection service's
-// current sticky lifetime.
+// gateway_ws_connections.go constructs Responses WS connection resources and
+// binds runtime option refresh. Responses WS option refresh updates the same
+// lazily created connection pool used by execution. The refresh hook stops at
+// level nine before connections close at level ten, and Codex turn origins
+// receive the selection service's current sticky lifetime.
 
 // provideCodexTurnStateHeaders binds a new origin registry and selection TTL
 // reads.

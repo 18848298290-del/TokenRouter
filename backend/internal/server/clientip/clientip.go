@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ipmatch"
 )
 
+// clientip.go resolves request client addresses using captured forwarding
+// settings and Gin proxy trust.
 // A request's client address can come from configured headers, built-in proxy
 // headers, or Gin's peer-trust policy. Compatibility mode reads raw forwarding
 // values regardless of the direct peer, so deployments relying on it need an

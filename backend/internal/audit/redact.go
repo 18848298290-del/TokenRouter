@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// redact.go masks sensitive audit fields and limits the bodies retained in
+// audit records.
 // Audit bodies may contain provider credentials even when their field names use
 // different separators or casing. Normalized key matching masks those values
 // recursively, while non-JSON and oversized bodies become size-bearing placeholders

@@ -14,6 +14,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// claude_oauth_body.go normalizes OAuth request bodies, system instructions,
+// metadata, and cache markers.
 // OAuth request preparation replaces recognizable client identity text and can
 // rebuild the system prompt as configured Claude blocks. Migrated client
 // instructions become joined text in an injected message block, with one

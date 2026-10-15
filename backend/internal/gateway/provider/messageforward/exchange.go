@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// exchange.go configures Anthropic exchanges and signature-recovery policy for
+// ordinary and passthrough requests.
 // Anthropic exchanges rebuild requests with the current attempt state and
 // selected provider. Signature and budget recovery are implemented by the
 // upstream exchange, while these callbacks supply model rules, bounded retry

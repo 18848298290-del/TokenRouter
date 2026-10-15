@@ -14,11 +14,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// Claude Code format recognition begins with a CLI User-Agent, then applies
-// route-specific evidence. Ordinary Messages requests need payload and header
-// markers; other routes and the validator's auxiliary Messages cases can use
-// the matching User-Agent. These requester-supplied values describe client format
-// for routing restrictions and mimicry policy.
+// client_detection.go identifies Claude Code HTTP requests and records their
+// version, probe, and thinking state. Claude Code format recognition begins
+// with a CLI User-Agent, then applies route-specific evidence. Ordinary
+// Messages requests need payload and header markers; other routes and the
+// validator's auxiliary Messages cases can use the matching User-Agent. These
+// requester-supplied values describe client format for routing restrictions and
+// mimicry policy.
 //
 // Messages preparation obtains probe and thinking state from parsed input before
 // provider selection. A compatibility copy coerces nonboolean stream values for

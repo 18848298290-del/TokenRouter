@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// oauth_usage_qoder.go coordinates Qoder usage fetching, conditional snapshot
+// persistence, and scheduling signals.
 // Qoder display queries share work by provider row while associating cached
 // and completed observations with credential identity. Force skips the
 // caller’s cache checks but can still join an existing flight, whose captured

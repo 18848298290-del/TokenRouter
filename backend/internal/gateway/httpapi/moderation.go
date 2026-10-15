@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// moderation.go builds moderation inputs and records cyber warnings with
+// request identities and current-turn content evidence.
 // Moderation risk identity can belong to a team actor while billing belongs to
 // the Key owner. HTTP input construction keeps those identities separate from
 // original client model attribution and actual provider execution, using the

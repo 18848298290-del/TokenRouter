@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_protocol_execution_passthrough.go dispatches passthrough execution
+// and records instruction and timeout-header diagnostics.
 // Passthrough execution retains request bytes for the selected provider while
 // the shared runner applies required compatibility and model policies. Its
 // HTTP adapter captures returned model observations, and local diagnostics

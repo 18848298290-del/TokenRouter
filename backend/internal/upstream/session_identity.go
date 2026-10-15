@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// session_identity.go derives scoped session identifiers and generates
+// protocol-specific message and session IDs.
 // Client session identifiers can be reused by different API keys, so an
 // isolation digest includes both the key ID and trimmed client value. Empty
 // client identifiers stay absent; a digest is a compact correlation value

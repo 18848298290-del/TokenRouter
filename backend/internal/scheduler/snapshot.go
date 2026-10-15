@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// snapshot.go rebuilds scheduler buckets and consumes persisted changes while
+// coordinating bucket and group lifecycles.
 // A provider change can arrive while an older scheduler rebuild is still
 // reading database records. Each bucket write carries the bucket identity and
 // lifecycle epoch captured before its query; retirement fences obsolete

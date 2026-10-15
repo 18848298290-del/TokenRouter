@@ -9,6 +9,8 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// admin_settings_read.go decodes stored billing settings into administrator
+// views and public balance labels.
 // Stored billing settings can omit display labels or contain invalid numeric
 // text. Administrator reads construct a typed snapshot with currency labels,
 // signup grants and alert switches, selecting defaults separately for each

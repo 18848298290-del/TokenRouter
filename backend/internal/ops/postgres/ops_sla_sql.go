@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_sla_sql.go builds SQL predicates for business-limit exclusions and SLA
+// eligibility from status policy and upstream evidence.
 // Client-status exclusion depends on upstream evidence as well as a configured
 // ignored-status list. An ignored status is classified as a local exclusion
 // only when no stored upstream status, nonempty attempt array, or provider

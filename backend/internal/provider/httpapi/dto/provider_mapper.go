@@ -12,6 +12,8 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
+// provider_mapper.go maps provider records to redacted administration
+// responses with platform-specific display fields.
 // A management DTO combines redacted provider configuration with
 // platform-specific display controls. Mapping first clones the record's
 // supported containers and pointers, then removes classified credential secrets

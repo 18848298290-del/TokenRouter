@@ -8,6 +8,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// grok_media_eligibility.go checks media eligibility and probes providers with
+// unobserved billing state.
 // Grok media generation uses provider overrides and observed billing
 // eligibility before an upstream attempt. Missing OAuth billing observations
 // trigger an active probe; other eligibility decisions return directly, and an

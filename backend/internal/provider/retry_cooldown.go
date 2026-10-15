@@ -2,6 +2,8 @@ package provider
 
 import "context"
 
+// retry_cooldown.go selects temporary provider pauses after eligible requests
+// exhaust their retries.
 // Retry exhaustion can describe either a provider failure or a request-specific
 // transient response. The request-scoped flag prevents a persistent cooldown
 // before any lookup. Eligible attempts reload the provider so its current pool

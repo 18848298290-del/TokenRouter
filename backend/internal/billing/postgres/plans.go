@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// plans.go persists subscription plans and synchronizes their relational group
+// mappings.
 // Plan group selections are stored in the plan's JSON fields and in a
 // relational group mapping used by billing queries. Creation saves both within
 // an owned Ent transaction. Updates start an owned transaction when groups,

@@ -10,10 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Requestable model queries read provider candidates for one requested group or
-// the full schedulable set. The catalogue reader converts those records into
-// routing data and pairs them with the shared group-policy resolver for later
-// model admission and display.
+// routing_model_list.go builds requestable model catalogues from provider
+// candidates and shared group policies. Requestable model queries read provider
+// candidates for one requested group or the full schedulable set. The catalogue
+// reader converts those records into routing data and pairs them with the
+// shared group-policy resolver for later model admission and display.
 
 // catalogueReader returns provider catalogue reads bound to shared storage. A
 // nonnil group ID selects its schedulable providers; nil selects all

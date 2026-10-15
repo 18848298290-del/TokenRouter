@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// count_tokens_request.go builds ordinary and passthrough token-counting
+// requests with authentication and beta-dependent body cleanup.
 // Count-token requests share OAuth identity and beta preparation with Messages,
 // but their bodies discard generation controls such as stream and max_tokens.
 // The selected beta header governs which optional body fields survive before

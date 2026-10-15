@@ -20,6 +20,8 @@ import (
 	servermiddleware "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// ops_ws_handler.go admits Ops WebSocket connections and streams cached traffic
+// samples under the administrator route middleware.
 // Ops WebSockets send the shared runtime's cached traffic payload and use a
 // reader to process control frames while discarding inbound application
 // messages. Environment-loaded policy trusts forwarded host and client

@@ -18,15 +18,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// team.go coordinates team permissions, membership management, invitations,
+// and ownership transfers.
 // Team management distinguishes the acting membership from its owner and
 // payer, so ordinary members cannot expand report scope or manage another
 // creator's credentials. Owner actions can require active teams or
 // deliberately allow suspended context for resume, departure and teardown.
 //
 // Invitation admission is recorded before token/link/storage preparation, and
-// mail delivery follows saved review state. An io.ReadFull error terminates
-// during token generation, while URL or mail errors retain the work completed
-// before their respective stages.
+// mail delivery follows saved review state. URL or mail errors retain the work
+// completed before their respective stages.
 // Lifecycle repositories own their related transactions and can return
 // post-commit readback errors; optional authentication invalidation is
 // requested only after successful selected results and Key-list failure is

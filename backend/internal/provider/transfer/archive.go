@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// archive.go defines provider archive data and validates its outer format and
+// required collections.
 // Provider archives identify a versioned format shared with proxy import and
 // export. Version two accepts the current and legacy product identifiers,
 // while the outer payload rejects unknown fields so a retired accounts

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// url.go builds validated AI Studio model-action URLs for generation,
+// streaming, and token counting.
 // AI Studio model actions share the v1beta resource path while selecting
 // generation, streaming generation, or token counting. Model names can
 // originate in client input or mapping, so the builder validates their trimmed

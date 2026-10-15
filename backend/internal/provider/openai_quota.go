@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_quota.go queries OpenAI quota, consumes reset credits, and builds
+// persisted quota observations.
 // OpenAI quota requests bind account identity and client transport before
 // reading usage or consuming a reset credit. Credential shadows read through a
 // separately loaded parent, while reset consumption rejects the initially

@@ -11,6 +11,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// client.go sends Code Assist account discovery and onboarding requests using
+// Gemini CLI authentication headers.
 // Code Assist discovery and onboarding use v1internal account endpoints with
 // the Gemini CLI client identity. Missing request inputs select the
 // Antigravity metadata defaults, while provider authorization interprets

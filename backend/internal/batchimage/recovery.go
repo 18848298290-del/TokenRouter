@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// recovery.go identifies stale unsubmitted batch jobs and releases their
+// funding reservations.
 // A process can stop after reserving funds and before saving its upstream job
 // name. BillingRecovery finds old created or uploading records with positive
 // holds, then conditionally fails each still-unsubmitted task before

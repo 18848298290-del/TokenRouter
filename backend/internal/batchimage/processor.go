@@ -15,6 +15,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// processor.go polls bound providers and reconciles their result rows into
+// persisted batch-image items.
 // Provider polling resumes from the stored batch stage and the originally
 // bound backend. A successful observation first records its output reference,
 // then enters indexing; already-indexing jobs reopen their saved output
@@ -22,8 +24,9 @@ import (
 // state before releasing the original funding reservation.
 //
 // The indexer reconciles provider custom IDs with submitted placeholders
-// before replacing result rows and counts. Unknown IDs are skipped, missing
-// IDs become visible failures, and duplicate accepted IDs abort replacement.
+// before replacing result rows and counts. When submitted IDs exist, unknown
+// IDs are skipped and missing IDs become visible failures. Duplicate accepted
+// IDs abort replacement.
 // Repository indexing guards prevent a stale worker from replacing already
 // progressed results. Parsing supports the nested and top-level candidate
 // shapes used by Gemini batch outputs, retains result metadata, and keeps

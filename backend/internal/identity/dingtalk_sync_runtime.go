@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// dingtalk_sync_runtime.go submits DingTalk profile synchronization through
+// the application background runner.
 // DingTalk synchronization can continue after the login request finishes using
 // the runner supplied by app. Configuration and provider clients are selected
 // before submission, while accepted callbacks keep the parent context's values

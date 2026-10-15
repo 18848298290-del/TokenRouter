@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// pricing_catalog.go exposes injected default-price catalogue queries,
+// snapshots, and refresh operations.
 // Default pricing queries and administrative refreshes share one injected
 // catalog runtime. The catalog supplies a published price snapshot and
 // paginated query callbacks, while individual model lookups delegate to the

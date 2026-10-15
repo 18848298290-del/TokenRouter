@@ -1,5 +1,7 @@
 package billing
 
+// allocation.go defines funding-source allocations and the plan terms captured
+// at checkout.
 // An allocation records the funding source and the USD amount charged or
 // reserved against it. Checkout snapshots separately retain purchased plan
 // terms so fulfillment can grant the recorded duration and quotas after

@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// refresh_acquire.go acquires local and distributed refresh locks and returns
+// their ordered release callback.
 // The refresh key first serializes exchanges inside this process, then
 // optionally attempts cross-process exclusion through the cache. A failed cache
 // acquisition leaves local protection in place, while distributed contention

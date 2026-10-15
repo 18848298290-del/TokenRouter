@@ -11,12 +11,18 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Responses-to-Chat history can recover reasoning text by its Responses item ID.
-// Plaintext request history, completed stream items, and buffered output seed this
-// cache, so later encrypted-only history can reuse text when it remains stored.
-// Each storage operation receives an independent context with a two-second
-// deadline. The production Redis client uses configured socket read/write
-// timeouts, so these context deadlines impose no two-second method-return bound.
+// reasoning_history.go caches Responses reasoning text by item ID for later
+// Responses-to-Chat history recovery. Plaintext request history, completed
+// stream items, and buffered output seed this cache, so later encrypted-only
+// history can reuse text when it remains stored.
+//
+// Only reasoning items with an ID and nonblank summary text populate the output
+// path. Summary fragments are trimmed and joined in order, while cache lookup
+// failures return empty text so callers can continue their own history
+// handling. Each storage operation receives an independent context with a
+// two-second deadline. The production Redis client uses configured socket
+// read/write timeouts, so these context deadlines impose no two-second
+// method-return bound.
 
 // responsesReasoningCacheTTL retains stored reasoning text for seven days to
 // support later item-ID recovery while the corresponding Redis entry remains available.

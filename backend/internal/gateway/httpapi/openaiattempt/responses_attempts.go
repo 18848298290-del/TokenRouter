@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// responses_attempts.go manages Responses provider attempts and qualifies
+// their retry and completion outcomes.
 // Responses attempts retain canonical request input while providers, resource
 // callbacks, and observed results change through a serial text loop. A selected
 // HTTP continuation target needs API-key credentials; unsuitable credentials

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// repository.go stores moderation audit records and applies transactional
+// Cyber warning policies.
 // Ordinary audit rows and retained image metadata are inserted together, but
 // ordinary hashes, account changes, and notices already occur outside this
 // store transaction. Cyber policy instead locks the actor before inserting

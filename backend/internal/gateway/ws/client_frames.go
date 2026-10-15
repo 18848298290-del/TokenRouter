@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// Passthrough applies inbound policy before sending client frames upstream,
-// while downstream frames restore the client's model and tools. Inter-turn idle
-// timing starts after a terminal write completes, so time spent waiting for the
-// current answer is excluded from that idle budget.
+// client_frames.go wraps client frames with inbound policy, outbound
+// restoration, and inter-turn activity tracking. Inter-turn idle timing starts
+// after a terminal write completes, so time spent waiting for the current
+// answer is excluded from that idle budget.
 //
 // clientFrameConn keeps a control context for reads and removes cancellation
 // from each write while retaining its existing deadline. This lets a

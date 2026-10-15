@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// ops_observation.go records request and WebSocket-turn failure observations
+// separately from wire status.
 // A committed HTTP status can remain successful while an in-band failure ends a
 // stream. Ops retains intended failure status separately from wire status, and
 // WebSocket turns keep their own captured provider and upstream evidence so

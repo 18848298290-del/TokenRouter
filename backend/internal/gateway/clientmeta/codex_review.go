@@ -8,11 +8,13 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Codex review requests can declare their parent thread in a dedicated header,
-// header turn metadata, and body turn metadata. Scheduling affinity needs one
-// parent identity, so conflicting nonempty declarations produce no usable
-// parent. Review recognition likewise requires the nonempty subagent declarations
-// to agree on guardian or review, in addition to the review model.
+// codex_review.go resolves a review request's parent thread from agreeing
+// header and body declarations. Codex review requests can declare their parent
+// thread in a dedicated header, header turn metadata, and body turn metadata.
+// Scheduling affinity needs one parent identity, so conflicting nonempty
+// declarations produce no usable parent. Review recognition likewise requires
+// the nonempty subagent declarations to agree on guardian or review, in
+// addition to the review model.
 //
 // Empty declarations do not override a supplied identity. Header and body
 // metadata are parsed independently, allowing clients that provide just one

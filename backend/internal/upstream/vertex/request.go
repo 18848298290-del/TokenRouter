@@ -10,6 +10,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// request.go builds authenticated Vertex Claude requests with filtered beta
+// features and sanitized bodies.
 // Claude requests sent to Vertex carry the model in the URL and a Vertex
 // version in the body. Beta policy and the local allowlist decide the
 // final header before body sanitization, so context-management options follow

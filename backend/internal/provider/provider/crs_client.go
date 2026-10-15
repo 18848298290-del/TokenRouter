@@ -17,10 +17,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// CRS synchronization first obtains an administrator token and then requests an
-// account export including secrets. URL validation runs before credential
-// validation, and the selected trust mode determines HTTPS, host allowlist, and
-// resolved-IP checks before either HTTP operation begins.
+// crs_client.go authenticates to CRS and retrieves account exports containing
+// credentials for synchronization. URL validation runs before credential
+// validation, and the selected trust mode determines HTTPS, host allowlist,
+// and resolved-IP checks before either HTTP operation begins.
 
 // CRSClientOptions selects URL validation and host trust for CRS import
 // requests.

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// generic_selection_values.go converts flow providers into comparison records
+// and restores their associations after ordering.
 // Basic and advanced ordering use smaller metadata records while execution
 // still needs the originating FlowProvider. Each conversion allocates
 // comparison metadata and keeps a lookup keyed by that metadata pointer, so

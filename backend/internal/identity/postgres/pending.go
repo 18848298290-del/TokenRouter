@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// pending.go persists browser authentication sessions, consumes their
+// completion credentials, and coordinates profile-adoption decisions.
 // Browser pending state pairs a stored session token with a browser key and a
 // separately hashed completion code. Reads validate expiry, consumption, and
 // browser proof before a conditional write claims the session and removes

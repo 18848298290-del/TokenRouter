@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// email_oauth.go defines GitHub and Google credential exchange and
+// verified-profile retrieval operations.
 // GitHub and Google login obtain a provider subject and verified email before
 // entering local account rules. Code exchange uses the selected server client
 // credentials, while profile retrieval consumes the returned access token;

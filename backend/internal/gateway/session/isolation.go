@@ -8,16 +8,17 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// A session's first group is recorded even when that group's isolation setting is
-// disabled. Later use in a different group is rejected only when the target group
-// requires isolation, so the first owner remains available if a later target
-// activates that rule. Identity combines the user, source category, and session
-// hash to separate otherwise equal client session text.
+// isolation.go records first-group session ownership and enforces isolation on
+// later group changes. Later use in a different group is rejected only when the
+// target group requires isolation, so the first owner remains available if a
+// later target activates that rule. Identity combines the user, source
+// category, and session hash to separate otherwise equal client session text.
 //
-// EnsureIsolation first attempts atomic insertion, then reads the existing owner.
-// A read failure triggers one insertion retry because the record can expire
-// between those operations. Matching the target renews the owner record; an
-// allowed different target retains the recorded first owner and its deadline.
+// EnsureIsolation first attempts atomic insertion, then reads the existing
+// owner. A read failure triggers one insertion retry because the record can
+// expire between those operations. Matching the target renews the owner record;
+// an allowed different target retains the recorded first owner and its
+// deadline.
 
 // These source labels separate ownership identities; the conflict message identifies
 // rejection when a session-owned group differs from an isolation-enabled target.

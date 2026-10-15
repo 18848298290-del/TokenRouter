@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// user_attribute.go persists account attribute definitions, display ordering,
+// and per-account text values.
 // Account attribute definitions persist input kinds, options, and validation
 // limits separately from per-account value strings. Ordinary CRUD reads the
 // Ent transaction from context when supplied, while display-order and

@@ -11,11 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ipmatch"
 )
 
-// Outbound URL validation runs before callers append endpoint paths and send
-// requests. Scheme permission, optional port range, normalized host patterns,
-// and literal private-host permission determine whether a parsed URL can be
-// used. Hostname resolution belongs to the transport layer, so accepting
-// ordinary DNS names here does not classify their resolved addresses.
+// policy.go validates outbound URL syntax and host permissions before callers
+// append endpoint paths and send requests. Scheme permission, optional port
+// range, normalized host patterns, and literal private-host permission
+// determine whether a parsed URL can be used. Hostname resolution belongs to
+// the transport layer, so accepting ordinary DNS names here does not classify
+// their resolved addresses.
 //
 // AllowedHosts constrains the URL when normalization retains entries;
 // RequireAllowlist also rejects an empty normalized list. Wildcard patterns

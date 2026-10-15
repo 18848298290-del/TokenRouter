@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// exchange.go executes Anthropic requests with status retries and signature or
+// thinking-budget recovery.
 // A provider can reject Messages history for signature or thinking-budget
 // constraints before generating output. Exchange treats those HTTP 400
 // responses as opportunities for selected request-body repairs, while other

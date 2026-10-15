@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// models.go resolves site-specific model aliases, eligibility, thinking
+// controls, and context capabilities.
 // Model aliases and controls depend on the credential site, with shared route
 // keys sometimes representing different public models. Catalog-derived tables
 // keep route identity, thinking support, and input limits together, and callers

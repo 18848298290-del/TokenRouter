@@ -10,6 +10,8 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 )
 
+// openai_error_fallback.go decides whether forwarding failures still need
+// client output after heartbeat or response commitment.
 // An HTTP writer can be committed by Compact SSE heartbeats, Images JSON
 // whitespace, or actual response content before forwarding reports an error.
 // EnsureResponse stops heartbeat writers before combining commitment markers

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// request_headers.go applies filtered provider header overrides and reads
+// individual normalized overrides.
 // Provider header overrides pass through egress policy before reaching an
 // upstream request. The provider record supplies an enabled, filtered map, and
 // the applicator uses Anthropic wire casing so permitted replacements retain

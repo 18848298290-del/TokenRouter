@@ -15,6 +15,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// upstream_transport_failure.go records sanitized transport failures and
+// translates retryable failures into provider failover errors.
 // Network failures can arrive before an upstream HTTP response supplies a
 // status or body. Ops keeps sanitized diagnostic evidence, while failover
 // receives a fixed safe 502 error body; cancellation returns its cause and

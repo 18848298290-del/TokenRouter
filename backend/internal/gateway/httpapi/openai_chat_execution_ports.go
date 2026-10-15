@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_chat_execution_ports.go binds selected Chat attempts to protocol
+// dispatch, client policy, request conversion, and response options.
 // Chat requests can execute as native Chat, converted Responses, Anthropic, or
 // Grok depending on the selected attempt profile. The adapter keeps that
 // attempt's provider and request state together while the shared runner

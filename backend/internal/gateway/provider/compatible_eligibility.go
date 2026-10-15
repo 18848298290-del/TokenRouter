@@ -12,6 +12,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// compatible_eligibility.go evaluates provider eligibility and reports the
+// first failed request requirement.
 // Compatible selection rejects targets in a fixed order so diagnostics
 // identify the first unavailable condition. Protocol and model-window
 // permission precede quota pause observations, model support, persistent quota

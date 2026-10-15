@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// session_limit.go tracks active provider sessions and enforces their
+// idle-window capacity in Redis.
 // Provider session capacity measures distinct sessions active within an idle
 // window, rather than the lifetime of each forwarding request. Sorted-set
 // members hold session UUIDs with Redis Unix-second activity scores;

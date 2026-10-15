@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// realtime.go admits realtime providers and retains upstream connections with
+// their provider capacity leases.
 // Realtime admission opens the upstream connection before the HTTP adapter
 // upgrades the client connection. A successful lease therefore retains both
 // upstream transport and provider admission, while a separate result

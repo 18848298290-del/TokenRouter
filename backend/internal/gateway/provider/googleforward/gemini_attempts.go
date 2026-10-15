@@ -32,6 +32,8 @@ import (
 	geminicli "github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// gemini_attempts.go executes Gemini Messages and native actions and assembles
+// their response observations.
 // Gemini Messages and native actions use one selected-provider exchange while
 // keeping the client model and upstream model separate. Project-bearing OAuth
 // generation can request an upstream stream for a buffered client, and native

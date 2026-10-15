@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// subscription_transactions.go supplies transaction scopes, row locks and key
+// rebinding for subscription mutations.
 // Subscription grants and maintenance coordinate on the recipient's user row
 // before locking a subscription row. Mutation adapters choose a bound
 // transaction first, then context's transaction, and create an owned

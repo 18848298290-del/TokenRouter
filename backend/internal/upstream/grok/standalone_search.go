@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// standalone_search.go builds Grok search requests and extracts results backed
+// by observed source URLs.
 // A search response can contain tool source URLs, citation annotations, and
 // assistant-written JSON results. Structured results are admitted only when
 // their normalized URL appears in that source evidence, preventing an
@@ -20,9 +22,10 @@ import (
 // or snippet text. Remaining observed sources are appended in discovery order
 // up to the normalized result limit. URL matching removes fragments and
 // normalizes hostname case and empty paths while retaining queries. Blank,
-// URL-valued, or integer-parsable titles fall back to source text or hostname.
-// Snippets can remain
-// empty when neither representation supplies them.
+// URL-valued, or integer-parsable titles use available source titles. Source-only
+// results also use the hostname when a title is absent. Structured results can
+// retain an empty title, and snippets remain empty when neither representation
+// supplies them.
 
 // Search prompts and extraction share a default and hard cap so returned
 // source counts follow the same request-size rule across web and X searches.

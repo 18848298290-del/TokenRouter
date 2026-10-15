@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usagecontract"
 )
 
+// usage_http.go constructs provider usage requests with validated roots,
+// credentials, and transport settings.
 // Upstream usage queries bind credentials and transport settings from one
 // provider record after validating the query root. A configured proxy ID
 // requires the corresponding loaded proxy and matching ID, so a missing or

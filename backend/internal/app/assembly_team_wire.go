@@ -8,6 +8,8 @@ import (
 	teamredis "github.com/TokenFlux/TokenRouter/internal/team/rediscache"
 )
 
+// assembly_team_wire.go registers team services, persistence, HTTP adapters,
+// and invitation limiting with Wire.
 // Team membership, member usage, and API key lifecycle changes share the
 // application SQL pool through the team repository. Wire passes that repository
 // and a Redis invitation limiter into the team service used by HTTP handlers.

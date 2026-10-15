@@ -19,13 +19,12 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// User Key requests combine authenticated subject identity with saved
-// credential configuration and payer-scoped group or subscription choices.
-// Creation converts optional HTTP amounts into service defaults and uses the
-// configured idempotency executor, while updates retain omission separately
-// from explicit zero or empty collections before selecting configuration
-// writes. Service validation decides ownership, binding and funding
-// eligibility.
+// key_handler.go handles user Key management requests and presents their group
+// and subscription choices. Creation converts optional HTTP amounts into
+// service defaults and uses the configured idempotency executor, while updates
+// retain omission separately from explicit zero or empty collections before
+// selecting configuration writes. Service validation decides ownership,
+// binding and funding eligibility.
 //
 // Responses present localized group copies and may attach optional live
 // capacity observations. Capacity failures still allow group listing, and

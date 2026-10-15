@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images_execute.go executes image attempts and records output commitment,
+// served images, usage, and delivery failures.
 // An image attempt can commit HTTP output or emit progressive image data before
 // a completed image is counted. Execution records those observations
 // independently, allowing a failed OAuth stream to report partial served output

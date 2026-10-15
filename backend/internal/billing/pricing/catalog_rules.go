@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// catalog_rules.go derives legacy context rules, compatibility modalities and
+// model identity candidates.
 // Legacy catalog prices can encode context surcharges in field names rather
 // than absolute context-tier records. The conversion recognizes positive input
 // and output above-price fields, selects the smallest supplied threshold, and

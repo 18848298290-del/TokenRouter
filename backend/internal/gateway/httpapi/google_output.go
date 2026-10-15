@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// google_output.go connects Google platform execution to synchronous HTTP
+// output, headers, and request observations.
 // Gemini and Antigravity execution write synchronously through the active Gin
 // response. Their shared HTTP adapter exposes request headers, filtered
 // upstream headers and Ops observation, while the selected error adapter

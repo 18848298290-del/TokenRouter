@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_cc_response_options.go binds Chat Completion readers to request-local
+// model observations, service tiers, and bounded response reads.
 // Chat Completion readers observe service tiers while decoding chunks and
 // bounded JSON bodies. Their callbacks retain the active HTTP request so model
 // observations, body-limit diagnostics and protocol errors reach the same

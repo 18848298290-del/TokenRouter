@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// collector.go records request dependency intervals and derives Server-Timing
+// header values.
 // Concurrent database, Redis, and external calls can overlap within one
 // request, so adding their durations would overstate blocked elapsed time.
 // The collector stores completed intervals and counts independently: two

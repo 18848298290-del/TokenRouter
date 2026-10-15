@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_runtime_wire.go registers subsystem lifecycle and application
+// constructors with Wire.
 // Wire readiness values require lifecycle hooks to be registered before
 // Application is returned. The runtime set collects the subsystem readiness
 // constructors and the application constructor, so Application.Run starts

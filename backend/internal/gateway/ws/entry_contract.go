@@ -12,11 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// An upgraded WebSocket keeps connection identity while each turn acquires
-// admission resources and can choose a new provider after failure. Entry data
-// separates validated Key and subject facts from provider selection, turn
-// callbacks, and completion inputs, letting RunEntry retain the current logical
-// request across attempts.
+// entry_contract.go defines the identities, operations, and per-turn callbacks
+// used by WebSocket entry execution. Entry data separates validated Key and
+// subject facts from provider selection, turn callbacks, and completion inputs,
+// letting RunEntry retain the current logical request across attempts.
 
 // EntryKey supplies validated Key access data retained by upgraded connection
 // orchestration.

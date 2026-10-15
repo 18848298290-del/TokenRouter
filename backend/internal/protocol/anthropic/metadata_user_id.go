@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// metadata_user_id.go extracts device, account, and session identities from
+// Claude metadata user IDs.
 // Claude metadata carries device, account, and conversation identifiers in
 // either a delimited string or a JSON object encoded inside user_id. Session
 // hashing and outgoing fingerprint rewriting need the same components from

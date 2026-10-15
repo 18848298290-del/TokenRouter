@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go handles administrator moderation configuration, audit review, and
+// risk-management requests.
 // Administrator review exposes moderation summaries, full input detail, and
 // retained image bytes through separate endpoints. App mounts these handlers
 // beneath administrator authentication and audit middleware; request filters

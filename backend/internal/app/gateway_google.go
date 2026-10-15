@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gateway_google.go constructs Gemini and Antigravity forwarding runtimes and
+// their HTTP executors.
 // Gemini and Antigravity forwarding share the application's transport and
 // request activity. Gemini rate-limit observation uses its daily quota reset as
 // a parser fallback, while both runtimes receive startup response limits and

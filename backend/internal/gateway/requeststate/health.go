@@ -5,10 +5,16 @@ import (
 	"strings"
 )
 
-// Provider health observations use an upstream model selected for the current
-// attempt. Explicit first-model evidence takes precedence over the stored hint,
-// and an explicit false thinking hint stays distinguishable from a missing hint
-// when the health adapter receives a pointer.
+// health.go selects the model and thinking evidence reported for provider
+// health observations. Explicit first-model evidence takes precedence over the
+// stored hint, and an explicit false thinking hint stays distinguishable from a
+// missing hint when the health adapter receives a pointer.
+//
+// Only the first explicit model participates in selection; a blank first entry
+// permits the saved model hint even when later entries are nonblank. Storing a
+// model leaves an empty candidate unchanged. Thinking evidence is returned
+// through a fresh pointer so a consumer can distinguish absent state from an
+// explicit false value without mutating the captured hint.
 
 // FirstHealthModel trims the first model in values, returning empty for a
 // missing or blank first entry. Later entries never supply a substitute, so

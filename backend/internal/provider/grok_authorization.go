@@ -11,6 +11,8 @@ import (
 	wiregrok "github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// grok_authorization.go exchanges Grok browser, password, SSO, and refresh
+// credentials into provider token metadata.
 // Grok browser authorization binds a returned code to the saved state, PKCE
 // verifier, redirect, and client identity. Validation finishes before the
 // session is claimed, then the claim is consumed and the session is deleted

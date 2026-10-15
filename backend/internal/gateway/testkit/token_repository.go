@@ -7,18 +7,18 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Refresh tests can supply an execution-provider store that also implements
-// credential write capabilities. Wrapping just the read interface would hide
-// those optional methods from the production refresh coordinator, even though
-// the fixture can perform them.
+// token_repository.go adapts execution-provider fixtures to token-refresh reads
+// while retaining optional write capabilities. Wrapping just the read interface
+// would hide those optional methods from the production refresh coordinator,
+// even though the fixture can perform them.
 //
 // The adapter captures credential and Grok-success writer interfaces during
-// construction and embeds exactly the capabilities the source exposes
-// alongside converted record reads. Runtime type assertions therefore reach
-// the same supported writes through the wrapper. A nil source remains a nil
-// refresh repository, and record conversion preserves missing results and
-// accompanying read errors. The fixture retains the source interfaces for the
-// duration of its refresh test.
+// construction and embeds exactly the capabilities the source exposes alongside
+// converted record reads. Runtime type assertions therefore reach the same
+// supported writes through the wrapper. A nil source remains a nil refresh
+// repository, and record conversion preserves missing results and accompanying
+// read errors. The fixture retains the source interfaces for the duration of
+// its refresh test.
 
 // tokenRepositoryReader adapts provider fixtures for production credential refresh.
 type tokenRepositoryReader struct {

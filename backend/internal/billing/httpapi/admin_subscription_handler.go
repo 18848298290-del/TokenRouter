@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin_subscription_handler.go handles administrator subscription assignment,
+// queries, and quota or validity maintenance.
 // Administrator grant operations use the subscription service for issued
 // limits, renewal chains and quota maintenance. The handlers bind HTTP inputs
 // and assignment identity, map service results to administrator DTOs and leave

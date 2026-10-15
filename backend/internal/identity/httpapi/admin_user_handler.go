@@ -15,6 +15,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin_user_handler.go handles administrator account queries and mutations,
+// including role checks and idempotent balance changes.
 // Administrator account requests combine editable identity fields with account
 // keys, activity, and current concurrency data. Optional pointer fields carry
 // zero and empty updates separately from omitted values, while list responses

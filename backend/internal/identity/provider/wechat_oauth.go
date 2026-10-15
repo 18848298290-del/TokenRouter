@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// wechat_oauth.go exchanges WeChat authorization codes and retrieves
+// channel-specific user information.
 // WeChat returns access credentials and channel-specific identity fields in two
 // HTTP responses. Code exchange obtains the token and openid, then userinfo uses
 // both values in a query request; the identity flow later chooses the stable

@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ws_session_headers.go resolves WebSocket session and conversation
+// identifiers while retaining the source of each selected value.
 // Codex WebSocket clients use both hyphenated and legacy session headers, and
 // may also send a conversation header or prompt cache key. A nonblank dedicated
 // session value determines connection affinity before either fallback is

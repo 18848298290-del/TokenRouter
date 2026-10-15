@@ -5,6 +5,8 @@ import (
 	"errors"
 )
 
+// query_mode.go resolves Ops query source preferences and prepares raw retries
+// when automatic queries fail.
 // Hourly overview totals carry the exclusion policy used when they were
 // computed, with no status-code dimension for recalculation at query time.
 // Query filters carry an internal source preference alongside the client-status

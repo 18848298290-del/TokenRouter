@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// normalize.go normalizes response.create frames while retaining client model
+// and replay identities.
 // A WebSocket request can omit model after the session has accepted an earlier
 // client identifier, but policy and provider execution still need distinct
 // model forms. Normalization retains the client model for response restoration,

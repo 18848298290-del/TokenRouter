@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// execution_agent_identity.go prepares signed authorization and associates
+// task credential updates with execution targets.
 // Agent Identity authorization signs with a registered task belonging to the
 // credential owner, including a Spark parent. The provider coordinator
 // serializes task work and rereads current credentials; this adapter binds

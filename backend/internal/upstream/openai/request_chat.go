@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// request_chat.go sends prepared Chat Completions bodies with selected
+// authentication, headers, and transport callbacks.
 // Chat requests apply bearer authentication and select JSON or SSE acceptance
 // from the prepared stream mode. Allowed inbound headers precede transport
 // preparation and final provider header handling, so the selected transport

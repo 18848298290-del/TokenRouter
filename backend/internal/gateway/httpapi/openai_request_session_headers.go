@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_request_session_headers.go forwards trusted conversation headers and
+// rebuilds Codex model routing hints.
 // A conversation header carries client state to one trusted API-key origin,
 // while Codex routing hints describe the final model and service tier sent by
 // an OAuth attempt. Provider overrides and model rewrites can otherwise leave

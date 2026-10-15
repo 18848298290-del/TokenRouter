@@ -5,6 +5,8 @@ import (
 	"reflect"
 )
 
+// clone.go copies supported nested values for independently mutable query
+// snapshots.
 // Cached results can contain pointers inside maps, slices, interfaces, and
 // exported struct fields. Clone recursively rebuilds those positions so
 // supported mutable values can be changed by a caller independently of the

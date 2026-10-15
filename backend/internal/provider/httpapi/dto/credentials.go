@@ -4,10 +4,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// credentials.go redacts sensitive provider credentials and reports their
+// configured presence to administrators.
 // Administrator credential responses expose permitted configuration and
 // sensitive-key presence separately. The provider classifier removes known
 // secret keys even when unconfigured, and presence flags use value-specific
 // rules so empty strings and false do not appear as configured secrets.
+//
+// Redaction builds the public map separately from presence flags, so an
+// omitted secret can still be shown as configured without returning its value.
+// Nil input retains nil outputs. Permitted values copy the container forms
+// supported by CloneValues; unsupported mutable values can remain shared with
+// the caller.
 
 // RedactCredentials returns permitted credential values and flags for
 // configured sensitive keys. Nil input returns two nil maps, and sensitive keys

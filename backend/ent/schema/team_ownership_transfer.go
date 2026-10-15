@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Transferring team ownership creates a pending request addressed to the target
-// member. Its token digest identifies the request, and expiry and resolution
-// timestamps let the team repository distinguish open requests from accepted,
-// declined, cancelled, or expired transfers.
+// team_ownership_transfer.go defines pending ownership-transfer requests
+// addressed to target members. Its token digest identifies the request, and
+// expiry and resolution timestamps let the team repository distinguish open
+// requests from accepted, declined, cancelled, or expired transfers.
 
 // TeamOwnershipTransfer stores a transfer that the target member must accept.
 type TeamOwnershipTransfer struct {

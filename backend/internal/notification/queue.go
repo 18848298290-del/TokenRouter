@@ -11,6 +11,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// queue.go queues identity email tasks and coordinates worker startup,
+// admission, and shutdown.
 // Identity credentials are prepared when a worker consumes an accepted task,
 // so queue admission records delivery intent before generation or token reuse.
 // The queue has fixed storage and worker counts; accepted tasks remain in memory

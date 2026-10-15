@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// system_log_service.go lists indexed system logs and coordinates filtered
+// cleanup with a subsequent audit write.
 // System-log cleanup deletes matching indexed rows before attempting a separate
 // audit write with the same caller context. Audit failure is logged while the
 // completed deletion count is returned, so successful cleanup does not

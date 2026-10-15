@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// pricing.go resolves batch-image unit prices through the shared billing price
+// resolver.
 // Batch estimates need a per-image price for the selected billing model and
 // image size. Pricing forwards that lookup to the shared billing resolver and
 // wraps lookup failures with the missing-task-price category used by

@@ -12,6 +12,8 @@ import (
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 )
 
+// legacy.go exposes named historical ciphertext fixtures and constructs a load
+// balancer with their matching encryption key.
 // Historical payment instance ciphertext uses a fixed thirty-two-byte key and
 // named stored configuration examples. The embedded fixture lets compatibility
 // tests read those strings directly, while LegacyLoadBalancer supplies the

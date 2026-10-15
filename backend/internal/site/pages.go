@@ -10,6 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// pages.go authorizes page and image reads through configured menu visibility.
 // Menu entries decide whether Markdown pages and their images are accessible.
 // A page_slug identifies a page directly, while older md: URLs carry the same
 // slug in a different field. The first matching entry supplies visibility, so

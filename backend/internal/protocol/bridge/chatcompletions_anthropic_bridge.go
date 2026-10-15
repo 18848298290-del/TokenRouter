@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// chatcompletions_anthropic_bridge.go converts Messages requests to Chat and
+// Chat replies back to Messages.
 // Messages history mixes text, thinking, media, and tool blocks inside roles,
 // while Chat carries reasoning and function calls in separate message fields.
 // Direct request conversion splits tool results from user media, replays

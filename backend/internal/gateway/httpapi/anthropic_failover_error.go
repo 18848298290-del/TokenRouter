@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// An exhausted upstream attempt needs a terminal client error even when its
-// provider uses credentials unrelated to the client's gateway key. Default
-// Anthropic mapping turns upstream authentication and server failures into
-// gateway errors while retaining distinct rate-limit and overload classifications.
+// anthropic_failover_error.go writes terminal Anthropic errors after provider
+// recovery is exhausted. An exhausted upstream attempt needs a terminal client
+// error even when its provider uses credentials unrelated to the client's
+// gateway key. Default Anthropic mapping turns upstream authentication and
+// server failures into gateway errors while retaining distinct rate-limit and
+// overload classifications.
 //
 // Silent rejection takes precedence over administrator rules. Other response
 // bodies can match a rule that chooses the client status and message before

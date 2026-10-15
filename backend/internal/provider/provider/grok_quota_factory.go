@@ -9,10 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok quota and observed-model queries share a probe runtime for in-flight
-// claims and shutdown. The factory binds platform transport, token acquisition,
-// provider storage and local statistics to that runtime, letting the core
-// service combine billing observations with quota and media eligibility.
+// grok_quota_factory.go assembles Grok quota and observed-model services
+// around a shared probe runtime. The factory binds platform transport, token
+// acquisition, provider storage and local statistics to that runtime, letting
+// the core service combine billing observations with quota and media
+// eligibility.
 
 // GrokQuotaStore reads providers and writes quota snapshots and rate limits.
 type GrokQuotaStore interface {

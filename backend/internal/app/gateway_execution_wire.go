@@ -8,6 +8,8 @@ import (
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 )
 
+// gateway_execution_wire.go registers gateway platform executors, request
+// credentials, response adapters, and completion rate readers with Wire.
 // Gateway text and media entry points need platform executors with request
 // credentials and response-state adapters. Wire supplies those executors
 // alongside provider route planning and the separate Forward and OpenAI rate

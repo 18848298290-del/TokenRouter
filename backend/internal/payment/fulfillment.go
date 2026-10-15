@@ -13,6 +13,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// fulfillment.go confirms provider payment observations and coordinates
+// repeatable balance or subscription delivery.
 // Verified provider progress can arrive repeatedly or after a local pending
 // order was closed. Notification handling first resolves merchant identity and
 // checks applicable saved provider metadata, then conditionally records

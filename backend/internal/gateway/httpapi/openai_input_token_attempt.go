@@ -16,6 +16,8 @@ import (
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 )
 
+// openai_input_token_attempt.go adapts input-token provider selection and
+// forwarding to the dedicated retry loop.
 // Responses preflight passes selected targets into a count-specific retry loop.
 // Each forward releases any selection resource before returning, and failures
 // carry platform retry classification back to that loop; terminal client output

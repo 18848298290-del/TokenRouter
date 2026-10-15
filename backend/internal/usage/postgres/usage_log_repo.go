@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo.go constructs the usage store, coordinates batcher shutdown,
+// and supplies compatibility filters and public rankings.
 // Usage records preserve the acting user, financial identity, execution
 // platform, and model evidence needed by distinct reports. Report filters keep
 // those meanings separate: ordinary user scopes select actors, public rankings

@@ -7,10 +7,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// execution_credentials.go acquires tokens and writes credential updates back
+// to execution targets.
 // Token acquisition and credential persistence can update the request
 // execution target before a storage operation succeeds. The adapters copy
 // those credentials back onto the original target so later request preparation
 // sees token-source backfills and the provider module's selected update path.
+//
+// Whole-record persistence assigns credentials to the loaded target before
+// invoking storage, retaining its other configuration fields. A store with a
+// credential-specific update method uses that narrower write. The provider
+// persistence result reports mutation separately from failure, so changed
+// credentials are copied back even when the write returns an error. Callers
+// synchronize access to the execution target.
 
 // providerCredentialsUpdater replaces credentials through a field-specific
 // provider storage operation.

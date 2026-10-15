@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// stats_pricing.go supplies group-linked provider cost rules to billing
+// statistics.
 // Provider cost statistics use the price configuration linked to a group,
 // independent of model authorization. The adapter exposes that configuration's
 // cost rules to billing and carries a missing configuration through as a nil

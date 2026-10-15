@@ -5,10 +5,12 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Converted upstream output needs a transport reader and a synchronous
-// downstream writer while protocol algorithms remain independent of Gin.
-// Adapters own header filtering, HTTP commitment, flushing, and line-size
-// restrictions; conversion supplies response values and framed event data.
+// output.go defines upstream response reading and synchronous downstream output
+// interfaces for protocol conversion. Converted upstream output needs a
+// transport reader and a synchronous downstream writer while protocol
+// algorithms remain independent of Gin. Adapters own header filtering, HTTP
+// commitment, flushing, and line-size restrictions; conversion supplies
+// response values and framed event data.
 
 // Lines supplies the transport adapter's response-line cursor and read-error result.
 type Lines interface {

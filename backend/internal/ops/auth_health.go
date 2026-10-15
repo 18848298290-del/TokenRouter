@@ -2,6 +2,8 @@ package ops
 
 import "context"
 
+// auth_health.go collects authentication cache and invalid-credential
+// diagnostics for administrator health responses.
 // Outbox lag, local subscriber health, lookup counters, and invalid-credential
 // pressure describe different parts of API-key authentication. The
 // administrator response keeps those signals together so operators can inspect

@@ -21,15 +21,15 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Responses WebSocket failures can carry HTTP status and diagnostic fields in
-// standalone errors or nested response failures. Their selected status
+// openai_ws_forwarder_support.go classifies Responses WebSocket failures and
+// applies provider-health and client-reporting decisions. Their selected status
 // controls provider policy, while the event shape controls warning observation
-// and client close presentation. Explicit numeric statuses retain priority
-// over inferred code or type labels.
+// and client close presentation. Explicit numeric statuses retain priority over
+// inferred code or type labels.
 //
 // Provider health and client reporting run at different points. Request-scoped
-// rejections bypass provider policy, paired error and failed events can share
-// a single health update, and Ops failure data is marked when an error is
+// rejections bypass provider policy, paired error and failed events can share a
+// single health update, and Ops failure data is marked when an error is
 // selected for client delivery. Callers decide whether output progress still
 // permits provider failover; these helpers return decisions and close
 // instructions for that execution path.

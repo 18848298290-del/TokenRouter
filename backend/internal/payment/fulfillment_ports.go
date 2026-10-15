@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// fulfillment_ports.go defines conditional order persistence and entitlement
+// operations and binds fulfillment runtime callbacks.
 // Verified payment observations can be replayed by callbacks, queries, or
 // recovery workers while entitlement delivery is unfinished. FulfillmentStore
 // exposes the conditional status and timestamp updates used to claim and

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// scheduled_report_service.go schedules operational email reports and builds
+// summary or detailed content from monitoring observations.
 // Scheduled reports use local cron times to decide when to summarize an elapsed
 // UTC window. A Redis marker records an attempt before content generation, and
 // a leader lease gates the scheduler when Redis is configured. Missing Redis

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// balance.go defines balance adjustment operations and their reported prior
+// and requested balances.
 // Balance adjustments need the observed old value and the resulting or
 // rejected requested balance. Returned changes let administrative flows
 // describe successful writes and explain rejected amounts, while initial

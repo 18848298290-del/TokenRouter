@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
 )
 
+// error_passthrough_repo.go stores and retrieves error passthrough rules
+// through Ent and applies complete rule replacements.
 // Stored error rules include match conditions, response actions, and ordering
 // metadata in one Ent record. Creating omits absent optional values, while
 // replacement updates clear omitted values so an earlier keyword, platform,

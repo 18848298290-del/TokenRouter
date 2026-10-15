@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// service_tier_validation.go validates request service-tier fields and
+// normalizes accepted aliases into canonical labels.
 // Service-tier field validation distinguishes omitted or null values from
 // explicit empty or unsupported values. Recognized strings are trimmed and
 // lowercased, with fast represented by the canonical priority label; this local

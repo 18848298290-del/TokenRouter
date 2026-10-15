@@ -17,12 +17,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic stream events distribute message content, usage, and stop reasons
-// across separate frames. OpenAI conversion accumulates those observations while
-// keeping raw upstream model declarations separate from restored client model
-// aliases. Buffered output needs a message_start object; streaming output feeds
-// the same observations through bridge state and restores tool names before
-// framing the resulting client events.
+// conversion_output.go converts Anthropic stream events into buffered or
+// streamed OpenAI responses and captures usage. Anthropic stream events
+// distribute message content, usage, and stop reasons across separate frames.
+// OpenAI conversion accumulates those observations while keeping raw upstream
+// model declarations separate from restored client model aliases. Buffered
+// output needs a message_start object; streaming output feeds the same
+// observations through bridge state and restores tool names before framing the
+// resulting client events.
 //
 // A read failure can follow a usable terminal observation, so partial usage and
 // the original error can accompany output that has already been formed. On read

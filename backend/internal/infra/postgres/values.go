@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// values.go converts optional IDs, truncates diagnostic text, and escapes
+// literal SQL LIKE input.
 // Audit and storage queries represent optional IDs, bounded diagnostic text,
 // and literal LIKE input with different SQL values. Positive-ID filtering is
 // separate from nullable integer conversion, while diagnostic truncation fits

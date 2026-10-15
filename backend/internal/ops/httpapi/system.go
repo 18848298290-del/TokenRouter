@@ -19,6 +19,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// system.go serves release queries and submits update, rollback, and restart
+// commands with operation identities.
 // System maintenance commands pair an HTTP idempotency payload with a separate
 // maintenance operation identity. A supplied key derives that identity from the
 // operation, administrator subject, and registered route; an absent key uses a

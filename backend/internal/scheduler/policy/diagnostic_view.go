@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// diagnostic_view.go defines the administrative response shapes for provider
+// eligibility and scheduler score explanations.
 // Administrative scheduler diagnostics carry a provider's advanced groups and
 // an optional detailed calculation. Score factors, effective settings,
 // exclusion counts, and policy decisions remain separate so readers can

@@ -24,6 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// openai_alpha_search.go adapts AlphaSearch provider attempts and captures
+// successful search usage for mandatory completion.
 // AlphaSearch keeps original request bytes beside group-mapped execution
 // bytes so successful completion can fingerprint the admitted payload while
 // platform requests use the selected route. A credential-bearing current
@@ -35,7 +37,7 @@ import (
 // results contribute the WebSearchCalls unit supplied by ForwardAlphaSearch.
 // Completion captures the result, authentication, subscription and client
 // metadata before mandatory submission. The worker records that snapshot
-// after HTTP exit while same-provider and provider-switch retry counts remain
+// independently of HTTP output while same-provider and provider-switch retry counts remain
 // with the media loop.
 
 // alphaRequestAdapter retains request identity and the current provider

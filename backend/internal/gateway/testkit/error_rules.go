@@ -7,10 +7,10 @@ import (
 	gatewaytelemetry "github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 )
 
-// Error-presentation tests can use the production rule matcher with an
-// in-memory rule list. Starting that service publishes its compiled snapshot,
-// while the non-failover fixture supplies an all-category match and fixed
-// response settings for callers testing final error formatting.
+// error_rules.go constructs production error matchers and non-failover rule
+// fixtures for gateway tests. Starting that service publishes its compiled
+// snapshot, while the non-failover fixture supplies an all-category match and
+// fixed response settings for callers testing final error formatting.
 
 // errorRulesFixtureRepo supplies a preset list to the production rule service.
 type errorRulesFixtureRepo struct {

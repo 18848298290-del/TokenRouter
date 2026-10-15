@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// grok_executor.go binds Grok execution dependencies and builds authenticated
+// Responses requests for the selected provider.
 // Grok Responses request construction uses the selected provider's route and
 // credentials, with CLI headers reserved for OAuth providers. Header overrides
 // run through the shared execution binding, and the supplied cache identity

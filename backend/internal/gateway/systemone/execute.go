@@ -9,18 +9,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// SystemOne answers can be served even when usage is unavailable or downstream
-// writing fails. Served results finish the attempt: valid usage reaches
-// completion, while missing usage reaches its observation callback, and
-// neither result starts another provider inference.
+// execute.go runs SystemOne provider attempts and routes served results to
+// completion or missing-usage observation. Served results finish the attempt:
+// valid usage reaches completion, while missing usage reaches its observation
+// callback, and neither result starts another provider inference.
 //
 // Unserved failures can retry on the held provider according to failover
-// policy, then switch within an independent outer budget if response
-// commitment still permits it. Reporting and completion run before the
-// acquired provider release callback. Same-provider backoff is cancellable,
-// and the outer loop checks cancellation before selection and switching.
-// Acquisition refusal returns the current context error; the HTTP adapter can
-// already have presented a local slot error while that context remains live.
+// policy, then switch within an independent outer budget if response commitment
+// still permits it. Reporting and completion run before the acquired provider
+// release callback. Same-provider backoff is cancellable, and the outer loop
+// checks cancellation before selection and switching. Acquisition refusal
+// returns the current context error; the HTTP adapter can already have
+// presented a local slot error while that context remains live.
 
 // ErrNoProvider reports that selection returned no usable SystemOne provider
 // for the request.

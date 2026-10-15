@@ -10,8 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAI workspace deactivation affects other OAuth-like records with the same
-// saved ChatGPT account ID. Propagation claims a process-local team key before
+// health_team_linked.go propagates OpenAI workspace deactivation to matching
+// account records with process-local deduplication.
+// OpenAI workspace deactivation affects other non-shadow OpenAI records with
+// the same saved ChatGPT account ID. Propagation claims a process-local team key before
 // querying, so a failed lookup still delays another attempt until the
 // deduplication interval expires.
 //

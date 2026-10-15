@@ -1,5 +1,7 @@
 package settings
 
+// omitted.go removes omitted storage keys from a prepared partial settings
+// update.
 // Flat request structs initialize absent non-pointer fields to zero, which can
 // look like an intentional settings update after normalization. The HTTP mapper
 // records their omitted storage keys so the prepared batch can retain those

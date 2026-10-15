@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// openai_fixed_execution.go opens protocol-specific attempt adapters and
+// copies execution observations.
 // Each HTTP text request opens fresh provider-attempt state while runtime
 // services remain shared with app assembly. Responses, Chat, and Messages
 // select different adapters from the request kind, using the same admitted key,

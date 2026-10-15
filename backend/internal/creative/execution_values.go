@@ -2,6 +2,8 @@ package creative
 
 import "github.com/TokenFlux/TokenRouter/internal/upstream"
 
+// execution_values.go validates and deduplicates generated images before
+// selecting the retained creative output.
 // A creative execution delivers one retained image even when an upstream
 // returns several outputs. Empty byte slices and repeated byte hashes are
 // removed, but the size of every nonempty candidate is checked before the

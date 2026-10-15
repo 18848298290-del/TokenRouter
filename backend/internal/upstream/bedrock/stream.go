@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// stream.go decodes Bedrock EventStream frames and emits Claude SSE with
+// normalized usage.
 // Bedrock streaming wraps Claude JSON events inside base64 chunk payloads
 // carried by binary AWS EventStream frames. The decoder verifies the IEEE
 // prelude and message checksums before classifying headers, then the output

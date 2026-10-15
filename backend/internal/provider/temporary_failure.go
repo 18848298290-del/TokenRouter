@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// temporary_failure.go applies fixed temporary pauses for Google configuration
+// errors and empty upstream responses.
 // Exhausted configuration or empty-response retries can leave a provider on a
 // short temporary pause. Both commands use the wall clock and fixed one-minute
 // deadlines, reporting the storage outcome through the supplied logger while

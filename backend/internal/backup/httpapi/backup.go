@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// backup.go handles administrator backup configuration, archive downloads, and
+// password-verified restore requests.
 // Administrator backup requests configure storage and content, launch tracked
 // background operations, and retrieve archive metadata or download responses.
 // Connection tests report their outcome inside a successful JSON envelope, while

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// codex_invite_client.go sends authenticated Codex invitation requests and
+// classifies unavailable referral responses.
 // Codex invitation operations use ChatGPT backend JSON endpoints with bearer
 // credentials and desktop identity headers. Responses are read within the
 // error-body limit and closed before ownership returns to the provider use

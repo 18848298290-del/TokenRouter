@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// analytics_aggregation.go defines multidimensional usage-aggregation progress
+// and the repository operations that maintain its buckets.
 // Multidimensional usage rollups keep UTC live progress separate from reverse
 // historical backfill. Their repository interface exposes hourly rebuilding,
 // daily rebuilding, and field-specific progress publication, allowing the

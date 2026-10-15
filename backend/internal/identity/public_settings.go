@@ -2,8 +2,9 @@ package identity
 
 import "strings"
 
-// Browser authentication choices are derived from supplied setting values and
-// startup defaults. LinuxDo, DingTalk and OIDC expose their selected switches;
+// public_settings.go derives browser-visible authentication options from
+// stored provider settings and startup defaults.
+// LinuxDo, DingTalk and OIDC expose their selected switches;
 // GitHub and Google also require client credentials and a backend callback to
 // advertise email OAuth. These public decisions have fewer validation checks
 // than the configuration reads used to start an actual login.

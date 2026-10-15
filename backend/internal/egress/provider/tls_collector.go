@@ -24,6 +24,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
+// tls_collector.go runs the TLS capture listener and records offered
+// fingerprints with HTTP request metadata.
 // The TLS collector reads an offered ClientHello before completing a server
 // handshake, allowing an administrator to save the client's ordered fingerprint
 // beside HTTP request metadata. Buffered peeking keeps that first TLS record

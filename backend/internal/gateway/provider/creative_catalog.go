@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// creative_catalog.go applies execution model rules to creative image
+// catalogue entries.
 // Creative image catalogues apply the same provider mapping and final-model
 // support rules as execution. Preparing the policy once gives the catalogue
 // reusable model rules, while attribute lookup still describes the supplied

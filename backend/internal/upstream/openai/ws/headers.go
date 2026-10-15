@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// headers.go builds WebSocket handshake headers from authentication, session
+// identity, fingerprint, and routing options.
 // WebSocket handshake identity includes selected authentication, isolated
 // sessions, device headers, and beta features used by connection compatibility.
 // Agent Identity leaves bearer Authorization absent here for the selected

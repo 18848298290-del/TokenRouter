@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_options.go supplies bounded error inspection and Antigravity
+// model, project, and identity options.
 // Antigravity error inspection uses a bounded response prefix separately from
 // optional diagnostic logging. The read cap starts at 512 KiB and can grow to
 // the requested logging cap, while model mapping, project selection, and

@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// image_output.go counts distinct generated images across repeated response
+// observations and collects their reported sizes.
 // One image can appear in an output-item event and again in a completed response.
 // Output items therefore share an identity set across observations, using the
 // first available ID, call ID, or result hash. Images API data arrays supply a

@@ -10,6 +10,8 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
+// openai_text_anthropic.go dispatches Messages, Chat and Responses requests to
+// native Anthropic execution.
 // A selected Anthropic-compatible upstream can serve Messages directly or
 // receive requests converted from Chat or Responses. These HTTP entry facades
 // create adapters with the corresponding client protocol kind so the shared

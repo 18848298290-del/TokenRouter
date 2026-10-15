@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// host.go samples host, container, and connection-pool health for Ops metric
+// collection.
 // Host and container resources can describe different denominators, so memory
 // usage and capacity are selected together. Readable cgroup usage is useful
 // only with a positive capacity; otherwise the sampler uses the host memory

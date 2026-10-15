@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
-// Tool lowering needs one mapping for the output still being produced and
-// another for a later WebSocket session update. Replacing session names leaves
-// the active-turn slot intact, so restoration can continue using the current
-// turn's names while future declarations change.
+// response_tools.go stores tool restoration mappings for active requests, later
+// session turns, and HTTP bridging. Replacing session names leaves the
+// active-turn slot intact, so restoration can continue using the current turn's
+// names while future declarations change.
 //
 // The mutex synchronizes reference publication and retrieval, while consumers
 // keep published maps immutable after retrieval. Client mappings and namespace

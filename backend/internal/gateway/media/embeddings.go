@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// embeddings.go runs embedding attempts with provider switching, slot cleanup
+// and successful usage completion.
 // Embedding execution switches providers only while a classified failure
 // has left output unchanged. The request adapter owns selection and writes,
 // while the loop carries the last switched outcome into a later selection

@@ -1,5 +1,7 @@
 package dto
 
+// settings_views.go defines HTTP display values for provider cooldown and
+// stream-timeout settings.
 // Provider health settings expose cooldown durations in the units used by their
 // administration endpoints. OpenAI 403 and stream-timeout policies additionally
 // include threshold counts and observation windows, while runtime settings

@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+// crypto.go encodes legacy provider ciphertext and reads both plaintext and
+// encrypted provider configuration.
 // Persisted provider configuration can be plaintext JSON or the historical
 // three-part AES-GCM representation. JSON parsing is attempted first, so an
 // empty value or JSON null can be readable while producing a nil map for

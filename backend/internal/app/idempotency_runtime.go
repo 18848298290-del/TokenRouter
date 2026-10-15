@@ -8,12 +8,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// Idempotency settings distinguish absent process configuration from an
-// explicit false observe-mode flag. Construction starts from package defaults,
-// replaces positive retention and lock durations and response-prefix limits,
-// and takes ObserveOnly from every present configuration. A zero-valued config
-// therefore retains numeric defaults while disabling observe-only admission
-// for commands that require a key.
+// idempotency_runtime.go constructs the idempotency coordinator and cleanup
+// worker from configuration and shared storage. Idempotency settings
+// distinguish absent process configuration from an explicit false observe-mode
+// flag. Construction starts from package defaults, replaces positive retention
+// and lock durations and response-prefix limits, and takes ObserveOnly from
+// every present configuration. A zero-valued config therefore retains numeric
+// defaults while disabling observe-only admission for commands that require a
+// key.
 //
 // The coordinator and expiry worker receive application logging callbacks and
 // the repository supplied by Wire. Cleanup intervals and batch sizes are passed

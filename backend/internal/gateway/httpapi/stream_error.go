@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// stream_error.go writes terminal Responses failure events and derives their
+// response IDs and client error codes.
 // After Responses streaming begins, clients recognize failure through a
 // terminal response.failed object. That object carries an ID, creation
 // timestamp and empty output array so clients can complete their response state

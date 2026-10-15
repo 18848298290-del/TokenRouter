@@ -12,6 +12,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// request.go builds Messages requests with coordinated authentication,
+// fingerprints, beta headers, and body sanitization.
 // A Messages body can carry identity and optional fields that depend on its
 // outbound User-Agent and beta header. Preparing these independently would let
 // a billing version, session header, or gated body field disagree with the

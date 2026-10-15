@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// options.go normalizes logger configuration and resolves bootstrap defaults
+// and output paths.
 // Logging starts with console bootstrap defaults, then normalizes configured
 // output, rotation, and sampling choices before construction. Blank fields
 // receive defaults, while invalid nonblank level and format strings remain

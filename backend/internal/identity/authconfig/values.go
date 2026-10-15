@@ -1,5 +1,7 @@
 package authconfig
 
+// values.go defines startup credential, callback, and profile settings for
+// supported OAuth providers.
 // Startup OAuth settings provide defaults for later runtime reads, and each
 // provider carries its own credential and callback fields. The resulting values
 // feed browser authorization, backend code exchange, and profile interpretation;

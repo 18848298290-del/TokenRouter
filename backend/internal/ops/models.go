@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// models.go defines error and system-log query models and extracts typed
+// request timings from access-log metadata.
 // An error query combines captured request facts with current user, provider,
 // group, and API-key display metadata. Display status prefers a nonnull
 // upstream value, while client-status guards and query-time SLA policy decide

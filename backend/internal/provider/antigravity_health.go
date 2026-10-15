@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// antigravity_health.go applies retry-exhaustion penalties and maintains model
+// and AI Credits cooldown observations.
 // Antigravity health handling records exhausted INTERNAL 500 retry rounds
 // separately from model and AI Credits cooldowns. One and two counted rounds
 // choose temporary pauses; later rounds write error status, while successful

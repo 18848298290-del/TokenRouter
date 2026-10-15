@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// bindings.go defines shared media execution bindings and constructs the
+// runtime used by HTTP request adapters.
 // Media HTTP factories share application-owned selection, funding,
 // concurrency and completion services while creating separate state for each
 // request. Platform callbacks perform one selected-provider operation, so the

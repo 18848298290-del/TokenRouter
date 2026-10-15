@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// application.go constructs the application and coordinates startup, HTTP
+// serving, and lifecycle cleanup.
 // Application construction can acquire resources before a later dependency
 // fails. Initialize supplies one lifecycle manager and background-task tracker
 // to the generated graph, registering the log backend before construction

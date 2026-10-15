@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_create.go handles strict batch creation requests through the
+// administrator response-idempotency executor.
 // Batch creation accepts a strict list of complete provider requests and
 // returns an outcome for each supplied item. Deprecated Extra keys are
 // discarded before response idempotency records the payload, while the batch

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// antigravity_authorization_sessions.go stores Antigravity authorization proof
+// and coordinates expiry cleanup startup and shutdown.
 // Antigravity authorization pairs state and PKCE proof with a saved proxy for
 // later code exchange. Lookup compares age from CreatedAt with the
 // thirty-minute lifetime even before periodic cleanup removes expired proof.

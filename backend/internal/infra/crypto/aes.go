@@ -9,6 +9,8 @@ import (
 	"io"
 )
 
+// aes.go encrypts and decrypts stored text secrets using AES-256-GCM and a
+// nonce-prefixed base64 representation.
 // Stored secrets need both confidentiality and a check that their encrypted
 // bytes belong to the supplied key. AES-256-GCM encrypts a string and
 // authenticates it before Decrypt returns any plaintext. Each encrypted value

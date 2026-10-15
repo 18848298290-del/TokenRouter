@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// health_client_rejection.go selects provider health actions for classified
+// bad-request and payment-required failures.
 // Classified 400 failures can describe an account problem even when their HTTP
 // status resembles an invalid request. Organization failure has precedence,
 // Anthropic credit exhaustion has its own platform check, and

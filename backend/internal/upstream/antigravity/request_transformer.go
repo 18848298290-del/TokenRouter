@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// request_transformer.go converts Claude requests into project-scoped Gemini
+// generation payloads.
 // Claude content becomes Gemini parts inside an Antigravity project envelope,
 // with mapped model identity retained even for web search. Session identity
 // comes from the first usable user part unless client metadata supplies its

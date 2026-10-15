@@ -7,6 +7,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// cache.go stores expiring query snapshots and coordinates reads with
+// replacement and shared loads.
 // A query snapshot has a fixed lifetime from insertion and can be read
 // independently of the caller that supplied its payload. Cache reads sample
 // time before checking storage, then remove expired entries under the write

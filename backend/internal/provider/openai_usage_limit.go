@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_usage_limit.go selects OpenAI cooldown deadlines and persists
+// observed subscription plans.
 // OpenAI 429 observations combine utilization with relative reset timing to
 // choose a provider cooldown. An exhausted weekly window takes precedence over
 // an exhausted short window even when its reset count is zero or negative;

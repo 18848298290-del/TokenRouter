@@ -6,6 +6,8 @@ import (
 	"github.com/lib/pq"
 )
 
+// connection.go opens PostgreSQL database handles with optional driver timing
+// instrumentation.
 // PostgreSQL handles are opened before their connection pool is configured
 // and checked at startup. Timing-enabled handles wrap pq's connector to
 // observe driver calls under request collectors; both paths return a lazy

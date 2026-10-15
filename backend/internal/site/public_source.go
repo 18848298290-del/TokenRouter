@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// public_source.go loads public display values and module decisions from one
+// settings batch.
 // Public settings combine display values with authentication and usage decisions
 // derived from the same stored batch. Display values are copied through an
 // allowlist before returning, while authentication conversion can inspect the

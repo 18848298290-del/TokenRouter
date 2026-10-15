@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// captcha.go defines CAPTCHA provider configuration and authentication
+// diagnostic callbacks.
 // Authentication actions receive CAPTCHA switches and server credentials as
 // one configuration value. AuthService chooses a provider from that value and
 // rejects conflicting enabled providers; public settings expose a separate

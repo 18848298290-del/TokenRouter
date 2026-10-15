@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator Ops and system-maintenance HTTP
+// routes on the supplied Gin group.
 // Ops and system routes inherit the supplied Gin admin group middleware.
 // Production app installs administrator authentication, panel-limiter, and
 // audit middleware before calling these registrars; endpoints perform request

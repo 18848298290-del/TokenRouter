@@ -13,8 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Upstream credentials belong to a provider that can participate in several
-// client-facing groups. Scheduling also reads persistent activation,
+// provider.go defines upstream credentials, scheduling state, and membership
+// in client-facing groups. Scheduling also reads persistent activation,
 // expiry, and cooldown state, while Spark shadows reference a parent for
 // credentials and retain a separate quota dimension and scheduling switch.
 

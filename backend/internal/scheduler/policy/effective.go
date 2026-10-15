@@ -5,6 +5,8 @@ import (
 	"math"
 )
 
+// effective.go resolves and validates effective scheduler policy from process
+// defaults, global settings, and sparse group overrides.
 // Advanced scheduling resolves each group field over dynamic global values and
 // process defaults. Pointer presence preserves explicit false and zero group
 // choices, including a deliberately zero base score. Global coefficients still

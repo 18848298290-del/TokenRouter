@@ -16,6 +16,8 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// body.go reads and decompresses request bodies and binds strictly validated
+// JSON input.
 // Compressed request headers describe transmitted bytes, while JSON consumers
 // need decoded bytes. Successful decoding clears Content-Encoding and the
 // transmitted Content-Length header, then records the returned byte count on

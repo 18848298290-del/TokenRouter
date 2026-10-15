@@ -13,6 +13,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// assembly_egress_wire.go registers proxy and TLS constructors and binds TLS
+// readers for provider token requests.
 // OpenAI token requests consult configured TLS profile and router readers.
 // Wire binds those reader interfaces to the egress implementations, while
 // proxy administration receives its own persisted proxy store, probe adapter,

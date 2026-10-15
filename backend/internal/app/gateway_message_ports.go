@@ -13,10 +13,11 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
-// Messages attempts share retry containment, session isolation, and digest-
-// session storage. These adapters translate failure details for provider
-// cooldown decisions and connect request group and session identity to the
-// shared stores, including the one-hour isolation owner lifetime.
+// gateway_message_ports.go adapts retry cooldown, session isolation, and
+// digest-session storage for Messages attempts. These adapters translate
+// failure details for provider cooldown decisions and connect request group
+// and session identity to the shared stores, including the one-hour isolation
+// owner lifetime.
 
 // provideRetryCooldown constructs provider cooldown decisions with diagnostics
 // and optional storage. Nil store leaves the storage capability unset, and the

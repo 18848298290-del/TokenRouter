@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// service.go buffers request snapshots, flushes versioned batches, and drains
+// admitted writes during shutdown.
 // Request summaries continue independently of Ops sampling and may receive
 // later snapshots under the same local request ID. Pending snapshots merge by
 // increasing UpdatedAt, retaining earlier identity and terminal failure

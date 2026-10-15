@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// health_observation.go captures request-aware health evidence and transfers
+// observed provider changes to execution targets.
 // Provider health receives both the first model argument and an effective
 // model resolved from request hints. An empty first argument still counts as
 // supplied, even when the effective model falls back to context. This lets

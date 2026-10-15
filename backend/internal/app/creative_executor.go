@@ -19,10 +19,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// creative_executor.go constructs creative execution adapters that retain the
+// selected provider and scheduler callbacks.
 // Creative generation selects providers under the saved task's group policy.
 // The executor reads that policy during preparation, carries the scheduler's
 // release and feedback callbacks into the selected target, and uses shared HTTP
 // execution credentials and transport for generation.
+//
+// Each selection closes over its execution provider for model resolution,
+// attribute lookup, and generation. The task receives the provider identifier
+// together with acquired or waiting state and the release callback from that
+// same result. Feedback is sent through the scheduler for the selected
+// platform, keeping execution and outcome reporting attached to the provider
+// whose selection produced those callbacks.
 
 // provideCreativeExecutor binds group policy and provider selection for
 // creative preparation. Execution defaults to five minutes unless cfg supplies

@@ -10,9 +10,10 @@ import (
 	"entgo.io/ent/schema/field"
 )
 
-// Runtime settings store one text value for each configured key. Removing a
-// row lets that setting's reader apply its own default, and the table retains
-// the latest value and update time rather than a history of earlier values.
+// setting.go defines runtime settings as one stored text value per key.
+// Removing a row lets that setting's reader apply its own default, and the
+// table retains the latest value and update time rather than a history of
+// earlier values.
 
 // Setting represents the current persisted value of one runtime setting.
 //

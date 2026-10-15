@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
+// service_tier_frame.go applies service-tier decisions to response.create
+// frames and renders policy rejection events.
 // WebSocket response.create carries the same top-level service_tier choices
 // used by HTTP Fast policy. ApplyServiceTierFrame validates reasoning first,
 // then asks tierpolicy to pass, normalize, remove, force, or block that tier;

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// localization.go reads and prepares revisioned translations for operational
+// settings text.
 // Short operational text keeps its localized content under a setting key derived
 // from the source field's storage key. The administrator reader can combine those
 // records with legacy source strings, while update preparation validates the

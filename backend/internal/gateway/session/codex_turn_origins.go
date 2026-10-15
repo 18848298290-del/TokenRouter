@@ -6,17 +6,17 @@ import (
 	"time"
 )
 
-// Codex turn state is opaque, so HTTP filtering remembers the latest provider
-// for an API Key and original client-session pair. CodexTurnStateHeaders supplies
-// a seed containing the decimal key ID, a NUL separator, and the inbound session.
-// Recording remembers a provider ID for that pair; the index does not identify
-// individual state values or confirm that a client received a response header.
+// codex_turn_origins.go records the latest provider for an API Key and original
+// client-session pair. CodexTurnStateHeaders supplies a seed containing the
+// decimal key ID, a NUL separator, and the inbound session. Recording remembers
+// a provider ID for that pair; the index does not identify individual state
+// values or confirm that a client received a response header.
 //
 // Entries expire strictly after their deadline and are removed on lookup or
 // periodic record-side sweeps. The map and write counter support concurrent
-// operations, but load, expiration testing, and deletion remain separate. Cleanup
-// of an older value can therefore remove a replacement recorded during that
-// sequence. An injected clock must support concurrent calls.
+// operations, but load, expiration testing, and deletion remain separate.
+// Cleanup of an older value can therefore remove a replacement recorded during
+// that sequence. An injected clock must support concurrent calls.
 
 // CodexTurnOrigins holds process-local provider ownership indexed by caller-built
 // key/session seeds. HTTP uses unknown ownership to allow replay and a different

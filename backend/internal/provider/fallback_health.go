@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// fallback_health.go selects and applies fallback cooldowns for responses
+// lacking a usable rate-limit reset.
 // A 429 response can lack a usable upstream reset while still requiring a short
 // scheduling pause. The fallback policy reads administrator settings when
 // available, honors a disabled setting, and otherwise uses the built-in enabled

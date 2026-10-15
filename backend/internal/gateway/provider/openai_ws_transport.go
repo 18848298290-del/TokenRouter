@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// openai_ws_transport.go selects native Responses WebSocket transport or an
+// HTTP bridge.
 // Responses WebSocket transport is selected from the provider's declared
 // protocol support before dialing an upstream connection. Providers supporting
 // WS use websocket v2; absent providers and other protocol configurations

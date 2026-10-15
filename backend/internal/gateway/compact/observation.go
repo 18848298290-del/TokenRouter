@@ -6,10 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// Compact recovery diagnostics identify the rejected provider and response
-// before the replacement model is dispatched. Body details are included only
-// when logging is enabled and are bounded by the caller's truncation function,
-// while recognized query credential values are masked in the summary message.
+// observation.go builds diagnostics for a rejected Compact exchange before the
+// replacement model is dispatched. Body details are included only when logging
+// is enabled and are bounded by the caller's truncation function, while
+// recognized query credential values are masked in the summary message.
 
 // RetryObservation snapshots provider, response, and diagnostic settings for one retry.
 type RetryObservation struct {

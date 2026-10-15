@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// marketplace.go serves public marketplace model listings and homepage
+// statistics.
 // Public model browsing can omit current capacity aggregation while retaining
 // model, price, and availability data returned by routing. The HTTP parameter
 // selects that work before the marketplace query; homepage totals use a

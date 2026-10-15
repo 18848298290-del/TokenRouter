@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// cn_monitor.go polls CN provider usage and writes identity-checked balance
+// decisions and observation snapshots.
 // CN usage monitoring records failed attempts alongside the last successful
 // balance or Coding Plan observation. Each result belongs to a fingerprint of
 // the provider's query identity, and snapshot writes compare the reread row
@@ -21,11 +23,11 @@ import (
 //
 // Periodic polling waits for the first full interval and requests singleton
 // ownership through the configured lease backends. Each round bounds concurrent
-// upstream queries and
-// separates balance decisions from snapshot persistence, rereading after health
-// changes. Shutdown cancels tracked loops and rounds, then waits for actual
-// completion; a dependency that ignores cancellation can leave a retained
-// timeout result. Manual RunOnce calls share this completion tracking.
+// upstream queries and separates balance decisions from snapshot persistence,
+// rereading after health changes. Shutdown cancels tracked loops and rounds,
+// then waits for actual completion; a dependency that ignores cancellation can
+// leave a retained timeout result. Manual RunOnce calls share this completion
+// tracking.
 
 // CNUsageMonitorSnapshotVersion, cnUsageMonitorLeaderLockKey, and
 // cnUsageMonitorReasonPrefix identify stored observations, shared round

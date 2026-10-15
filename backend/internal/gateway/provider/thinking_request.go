@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// thinking_request.go resolves model-family options for thinking-history
+// filtering and effort conversion.
 // Thinking-history filtering depends on the mapped model's replay format, so
 // passback families retain their historical blocks while Anthropic-oriented
 // paths can clean invalid signatures. These wrappers resolve family flags for

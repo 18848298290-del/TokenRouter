@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// expiry.go runs periodic announcement expiry scans and coordinates worker
+// shutdown.
 // Active announcements become archived when their end time reaches the scan's
 // current time. Expiry scans start once immediately and then use a fixed ticker;
 // each scan passes a bounded context to the repository and reports failures in

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// refresh_gates.go coordinates refresh concurrency slots and rate reservations
+// with cancellation-aware waits.
 // Credential exchanges share platform capacity and rate limits, but the two
 // limits have different lifetimes. A concurrency acquisition occupies one
 // channel slot until its caller releases it; a rate acquisition reserves one

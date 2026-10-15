@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// openai_sessions.go stores OpenAI PKCE sessions and coordinates expiration
+// cleanup with shutdown.
 // An OpenAI authorization URL stores state, PKCE verifier and exchange
 // parameters under a generated session ID for later code exchange. Get rejects
 // entries older than the session TTL even when cleanup has not run, so

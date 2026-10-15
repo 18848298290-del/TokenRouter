@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// support.go maps database associations into usage display views and delegates
+// shared SQL operations.
 // Usage reports combine raw SQL records with current identity, key, group,
 // provider, and subscription data. These conversions keep each owning module's
 // mapping rules in one place while presenting the smaller usage views to

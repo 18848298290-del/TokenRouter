@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// pricing_config_models.go reads and writes model-price rows, their intervals,
+// and pricing group associations.
 // A model-price row owns its context intervals, whose foreign key needs the
 // price ID returned by insertion. Writers therefore create the parent before
 // assigning that ID to interval rows. Whole-list replacements delete prior

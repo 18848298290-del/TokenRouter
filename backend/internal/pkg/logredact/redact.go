@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+// redact.go redacts recognized secrets from structured payloads and diagnostic
+// text.
 // Diagnostic input may contain OAuth tokens, passwords, or provider credentials
 // inside JSON or plain key/value text. Structured redaction replaces recognized
 // values recursively, while plain text uses compiled key patterns and two

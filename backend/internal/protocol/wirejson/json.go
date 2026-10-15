@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// json.go decodes number-preserving JSON documents, serializes forwarding
+// payloads, and exposes borrowed views for path inspection.
 // Request repairs often decode an object and then serialize it after removing
 // one field. Numbers decoded as float64 can round unrelated large identifiers,
 // so object decoding retains json.Number values and verifies that the input

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// default_pricing.go handles administrative catalogue refreshes and filtered
+// default-price queries.
 // Administrator catalog refreshes invoke the configured updater, while price
 // queries read the published catalog. Paged queries use a prepared catalog
 // index when available; snapshot-backed queries apply HTTP filters

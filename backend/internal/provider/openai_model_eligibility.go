@@ -6,9 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// OpenAI OAuth admission rejects known foreign model families before Codex
-// forwarding. The filter examines a lowercased model segment while unknown
-// names and aliases remain eligible for later whitelist and upstream checks;
+// openai_model_eligibility.go filters known foreign model families from OpenAI
+// OAuth admission before Codex forwarding. The filter examines a lowercased
+// model segment while unknown names and aliases remain eligible for later
+// whitelist and upstream checks;
 // eligibility alone cannot establish execution support.
 
 // oauthForeignModelPrefixes lists model-family prefixes excluded from OpenAI

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// concurrency_hooks.go provides configurable slot-store test hooks and atomic
+// counters for user, provider and ingress releases.
 // Slot admission tests inject acquisition results while release counters record
 // cleanup from cancellation and normal return. The store supplies empty
 // occupancy and load observations, accepted wait registration and successful

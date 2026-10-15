@@ -11,10 +11,11 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A payment channel combines provider configuration with supported methods,
-// availability, and refund settings. ConfigService writes configuration as JSON
-// and can also read legacy encrypted values; suspending a channel retains its
-// stored configuration, while permitted deletion removes the instance row.
+// payment_provider_instance.go defines payment-channel configuration,
+// supported methods, availability, and refund settings. ConfigService writes
+// configuration as JSON and can also read legacy encrypted values; suspending
+// a channel retains its stored configuration, while permitted deletion removes
+// the instance row.
 
 // PaymentProviderInstance stores one administrator-configured payment channel and its options.
 type PaymentProviderInstance struct {

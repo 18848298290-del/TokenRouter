@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// settings_oidc_discovery.go retrieves OIDC discovery metadata for effective
+// provider configuration.
 // Missing OIDC endpoint settings can be filled from the provider discovery
 // document. This reader obtains the document with a bounded request and decodes
 // endpoint metadata; OAuthSettings decides which missing values to fill and

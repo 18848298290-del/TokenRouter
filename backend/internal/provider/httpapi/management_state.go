@@ -8,6 +8,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_state.go handles administrator scheduling switches, quota resets,
+// error recovery, and proxy restoration.
 // The administrator scheduling switch, quota accounting and recoverable errors
 // have separate maintenance operations. State responses reread or use the
 // updated provider before runtime presentation, while proxy-fallback

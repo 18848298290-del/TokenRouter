@@ -2,6 +2,8 @@ package gemini
 
 import "encoding/json"
 
+// empty_parts.go removes Gemini conversation entries whose parts arrays are
+// empty.
 // Gemini requests can contain conversation entries whose parts array is
 // empty after compatibility conversion. Empty-array entries are removed before
 // forwarding, while absent or differently shaped parts fields remain available

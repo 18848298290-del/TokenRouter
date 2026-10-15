@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_analytics_aggregation_repo.go rebuilds multidimensional usage rollups
+// and publishes field-specific aggregation progress.
 // Usage analytics combines normalized dimensions with UTC hour and day buckets.
 // Live rebuilding clears every affected hourly row but reads the last hour only
 // through the supplied watermark. Cleanup uses an inclusive end and rescans

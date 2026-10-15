@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers search configuration, test, and quota-reset
+// endpoints on the administrator settings group.
 // Search administration shares the settings route group for configuration
 // reads, saves, test execution, and quota reset. That group supplies the
 // application's authentication and other middleware, so these handlers inherit

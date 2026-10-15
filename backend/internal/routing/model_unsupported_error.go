@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// model_unsupported_error.go formats group-model rejection errors with bounded
+// alternative-model lists.
 // Group-model rejection messages include concrete alternatives when suggestion
 // building finds them. Public text trims the requested name and bounds the
 // displayed list while reporting how many suggestions were omitted, so large

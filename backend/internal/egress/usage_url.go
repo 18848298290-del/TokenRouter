@@ -6,11 +6,12 @@ import (
 	"strings"
 )
 
-// Usage endpoints first reject embedded credentials and nonempty query or
-// fragment text before selecting host policy. That preliminary format check does
-// not reject an empty query or fragment delimiter, and it leaves supplied port
-// ranges to the selected validator. The resulting policy depends on whether
-// configuration exists as well as whether its allowlist is enabled.
+// usage_url.go validates usage endpoint base URLs and selects their configured
+// host policy. Usage endpoints first reject embedded credentials and nonempty
+// query or fragment text before selecting host policy. That preliminary format
+// check does not reject an empty query or fragment delimiter, and it leaves
+// supplied port ranges to the selected validator. The resulting policy depends
+// on whether configuration exists as well as whether its allowlist is enabled.
 //
 // An unconfigured service requires HTTPS and public literal hosts. Configured
 // disabled policies instead use format validation with their HTTP permission,

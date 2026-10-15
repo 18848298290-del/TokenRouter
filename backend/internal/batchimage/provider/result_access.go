@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// result_access.go binds stored batch-job providers for downloads, processing,
+// and resource cleanup.
 // Existing batch operations resolve the platform and provider ID stored on the
 // job. Download hides provider lookup errors, processing retains them, and cleanup
 // can proceed without the adapter's eligibility check, allowing resource removal

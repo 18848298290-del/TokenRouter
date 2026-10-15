@@ -1,5 +1,7 @@
 package dto
 
+// settings_views.go defines JSON response views for request correction, beta
+// rules, and service-tier settings.
 // Runtime-setting responses expose correction toggles and policy rules using
 // stable JSON field names. HTTP handlers build these views from the owning
 // settings values; policy evaluation and input validation remain in the

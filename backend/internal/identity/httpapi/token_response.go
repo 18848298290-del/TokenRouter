@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// token_response.go issues login credentials and writes the shared HTTP token
+// response after account validation.
 // Successful login responses require a present, active account before
 // credentials are issued. Token-pair failure triggers a separate access-token
 // attempt, so clients can receive an access credential with omitted refresh

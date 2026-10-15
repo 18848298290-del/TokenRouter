@@ -20,6 +20,8 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// s3.go uploads backup archives to S3-compatible storage and provides
+// download, deletion, and signing operations.
 // Unknown-length gzip streams and already sized archive files need different
 // upload preparation. Streaming multipart uses fixed small parts with one worker;
 // spooled PutObject first measures a temporary file, and known-length segment

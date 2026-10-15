@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// redact.go redacts recognized credentials and URLs from moderation summary
+// text.
 // Administrator summaries remove recognized URLs and credential-shaped strings
 // before excerpt truncation. Redaction is a sequence of regular-expression
 // substitutions, so later patterns operate on the text produced by earlier

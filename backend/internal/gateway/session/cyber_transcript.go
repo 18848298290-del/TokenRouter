@@ -12,18 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Cyber transcript blocks need to recognize a continuation even when the latest
-// user input changes. A cumulative SHA-256 stream includes API Key identity,
+// cyber_transcript.go hashes cumulative visible transcript prefixes for Cyber
+// continuation blocking. A cumulative SHA-256 stream includes API Key identity,
 // root instructions, and each visible transcript item. The saved context before
-// a later user turn can match that edited continuation when earlier items carry
-// model-generated labels. Those labels are a heuristic supplied in the request.
+// a later user turn can match a continuation whose latest user input has
+// changed when earlier items carry model-generated labels. Those labels are a
+// heuristic supplied in the request.
 //
-// Lookup keeps the newest 256 cumulative prefixes and records whether older ones
-// were dropped. The ring is reordered chronologically before returning it, while
-// the full key remains the final prefix. CyberBlocks rejects this truncation when
-// the source scope is active, preventing appended history from hiding a previously
-// blocked prefix. Messages take precedence over Responses input when the messages
-// field exists.
+// Lookup keeps the newest 256 cumulative prefixes and records whether older
+// ones were dropped. The ring is reordered chronologically before returning it,
+// while the full key remains the final prefix. CyberBlocks rejects this
+// truncation when the source scope is active, preventing appended history from
+// hiding a previously blocked prefix. Messages take precedence over Responses
+// input when the messages field exists.
 
 // maxOpenAICyberTranscriptLookupKeys caps stored lookup prefixes; CyberBlocks rejects
 // truncation under active scope so discarded history cannot establish an unblocked request.

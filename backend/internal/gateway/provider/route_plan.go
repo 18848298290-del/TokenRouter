@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// route_plan.go builds request route plans and attaches revalidated protocol
+// attempts to execution targets.
 // A request route combines an admitted group with group-model mapping and the
 // client protocol stored in request state. Planning carries API Key redirects
 // into that model chain, and attempt revalidation attaches a resolved

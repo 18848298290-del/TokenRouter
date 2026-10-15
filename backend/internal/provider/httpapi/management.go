@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management.go constructs provider management handlers and serves individual
+// provider reads and deletions.
 // Provider administration separates stored configuration from live scheduler
 // and usage observations. Individual reads can resolve shared Ollama usage
 // before presentation, while route handlers delegate mutations to the

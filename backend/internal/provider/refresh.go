@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// refresh.go coordinates OAuth token exchange, conditional credential
+// persistence, and recovery from competing refreshes.
 // A selected refresh token can become stale while another worker or
 // administrator changes the provider. Local and optional distributed locks
 // serialize exchange attempts before a current-row reread; the attempted

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// codex_invite_service.go queries Codex invitation and reset-credit status and
+// performs invitation and credit-consumption requests.
 // Codex invitation status queries keep invitation eligibility separate from
 // existing rate-limit reset credits. Eligibility or rule-query failure
 // marks invitation queries unavailable while credit usage remains queryable;

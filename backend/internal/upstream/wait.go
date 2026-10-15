@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// wait.go waits for a retry delay or request cancellation and releases its
+// timer.
 // A retry delay needs to finish either when its timer fires or when the
 // request is cancelled. Nonpositive delays finish immediately, before
 // consulting the context, so callers can use the same helper for an already-resolved

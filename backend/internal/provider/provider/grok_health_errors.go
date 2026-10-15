@@ -12,17 +12,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok failures can be request-specific, model-limited, quota-limited or
-// provider-wide. RequestScoped errors return before quota or health writes.
-// Other failures first retain quota headers, then apply pool/custom policy,
-// model rules and ordinary temporary policy before selecting default cooldowns.
+// grok_health_errors.go selects Grok health actions from request scope, quota
+// observations, and configured error policies. Grok failures can be
+// request-specific, model-limited, quota-limited or provider-wide.
+// RequestScoped errors return before quota or health writes. Other failures
+// first retain quota headers, then apply pool/custom policy, model rules and
+// ordinary temporary policy before selecting default cooldowns.
 //
 // That ordering lets explicit policy consume an error and keeps known API-key
 // transient failures on the provider/model tracker. Classified free quota can
 // choose a model window or provider reset, spending limits use recoverable
 // billing state, and compatibility failures leave health for caller failover.
-// The returned decision reports selection behavior even when best-effort writes
-// fail or a handled classification intentionally installs no state.
+// The returned decision reports selection behavior even when best-effort
+// writes fail or a handled classification intentionally installs no state.
 
 // GrokHealthInput contains the model and health observations for one attempt.
 type GrokHealthInput struct {

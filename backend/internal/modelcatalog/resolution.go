@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// resolution.go resolves route capabilities and execution rules from catalog,
+// platform, and administrator data.
 // A route's metadata depends on the actual service, authentication, protocols,
 // and complete outbound model identity. Recognized Google resource paths are
 // reduced for catalog lookup while the Target retains its outbound spelling,

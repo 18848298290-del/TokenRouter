@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// sse_documents.go repairs concatenated typed JSON events into ordered logical
+// SSE lines for stream readers.
 // Compatible streams can concatenate several typed JSON events on one data
 // line, causing a normal SSE reader to see one invalid JSON value. Splitting
 // succeeds only when every document decodes completely and supplies a usable

@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// voice_request.go validates Grok Voice route shapes and builds authenticated
+// requests for their endpoints.
 // Grok Voice subpaths belong to custom-Voice management and optional audio
 // downloads; TTS and STT each use one base endpoint. Endpoint validation keeps
 // those route shapes distinct, and request construction carries the caller's

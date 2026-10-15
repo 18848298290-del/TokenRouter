@@ -12,12 +12,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Backend-mode admission reads are cached so identity handlers can consult the
-// setting without a database read on each request. Successful reads and missing
-// settings expire after one minute; other read failures produce a disabled
-// snapshot with a five-second lifetime. A refresh uses an independent timeout
-// so cancellation of the first waiting request does not determine other callers'
-// setting value.
+// backend_mode.go caches the backend-mode setting for admission and publishes
+// administrative updates. Backend-mode admission reads are cached so identity
+// handlers can consult the setting without a database read on each request.
+// Successful reads and missing settings expire after one minute; other read
+// failures produce a disabled snapshot with a five-second lifetime. A refresh
+// uses an independent timeout so cancellation of the first waiting request does
+// not determine other callers' setting value.
 //
 // Administrative publication can finish while an older refresh is reading the
 // database. The generation protected by mu prevents that older value from

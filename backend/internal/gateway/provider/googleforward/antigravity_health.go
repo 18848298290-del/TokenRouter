@@ -13,6 +13,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// antigravity_health.go adapts Antigravity error observations and
+// sticky-session cleanup to execution targets.
 // Antigravity retry feedback can change the provider model window and remove a
 // sticky session binding. The adapter passes request thinking and failure
 // evidence to the shared observer, then copies updated credential and extra

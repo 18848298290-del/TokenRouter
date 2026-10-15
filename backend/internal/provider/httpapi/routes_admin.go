@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers provider management, authorization, usage, and
+// connection-test routes for administrators.
 // Provider administration mounts management, credential exchange, usage and
 // connection-test endpoints under the caller's administrator group. The group
 // supplies authentication, rate limiting and auditing before registration, and

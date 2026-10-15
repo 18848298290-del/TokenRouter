@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// redeem_admin.go generates and edits redemption credentials and records
+// administrator adjustment history.
 // Administrator credential changes need to retain the meaning of benefits
 // already granted. Usage records store recipient/time rather than value and
 // plan snapshots, so editing a used credential's entitlement would reinterpret

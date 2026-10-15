@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// tls_profile_handler.go serves TLS profile administration and collector
+// controls while preserving profile patch presence.
 // Administrator profile updates distinguish an omitted list from an explicit
 // empty array. A nil decoded list retains the stored value, while a present
 // empty list reaches repository clearing and subsequent transport defaults;

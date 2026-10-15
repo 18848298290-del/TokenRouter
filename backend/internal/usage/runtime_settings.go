@@ -6,6 +6,8 @@ import (
 	"log/slog"
 )
 
+// runtime_settings.go reads runtime ranking settings and user error-record
+// visibility.
 // Missing ranking settings keep the public ranking enabled with all counters
 // visible. Stored false values opt out of individual options, while viewing
 // error records uses the stricter exact-true rule and returns false when

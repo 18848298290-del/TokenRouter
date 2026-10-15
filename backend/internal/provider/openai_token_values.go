@@ -7,6 +7,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_token_values.go builds OpenAI credential maps from OAuth exchanges
+// and validated PAT metadata.
 // OAuth exchanges, imported access tokens and PAT validation return different
 // combinations of OpenAI metadata. Credential updates always include
 // access_token, while absent optional response fields are omitted so merging

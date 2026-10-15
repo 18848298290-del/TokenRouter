@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// runtime_block.go coordinates provider cooldowns, credential failure blocks,
+// retry windows, and conditional recovery.
 // Provider-wide cooldowns and credential-specific refresh failures can block
 // the same provider for different reasons. A new provider declaration extends
 // its deadline without shortening a longer window, but advances its generation

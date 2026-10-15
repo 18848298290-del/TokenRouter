@@ -12,6 +12,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// oauth_client.go exchanges authorization codes and refresh tokens for the
+// selected Gemini OAuth account type.
 // Code Assist and Google One token exchanges use the built-in Gemini CLI
 // credentials even when configured credentials exist. AI Studio reads its
 // configured client on each exchange or refresh, and the shared OAuth client

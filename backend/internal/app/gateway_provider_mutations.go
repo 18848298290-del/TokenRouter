@@ -8,6 +8,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// gateway_provider_mutations.go adapts gateway provider mutations and copies
+// updated records back into their execution targets.
 // Execution targets contain a provider record plus request-specific route and
 // capability data. Configuration and full-record updates send a provider-module
 // copy to storage, then copy the returned record back into the existing

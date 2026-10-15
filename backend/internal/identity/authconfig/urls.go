@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// urls.go validates OAuth endpoint addresses and frontend redirect URL shapes.
 // OAuth endpoints need an absolute HTTP or HTTPS address, while frontend callback
 // routes may also be paths on the current origin. These checks validate the saved
 // URL shape; endpoint fetching and redirect execution belong to their callers.

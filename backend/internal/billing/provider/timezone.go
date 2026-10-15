@@ -8,6 +8,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// timezone.go loads and caches named locations for pricing schedules.
 // Pricing schedules require named timezones; blank names and the
 // process-dependent Local name are rejected before loading. Accepted
 // locations are cached for later calculations, and callers receive

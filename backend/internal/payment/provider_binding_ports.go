@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// provider_binding_ports.go binds instance storage and adapter factories for
+// historical order resolution and registry refresh.
 // A payment method can move between providers while old orders still refer to
 // the merchant that accepted their payment. ProviderBindings reads the saved
 // instance or snapshot identity, then constructs an adapter from that

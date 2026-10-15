@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage.go queries Zhipu coding usage and assigns reported allowances to
+// display windows.
 // Zhipu token windows carry unit identifiers that can establish five-hour and
 // weekly identity independently of reset chronology. The parser reserves those
 // identified slots first, then uses remaining entries to fill vacant slots.

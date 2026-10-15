@@ -11,9 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Upstream error responses can be selected by status code, body keywords, and
-// provider platform. Stored rules decide which upstream details reach clients
-// and whether a matched response is included in operations error monitoring.
+// error_passthrough_rule.go defines stored rules for matching upstream errors
+// by status, body keywords, and provider platform. Stored rules decide which
+// upstream details reach clients and whether a matched response is included in
+// operations error monitoring.
 
 // ErrorPassthroughRule stores matching conditions and client-facing error settings.
 //

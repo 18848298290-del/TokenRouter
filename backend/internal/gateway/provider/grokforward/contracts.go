@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// contracts.go defines the inputs, observations, and callbacks used by Grok
+// Responses forwarding.
 // Grok Responses forwarding keeps caller, billing, and upstream model
 // identities separate while request-local adapters supply transport and health
 // effects. Its inputs also carry output mode and timing so the returned OpenAI

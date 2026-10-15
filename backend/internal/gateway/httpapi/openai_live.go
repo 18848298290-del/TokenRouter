@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai/liveattestation"
 )
 
+// openai_live.go connects Live creation and sideband control to saved sessions
+// and shared services.
 // Live control reconnects load the saved provider and resolve current
 // credentials while reusing the encrypted attestation issued during creation.
 // Session storage, concurrency leases and WebSocket transport are

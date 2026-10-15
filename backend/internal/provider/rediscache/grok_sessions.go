@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// grok_sessions.go constructs the Redis-backed Grok authorization session
+// store.
 // Grok authorization sessions use a shared OAuth JSON namespace with a
 // separate consumption marker and a thirty-minute lifetime. The adapter binds
 // Redis to the provider's session store, whose local storage handles an

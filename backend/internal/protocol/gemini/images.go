@@ -1,5 +1,7 @@
 package gemini
 
+// images.go defines Gemini image generation requests and their nested image
+// and thinking settings.
 // Creative image requests carry prompt and reference-image parts with
 // generateContent configuration. Image size and aspect ratio are nested in
 // imageConfig, while optional reasoning settings occupy thinkingConfig; keeping

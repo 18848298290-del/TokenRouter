@@ -21,6 +21,8 @@ import (
 	wiregrok "github.com/TokenFlux/TokenRouter/internal/protocol/grok"
 )
 
+// oauth_client.go exchanges Grok OAuth grants, obtains password-login SSO
+// tokens, and maps authorization failures.
 // OAuth token exchanges use a validated endpoint pinned when OAuthClient is
 // constructed. Invalid token overrides select the trusted default before
 // codes or refresh tokens are sent. Password authorization follows a separate

@@ -35,10 +35,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
-// Ops shares provider, user, concurrency, quota, and authentication observers
-// with the application. Error recording receives a separately owned queue,
-// while query, collector, aggregation, cleanup, reports, and release services
-// bind their SQL, Redis, settings, and external adapters here.
+// ops.go assembles operational queries, collectors, alerting, reporting, and
+// release maintenance services. Ops shares provider, user, concurrency, quota,
+// and authentication observers with the application. Error recording receives a
+// separately owned queue, while the services receive SQL, Redis, settings, and
+// external adapters during construction.
 
 // provideOpsErrorQueue constructs error recording and registers its owned
 // shutdown before lifecycle startup. Processor count comes from current

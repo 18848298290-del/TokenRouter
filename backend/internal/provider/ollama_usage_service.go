@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// ollama_usage_service.go manages shared Ollama browser sessions and
+// coordinates manual and periodic usage refreshes.
 // Ollama browser usage is shared by eligible providers using the same API key,
 // even when their proxy choices differ. Group resolution selects the newest
 // configured session and allows matching encrypted sessions to supply newer

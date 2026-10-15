@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 )
 
+// codeassist.go decodes Code Assist tier identities and represents project
+// discovery and onboarding responses.
 // Code Assist project discovery can return both a paid tier and a current
 // tier, with tier identifiers represented as either strings or objects.
 // Authorization prefers a nonempty paid identifier before the current tier,

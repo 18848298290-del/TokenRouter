@@ -13,10 +13,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// A batch image job continues through submission, provider polling, indexing,
-// and settlement after its creation request finishes. Persisted funding choices,
+// batch_image_job.go defines durable metadata for batch submission, provider
+// polling, result indexing, and settlement. Persisted funding choices,
 // provider references, result counts, and cleanup timestamps let those phases
-// resume using the recorded job and distinguish hidden jobs from deleted output.
+// resume using the recorded job and distinguish hidden jobs from deleted
+// output.
 
 // BatchImageJob stores asynchronous batch execution metadata and funding snapshots.
 type BatchImageJob struct {

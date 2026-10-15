@@ -2,9 +2,9 @@ package text
 
 import "context"
 
-// Qoder compatibility recovery first distinguishes served partial output and
-// cancellation from a replayable failure. Those terminal observations end the
-// request before a credential refresh or another provider can repeat work.
+// qoder_compatible.go coordinates Qoder compatibility retries, credential
+// refresh, and provider replacement. Served partial output and cancellation end
+// the request before a credential refresh or another provider can repeat work.
 //
 // A ready credential refresh permits one additional attempt on the captured
 // provider after reacquiring its resources. Pending refresh excludes that

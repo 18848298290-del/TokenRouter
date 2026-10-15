@@ -15,6 +15,8 @@ import (
 	protocolgemini "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// gemini_native_bindings.go binds Gemini request validation, moderation, and
+// digest-session services to the native HTTP handler.
 // Gemini native admission shares Messages funding and observation services,
 // but uses Gemini content moderation and digest identity. Bound callbacks
 // validate the model path segment and resolve or write the sticky provider

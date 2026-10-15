@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// chatcompletions_to_responses.go converts Chat requests, conversation
+// content, and tool history into Responses requests.
 // Chat content can be scalar text, multimodal parts, assistant reasoning, or
 // tool-result history. Responses input represents user media as typed parts
 // and tool calls/results as separate items, while assistant reasoning is

@@ -13,11 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Payment maintenance reconciles pending, processing, and fulfillment work
-// before expiring old orders through OrderLifecycle. Assembly supplies a
-// one-minute runner and singleton lease identity, while step-specific
-// diagnostics report positive work counts and the error severity chosen for
-// each phase.
+// payment_expiry.go binds scheduled order maintenance to singleton leasing and
+// phase-specific diagnostics. Payment maintenance reconciles pending,
+// processing, and fulfillment work before expiring old orders through
+// OrderLifecycle. Assembly supplies a one-minute runner and singleton lease
+// identity, while step-specific diagnostics report positive work counts and the
+// error severity chosen for each phase.
 
 // providePaymentExpiry constructs one-minute order maintenance using the
 // assembled order lifecycle. A generated owner identifies lease attempts; the

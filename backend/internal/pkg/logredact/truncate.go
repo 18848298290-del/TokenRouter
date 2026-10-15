@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 )
 
+// truncate.go truncates diagnostic strings and byte slices for bounded log
+// output.
 // Log storage limits are measured in bytes, so cutting a string at its limit
 // can leave a partial UTF-8 character. TruncateUTF8 backs off the cut until the
 // prefix is valid UTF-8, while TruncateUTF8Value first removes surrounding

@@ -8,10 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// participants.go locks inviter profiles and supplies transaction-bound
+// balance participants.
 // Affiliate lifetime-cap checks need their cumulative read and next accrual
 // to use the same locked profile. The callback receives a transaction
 // context, and billing transfer factories bind balance changes to that
 // transaction while its owner controls completion.
+//
+// The row lock is acquired before the callback reads cumulative rebate totals
+// and remains governed by the transaction used by withTx. Missing profiles
+// return a user-not-found error before invoking the callback. Existing
+// transaction contexts select their own client, so nested rebate work can
+// participate in a payment transaction and leave its commit or rollback to
+// that caller.
 
 // TransferBalance credits affiliate quota through the caller-owned billing
 // transaction.

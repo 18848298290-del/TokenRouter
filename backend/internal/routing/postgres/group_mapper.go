@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_mapper.go converts stored Ent group records into hydrated routing
+// groups.
 // Stored groups carry nullable text and JSON routing rules into administrative
 // and request reads. Conversion marks the group hydrated and decodes policy
 // separately from the directly assigned collections, so callers must

@@ -12,6 +12,8 @@ import (
 	ippkg "github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// rate_limiter.go adapts fixed-window admission results into HTTP rate-limit
+// responses.
 // Fixed-window storage reports admission, its observed count, and a retry delay
 // to the HTTP layer. Middleware adds the resolved client address to a route
 // bucket and translates rejection into 429, while each route chooses whether

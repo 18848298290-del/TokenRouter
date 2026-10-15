@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// anthropic_settings.go converts beta policy settings between gateway and
+// Anthropic types with copied rule collections.
 // Beta policy settings cross the gateway and Anthropic execution types with
 // the same rule fields. Each conversion allocates a rule slice and copies
 // model whitelists, so edits to those collections stay with the receiving

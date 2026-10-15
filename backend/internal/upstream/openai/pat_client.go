@@ -13,6 +13,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// pat_client.go validates Codex personal access tokens and checks the identity
+// metadata returned by whoami.
 // Personal access token import validates the at- prefix before calling the
 // Codex whoami endpoint with canonical authentication identity. Successful
 // metadata must contain user and account identifiers, email, plan type, and a

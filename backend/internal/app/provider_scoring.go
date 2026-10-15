@@ -12,10 +12,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Administrator score snapshots use the same feedback and runtime settings as
-// provider selection. Process configuration supplies initial weights and escape
-// policy, but group overrides are read only for advanced groups, keeping basic
-// group display independent of stale advanced settings.
+// provider_scoring.go resolves administrator scoring inputs from deployment
+// defaults, runtime settings, and eligible group overrides. Administrator score
+// snapshots use the same feedback and runtime settings as provider selection.
+// Process configuration supplies initial weights and escape policy, but group
+// overrides are read only for advanced groups, keeping basic group display
+// independent of stale advanced settings.
+//
+// Missing process configuration keeps built-in inputs, and a nonpositive
+// configured Top-K retains seven candidates. The callback loads runtime
+// settings with those defaults before resolving eligible group overrides. A
+// nil callback context becomes Background so the shared settings reader has a
+// usable context for that lookup.
 
 // providerScoreOptions binds diagnostic scoring to shared feedback and
 // effective scheduler settings. Nil cfg supplies built-in inputs; a positive

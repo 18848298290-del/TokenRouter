@@ -13,6 +13,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// privacy_client.go updates ChatGPT training preferences and selects usable
+// account and subscription metadata.
 // ChatGPT account metadata can contain personal and workspace entries under
 // different IDs. Account lookup prefers the requested organization when it is
 // usable, then selects a usable default account, a paid account, or any

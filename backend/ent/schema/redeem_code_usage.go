@@ -12,9 +12,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A reusable redeem code records each user who has received its entitlement.
-// The unique code-user pair limits that user to one receipt for the code,
-// while a use timestamp supports the redemption history retained by billing.
+// redeem_code_usage.go defines recipient receipts for reusable redemption
+// codes. The unique code-user pair limits that user to one receipt for the
+// code, while a use timestamp supports the redemption history retained by
+// billing.
 
 // RedeemCodeUsage stores one user's recorded use of a redeem code.
 type RedeemCodeUsage struct {

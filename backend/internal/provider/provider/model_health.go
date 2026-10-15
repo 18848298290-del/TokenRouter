@@ -12,17 +12,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Model health observations need the identity of the model that actually failed
-// upstream. OpenAI and Grok inputs already name the mapped target, while
-// Antigravity can still resolve a request model through its thinking-aware
-// rules; other platforms use the provider mapping.
+// model_health.go resolves failed model identities and forwards
+// unavailable-model and Spark limit observations to health services. OpenAI
+// and Grok inputs already name the mapped target, while Antigravity can still
+// resolve a request model through its thinking-aware rules; other platforms
+// use the provider mapping.
 //
-// LimitKey retains the trimmed input when resolution produces no usable target,
-// preventing a blank cooldown key from replacing a known request identity.
-// Observe passes that key with model-not-found and plan-gating classifications
-// to the health service, and checks image recognition against both input and
-// resolved names. Spark rate-limit handling uses the same key resolution with
-// the current attempt's thinking setting.
+// LimitKey retains the trimmed input when resolution produces no usable
+// target, preventing a blank cooldown key from replacing a known request
+// identity. Observe passes that key with model-not-found and plan-gating
+// classifications to the health service, and checks image recognition against
+// both input and resolved names. Spark rate-limit handling uses the same key
+// resolution with the current attempt's thinking setting.
 
 // ModelHealth translates model identities and platform errors into provider
 // health observations.

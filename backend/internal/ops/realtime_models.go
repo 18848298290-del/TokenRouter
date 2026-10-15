@@ -2,6 +2,8 @@ package ops
 
 import "time"
 
+// realtime_models.go defines realtime concurrency and availability response
+// shapes for providers, groups, platforms, and users.
 // Realtime provider observations separate configured display capacity from
 // scheduler activity, and one provider can contribute to several group totals.
 // Availability badges combine saved status with current hold times; an error

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// values.go defines the normalized balances, quotas, and subscription values
+// returned by usage adapters.
 // API-key usage adapters report wallets, key quotas, subscriptions, or
 // percentage windows in one display representation. Optional pointers
 // distinguish an absent observation from a reported zero, and separate wallet

@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go serves administrative search configuration, quota reset, and
+// test-search HTTP requests.
 // Administrator search settings responses include configured API keys together
 // with usage read from the current Manager. The same adapter exposes quota
 // reset and a bounded test search; route-group authentication protects these

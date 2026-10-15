@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// catalog_parse.go decodes catalog entries into price records and validation
+// diagnostics.
 // A catalog entry can contain model prices, descriptive metadata, or the
 // reserved operation defaults. Price parsing retains supplied zero amounts as
 // known prices and records malformed entries so the publication loader can

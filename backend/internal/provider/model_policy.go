@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// model_policy.go evaluates provider model admission and enumerates configured
+// request model names.
 // Provider model admission checks the mapped model against an effective scope,
 // then applies platform eligibility. Ordinary records use a nonempty explicit
 // whitelist or the global wildcard. OpenAI shadows instead enumerate their

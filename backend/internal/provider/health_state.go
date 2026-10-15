@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// health_state.go defines temporary-pause evidence and cache interfaces for
+// provider health accounting.
 // Temporary health pauses carry a deadline and their triggering evidence for
 // cache and administrator display. Rule-generated pauses retain their rule
 // index, while system actions use a sentinel; shared API Key failure accounting

@@ -11,11 +11,18 @@ import (
 	googleapi "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Gateway credential headers are bounded before Key lookup to constrain
-// invalid-authentication work. Google entry extraction prefers its native
-// header and accepts a query key only on the supported path prefixes, while
-// team rejection helpers shape the same domain failures for generic or Google
-// clients.
+// credentials.go checks credential header sizes, extracts Google-compatible
+// credentials, and formats team authentication errors. Header-size checks run
+// before Key lookup to bound credential input. Team rejection helpers
+// translate member allowances and lifecycle failures into generic or Google
+// response bodies.
+//
+// Credential extraction checks the Google header first, then a Bearer value,
+// then x-api-key, and finally an eligible query key. Blank values fall through
+// to the next source after trimming. The path restriction applies to query
+// credentials, while header credentials remain available on other paths.
+// Failure formatting maps the same team error identities to the response
+// structure expected by the selected client protocol.
 
 // MaxAuthorizationHeaderBytes allows credential length plus bearer-scheme and
 // whitespace overhead before the HTTP adapter rejects an oversized

@@ -22,10 +22,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// An upgraded Responses connection contains logical turns that can outlive a
-// provider attempt. User and provider slots are released between turns, while
-// the Key request reservation stays held across a classified retry of the same
-// logical request and is released after that request finishes.
+// entry.go orchestrates admission, provider attempts, and completion for
+// upgraded Responses WebSocket connections. User and provider slots are
+// released between turns, while the Key request reservation stays held across a
+// classified retry of the same logical request and is released after that
+// request finishes.
 //
 // RunEntry performs first-frame prompt, model, moderation, funding, and
 // isolation checks before selecting a provider. Execution hooks reacquire

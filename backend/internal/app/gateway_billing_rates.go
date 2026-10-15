@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// gateway_billing_rates.go constructs and expires the rate caches used by
+// gateway completion recorders.
 // Gateway completion recording uses separate user-group rate resolvers for
 // forward and OpenAI execution. They read the same rate repository with the
 // selected TTL, while timing-wheel cleanup sweeps both independent caches

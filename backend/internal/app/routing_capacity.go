@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Group capacity reads narrow provider records before combining concurrency,
-// session, and RPM observations in routing. Quota settings are captured once
-// for each nonempty provider read, while each provider capacity conversion
-// evaluates its windows using the current observation time.
+// routing_capacity.go adapts stored provider capacity and quota policy for
+// group capacity queries. Group capacity reads narrow provider records before
+// combining concurrency, session, and RPM observations in routing. Quota
+// settings are captured once for each nonempty provider read, while each
+// provider capacity conversion evaluates its windows using the current
+// observation time.
 
 // capacityProviders adapts stored provider capacity with current quota pause
 // settings.

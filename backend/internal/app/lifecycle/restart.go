@@ -5,10 +5,12 @@ import (
 	"time"
 )
 
-// Restart requests schedule a main-loop shutdown callback on Linux after a
-// 600-millisecond response-send window. Once scheduled, later requests cause no
-// additional callback, and other platform names cause none. The process entry point
-// handles exit and the supervisor performs the subsequent process restart.
+// restart.go coordinates delayed restart callbacks with cancellation and
+// completion during close. Restart requests schedule a main-loop shutdown
+// callback on Linux after a 600-millisecond response-send window. Once
+// scheduled, later requests cause no additional callback, and other platform
+// names cause none. The process entry point handles exit and the supervisor
+// performs the subsequent process restart.
 //
 // Scheduling and closing share a mutex so no callback is added after admission
 // closes. A wait-group slot is registered before the timer can fire. If Close

@@ -9,11 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// Usage queries can share work only when their provider credentials and
-// connection settings describe the same request. A digest includes normalized
-// query choices, proxy credentials and TLS settings so an identity change
-// selects another shared query; CN monitor snapshots reuse that digest to reject
-// observations from an earlier identity.
+// usage_identity.go computes usage-query identities from provider credentials
+// and connection settings.
+// Normal JSON digest input includes query choices, proxy credentials, and TLS
+// settings so changes to those inputs select another shared query. CN monitor
+// snapshots reuse the digest to reject observations from an earlier identity.
+// When JSON encoding fails, the reduced input contains provider ID, platform,
+// adapter, and formatted credentials; connection settings are omitted on that
+// path.
 //
 // Ollama browser usage groups use a narrower identity: the fixed host and API
 // key. Providers with that same key can share the managed browser observation

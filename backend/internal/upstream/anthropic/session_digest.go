@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// session_digest.go builds conversation digest chains and shortened Anthropic
+// session cache keys.
 // Conversation digests encode system content followed by each message's role
 // and content hash. Per-message entries keep earlier content at the same chain
 // positions when a later turn is appended, allowing callers to compare prefixes

@@ -10,6 +10,8 @@ import (
 	wireprotocol "github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// routes.go registers gateway endpoints, aliases, protocol guards and
+// middleware for incoming HTTP requests.
 // Gateway aliases need the same authentication and selected-group protocol
 // rules as their versioned entry points. Route registration fixes the inbound
 // protocol before endpoint execution, while compatible text dispatch chooses

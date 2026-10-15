@@ -29,6 +29,8 @@ import (
 	usageredis "github.com/TokenFlux/TokenRouter/internal/usage/rediscache"
 )
 
+// usage.go assembles usage queries, aggregation, cleanup, and dashboard
+// services with their storage dependencies.
 // Usage querying, dashboard aggregation, and cleanup share the same SQL-backed
 // store and calendar. Dashboard refresh tasks use application tracking,
 // aggregation receives singleton coordination and billing deduplication

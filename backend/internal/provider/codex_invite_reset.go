@@ -1,5 +1,7 @@
 package provider
 
+// codex_invite_reset.go defines Codex invitation status, reset-credit details,
+// and invitation and consumption result values.
 // Codex invitation eligibility and reset-credit availability are reported
 // separately so an unavailable invitation entry point can coexist with usable
 // credits. Optional upstream reward fields retain presence, and raw objects

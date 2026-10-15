@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 
+// openai_request_header_policy.go defines allowed outgoing headers for
+// Responses passthrough and raw Chat requests.
 // Outgoing header permissions differ between Codex Responses and raw Chat.
 // Standard and passthrough Responses retain session and device metadata for
 // later identity rewriting, while raw Chat forwards general client headers and

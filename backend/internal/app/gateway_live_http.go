@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai/liveattestation"
 )
 
+// gateway_live_http.go constructs Live execution and HTTP admission and
+// registers observer shutdown.
 // Live creation shares OpenAI request construction and Grok WebSocket dialing
 // with other gateway execution. Optional cache and concurrency capabilities
 // provide stored call state and leases, while local observer shutdown is

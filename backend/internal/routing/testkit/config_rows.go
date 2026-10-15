@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// config_rows.go supplies row-based pricing fixtures and constructs a pricing
+// service for one group.
 // Pricing fixtures supply combined configuration rows while the production
 // service builds its own cache. List reads expose the fixture collections
 // directly, ID reads copy selected pricing and policy values, and a

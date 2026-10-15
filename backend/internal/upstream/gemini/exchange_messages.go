@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// exchange_messages.go executes Gemini requests for Messages clients and
+// coordinates signature recovery with status retries.
 // Messages compatibility retries rebuild a Gemini request using caller-owned
 // conversion state. Signature-related 400 responses can first discard thinking
 // history and then tool history, and each successful downgrade consumes one

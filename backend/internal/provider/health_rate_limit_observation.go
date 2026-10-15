@@ -7,6 +7,8 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// health_rate_limit_observation.go persists observed provider rate limits,
+// session windows, and Codex usage snapshots.
 // Response reset observations feed provider rate-limit columns, five-hour
 // session columns and Codex Extra snapshots through separate writes. The
 // rate-limit command notifies the configured runtime blocker before its

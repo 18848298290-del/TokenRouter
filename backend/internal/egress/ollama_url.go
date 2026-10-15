@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// ollama_url.go recognizes supported Ollama cloud base URLs for provider
+// capability and usage selection.
 // Ollama cloud identity is tied to an HTTPS authority and an exact supported
 // base path. Provider capability and usage selection use this check to exclude
 // credentials, alternate ports, escaped paths, queries, and fragments from the

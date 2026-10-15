@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_handler.go serves request-error and upstream-error administration,
+// including filtered lists, drilldown, and resolution.
 // Administrator error URLs share stored Ops rows, so request and upstream
 // detail/resolution aliases delegate to the same numeric-ID handlers. Lists add
 // different identity, phase, recovered-provider, and SLA-view filters, while

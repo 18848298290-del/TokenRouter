@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 )
 
-// OpenAI client requests sent to Anthropic share credential, exchange, and
-// health operations while retaining their own downstream format. Conversion
-// always asks Anthropic for a stream, then chooses either event output or
-// buffered JSON using the client's original stream setting.
+// conversion_contract.go defines adapter operations for sending OpenAI client
+// requests through Anthropic. Conversion always asks Anthropic for a stream,
+// then chooses either event output or buffered JSON using the client's original
+// stream setting.
 
 // ConversionInput selects provider preparation rules before the converted request is exchanged.
 type ConversionInput struct {

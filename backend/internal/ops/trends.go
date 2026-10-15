@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// trends.go defines throughput and error chart responses and routes throughput
+// queries through the selected storage mode.
 // Throughput buckets count usage and client-error observations together, while
 // token totals come from usage rows and switches come from saved attempt
 // events. Error charts keep SLA exclusions separate from provider status

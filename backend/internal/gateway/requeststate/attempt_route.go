@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// attempt_route.go resolves provider protocol attempts from request routing
+// state and applies the current model mapping.
 // Provider capabilities can change between selections even when the request
 // keeps its group plan. Candidate resolution therefore rechecks the current
 // provider snapshot against the client protocol before a later attempt uses a

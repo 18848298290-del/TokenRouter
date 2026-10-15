@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// auth_error.go writes localized authentication error responses and aborts the
+// rejected Gin handler chain.
 // Authentication and access checks return a string code alongside a readable
 // message. Error text follows an injected request language or negotiated browser
 // language, then Gin's chain is aborted so subsequent middleware handlers do

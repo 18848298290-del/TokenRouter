@@ -22,6 +22,8 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
+// ws_client.go dials OpenAI WebSockets and caches HTTP/1.1 handshake
+// transports by proxy and effective TLS profile.
 // WebSocket Upgrade uses HTTP/1.1 even when a configured TLS fingerprint
 // advertises HTTP/2. Proxy/TLS client selection removes HTTP/2 from the
 // effective profile before forming the cache key, keeping the cached transport

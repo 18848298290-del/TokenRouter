@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// refresh_provider_state.go tracks platform refresh failures and gates further
+// attempts after a cycle trips.
 // A platform cycle can stop admitting work after consecutive attempt failures,
 // shared configuration rejection or an uncertain contained outcome. Permanent
 // credential rejection belongs to its individual provider, so it resets the

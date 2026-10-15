@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// video_urls.go rewrites video content URLs to a task proxy URL while
+// preserving JSON numeric spellings.
 // Video status output can expose a signed or provider-protected content URL
 // that the gateway replaces with a task proxy URL. A nonblank root
 // video.url string is replaced directly, while nested string values use the

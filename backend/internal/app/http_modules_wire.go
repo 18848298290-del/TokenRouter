@@ -10,10 +10,12 @@ import (
 	sitehttp "github.com/TokenFlux/TokenRouter/internal/site/httpapi"
 )
 
-// Announcement handlers consume AnnouncementService, and subscription and
-// redeem handlers consume their billing use cases. These HTTP constructors
-// provide concrete handler types to application route mounting, alongside the
-// Ops handler constructed from OpsService for operational queries.
+// http_modules_wire.go registers constructors for billing, announcement, and
+// Ops HTTP handlers with Wire. Announcement handlers consume
+// AnnouncementService, and subscription and redeem handlers consume their
+// billing use cases. These HTTP constructors provide concrete handler types to
+// application route mounting, alongside the Ops handler constructed from
+// OpsService for operational queries.
 
 // nativeHTTPProviders supplies billing, announcement, and Ops HTTP handlers
 // whose use cases are resolved by other application sets.

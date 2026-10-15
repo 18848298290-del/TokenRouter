@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Converted Messages results retain the upstream token buckets needed for
-// cache-aware pricing. The logical model, sent model, and upstream response
-// declaration remain separate, allowing completion and client output to use
-// the observation appropriate to their own decision.
+// messages_result.go defines converted Messages results and extracts them from
+// upstream attempts. Converted Messages results retain the upstream token
+// buckets needed for cache-aware pricing. The logical model, sent model, and
+// upstream response declaration remain separate, allowing completion and client
+// output to use the observation appropriate to their own decision.
 
 // MessagesResult contains raw protocol usage and metadata from Messages-compatible execution.
 type MessagesResult struct {

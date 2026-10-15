@@ -17,6 +17,8 @@ import (
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
+// session.go stores gateway session state in Redis and arbitrates
+// response-window ownership and Live controller transitions.
 // Gateway session keys coordinate response-window owners, deferred video
 // billing, reasoning recovery, transcript blocks, and saved Live calls through
 // one Redis client. Atomic scripts replace or compare an owner before changing

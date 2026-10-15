@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// advisory_lock.go acquires PostgreSQL advisory locks and returns cleanup for
+// their reserved connections.
 // Periodic maintenance needs a database-wide admission decision when Redis
 // locking is unavailable. PostgreSQL session advisory locks require holding
 // one reserved SQL connection through the work; a successful caller receives

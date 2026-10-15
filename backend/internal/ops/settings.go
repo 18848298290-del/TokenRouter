@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// settings.go reads, validates, and saves Ops notification, alert, capture,
+// and cleanup preferences.
 // Ops runtime preferences use separate stored keys for mail, evaluator
 // behavior, display cutoffs, and advanced capture/cleanup settings. Missing
 // keys can receive best-effort defaults during a read, while malformed JSON

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// gemini_response_chain.go converts buffered Gemini responses into Responses
+// or Chat replies through Messages.
 // Buffered Gemini answers reach OpenAI clients through the existing Anthropic
 // and Responses converters, with the requested model restored at the Responses
 // stage. The native usage value travels beside that converted answer, allowing

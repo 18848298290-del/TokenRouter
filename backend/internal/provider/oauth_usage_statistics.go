@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// oauth_usage_statistics.go reads local provider usage totals and attaches
+// statistics to quota displays.
 // Local provider totals supplement upstream quota windows even when statistics
 // reads partially fail. A combined two-window query is preferred when
 // available, then separate reads preserve successful observations; daily

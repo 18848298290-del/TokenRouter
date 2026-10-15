@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// request_lifetime.go admits HTTP handlers through the application activity
+// barrier and presents shutdown rejections in the inbound protocol.
 // Requests can enqueue completion work until their handlers finish. The
 // application supplies one activity barrier so shutdown can wait for that work
 // before closing completion and storage dependencies; a rejected entry is

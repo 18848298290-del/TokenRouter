@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// http_exchange.go executes HTTP requests while arbitrating header arrival
+// against the first-output deadline.
 // A first-output budget starts at the supplied request arrival time and
 // initially guards the HTTP header wait. If the timer wins, the guarded request
 // is cancelled and any returned response body is closed before HeaderTimeout

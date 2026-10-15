@@ -15,6 +15,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// wechat_oauth.go handles WeChat authorization redirects, callback identity
+// resolution, and pending registration completion.
 // WeChat account identity prefers unionid while channel observations retain
 // mode, application ID, and openid. Login callback checks state and browser
 // proof before resolving current provider ownership, signed binding targets,

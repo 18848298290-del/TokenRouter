@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// operation_lease.go defines maintenance-operation lease claims and
+// ownership-checked storage operations.
 // Maintenance operations share a database lease that can be acquired again after
 // its lock expires. Acquisition callers supply an operation ID and fresh ownership token,
 // allowing renewal and completion to distinguish the current owner from an

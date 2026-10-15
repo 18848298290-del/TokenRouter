@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// agent_identity.go signs agent assertions, registers tasks, and decrypts
+// returned task identifiers using the agent key.
 // Agent credentials bind a runtime, registered task, and Ed25519 signing key to
 // the Authorization header. The signed payload includes those identifiers and a
 // UTC timestamp; the outer JSON envelope and signature use different Base64

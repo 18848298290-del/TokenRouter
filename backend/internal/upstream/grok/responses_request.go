@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// responses_request.go builds authenticated Grok Responses requests with
+// cache, CLI, and transport-profile settings.
 // Grok Responses requests combine bearer authentication with optional
 // subscription CLI identity and cache routing headers. Provider overrides are
 // applied after the built-in fields, while the supplied context and optional

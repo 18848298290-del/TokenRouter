@@ -7,6 +7,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// openai_dependencies.go checks required OpenAI handler dependencies and
+// reports unavailable services before response output begins.
 // Responses admission distinguishes a missing handler from missing services
 // used by that handler. Dependency checks return ordered diagnostic names and
 // write a 503 only while the HTTP response is still available for an error

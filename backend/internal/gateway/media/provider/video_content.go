@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// video_content.go opens Grok video content streams using task lookup,
+// authorization and download callbacks.
 // Video content retrieval first reads task status, then opens a signed URL
 // or an authenticated provider download. The adapter delegates redirect
 // rejection and Range handling to Grok; a returned stream retains download

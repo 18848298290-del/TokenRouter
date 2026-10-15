@@ -11,6 +11,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending_flow.go implements pending account completion against PostgreSQL and
+// converts stored records for the identity flow.
 // Pending account completion combines identity binding, signup finalization,
 // and browser-session consumption around an already created local account. The
 // database adapter supplies entity conversion and current-row lookup while the

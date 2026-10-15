@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// codec.go validates SystemOne decisions, extracts response usage, and builds
+// moderation and probe requests.
 // SystemOne decisions return typed answers separately from token accounting.
 // Valid answers remain deliverable when usage is missing or malformed, while
 // valid zero usage still establishes accounting evidence. Request validation

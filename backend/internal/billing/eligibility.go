@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// eligibility.go checks request funding eligibility and coordinates cached
+// balance and spending updates.
 // Funding prechecks combine Key source policy, selected subscription windows,
 // cached balance and Key spending ceilings before the request coordinator
 // applies RPM. Cache errors can start a per-user coalesced balance load with

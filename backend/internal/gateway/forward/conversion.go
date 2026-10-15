@@ -15,11 +15,13 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Anthropic conversion keeps the client's logical model and output mode while
-// selecting a provider wire model and a streaming upstream request. Responses
-// client tools can require reversible function-tool adaptations before typed
-// conversion; their restoration mapping accompanies only the Responses output
-// path. Both entrypoints prepare OAuth requests and cache limits before their
+// conversion.go forwards OpenAI Responses and Chat requests through Anthropic
+// and selects their converted output path. Anthropic conversion keeps the
+// client's logical model and output mode while selecting a provider wire model
+// and a streaming upstream request. Responses client tools can require
+// reversible function-tool adaptations before typed conversion; their
+// restoration mapping accompanies only the Responses output path. Both
+// entrypoints prepare OAuth requests and cache limits before their
 // credential/build/send sequence, then apply health decisions to source errors.
 //
 // Recorded effort combines client syntax, selected model, converted Anthropic

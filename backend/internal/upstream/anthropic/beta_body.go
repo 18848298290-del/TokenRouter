@@ -9,6 +9,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// beta_body.go removes request fields whose required capabilities are absent
+// from the selected beta header.
 // A final beta Header can omit capabilities that the client used in its request
 // body. Context management, fast speed, and refusal fallback fields therefore
 // need their own gate after Header selection, including any provider-specific

@@ -12,10 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Responses upstream events can serve a Chat client that requests either JSON
-// or SSE output. Gateway output binds request-specific error and observation
-// callbacks to the upstream converter, then adds the selected billing model to
-// its usage result for completion processing.
+// chat_response_reader.go binds HTTP output to buffered and streaming
+// Responses-to-Chat conversion. Responses upstream events can serve a Chat
+// client that requests either JSON or SSE output. Gateway output binds
+// request-specific error and observation callbacks to the upstream converter,
+// then adds the selected billing model to its usage result for completion
+// processing.
 
 // ChatBuffered collects a Responses terminal event and writes converted Chat JSON.
 // The caller supplies a live response and request context and owns response-body

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// marketplace.go converts routing marketplace results into JSON response
+// structures while retaining optional price presence.
 // A quoted image size can be free or have no available price, and both cases
 // may carry a numeric zero before HTTP conversion. ImagePriceSizes retains
 // which sizes were quoted; the mapper emits a pointer for a known free size

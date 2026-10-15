@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated creative model, task, and output
+// routes.
 // Creative tasks are exposed under the authenticated dashboard route group.
 // Creation also passes through the supplied heavy-request limiter, while model
 // reads, task queries, binary output delivery, and acknowledgment use their

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_images_backfill.go configures image URL downloads for optional base64
+// response delivery.
 // Image URL backfill is an optional API Key delivery conversion, using the
 // selected provider's proxy and shared URL validator. The native downloader
 // adds a per-request public-host restriction, preserves signed URL spelling

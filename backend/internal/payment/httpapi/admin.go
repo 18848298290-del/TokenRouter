@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin.go handles administrative payment queries, recovery actions, refunds,
+// and provider configuration requests.
 // Administrator payment endpoints can inspect orders, request recovery and
 // manage provider configuration independently of buyer ownership checks.
 // Forced expiration supplies a required reason for a local transactional

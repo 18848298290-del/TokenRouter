@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// codex_import_index.go indexes stored Codex providers and matches ordered
+// import identities while tracking duplicates within a batch.
 // Codex imports match stored rows through ordered identity keys while
 // retaining multiple candidates for shared accounts. User keys precede token
 // fingerprints and the account fallback for full OAuth, whereas access-only

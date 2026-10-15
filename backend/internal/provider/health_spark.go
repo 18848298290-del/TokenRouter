@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// health_spark.go selects and persists model-scoped Spark rate-limit
+// deadlines.
 // Spark quota exhaustion pauses its normalized model scope, leaving the
 // provider's other model windows separate. A confirmed five-hour or seven-day
 // exhaustion can use its future reset; transient classifications discard long

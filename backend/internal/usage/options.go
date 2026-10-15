@@ -10,6 +10,8 @@ import (
 	p "github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// options.go defines usage-service configuration and application-supplied
+// scheduling, calendar, and reporting dependencies.
 // Application assembly supplies calendars, background dispatch, and deployment
 // settings separately to usage services. Constructors and workers interpret
 // zero-valued durations and limits at their own call sites, while callbacks

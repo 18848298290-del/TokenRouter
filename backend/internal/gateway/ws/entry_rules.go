@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Provider switching must replay the request belonging to the failed turn,
-// while billing may select a different model from the client or upstream
-// identifier. The entry rules preserve those distinctions through explicit
-// replay selection, model-source precedence, and local-failure classification.
+// entry_rules.go selects retry payloads and billing models and classifies local
+// WebSocket entry failures. A failed turn supplies its own replay request,
+// while billing can select a model different from the client or upstream
+// identifier.
 //
 // A recognized later-turn failure needs its own nonempty retry payload, and
 // selected payloads are copied for the next provider attempt. Billing first

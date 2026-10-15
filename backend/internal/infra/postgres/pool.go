@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// pool.go resolves and applies PostgreSQL connection-pool limits and
+// connection age settings.
 // Database connection counts and age limits enter through startup
 // configuration before sql.DB creates its pool. Connection ages outside one
 // minute through twenty-four hours select bounded defaults with a warning;

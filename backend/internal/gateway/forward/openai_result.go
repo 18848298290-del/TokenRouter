@@ -8,12 +8,13 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// An OpenAI-compatible result can come from direct OpenAI execution or another
-// protocol converted into OpenAI output. It therefore keeps native token
-// buckets, explicit billing candidates, and sent model/tier values separate
-// from client-facing metadata and upstream response declarations. Completion
-// applies the configured pricing source and credential-specific tier rules to
-// those observations.
+// openai_result.go holds OpenAI-compatible result evidence and WebSocket replay
+// state and classifies scheduling success. An OpenAI-compatible result can come
+// from direct OpenAI execution or another protocol converted into OpenAI
+// output. It therefore keeps native token buckets, explicit billing candidates,
+// and sent model/tier values separate from client-facing metadata and upstream
+// response declarations. Completion applies the configured pricing source and
+// credential-specific tier rules to those observations.
 //
 // WebSocket turns also need replay history and terminal outcome classification.
 // Replay slices remain private to the Go result and are stored by reference;

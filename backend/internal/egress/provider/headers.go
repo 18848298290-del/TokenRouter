@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// headers.go applies request header overrides and rebuilds permitted response
+// headers for forwarding.
 // Provider overrides replace a request header even when its map contains several
 // wire spellings of the same case-insensitive name. ApplyRequestHeaders removes
 // those variants before inserting the casing selected by the upstream caller,

@@ -8,10 +8,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Client JSON can contain raw control bytes that a strict parser rejects inside
-// strings. Gateway adapters delegate that compatibility pass to the OpenAI
-// normalizer and translate its expanded-size limit into the HTTP error type
-// consumed by endpoint handlers.
+// body.go reads request bodies and adapts lenient JSON normalization errors for
+// HTTP handlers. Client JSON can contain raw control bytes that a strict parser
+// rejects inside strings. Gateway adapters delegate that compatibility pass to
+// the OpenAI normalizer and translate its expanded-size limit into the HTTP
+// error type consumed by endpoint handlers.
 
 // ReadLenientJSONRequestBodyWithPrealloc reads and decodes the body before
 // escaping raw control bytes inside JSON strings. maxNormalizedBytes limits the

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// http_execute.go executes authenticated Bedrock requests with bounded waits
+// between eligible HTTP retries.
 // Bedrock retry policy applies to eligible HTTP statuses after a newly built
 // request is sent. Request construction selects bearer or SigV4
 // authentication, and the final response body transfers to the caller for

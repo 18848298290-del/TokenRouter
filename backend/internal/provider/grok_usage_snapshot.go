@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
+// grok_usage_snapshot.go decodes Grok billing snapshots, merges usage
+// metadata, and recognizes available quota evidence.
 // Grok billing snapshots can enter Extra as typed summaries or serialized
 // values. Parsing detaches direct summary references and decodes other values
 // into fresh summary data, while preserving errors for the query caller's

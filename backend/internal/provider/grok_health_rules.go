@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grok_health_rules.go calculates Grok rate-limit deadlines and scheduler
+// utilization from quota observations.
 // Grok rate limits combine Retry-After with request and token window resets. A
 // parseable observation time fixes the Retry-After deadline across repeated
 // reads, while exhausted windows can supply a later deadline. An expired

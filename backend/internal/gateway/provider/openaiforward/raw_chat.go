@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// raw_chat.go forwards Chat Completions requests using the selected provider
+// and collects main and auxiliary usage.
 // Native Chat request bodies still need mapped models, platform controls, and
 // streaming usage flags before exchange. Grok Composer image descriptions can
 // add an auxiliary usage amount, while the main response stays in Chat format

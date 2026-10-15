@@ -2,6 +2,8 @@ package provider
 
 import "slices"
 
+// usage_copy.go copies upstream usage results while retaining selected
+// relationships between their display and internal fields.
 // A coalesced upstream query returns one shared observation, but each waiter
 // needs mutable display data of its own. Amount pointers, window slices, expiry
 // values and subscription data are copied before QueryProvider returns,

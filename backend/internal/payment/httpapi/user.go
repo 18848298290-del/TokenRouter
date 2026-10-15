@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// user.go handles buyer checkout and order operations and builds
+// route-specific public recovery responses.
 // Buyer endpoints pass the authenticated account identity to payment
 // operations, while two public recovery endpoints accept a merchant number or
 // signed resume token. Each response builder selects fields for that route;

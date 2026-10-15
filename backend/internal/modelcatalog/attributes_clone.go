@@ -5,6 +5,8 @@ import (
 	"slices"
 )
 
+// attributes_clone.go copies nested model attributes and applies populated
+// media patch fields.
 // Request attributes contain nested slices and pointers that consumers may
 // change after resolving a route. Copying each populated value keeps those
 // changes separate from the catalog and from other requests, including empty

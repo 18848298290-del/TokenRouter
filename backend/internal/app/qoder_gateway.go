@@ -27,10 +27,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Qoder Chat preparation captures body, headers, Key funding, and HTTP metadata
-// before handing the request to its executor. Observation methods keep Gin
-// access in the request path, while request and platform attempts share a Qoder
-// activity barrier in addition to the general gateway barrier.
+// qoder_gateway.go assembles Qoder Chat HTTP handling and captures request
+// inputs for execution. Qoder Chat preparation captures body, headers, Key
+// funding, and HTTP metadata before handing the request to its executor.
+// Observation methods keep Gin access in the request path, while request and
+// platform attempts share a Qoder activity barrier in addition to the general
+// gateway barrier.
 
 // qoderHTTPObservation binds Qoder preparation and waiting observations to the
 // current HTTP request.

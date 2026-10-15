@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// ports.go defines moderation dependencies for settings, account actions,
+// audit transport, and notices.
 // Moderation requests consult settings, identity accounts, groups, proxies, and
 // notification delivery through capabilities bound by app. Ordinary account
 // actions use status commands and later invalidation, while Cyber persistence

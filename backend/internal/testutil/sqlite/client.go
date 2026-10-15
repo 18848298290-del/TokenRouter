@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/enttest"
 )
 
+// client.go constructs in-memory SQLite clients and initializes Ent schemas
+// for unit fixtures.
 // Ent unit fixtures use a named in-memory SQLite database with shared-cache
 // access. The name derives from the test name with slash and space replacement,
 // so overlapping callers with the same normalized name can refer to the same

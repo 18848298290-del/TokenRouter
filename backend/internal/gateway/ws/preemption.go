@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 )
 
+// preemption.go arbitrates local and remote ownership of pooled OAuth
+// sessions.
 // A newer pooled OAuth session can replace an existing request for the same
 // group, API Key, and session hash. The displaced request needs cancellation
 // and its connection/turn-state affinity must be cleared so subsequent work can

@@ -5,6 +5,8 @@ import (
 	"errors"
 )
 
+// refresh_lifecycle.go registers refresh activity and exposes shutdown and
+// post-lock admission checks.
 // A refresh coordinator can be stopped while callers are exchanging credentials
 // or waiting for the same provider lock. Registration connects each operation to
 // shutdown cancellation, and a second stop-state check after lock acquisition

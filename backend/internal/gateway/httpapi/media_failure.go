@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 )
 
+// media_failure.go selects final media error output from attempt stage,
+// provider eligibility, and response commitment.
 // Media selection failures distinguish an unavailable model from exhausted
 // capacity, while forwarding failures can arrive after response output has
 // begun. The HTTP presenter combines the stage with excluded-provider count

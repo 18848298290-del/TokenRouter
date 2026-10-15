@@ -2,10 +2,9 @@ package searchtools
 
 import "github.com/TokenFlux/TokenRouter/internal/routing/capability"
 
-// Anthropic API-key providers interpret the emulation feature through exact
-// enabled/disabled labels or a legacy bool. The legacy false value retains
-// default mode, allowing the later group feature to decide execution after
-// global prerequisites.
+// provider_mode.go interprets Anthropic API-key provider settings as search
+// emulation modes. The legacy false value retains default mode, allowing the
+// later group feature to decide execution after global prerequisites.
 //
 // ProviderMode also returns copied legacy bool evidence so its caller can
 // diagnose that spelling independently of the chosen enum. Missing, unknown or

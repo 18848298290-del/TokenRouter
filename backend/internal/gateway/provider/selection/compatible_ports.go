@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// compatible_ports.go binds compatible provider policy and execution targets
+// to the platform scheduler.
 // Compatible scheduling needs provider policy and credentials again after
 // ranking candidate metadata. One invocation-scoped lookup associates every
 // candidate, fresh read, and database read with its exact execution target, so

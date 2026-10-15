@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// management_batch.go runs batches for provider deletion, credential refresh,
+// and error clearing while retaining individual outcomes.
 // Administrative batches retain per-provider failures while other work
 // continues. Refresh and error clearing each use a bounded worker group, but each
 // worker records its outcome and returns success to the group so one provider's

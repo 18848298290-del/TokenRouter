@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// proxy_transfer.go exports proxy backups and imports connection records with
+// destination backup references.
 // Proxy backups match connection identities across instances and use names for
 // backup references that local IDs cannot preserve. Export resolves names
 // within its selected set, while import maps existing records and earlier batch

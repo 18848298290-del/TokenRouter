@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_chat_response_output.go binds Responses-to-Chat readers to failure
+// policy, HTTP presentation, and request-local usage observations.
 // Responses failures reach Chat clients through either a buffered JSON
 // rejection or a terminal stream error. Provider health classification runs
 // before presentation rules, so a custom error message cannot by itself reopen

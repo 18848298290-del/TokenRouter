@@ -1,5 +1,7 @@
 package egress
 
+// request_policy.go constructs per-request egress policy from proxy, TLS,
+// header, and destination-check inputs.
 // An outbound attempt carries its selected proxy and fingerprint together with
 // destination and redirect checks. RequestPolicy copies a present profile and
 // any accepted header overrides before transport construction, so callers can

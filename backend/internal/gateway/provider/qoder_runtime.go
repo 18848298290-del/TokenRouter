@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// qoder_runtime.go constructs Qoder execution targets and publishes the
+// runtime executor with its activity callback.
 // Qoder requests use a conversation store and a lazily constructed executor
 // shared by this runtime. The activity callback is captured on the first
 // executor read, so application binding precedes request execution. Provider

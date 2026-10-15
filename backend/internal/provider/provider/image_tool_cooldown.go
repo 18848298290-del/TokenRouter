@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// A confirmed OpenAI image-tool failure temporarily blocks the image capability
-// under its model-limit key. The caller classifies the failure before invoking
-// Apply; dynamic cooldown settings can change the duration, and a settings read
-// error retains the platform default.
+// image_tool_cooldown.go records a temporary image-capability block after a
+// caller confirms an OpenAI image-tool failure. The caller classifies the
+// failure before invoking Apply; dynamic cooldown settings can change the
+// duration, and a settings read error retains the platform default.
 
 // ImageToolCooldown stores model-specific cooldowns for caller-classified
 // OpenAI image-tool failures.

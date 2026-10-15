@@ -8,6 +8,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// totp_handler.go exposes TOTP enrollment, removal, status, and session
+// step-up verification through authenticated HTTP requests.
 // TOTP account management uses the authenticated Gin subject for setup,
 // activation, disabling, and status reads. Sensitive-operation verification
 // stores a grant under StepUpSessionKey, matching the key used by step-up

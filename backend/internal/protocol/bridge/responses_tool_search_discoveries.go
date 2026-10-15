@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// responses_tool_search_discoveries.go promotes discovered tool declarations
+// from Responses history while checking identity conflicts.
 // A tool-search result can advertise declarations that a function-only
 // upstream must receive on the next request. Promotion keeps static
 // declarations before history discoveries and admits only named

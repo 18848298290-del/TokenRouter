@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// admin_settings_read.go derives the search-emulation enable flag for the
+// combined administrator settings view.
 // The combined administrator settings view exposes whether stored search
 // emulation is enabled and contains at least one supplier. It derives that flag
 // directly from the serialized setting; supplier credentials, quota

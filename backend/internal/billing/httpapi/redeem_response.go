@@ -5,6 +5,8 @@ import (
 	billingdto "github.com/TokenFlux/TokenRouter/internal/billing/httpapi/dto"
 )
 
+// redeem_response.go exposes redemption response aliases and delegates user
+// and administrator mappings.
 // User and administrator redemption endpoints share DTO mappings with distinct
 // note visibility. These response aliases keep handler call sites using the
 // same JSON structures, while conversion wrappers delegate nil handling and

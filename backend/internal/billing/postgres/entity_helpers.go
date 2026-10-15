@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// entity_helpers.go selects billing persistence clients, translates database
+// errors and maps user records.
 // Billing persistence adapters can join an Ent transaction passed in context
 // or use their configured client. These shared helpers select that connection,
 // translate known missing/unique errors to application errors, and map billing

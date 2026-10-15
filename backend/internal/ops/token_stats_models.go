@@ -2,6 +2,8 @@ package ops
 
 import "time"
 
+// token_stats_models.go defines filters and response values for model-grouped
+// token statistics.
 // Model token statistics group saved usage observations by their execution
 // model and rank them by request count. The token-rate average divides output
 // by the full recorded duration, while first-token latency has its own sample

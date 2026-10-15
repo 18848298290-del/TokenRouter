@@ -13,6 +13,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/systemone"
 )
 
+// systemone_handler.go admits SystemOne HTTP requests and passes parsed
+// decision input to the shared execution loop.
 // SystemOne accepts synchronous structured decision input and reuses shared
 // authentication, moderation and concurrency admission. Its HTTP handler
 // passes a validated model/body and mapping into the decision loop, then

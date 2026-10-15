@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// tool_continuation.go evaluates tool-result history and checks whether call or
+// reference identities cover continuation outputs.
 // A tool result can depend on a prior upstream response even when the request
 // contains some tool-call context. Preliminary validation asks whether an
 // output and any nonblank call context exist; that decision can accept

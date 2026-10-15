@@ -8,17 +8,20 @@ import (
 	"sync"
 )
 
-// Background work may create child tasks while application shutdown is
-// draining. Task admission remains open until the current group reaches zero,
-// allowing a parent to register its child before the parent finishes. Ordinary
-// Wait observes a captured group's idle signal and leaves admission available
-// for later consumers; Stop asks the final idle transition to seal it.
+// tasks.go tracks background callbacks and coordinates task admission with
+// shutdown draining. Background work may create child tasks while application
+// shutdown is draining. Task admission remains open until the current group
+// reaches zero, allowing a parent to register its child before the parent
+// finishes. Ordinary Wait observes a captured group's idle signal and leaves
+// admission available for later consumers; Stop asks the final idle transition
+// to seal it.
 //
-// A mutex coordinates the count, diagnostic names, and idle-channel replacement.
-// Each accepted callback returns through complete, which closes idle at zero
-// and closes admission when stopping was requested. Caller contexts bound
-// waiting, while callbacks retain their own contexts, concurrency limits, and
-// retry policy. A timed-out stop can be retried after the remaining work returns.
+// A mutex coordinates the count, diagnostic names, and idle-channel
+// replacement. Each accepted callback returns through complete, which closes
+// idle at zero and closes admission when stopping was requested. Caller
+// contexts bound waiting, while callbacks retain their own contexts,
+// concurrency limits, and retry policy. A timed-out stop can be retried after
+// the remaining work returns.
 
 // Tasks counts named asynchronous callbacks and coordinates their final admission seal.
 type Tasks struct {

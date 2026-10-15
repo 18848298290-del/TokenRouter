@@ -8,17 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Background failure handling compares the complete attempted authentication
-// state before changing persistent health. One SQL statement locks the candidate
-// and chooses permanent rejection or a longer temporary pause, returning
-// identity-match and actual-change results separately so an already longer pause
-// still counts as a handled failure.
+// refresh_failure.go applies background refresh failures to the matching
+// authentication state and clears Antigravity refresh requests. Background
+// failure handling compares the complete attempted authentication state before
+// changing persistent health. One SQL statement locks the candidate and
+// chooses permanent rejection or a longer temporary pause, returning
+// identity-match and actual-change results separately so an already longer
+// pause still counts as a handled failure.
 //
 // Only an actual health change triggers outbox and snapshot notifications, and
 // an outbox error is logged after that write. Clearing Antigravity's one-time
-// request uses a different path: CredentialRefreshStore keeps its identity lock
-// while UpdateExtra merges the clearing fields in the same transaction. An owned
-// successful commit precedes snapshot synchronization in that path.
+// request uses a different path: CredentialRefreshStore keeps its identity
+// lock while UpdateExtra merges the clearing fields in the same transaction.
+// An owned successful commit precedes snapshot synchronization in that path.
 
 // ApplyOAuthRefreshFailure records permanent rejection or extends a cooldown
 // when the attempted identity and schedulable value still match. Nil expected

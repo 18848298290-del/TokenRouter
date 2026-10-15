@@ -11,11 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Provider storage combines Ent record conversion with SQL operations for
-// conditional health and JSONB changes. Application assembly supplies
-// proxy/group conversion and the scheduler event adapter; constructor
-// defaults provide clocks while storage clients and executors remain
-// caller-owned.
+// provider_store.go constructs provider storage and connects record
+// conversion, clocks, and scheduler callbacks. Provider storage combines Ent
+// record conversion with SQL operations for conditional health and JSONB
+// changes. Application assembly supplies proxy/group conversion and the
+// scheduler event adapter; constructor defaults provide clocks while storage
+// clients and executors remain caller-owned.
 //
 // Some mutations open an Ent transaction, others participate in a context
 // transaction, and dedicated health paths operate directly on the configured

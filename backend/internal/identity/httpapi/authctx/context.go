@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// context.go records authenticated callers and paying-account context for Gin
+// identity readers.
 // A Gin request can carry an authenticated caller and a different paying user.
 // The private authentication record keeps those identities together with the
 // role and concurrency already resolved by the middleware, so later

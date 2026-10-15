@@ -19,10 +19,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// completion_capture.go captures completion inputs and associates billing
+// identities with diagnostic request records.
 // Completion can run after the HTTP request or WS turn has ended, so capture
 // resolves usage, payer, provider, and pricing evidence synchronously before a
 // worker receives it. Dedicated snapshot helpers copy the mutable fields that
-// worker normalization uses, and source writers are serialized with this
+// worker normalization uses. Callers serialize source writers with this
 // capture phase.
 //
 // Financial deduplication and diagnostic correlation can select different IDs.

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// admin_settings.go prepares balance display, signup funding, and notification
+// settings for persistence.
 // Balance display settings name the unit shown to users, while default funds
 // and subscriptions determine signup grants. Preparation trims display text
 // and encodes numeric values for the settings store; the settings coordinator

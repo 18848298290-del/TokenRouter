@@ -21,6 +21,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_forward_http_adapter.go binds Responses HTTP attempts to recovery,
+// provider health, and output callbacks and prepares encrypted-content
+// retries.
 // Responses HTTP recovery reuses prepared model and policy state while a
 // rejected request body may need decoding and encrypted-history removal. The
 // supplied decoder must retain numeric precision, because full serialization

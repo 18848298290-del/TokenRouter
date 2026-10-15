@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// alphasearch.go binds prepared Alpha Search requests and response callbacks
+// to the native OpenAI executor.
 // Standalone Alpha Search and its Responses fallback share a prepared request
 // but use different response and quota handling. The adapter passes captured
 // callbacks to the native executor, which owns response-body cleanup while

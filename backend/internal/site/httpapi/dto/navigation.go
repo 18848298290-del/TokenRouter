@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/content"
 )
 
+// navigation.go parses public navigation responses and filters
+// administrator-only menu entries.
 // Public navigation retains stable entry IDs while selecting display text for
 // menus, endpoints, and footer links. The response mapper excludes admin-only
 // menu entries, and featured model IDs remain a plain JSON string list.

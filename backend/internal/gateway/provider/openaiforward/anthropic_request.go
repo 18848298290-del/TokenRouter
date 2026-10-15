@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// anthropic_request.go builds authenticated Anthropic requests with
+// beta-dependent body sanitation and ordered header application.
 // Anthropic body fields can depend on the beta header that the upstream
 // actually receives. Request construction chooses the provider beta override
 // before sanitizing dependent fields, then copies allowed incoming headers,

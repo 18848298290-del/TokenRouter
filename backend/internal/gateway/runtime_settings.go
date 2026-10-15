@@ -16,18 +16,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Gateway policies are stored as JSON values and interpreted at their point of
-// use. Missing, empty, or malformed values select the relevant policy default,
-// while other storage failures are returned for the execution caller to handle.
-// Valid JSON is decoded as supplied, so omitted fields retain their zero values
-// rather than being merged with defaults.
+// runtime_settings.go reads and saves gateway rectifier, beta-header, and Fast
+// policy settings. Missing, empty, or malformed values select the relevant
+// policy default. Typed settings readers return other storage failures, while
+// the signature and budget rectifier boolean accessors return true on those
+// errors. Valid JSON is decoded as supplied, so omitted fields retain their
+// zero values rather than being merged with defaults.
 //
-// Beta updates validate actions and provider scopes before persistence and
-// trim model patterns in the supplied settings object. Fast policy preparation
-// is delegated to tierpolicy so direct saves and coordinated administration use
-// the same validation. The runtime also owns the typed caches and shared refresh
-// groups whose client and forwarding read rules are implemented alongside these
-// JSON policy readers.
+// Beta updates validate actions and provider scopes before persistence and trim
+// model patterns in the supplied settings object. Fast policy preparation is
+// delegated to tierpolicy so direct saves and coordinated administration use
+// the same validation. The runtime also owns the typed caches and shared
+// refresh groups whose client and forwarding read rules are implemented
+// alongside these JSON policy readers.
 
 // Gateway policy keys identify the stored JSON values used by beta, Fast-tier,
 // and request-rectifier readers and administration participants.

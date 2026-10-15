@@ -8,10 +8,18 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// credential_target.go resolves the credential-owning execution target and
+// applies its ChatGPT account headers.
 // Spark execution targets carry routing configuration while their OpenAI OAuth
 // parent owns authentication credentials. Credential resolution keeps an
 // ordinary target intact and reads a parent for a shadow, allowing header
 // construction to use the account that supplies its token.
+//
+// The resolver converts records for provider-level validation but retains the
+// loaded execution target beside that conversion. Comparing the resolved
+// record with the input distinguishes ordinary targets from parent lookups.
+// Returning the retained target keeps header construction attached to the same
+// parent object loaded by the repository.
 
 // ExecutionProviderReader loads execution targets for credential-parent
 // resolution by provider ID.

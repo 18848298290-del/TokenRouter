@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// snapshot_contracts.go defines provider sources, group authority, cache
+// operations, and options used by scheduler snapshots.
 // Scheduler snapshots separate provider rebuild metadata from the records
 // encoded by storage adapters. Sources supply publishable records and hydrated
 // group authority, while the cache exposes bucket fencing, lifecycle leases,

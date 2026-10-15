@@ -7,6 +7,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_quota_actions.go coordinates OpenAI reset-credit consumption with
+// subsequent recovery and quota refresh.
 // Credit consumption can succeed before provider recovery, cache refresh, or
 // display reload fails. Reset therefore returns the consumed upstream result
 // with stage-specific warning flags, preserving completed effects while later

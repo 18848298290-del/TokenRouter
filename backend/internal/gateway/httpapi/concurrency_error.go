@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// concurrency_error.go classifies scheduler admission errors into HTTP status
+// and client error fields.
 // Slot admission can fail from a configured limit, a full queue, or an
 // interrupted request. Typed scheduler errors retain rate-limit classification,
 // while caller cancellation and unknown infrastructure failures receive distinct

@@ -6,6 +6,8 @@ import (
 	settingvalues "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// admin_settings_read.go interprets stored site settings for the administrator
+// content editor.
 // The settings editor needs source content and localization state together.
 // Stored strings are interpreted with editor defaults for branding, consent,
 // and pagination, while raw navigation JSON remains available for later

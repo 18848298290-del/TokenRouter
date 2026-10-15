@@ -7,6 +7,8 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// configuration_write.go delegates declared configuration updates and locks
+// current provider records for merging.
 // Provider edits declare the fields they intend to change so an old
 // administrator read does not replace current credentials or health data.
 // UpdateConfiguration delegates transaction handling to the shared mutation

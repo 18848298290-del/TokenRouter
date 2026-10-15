@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// beta_policy.go evaluates model-scoped beta rules and returns blocking errors
+// and header filters.
 // Configured beta rules select their action from provider scope and the final
 // model's whitelist match. Blocking examines supplied tokens, while filtering
 // builds a set that request builders can apply to both required and

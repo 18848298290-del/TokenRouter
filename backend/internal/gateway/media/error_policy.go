@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// error_policy.go orders media failure classification, provider policy
+// effects, recovery and final response presentation.
 // Upstream status handling decides recovery before final client-message
 // rewriting, with operation-specific exceptions for content rejection and
 // invalid input. Callback order matters because policy can update provider

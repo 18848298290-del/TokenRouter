@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_trend.go queries usage trends, distributions, and rankings
+// through analytics, legacy buckets, or raw records.
 // Usage distribution can group the internal request model, actual upstream
 // model, or their mapping path without splitting one internal model by a client
 // display prefix. Trends also select actor-visible scopes, while administrator

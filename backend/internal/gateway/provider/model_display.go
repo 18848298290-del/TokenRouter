@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// model_display.go builds client model resources from requested identities and
+// catalogue display metadata.
 // Client model resources retain the requested ID while display metadata is
 // looked up by its full identity. Unknown entries keep the ID as the display
 // name and tokenrouter as ownership; Gemini formatting removes one models/

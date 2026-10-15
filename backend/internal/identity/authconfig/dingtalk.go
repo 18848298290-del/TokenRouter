@@ -2,6 +2,8 @@ package authconfig
 
 import "errors"
 
+// dingtalk.go validates the application kind required by enabled DingTalk
+// login settings.
 // DingTalk authorization requires an internal application kind whenever login is
 // enabled. The internal_only organization policy also requires the internal app
 // type; disabled settings can remain incomplete while administrators prepare them.

@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
+// executor.go selects supplier HTTP clients by proxy URL and dispatches
+// searches to Brave or Tavily.
 // A request can override the proxy resolved for its search supplier, so HTTP
 // clients are cached by the complete selected proxy URL. The empty key selects
 // direct transport. Brave and Tavily share these clients within one executor,

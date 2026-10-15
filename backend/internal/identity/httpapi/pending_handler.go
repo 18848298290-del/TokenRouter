@@ -20,6 +20,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// pending_handler.go handles browser continuations for OAuth account creation,
+// account binding, and login completion.
 // OAuth callbacks can continue in a browser-bound pending session while the
 // user supplies account proof or profile-adoption choices. Shared cookies
 // carry the pending session token and a separate browser key; completion

@@ -1,5 +1,7 @@
 package provider
 
+// admin_inputs.go defines creation, edit, and bulk-update inputs and the
+// per-provider outcomes returned by administration.
 // Provider administration distinguishes omitted settings from requested zero or
 // empty values. Creation inputs select defaults, single edits describe field
 // replacement or internal patches, and bulk inputs carry shared updates plus

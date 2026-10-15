@@ -16,6 +16,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// email_oauth.go handles GitHub and Google browser authorization and pending
+// email registration completion.
 // GitHub and Google email OAuth share browser state, provider selection, and
 // verified-email account resolution. Start stores the state and selected
 // provider in short-lived cookies, then callback checks both before exchanging

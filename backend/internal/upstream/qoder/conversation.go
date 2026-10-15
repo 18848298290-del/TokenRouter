@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// conversation.go plans reusable Qoder conversations and publishes or rolls
+// back versioned history and usage snapshots.
 // Conversation reuse depends on a provider-scoped key plus matching system,
 // tools, and message fingerprints. A plan records the previous snapshot before
 // inference, and acceptance publishes a versioned state so a later read or

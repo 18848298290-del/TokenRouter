@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// vertex_credentials.go selects Vertex locations, project IDs, and stored
+// service-account JSON.
 // Vertex requests choose location and project separately from service-account
 // JSON. A model-specific nonblank location wins over record location fields,
 // while an administrator-supplied project bypasses JSON parsing and missing

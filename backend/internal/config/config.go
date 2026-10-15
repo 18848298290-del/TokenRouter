@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpconfig"
 )
 
+// config.go loads, normalizes, and validates process configuration and
+// publishes forwarded-IP settings.
 // Startup configuration can distinguish an omitted key from a deliberately
 // supplied zero, false, or empty list. Loading registers Viper decode keys,
 // resolves file and environment precedence, and maps selected retired inputs

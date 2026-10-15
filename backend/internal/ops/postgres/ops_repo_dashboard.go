@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_dashboard.go builds dashboard overviews from raw observations or
+// covered hourly aggregates and raw fragments.
 // Dashboard counts and latency samples are separate observations, so a latency
 // query can time out while counts remain usable. Recognized deadline errors
 // produce missing latency values and can replace nonpositive current or peak

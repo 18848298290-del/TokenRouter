@@ -11,6 +11,8 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// timing.go wraps SQL driver resources to record request-scoped database
+// durations and operation counts.
 // Database timing observes blocking driver calls separately from how long a
 // caller keeps rows or a transaction open. Prepare, execution, and query
 // creation count logical SQL operations, while connection setup, row

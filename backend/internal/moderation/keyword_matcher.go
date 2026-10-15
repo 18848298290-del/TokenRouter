@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// keyword_matcher.go builds and searches a keyword automaton that selects
+// matches by configured order.
 // Keyword blocking returns the first configured keyword present anywhere in the
 // lowered text, even when a later configured keyword occurs earlier in the
 // prompt. The automaton therefore combines matches by configuration index

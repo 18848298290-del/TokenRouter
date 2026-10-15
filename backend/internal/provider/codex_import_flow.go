@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// codex_import_flow.go imports normalized Codex sessions by matching existing
+// providers, applying expiry rules, and recording per-entry outcomes.
 // Codex session imports load one stored-provider population, then normalize
 // and persist each entry independently. Fatal initial lookup failure aborts
 // the batch, while normalization, expiry, and row-write failures become item

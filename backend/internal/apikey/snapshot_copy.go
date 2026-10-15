@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// snapshot_copy.go copies mutable authentication snapshot fields for
+// request-local use.
 // Authentication snapshots reuse parsed configuration across requests, so
 // selected mutable values need fresh storage during conversion. These copies
 // retain nil input and isolate scalar pointers, model candidate slices, model

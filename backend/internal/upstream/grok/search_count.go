@@ -9,6 +9,8 @@ import (
 	wireopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// search_count.go counts Grok native search calls across buffered responses
+// and deduplicated stream events.
 // Search usage can appear in an item completion event and again in the final
 // Responses output. Stream counting compares selected keys in a caller-owned
 // seen set, with separate ordinal handling for synthetic-prefix keys. Buffered
@@ -19,8 +21,9 @@ import (
 // their events. Each anonymous item.done advances to the next available
 // ordinal of its type/name, while final arrays enumerate corresponding
 // ordinal keys. This counts multiple completed anonymous items even when the
-// stream ends before a final response. Completion event labels are matched
-// exactly; search item types and function names are trimmed and lowercased.
+// stream ends before a final response. Completion event labels are trimmed
+// and then matched case-sensitively; search item types and function names are
+// also lowercased after trimming.
 
 // CountGrokNativeSearchCallsFromJSONBytes counts recognized search items in a
 // buffered Responses output array. Empty or invalid JSON returns zero. A

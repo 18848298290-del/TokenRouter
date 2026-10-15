@@ -28,12 +28,14 @@ import (
 	usagequery "github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
-// Key configuration edits can overlap billing increments, credential
-// replacement and deletion, so storage applies selected configuration columns
-// to currently nondeleted rows. Composite bindings require a transaction with
-// their owning Key record, while ordinary reads choose only relationships and
-// fields required by their caller. Authentication conversion receives those
-// selected entity values and independently constructs its cached view.
+// key_store.go persists Key configuration and composite bindings and loads
+// credential views for authentication and administration. Selected
+// configuration columns are written to currently nondeleted rows so unrelated
+// edits retain billing-owned counters. Composite bindings require a
+// transaction with their owning Key record, while ordinary reads choose only
+// relationships and fields required by their caller. Authentication conversion
+// receives those selected entity values and independently constructs its
+// cached view.
 //
 // Creation locks the PostgreSQL user row before checking the Key count and
 // inserting, keeping concurrent same-user creation under its configured limit.

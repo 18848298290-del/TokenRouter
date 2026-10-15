@@ -25,6 +25,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gemini_openai.go converts OpenAI requests to Gemini and returns
+// client-specific responses and completion metadata.
 // OpenAI compatibility uses an Anthropic request as an intermediate form before
 // preparing Gemini input. Original client bytes remain available for final-
 // route reasoning controls and recorded effort, while logical client model and

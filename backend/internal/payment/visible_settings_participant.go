@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// visible_settings_participant.go normalizes visible payment sources and
+// prepares supplied fields for combined settings updates.
 // Alipay and WeChat source labels are normalized independently of their stored
 // visibility flags. Source validation currently ignores the enabled argument,
 // while administrator reads interpret exact true strings and normalize

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// proxy_response_feedback.go records OpenAI stream failures and successes in
+// the shared proxy circuit.
 // OpenAI stream disconnects can identify a shared proxy fault, while client
 // cancellation and deadline errors provide different evidence. Proxy feedback
 // records qualifying failures in the circuit and logs a newly activated

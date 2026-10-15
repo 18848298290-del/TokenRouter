@@ -14,11 +14,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// batch_client.go accesses Vertex batch jobs and GCS objects and reads result
+// objects as a combined JSONL stream.
 // Vertex batch jobs refer to JSONL objects stored in GCS and return a prefix
 // containing result objects. The HTTP clients use bearer tokens supplied by
 // the task owner; job state and managed-object cleanup remain with that
-// caller. Object listing follows every returned page token before filtering
-// JSONL names.
+// caller. Object listing follows returned page tokens and filters JSONL names
+// on each page.
 //
 // The combined reader opens one object at a time and inserts a newline between
 // adjacent objects so a final line cannot merge with the next object. An

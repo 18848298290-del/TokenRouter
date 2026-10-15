@@ -10,6 +10,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// invalid_json.go binds invalid-JSON failure classification to provider health
+// and request diagnostics.
 // A non-JSON upstream response can be an HTTP failure or a nominal success
 // with unusable output. The forwarding classifier uses these observations to
 // log the failure, apply provider health rules when available, and create a

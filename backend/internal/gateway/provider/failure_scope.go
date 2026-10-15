@@ -12,6 +12,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// failure_scope.go classifies request-scoped rejections and transient provider
+// failures for recovery decisions.
 // Request-content and request-shape failures need different treatment from
 // provider outages during health observation and replay. Classifiers combine
 // structured OpenAI markers with message matching and Grok content-policy

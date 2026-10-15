@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// mappers.go maps usage records and cleanup tasks into user and administrator
+// HTTP responses.
 // Usage detail responses display the client model while administrator
 // responses add outbound observations and provider costs. Request categories
 // also supply older transport flags, so converting a record resolves those

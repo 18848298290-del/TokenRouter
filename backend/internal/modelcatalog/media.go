@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// media.go selects registered image and video parameters for each platform and
+// model.
 // Media parameter support varies by platform and full model identity.
 // Registered choices supply image sizes, reference limits, and video operations
 // to creative requests, while input and output modalities are resolved from

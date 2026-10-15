@@ -18,6 +18,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// gateway_grok_execution.go constructs Grok execution, destination policy, and
+// provider health reporting.
 // Grok execution reuses request credentials, transport, output handling, and
 // WebSocket dialing from the application. Health reporting shares runtime
 // blocks and transient model state with provider selection, and ordinary quota

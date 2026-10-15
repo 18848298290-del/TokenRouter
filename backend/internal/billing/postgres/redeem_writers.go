@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// redeem_writers.go dispatches redemption balance and concurrency writes to
+// their owning adapters.
 // Redemption funds belong to billing, while user concurrency belongs to
 // identity. The combined writer forwards the same operation context to both
 // owners so their adapters can share the Ent transaction chosen by the

@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// auth_email_oauth_auto.go resolves verified-email OAuth identities to
+// existing or newly created accounts.
 // A verified provider mailbox does not replace the stable provider subject as
 // account identity. GitHub, Google and OIDC login first resolve that
 // subject's owner, reject an email mismatch and only then consider

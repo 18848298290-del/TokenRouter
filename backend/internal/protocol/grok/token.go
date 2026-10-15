@@ -1,5 +1,7 @@
 package grok
 
+// token.go defines Grok OAuth credentials, temporary password-login results,
+// and parsed authorization callback inputs.
 // Grok authorization can exchange browser OAuth credentials directly or convert
 // a temporary web SSO token into Build OAuth tokens. The wire values keep that
 // temporary login input separate from the access/refresh credentials returned

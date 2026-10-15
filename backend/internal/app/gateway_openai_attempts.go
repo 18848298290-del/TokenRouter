@@ -15,6 +15,8 @@ import (
 	openaiwire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// gateway_openai_attempts.go constructs shared OpenAI attempt bindings and
+// their text runtime.
 // HTTP and WebSocket text attempts share OpenAI concurrency, moderation, and
 // completion support. Assembly uses selected platform executors when available,
 // then lets the unified executor replace forwarding callbacks. Cross-platform

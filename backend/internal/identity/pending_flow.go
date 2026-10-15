@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending_flow.go coordinates profile-adoption choices, account finalization,
+// and compensation for pending OAuth authentication.
 // A pending OAuth account can be created before identity binding and
 // browser-session consumption finish. Failure handling therefore needs the
 // created account and invitation information as well as a storage phase, so

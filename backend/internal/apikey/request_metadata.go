@@ -4,10 +4,17 @@ import (
 	"context"
 )
 
-// Gateway entry readers record platform and endpoint values before services
-// inspect the request. Each presence flag distinguishes an omitted input from a
-// supplied empty string, and the setters retain the other metadata fields when
-// replacing one value.
+// request_metadata.go records gateway platform and endpoint metadata in
+// request contexts. Gateway entry readers supply these values before services
+// inspect the request. Each string has an independent presence flag, so a
+// supplied empty string remains distinguishable from an omitted input.
+//
+// Both fields and their flags occupy one context value. Each individual setter
+// first reads that value and replaces its own pair, so recording an endpoint
+// retains a previously forced platform. WithRequestMetadata replaces the whole
+// value and relies on its caller to supply both flags. Reads from nil contexts,
+// missing entries, or entries of another type return zero metadata with both
+// fields absent.
 
 // RequestMetadata records gateway entry values and their independent presence
 // flags.

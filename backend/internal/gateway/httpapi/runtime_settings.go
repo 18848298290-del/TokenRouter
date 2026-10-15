@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// runtime_settings.go exposes admin reads and replacements for request
+// correction settings and beta policy rules.
 // Gateway correction switches and beta rules are runtime settings stored
 // through one shared service. Admin updates validate their supplied shape, save
 // the complete configuration and read it back for response DTOs; empty pattern

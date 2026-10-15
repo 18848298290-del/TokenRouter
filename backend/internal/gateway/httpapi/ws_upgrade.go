@@ -7,6 +7,8 @@ import (
 	coderws "github.com/coder/websocket"
 )
 
+// ws_upgrade.go detects Responses WebSocket upgrades and closes connections
+// using bounded reason strings.
 // Responses upgrade detection reads the HTTP upgrade headers before choosing
 // the WebSocket path. Close presentation bounds dynamic reason bytes before
 // invoking the library handshake, then attempts immediate transport closure as

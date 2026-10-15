@@ -18,6 +18,8 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// composite_get.go builds administrator settings responses from module reads
+// and authentication grants.
 // Administrator settings GET loads system fields and authentication grants before
 // adding deployment-aware monitoring, optional payment configuration, and a
 // separately stored tier policy. Required system/grant read failures stop response

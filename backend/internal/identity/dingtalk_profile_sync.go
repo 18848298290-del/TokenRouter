@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// dingtalk_profile_sync.go synchronizes selected DingTalk staff fields into
+// local profiles and attributes.
 // DingTalk profile synchronization writes selected staff values after an
 // eligible internal-organization login. The supplied switches choose email,
 // display name and department attributes, while the caller separately permits

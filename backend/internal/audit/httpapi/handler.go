@@ -15,6 +15,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go exposes administrator audit queries and authorizes audit-history
+// clearing.
 // Administrators inspect audit summaries through paginated filters and fetch
 // redacted bodies through individual detail records. Clearing history verifies a
 // fresh TOTP code and submits a synchronous trace, allowing the middleware to skip

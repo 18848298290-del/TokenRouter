@@ -11,11 +11,11 @@ import (
 	schedulerhttp "github.com/TokenFlux/TokenRouter/internal/scheduler/httpapi"
 )
 
-// Administrator scheduler diagnostics reuse execution selection rules,
-// parameter state, and feedback. The source adapter converts provider
-// administration reads into execution targets while groups remain routing
-// values, so diagnostic evaluation consumes the same shared eligibility
-// services as gateway selection.
+// provider_diagnostics.go connects administrator scheduler diagnostics to
+// execution selection rules and shared scheduling state. The source adapter
+// converts provider administration reads into execution targets while groups
+// remain routing values, so diagnostic evaluation consumes the same shared
+// eligibility services as gateway selection.
 
 // providerDiagnosticSource adapts administrator provider and group queries for
 // scheduler diagnostics.

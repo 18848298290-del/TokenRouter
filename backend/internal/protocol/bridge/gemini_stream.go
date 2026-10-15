@@ -7,6 +7,8 @@ import (
 	"maps"
 )
 
+// gemini_stream.go converts typed Gemini stream parts into Messages content
+// block lifecycles.
 // Typed Gemini stream parts arrive as incremental content, and Messages
 // clients need a start/delta/stop lifecycle for each text, thinking, or tool
 // block. A single active block and advancing index order those lifecycles; a

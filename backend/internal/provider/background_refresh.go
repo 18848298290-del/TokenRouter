@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// background_refresh.go runs periodic credential scans and Grok reconciliation
+// through shared platform gates and coordinated shutdown.
 // Periodic refresh and Grok reconciliation compete for the same platform rate
 // and concurrency gates. Each entry point creates its own failure state, so a
 // platform trip in one execution does not carry a failure streak into the next

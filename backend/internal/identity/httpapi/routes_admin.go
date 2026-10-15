@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers administrator routes for user management and
+// custom account attributes.
 // Administrator attribute definitions and account operations share the
 // caller-installed administrator route group. Fixed batch and reorder paths
 // are registered with the same handler families as per-ID operations, while

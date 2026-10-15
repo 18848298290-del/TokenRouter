@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_qualification.go checks protocol and model-window eligibility and
+// reports remaining cooldown time.
 // A provider can have a model-specific cooldown and a shared-scope cooldown
 // applying to the same request. Qualification checks protocol permission and
 // provider health before asking whether those scopes permit execution;

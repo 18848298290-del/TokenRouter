@@ -13,20 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// CRS source identity is global across six exported provider categories, and
-// creation selection leaves updates to existing source IDs enabled. Initial
-// kind and credential checks precede proxy resolution; after reaching that
-// step, a saved connection can survive later provider selection or failure.
+// crs_sync.go imports CRS providers and proxies and previews source-account
+// matches. CRS source identity is global across six exported provider
+// categories, and creation selection leaves updates to existing source IDs
+// enabled. Initial kind and credential checks precede proxy resolution; after
+// reaching that step, a saved connection can survive later provider selection
+// or failure.
 //
 // Synchronization commits each source item separately and reports partial
 // outcomes. Platform expiry representations and base-URL cleanup precede
-// merging,
-// source null credentials are omitted, and local Ollama state survives only
-// unchanged supported API-key identity. Spark shadows keep their parent's
-// OpenAI OAuth kind before incompatible updates are accepted. Post-import
-// exchange and OpenAI shadow proxy inheritance follow provider write
-// acceptance; their failures leave that item counted. Preview classifies global
-// ID membership before actual import checks.
+// merging, source null credentials are omitted, and local Ollama state
+// survives only unchanged supported API-key identity. Spark shadows keep their
+// parent's OpenAI OAuth kind before incompatible updates are accepted.
+// Post-import exchange and OpenAI shadow proxy inheritance follow provider
+// write acceptance; their failures leave that item counted. Preview classifies
+// global ID membership before actual import checks.
 
 // CRSProviderStore supplies source identity lookup and provider/shadow
 // configuration writes for import.

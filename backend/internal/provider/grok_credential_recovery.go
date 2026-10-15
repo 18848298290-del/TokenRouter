@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// grok_credential_recovery.go contains failed Grok credential use through
+// conditional state writes and runtime-block recovery.
 // A failed Grok credential use can race with completed renewal or an
 // administrator's provider update. Recovery therefore captures the failed
 // credential/proxy snapshot, serializes this provider's mutation attempt, and

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response.go reads Gemini responses, collects streamed content, and writes
+// native or Messages output.
 // Gemini output may arrive as ordinary JSON or one JSON payload per SSE data
 // line, with an optional Code Assist response wrapper. Native output retains
 // the original REST payload, while Messages conversion delegates its event and

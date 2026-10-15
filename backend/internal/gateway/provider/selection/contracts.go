@@ -14,6 +14,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// contracts.go defines selector dependencies and startup options for provider
+// reads, shared state, and scheduling policy.
 // Provider choice needs candidate records, the admitted group's settings, and
 // shared runtime observations. The application supplies these readers and
 // services to each selector; startup options are passed as values so app

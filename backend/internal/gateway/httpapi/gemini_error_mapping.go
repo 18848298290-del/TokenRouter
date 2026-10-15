@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_error_mapping.go maps Google error categories to Messages error types
+// and selected HTTP status overrides.
 // Google error objects can describe a failure more specifically than the HTTP
 // status alone. Messages error presentation uses the mapped category and
 // optional status override while keeping message selection in the HTTP output

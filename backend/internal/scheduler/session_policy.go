@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// session_policy.go applies provider idle-session admission rules and removes
+// registrations after unserved attempts.
 // Idle session capacity survives individual successful requests on the same
 // Anthropic provider. Admission refreshes or registers activity, while final
 // attempt outcome decides whether to retain that idle registration or remove

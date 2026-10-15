@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// query_ports.go binds order query storage, an observation clock, and provider
+// resolution for payment documents.
 // Payment order pages and dashboards read persisted state through a shared
 // query store. The query service retains an injected observation clock and
 // provider resolver for document retrieval, while list pagination normalizes

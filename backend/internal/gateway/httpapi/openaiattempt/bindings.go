@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// bindings.go binds shared forwarding, scheduling and completion services for
+// text attempts.
 // Text attempts invoke shared platform callbacks for the provider already
 // selected by the text loop. Runtime construction binds HTTP error output, slot
 // helpers, moderation, and completion submission once; Open then creates the

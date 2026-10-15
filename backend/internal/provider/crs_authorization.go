@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// crs_authorization.go selects post-import OAuth exchanges and builds
+// replacement credentials for CRS imports.
 // CRS imports can save a provider before its OAuth token has been refreshed.
 // Post-import exchange therefore returns replacement credentials separately
 // from import success, and an exchange failure leaves the saved provider

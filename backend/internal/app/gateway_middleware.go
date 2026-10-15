@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// gateway_middleware.go constructs gateway route middleware for authorization,
+// request context, diagnostics, and group assignment.
 // Gateway route registration shares authentication and group checks across
 // endpoint families. The bound middleware installs model attributes and the
 // final group into request context, while protocol-specific guards record

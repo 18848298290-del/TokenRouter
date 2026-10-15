@@ -9,6 +9,8 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
+// registration_email_policy.go normalizes registration email keys and
+// validates or matches domain whitelist entries.
 // Registration email policy separates a stored address from the keys used to
 // check uniqueness and a domain quota. The uniqueness key folds mailbox aliases;
 // the quota key uses the public-suffix library's registrable domain, allowing

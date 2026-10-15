@@ -2,6 +2,8 @@ package contract
 
 import "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 
+// smtp.go defines SMTP connection settings and the missing-configuration
+// error.
 // SMTP delivery receives host, authentication, sender, and TLS choices as one
 // configuration value. The transport uses the same configuration for connection
 // tests and actual delivery. Mailer's stored-settings reader reports a missing

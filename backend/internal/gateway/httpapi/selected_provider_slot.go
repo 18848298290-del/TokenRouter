@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// selected_provider_slot.go acquires or adopts selected-provider capacity and
+// binds its release lifetime to the HTTP request.
 // A selected provider may already hold capacity or carry a plan for waiting.
 // HTTP adoption keeps that resource attached to the request, with cancellation
 // cleanup normally enabled and a completion mode available for callers

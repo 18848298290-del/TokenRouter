@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_nonstream_options.go configures buffered Responses reading
+// and resolves failed terminal output.
 // Buffered Responses failures can arrive inside a successful HTTP transport
 // response, including Compact exchanges. Provider health first classifies the
 // terminal payload; commitment then determines whether that classification can

@@ -4,6 +4,8 @@ import (
 	"maps"
 )
 
+// model_routing_snapshot.go captures a private model mapping for subsequent
+// request resolution.
 // A request's model mapping stays fixed while its provider configuration can
 // be edited elsewhere. Capturing the mapping detaches its string entries from
 // the source map, and resolution delegates exact and wildcard matching to the

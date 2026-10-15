@@ -8,6 +8,8 @@ import (
 	"syscall"
 )
 
+// stream_error.go reduces upstream stream failures to client-facing error
+// labels.
 // Network error strings can include the local address and the upstream
 // destination in a client-facing disconnect message. Known causes are reduced
 // to stable labels, and unrecognized errors receive a generic category while

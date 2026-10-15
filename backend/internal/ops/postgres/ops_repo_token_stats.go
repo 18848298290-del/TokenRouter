@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_token_stats.go queries model token statistics with ranked or
+// paginated results and nullable latency measurements.
 // Model rankings count saved usage rows by execution model while token-rate and
 // first-token measurements use different sample sets. A row with no positive
 // output or duration still contributes to request count and output totals, but

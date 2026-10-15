@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// database.go initializes PostgreSQL, applies migrations, and loads persistent
+// secrets before returning shared database clients.
 // Database initialization fixes the process timezone before constructing the
 // shared PostgreSQL pool. Migrations run before persistent system secrets are
 // loaded, and complete configuration validation runs after those secrets have

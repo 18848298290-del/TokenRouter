@@ -12,11 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Text execution carries authenticated access, routing choices, and
-// protocol-specific input from an adapter into a synchronous request call.
-// These value structs retain their nested pointers, maps, and byte slices;
-// adapters prepare those inputs before execution and choose when to snapshot
-// results for asynchronous completion.
+// types.go defines synchronous text execution requests, results, and the
+// executor interface. Text execution carries authenticated access, routing
+// choices, and protocol-specific input from an adapter into a synchronous
+// request call. These value structs retain their nested pointers, maps, and
+// byte slices; adapters prepare those inputs before execution and choose when
+// to snapshot results for asynchronous completion.
 
 // Text kinds select the protocol-specific request bridge and provider-loop
 // options; ordinary Messages is the zero value used by default request state.

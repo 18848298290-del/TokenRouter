@@ -6,6 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// error_message.go extracts diagnostic messages and codes from upstream error
+// bodies and classifies selected failure signals.
 // Error bodies can carry their message in a nested object, a top-level field,
 // or another JSON object encoded inside the message string. Consumers need the
 // same error text and code whether a compatible gateway adds that extra

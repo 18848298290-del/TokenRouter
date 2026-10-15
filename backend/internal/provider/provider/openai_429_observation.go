@@ -9,16 +9,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// A 429 can represent an exhausted quota window, a reset-bearing response, or a
-// transient failure. Quota classification takes precedence over retry
-// admission: exhausted Codex windows are checked first, followed by other Codex
-// reset headers and then the response body.
+// openai_429_observation.go classifies OpenAI quota signals and checks
+// admission to same-provider transient retries. A 429 can represent an
+// exhausted quota window, a reset-bearing response, or a transient failure.
+// Quota classification takes precedence over retry admission: exhausted Codex
+// windows are checked first, followed by other Codex reset headers and then
+// the response body.
 //
 // Same-provider recovery is available for nonshadow OpenAI OAuth-like records
 // only when runtime state permits scheduling and no quota signal has won.
 // Checking retry eligibility can create the runtime recovery window on first
-// observation, so it is a stateful admission check. The gateway controls actual
-// retry attempts and uses the resulting window deadline to bound them.
+// observation, so it is a stateful admission check. The gateway controls
+// actual retry attempts and uses the resulting window deadline to bound them.
 
 // CanRetryOpenAI429 checks same-provider recovery eligibility for a transient
 // OpenAI OAuth-like failure. Nil state, unsupported records, shadows, and

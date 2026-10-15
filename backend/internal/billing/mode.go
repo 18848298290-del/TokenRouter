@@ -4,6 +4,7 @@ import (
 	"strings"
 )
 
+// mode.go defines and normalizes API-key funding mode names.
 // API keys can use automatic funding, one selected subscription, or wallet
 // balance. Missing mode input selects automatic funding for older callers,
 // while unsupported text remains distinguishable from that default so

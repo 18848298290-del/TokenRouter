@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// chat_stream_compat.go repairs empty Chat tool-call identities and tracks
+// usage and terminal evidence in raw streams.
 // Tool-argument fragments can carry empty identity fields after a first chunk
 // supplied their ID and name. A client that overwrites every present field
 // would replace its stored identity with empty text, so raw Chat cleanup

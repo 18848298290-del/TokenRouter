@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// management_reports.go queries provider usage reports over calendar-day
+// ranges selected by administrator requests.
 // Provider reports include complete calendar days in the timezone supplied by
 // application assembly. The requested span includes today and ends at
 // tomorrow's day start, so a days value describes calendar dates rather than a

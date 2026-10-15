@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// logging.go applies logging settings to the process logger and emits
+// configuration audit events.
 // Runtime log changes update level, caller reporting, stacktrace threshold, and
 // sampling in the shared logging core. Configuration audit callbacks serialize
 // old and new settings into structured events, while persistence ordering and

@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// chat.go dispatches Chat Completions requests and executes their conversion
+// through Responses when that route is selected.
 // Chat requests can contain Responses input, which a typed Chat round trip
 // would discard. Dispatch examines the resolved upstream protocol and body
 // shape before conversion; native CN, raw Chat, Anthropic, and Grok routes can

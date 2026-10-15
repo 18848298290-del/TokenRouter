@@ -12,10 +12,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// A signup promotion grant records the credited amount at the time of use.
-// The promotion and user pair is unique, so concurrent grant attempts cannot
-// persist two receipts for the same user even when the code allows unlimited
-// total usage.
+// promo_code_usage.go defines per-user promotion receipts with the credited
+// amount at use time. The promotion and user pair is unique, so concurrent
+// grant attempts cannot persist two receipts for the same user even when the
+// code allows unlimited total usage.
 
 // PromoCodeUsage records a user's signup promotion grant and credited amount.
 type PromoCodeUsage struct {

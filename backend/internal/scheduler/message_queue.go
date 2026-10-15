@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// message_queue.go manages provider serialization locks and calculates
+// RPM-dependent spacing between Anthropic requests.
 // Anthropic message serialization uses a provider lock and spacing measured
 // from the last completed request. An acquired lock belongs to one request ID,
 // while its completion timestamp comes from Redis so every instance measures

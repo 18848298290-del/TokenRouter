@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 )
 
+// request_text.go normalizes persistent text and bounds its byte length while
+// retaining valid UTF-8.
 // Persistent User-Agent text is bounded in bytes even when it contains multibyte
 // UTF-8 characters. A direct byte slice can cut a character in half: A你B
 // occupies five bytes, and a three-byte cap leaves A after the incomplete rune

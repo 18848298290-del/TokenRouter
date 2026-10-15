@@ -10,6 +10,8 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
+// assembly_routing_wire.go registers routing administration and catalog
+// constructors and binds group storage for creative execution.
 // Group administration, model attributes, and price configuration supply
 // information consumed during routing. The application set also binds the
 // persisted group store for creative execution, so creative jobs and route

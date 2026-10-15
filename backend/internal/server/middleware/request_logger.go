@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// request_logger.go creates local request identities and captures request
+// completion for observers.
 // Every HTTP entry request receives a locally generated diagnostic ID even when
 // the caller supplies its own correlation header. The incoming X-Request-ID and
 // validated X-Client-Request-ID become searchable caller aliases, while the

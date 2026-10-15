@@ -15,6 +15,8 @@ import (
 	openaiupstream "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// rate_limit_observation.go translates upstream quota signals into provider
+// cooldown and session-window observations.
 // Provider cooldowns use different quota signals across platforms, and Spark
 // shadows have their own scope. The observer skips shadows before plan or
 // header writes and can defer an OpenAI OAuth observation to the same-provider

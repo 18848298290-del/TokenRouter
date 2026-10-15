@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// authorization.go completes site-specific device authorization and prepares
+// credentials with optional metadata warnings.
 // Device polling separates an unfinished browser login from a completed token
 // exchange. CompleteAuthorization returns a pending result until the access
 // token is available, then resolves the identity and machine fields that the

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// unified_messages_prepare.go prepares native Messages requests with client
+// detection, local probe interception and queue ownership.
 // Native Messages execution needs client identity before choosing warmup
 // interception or serial queue policy. Intercepted probes are answered locally
 // and return before queue admission. Real user messages on eligible Anthropic

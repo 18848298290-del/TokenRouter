@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_audio.go adapts Grok Voice and Realtime selection and captures observed
+// audio usage for completion.
 // Voice completion starts from measured audio units, and Realtime produces
 // units only after audio has actually been observed during a positive session
 // duration. The saved provider selection connects slot acquisition, credential

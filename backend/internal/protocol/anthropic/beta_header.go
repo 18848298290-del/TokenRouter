@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// beta_header.go defines Anthropic beta tokens and parses configured token
+// lists.
 // Anthropic request preparation uses beta tokens to select optional Messages
 // features and filter fields tied to those features. Configuration can express
 // the token list as a comma-separated header or a JSON array, so both forms

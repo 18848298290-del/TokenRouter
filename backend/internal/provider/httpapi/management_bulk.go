@@ -7,10 +7,18 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_bulk.go validates bulk provider edits and forwards selected
+// fields and filters to administration.
 // Bulk editing selects provider IDs or a filter-defined population, then sends
 // supplied fields to administration. Pointer presence counts as an update even
 // for zero values, while name, status and map changes require nonempty values
 // before the handler admits the request.
+//
+// The handler preserves pointer presence when assembling the administrative
+// input, allowing false scheduling flags and empty group lists to reach the
+// use case. Extra validation runs before admission, and deprecated keys are
+// removed before dispatch. Selection and persistence remain with
+// administration, which returns the bulk result.
 
 // BulkUpdateProvidersRequest selects provider targets and configuration values
 // for strict bulk editing.

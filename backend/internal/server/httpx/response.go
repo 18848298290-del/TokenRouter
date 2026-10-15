@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// response.go writes panel response envelopes and resolves pagination
+// parameters for HTTP handlers.
 // Panel responses pair an HTTP status with an envelope code: success writers
 // use zero, while error writers use the supplied status value. JSON encoding
 // keeps supplied payload shapes, including omission for a nil data interface.

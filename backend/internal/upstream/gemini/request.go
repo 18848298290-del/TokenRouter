@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 )
 
+// request.go builds authenticated Gemini requests from credential snapshots
+// and protocol-specific endpoint plans.
 // Gemini API-key, OAuth, and service-account requests carry the same
 // generation data through different endpoints. An OAuth token snapshot
 // includes the project returned with that token, so Code Assist wrapping uses

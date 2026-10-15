@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// refresh_attempts.go runs bounded credential refresh attempts and classifies
+// their persistence and health outcomes.
 // Background exchange attempts can stop before upstream work, fail permanently,
 // exhaust retries, or commit credentials before cleanup reaches a deadline.
 // Those outcomes need different health and accounting decisions: a reported

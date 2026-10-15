@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// request_details.go normalizes request-detail filters and delegates drilldown
+// and timing queries to storage.
 // Request drilldown combines usage observations with client-error observations,
 // while access-log timing lookup reads a separate diagnostic source. Drilldown
 // normalizes a copied filter and SLA policy; timing lookup trims supplied

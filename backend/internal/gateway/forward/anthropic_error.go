@@ -8,11 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic HTTP errors retain their source status and body for provider policy
-// even when the client receives a different error envelope. Direct handling
-// records activity and diagnostics, then selects generic output, failover, or
-// display rules in that order. Retry-exhausted handling first gives retry policy
-// the captured body through a replacement reader.
+// anthropic_error.go handles Anthropic HTTP failures through provider policy,
+// retry decisions, and client error output. Anthropic HTTP errors retain their
+// source status and body for provider policy even when the client receives a
+// different error envelope. Direct handling records activity and diagnostics,
+// then selects generic output, failover, or display rules in that order.
+// Retry-exhausted handling first gives retry policy the captured body through a
+// replacement reader.
 //
 // Display rules can override status or extracted message after recovery has
 // been decided. Unmatched direct HTTP 400 responses retain their raw body;

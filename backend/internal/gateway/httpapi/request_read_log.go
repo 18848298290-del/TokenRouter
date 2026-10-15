@@ -15,6 +15,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// request_read_log.go classifies request body read failures and records
+// bounded diagnostic fields with request-scoped logging.
 // Body-read failures may contain user data in their error text. Read
 // diagnostics use bounded category names, declared content length and content
 // encoding, allowing size, decoding and disconnect failures to be investigated

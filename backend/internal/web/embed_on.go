@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// embed_on.go serves embedded frontend assets and injects public settings into
+// language-specific HTML pages.
 // The embedded SPA shares HTTP entry paths with gateway APIs, including the
 // browser model marketplace at /models. Request negotiation checks methods,
 // credential hints, and Accept preferences before the frontend serves a page.

@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// codex_invite_reset.go exposes Codex invitation status, invitation sending,
+// and reset-credit consumption over HTTP.
 // Codex invitation eligibility and reset-credit consumption have different
 // upstream operations and outcomes. Administrator handlers parse the provider
 // identifier first, bind operation-specific input and pass domain failures

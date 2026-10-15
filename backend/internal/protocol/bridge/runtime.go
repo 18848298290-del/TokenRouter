@@ -2,6 +2,8 @@ package bridge
 
 import "time"
 
+// runtime.go defines the clock and random-byte sources used to synthesize
+// conversion metadata.
 // Response conversion can synthesize timestamps and IDs that the incoming
 // protocol did not supply. Callers inject their clock and random reader so
 // those generated values follow the attempt's chosen sources; request-only

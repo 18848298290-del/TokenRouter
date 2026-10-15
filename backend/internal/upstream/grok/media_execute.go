@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// media_execute.go executes Grok image and video requests and checks image
+// output before delivery.
 // Successful Grok image responses need observable image data before the gateway
 // emits a response. Media execution checks that output before applying a body
 // transformation, and returns MissingImageOutput to caller policy when an

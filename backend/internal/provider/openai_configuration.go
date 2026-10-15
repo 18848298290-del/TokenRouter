@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// openai_configuration.go normalizes OpenAI API-key workload and route
+// configuration from current and legacy input.
 // OpenAI API-key compatibility input can name workloads through current or
 // legacy fields, and an omitted field differs from a configured empty set.
 // Full-record normalization supplies defaults when unified protocols are

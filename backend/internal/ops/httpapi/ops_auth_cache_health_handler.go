@@ -8,6 +8,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_auth_cache_health_handler.go serves administrator authentication-cache
+// health observations after checking monitoring availability.
 // Authentication cache health combines persisted outbox progress with local
 // subscriber, lookup, and invalid-credential observations. The administrator
 // endpoint checks monitoring before requesting those signals and returns the

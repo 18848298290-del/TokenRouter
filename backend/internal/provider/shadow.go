@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// shadow.go creates Spark shadows, resolves their parent credentials, and
+// propagates parent proxy changes.
 // A Spark shadow uses its parent's OpenAI OAuth credentials and proxy while
 // carrying its own Spark quota dimension and scheduling controls. Credential
 // resolution follows one parent link and rejects a shadow parent, so stored

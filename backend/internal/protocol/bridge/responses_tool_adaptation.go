@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// responses_tool_adaptation.go detects OpenAI Responses client tools and
+// adapts eligible request bodies.
 // Codex custom and tool-search shapes can need conversion before a function-
 // only Responses upstream receives them. A recursive type screen chooses
 // whether to decode, while inherited mappings let subsequent turns reuse the

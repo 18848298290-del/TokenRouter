@@ -18,6 +18,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// google_gemini_errors.go records Gemini upstream failures and selects native,
+// Messages, or OpenAI-compatible error output.
 // Gemini failures reach clients through native Google, Messages or OpenAI-
 // compatible envelopes. Error observation retains the upstream status and
 // request identity before final presentation. Native output can deliver an

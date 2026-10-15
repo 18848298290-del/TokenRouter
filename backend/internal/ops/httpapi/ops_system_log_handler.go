@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_system_log_handler.go serves system-log listing, filtered cleanup, and
+// ingestion-health endpoints.
 // System-log administration lists indexed observations and submits filtered
 // deletion requests after monitoring checks. Listing caps pages and validates
 // supplied numeric identity filters, while cleanup additionally requires a positive

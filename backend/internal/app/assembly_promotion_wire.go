@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_promotion_wire.go registers promo-code and affiliate services,
+// stores, settings, and HTTP constructors with Wire.
 // Registration promo codes and affiliate rewards use separate services and
 // persistence. Identity registration and promotion HTTP handlers receive those
 // same services, while promotion settings govern which invitation and reward

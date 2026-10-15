@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_alerts.go persists alert rules, events, silences, and delivery
+// markers and reconstructs their query results.
 // Alert events retain nullable measurements and dimensions alongside
 // independent status and email markers. A missing event becomes nil for
 // evaluator reads, while a missing rule update or deletion returns

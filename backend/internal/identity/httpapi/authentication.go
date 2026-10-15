@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// authentication.go dispatches authentication requests to assembled session
+// and provider handlers.
 // Authentication routes share one assembled set of session, pending, and
 // provider handlers. Dispatch passes the request to the selected child
 // instance, so validation, cookie changes, and response writing stay with the

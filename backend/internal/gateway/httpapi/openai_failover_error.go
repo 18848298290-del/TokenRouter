@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
 )
 
+// openai_failover_error.go selects final OpenAI failover error presentation
+// and relays bounded retry guidance.
 // Provider retry exhaustion presents classification before administrator error
 // rules. Oversized requests and unsupported continuation end first, followed
 // by credential, capacity, silent-refusal and cyber-warning errors; a normal

@@ -12,6 +12,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// dialer.go configures HTTP transports to connect through HTTP, HTTPS, or
+// SOCKS proxies.
 // SOCKS proxy routing replaces an HTTP transport's DialContext, so a caller's
 // original dial budget no longer governs that route. A shared forward
 // net.Dialer supplies its own ten-second connection limit and keepalive

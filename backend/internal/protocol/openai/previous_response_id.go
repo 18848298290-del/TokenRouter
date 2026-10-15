@@ -8,6 +8,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// previous_response_id.go classifies continuation identifiers and patches
+// Responses requests for stateless forwarding.
 // Responses continuation accepts a response identifier, while message/item
 // identifiers describe different objects in conversation history. Format
 // classification distinguishes their prefixes after trimming input; it does

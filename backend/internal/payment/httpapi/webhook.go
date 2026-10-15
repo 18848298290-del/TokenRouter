@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// webhook.go reads provider callbacks, tries candidate verifiers, and
+// dispatches accepted notifications to payment fulfillment.
 // A callback's merchant number can narrow candidate accounts before its
 // signature is verified, but it remains an unsigned hint. The handler passes
 // the received text and first header values to each candidate until one

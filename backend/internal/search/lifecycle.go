@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+// lifecycle.go tracks search operations across Manager generations and waits
+// for their completion during shutdown.
 // Replacing a search Manager leaves requests from the previous configuration
 // generation active, including quota release after a failed supplier call. A
 // shared WorkGroup counts these operations across generations so shutdown waits

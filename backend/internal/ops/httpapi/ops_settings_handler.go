@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_settings_handler.go exposes administrator reads and updates for Ops
+// notification, alert, logging, and monitoring settings.
 // Runtime Ops settings are managed through monitoring-gated administrator
 // endpoints. Email configuration uses strict JSON decoding, while other update
 // bodies use Gin's ordinary binding. After monitoring checks, configuration

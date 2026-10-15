@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// qoder_attempt.go executes Qoder attempts and retains usage-bearing partial
+// results.
 // A native Qoder attempt can fail after serving measurable usage. The HTTP
 // adapter returns that partial result only when execution reports both Served
 // and HasUsage; a failure with either observation absent returns the error

@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// completion_snapshot.go converts forwarding results and account data into
+// completion snapshots.
 // Completion records need model, usage, identity, and pricing observations
 // after the request's mutable inputs can change. These adapters extract the
 // fields used by completion and then delegate mutable result, Key, and

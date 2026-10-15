@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// monitor_hosts.go validates periodic monitor endpoints against official-host
+// recognition and custom-host policy.
 // Periodic monitoring distinguishes a caller-recognized official host from a
 // custom endpoint before enforcing custom-host policy. A parsed official
 // hostname is accepted immediately, even when its scheme would fail the later

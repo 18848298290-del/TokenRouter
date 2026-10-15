@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// quota_errors.go classifies forbidden responses and extracts account
+// verification or appeal links.
 // Antigravity forbidden messages can indicate verification, terms violations,
 // or ordinary permission rejection. Classification prioritizes verification
 // wording, while link extraction prefers structured account guidance over a

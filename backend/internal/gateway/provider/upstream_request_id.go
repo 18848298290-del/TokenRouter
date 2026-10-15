@@ -8,6 +8,8 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// upstream_request_id.go extracts configured upstream response identifiers and
+// prepares bounded values for usage records.
 // Usage records capture an upstream request ID only from the
 // provider-configured response header. WebSocket turns omit that
 // header-derived value, and HTTP IDs are trimmed and byte-capped before

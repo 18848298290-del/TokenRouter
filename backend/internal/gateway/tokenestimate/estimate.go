@@ -14,19 +14,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// Local input estimates count serialized text with a selected tiktoken
-// encoding when an upstream count endpoint is unavailable. Responses messages
-// add fixed item and part overheads, while tools and unfamiliar JSON shapes
-// contribute their compact serialized representation. Anthropic requests first
-// use the protocol bridge to obtain those Responses inputs.
+// estimate.go estimates Responses and Anthropic input tokens using
+// model-selected text encodings. Responses messages add fixed item and part
+// overheads, while tools and unfamiliar JSON shapes contribute their compact
+// serialized representation. Anthropic requests first use the protocol bridge
+// to obtain those Responses inputs.
 //
 // These totals are estimates of request content, including metadata such as
 // roles and call identifiers. Image URLs contribute text; a data URL
 // contributes its header before the comma instead of its encoded payload.
-// Instructions and structured item text are trimmed, while a plain string
-// input is counted as decoded. Model-prefix rules choose between two
-// encodings, with unfamiliar names using o200k_base; Anthropic additionally
-// requires a positive minimum.
+// Instructions and structured item text are trimmed, while a plain string input
+// is counted as decoded. Model-prefix rules choose between two encodings, with
+// unfamiliar names using o200k_base; Anthropic additionally requires a positive
+// minimum.
 
 // These local overheads approximate Responses item and content framing; the
 // Anthropic counting path applies a positive minimum after summing estimated

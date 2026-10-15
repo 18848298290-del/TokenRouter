@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// group_rate_resolver.go resolves user-group billing multipliers with caching
+// and shared concurrent loads.
 // A user override or the supplied group default determines the multiplier for
 // a completed request. Successful reads cache that selected number under the
 // user/group pair, including the default when no override exists. The key

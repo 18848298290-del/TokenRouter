@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// oauth_binding.go transfers authenticated binding intent from panel requests
+// into signed OAuth target cookies.
 // OAuth binding starts can be reached by browser navigation after an
 // authenticated panel request prepares a short-lived access-token cookie. The
 // start handler resolves the target account and signs a separate user-ID

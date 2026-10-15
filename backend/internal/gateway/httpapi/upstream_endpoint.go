@@ -11,10 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// upstream_endpoint.go resolves the selected OpenAI text protocol and records
+// its upstream endpoint for attempt attribution.
 // An attempt can fail before a forwarding result supplies its actual endpoint.
 // Recording the selected Chat or Responses endpoint in request-local state lets
 // failure capture attribute that attempt; clearing the value keeps subsequent
 // attempts from inheriting stale attribution.
+//
+// The default protocol is Responses. API Key targets can choose a protocol
+// through provider configuration, and a selected route for Chat or Responses
+// overrides that preference. Recording follows that final decision so an early
+// failure refers to the endpoint actually chosen for the attempt. Setters
+// ignore blank input, while the dedicated clear operation stores an empty
+// value before another attempt can reuse the request.
 
 // openAIUpstreamEndpointContextKey names the request-local endpoint value read by
 // failure capture when execution returns no result carrying upstream metadata.

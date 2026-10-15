@@ -2,6 +2,8 @@ package usage
 
 import "errors"
 
+// log_create_result.go marks usage-write errors with persistence dispositions
+// while preserving their underlying causes.
 // A canceled usage write can have an unknown database outcome once processing
 // has begun. Persistence markers distinguish a confirmed unwritten submission
 // from a best-effort result that was dropped or abandoned while retaining the

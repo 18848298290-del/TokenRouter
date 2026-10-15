@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go maps composite payment fields into validated
+// settings writes and a post-commit refresh callback.
 // Composite settings use payment-prefixed HTTP names while payment validation
 // accepts its own serialized request fields. Each mapping pair carries a
 // present raw value whose text is not exactly null into that typed request, so pointer and collection

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// logger.go records completed HTTP requests and their gateway timing
+// observations.
 // Access logging observes the handler's final status, selected provider, and
 // request stages after downstream execution. Health and setup probes are
 // skipped. Expected admission rejections reach the aggregate recorder first,

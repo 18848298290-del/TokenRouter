@@ -2,6 +2,8 @@ package capability
 
 import "slices"
 
+// route.go selects a provider protocol from native capabilities and permitted
+// conversion targets.
 // A provider's enabled protocols declare possible upstream paths, and
 // authentication limits which of those declarations are usable. Native
 // execution wins before conversion, so explicit conversion restrictions cannot

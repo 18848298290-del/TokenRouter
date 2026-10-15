@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// user.go constructs ordinary and administrator account responses from
+// identity data.
 // User JSON combines account fields with caller-supplied API Key data and
 // converted subscription values. Ordinary responses use User, while
 // administrator responses add account notes, last use, and group rate

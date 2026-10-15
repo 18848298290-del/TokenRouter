@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// dto.go maps announcement service values into administrator and user response
+// shapes.
 // Administrator announcement responses include editable localization and targeting
 // state, while user responses contain selected copy and read timing. Both
 // mappings keep record identities and schedule pointers from their service

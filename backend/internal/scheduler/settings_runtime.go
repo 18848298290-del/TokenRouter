@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// settings_runtime.go loads, parses, and caches dynamic scheduler settings for
+// selection and diagnostics.
 // Advanced scheduler settings are shared by production selection and
 // administrative diagnostics through one short-lived cache. A load reads the
 // complete runtime key set, parses valid overrides, and publishes scalar

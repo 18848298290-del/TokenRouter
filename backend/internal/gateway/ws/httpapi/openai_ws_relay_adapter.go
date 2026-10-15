@@ -10,6 +10,8 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
+// openai_ws_relay_adapter.go connects gateway session callbacks and result
+// records to the dedicated upstream relay.
 // The dedicated upstream relay reports usage, terminal identity and timing for
 // individual turns as well as aggregate connection observations. Callback
 // conversion passes those values to the gateway controller with message-type

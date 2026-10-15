@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// write_throttle.go limits provider snapshot write attempts through
+// synchronized per-provider admission timestamps.
 // Provider snapshot writers can attempt several observations for one provider
 // inside a short interval. Admission reserves the interval before persistence,
 // so a failed write still counts as an attempt and a burst cannot immediately

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
+// panel_settings.go reads and updates panel rate limits through administrative
+// HTTP handlers.
 // Panel limits are read directly for administrator display and persisted before
 // the update response is assembled. Reading back the settings lets storage
 // determine the displayed result; if that read fails, the handler returns an

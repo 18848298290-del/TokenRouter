@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// clienthello_capture.go decodes captured TLS ClientHello records into profile
+// fields and JA3 fingerprints.
 // A captured TLS record contains handshake fields in ordered, length-prefixed
 // byte vectors rather than the profile representation used for dialing.
 // Capture parsing requires a complete ClientHello inside the first record,

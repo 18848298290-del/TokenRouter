@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// plan.go defines subscription sale templates and their group display values.
 // Plans are editable sale templates, while a granted subscription
 // retains its own issued duration and quota limits. Plan group
 // configuration still supplies applicable group coverage and rates,

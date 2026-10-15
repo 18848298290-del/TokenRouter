@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// localized_text.go builds SQL expressions that select current translations in
+// locale preference order.
 // User-facing SQL queries can select translated JSON text while retaining the
 // ordinary business field when localized content is unconfigured. Language
 // candidates are nested in preference order, and a translation's saved source

@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// redeem_mappers.go maps redemption records into user and administrator
+// responses with different notes visibility.
 // User redemption history needs visible adjustment reasons while internal
 // notes remain available to administrators. The common mapping selects
 // user-visible notes by record type, and the administrator wrapper supplies

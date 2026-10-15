@@ -5,12 +5,13 @@ import (
 	"strings"
 )
 
-// Codex format recognition serves two callers with different requirements.
-// Passthrough compatibility accepts known markers inside a composite User-Agent,
-// while codex_only checks require a leading marker or a recognized client name
-// in the final parenthesized trailer. Both checks inspect requester-supplied
-// values, so their result identifies a client format for an already authorized
-// request.
+// openai.go recognizes Codex client formats and pairs outbound User-Agent and
+// originator values. Codex format recognition serves two callers with different
+// requirements. Passthrough compatibility accepts known markers inside a
+// composite User-Agent, while codex_only checks require a leading marker or a
+// recognized client name in the final parenthesized trailer. Both checks
+// inspect requester-supplied values, so their result identifies a client format
+// for an already authorized request.
 //
 // Outbound identity pairing also needs the originator and leading User-Agent
 // name to agree. A recognized leading name wins; otherwise a recognized trailer

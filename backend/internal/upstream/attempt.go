@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// attempt.go defines platform execution inputs and the result observations
+// returned to gateway callers.
 // A platform attempt receives a selected target and reports the evidence
 // observed during that one exchange. The gateway consumes output commitment
 // and usage separately when deciding provider switching, request completion,

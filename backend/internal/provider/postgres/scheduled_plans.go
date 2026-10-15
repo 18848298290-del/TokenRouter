@@ -8,17 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Recurring provider tests store their execution schedule separately from
-// result history. Plan reads select enabled due entries or provider-specific
-// lists, and result retention ranks each plan's newest observations by
-// creation time before deleting entries beyond the requested count. The
-// provider service supplies cron validation and default retention values.
+// scheduled_plans.go stores recurring provider-test schedules and their
+// retained execution results. Recurring provider tests store their execution
+// schedule separately from result history. Plan reads select enabled due
+// entries or provider-specific lists, and result retention ranks each plan's
+// newest observations by creation time before deleting entries beyond the
+// requested count. The provider service supplies cron validation and default
+// retention values.
 //
-// Plan timestamps can be absent, so due selection requires an enabled plan with
-// a comparable next-run time. Result creation and pruning are independent service
-// calls: retention failure leaves the newly inserted result available. History
-// order uses creation time without an ID tie-breaker, and deleting a plan delegates
-// result removal to its database foreign-key cascade.
+// Plan timestamps can be absent, so due selection requires an enabled plan
+// with a comparable next-run time. Result creation and pruning are independent
+// service calls: retention failure leaves the newly inserted result available.
+// History order uses creation time without an ID tie-breaker, and deleting a
+// plan delegates result removal to its database foreign-key cascade.
 
 // scheduledTestPlanRepository stores scheduled provider-test plans on the
 // supplied database.

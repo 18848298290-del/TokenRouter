@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// group_resources.go exposes group capacity, usage, linked keys, and per-user
+// billing overrides through HTTP handlers.
 // Group administration reads current capacity and linked API keys from their
 // owning services, while usage summaries use the injected calendar's start of
 // today. Live attestation availability is reported as capability data, and

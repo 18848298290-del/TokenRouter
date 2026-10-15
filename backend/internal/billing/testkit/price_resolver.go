@@ -16,6 +16,8 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
+// price_resolver.go builds configured price resolvers and calculator fixtures
+// for billing tests.
 // Configured-card tests use group 100 and a fixed Claude base price to observe
 // inheritance and interval selection. Resolver fixtures build the shared
 // configuration service with production model-identity lookup, so manual

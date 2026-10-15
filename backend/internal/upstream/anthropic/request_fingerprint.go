@@ -19,6 +19,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// request_fingerprint.go maintains provider fingerprints and rewrites OAuth
+// metadata identities and masked sessions.
 // OAuth requests can reuse one provider fingerprint even when client headers
 // change between requests. User-Agent acceptance precedes persistence so
 // malformed local-build versions and implausible Claude CLI major versions

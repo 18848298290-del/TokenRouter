@@ -7,11 +7,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// An upstream tier declaration can show that a requested premium tier was served
-// at a cheaper level. Billing accepts known downward changes and retains the
-// request for equal, more expensive, unknown, or absent declarations. OAuth-like
-// OpenAI providers treat a default response echo as nonauthoritative, while an
-// explicit cheaper tier still changes the recorded charge category.
+// normalize.go reconciles requested and observed service tiers and normalizes
+// image billing dimensions. An upstream tier declaration can show that a
+// requested premium tier was served at a cheaper level. Billing accepts known
+// downward changes and retains the request for equal, more expensive, unknown,
+// or absent declarations. OAuth-like OpenAI providers treat a default response
+// echo as nonauthoritative, while an explicit cheaper tier still changes the
+// recorded charge category.
 //
 // Image dimensions are normalized before cost calculation so decoded output
 // sizes can determine the billing tier. normalizeResult mutates the captured

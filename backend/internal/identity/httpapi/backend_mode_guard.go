@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// backend_mode_guard.go filters authentication and user routes under the
+// runtime backend-mode policy.
 // Backend mode keeps administrator login continuations available while
 // disabling user self-service. Auth-route filtering permits selected login and
 // pending paths; user-route filtering relies on JWT middleware having already

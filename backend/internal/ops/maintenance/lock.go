@@ -13,6 +13,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// lock.go acquires and renews persistent maintenance leases and finalizes
+// claims using captured owner identities.
 // Maintenance actions share one persistent lease row, even when callers reuse an
 // operation ID. Each successful acquisition supplies fresh random owner metadata;
 // renewal and completion compare that captured text so replacement acquisitions

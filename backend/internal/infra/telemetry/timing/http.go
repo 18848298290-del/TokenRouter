@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// http.go records external HTTP durations under normalized dependency labels.
 // External HTTP timing ends when Do or RoundTrip returns a response or error,
 // leaving body reads to the caller. A context override selects a sanitized
 // dependency label; otherwise ordered hostname substring checks choose a

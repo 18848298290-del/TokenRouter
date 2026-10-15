@@ -12,6 +12,8 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 )
 
+// openai_protocol_execution_messages.go dispatches Messages execution through
+// the selected provider's protocol runner.
 // Messages input may reach a native Anthropic endpoint, a Chat endpoint, or
 // Responses conversion under the selected provider policy. A new adapter
 // carries this attempt through the shared runner, and returned observations

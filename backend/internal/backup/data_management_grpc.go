@@ -1,5 +1,7 @@
 package backup
 
+// data_management_grpc.go defines the legacy connection and profile request
+// shapes accepted by retired data-management endpoints.
 // Retired data-management endpoints still decode their legacy connection and
 // profile shapes before reporting service unavailability. These JSON fields keep
 // that request parsing compatible, including secret-presence flags and active

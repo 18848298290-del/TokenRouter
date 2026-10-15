@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// claude_refresh.go qualifies Claude credential refreshes and builds merged
+// credential values for coordinated persistence.
 // Claude refresh uses the provider's stored expiry and merges exchanged
 // credentials before coordinated persistence. OAuth and Setup Token records
 // share eligibility at this adapter, while the authorization exchange still

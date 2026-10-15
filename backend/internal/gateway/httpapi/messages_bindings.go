@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// messages_bindings.go binds Messages admission services and publishes
+// request-local client, thinking, and route observations.
 // Messages HTTP admission uses request-scoped Key copies when calling routing,
 // reasoning, moderation and funding services. Context setters install parsed
 // client, probe, thinking and route information for downstream selection,

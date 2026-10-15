@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// session_binding.go constructs client fingerprints and carries request
+// binding observations through context.
 // Session bindings derive a fingerprint from the HTTP middleware's client IP
 // and User-Agent. Both strings are trimmed and separated by a newline before
 // hashing, so the digest combines the network and client observations in one

@@ -17,6 +17,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_alerts_handler.go validates alert administration requests and exposes
+// rule, event, resolution, and silence endpoints.
 // Alert rule writes require name, metric, operator, and threshold members for
 // both creation and replacement. The body is decoded into raw members and a
 // complete rule before normalized controls are applied, retaining descriptions,

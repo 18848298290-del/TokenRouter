@@ -10,17 +10,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// A Cyber block can name an explicit session or a transcript continuation.
-// Transcript keys include API Key identity and cumulative visible history, while
-// a source scope combines the key, client IP, and normalized User-Agent to limit
-// when content-based block lookup is enabled. This lets a caller retain blocking
-// across edited latest input while separating unrelated credential and source identities.
+// cyber_keys.go derives Cyber block keys for explicit sessions, transcript
+// continuations, and request-source scopes. Transcript keys include API Key
+// identity and cumulative visible history, while a source scope combines the
+// key, client IP, and normalized User-Agent to limit when content-based block
+// lookup is enabled. This lets a caller retain blocking across edited latest
+// input while separating unrelated credential and source identities.
 //
-// The full transcript key is the final retained prefix. A second candidate names
-// context before the latest user turn when earlier items look model-generated;
-// that heuristic also accepts client-supplied assistant examples. Lookup receives
-// bounded cumulative prefixes from the transcript implementation, and CyberBlocks
-// uses its separate truncation flag before trusting scoped matching.
+// The full transcript key is the final retained prefix. A second candidate
+// names context before the latest user turn when earlier items look
+// model-generated; that heuristic also accepts client-supplied assistant
+// examples. Lookup receives bounded cumulative prefixes from the transcript
+// implementation, and CyberBlocks uses its separate truncation flag before
+// trusting scoped matching.
 
 // CyberSessionTranscriptBlockKeys returns the full transcript key and, when
 // available, the context preceding the latest user turn. Missing usable input

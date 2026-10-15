@@ -20,13 +20,14 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Administrator status filters and gateway scheduling eligibility use
-// different views of provider state. Management can select active,
-// rate-limited, temporarily paused, or manually unschedulable records, while
-// gateway candidates also combine expiry and overload windows with persistent
-// scheduling configuration. Model-availability checks intentionally use
-// persistent eligibility while those transient windows may still prevent
-// execution.
+// provider_queries.go selects provider records for administration, scheduling,
+// refresh scans, and model availability. Administrator status filters and
+// gateway scheduling eligibility use different views of provider state.
+// Management can select active, rate-limited, temporarily paused, or manually
+// unschedulable records, while gateway candidates also combine expiry and
+// overload windows with persistent scheduling configuration.
+// Model-availability checks intentionally use persistent eligibility while
+// those transient windows may still prevent execution.
 //
 // Group queries retain global priority and provider-ID order as they hydrate
 // associations. Refresh scanning first selects an ordered ID page and derives

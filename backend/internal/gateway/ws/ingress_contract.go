@@ -11,6 +11,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// ingress_contract.go defines turn payloads, execution results, and
+// dependencies for sequential Responses ingress.
 // A normalized WebSocket turn has several identities: client model, eligible
 // routing model, provider-scoped payload, and pre-scope input used for retry
 // construction. Ingress records keep these forms separate from observed result

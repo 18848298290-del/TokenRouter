@@ -18,6 +18,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// openai_protocol_execution_chat.go dispatches Chat execution and normalizes
+// Responses service-tier fields.
 // Chat execution creates one attempt adapter around the selected provider and
 // shared request services. The runner owns conversion and response recovery,
 // while the HTTP facade captures the upstream model from a returned result,

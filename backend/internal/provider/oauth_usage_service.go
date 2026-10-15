@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// oauth_usage_service.go dispatches OAuth usage queries and combines their
+// observations with local statistics and recovery.
 // OAuth usage combines active upstream observations, stored passive samples,
 // local statistics, and conditional error recovery. Anthropic active results
 // and failures share a row flight but retain credential identity, while batch

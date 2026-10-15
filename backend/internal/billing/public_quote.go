@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// public_quote.go builds marketplace price quotes with eligible free-Fast
+// display pricing.
 // Marketplace prices represent the user charge for a group and model,
 // including the Standard rate for eligible free-Fast requests. A free-Fast
 // quote requires the effective billing setting, the caller's applicability

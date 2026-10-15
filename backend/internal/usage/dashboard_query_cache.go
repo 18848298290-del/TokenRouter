@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
+// dashboard_query_cache.go builds dashboard query-cache identities and loads
+// cached chart results.
 // Dashboard chart filters become JSON cache keys with UTC range text at
 // second precision. Optional request, stream, billing and compaction values
 // retain nil separately from concrete values, and each chart family owns its

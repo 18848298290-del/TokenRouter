@@ -8,10 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Combined administrator updates distinguish omitted moderation fields from
-// supplied false switches. Preparation returns writes for fields present in the
-// request, while the session TTL contributes a write only when its decoded
-// value is positive.
+// settings_participant.go prepares moderation fields for combined administrator
+// updates while retaining which fields the request supplied. Decoding the input
+// map into AdminSettings gives omitted switches the same false value as an
+// explicit disabling request. The participant callback keeps the input map to
+// distinguish those cases after conversion.
+//
+// PrepareAdminSettings always produces both boolean keys and includes the
+// session lifetime only when positive. The callback then removes writes whose
+// fields were absent from the input map, so omission retains a stored switch
+// while supplied false disables it. A nonpositive lifetime produces no write
+// even when supplied. JSON conversion errors stop preparation before any values
+// reach the settings coordinator for persistence.
 
 // Cyber session-block keys store enablement and decimal lifetime seconds for the
 // combined administrator update participant and the cached gateway settings reader.

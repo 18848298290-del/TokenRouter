@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// model_availability.go supplies persistent provider candidates and
+// protocol-aware model checks for availability diagnosis.
 // Model-availability diagnosis reads persistently active, schedulable
 // providers even when transient health windows prevent execution. The adapter
 // narrows platforms for forced entries, applies request protocol policy, and

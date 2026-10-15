@@ -32,6 +32,8 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
+// gateway_selection.go constructs gateway provider selection, model
+// diagnostics, and runtime policy readers.
 // Provider selection shares feedback, group policies, quota gates, containment,
 // and sticky-session statistics across execution paths. Assembly captures
 // startup scheduling options but binds dynamic readers for platform policy,

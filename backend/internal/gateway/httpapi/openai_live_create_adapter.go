@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_live_create_adapter.go binds Live creation to provider admission,
+// model tracing and session observation.
 // Live creation first selects an ordinary admitted provider, then qualifies
 // its model and client policy before obtaining the separate session lease.
 // The creation target retains its routed TLS match after client checks, so

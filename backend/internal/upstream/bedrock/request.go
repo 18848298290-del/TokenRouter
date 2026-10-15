@@ -16,6 +16,8 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// request.go adapts Anthropic request bodies and model URLs for Bedrock Invoke
+// operations.
 // Bedrock Invoke bodies differ from direct Anthropic messages in version
 // placement, beta encoding, and URL-carried model/stream selection.
 // Preparation resolves and filters beta tokens before removing fields whose

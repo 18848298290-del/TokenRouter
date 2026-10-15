@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// provider_data.go creates provider records and hydrates database results with
+// proxies and group memberships.
 // Provider reads combine database rows with proxy details and group
 // memberships before returning records to management and scheduling callers.
 // Batched lookups keep the caller's first-occurrence ID order and omit

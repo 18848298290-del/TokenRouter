@@ -4,9 +4,9 @@ import (
 	"context"
 )
 
-// The relay entry receives the first client frame after connection setup and
-// passes it with both transports to the shared bidirectional relay. The wrapper
-// keeps that prepared context and options together, so initial model/usage
+// entry.go passes the first client frame after connection setup and both
+// transports to the shared bidirectional WebSocket relay. The wrapper keeps
+// the prepared context and options together, so initial model and usage
 // observation follows the same frame relay path as subsequent traffic.
 
 // EntryInput contains the prepared first frame and transport inputs for relay

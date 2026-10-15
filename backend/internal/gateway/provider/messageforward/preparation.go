@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// preparation.go constructs the Messages runtime and retains evaluated beta
+// policy for each attempt.
 // An evaluated beta policy can produce an empty removal set, which differs from
 // an attempt that has not evaluated the policy. Preparation stores both the
 // evaluation flag and filter map, and subsequent request building reuses that

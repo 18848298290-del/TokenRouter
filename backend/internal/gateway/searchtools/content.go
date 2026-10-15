@@ -9,11 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// Search declaration checks select a request containing one recognized search
-// tool as an emulation candidate. The final user message supplies its query
-// through a string or the first nonempty text block, and results become
-// protocol blocks plus a readable
-// text summary for the client.
+// content.go recognizes search tool declarations, extracts user queries, and
+// formats search results. The final user message supplies its query through a
+// string or the first nonempty text block, and results become protocol blocks
+// plus a readable text summary for the client.
 
 const (
 	// Search tool types and names identify emulation candidates before a provider

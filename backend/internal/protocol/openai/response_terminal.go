@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// response_terminal.go supplements missing compaction output from SSE history
+// and identifies terminal Responses events.
 // A compact Responses stream can finish with an output array that omits the
 // compaction item carried by an earlier output-item event. Buffered conversion
 // can supplement that item while retaining its raw JSON fields, provided the

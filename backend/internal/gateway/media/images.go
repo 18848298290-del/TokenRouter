@@ -9,6 +9,8 @@ import (
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images.go parses image requests, selects required provider capabilities and
+// resolves completion image counts.
 // Image routing can validate a group-mapped model while retaining the
 // client's requested model and request bytes. Parsing keeps native upload
 // and option references, then classifies whether an implicit single-image

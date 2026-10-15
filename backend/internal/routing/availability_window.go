@@ -1,5 +1,7 @@
 package routing
 
+// availability_window.go bounds marketplace history windows and adjusts bucket
+// widths to cap response size.
 // Availability history combines a requested day window with its bucket
 // interval. Independently valid settings can still produce too many public time
 // buckets, so normalization considers the combined response size after bounding

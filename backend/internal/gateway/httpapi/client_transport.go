@@ -6,10 +6,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Inbound HTTP and WebSocket clients can reach the same OpenAI execution path.
-// Request context stores their normalized transport separately from upstream
-// transport selection, allowing later execution and observation to identify how
-// this client entered the gateway.
+// client_transport.go records and retrieves normalized inbound OpenAI transport
+// labels. Inbound HTTP and WebSocket clients can reach the same OpenAI
+// execution path. Request context stores their normalized transport separately
+// from upstream transport selection, allowing later execution and observation
+// to identify how this client entered the gateway.
 
 // Client transport values identify inbound request framing after accepted aliases
 // are normalized; the context key stores their canonical string representation.

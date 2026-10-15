@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated affiliate detail and quota-transfer
+// endpoints.
 // Authenticated users can read their own invitation details and transfer
 // their own available rebate quota. The application guards the parent group,
 // and the mounted handlers obtain the affected account from the authenticated

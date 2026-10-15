@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// update_cache.go stores and retrieves serialized release-check results with
+// Redis expiration.
 // Release checks share a Redis value containing the latest version, release
 // metadata, and write timestamp. Redis expiration limits stored availability,
 // while ReleaseQuery also checks timestamp age when decoding the cached

@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// path_segment.go validates upstream URL path segments and Responses suffixes
+// against bounded ASCII path rules.
 // Client-controlled Responses suffixes and Gemini model names become upstream paths.
 // An ASCII allowlist prevents those values from changing the URL structure.
 // URL.Path is already percent-decoded; validate it before constructing an upstream URL.

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// stream_ttft.go selects the event rule that starts OpenAI time-to-first-token
+// measurement.
 // OpenAI TTFT can begin at semantic activity or at visible output, according
 // to runtime policy. Visible mode delegates to protocol content detection;
 // other normalized modes let forceOutput or the upstream semantic-event

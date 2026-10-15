@@ -7,6 +7,8 @@ import (
 	"net/http"
 )
 
+// responses_exchange.go exchanges Grok Responses requests and retries eligible
+// encrypted-history failures with a cleaned payload.
 // A Grok history replay can fail because the selected deployment cannot decode
 // its encrypted or Compact state. The first HTTP 400 response is inspected
 // before ordinary error presentation, and a changed cleanup payload permits one

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpconfig"
 )
 
+// security_headers.go sets browser security headers and prepares nonce-bearing
+// content policies.
 // Placeholder-based browser policies use a request nonce in both the CSP header
 // and the HTML rendered by the frontend server. Configured policies are
 // supplemented with the sources the application's CAPTCHA, identity, payment,

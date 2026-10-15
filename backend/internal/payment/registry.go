@@ -6,6 +6,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// registry.go maintains synchronized payment-method bindings and publishes
+// complete replacement provider maps.
 // Several payment methods can resolve to the same provider, while registering
 // another provider can replace individual method bindings. The registry
 // synchronizes that method map and returns shared provider values; each

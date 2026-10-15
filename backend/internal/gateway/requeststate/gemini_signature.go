@@ -2,6 +2,8 @@ package requeststate
 
 import "bytes"
 
+// gemini_signature.go tracks signature ownership across provider selections
+// and requests cleanup when that ownership changes or is unknown.
 // Gemini thought signatures carry provider-specific history into later
 // requests. Selecting another provider requests cleanup, while a session with
 // unknown ownership requests cleanup once when signature bytes are present.

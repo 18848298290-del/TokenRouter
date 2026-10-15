@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// checkout.go validates purchases, selects provider instances, and coordinates
+// local order creation with external payment initiation.
 // Checkout separates credited entitlement, purchase principal and fee-bearing
 // gateway money before selecting a merchant instance. Balance credit can use a
 // multiplier, subscriptions use the sale plan price and optional CNY

@@ -20,6 +20,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// linuxdo_oauth.go handles LinuxDo browser authorization, account
+// continuation, and callback redirects.
 // LinuxDo login uses the stable provider subject for account identity and a
 // synthetic email for binding, while a provider email remains a compatibility
 // hint. Start captures browser proof, login or current-user intent, and

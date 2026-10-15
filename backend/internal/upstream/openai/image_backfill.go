@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// image_backfill.go fills missing Base64 image results from validated URLs or
+// inline data while retaining response metadata.
 // Image responses can contain downloadable URLs when a client expects Base64
 // data. Optional nonstreaming backfill visits missing b64_json values, retains
 // the URL and surrounding response metadata, and leaves items unchanged when a

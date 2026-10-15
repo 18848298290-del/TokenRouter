@@ -7,6 +7,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// crs.go binds CRS synchronization and preview requests to the provider import
+// use case.
 // CRS synchronization can update existing providers and create selected source
 // entries, with proxy synchronization enabled by default. The handler preserves
 // nil versus empty selections when delegating to CRSSync, and preview reads

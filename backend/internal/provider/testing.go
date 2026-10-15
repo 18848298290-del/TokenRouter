@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// testing.go normalizes provider test requests, coordinates guarded execution,
+// and aggregates background test results.
 // Provider tests combine administrator input, platform eligibility, and typed
 // output events. An omitted kind lets the execution adapter infer the test,
 // while explicit image selection resets compact mode and checks platform support

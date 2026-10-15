@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Availability diagnostics need provider records while gateway fixtures expose
-// execution-provider values. The adapter uses the production record conversion
-// for each returned candidate, retaining the source query filters and treating
-// a nil candidate collection as absent results for the diagnostic caller.
+// availability.go converts execution-provider fixture results into provider
+// records for availability diagnostics. The adapter uses the production record
+// conversion for each returned candidate, retaining the source query filters
+// and treating a nil candidate collection as absent results for the diagnostic
+// caller.
 
 // AvailabilityStore converts execution-store fixtures into provider records
 // for diagnostics.

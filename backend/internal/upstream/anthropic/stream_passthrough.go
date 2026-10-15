@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// stream_passthrough.go forwards API-key SSE lines and collects usage through
+// downstream write failures.
 // API-key SSE passthrough sends upstream lines while parsing their usage for
 // local accounting. The first nonempty data payload supplies legacy arrival
 // timing, so an initial message_start can establish that timestamp before any

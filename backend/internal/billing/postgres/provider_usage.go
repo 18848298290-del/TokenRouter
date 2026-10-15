@@ -7,6 +7,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// provider_usage.go increments provider quotas and clears quota and cooldown
+// state.
 // Provider quota increments update total usage and each enabled finite
 // daily/weekly period together in JSONB. Stored expiry expressions decide
 // whether a period receives just this increment or adds it to its previous

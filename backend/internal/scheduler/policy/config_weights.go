@@ -2,6 +2,8 @@ package policy
 
 import "math"
 
+// config_weights.go validates global scoring coefficients and calculates their
+// base and total sums.
 // Global score configuration needs at least one positive base contribution.
 // Affinity bonuses extend that base when weighted stickiness is active, but
 // they cannot alone make process defaults valid. IsValid checks individual

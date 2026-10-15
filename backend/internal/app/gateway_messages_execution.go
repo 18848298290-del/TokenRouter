@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// gateway_messages_execution.go constructs Messages execution, error rules,
+// debug tracing, and prompt replacement services.
 // Messages execution receives platform credentials, model pricing, search,
 // health, and transport through one runtime. Startup options control response
 // limits and network policy, while runtime readers and the optional trace

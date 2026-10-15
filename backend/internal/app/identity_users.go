@@ -10,10 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Announcement eligibility reads a narrow user snapshot, while billing needs
-// balances, entitlements, and notification data. These adapters select fields
-// from identity users; billing copies extra notification-email entries but
-// retains group lists and time pointers supplied by the identity record.
+// identity_users.go adapts identity user records for announcement eligibility
+// and billing consumers. Announcement eligibility reads a narrow user snapshot,
+// while billing needs balances, entitlements, and notification data. These
+// adapters select fields from identity users; billing copies extra
+// notification-email entries but retains group lists and time pointers supplied
+// by the identity record.
 
 // announcementUsers adapts identity user storage for announcement eligibility
 // and lookup.

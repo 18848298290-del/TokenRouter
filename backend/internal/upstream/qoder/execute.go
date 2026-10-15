@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go executes Qoder requests with conversation planning, credential
+// acquisition, protocol conversion, and completion evidence.
 // Qoder execution converts three client protocols into one signed upstream
 // stream while retaining conversation identity. The original request context
 // controls preparation and credential waits. Streaming inference uses a

@@ -11,6 +11,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// auth_service.go orchestrates registration, password login, CAPTCHA checks,
+// and password resets.
 // Email registration saves the account and applicable invitation use before
 // requesting optional signup plans, affiliate attribution and promotion.
 // Access-token generation follows those steps, so its failure can leave an

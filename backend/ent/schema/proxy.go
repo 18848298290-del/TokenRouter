@@ -11,7 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Providers refer to reusable proxy records for their outbound connections.
+// proxy.go defines reusable outbound proxy endpoints referenced by providers.
 // Each record combines endpoint credentials with availability and expiration
 // settings, allowing egress maintenance to leave a provider bound, move it to
 // a configured backup, or select direct connections when the proxy expires.

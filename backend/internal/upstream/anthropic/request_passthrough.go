@@ -9,6 +9,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// request_passthrough.go builds API-key passthrough requests with provider
+// authentication and beta policy enforcement.
 // API-key passthrough forwards allowed client request headers while replacing
 // the credential used for the selected provider. Optional body fields still
 // depend on the beta header selected by policy and provider overrides, so

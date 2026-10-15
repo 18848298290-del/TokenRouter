@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// pool_cleanup.go returns undelivered WebSocket leases and retires expired
+// connections before deferred transport closure.
 // Queue cancellation can return a connection before the caller receives its
 // lease. Returning capacity and notifying waiters happen before a coalesced
 // cleanup signal, so connection closing can run in the background while

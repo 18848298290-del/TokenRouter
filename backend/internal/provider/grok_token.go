@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// grok_token.go acquires Grok request tokens while checking refresh results
+// against selected provider and proxy identity.
 // A Grok request carries a selected provider and proxy identity while token
 // refresh and cache state can advance independently. Request token reads first
 // require schedulable OAuth identity and complete selected token inputs. Cached

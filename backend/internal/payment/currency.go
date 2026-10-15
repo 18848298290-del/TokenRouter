@@ -7,6 +7,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// currency.go converts payment amounts between decimal text and integer API
+// units using currency-specific precision.
 // Payment amount precision and integer API encoding are separate
 // currency properties. Most configured currencies use the same decimal
 // scale for both, while the ISK and UGX entries accept whole-unit

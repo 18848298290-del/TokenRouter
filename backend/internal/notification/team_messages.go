@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// team_messages.go sends team invitation and ownership-transfer notifications
+// through the shared mailer.
 // Team notices carry an invitation or ownership-review link into the shared
 // notification renderer. The service resolves recipient language and branding,
 // while invitation expiry is represented as an RFC3339 timestamp supplied by

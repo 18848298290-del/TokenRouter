@@ -27,10 +27,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/web"
 )
 
-// HTTP middleware reads published locale and CSP frame origins while settings
-// updates refresh those values. Failed refreshes retain the last successful
-// state, and embedded frontend builds add cache invalidation to the same
-// notification that reloads frame origins.
+// http_bindings.go assembles router middleware, publishes HTTP settings, and
+// binds application route registration. HTTP middleware reads published locale
+// and CSP frame origins while settings updates refresh those values. Failed
+// refreshes retain the last successful state, and embedded frontend builds add
+// cache invalidation to the same notification that reloads frame origins.
 
 // httpRouteMount registers application route families with their shared
 // security middleware.

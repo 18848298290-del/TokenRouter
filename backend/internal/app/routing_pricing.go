@@ -16,11 +16,13 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// A default-price response includes catalog status and price rows from the same
-// published view. The query freezes that view into a calculator before
-// iterating, so catalog replacement during the query cannot combine a newer
-// status with rows calculated from another view. Group pricing separately
-// reuses a matching hydrated authorization group before storage lookup.
+// routing_pricing.go constructs group pricing configuration and default-price
+// queries over a captured catalog view. A default-price response includes
+// catalog status and price rows from the same published view. The query freezes
+// that view into a calculator before iterating, so catalog replacement during
+// the query cannot combine a newer status with rows calculated from another
+// view. Group pricing separately reuses a matching hydrated authorization group
+// before storage lookup.
 //
 // Platform names are normalized for display and collected across the catalog
 // before filtering. Search, platform, and billing-mode filters decide the

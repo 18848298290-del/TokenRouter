@@ -18,11 +18,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Grok quota queries validate provider endpoints before using billing, Responses
-// or model-list paths. Official OAuth addresses use the trusted validator, while
-// custom addresses and API-key providers follow operator validation. The adapter
-// then applies provider headers and shared transport parameters to platform
-// clients that own response reading and closing.
+// grok_quota_transport.go validates endpoints and binds provider transport for
+// Grok billing, quota, and model queries. Official OAuth addresses use the
+// trusted validator, while custom addresses and API-key providers follow
+// operator validation. The adapter then applies provider headers and shared
+// transport parameters to platform clients that own response reading and
+// closing.
 
 // GrokQuotaTransport performs upstream queries; the provider service owns
 // claims, snapshots, health

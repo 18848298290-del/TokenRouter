@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// subscription_store.go defines subscription persistence operations used by
+// grant and maintenance services.
 // Subscription services use repository reads to build grant timelines and
 // persisted quota observations. Mutations share the caller-selected
 // persistence context, while lock and transaction ownership come from

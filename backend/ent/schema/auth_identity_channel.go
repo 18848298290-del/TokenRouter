@@ -12,10 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A provider application can assign a channel-specific subject alongside a
-// canonical login identity. Channel rows retain the provider, application, and
-// subject together, so an identifier from one application can resolve to its
-// owning identity without colliding with another channel.
+// auth_identity_channel.go defines application-scoped identifiers attached to
+// canonical login identities. Channel rows retain the provider, application,
+// and subject together, so an identifier from one application can resolve to
+// its owning identity without colliding with another channel.
 
 // AuthIdentityChannel stores channel-scoped identifiers for a canonical identity.
 type AuthIdentityChannel struct {

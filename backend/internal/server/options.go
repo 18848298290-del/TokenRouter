@@ -1,5 +1,7 @@
 package server
 
+// options.go defines resolved listener and transport settings used to
+// construct HTTP servers.
 // HTTP listeners serve short panel calls and long-lived generation streams.
 // App resolves process configuration into these values before construction so
 // the server can bound headers, uploads, and idle connections while request

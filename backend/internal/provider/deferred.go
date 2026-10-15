@@ -6,9 +6,11 @@ import (
 	"time"
 )
 
+// deferred.go queues provider activity timestamps and flushes them through
+// periodic and shutdown writes.
 // Frequent provider activity replaces one queued last-used timestamp per ID,
-// while a periodic writer persists batches after the request path finishes. A
-// failed older batch must not replace newer activity that arrived while the
+// while a periodic writer persists batches independently of the request path.
+// A failed older batch must not replace newer activity that arrived while the
 // database write was in progress.
 //
 // The lifecycle mutex protects enqueueing and the drain that removes a batch; a

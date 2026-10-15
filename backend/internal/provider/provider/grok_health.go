@@ -11,18 +11,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok quota observations can update both display snapshots and scheduling
-// windows. Exhausted headers and successful recovery bypass ordinary snapshot
-// throttling, while quiet observations reserve the configured write interval.
-// The request record receives the snapshot before its best-effort Extra write,
-// so callers retain the observation even when storage fails.
+// grok_health.go records Grok quota observations and updates local and
+// persisted scheduling windows. Exhausted headers and successful recovery
+// bypass ordinary snapshot throttling, while quiet observations reserve the
+// configured write interval. The request record receives the snapshot before
+// its best-effort Extra write, so callers retain the observation even when
+// storage fails.
 //
 // Rate limiting installs the local scheduling block before persistence and can
 // also share a bounded model window with OAuth providers on the same team.
 // Existing longer limit and temporary-suspension deadlines remain relevant to
-// that local block. Recovery delegates to the store's observed-timestamp compare,
-// and pool-mode snapshot handling leaves default provider limit installation to
-// request recovery rather than forcing it from exhausted headers.
+// that local block. Recovery delegates to the store's observed-timestamp
+// compare, and pool-mode snapshot handling leaves default provider limit
+// installation to request recovery rather than forcing it from exhausted
+// headers.
 
 // grokQuotaSnapshotExtraKey names the stored usage observation consumed by
 // provider quota display and health recovery.

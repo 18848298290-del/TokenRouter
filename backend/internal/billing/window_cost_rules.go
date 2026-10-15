@@ -2,6 +2,8 @@ package billing
 
 import "time"
 
+// window_cost_rules.go classifies provider cost limits and selects the
+// aggregation window start.
 // Provider cost windows distinguish requests seeking a new provider from
 // sessions already bound to it. Spending below the regular ceiling permits
 // both, while the extra reserve keeps bound sessions eligible after that

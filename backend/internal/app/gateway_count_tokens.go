@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// gateway_count_tokens.go constructs token-count HTTP admission and adapts
+// selected providers for platform counting.
 // Token counting selects an execution provider using the requested model and
 // excluded-provider set. The selected target routes auxiliary counting to
 // Messages, OpenAI, or Gemini while retaining its session-release capability,

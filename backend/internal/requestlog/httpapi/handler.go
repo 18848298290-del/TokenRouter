@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go serves administrator request-detail lookups and local writer
+// health responses.
 // Request diagnostics can contain upstream identifiers, provider metadata, and
 // error or audit references. The handler checks an authenticated administrator
 // before reading details or local writer health, then bounds lookup text and

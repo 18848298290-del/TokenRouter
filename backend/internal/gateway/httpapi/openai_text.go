@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// openai_text.go defines admitted text request state and transfers it to
+// synchronous execution.
 // Text HTTP admission uses several request identities for different consumers:
 // provider affinity can include derived content, explicit isolation requires a
 // client session, and upstream prompt caching needs its own raw seed.

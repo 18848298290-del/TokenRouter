@@ -7,10 +7,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// Provider policy can rewrite the reasoning effort sent upstream. Completion
-// records retain the canonical client request separately by binding it before
-// rewriting and filling that value only when the forwarding result has not
-// already supplied it.
+// reasoning_effort_usage.go retains the client's requested reasoning effort
+// for completion records across provider request rewrites. Provider policy can
+// change the effort sent upstream, so binding reads canonical effort from the
+// supplied body before that transformation and stores recognized values on the
+// request context.
+//
+// OpenAI and Messages completion stamping fill the requested-effort field only
+// when the result has not already supplied it. The result's existing value
+// takes precedence over context evidence. Missing requests, absent canonical
+// effort and nil results leave the available state unchanged. The model
+// argument does not affect binding; the body determines which preference is
+// retained.
 
 // BindRequestedReasoningEffort stores canonical client effort before provider
 // policy rewrites. Missing requests or unrecognized effort leave context

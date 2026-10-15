@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// cleanup_policy.go translates retention days into cleanup actions and formats
+// completed deletion counts.
 // Retention values distinguish skipping a target, truncating its whole table,
 // and deleting observations before a calendar-day cutoff. Cleanup summaries
 // retain only successfully returned target counts, which can be estimates for

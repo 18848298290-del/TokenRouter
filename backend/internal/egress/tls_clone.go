@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// tls_clone.go copies TLS profiles and routers for cache publication and
+// request selection.
 // TLS profile slices and optional router values can be retained by caches and
 // returned to request selection. Cloning allocates storage for those mutable
 // values, including ordered router rules, while retaining the distinction

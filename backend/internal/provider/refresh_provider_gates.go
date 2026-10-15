@@ -2,6 +2,8 @@ package provider
 
 import "sync"
 
+// refresh_provider_gates.go shares per-platform refresh rate and concurrency
+// gates across maintenance cycles.
 // Periodic scans and administrative reconciliation use the same per-platform
 // admission gates. The registry lazily publishes one rate gate and one capacity
 // gate for each exact platform string, so the first requested limits remain in

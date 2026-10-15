@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// oidc_oauth.go exchanges OIDC authorization codes, retrieves userinfo, and
+// validates ID tokens against provider signing keys.
 // OIDC token replies can provide an access token, an ID token, or both.
 // The client keeps those credentials separate because an omitted userinfo endpoint
 // allows the HTTP flow to derive identity from validated ID-token claims, while

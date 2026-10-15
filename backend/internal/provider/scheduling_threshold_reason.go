@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// scheduling_threshold_reason.go encodes scheduling threshold reasons and
+// restores temporary pause state from stored reasons.
 // Temporary scheduling blocks can store a structured threshold reason or a
 // legacy plain message. Structured reasons retain platform, window,
 // percentage, and reset details for administration, while their source marker

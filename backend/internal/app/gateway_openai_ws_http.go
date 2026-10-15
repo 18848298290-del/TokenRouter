@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// gateway_openai_ws_http.go constructs Responses WebSocket ingress with shared
+// attempt support and runtime session settings.
 // Responses WS handlers reuse OpenAI attempt support while resolving online
 // parameters from the WS runtime. Sticky binding reads the current session TTL
 // when that runtime is available, and each handler shares pricing, credential

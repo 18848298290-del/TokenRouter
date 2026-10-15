@@ -1,5 +1,7 @@
 package protocol
 
+// usage.go represents token and audio usage and reconciles cache-duration
+// categories and independently reported reasoning tokens.
 // Token and audio usage feed different pricing dimensions after upstream
 // execution. Audio quantities depend on their processing mode, while cache
 // writes can carry both an aggregate token count and a TTL-specific breakdown

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// group_handler.go handles administrative group requests and recovers
+// persisted duplicate operations after selected idempotency failures.
 // Group administration accepts product and protocol policy independently of
 // provider platforms. Strict JSON binding rejects retired fields, and the
 // complete protocol selection takes precedence over a supplied legacy

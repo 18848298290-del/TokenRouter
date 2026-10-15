@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 )
 
+// upstream_context.go detaches upstream execution from client cancellation
+// when continued response reading is needed.
 // Streaming readers may need final usage after a client disconnects, while
 // shutdown still needs to stop server-owned work. These adapters delegate to
 // requestcontext.Detach to retain request values and its separate abort

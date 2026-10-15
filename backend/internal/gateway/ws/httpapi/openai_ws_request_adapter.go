@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_ws_request_adapter.go applies image policy and JSON mutations for
+// pooled WebSocket request normalization.
 // Client response.create frames receive group and provider image policy after
 // model eligibility is resolved. Inspection uses the routing model while the
 // forwarded body keeps its upstream model, so image permission and billing

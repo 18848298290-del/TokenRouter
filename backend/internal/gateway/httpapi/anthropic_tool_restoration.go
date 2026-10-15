@@ -4,9 +4,11 @@ import (
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
-// Anthropic request preparation can substitute tool names that response output
-// must restore for the client. Output adapters read the request's context mapping
-// and apply the Anthropic byte rewriter, including its shared static substitutions.
+// anthropic_tool_restoration.go restores client tool names using request-local
+// and static mappings. Anthropic request preparation can substitute tool names
+// that response output must restore for the client. Output adapters read the
+// request's context mapping and apply the Anthropic byte rewriter, including
+// its shared static substitutions.
 
 // toolNameRewriteKey identifies the request mapping that response adapters read
 // from Gin context to restore client tool names after upstream preparation.

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// protocol.go defines the protocol catalogue and computes native options and
+// conversion targets.
 // Client entry protocols and provider upstream protocols share stable
 // identifiers, but their permitted uses differ. Catalogue entries mark
 // dedicated upstream operations separately so group admission can expose public

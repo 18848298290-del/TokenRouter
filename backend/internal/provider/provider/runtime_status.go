@@ -9,11 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Administrative runtime status combines live load counters with local provider
-// usage and dynamic quota settings. Optional readers remain absent when their
-// services are absent, while a window-statistics result contributes
-// StandardCost through a newly allocated float value to the provider core's
-// display reader.
+// runtime_status.go connects live counters, local usage costs, and dynamic quota
+// settings to administrative provider status reads. Optional readers remain
+// absent when their services are absent, while a window-statistics result
+// contributes StandardCost through a newly allocated float value to the provider
+// core's display reader.
 
 // RuntimeStatusOptions connects runtime counters and settings to provider
 // status reads. Nil dependencies leave their callbacks unset; window usage

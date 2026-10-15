@@ -9,11 +9,11 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Grok import probing begins after provider creation and runs through a bounded
-// queue. Only OAuth Grok routing snapshots are admitted; the queue retains a
-// prober and provider ID rather than the supplied snapshot. Pending and
-// executing IDs share a deduplication decision, while completed IDs can be
-// scheduled again.
+// import_probes.go queues and runs bounded Grok quota probes after imported
+// providers are created. Only OAuth Grok routing snapshots are admitted; the
+// queue retains a prober and provider ID rather than the supplied snapshot.
+// Pending and executing IDs share a deduplication decision, while completed
+// IDs can be scheduled again.
 //
 // Workers are created on demand and exit when no queued task remains. Queue
 // admission, pending-to-executing transfer, and worker counts change under one

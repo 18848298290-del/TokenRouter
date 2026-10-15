@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// gateway_openai_tokens.go constructs OpenAI token-count handlers and adapts
+// auxiliary provider selections for counting.
 // OpenAI token-count preparation uses shared route planning and auxiliary
 // execution. Responses input-token selection asks the scheduler to select
 // without normal slot admission and carries any acquired release callback,

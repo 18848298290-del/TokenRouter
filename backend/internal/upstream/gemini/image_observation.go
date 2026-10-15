@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// image_observation.go counts nonempty inline image parts in Gemini candidates
+// for image output observations.
 // Gemini image billing observes inline image parts across every candidate in
 // one payload. Compatible camelCase and snake_case fields are recognized, and
 // an image MIME label plus nonblank data defines the counted image

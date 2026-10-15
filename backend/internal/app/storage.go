@@ -22,10 +22,11 @@ import (
 	settingspostgres "github.com/TokenFlux/TokenRouter/internal/settings/postgres"
 )
 
-// Successful Ent and Redis assembly registers each resource with the lifecycle
-// manager. Redis runtime-key migration finishes before the client is returned
-// to worker constructors, and calendar capture depends on Ent bootstrap so
-// business date calculations use the initialized process timezone.
+// storage.go constructs shared database and Redis resources, registers their
+// cleanup, and supplies settings storage. Redis runtime-key migration finishes
+// before the client is returned to worker constructors, and calendar capture
+// depends on Ent bootstrap so business date calculations use the initialized
+// process timezone.
 
 // provideCalendar captures bootstrap's process location in the shared calendar.
 // The Ent argument is a Wire ordering dependency, requiring database bootstrap

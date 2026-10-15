@@ -12,6 +12,8 @@ import (
 	identityredis "github.com/TokenFlux/TokenRouter/internal/identity/rediscache"
 )
 
+// assembly_identity_wire.go registers identity services, challenge verifiers,
+// persistence, and HTTP authentication dependencies with Wire.
 // Login endpoints, JWT middleware, and administrator authorization share the
 // application's authentication graph. Redis stores supply refresh-token, TOTP,
 // and passkey state, while external challenge verifiers are injected into the

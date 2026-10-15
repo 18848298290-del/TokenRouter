@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// request_type.go normalizes usage request categories and translates their
+// legacy stream and WebSocket flags.
 // Usage records carry a request category alongside older stream and WebSocket
 // flags. An explicit transport category determines those flags; older records
 // can still recover a category from their booleans, with WebSocket taking

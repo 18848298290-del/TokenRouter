@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_insert.go persists usage records through direct and queued
+// writes with duplicate recovery and cancellation-aware results.
 // A usage write can be canceled before admission, while queued, or after
 // database processing starts. Result-aware writes distinguish an inserted row
 // from an existing row and can confirm that a canceled queued submission never

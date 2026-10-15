@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// port.go defines persistence operations and record shapes for errors, system
+// logs, metrics, and background-job diagnostics.
 // Ops observations keep the platform request ID separate from caller
 // correlation text and saved provider/group dimensions. Nullable measurements
 // distinguish absent evidence from recorded zero, while each PostgreSQL encoder

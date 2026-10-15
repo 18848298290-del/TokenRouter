@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Anthropic usage queries can discover a new session-window end while another
-// request updates the same provider. The conditional write compares both
-// credential identity and the previously observed end, so it applies only to
-// the version used for that usage result.
+// usage_session_window.go conditionally saves the session-window end
+// discovered by an Anthropic usage query. Anthropic usage queries can discover
+// a new session-window end while another request updates the same provider.
+// The conditional write compares both credential identity and the previously
+// observed end, so it applies only to the version used for that usage result.
 //
 // The matching SQL update precedes a separate best-effort scheduling event.
 // Event failure is logged after the state change, and this path relies on

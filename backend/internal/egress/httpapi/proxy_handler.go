@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// proxy_handler.go serves proxy administration requests and translates request
+// fields into service inputs.
 // Proxy administration endpoints expose credential-bearing DTOs and interpret
 // connection patches separately from expiration replacement. Incoming
 // expiration uses positive Unix seconds, while nil or nonpositive values become

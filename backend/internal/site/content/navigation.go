@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// navigation.go parses navigation records and supplies identifiers for legacy
+// entries.
 // Stored navigation entries may predate the editor's explicit IDs. Parsing
 // retains saved IDs and derives missing ones from the entry kind, position,
 // and a source value, giving later translation updates a way to match entries

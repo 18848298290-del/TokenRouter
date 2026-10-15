@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_messages_response_output.go binds Messages response reading to
+// request observations and stream failure policy.
 // Messages clients can receive output converted from Responses events whose
 // transport status remains HTTP 200 even on terminal failure. Error
 // classification therefore reads event evidence and applies provider health

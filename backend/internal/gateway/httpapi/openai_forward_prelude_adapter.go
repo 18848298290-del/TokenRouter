@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_forward_prelude_adapter.go binds Responses preparation to HTTP
+// admission, identity and tool-restoration state.
 // Responses preparation clears request-local response mappings before deriving
 // this attempt's provider identity and compatibility policy. The prelude
 // adapter supplies group image controls, client admission and protocol

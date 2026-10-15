@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// test_handler.go binds provider connection-test requests and streams their
+// results before optional recovery.
 // Provider connection tests accept an empty body as a default request and
 // stream events through the shared TestService. The HTTP wrapper prefers
 // test_type over its legacy test_mode alias and starts recovery only when the

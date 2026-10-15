@@ -22,12 +22,12 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
-// A WebSocket turn carries a client model, a group-selected routing model, and
-// an upstream model used by provider requests. A supplied routing hook checks
+// openai_ws_forwarder.go resolves WebSocket turn models, transport budgets,
+// response ownership, and upstream warning data. A supplied routing hook checks
 // group eligibility before provider mapping, while response restoration and
 // retry payloads retain the client model. The same execution adapter supplies
-// transport budgets and
-// provider warning observations to the pooled and dedicated paths.
+// transport budgets and provider warning observations to the pooled and
+// dedicated paths.
 //
 // Missing option values select adapter defaults rather than disabling
 // connection operations. Response-ID affinity uses a separate lifetime from

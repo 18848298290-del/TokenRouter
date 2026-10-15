@@ -35,6 +35,8 @@ import (
 	usagequery "github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// user_repo.go persists accounts and their group permissions, with guarded
+// email changes and filtered account queries.
 // Account persistence keeps email uniqueness, provider email identity, and
 // per-user group permissions beside the user row. Guarded creation and updates
 // join or own Ent transactions so permission and email-identity writes can

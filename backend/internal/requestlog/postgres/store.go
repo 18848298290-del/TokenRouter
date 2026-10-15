@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
+// store.go persists versioned request snapshots and joins retained diagnostic
+// records by request identity.
 // Request snapshots are stored by local ID with nanosecond UpdatedAt revisions,
 // while retained usage, error, and audit rows may outlive their summary.
 // Snapshot upserts retain earlier start and parent identity, combine aliases,

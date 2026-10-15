@@ -7,17 +7,20 @@ import (
 	"time"
 )
 
-// Messages converted to Responses can retain a response ID and opaque turn state
-// for their provider, API Key, and prompt-cache identity. Continuation can also be
-// disabled after an unsupported upstream response. All three values occupy one
-// binding with one deadline, so a write refreshes the lifetime of the other
-// retained values as well. Disabled continuation still permits turn-state lookup.
+// compat_responses.go stores response IDs, opaque turn state, and
+// continuation-disable flags for converted Messages requests. Bindings are
+// keyed by provider, API Key, and prompt-cache identity. Continuation can also
+// be disabled after an unsupported upstream response. All three values
+// occupy one binding with one deadline, so a write refreshes the lifetime of
+// the other retained values as well. Disabled continuation still permits
+// turn-state lookup.
 //
 // Reads and updates use separate concurrent map operations. Read-modify-write
-// updates can lose another writer's change, and cleanup can delete a replacement
-// installed after the loaded value was read. Updates also carry existing fields
-// without testing their prior deadline. Merged same-session state requires caller coordination;
-// this process-local store performs no background expiration sweep.
+// updates can lose another writer's change, and cleanup can delete a
+// replacement installed after the loaded value was read. Updates also carry
+// existing fields without testing their prior deadline. Merged same-session
+// state requires caller coordination; this process-local store performs no
+// background expiration sweep.
 
 // CompatResponses holds process-local response continuity for provider/key/prompt identities.
 // Individual map operations support concurrent access; callers coordinate updates

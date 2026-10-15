@@ -1,5 +1,7 @@
 package modelcatalog
 
+// reader.go defines model identity, metadata, and version access for catalog
+// consumers.
 // Catalog consumers read model identities, metadata, and a publication version
 // through the same small interface. Production implementations retain their
 // last valid publication after a failed update so consumers can continue

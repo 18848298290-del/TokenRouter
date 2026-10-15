@@ -24,10 +24,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// User administration needs Key display data and live concurrency alongside
-// identity mutations. The application binds Key and user transaction
-// participants to the shared Ent client, and the HTTP adapter converts Key
-// group display and concurrency loads for administrator responses.
+// identity_admin_http.go assembles user and Key administration and adapts their
+// data for HTTP responses. User administration needs Key display data and live
+// concurrency alongside identity mutations. The application binds Key and user
+// transaction participants to the shared Ent client, and the HTTP adapter
+// converts Key group display and concurrency loads for administrator responses.
 
 // identityAdminKeys adapts stored Key pages for identity administration
 // responses.

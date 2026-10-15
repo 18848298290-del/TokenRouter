@@ -8,6 +8,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// grok_team_rate_limit.go filters Grok candidates against team model cooldowns
+// using their scheduling model names.
 // Grok OAuth providers in one team share observed model cooldowns in the
 // provider package. Filtering resolves each candidate's scheduling model before
 // the team check and compacts survivors into the incoming slice, preserving

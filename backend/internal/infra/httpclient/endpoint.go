@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// endpoint.go constructs OpenAI-compatible endpoint URLs from configured base
+// paths and requested routes.
 // OpenAI-compatible servers can expose a root URL, a prefixed API path, a
 // different version, or an already complete endpoint. Endpoint construction
 // separates the parsed path from its query so adding a route does not turn

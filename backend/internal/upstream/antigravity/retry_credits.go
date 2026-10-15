@@ -9,6 +9,8 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// retry_credits.go classifies quota failures and retries eligible requests
+// with enabled credits.
 // Quota exhaustion can permit an enabled-credit retry, while a structured
 // model rate limit follows provider wait or switch policy. Textual quota
 // markers take precedence over structured rate-limit decoding, and capacity

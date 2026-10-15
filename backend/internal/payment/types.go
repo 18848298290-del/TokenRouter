@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// types.go defines payment adapter requests, results, and interfaces and
+// normalizes historical payment-method labels.
 // Checkout, confirmation, and refund adapters exchange merchant references
 // separately from provider transaction, invoice, and refund identities. Their
 // request and response values retain gateway currency quantities, optional

@@ -14,10 +14,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// Maintenance access tokens are signed with the persisted application secret.
-// The command bootstraps the database, selects a user by email or the first
-// active administrator, and prints the user's identity with the generated JWT
-// after successful signing.
+// main.go issues a maintenance JWT for a selected database user using the
+// persisted application signing secret. The command
+// bootstraps the database, selects a user by email or the first active
+// administrator, and prints the user's identity with the generated JWT after
+// successful signing.
 
 // main executes token generation and reports failures through the logger.
 // A failed run exits with status one after run has attempted database cleanup,

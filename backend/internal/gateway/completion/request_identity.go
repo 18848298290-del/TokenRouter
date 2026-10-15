@@ -2,10 +2,11 @@ package completion
 
 import "strings"
 
-// Financial deduplication keeps historical prefixes and stable operation keys.
-// A local diagnostic request and an upstream video or audio operation can use
-// different identifiers, so repeated task completion reuses its financial key
-// while analysis rows retain the request used for diagnostic correlation.
+// request_identity.go selects financial deduplication keys and payload
+// fingerprints for completed requests and media operations. A local diagnostic
+// request and an upstream video or audio operation can use different
+// identifiers, so repeated task completion reuses its financial key while
+// analysis rows retain the request used for diagnostic correlation.
 // PayloadFingerprint independently chooses evidence for detecting conflicting
 // reuse of the selected settlement key.
 //

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_compat_nonstream.go converts collected Antigravity responses into
+// buffered Chat Completions and Responses payloads.
 // Buffered OpenAI clients receive a collected Claude answer converted through
 // the shared Responses representation. Collection preserves the Antigravity
 // timing/usage result, while serialized output restores provider tool names

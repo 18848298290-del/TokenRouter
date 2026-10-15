@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// alerts.go provides monitoring-gated administration of alert rules, events,
+// silences, and delivery markers.
 // Alert administration reads saved rules and events and writes rule changes,
 // silence deadlines, resolution states, and mail markers. Monitoring is checked
 // before each operation; missing storage yields empty list responses but makes

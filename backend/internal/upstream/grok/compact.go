@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// compact.go translates OpenAI compaction history and responses into Grok
+// reasoning and summary representations.
 // OpenAI Compact history holds encrypted state and may also include a plaintext
 // summary, while Grok replay expects reasoning items and ordinary user messages.
 // Conversion separates these representations so usable ciphertext can accompany

@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/backup"
 )
 
+// parts.go spools bounded archive segments and verifies downloaded segments
+// before returning an assembled restore file.
 // One gzip stream can be stored as successive objects when uploads need a known
 // content length. Spooling writes one bounded segment and its digest, then peeks
 // at the buffered source to distinguish the final segment from a full-sized

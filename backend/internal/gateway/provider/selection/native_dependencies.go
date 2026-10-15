@@ -16,6 +16,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// native_dependencies.go adapts provider snapshots and exposes the shared
+// services used during selection.
 // Selection keeps provider credentials in gateway execution targets while
 // scheduler inputs carry metadata. Snapshot reads use the gateway constructors
 // to recover full targets, and accessors expose the app-bound block stores,

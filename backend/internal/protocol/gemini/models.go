@@ -1,5 +1,6 @@
 package gemini
 
+// models.go defines Gemini model resource records and model-list responses.
 // Gemini model resources identify models by name and advertise their supported
 // generation methods. The list response retains those resource descriptions
 // and optional display labels as supplied; callers decide which advertised

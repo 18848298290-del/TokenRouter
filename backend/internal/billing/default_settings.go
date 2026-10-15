@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// default_settings.go parses signup subscription selections and validates
+// their referenced plans.
 // Default subscription selections are stored as plan-ID JSON and consumed
 // during signup. Reads omit nonpositive IDs and tolerate invalid JSON, while
 // settings validation rejects repeated positive IDs and verifies plans when a

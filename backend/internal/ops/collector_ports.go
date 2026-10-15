@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// collector_ports.go defines historical-query and host-sampling dependencies
+// and the measurements consumed by the metrics collector.
 // A collector sample combines historical request counts with current host and
 // connection-pool observations. Nullable measurements distinguish missing data
 // from zero utilization, while the dependency interfaces let app supply

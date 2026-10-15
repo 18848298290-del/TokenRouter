@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// dingtalk_client.go retrieves DingTalk login identities and organization
+// profiles while caching application access tokens.
 // DingTalk login identifies a user by unionID from the user-token endpoint, while
 // organization profile reads require an application token and a directory user ID.
 // The client resolves those different identifiers before returning staff and

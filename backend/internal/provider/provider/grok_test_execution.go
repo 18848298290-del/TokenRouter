@@ -17,18 +17,21 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok provider probes select Responses for text and the image-generation
-// endpoint for an explicit image test. OAuth uses the manual-test token path,
-// while API-key probes read the saved key. Saved model mapping precedes
-// request construction, and resolved endpoint policy still applies to either
-// credential kind before the shared transport is called.
+// grok_test_execution.go executes Grok text and image probes and publishes
+// their content and quota observations. Grok provider probes select Responses
+// for text and the image-generation endpoint for an explicit image test. OAuth
+// uses the manual-test token path, while API-key probes read the saved key.
+// Saved model mapping precedes request construction, and resolved endpoint
+// policy still applies to either credential kind before the shared transport
+// is called.
 //
-// Text responses can persist quota headers and recover or install their observed
-// windows before body-status handling. Further failure classification distinguishes
-// free usage, recoverable billing and a payment-required temporary window.
-// Image responses instead emit previews from base64 or URL entries and require
-// at least one usable image value for success. Both request paths consume and
-// close the returned body through this synchronous probe invocation.
+// Text responses can persist quota headers and recover or install their
+// observed windows before body-status handling. Further failure classification
+// distinguishes free usage, recoverable billing and a payment-required
+// temporary window. Image responses instead emit previews from base64 or URL
+// entries and require at least one usable image value for success. Both
+// request paths consume and close the returned body through this synchronous
+// probe invocation.
 
 // GrokProviderTest probes Grok with shared token and transport services and
 // records quota health.

@@ -13,11 +13,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// Authentication startup captures cache sizes, lifetimes and lookup protection
-// while later time and group-policy reads use bound callbacks. User,
-// subscription, team and live-count interfaces supply the specific current data
-// required by Key use cases, and the caller binds optional dependencies before
-// concurrent service use.
+// options.go defines authentication configuration and dependency interfaces
+// and resolves the bound group Fast-policy callback. Startup captures cache
+// sizes, lifetimes, and lookup protection, while time and group policy can use
+// bound callbacks. User, subscription, team and live-count interfaces supply
+// the specific current data required by Key use cases, and the caller binds
+// optional dependencies before concurrent service use.
 
 // Identity and team lifecycle labels reuse the owning modules' values so
 // authentication compares the same active and owner states as those services.

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// model_get.go reads AI Studio model resources with the selected credentials
+// and returns bounded HTTP results.
 // AI Studio model reads use a caller-validated base and a bounded, validated
 // resource suffix. API-key and OAuth modes select different headers, while the
 // returned HTTP result retains upstream status and a challenge header so the

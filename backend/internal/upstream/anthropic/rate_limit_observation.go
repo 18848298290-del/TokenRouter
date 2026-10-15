@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// rate_limit_observation.go selects Anthropic quota cooldown endpoints from
+// reset times and exhaustion observations.
 // Anthropic quota signals can describe a five-hour window, a seven-day window,
 // or a Fable-specific weekly window. Selection keeps the five-hour reset
 // separately when a weekly limit controls cooldown, so session accounting can

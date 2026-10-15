@@ -29,11 +29,13 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Group mutations connect provider membership, user access deletion, and
-// scheduler events through the selected database executor. Administration also
-// receives provider and Key reads, requestable-model resolution, and shared
-// score validation, while availability probing uses the configured calendar
-// location and common platform tests.
+// routing_groups.go assembles group persistence, administration, and
+// availability probes with shared provider and identity services. Group
+// mutations connect provider membership, user access deletion, and scheduler
+// events through the selected database executor. Administration also receives
+// provider and Key reads, requestable-model resolution, and shared score
+// validation, while availability probing uses the configured calendar location
+// and common platform tests.
 
 // routingGroupProviders narrows provider storage reads for routing group
 // administration.

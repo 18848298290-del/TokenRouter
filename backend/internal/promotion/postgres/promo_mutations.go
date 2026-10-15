@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// promo_mutations.go applies a registration promotion as one locked database
+// transaction.
 // Concurrent registration grants recheck a code's status and capacity after
 // acquiring that code's row lock. The lock serializes redemption checks on
 // its global use count. One transaction keeps that recheck, the recipient's

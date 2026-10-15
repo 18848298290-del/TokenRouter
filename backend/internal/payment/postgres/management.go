@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// management.go persists provider instance changes and counts order references
+// used by management checks.
 // Instance management uses optional field replacements and protects selected
 // configuration observations with an expected stored string. Provider and plan
 // order counts remain separate reads used by ConfigService before those

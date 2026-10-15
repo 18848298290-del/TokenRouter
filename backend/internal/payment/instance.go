@@ -2,6 +2,8 @@ package payment
 
 import "time"
 
+// instance.go defines persisted payment instance configuration and the
+// selection and refund flags read by payment services.
 // New-order selection excludes disabled payment instances. Historical
 // recovery can still need a disabled instance's recorded credentials and
 // merchant identity, while current configuration writers store plaintext

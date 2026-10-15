@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// openai_live_adapter.go adapts Live runtime storage, transport and usage
+// recording to HTTP services.
 // Live runtime receives frame interfaces while provider credentials and
 // encrypted attestation handling remain in the HTTP execution adapter. A
 // selected saved-call target loads current provider capability and converts

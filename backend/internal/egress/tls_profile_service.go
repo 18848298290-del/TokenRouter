@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// tls_profile_service.go publishes cached TLS profiles and selects
+// fingerprints for requests and token operations.
 // Runtime fingerprint selection reads cloned profiles from a locally published
 // ID map. Database writes refresh that map and the distributed cache after
 // persistence, using an independent three-second context so cancellation of the

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// diagnostics.go supplies production eligibility observations and settings to
+// scheduler score diagnostics.
 // Scheduling diagnostics explain provider scores using the parameters and
 // feedback bound to production selectors. Before scoring, the adapter supplies
 // group, cost-window, RPM, and quota settings needed by platform eligibility

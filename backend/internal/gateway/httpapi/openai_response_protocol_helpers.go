@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_protocol_helpers.go supplies image response timing,
+// diagnostic summaries and error delivery bindings.
 // Image response readers use separately configured idle and heartbeat
 // intervals, expressed as whole seconds. A no-output diagnostic can retain
 // structured event information while omitting body excerpts, and image error

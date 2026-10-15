@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// subscription_allocation.go allocates charges across ordered subscriptions
+// and computes quota updates.
 // A charge can use multiple ordered subscriptions whose quota amounts overlap
 // across daily, weekly and monthly periods. Allocation consumes the smallest
 // enabled remainder on each supplied row and advances through that row order.

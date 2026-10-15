@@ -2,6 +2,8 @@ package identity
 
 import "time"
 
+// clock.go supplies operation-time reads for authentication and administrator
+// services.
 // Authentication decisions read time at each operation so signing, expiry and
 // challenge checks can share an injected clock. Missing clock functions select
 // time.Now, while optional clock lists take their first entry even when later

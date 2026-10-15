@@ -11,26 +11,26 @@ import (
 	"time"
 )
 
-// Responses continuation needs a provider identity that another instance can
-// read, while a pooled connection ID identifies a socket on this instance.
-// Provider and HTTP-owner records therefore combine local maps with optional
-// GatewayCache storage; connection IDs, turn state, and rejected-ciphertext
-// digests remain process-local. Response provider and owner maps include group
-// identity, while response-to-connection affinity uses the response ID alone.
+// openai_ws_state_store.go stores Responses provider affinity, HTTP ownership,
+// and local WebSocket continuation state. Provider and HTTP-owner records
+// combine local maps with optional GatewayCache storage; connection IDs, turn
+// state, and rejected-ciphertext digests remain process-local. Response
+// provider and owner maps include group identity, while response-to-connection
+// affinity uses the response ID alone.
 //
-// Local bindings are installed before shared persistence. A failed shared
-// write leaves local state available, and HTTP ownership writes user and key
-// separately using one caller-derived context. Reads also fetch those components
-// separately, then cache a complete positive pair for one minute. Provider
-// reads instead suppress shared-cache errors as misses and return successful
-// shared results without populating the local provider map.
+// Local bindings are installed before shared persistence. A failed shared write
+// leaves local state available, and HTTP ownership writes user and key
+// separately using one caller-derived context. Reads also fetch those
+// components separately, then cache a complete positive pair for one minute.
+// Provider reads instead suppress shared-cache errors as misses and return
+// successful shared results without populating the local provider map.
 //
 // Each map has its own lock, and capacity checks happen inside its write lock.
 // A full map evicts one arbitrary existing key when a new key is admitted.
-// Periodic cleanup elects one caller with an atomic timestamp and scans at
-// most 512 entries per map; expired entries can remain physically present
-// between scans. Rejected-digest reads copy their map under the lock so
-// callers can modify the returned set independently.
+// Periodic cleanup elects one caller with an atomic timestamp and scans at most
+// 512 entries per map; expired entries can remain physically present between
+// scans. Rejected-digest reads copy their map under the lock so callers can
+// modify the returned set independently.
 
 // Shared-key prefixes separate provider and HTTP-owner records; the limits bound
 // local map admission, incremental cleanup, and the timeout attached to

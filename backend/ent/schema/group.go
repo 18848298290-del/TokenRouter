@@ -18,10 +18,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// A group defines the product permissions and pricing multiplier chosen by
-// a client key, while its members can use different upstream platforms.
-// Stored protocol selections determine new entry permissions, and legacy
-// booleans remain compatibility values for task and pricing consumers.
+// group.go defines routing-group permissions, pricing multipliers, and
+// relationships to providers across upstream platforms. Stored protocol
+// selections determine new entry permissions, and legacy booleans remain
+// compatibility values for task and pricing consumers.
 
 // Group declares product settings, provider membership, and user access relationships.
 type Group struct {

@@ -4,6 +4,7 @@ import (
 	billingcore "github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// billing_context.go exposes the funding object stored in Gin request context.
 // Funding admission saves its chosen source in Gin context before execution
 // captures completion data. HTTP consumers retrieve the same billing object
 // through a lookup interface, allowing request adapters and test contexts to

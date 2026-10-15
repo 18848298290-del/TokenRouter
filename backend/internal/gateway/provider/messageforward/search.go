@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/searchtools"
 )
 
+// search.go admits and executes emulated search for Messages requests.
 // Messages requests containing emulated search can complete through the search
 // service before a model exchange. Provider mode and group policy decide
 // admission, and a search proxy failure is converted into a gateway failover

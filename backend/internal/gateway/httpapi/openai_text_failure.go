@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_text_failure.go combines HTTP error classification and provider
+// health into text failover decisions.
 // HTTP text failures can describe client input, provider credentials, capacity
 // or transient transport behavior. The classifier excludes request-scoped
 // rejections before applying platform health, then combines that decision with

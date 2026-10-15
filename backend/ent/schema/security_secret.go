@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Bootstrap retrieves the JWT signing secret by its stable database key across
-// process starts. A dedicated secret record keeps that signing material
+// security_secret.go defines database records that retain signing secrets
+// under stable keys. A dedicated secret record keeps that signing material
 // available independently of ordinary runtime settings, with one nonempty
 // stored value per key.
 

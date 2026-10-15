@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Upstream transport reads application options through a callback while
-// requests execute. The app maps resolved-IP checks, connection-pool settings,
-// timeouts, and HTTP/2 policy into transport options; platform OAuth and usage
-// clients receive their respective configuration readers or transport interfaces.
+// http_transport.go constructs upstream transport and OAuth clients from
+// application configuration. Upstream transport reads application options
+// through a callback while requests execute. The app maps resolved-IP checks,
+// connection-pool settings, timeouts, and HTTP/2 policy into transport options;
+// platform OAuth and usage clients receive their respective configuration
+// readers or transport interfaces.
 
 // provideHTTPUpstream constructs the shared transport with a getter over cfg.
 // Option readers see configuration at use time; callers coordinate any cfg

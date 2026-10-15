@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// wheel.go schedules named callbacks and coordinates replacement,
+// cancellation, and shutdown.
 // Named callbacks can be registered before the timing wheel starts and can
 // outlive cancellation once execution has begun. Each registration gets a
 // distinct task pointer; dispatch and rearming compare that pointer with the

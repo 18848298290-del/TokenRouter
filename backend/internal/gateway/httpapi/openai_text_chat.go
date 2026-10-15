@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// openai_text_chat.go admits Chat Completions requests and prepares their
+// routing and session identities.
 // Chat admission validates stream and tier before provider execution, and
 // rejects group-mapped image models before moderation. Prompt replacement
 // occurs before model policy and session derivation so later checks use the

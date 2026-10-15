@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// cleanup.go defines persisted usage-cleanup tasks, deletion filters, and
+// repository operations.
 // Administrator usage cleanup persists its filters and progress so interrupted
 // tasks can be reclaimed. Cleanup uses an inclusive start and end, while
 // ordinary report queries use exclusive ends; the worker requests bucket repair

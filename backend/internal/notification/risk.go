@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// risk.go formats moderation observations into violation and account-disabled
+// email requests.
 // Moderation notices format an already recorded log or session warning into
 // event variables and source identity. The shared mailer resolves language and
 // sends the selected notice; these adapters report the provided risk observation

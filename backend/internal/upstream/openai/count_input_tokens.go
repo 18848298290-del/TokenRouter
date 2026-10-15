@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// count_input_tokens.go builds input-token requests and returns counts through
+// compatibility or native Responses output.
 // Input-token queries have two response forms: a compatibility path extracts
 // one count, and the native Responses path forwards the complete upstream JSON.
 // The native reader requires a numeric input_tokens field, while the

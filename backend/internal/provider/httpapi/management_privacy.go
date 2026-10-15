@@ -9,10 +9,17 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_privacy.go requests provider privacy updates and presents the
+// stored or locally observed mode.
 // Privacy requests produce an upstream mode observation for eligible OpenAI or
 // Antigravity OAuth providers. The mode may be returned after a persistence
 // error, and response rereading distinguishes the current stored view from a
 // locally applied observation when that reread fails.
+//
+// A nonempty upstream mode allows response presentation even when the privacy
+// callback could not persist it. A successful reread supplies the response
+// record; when rereading fails, the handler adds the observed mode to the
+// earlier record. That local response field does not confirm a durable write.
 
 // SetPrivacy requests a fresh eligible OAuth privacy mode and rereads the
 // provider for response presentation. A nonempty mode is an observation that

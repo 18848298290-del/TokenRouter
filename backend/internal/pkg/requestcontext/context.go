@@ -2,6 +2,8 @@ package requestcontext
 
 import "context"
 
+// context.go separates server-controlled abort signals from HTTP request
+// cancellation.
 // An upstream operation can outlive a disconnected HTTP client while still
 // needing a service-controlled stop signal. WithAbort stores a separate server
 // signal in request values, and Detach discards the parent's deadline and

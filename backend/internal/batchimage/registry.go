@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// registry.go registers batch-image backend implementations and retrieves them
+// by name.
 // Batch backends are selected by their exact registered names. Registration
 // ignores blank names and a nil interface value, and later entries replace
 // earlier entries with the same name; public selection and result access

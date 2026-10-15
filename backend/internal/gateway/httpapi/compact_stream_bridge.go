@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// compact_stream_bridge.go writes legacy Compact JSON results as Responses SSE
+// output when the client requested streaming.
 // Body-triggered legacy compaction can request a stream even though its upstream
 // Compact exchange returns JSON. The saved client marker lets output convert
 // that JSON into item events followed by a Responses terminal event. The protocol

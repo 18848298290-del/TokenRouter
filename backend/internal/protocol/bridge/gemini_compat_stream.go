@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_compat_stream.go converts native Gemini payloads into Messages events
+// for OpenAI compatibility streams.
 // Gemini payloads can repeat accumulated text or provide new fragments, while
 // Responses and Chat consumers receive sequential Anthropic block events. Text
 // and thinking therefore keep separate accumulated histories, and successive

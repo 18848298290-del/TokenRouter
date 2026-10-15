@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// intent.go classifies image-generation intent and resolves image billing
+// model and size evidence from request payloads.
 // Image intent can be established by an image endpoint or requested image
 // model before a body is parsed. Valid JSON bodies add tool declarations
 // and tool-choice evidence, with ordinary classification accepting passive

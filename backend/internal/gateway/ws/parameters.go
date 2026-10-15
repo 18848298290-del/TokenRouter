@@ -7,6 +7,8 @@ import (
 	"math"
 )
 
+// parameters.go merges and validates stored WebSocket overrides against
+// deployment parameters.
 // Stored WebSocket settings contain overrides, while deployment parameters
 // supply every omitted value. A patch can clear one override with null, retain
 // other overrides by omission, or reset the whole stored object with a

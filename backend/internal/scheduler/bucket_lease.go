@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// bucket_lease.go releases a bucket rebuild lock once and shares the recorded
+// cleanup result.
 // A bucket rebuild holds a storage lock until its work finishes. BucketLease
 // retains the release result so cleanup paths can share one callback,
 // including a lost-lock error returned by an ownership-aware storage adapter.

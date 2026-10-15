@@ -12,6 +12,8 @@ import (
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 )
 
+// gateway_credentials.go constructs gateway credential resolution and connects
+// Grok credential recovery to conditional provider mutations.
 // Grok request failures can arrive after credentials or proxy settings have
 // changed. Recovery uses the shared provider store for conditional mutations
 // and token invalidation, passing the proxy-invalid reason that selects the

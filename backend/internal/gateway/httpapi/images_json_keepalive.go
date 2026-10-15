@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// images_json_keepalive.go coordinates JSON whitespace heartbeats with final
+// image response writes and retry accounting.
 // Nonstreaming image generation can wait for an OAuth upstream that emits SSE
 // internally. JSON whitespace keeps the HTTP response active while the
 // eventual image document is still being assembled; the first heartbeat

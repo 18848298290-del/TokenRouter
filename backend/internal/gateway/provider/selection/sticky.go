@@ -8,6 +8,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// sticky.go adapts compatible session affinity to current and legacy hashes
+// and resolves Guardian parent bindings.
 // OpenAI-compatible session bindings use a group-scoped openai namespace and
 // can read or write a legacy hash during migration. Guardian review requests
 // resolve their parent's affinity within the same group while preserving the

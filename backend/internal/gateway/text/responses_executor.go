@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Responses HTTP entry retains provider and attempt evidence after serial
-// execution. Selection capture supplies route identity when a Forward
-// invocation produces its result, while later selection or rejection errors can
-// leave that earlier result available.
+// responses_executor.go runs HTTP Responses sessions and retains their
+// provider, route, and latest attempt evidence. Selection capture supplies
+// route identity when a Forward invocation produces its result, while later
+// selection or rejection errors can leave that earlier result available.
 //
 // Attempts counts Forward invocations and can include a local stop before
 // network dispatch. Execute binds captured request hints/routing, opens one

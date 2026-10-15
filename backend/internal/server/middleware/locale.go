@@ -8,10 +8,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// locale.go selects request language and marks routes eligible for user
+// presentation.
 // HTML navigation can carry a saved locale cookie even when the browser's
 // Accept-Language expresses another preference. Requests below /api/ negotiate
 // language from the header, and administrator or setup prefixes disable user
 // presentation while retaining a selected language in context.
+//
+// The saved cookie takes precedence only for a non-API request accepting HTML
+// and only when its value normalizes to a supported language. Other requests
+// negotiate from Accept-Language and the configured default. The selected
+// language is written to context and Content-Language, while the separate
+// presentation flag keeps administrator and setup responses outside
+// user-facing localization.
 
 // Locale negotiates a supported language and attaches language and
 // user-presentation flags before downstream handling. A nil defaultLanguage

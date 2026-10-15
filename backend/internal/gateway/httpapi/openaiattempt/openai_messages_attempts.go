@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_messages_attempts.go manages Messages attempt models, retry readiness
+// and completion capture.
 // Messages attempts retain the provider-layer model separately from the
 // original client model and use a request-local cache for group-mapped body
 // bytes. Each selected provider receives those bytes with its own

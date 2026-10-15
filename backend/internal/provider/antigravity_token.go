@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// antigravity_token.go selects request access tokens and backfills missing
+// project identity while coordinating cache and refresh observations.
 // Antigravity requests accept OAuth records and prefer cached tokens before
 // inspecting credential expiry. Near-expiry refresh receives an eight-second
 // child budget; failure attempts a temporary scheduling pause before policy

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// encrypted_content.go finds rejected encrypted-history values by digest and
+// sanitizes matching request or replay items.
 // Invalid encrypted reasoning state is identified by a SHA-256 digest of the
 // ciphertext returned in request history. The collector accepts reasoning and
 // compaction types handled by the protocol sanitizer, so lineage tracking does

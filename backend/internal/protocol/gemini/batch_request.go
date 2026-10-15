@@ -1,5 +1,7 @@
 package gemini
 
+// batch_request.go defines JSONL request records for Gemini batch generation
+// and reference images.
 // A Gemini batch JSONL line pairs the caller's custom item identifier with
 // one generation request. Image-batch construction emits prompt text followed
 // by inline or uploaded reference-image parts, requesting both TEXT and IMAGE

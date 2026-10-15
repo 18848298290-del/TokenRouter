@@ -1,5 +1,7 @@
 package postgres
 
+// provider_quota_expressions.go defines SQL expressions for provider quota
+// expiry and reset scheduling.
 // Provider daily and weekly quota periods can roll from their recorded starts
 // or reset at configured local calendar points. Expiry expressions treat only
 // fixed mode as calendar scheduling; other or absent modes use the rolling

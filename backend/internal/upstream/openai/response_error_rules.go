@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_error_rules.go classifies Responses output and failures and
+// sanitizes error payloads for client delivery.
 // Responses lifecycle progress, client output, and retryable failure are
 // separate observations. Empty known added-item structures can remain staged,
 // while unknown structures count as output so unsupported content is not

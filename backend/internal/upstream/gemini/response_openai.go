@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_openai.go converts Gemini responses into Chat or Responses output
+// while restoring client model and tool identities.
 // OpenAI-compatible Gemini responses pass through the shared Anthropic and
 // Responses converters before reaching Chat or Responses clients. The selected
 // response model is restored for client output, and usage travels separately

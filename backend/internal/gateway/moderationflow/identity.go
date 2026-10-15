@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
+// identity.go resolves moderation actor identity separately from billing
+// ownership using authenticated Key evidence.
 // A moderation risk actor can differ from the user that owns billing for an
 // API key. Subject identity initializes both roles, then loaded key and
 // user evidence can replace them independently. Actor or matching loaded

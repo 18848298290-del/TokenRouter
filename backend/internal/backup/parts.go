@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// parts.go validates and orders archive segment metadata for multipart
+// downloads and restoration.
 // Multipart archive metadata must describe every segment in order before restore
 // can assemble a complete gzip stream. Sorting a copy keeps the stored record's
 // slice order intact, while contiguous indices, nonempty effective keys, and positive

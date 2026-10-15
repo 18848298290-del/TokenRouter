@@ -8,12 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Authentication caches serialize credential configuration, payer observations
-// and group policy in a bounded request view. Versioned snapshots carry
-// identity, group policy and configured limits needed by request admission,
-// while current spending-window usage is read separately. Conversion
-// reconstructs request-owned collections so prefix selection and policy
-// processing can change that view without mutating the cached entry.
+// auth_cache.go defines serialized authentication snapshots containing
+// credential configuration, payer observations, and group policy. Versioned
+// snapshots carry identity, group policy and configured limits needed by
+// request admission, while current spending-window usage is read separately.
+// Conversion reconstructs request-owned collections so prefix selection and
+// policy processing can change that view without mutating the cached entry.
 
 // APIKeyAuthSnapshot stores versioned credential configuration and hydrated
 // authentication identity views.

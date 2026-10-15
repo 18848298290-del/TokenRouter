@@ -18,6 +18,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// auth_state.go persists registration, email binding, invitation use, and
+// first-bind grants for authentication flows.
 // Registration and email binding keep account credentials, provider identity
 // rows, invitation use, and first-bind grants in their selected persistence
 // scope. Authentication supplies prepared account and provider inputs;

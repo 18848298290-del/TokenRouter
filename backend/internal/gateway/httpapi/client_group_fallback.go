@@ -16,11 +16,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// A Claude Code-only group can redirect an incompatible client to a configured
-// group before route planning. Recognized Messages clients keep their current
-// group, while other entry protocols require a resolver result that passes
-// authorization, protocol, and funding checks. The adapter verifies the returned
-// group is active, internally consistent, and accepts the inbound protocol.
+// client_group_fallback.go resolves a compatible group for clients rejected by
+// a Claude Code-only group. A Claude Code-only group can redirect an
+// incompatible client to a configured group before route planning. Recognized
+// Messages clients keep their current group, while other entry protocols
+// require a resolver result that passes authorization, protocol, and funding
+// checks. The adapter verifies the returned group is active, internally
+// consistent, and accepts the inbound protocol.
 //
 // Successful resolution replaces request group, effective key, and subscription
 // together for subsequent handler phases. apikey.WithRuntimeAPIKey updates a

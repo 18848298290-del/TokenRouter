@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// signature.go computes Center and Gateway request signatures and formats COSY
+// bearer credentials.
 // Center signing hashes the Appcode, shared protocol secret, and HTTP date in a
 // fixed order. Gateway signing hashes the encoded identity header, encrypted
 // temporary key, Unix date, encoded request body, and logical path, so callers

@@ -12,9 +12,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// Access to an exclusive group is represented by an individual user-group
-// grant. The pair forms the row identity, so a user can have multiple distinct
-// grants while each grant records its own creation time and required entities.
+// user_allowed_group.go defines individual grants of user access to exclusive
+// groups. The user-group pair forms the row identity, so a user can have
+// multiple distinct grants while each grant records its own creation time and
+// required entities.
 
 // UserAllowedGroup represents a stored exclusive-group access grant for one user.
 type UserAllowedGroup struct {

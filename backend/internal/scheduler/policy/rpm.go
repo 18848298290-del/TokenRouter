@@ -1,5 +1,7 @@
 package policy
 
+// rpm.go determines provider RPM allowance and calculates the extra capacity
+// reserved for sticky requests.
 // Provider RPM admission separates ordinary capacity from an affinity-only
 // reserve. Counts below the configured base admit ordinary requests; reaching
 // that base changes which requests can use the provider. The sticky_exempt

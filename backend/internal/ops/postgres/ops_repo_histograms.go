@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_histograms.go queries latency counts and reconstructs six histogram
+// buckets from ordered thresholds.
 // Latency histograms map five ordered millisecond cutoffs to six displayed
 // buckets. SQL uses strictly-less-than comparisons, so a duration equal to a
 // cutoff enters the following bucket; nonnull negative durations also enter the

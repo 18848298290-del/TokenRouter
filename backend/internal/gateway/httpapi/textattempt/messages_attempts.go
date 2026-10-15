@@ -28,6 +28,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// messages_attempts.go prepares and executes Messages provider attempts and
+// captures their usage for completion recording.
 // Messages attempts retain client body/model identity while preparing
 // group-mapped provider input. Selection and session tracking establish the
 // target before slot acquisition; the serial text loop owns failover, while

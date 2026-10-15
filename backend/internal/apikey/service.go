@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// service.go validates API key configuration, reconstructs authentication
+// views, and records key usage observations.
 // A Key configuration write can overlap billing increments and cached
 // authentication reads, so the service selects stored configuration columns and
 // includes usage fields only for an explicit reset. Credential creator, team

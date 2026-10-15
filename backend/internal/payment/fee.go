@@ -4,6 +4,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// fee.go calculates currency-rounded checkout charges and separates their
+// base, fixed, and percentage components.
 // Checkout fees are calculated from the currency-rounded base amount,
 // so a percentage is applied to the amount the channel can actually
 // accept. A positive fixed fee rounds to the accepted precision, while

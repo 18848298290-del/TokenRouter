@@ -16,6 +16,8 @@ import (
 	usagequery "github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// team.go persists team membership, invitation, and ownership changes with
+// their credential lifecycle updates.
 // A current team membership is constrained per account, and a team has one
 // current owner. Creation and invitation acceptance serialize account
 // participation before their related writes, while owner transfer demotes

@@ -10,6 +10,8 @@ import (
 	redisinfra "github.com/TokenFlux/TokenRouter/internal/infra/redis"
 )
 
+// redis.go constructs the shared Redis client from deployment connection
+// settings.
 // Redis deployment settings determine credentials, pool sizing, and connection
 // timeouts for the shared application client. Timeout values become durations
 // in seconds, and enabling TLS sets the configured host as the server name

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// protocol_catalog.go builds administrative protocol descriptions from
+// capability rules and HTTP endpoint metadata.
 // Protocol admission choices come from routing capability rules, while their
 // public endpoint text comes from HTTP route wiring. Administrative responses
 // combine those sources with provider authentication profiles and one generic

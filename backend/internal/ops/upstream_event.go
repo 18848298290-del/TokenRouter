@@ -1,5 +1,7 @@
 package ops
 
+// upstream_event.go defines the diagnostic fields serialized for individual
+// upstream attempts.
 // One gateway request can fail several upstream attempts before succeeding or
 // returning its final error. Attempt records keep provider identity, upstream
 // correlation, stage, and response diagnostics separate from the final client

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// usage_errors.go builds degraded usage responses and overlays stored provider
+// restriction evidence.
 // Usage display can combine a failed quota fetch with an existing provider
 // restriction. Antigravity fetch errors distinguish authentication, rate
 // limiting, and network classification, while an error-state record can

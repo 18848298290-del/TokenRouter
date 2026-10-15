@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending_rules.go merges pending OAuth response fields and determines which
+// browser choices permit login completion or identity binding.
 // Pending browser responses carry account-choice steps beside stored provider
 // hints and selected account identifiers. A payload can contain a frontend
 // step without an issuable account target, while a completed login can still

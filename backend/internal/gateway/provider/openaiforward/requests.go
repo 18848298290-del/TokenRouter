@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// requests.go resolves Responses target URLs and builds ordinary or
+// passthrough upstream requests.
 // Responses endpoint selection depends on credential type and the provider's
 // protocol-specific base URL. OAuth targets use the Codex address, while API
 // Key targets validate custom bases before endpoint suffix construction; native

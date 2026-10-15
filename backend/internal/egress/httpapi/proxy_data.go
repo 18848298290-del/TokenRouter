@@ -12,6 +12,7 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// proxy_data.go handles administrator proxy backup import and export requests.
 // Proxy backup export supports selected IDs or filtered ordering and includes
 // connection credentials in its administrator payload. Import validates the
 // shared transfer envelope before delegating partial item processing, so

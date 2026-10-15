@@ -14,10 +14,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// External login identity combines provider type, issuer key, and stable subject.
-// That triplet identifies the same account across callbacks, while a required
-// user relationship records its local owner and separate channels retain
-// identifiers limited to one provider application.
+// auth_identity.go defines canonical login identities keyed by provider type,
+// issuer key, and stable subject. That triplet identifies the same account
+// across callbacks, while a required user relationship records its local owner
+// and separate channels retain identifiers limited to one provider
+// application.
 
 // authProviderTypes restricts identity schemas to the supported email and third-party
 // authentication providers accepted by validateAuthProviderType during Ent field validation.

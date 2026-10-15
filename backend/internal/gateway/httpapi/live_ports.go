@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// live_ports.go binds Live HTTP admission to authenticated identities,
+// funding, moderation, slots, and session execution.
 // Live HTTP admission uses the authenticated Key owner beside the funding
 // subject carried by the request. Model-mapping entries and the group feature
 // flag are copied into a Live view before execution, while optional identity

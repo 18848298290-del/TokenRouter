@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// team_reports.go selects analytics or raw usage sources for team summaries and
+// member histories.
 // Team reports attribute usage to the acting user and group it into dates using
 // the injected Calendar. Hourly UTC rows can represent whole local dates when
 // each offset in the range is an integer number of hours. A fractional-hour

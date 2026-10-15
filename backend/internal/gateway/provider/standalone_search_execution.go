@@ -19,6 +19,8 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// standalone_search_execution.go executes standalone Grok Responses searches
+// and classifies failures for the caller's provider loop.
 // Standalone Grok search performs one Responses exchange using stored
 // credentials and provider transport parameters. Its caller owns provider
 // selection and retry policy: this executor classifies credential, transport,

@@ -6,6 +6,8 @@ import (
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 )
 
+// group_access_participant.go supplies account group-grant writes bound to an
+// existing Ent transaction.
 // Administrator group replacement grants the destination before moving account
 // keys. This participant uses the caller Ent transaction for the grant write,
 // keeping permission changes in the same commit scope as key migration and

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// endpoint_policy.go selects Grok billing, media, and Voice endpoints from
+// provider bases and caller URL policy.
 // Grok subscription inference, billing and media do not all use the same
 // official host. Billing selects the CLI base for official public or regional
 // endpoints, while Voice uses the public base when the supplied base is missing

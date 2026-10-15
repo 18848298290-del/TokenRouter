@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// Cyber session storage can expose a batch interface or the historical single-key
-// operations. The adapter prefers batches; a legacy write selects its source
-// scope or first supplied key, and legacy lookup probes trimmed candidates in
-// caller order until one is blocked.
+// cyber_store_adapter.go adapts legacy single-key Cyber session storage to
+// batch-oriented callers. The adapter prefers batches; a legacy write selects
+// its source scope or first supplied key, and legacy lookup probes trimmed
+// candidates in caller order until one is blocked.
 
 // cyberSessionTranscriptLookupOverflowBlockKey identifies an active scope whose
 // transcript candidates exceed the lookup limit, allowing callers to reject

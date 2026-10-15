@@ -12,8 +12,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
-// Messages runtime execution creates synchronous HTTP output separately for
-// each call. Anthropic, Bedrock compatibility, Count Tokens, Chat and
+// messages_executor.go creates synchronous HTTP output adapters for calls to
+// the shared Messages forwarding runtime.
+// Anthropic, Bedrock compatibility, Count Tokens, Chat and
 // Responses entry adapters share the bound runtime and response header filter,
 // keeping platform attempts in that runtime while HTTP writers remain
 // request-local.

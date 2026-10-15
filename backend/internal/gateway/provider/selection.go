@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// selection.go represents selected provider resources and captures route
+// information for the text provider loop.
 // Provider selection can return an occupied slot or a plan for waiting until
 // capacity becomes available. The result also carries the advanced scheduler
 // parameters chosen for this request, while text capture records the selected

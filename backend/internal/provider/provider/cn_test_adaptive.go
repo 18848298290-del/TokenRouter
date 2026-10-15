@@ -19,18 +19,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Adaptive CN tests validate the enabled native protocol set and can narrow it
-// to one administrator-selected protocol. An empty selection checks enabled
-// Chat, Messages, and Responses endpoints in that order, ending at the first
-// failed endpoint.
+// cn_test_adaptive.go tests enabled CN native protocols in sequence,
+// optionally narrowed to one selected protocol. An empty selection checks
+// enabled Chat, Messages, and Responses endpoints in that order, ending at the
+// first failed endpoint.
 //
 // Each endpoint can emit content and status events, but completion is
-// suppressed until every selected endpoint succeeds. Chat owns its start event;
-// tests without Chat commit one start before the other endpoints run. Model
-// preparation applies one mapping for Messages and Responses, while Chat
-// delegates its original supplied model to the fixed executor. Native Responses
-// remove synthetic Codex instructions and request stateless behavior, and
-// native authentication failures can attempt provider error persistence.
+// suppressed until every selected endpoint succeeds. Chat owns its start
+// event; tests without Chat commit one start before the other endpoints run.
+// Model preparation applies one mapping for Messages and Responses, while Chat
+// delegates its original supplied model to the fixed executor. Native
+// Responses remove synthetic Codex instructions and request stateless
+// behavior, and native authentication failures can attempt provider error
+// persistence.
 
 // ExecuteAdaptive tests one selected native protocol or every enabled protocol
 // for a CN record. Empty protocol sets and disabled explicit selections fail

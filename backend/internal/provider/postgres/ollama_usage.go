@@ -13,6 +13,8 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// ollama_usage.go persists shared Ollama usage state and selects due API-key
+// groups for refresh.
 // Ollama Cloud providers sharing the same API key use one managed
 // browser-session identity even when their proxy selections differ. Group
 // writes lock the selected proxy and eligible provider rows, compare the

@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
+// plan_inputs.go defines plan change requests and decodes nullable numeric
+// patches.
 // Plan updates distinguish an omitted nullable field from an explicit
 // clear and a numeric value, including zero. Ordinary pointer fields
 // retain existing values when nil, while OriginalPrice and the three

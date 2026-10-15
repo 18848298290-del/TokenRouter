@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// execution_groups.go defines the group lookup required during creative
+// execution selection.
 // Execution reads the group again before selecting an upstream provider. The
 // group supplies current protocol permissions and model restrictions, so a
 // queued task can be refused when its saved group has become unavailable or

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_contents.go converts Messages history into internal Gemini content
+// and system instructions.
 // Internal Gemini history uses model roles and function names where Messages
 // history uses assistant roles and tool-use IDs. A shared call-ID map connects
 // later results to earlier names while system turns become separate

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// expiry.go runs expiration scans and coordinates startup and shutdown of
+// automatic provider pausing.
 // Providers configured for automatic expiry pausing qualify for suspension once
 // their stored expiration is reached. The worker scans immediately after a
 // usable Start and then at the configured interval; construction and disabled

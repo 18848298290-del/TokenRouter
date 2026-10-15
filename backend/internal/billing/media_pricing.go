@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// media_pricing.go resolves per-image reservation prices through configured
+// and catalog pricing.
 // Studio and batch submissions reserve a fixed price for each image
 // before final usage is available. Configured image or fixed request
 // prices can supply that unit amount, including zero, while catalog

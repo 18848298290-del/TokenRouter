@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// vertex_credentials.go parses Vertex service-account credentials and connects
+// identity-based cache keys to token acquisition.
 // Vertex access tokens are cached under service-account identity when its stored
 // JSON can be parsed. Email and private-key ID determine that identity, allowing
 // providers with the same key to reuse the token, while missing parsed key data

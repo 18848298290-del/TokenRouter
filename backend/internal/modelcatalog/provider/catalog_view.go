@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// catalog_view.go captures fixed pricing views and classifies model identities
+// for administrative listings.
 // Price listings include attribute-only catalog identities as well as
 // supplemented price records. Pricing fields supply each identity's provider
 // and mode when available. Billing classification also reads the pricing

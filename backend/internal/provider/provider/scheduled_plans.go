@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// scheduled_plans.go parses scheduled test expressions and coordinates the
+// cron dispatcher lifecycle.
 // Scheduled provider tests use five-field cron expressions and a per-minute
 // dispatcher. A scheduler starts idle and registers its dispatcher on the first
 // successful Start; stopping before that call closes the lifecycle just as

@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// input_validation.go validates platform credential choices and normalizes
+// Grok media eligibility updates.
 // CN provider credentials carry a mode and either legacy protocol selection or
 // a unified protocol set. Creation records legacy defaults when needed, while
 // editing can validate historical missing fields without writing those

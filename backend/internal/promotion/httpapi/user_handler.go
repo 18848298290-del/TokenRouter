@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// user_handler.go handles affiliate detail and quota-transfer requests for the
+// authenticated account.
 // User affiliate operations derive their account ID from the authenticated
 // subject, so clients select no recipient in the request payload. Detail
 // access can persist matured quota, and transfer returns the claimed quota

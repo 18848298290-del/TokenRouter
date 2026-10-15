@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// transform.go applies Responses model, image, OAuth, and billing policy while
+// synchronizing request bytes and decoded state.
 // Responses preparation can update simple fields as byte patches while image,
 // schema, and OAuth transformations need a decoded object. Pending patches are
 // adopted before a decoded map is exposed, and an object mutation disables

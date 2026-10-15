@@ -1,5 +1,7 @@
 package openai
 
+// oauth_values.go represents OpenAI authorization credentials and selects user
+// and organization metadata from decoded claims.
 // OpenAI authorization exchanges return token credentials separately from the
 // account and organization metadata carried by decoded claims or identity
 // endpoints. Those account identifiers need to stay distinct from a local

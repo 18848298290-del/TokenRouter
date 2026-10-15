@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Group reasoning policy maps an explicitly supplied client effort before
-// applying its ceiling. The request model selects scoped mappings, so capture
-// can retain the client's pre-policy choice while outgoing fields carry the
-// mapped or capped choice.
+// reasoning_effort_policy.go applies model-scoped effort mappings and group
+// effort ceilings to request fields. The request model selects scoped mappings,
+// so capture can retain the client's pre-policy choice while outgoing fields
+// carry the mapped or capped choice.
 //
 // Each supported effort spelling is processed independently and missing fields
 // remain omitted. A deny decision returns the original body even when earlier

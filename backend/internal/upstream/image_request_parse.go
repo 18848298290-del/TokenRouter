@@ -17,6 +17,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// image_request_parse.go parses image generation and editing requests into
+// forwarding, moderation, and routing evidence.
 // Image generation and editing share request options but receive reference
 // images in different encodings. JSON editing uses image_url entries, while
 // multipart editing retains named file parts and their byte content. Both

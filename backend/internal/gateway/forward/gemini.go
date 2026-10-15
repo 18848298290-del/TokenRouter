@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Antigravity Gemini input uses the platform's streaming upstream action even
-// for a buffered client. Identity and schema preparation precede model-attribute
-// application and internal project/model wrapping. The schema step can fail
-// without replacing the identity-injected base used for later preparation.
+// gemini.go prepares Antigravity Gemini requests and coordinates recovery,
+// error handling, and response capture. Antigravity Gemini input uses the
+// platform's streaming upstream action even for a buffered client. Identity and
+// schema preparation precede model-attribute application and internal
+// project/model wrapping. The schema step can fail without replacing the
+// identity-injected base used for later preparation.
 //
 // Retry and recovery finish before the response hook decides error output or
 // provider switching. The hook retains original error evidence when unwrapping

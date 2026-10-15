@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// release_query.go queries and caches release information and selects eligible
+// rollback versions.
 // Update cache entries contain the remote version, release metadata, and write
 // time, while each ReleaseQuery supplies its own running version and build
 // label. Cache hits recompute numeric update eligibility so instances using the

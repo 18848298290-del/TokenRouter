@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// suite.go creates isolated PostgreSQL test databases from a shared migrated
+// template.
 // Parallel PostgreSQL tests need independent databases while the migration set
 // can be applied once per process. Suite lazily starts one container, migrates
 // a verification_template database, closes that template's pool, and disables

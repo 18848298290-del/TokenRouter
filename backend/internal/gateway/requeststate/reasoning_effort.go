@@ -10,10 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Requested reasoning effort and recorded effort have different reporting
-// meanings. Capturing the client choice before policy preserves a recognized
-// none value, while effective reporting keeps the supported nonempty effort
-// labels after transformations.
+// reasoning_effort.go extracts requested and recorded reasoning effort from
+// request bytes and decoded objects. Capturing the client choice before policy
+// preserves a recognized none value, while effective reporting keeps the
+// supported nonempty effort labels after transformations.
 //
 // Byte readers and decoded-object readers select their own field evidence. The
 // byte reporting path falls through a blank nested value to the flat spelling;

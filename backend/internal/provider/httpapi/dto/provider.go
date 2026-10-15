@@ -8,6 +8,8 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
+// provider.go defines provider administration responses for configuration,
+// health, quotas, and loaded relationships.
 // Provider administration displays configuration together with stored health
 // and scheduling windows. Classifier-selected credential secrets use
 // presence flags, and Ollama-managed Extra becomes a separate eligible usage

@@ -15,6 +15,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// response_buffered.go reads buffered Responses streams through terminal
+// output while accumulating usage and conversion state.
 // Buffered compatibility reads combine SSE framing, accumulated output, and
 // final response usage before a nonstreaming caller constructs its result. A
 // terminal response object takes precedence over accumulated usage, including

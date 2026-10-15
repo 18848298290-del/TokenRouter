@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers backup and retired data-management endpoints with
+// their administrator authorization checks.
 // Archive routes combine the administrator group's existing middleware with
 // supplied step-up policy for credential changes, exports, creation, and restore.
 // That middleware controls enforcement, including bypass when its global switch is disabled.

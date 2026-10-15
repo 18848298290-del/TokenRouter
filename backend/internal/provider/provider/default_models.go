@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Default model candidates are finite platform choices used when constructing
-// provider mappings and catalogues. OpenAI shadows expose the native Spark ID,
-// Bedrock contributes aliases and targets in sorted distinct order, and Qoder
-// chooses its list from the credential site.
+// default_models.go supplies finite platform model candidates for provider
+// mappings and catalogues. OpenAI shadows expose the native Spark ID, Bedrock
+// contributes aliases and targets in sorted distinct order, and Qoder chooses
+// its list from the credential site.
 
 // DefaultProviderModels returns platform candidates for a record, with OpenAI
 // shadows checked first. Nil records, unsupported platforms, and invalid Qoder

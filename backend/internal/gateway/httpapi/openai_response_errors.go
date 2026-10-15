@@ -26,6 +26,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_errors.go classifies upstream HTTP failures and writes
+// protocol-specific client errors.
 // Upstream HTTP failures need separate request-error, provider-health and
 // client-presentation decisions. Responses and compatible Chat/Messages output
 // preserve structured request rejection details, handle cyber evidence before

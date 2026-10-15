@@ -11,10 +11,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Creative output metadata records delivery state separately from the image
-// bytes kept in Redis. Expiration, acknowledgement, and error information let
-// Queries decide whether an output can be served, while temporary bytes may
-// be removed by acknowledgement, TTL, or terminal-run cleanup.
+// creative_run_output.go defines creative image delivery metadata separately
+// from the bytes kept in Redis. Expiration, acknowledgement, and error
+// information let Queries decide whether an output can be served, while
+// temporary bytes may be removed by acknowledgement, TTL, or terminal-run
+// cleanup.
 
 // CreativeRunOutput stores delivery metadata for one indexed creative image result.
 type CreativeRunOutput struct {

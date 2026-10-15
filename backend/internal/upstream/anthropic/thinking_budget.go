@@ -7,6 +7,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// thinking_budget.go recognizes thinking-budget errors and repairs nonadaptive
+// request budgets for replay.
 // A rejected nonadaptive thinking budget can be rewritten into an enabled
 // 32000-token budget. The output limit is raised only when it is too small for
 // that budget, and adaptive requests keep their supplied thinking

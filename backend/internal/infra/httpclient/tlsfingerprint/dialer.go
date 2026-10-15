@@ -18,12 +18,14 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// dialer.go establishes direct and proxied TLS connections using configured
+// ClientHello profiles.
 // TLS fingerprint dialing creates an ordered ClientHello independently of
 // net/http's ordinary TLS connector. Direct and SOCKS paths obtain a network
 // connection before the target uTLS handshake; HTTP proxies establish CONNECT
 // first, and HTTPS proxies add a standard verified TLS connection around that
-// CONNECT exchange. Network dialing and the target handshake have separate
-// ten-second budgets.
+// CONNECT exchange. Default network dialing and the target handshake have
+// separate ten-second budgets; a supplied direct dialer owns its dial budget.
 //
 // Profiles select raw ordered IDs and protocol lists, with empty lists
 // choosing built-in defaults. Unknown extension IDs carry empty payloads,

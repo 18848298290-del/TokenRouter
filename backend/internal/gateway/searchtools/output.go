@@ -8,18 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
-// External search output becomes one Anthropic-shaped message with a server
-// call, its result block and readable summary. Call/result blocks share a
-// reserved tool identifier so later history filtering can recognize this
-// synthetic origin.
+// output.go renders external search results as Anthropic JSON messages or
+// streaming events. Each message contains a search call, its results, and
+// readable summary text. Call/result blocks share a reserved tool identifier so
+// later history filtering can recognize this synthetic origin.
 //
 // Streaming opens and closes fixed indexes before terminal events, stopping on
-// the first write error while still reaching Flush. JSON creates the same
-// three content blocks together. Both formats report a truncated summary-byte
-// estimate on the wire, while Result retains zero TokenUsage and
-// injected-clock duration. Output adapters define write and delivery behavior,
-// and successful builders require generated strings long enough for the
-// sixteen-byte tool-ID slice.
+// the first write error while still reaching Flush. JSON creates the same three
+// content blocks together. Both formats report a truncated summary-byte
+// estimate on the wire, while Result retains zero TokenUsage and injected-clock
+// duration. Output adapters define write and delivery behavior, and successful
+// builders require generated strings long enough for the sixteen-byte tool-ID
+// slice.
 
 // writeStream emits the paired search call/results and summary, then flushes
 // once. Callers provide response/output and a usable identifier generator

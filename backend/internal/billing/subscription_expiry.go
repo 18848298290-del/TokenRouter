@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// subscription_expiry.go runs subscription expiry maintenance and dispatches
+// due reminder requests.
 // Subscription maintenance first marks elapsed active/pending grants expired,
 // then scans active rows for reminders at rounded seven-, three- and one-day
 // thresholds. Settings and notifier readiness can skip the reminder scan

@@ -9,6 +9,8 @@ import (
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 )
 
+// assembly_payment_wire.go registers payment runtime and HTTP constructors and
+// binds the payment load balancer.
 // Payment runtime, public endpoints, and administrator handlers share
 // persisted provider instances and the application provider registry. Wire
 // binds DefaultLoadBalancer to payment.LoadBalancer, so order processing

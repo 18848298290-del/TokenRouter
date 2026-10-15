@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// anthropic_output.go converts Anthropic event streams into buffered or
+// streaming OpenAI responses and records their usage.
 // Anthropic stream events carry content fragments and separate uncached, cache-
 // creation, and cache-read usage buckets. Converted Responses and Chat output
 // reconstruct those fragments while retaining the vendor model declaration
@@ -29,7 +31,7 @@ import (
 //
 // Buffered conversion waits for a message_start before producing JSON, while
 // streaming conversion commits SSE headers and records the first decoded event
-// as its timing observation. An idle pump closes the upstream body; buffered
+// as its timing observation. An idle timeout closes the upstream body; buffered
 // output reports a failure with no result, and streaming output returns
 // collected usage beside that error. Responses streaming continues conversion
 // state after client disconnection, while Chat streaming continues usage

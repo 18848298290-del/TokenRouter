@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_response.go binds Antigravity response conversion to attempt
+// output and tool restoration.
 // Antigravity response modes share attempt tool restoration and HTTP error
 // presentation. The response options install semantic commitment and typed
 // failover callbacks, while stream limits are supplied when startup

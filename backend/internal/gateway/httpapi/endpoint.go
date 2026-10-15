@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// endpoint.go normalizes inbound endpoint labels and resolves the upstream
+// endpoint reported for each request.
 // Endpoint observations distinguish a client route from the protocol path
 // eventually used by a selected provider. Canonical inbound labels collapse
 // aliases and resource details, but retain Compact and input-token identities

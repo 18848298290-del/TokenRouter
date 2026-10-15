@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_audit_wire.go registers audit recording, administration, and
+// redaction constructors with Wire.
 // Administrator operations and session binding mismatches feed the same
 // AuditLogService. Provider credential names and sensitive payment
 // configuration fields contribute to the HTTP middleware's shared redaction

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// settlement.go commits request charges and task fund reservations, captures
+// and releases.
 // Completed gateway usage can exceed a pinned subscription's remaining quota,
 // while task submission requires a fully funded reservation before upstream
 // work starts. Ordinary settlement caps subscription usage and records

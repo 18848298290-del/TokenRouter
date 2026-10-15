@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 )
 
+// request_limits.go manages API key request admission and the lifetime of
+// renewable concurrency leases.
 // A consuming request reserves the Key's configured active-request and rolling
 // RPM capacity before forwarding. Unlimited keys proceed directly, while a
 // limited Key requires the cache's atomic reservation operations. The admission

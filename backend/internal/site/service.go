@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// service.go manages announcement publication, localized user visibility, and
+// read acknowledgements.
 // Announcements are published for users whose current balance and active plans
 // satisfy their targeting expression within the scheduled interval. User lists
 // resolve a title and body together, join first-read markers by announcement ID,

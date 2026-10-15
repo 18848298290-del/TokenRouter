@@ -15,10 +15,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Runtime-setting tests need controlled raw values while production readers
-// supply parsing and defaults. The map repository implements value and batch
-// reads plus individual writes; other repository operations panic so a test
-// notices when its execution path asks for unsupported storage behavior.
+// runtime_settings.go supplies an in-memory settings repository and production
+// runtime readers for gateway tests. The map repository implements value and
+// batch reads plus individual writes; other repository operations panic so a
+// test notices when its execution path asks for unsupported storage behavior.
 
 // FastPolicySettingsRepo supplies raw setting values and captures individual
 // test writes.

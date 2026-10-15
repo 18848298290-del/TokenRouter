@@ -1,5 +1,7 @@
 package anthropic
 
+// oauth.go represents Claude OAuth token responses and their optional account
+// identities.
 // Claude authorization exchanges return credentials together with optional
 // account and organization identities. Provider authorization converts the
 // relative token lifetime into an expiry time and copies the identity objects

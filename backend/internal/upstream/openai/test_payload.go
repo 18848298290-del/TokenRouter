@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// test_payload.go builds Responses and Chat Completions payloads for provider
+// text probes.
 // Provider text probes use one user prompt in the selected Responses or Chat
 // wire format. Blank prompts become hi, while Responses probes include the
 // shared Codex instructions and OAuth storage policy needed by the internal

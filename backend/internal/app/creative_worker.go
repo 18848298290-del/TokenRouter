@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 )
 
+// creative_worker.go constructs creative workers with user concurrency
+// admission and runtime pool settings.
 // Creative generation requests capacity using the concurrency limit read from
 // its user's record, and the worker releases an acquired slot when generation
 // finishes. Pool sizing comes from composite settings at runtime startup, while

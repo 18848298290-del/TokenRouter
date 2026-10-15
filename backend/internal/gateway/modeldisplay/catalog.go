@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// catalog.go defines protocol model-list representations and merges
+// requestable model IDs in stable order.
 // Model-list entries retain the identifier a client can request even when
 // catalogue metadata supplies another display label or owner. Protocol
 // response shapes choose their own names and optional fields; merging

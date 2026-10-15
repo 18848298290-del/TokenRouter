@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// cyber_session_lookup.go supplies request identity and source metadata to
+// cyber session-block lookups.
 // A cyber session may be identified by a client header or prompt-cache key,
 // while transcript matching depends on source scope and runtime settings.
 // HTTP adapters pass explicit identity as a callback so the session core can

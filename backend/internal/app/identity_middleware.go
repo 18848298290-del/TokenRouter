@@ -10,10 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// JWT and administrator authentication use the same assembled session and user
-// services, with binding mismatches submitted to the audit recorder. Step-up
-// middleware receives TOTP and runtime settings separately, while management
-// audit middleware receives the shared redactor.
+// identity_middleware.go constructs authentication, step-up, and audit
+// middleware from shared identity services. JWT and administrator
+// authentication use the same assembled session and user services, with binding
+// mismatches submitted to the audit recorder. Step-up middleware receives TOTP
+// and runtime settings separately, while management audit middleware receives
+// the shared redactor.
 
 // identityAuthAudit converts authentication events to queued audit records.
 type identityAuthAudit struct {

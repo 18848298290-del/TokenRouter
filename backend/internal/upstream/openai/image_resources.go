@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// image_resources.go collects ChatGPT image assets and resolves their inline
+// data, download URLs, or authenticated pointers.
 // ChatGPT image assets can arrive as file-service or sediment pointers, direct
 // download URLs, or inline Base64 text. Collection merges these representations
 // by a preferred pointer/URL key or a short encoded prefix, filling missing

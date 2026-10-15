@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/clientmeta"
 )
 
+// cli_version.go resolves the Claude CLI version from deployment overrides or
+// the built-in pin.
 // The CLI version is resolved during package initialization and feeds both
 // User-Agent defaults and billing templates. Deployment variables can select a
 // supported release, while invalid overrides return the built-in pin and

@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// client_request_id.go binds gateway request identities to logging context and
+// correlation headers.
 // Gateway requests carry a local diagnostic ID and may also carry a caller's
 // correlation ID. A valid ID already attached to the request context comes from
 // the global RequestLogger or another internal entry point; incoming internal

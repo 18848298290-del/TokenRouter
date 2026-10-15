@@ -6,8 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 )
 
-// Anthropic-style token counting can retry provider failures while rebuilding
-// its payload for each selected target. The loop performs no request-slot
+// count_tokens.go runs Anthropic-style token-count attempts with provider
+// selection and classified failure recovery. The loop performs no request-slot
 // acquisition or completion submission, leaving one-count execution and its
 // resources to the adapter.
 //

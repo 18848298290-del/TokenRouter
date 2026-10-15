@@ -12,6 +12,8 @@ import (
 	middleware2 "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// subscription_handler.go serves current-user subscription lists, progress,
+// summaries and revocation requests.
 // User subscription views derive their recipient from authentication rather
 // than a supplied query ID. Lists enrich group labels and resolve plan display
 // text, while progress pairs a listed view with a separate service read and

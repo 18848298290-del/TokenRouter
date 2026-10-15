@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// runtime.go publishes effective WebSocket settings and rejects stale refresh
+// results.
 // A settings refresh can begin before an administrator saves and publishes a
 // newer override object. Returning storage bytes from that earlier read must
 // not replace the locally published settings used by new connections and turns.

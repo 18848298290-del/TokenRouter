@@ -8,11 +8,13 @@ import (
 	"time"
 )
 
+// grok_refresh.go selects Grok credentials for timed refresh and builds their
+// replacement credential maps.
 // Grok token maintenance needs a renewable OAuth credential before expiry
 // timing can select it. Missing access token or unparseable expiry requests
-// refresh, while an otherwise usable token is compared with a window of at
-// least one hour. A stable provider-ID offset spreads that window and keeps it
-// above the minimum.
+// refresh. For an otherwise usable token, the base window is raised to at least
+// one hour before a stable provider-ID offset of zero through 179 seconds is
+// subtracted. The jitter helper also enforces its thirty-minute lower bound.
 //
 // The refresher returns a credential update for its persistence caller. Newly
 // exchanged fields override stored values, omitted metadata is inherited

@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Free-quota decisions are cached per selection scope, so loading usage into
-// one gate does not populate another gate's cache. Construction gives generic
-// and compatible selection separate gates and advanced selection a factory,
-// with usage loading, task tracking, and observations shared among them.
+// provider_free_quota.go constructs separate free-quota gates for generic,
+// compatible, and advanced selection. Free-quota decisions are cached per
+// selection scope, so loading usage into one gate does not populate another
+// gate's cache. Construction gives generic and compatible selection separate
+// gates and advanced selection a factory, with usage loading, task tracking,
+// and observations shared among them.
 
 // selectionFreeQuotaGates supplies separately cached gates and an advanced-selection gate factory.
 type selectionFreeQuotaGates struct {

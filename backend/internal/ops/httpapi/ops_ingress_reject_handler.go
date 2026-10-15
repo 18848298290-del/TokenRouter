@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_ingress_reject_handler.go validates ingress-rejection query dimensions
+// and serves aggregate lists and ingestion health.
 // Ingress-rejection queries address aggregate rows by minute, reason, route,
 // protocol, and caller identities. Public enum filters reject unknown values
 // before storage, while client addresses are normalized to the same

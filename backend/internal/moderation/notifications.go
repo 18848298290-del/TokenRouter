@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// notifications.go converts moderation records and policies into risk
+// notification inputs.
 // Risk notices consume thresholds and observations selected by moderation.
 // Ordinary notices are prepared before a new audit log receives its database
 // ID, while Cyber notices receive the committed warning ID for notification

@@ -2,6 +2,8 @@ package identity
 
 import "context"
 
+// risk_status.go defines the account view and status-write operations used by
+// moderation decisions.
 // Moderation reads a user's identity, role and current status before deciding
 // whether a risk action applies. Status writes select that single repository
 // field, so the reduced read view can support moderation decisions without

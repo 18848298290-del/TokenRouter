@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// live_client.go creates authenticated Live calls and opens raw-frame
+// WebSocket sideband connections.
 // Live call creation posts SDP and session JSON with provider authentication
 // and an attestation header, then returns the upstream SDP and call identifier.
 // Redirects are disabled for this authenticated request, and bounded body

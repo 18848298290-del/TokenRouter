@@ -6,6 +6,7 @@ import (
 	audit "github.com/TokenFlux/TokenRouter/internal/audit/httpapi"
 )
 
+// audit_log.go exposes audit action and actor setters to HTTP route handlers.
 // Management handlers can refine an audit record with the operation name and
 // the actor identified during execution. The audit HTTP adapter reads those
 // values after the handler returns, while this middleware package exposes the

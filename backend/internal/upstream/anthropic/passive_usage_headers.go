@@ -5,6 +5,8 @@ import (
 	"strconv"
 )
 
+// passive_usage_headers.go parses passive Anthropic quota headers into
+// provider observation fields.
 // Anthropic response headers supply passive utilization fractions and reset
 // timestamps for provider observations. The parser returns recognized values
 // under Extra field names, omits parse failures, and converts large integer

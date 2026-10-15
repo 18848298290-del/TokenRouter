@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers administrator routes for creative model
+// candidates and worker status.
 // Creative administrator settings expose model candidates and the live worker
 // snapshot through separate reads. Registration uses the existing admin
 // settings group, so its caller supplies authentication and audit middleware

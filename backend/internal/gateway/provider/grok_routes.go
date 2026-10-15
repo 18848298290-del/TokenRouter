@@ -7,6 +7,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_routes.go builds validated Grok text, media, and voice endpoint URLs.
 // Grok text endpoints combine saved provider URLs with optional dynamic
 // defaults, while media and voice use the media endpoint rules. Endpoint
 // construction selects an OAuth-aware validator before joining paths, so

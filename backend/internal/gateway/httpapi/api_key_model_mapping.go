@@ -13,11 +13,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// A key alias is resolved once before group and provider mappings run, so later
-// routing starts from the key's selected target. HTTP input may carry the alias
-// in JSON, multipart, or Gemini route parameters; tool-model aliases can be
-// redirected even when the primary model has no matching rule. Parsing failures
-// leave validation to the protocol handler instead of producing a redirect here.
+// api_key_model_mapping.go applies API-key model redirects and restores client
+// model names in responses. A key alias is resolved once before group and
+// provider mappings run, so later routing starts from the key's selected
+// target. HTTP input may carry the alias in JSON, multipart, or Gemini route
+// parameters; tool-model aliases can be redirected even when the primary model
+// has no matching rule. Parsing failures leave validation to the protocol
+// handler instead of producing a redirect here.
 //
 // Response restoration follows the request's shared model trace as internal
 // names become known. With a composite key, the inner writer restores the

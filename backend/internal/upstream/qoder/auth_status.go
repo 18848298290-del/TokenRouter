@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// auth_status.go completes CN token identities through Gateway status and
+// refreshes imported COSY credentials.
 // CN OpenAPI tokens require Gateway status completion to obtain COSY user and
 // account identity before inference. That request uses pre-login Appcode signing
 // with the stored machine, while imported COSY credentials refresh through a
@@ -17,7 +19,7 @@ import (
 // Status requests carry string-valued JSON in an encodeVersion=1 envelope,
 // including empty token and authInfo fields required by the request shape.
 // Status identity fields can differ from OpenAPI user IDs, so completion uses
-// the device-token user ID to verify ownership and then keeps the effective
+// the device-token user ID for the status request and then keeps the effective
 // OpenAPI access and refresh tokens. Legacy COSY refresh instead accepts token
 // replacements from status and retains its old refresh token when omitted.
 

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// oauth.go selects Gemini OAuth credentials and scopes and builds
+// authorization URLs with PKCE parameters.
 // Gemini authorization can use a configured Google OAuth client or the
 // built-in Gemini CLI identity. Credential-pair presence and OAuth type
 // determine which scopes are sent, and a partially configured client is

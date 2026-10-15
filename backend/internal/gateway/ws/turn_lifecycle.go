@@ -2,6 +2,8 @@ package ws
 
 import "sync"
 
+// turn_lifecycle.go coordinates response.create admission with completion of
+// the previous terminal write.
 // A client can send its next response.create while the relay is delivering the
 // previous turn's terminal frame. Admission has to remain closed through that
 // write, because completion metadata may already be consumed before the client

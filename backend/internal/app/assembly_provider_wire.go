@@ -12,6 +12,8 @@ import (
 	providerredis "github.com/TokenFlux/TokenRouter/internal/provider/rediscache"
 )
 
+// assembly_provider_wire.go registers provider authorization, maintenance,
+// health, and administration dependencies with Wire.
 // Provider maintenance and credential refresh share runtime blocking state.
 // The graph binds RuntimeBlockState as both RefreshFailureObserver and
 // RuntimeUnblocker, so refresh failures and recovery operations reach the same

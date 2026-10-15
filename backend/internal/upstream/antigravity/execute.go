@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go executes Antigravity exchanges and adapts responses while
+// retaining usage and output observations.
 // Antigravity execution keeps upstream observation active while adapting one
 // exchange into Claude, Gemini, Chat, or Responses output. Raw usage fields
 // accumulate across partial payloads, so a later observation containing only

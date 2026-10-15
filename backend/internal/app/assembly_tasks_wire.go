@@ -6,6 +6,8 @@ import (
 	"github.com/google/wire"
 )
 
+// assembly_tasks_wire.go registers creative and batch-image task services,
+// workers, HTTP handlers, and activity tracking with Wire.
 // Creative and batch image handlers participate in task activity tracking, so
 // shutdown can wait for submissions, downloads, and management calls. Their
 // workers and public services use application-assembled pricing, funding, and

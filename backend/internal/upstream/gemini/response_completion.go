@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_completion.go selects Gemini response writers and reconciles usage
+// when upstream streams serve buffered clients.
 // Client streaming and upstream streaming are separate Gemini choices. A
 // buffered client can consume upstream SSE by collecting parts before protocol
 // conversion, and each completion entry chooses the matching native, Messages,

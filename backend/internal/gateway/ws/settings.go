@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings.go prepares validated WebSocket setting changes for the shared
+// settings workflow.
 // Administrative WS updates must validate the combined override object before
 // settings storage accepts it. SettingsParticipant claims the responses_ws
 // field, merges it with current storage and deployment defaults, and supplies

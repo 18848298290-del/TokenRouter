@@ -13,19 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity retries consult provider model windows using the final forwarded
-// identity and, for Gemini names, its shared platform window. The remaining wait
-// is the longest positive duration across those keys, so a short exact-model
-// window cannot hide a longer shared window. Credits overages use their own
-// exhaustion marker and can select a different recovery path.
+// antigravity_retry.go binds Antigravity retry decisions to model windows,
+// credit exhaustion, and provider health callbacks. Antigravity retries
+// consult provider model windows using the final forwarded identity and, for
+// Gemini names, its shared platform window. The remaining wait is the longest
+// positive duration across those keys, so a short exact-model window cannot
+// hide a longer shared window. Credits overages use their own exhaustion
+// marker and can select a different recovery path.
 //
 // The adapter binds attempt-local callbacks to application health services.
-// Custom policy handling preserves a recognized long model limit before consuming
-// or rewriting the error, and successful model-window handling releases the
-// sticky binding. Health callbacks can publish or mutate the borrowed record
-// and notify Changed even when a write reports failure. The platform retry loop
-// owns request/response sequencing; this adapter supplies its policy, transport
-// selection and bounded diagnostic reads.
+// Custom policy handling preserves a recognized long model limit before
+// consuming or rewriting the error, and successful model-window handling
+// releases the sticky binding. Health callbacks can publish or mutate the
+// borrowed record and notify Changed even when a write reports failure. The
+// platform retry loop owns request/response sequencing; this adapter supplies
+// its policy, transport selection and bounded diagnostic reads.
 
 // AntigravityRetryRequest contains one attempt and its synchronous observation
 // and health callbacks.

@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// video_content.go opens Grok video downloads and retains activity admission
+// until the returned stream closes.
 // Video content lookup begins with an authenticated status request, then
 // chooses a recognized signed video URL or the provider's authenticated relay
 // endpoint. Signed downloads carry the requested Range while omitting bearer

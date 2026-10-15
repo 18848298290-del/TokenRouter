@@ -10,6 +10,8 @@ import (
 	"strconv"
 )
 
+// brave.go sends search requests to Brave and converts its web results into
+// the shared search response.
 // Brave receives its subscription token in a header and its query and requested
 // count in URL parameters. Responses expose result age alongside link and
 // description text; successful empty result sets remain valid searches, while

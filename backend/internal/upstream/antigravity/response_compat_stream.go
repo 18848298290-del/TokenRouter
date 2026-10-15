@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_compat_stream.go converts Antigravity streams to OpenAI protocols
+// while buffering output until meaningful data arrives.
 // OpenAI compatibility streams pass Antigravity data through Claude events
 // before Responses or Chat conversion. Prelude events stay buffered until
 // content or a completion observation qualifies as meaningful, so an empty

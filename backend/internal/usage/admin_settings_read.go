@@ -1,5 +1,7 @@
 package usage
 
+// admin_settings_read.go converts stored usage settings into the administrator
+// settings view.
 // Administrator settings expose the configured ranking metric and visibility
 // switches together. Parsing passes ranking values through the same
 // normalization used by the user page, while error-record access requires the

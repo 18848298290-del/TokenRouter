@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// execute.go exchanges SystemOne requests and records validated answers
+// separately from usage and delivery observations.
 // SystemOne answers can be valid even when their token usage is absent or
 // malformed. The executor buffers the complete bounded response and validates
 // answers before beginning downstream output, then retains usage validity as

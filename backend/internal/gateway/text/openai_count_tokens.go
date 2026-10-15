@@ -1,9 +1,9 @@
 package text
 
-// The OpenAI count_tokens compatibility path performs one provider selection
-// and one auxiliary count at most. Selection latency is recorded even when no
-// target is usable, and output/error handling stays with the adapter rather
-// than creating generation completion work.
+// openai_count_tokens.go runs one provider selection and at most one OpenAI
+// compatibility token count. Selection latency is recorded even when no target
+// is usable, and output/error handling stays with the adapter rather than
+// creating generation completion work.
 
 // SingleCountPorts supplies one auxiliary selection and count with
 // adapter-owned resources and output.

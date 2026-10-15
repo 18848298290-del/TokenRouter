@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// models_gemini.go serves Gemini model lists and individual resources with
+// group eligibility and API-key alias metadata.
 // Gemini model resources describe configured candidates that support the
 // Gemini generation protocol. Group protocol permission and custom display
 // lists constrain these names before concrete Key aliases are added, so

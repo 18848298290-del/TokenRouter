@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers group and pricing administration endpoints on the
+// supplied router.
 // Price administration separates catalog reads and refresh from shared
 // price-card writes. Group administration exposes product settings, current
 // observations, linked keys, and per-user billing overrides through one admin

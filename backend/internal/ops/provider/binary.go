@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// binary.go downloads release archives, selects executable entries, and
+// replaces or rolls back the installed binary.
 // Release archives use current tokenrouter names and historical sub2api names
 // for the same runtime platform. Installation prefers a current-name archive,
 // checks its initial download host, and verifies an archive hash only when

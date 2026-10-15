@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// client.go sends usage-adapter HTTP requests with selected credentials and
+// returns bounded response bodies and statuses.
 // Usage adapters query fixed provider endpoints through a supplied request
 // snapshot. A forwarding URL builder handles versioned API bases, while root
 // management paths remove a trailing OpenAI version segment and discard

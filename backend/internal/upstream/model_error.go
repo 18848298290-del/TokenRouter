@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// model_error.go classifies upstream model-not-found responses using HTTP
+// status and normalized diagnostic wording.
 // Model-error detection uses both the HTTP status and normalized response
 // wording. The strict detector requires a model mention, while the Antigravity
 // hook accepts a bare 404 as the same failure signal for its attempt policy.

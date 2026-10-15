@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// concurrency.go builds provider, group, platform, and user concurrency views
+// from identities and scheduler loads.
 // Live concurrency joins repository identities and configured capacities with
 // separately fetched scheduler load counters. The same provider can belong to
 // multiple groups, so group totals overlap, while provider details show a

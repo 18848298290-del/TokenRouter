@@ -13,10 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// Administrators request usage deletion through persistent cleanup tasks with
-// serialized filters. Task records retain who requested deletion, how many
-// rows were deleted, and the cancellation or failure outcome, so partially
-// completed work remains visible after the worker stops.
+// usage_cleanup_task.go defines persistent administrator-requested usage
+// deletions with serialized filters. Task records retain who requested
+// deletion, how many rows were deleted, and the cancellation or failure
+// outcome, so partially completed work remains visible after the worker stops.
 
 // UsageCleanupTask stores usage-record cleanup requests, progress, and execution outcomes.
 type UsageCleanupTask struct {

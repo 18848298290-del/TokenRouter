@@ -9,10 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/runtimeconfig"
 )
 
-// Forwarded-IP settings loading and the Grok default-model migration run in
-// the same startup hook. Each failure produces its own warning and the hook
-// returns success, allowing catalog initialization and the remaining
-// application hooks to proceed.
+// runtime_settings.go registers forwarded-IP settings loading and the Grok
+// default-model migration in one startup hook. Each failure produces its own
+// warning and the hook returns success, allowing catalog initialization and the
+// remaining application hooks to proceed.
 
 // settingsRuntimeReady marks registration of forwarding settings load and default-model migration.
 type settingsRuntimeReady struct{}

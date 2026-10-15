@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// email_verification.go defines email challenge records, expiry settings, and
+// cache operations.
 // Verification and reset credentials use separate cache records, including a
 // separate challenge namespace for notification addresses. The shared record
 // types carry issuance and attempt data, while their callers choose send

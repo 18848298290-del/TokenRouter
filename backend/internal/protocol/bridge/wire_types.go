@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// wire_types.go exposes protocol-owned wire types to conversation converters
+// through aliases.
 // Messages, Responses, Chat, and Gemini conversions use the owning protocol
 // packages' wire types so custom JSON codecs apply consistently on either side
 // of a conversion. Aliases keep those codecs available under the bridge names

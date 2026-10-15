@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// oauth_usage_antigravity.go fetches and caches Antigravity usage while
+// checking the credential identity of shared results.
 // Antigravity usage queries associate cached results with credential identity
 // while sharing in-flight work by provider row ID. A waiter with changed
 // credentials can join that work, then rejects its result identity before

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/idempotency"
 )
 
+// memory_store.go implements a synchronized in-memory idempotency repository
+// for HTTP scenarios.
 // HTTP idempotency scenarios need competing requests to see one record per scope
 // and key, while assertion reads should not mutate stored nullable fields. The
 // store serializes lookups and state updates with a mutex and copies every pointer

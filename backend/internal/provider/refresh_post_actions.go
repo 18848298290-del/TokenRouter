@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// refresh_post_actions.go cleans up health state and synchronizes caches after
+// successful credential refresh.
 // A successful credential exchange can still be followed by an administrator
 // changing health or identity before cleanup. Matching clears update local
 // health before publishing the exchanged record, while an identity or window

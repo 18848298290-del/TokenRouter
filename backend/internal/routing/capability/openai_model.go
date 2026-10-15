@@ -6,6 +6,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// openai_model.go normalizes OpenAI model spellings and delegates recorded
+// reasoning-effort normalization.
 // Capability classification can inspect the final segment of a
 // provider-qualified model name. Alias normalization lowercases and trims the
 // full identity while retaining qualification, version separators, and

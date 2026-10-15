@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// oauth_subject.go validates LinuxDo subjects and constructs their
+// compatibility email addresses and ordered profile hints.
 // LinuxDo profiles may lack an email while still supplying a stable subject.
 // Synthetic addresses place that subject after a linuxdo- prefix, and the
 // provider checks its ASCII alphabet and byte length before storing the result

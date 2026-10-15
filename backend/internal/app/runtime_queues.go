@@ -12,10 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Completion recording, billing-cache updates, moderation, deferred writes,
-// email, and audit each have distinct stop levels. This keeps request-produced
-// side effects ahead of the queues or stores they use; quota-operation
-// shutdown is registered separately from those background consumer loops.
+// runtime_queues.go registers asynchronous consumer lifecycles and platform
+// quota-operation shutdown hooks. Completion recording, billing-cache updates,
+// moderation, deferred writes, email, and audit each have distinct stop levels.
+// This keeps request-produced side effects ahead of the queues or stores they
+// use; quota-operation shutdown is registered separately from those background
+// consumer loops.
 
 // queuesRuntimeReady marks registration of asynchronous consumers and platform
 // quota-operation shutdown.

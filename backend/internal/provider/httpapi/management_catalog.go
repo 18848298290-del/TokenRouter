@@ -10,11 +10,12 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// Administrator model candidates come from provider configuration and platform
-// rules, while the unified catalogue supplies display values. Response encoding
-// follows the selected platform shape: OpenAI includes zero-valued fields, Grok
-// omits optional empty fields, and the default shape carries a textual creation
-// timestamp.
+// management_catalog.go returns administrator model candidates in
+// platform-specific response formats. Administrator model candidates come from
+// provider configuration and platform rules, while the unified catalogue
+// supplies display values. Response encoding follows the selected platform
+// shape: OpenAI includes zero-valued fields, Grok omits optional empty fields,
+// and the default shape carries a textual creation timestamp.
 
 // claudeCatalogModel encodes the default catalogue response with textual
 // creation time.

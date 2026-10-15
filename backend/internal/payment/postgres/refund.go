@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// refund.go persists refund preparation, compensation, and finalization with
+// transaction-bound entitlement changes and recovery evidence.
 // Refund recovery combines an order timestamp with a mandatory audit record so
 // a provider result can be applied to the preparation that issued it.
 // Preparation commits local entitlement deductions, refund metadata, and a

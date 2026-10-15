@@ -20,18 +20,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// Anthropic probes use different model and payload forms on Messages, Vertex,
-// and Bedrock. API-key mappings choose the tested target before request
-// construction, Vertex can normalize an unmapped model into its service
-// spelling, and Bedrock resolves a model together with its invocation region.
+// anthropic_test_execution.go executes Anthropic probes through Messages,
+// Vertex, and Bedrock request formats. API-key mappings choose the tested
+// target before request construction, Vertex can normalize an unmapped model
+// into its service spelling, and Bedrock resolves a model together with its
+// invocation region.
 //
 // The chosen service model also drives sampling capability checks, keeping
-// temperature and top_p removal aligned with the target sent upstream. Messages
-// and Vertex stream test content; Bedrock uses a nonstreaming invocation and
-// converts its first content block into test events. Token acquisition is
-// required for Vertex, while ordinary OAuth reads its stored access token.
-// Forbidden Messages and Vertex responses attempt an error-state write before
-// reporting the probe failure.
+// temperature and top_p removal aligned with the target sent upstream.
+// Messages and Vertex stream test content; Bedrock uses a nonstreaming
+// invocation and converts its first content block into test events. Token
+// acquisition is required for Vertex, while ordinary OAuth reads its stored
+// access token. Forbidden Messages and Vertex responses attempt an error-state
+// write before reporting the probe failure.
 
 // AnthropicProviderTest prepares provider-authenticated Messages, Vertex, and
 // Bedrock connection probes.

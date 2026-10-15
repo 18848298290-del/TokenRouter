@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/bedrock"
 )
 
-// Bedrock SigV4 authentication signs against the runtime endpoint's source region.
-// A global inference model can still use a regional HTTP endpoint, so signer
-// construction resolves the provider's runtime region separately from the model
-// target and carries an optional AWS session token.
+// bedrock_signer.go constructs SigV4 signers using provider credentials and
+// the Bedrock runtime source region. A global inference model can still use a
+// regional HTTP endpoint, so signer construction resolves the provider's
+// runtime region separately from the model target and carries an optional AWS
+// session token.
 
 // NewBedrockSignerFromProvider builds a SigV4 signer from stored AWS credentials.
 // A nonnil record with both access-key and secret-key values is required. Missing

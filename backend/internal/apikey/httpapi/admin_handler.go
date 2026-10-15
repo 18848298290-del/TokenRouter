@@ -12,10 +12,10 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// One administrator request can update a Key binding and reset its spending
-// windows through the same use case. The handler accepts the group pointer's
-// omitted or zero value, maps the resulting grant details beside the returned
-// Key, and relies on route middleware for administrator authorization.
+// admin_handler.go accepts administrator requests to change Key bindings and
+// reset spending windows. The handler accepts the group pointer's omitted or
+// zero value, maps the resulting grant details beside the returned Key, and
+// relies on route middleware for administrator authorization.
 
 // KeyAdministration submits administrative binding changes and optional
 // spending-window resets together.

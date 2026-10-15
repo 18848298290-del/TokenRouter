@@ -2,6 +2,8 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/billing"
 
+// billing_projection.go transfers billing administrator values between module
+// settings and the combined snapshot.
 // Billing display, default grants, and notification settings share one
 // Snapshot during a combined administrator update. The billing value struct
 // selects those fields for module preparation; successful normalization writes

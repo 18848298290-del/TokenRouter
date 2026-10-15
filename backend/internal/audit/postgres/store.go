@@ -16,6 +16,8 @@ import (
 	sqlutil "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// store.go persists audit records and clears audit history together with a
+// retained clearing trace.
 // Clearing audit history needs to retain evidence of the clear itself, including
 // how many records were removed. An exclusive table lock keeps the count,
 // truncation, and trace insertion inside one transaction while concurrent writers

@@ -9,10 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Settings readers and idempotent HTTP operations use storage supplied by the
-// application graph. settings.Repository resolves to the shared Store, while
-// idempotency storage uses the SQL pool extracted from Ent; the set also
-// supplies the timing-wheel constructor.
+// storage_wire.go registers shared settings, SQL-backed idempotency, and
+// timing-wheel construction with Wire. Settings readers and idempotent HTTP
+// operations use storage supplied by the application graph. settings.Repository
+// resolves to the shared Store, while idempotency storage uses the SQL pool
+// extracted from Ent; the set also supplies the timing-wheel constructor.
 
 // storageProviders binds settings repository reads and supplies SQL-backed
 // idempotency construction together with the application timing wheel.

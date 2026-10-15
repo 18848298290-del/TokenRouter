@@ -42,6 +42,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// composite_update.go validates and commits partial administrator settings
+// updates before returning saved values.
 // A combined settings request needs its raw field presence before typed
 // decoding supplies zero values. The handler rejects retired inputs first, then
 // acquires one update session before reading current values, merging partial

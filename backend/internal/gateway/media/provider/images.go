@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// images.go binds OpenAI image requests and response readers to native OAuth
+// or API Key execution.
 // OpenAI image response handling differs between OAuth and API-key transports
 // and between streaming and buffered output. This adapter binds prepared
 // request and image-reader callbacks to native execution, which retains

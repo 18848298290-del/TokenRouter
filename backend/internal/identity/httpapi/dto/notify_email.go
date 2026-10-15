@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// notify_email.go converts notification recipients between identity records
+// and user JSON values.
 // Additional notification recipients expose separate delivery and verification
 // flags in user JSON. Conversion allocates a result slice while retaining nil
 // input as nil, so DTO callers can distinguish an absent collection from an

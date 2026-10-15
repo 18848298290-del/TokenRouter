@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// bindings.go binds application callbacks and shared services to text attempt
+// runtimes.
 // Text attempt runtimes share application services while each Open call owns
 // its current selection, provider and forwarding result. Binding copies
 // callback values into a dependency object, connecting platform attempts to the

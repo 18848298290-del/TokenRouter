@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// qoder_refresh.go selects Qoder refresh candidates and merges exchanged
+// credentials with retained authentication metadata.
 // Qoder PAT sessions and refresh-token sessions have different maintenance
 // eligibility. Periodic refresh excludes PAT and requires an observed expiry
 // within fifteen minutes, while failed-request coordination can refresh the

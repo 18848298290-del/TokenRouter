@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// unified_text_executor.go dispatches compatible text requests to platform
+// executors and converts native results for completion.
 // Compatible text entry points can execute providers whose native token
 // accounting differs from OpenAI total input. Shared preparation checks pricing
 // and reasoning before dispatching the selected platform; conversion retains

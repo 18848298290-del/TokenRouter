@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// migrations_runner.go applies SQL migrations and records their checksums
+// under a reserved-session advisory lock.
 // Application startup applies embedded SQL in filename order before serving
 // traffic, and existing filename checksums keep released migrations
 // identifiable across upgrades. One reserved SQL session holds the migration

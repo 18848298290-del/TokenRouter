@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// request_details_types.go defines request-detail observations and normalizes
+// their time and pagination filters.
 // Administrator drilldown joins usage rows and client-error rows as separate
 // observations, retaining a kind label and error identity so the UI can open
 // the appropriate detail. The success label identifies a usage row; the query

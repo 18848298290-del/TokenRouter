@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// runtime_settings.go reads live promotion policy from saved settings and
+// applies defaults and bounds.
 // Promotion policy is read from saved settings at each decision, so changes
 // can affect later calls on the same service. Boolean values use exact text
 // matching; numeric settings trim whitespace and select defaults when storage

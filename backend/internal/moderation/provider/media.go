@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation/contract"
 )
 
+// media.go retrieves moderation image snapshots under per-image and batch
+// limits.
 // Retained review images can come from inline data or untrusted HTTP locations,
 // and failed retrievals still need their reference and input position. Remote
 // downloads validate the host before requesting, validate redirect targets, and

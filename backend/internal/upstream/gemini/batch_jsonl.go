@@ -9,6 +9,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/gemini"
 )
 
+// batch_jsonl.go encodes image batch requests as JSONL while validating item
+// identities and reference image representations.
 // Gemini batch results use an item key to identify the input request that
 // produced them. Trimming occurs before key uniqueness checks, so padded
 // spellings cannot create competing identities when task results are matched

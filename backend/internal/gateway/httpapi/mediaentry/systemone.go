@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// systemone.go adapts SystemOne selection, funding checks, provider feedback,
+// and completion to the decision loop.
 // SystemOne keeps one selected provider lease while retrying eligible pool
 // failures, and each exchange rechecks funding with RPM counting skipped.
 // Served answers report valid usage for completion or a missing-usage warning

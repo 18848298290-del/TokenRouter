@@ -11,10 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// response_image_policy.go resolves Responses image bridge and explicit-tool
+// policies from group, provider, and runtime settings.
 // Responses image policy distinguishes automatic bridge injection from tools
 // already declared by a client. A group can disable injection while allowing
 // explicit tools, or block them altogether; provider and global bridge
 // defaults apply when no relevant group policy overrides them.
+//
+// Group overrides apply only when the request has no declared client protocol
+// or uses Responses or Responses WebSocket. The enabled value turns injection
+// on; disabled and block both turn it off. Explicit-tool handling separately
+// maps enabled and disabled to allow, and block to strip. When group policy
+// supplies no recognized value, the provider override precedes the runtime
+// default.
 
 // ProviderExtraImagesURLToB64JSON names the provider Extra flag enabling image
 // URL backfill for OpenAI API Key image responses.

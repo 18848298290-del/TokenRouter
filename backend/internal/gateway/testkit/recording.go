@@ -16,10 +16,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Usage tests need production capture and billing with controllable funds and
-// log repositories. The recording fixture supplies a calculator, default
-// multiplier and rate-cache settings, then builds a recorder using the current
-// dependency and effect selections for each assertion.
+// recording.go constructs usage-recording fixtures with production capture,
+// calculation, and billing services. The recording fixture supplies a
+// calculator, default multiplier and rate-cache settings, then builds a
+// recorder using the current dependency and effect selections for each
+// assertion.
 
 // Recording holds dependencies and options for usage-recording tests.
 type Recording struct {

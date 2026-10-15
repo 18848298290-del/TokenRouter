@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 )
 
+// settings.go resolves localized setting text while distinguishing saved empty
+// content from missing settings.
 // An accepted localized text block can deliberately contain an empty source or
 // translation. Successful JSON decoding therefore establishes presence
 // independently of the chosen text, and ResolveSettingText returns that text

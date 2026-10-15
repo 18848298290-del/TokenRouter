@@ -7,19 +7,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// CN endpoint selection combines stored provider configuration with one
-// operation's text protocol. A recognized selected protocol overrides the stored
-// variant, while a unified native-set key makes unselected CN operations adaptive
-// even when the set is empty or malformed. Protocol admission is checked separately
-// from these address and variant helpers.
+// protocol_target.go resolves CN protocol variants and endpoint addresses for
+// a selected operation. CN endpoint selection combines stored provider
+// configuration with one operation's text protocol. A recognized selected
+// protocol overrides the stored variant, while a unified native-set key makes
+// unselected CN operations adaptive even when the set is empty or malformed.
+// Protocol admission is checked separately from these address and variant
+// helpers.
 //
 // Adaptive and unified CN addresses use protocol-specific slots, with legacy
 // base_url available as a Chat fallback. Fixed legacy Messages configurations
-// instead use their stored base directly. Model and OpenAI-format endpoint lookup
-// recognizes migrated Messages addresses, maps built-in addresses to platform
-// Chat defaults, and strips a custom relay's terminal /anthropic path. Record
-// configuration remains borrowed, and operation selection is carried separately
-// rather than written back to shared provider state.
+// instead use their stored base directly. Model and OpenAI-format endpoint
+// lookup recognizes migrated Messages addresses, maps built-in addresses to
+// platform Chat defaults, and strips a custom relay's terminal /anthropic
+// path. Record configuration remains borrowed, and operation selection is
+// carried separately rather than written back to shared provider state.
 
 // ProtocolTarget combines borrowed provider configuration with one operation's
 // selected text protocol for endpoint and variant resolution.

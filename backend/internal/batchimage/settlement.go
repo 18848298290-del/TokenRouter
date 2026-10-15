@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// settlement.go captures batch-job charges from indexed results and records
+// settlement completion and usage.
 // Indexed successful custom IDs determine the batch charge, while failed
 // items contribute no billable count. Settlement uses submitted price
 // snapshots for current jobs and the quote callback for legacy records, then

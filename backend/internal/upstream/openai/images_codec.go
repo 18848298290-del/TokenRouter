@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images_codec.go builds Images requests through Responses and converts image
+// results, usage, and failures back to Images shapes.
 // A Codex Images request carries a text model at the Responses level and the
 // requested image model inside image_generation. The builder supplies that
 // split identity, an explicit tool choice, and instructions asking the model to

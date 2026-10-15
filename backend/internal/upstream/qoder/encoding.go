@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// encoding.go encodes and decodes COSY bodies through reversible Base64
+// alphabet substitution and segment rearrangement.
 // COSY body encoding replaces the base64 alphabet and swaps the first and last
 // thirds of the encoded text. Decoding reverses that rearrangement before
 // parsing base64, so the padding bytes must be removed after their original

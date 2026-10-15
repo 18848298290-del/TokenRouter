@@ -1,5 +1,7 @@
 package google
 
+// drive.go defines byte-valued storage capacity and usage observations returned
+// by Google Drive queries.
 // Drive storage capacity is used by GeminiAuthorization to estimate a Google
 // One tier, while usage reports consumed storage separately. The Drive client
 // converts decimal response strings to byte counts and leaves missing or

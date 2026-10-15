@@ -9,6 +9,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// cleanup.go removes retained provider resources and records input or output
+// deletion after cleanup succeeds.
 // Provider input and output references can outlive generation, settlement and
 // the process that started the job. Cleanup selects records whose input
 // retention or output expiry has elapsed, resolves the provider bound to each

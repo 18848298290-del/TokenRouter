@@ -9,6 +9,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// antigravity_oauth.go handles Antigravity authorization URL, code exchange,
+// and refresh-token HTTP requests.
 // Antigravity authorization binds Google OAuth session, state and code before
 // delegating token exchange. Invalid bodies are rejected here, URL-generation
 // failures use 500, code-exchange failures use 400, and refresh-token

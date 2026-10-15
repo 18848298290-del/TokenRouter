@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// announcement_repo.go persists announcements and queries publication
+// candidates and administrator lists.
 // Published announcement candidates require active status and a half-open
 // schedule containing the supplied time. Administrator queries use separate
 // status and source-text filters, with a selected sort field followed by ID

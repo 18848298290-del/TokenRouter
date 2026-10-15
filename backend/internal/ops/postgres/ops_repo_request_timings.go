@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_request_timings.go retrieves access-log timing metadata for
+// supplied request identifiers and indexes it by stored correlation keys.
 // Request timing metadata is read from the latest matching completed
 // http.access row for each stored correlation key. The SQL predicate accepts
 // supplied IDs against both client_request_id and request_id, while result

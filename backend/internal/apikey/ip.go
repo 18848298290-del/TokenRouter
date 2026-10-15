@@ -6,11 +6,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ipmatch"
 )
 
-// IP access checks reject an empty or unparsable client address before
-// examining any configured rules. A matching denylist entry wins even when the
-// same address appears in the allowlist, and a configured allowlist requires a
-// successful match. Callers pass compiled rules so repeated authentication uses
-// parsed addresses and CIDRs.
+// ip.go evaluates client addresses against compiled Key allowlists and
+// denylists. Empty or unparsable client addresses are rejected before
+// examining the rules. A matching denylist entry wins even when the same
+// address appears in the allowlist, and a configured allowlist requires a
+// successful match. Callers pass compiled rules so repeated authentication
+// uses parsed addresses and CIDRs.
 //
 // Compilation can skip invalid patterns while retaining their original count.
 // That count distinguishes an absent allowlist from an allowlist whose entries

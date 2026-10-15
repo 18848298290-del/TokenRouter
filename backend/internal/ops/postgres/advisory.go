@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// advisory.go adapts PostgreSQL session advisory locks to Ops job leadership
+// attempts.
 // Ops jobs can attempt a PostgreSQL advisory lock when their chosen Redis
 // policy requires a database alternative. The shared lock helper reserves a
 // pooled connection for a successful session lock and returns cleanup that

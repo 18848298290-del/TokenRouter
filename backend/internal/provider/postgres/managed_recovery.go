@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// managed_recovery.go applies conditional managed-recovery steps and publishes
+// their scheduling changes.
 // Managed refresh recovery clears five pieces of health state through
 // separately invoked conditional writes. Each step compares the observed
 // credential identity and error message; the rate-limit, Extra-key, and

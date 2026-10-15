@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// provider_terminology.go validates administrator provider field names before
+// downstream request binding.
 // Selected administrator resources use provider field names for local
 // identifiers while nested upstream credentials can still contain account
 // fields. Query keys and top-level JSON keys are checked before handlers bind

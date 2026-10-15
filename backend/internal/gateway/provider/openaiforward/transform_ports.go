@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// transform_ports.go defines the policy and transformation callbacks used to
+// prepare a Responses request.
 // Responses transformations need model capability observations before they edit
 // image tools, OAuth metadata, and billing controls. The bindings expose a
 // number-aware decoder and marshaler for writable object changes, while the

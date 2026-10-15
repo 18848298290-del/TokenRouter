@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// coordinator.go serializes deliveries sharing a key and coordinates
+// cancellation with admission.
 // Equal delivery keys share one admission token while distinct keys can proceed
 // independently. A waiter registers its reference before waiting for that token,
 // so releasing a current holder cannot remove the entry and let a later waiter

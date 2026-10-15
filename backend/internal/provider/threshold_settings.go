@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// threshold_settings.go validates platform scheduling thresholds and caches
+// their persisted runtime settings.
 // Platform pause thresholds are stored as a JSON map, while provider
 // credentials can supply a separate override. The default map disables
 // OpenAI, Anthropic, and Grok with one hundred percent and leaves Coding Plan

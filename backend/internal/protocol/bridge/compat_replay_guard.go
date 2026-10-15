@@ -6,6 +6,8 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// compat_replay_guard.go trims replay history while retaining recognized tool
+// call and result relationships.
 // Full compatibility replay keeps a recent message tail while retaining the
 // recognized tool relationships that cross its starting point. A fixed count
 // alone can leave an output separated from its call, or a retained call

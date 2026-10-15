@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+// files.go tracks rotating log writers and closes registered outputs during
+// shutdown.
 // Logger reconfiguration can replace output cores while earlier rotating file
 // writers remain owned by the process. Registration retains those closers
 // across replacements, and shutdown closes the accumulated outputs after

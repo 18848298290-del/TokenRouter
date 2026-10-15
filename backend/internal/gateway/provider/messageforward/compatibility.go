@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// compatibility.go recognizes Messages compatibility failures and unavailable
+// token-counting routes.
 // Messages compatibility failures can be specific to beta support, thinking
 // signatures, or tools. The status-400 classifier recognizes those message
 // fragments for provider switching, while counting has a separate status-404

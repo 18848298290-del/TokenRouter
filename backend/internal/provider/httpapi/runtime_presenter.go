@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/httpapi/dto"
 )
 
+// runtime_presenter.go builds administrator provider responses from runtime
+// observations and parent account hints.
 // Provider administration combines redacted configuration with runtime fields
 // calculated by the provider use cases. Parent account hints are filled in
 // place for loaded credential shadows; failed parent lookup leaves the response

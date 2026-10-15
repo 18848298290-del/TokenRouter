@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// resolve.go applies card overrides and resolves token intervals and
+// request-unit prices.
 // A token card can supply default amounts, priced intervals, or modifiers that
 // need an existing price. Resolution retains availability separately from
 // zero-valued amount storage, so an interval-only model stays unpriced outside

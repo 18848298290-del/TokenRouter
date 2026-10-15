@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// grant_settings_participant.go converts grant settings to JSON fields and
+// prepares submitted grant updates.
 // Provider grant settings cross a JSON-fields boundary before the settings
 // workflow prepares flat persistence values. Numeric-looking balance text
 // must remain a JSON string at that boundary so the merged administrator view

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// grok_credential_snapshot.go attaches the failed Grok credential identity to
+// errors for later recovery comparisons.
 // Credential recovery can reread a provider after the failed token use. The
 // failure therefore carries the credential identity observed for that use so
 // gateway recovery can compare it with the current record before applying a

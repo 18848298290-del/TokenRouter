@@ -2,6 +2,8 @@ package routing
 
 import "context"
 
+// requestable_catalogue.go loads provider configuration and delegates
+// requestable-model resolution.
 // Catalogue queries load current provider configuration before validating
 // finite saved request names. A missing reader represents absent catalogue
 // wiring, while a provider read failure produces a restricted empty result so

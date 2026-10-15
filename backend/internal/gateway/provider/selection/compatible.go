@@ -16,6 +16,8 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// compatible.go selects compatible providers and rechecks their eligibility
+// before returning execution targets or slot plans.
 // Compatible selection chooses within the admitted group while retaining both
 // the client model and the group-mapped routing model. Slot-free auxiliary
 // requests, basic selection, and load-aware selection all reuse platform

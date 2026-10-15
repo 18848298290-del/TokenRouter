@@ -11,17 +11,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic Messages continuations can reuse a prompt cache key when the new
-// request extends a previously bound digest chain. Bindings include both provider
-// and API Key IDs, so identical content sent through another provider or key has
-// its own cache identity. Lookup walks complete chain components from the longest
-// candidate to shorter prefixes and removes unusable entries that it encounters.
+// anthropic_prompt_cache.go derives Anthropic digest identities and stores
+// prompt cache keys for matching continuations. Bindings include both provider
+// and API Key IDs, so identical content sent through another provider or key
+// has its own cache identity. Lookup walks complete chain components from the
+// longest candidate to shorter prefixes and removes unusable entries that it
+// encounters.
 //
 // A replacement publishes the new chain before deleting a different old chain,
-// keeping the continuation available during that sequence. Each map operation is
-// concurrent-safe, but lookup cleanup and replacement are separate operations:
-// cleanup can delete a concurrently replaced entry. Expiration occurs at the
-// deadline, and entries receive no background cleanup.
+// keeping the continuation available during that sequence. Each map operation
+// is concurrent-safe, but lookup cleanup and replacement are separate
+// operations: cleanup can delete a concurrently replaced entry. Expiration
+// occurs at the deadline, and entries receive no background cleanup.
 
 // anthropicPromptBinding holds a prompt key and its lookup expiration deadline.
 type anthropicPromptBinding struct {

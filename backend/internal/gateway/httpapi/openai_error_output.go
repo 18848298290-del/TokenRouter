@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// openai_error_output.go writes OpenAI protocol errors and records their
+// intended status after stream framing begins.
 // A Compact heartbeat can commit HTTP 200 before an HTTP error is ready. Error
 // output first stops that writer and then emits a failed Responses terminal
 // when the inbound route is Responses, because its client consumes protocol

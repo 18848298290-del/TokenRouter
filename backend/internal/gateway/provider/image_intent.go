@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// image_intent.go binds OpenAI image-tool recognition to platform-specific
+// image intent checks.
 // Image permission checks use media-owned intent rules together with OpenAI
 // tool recognition. Platform selection gives Grok its stricter intent
 // interpretation, so a passive tool declaration can be distinguished from a

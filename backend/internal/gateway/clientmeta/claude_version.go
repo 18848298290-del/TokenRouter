@@ -9,10 +9,11 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// Claude version checks distinguish client version reporting from operational
-// overrides. Headers can report release components before a trailing suffix,
-// while overrides need a complete release version; configured range checks
-// compare three numeric components and ignore a leading lowercase v.
+// claude_version.go extracts Claude CLI versions, validates overrides, and
+// reports configured version-range rejections. Headers can report release
+// components before a trailing suffix, while overrides need a complete release
+// version; configured range checks compare three numeric components and ignore
+// a leading lowercase v.
 
 // claudeUAVersionPattern captures the release components of a leading CLI
 // User-Agent for client reporting and configured ingress version checks.

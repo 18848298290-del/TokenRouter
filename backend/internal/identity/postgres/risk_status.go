@@ -6,6 +6,8 @@ import (
 	"errors"
 )
 
+// risk_status.go provides account locking and status changes within
+// moderation-owned SQL transactions.
 // Risk decisions lock the account row and update disabled status through the
 // caller-supplied SQL transaction. The participant reports whether a row
 // existed or an update changed status, leaving transaction completion to

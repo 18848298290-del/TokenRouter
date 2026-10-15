@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// github_release.go fetches GitHub release metadata, checksum lists, and
+// bounded archive downloads through configured HTTP clients.
 // The update API token is attached only to trusted HTTPS api.github.com
 // requests without user information or an explicit port. API redirects remove
 // Authorization before applying any earlier redirect policy when the target

@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// routes_admin.go registers proxy, TLS fingerprint, and collector routes under
+// the administrator group.
 // Proxy backup export includes plaintext credentials and installs the
 // application-supplied step-up handler before its endpoint. Proxy
 // administration, TLS profile/router management, and collector sessions mount

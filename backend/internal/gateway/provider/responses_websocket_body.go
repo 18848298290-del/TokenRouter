@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// responses_websocket_body.go normalizes Responses WebSocket bodies for the
+// selected provider before frame transmission.
 // WebSocket Responses input needs the same provider-specific request shapes as
 // HTTP preparation, with different cleanup for OAuth and API Key records.
 // Compatibility stages can rebuild input or remove historical items, so the

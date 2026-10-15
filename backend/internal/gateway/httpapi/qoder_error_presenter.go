@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// qoder_error_presenter.go translates Qoder execution failures and applies
+// configured client error rules.
 // Qoder execution failures carry a stage as well as any recognized upstream
 // details. HTTP presentation preserves an existing HTTPFailure, otherwise
 // translates billing, queue, slot, selection and refresh-pending stages into

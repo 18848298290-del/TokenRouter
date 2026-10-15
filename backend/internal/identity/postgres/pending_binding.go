@@ -20,6 +20,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pending_binding.go resolves pending account targets and persists provider
+// bindings, adopted profile fields, and browser consumption.
 // Pending identity persistence distinguishes stable provider subjects from
 // account email hints and optional application-scoped channel subjects. Target
 // resolution prefers a supplied positive account ID, while email lookup is an

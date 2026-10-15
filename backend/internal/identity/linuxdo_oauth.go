@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// linuxdo_oauth.go builds LinuxDo pending account choices and defines the
+// provider exchange inputs and results.
 // LinuxDo pending choices distinguish provider email suggestions from the
 // email associated with a compatible local account. A compatibility match can
 // establish a target identifier, while a new account requiring local email

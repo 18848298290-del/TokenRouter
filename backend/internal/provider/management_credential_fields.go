@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// management_credential_fields.go validates and applies a selected credential
+// field across an administrator provider batch.
 // A credential-field batch validates the chosen value and checks every
 // requested provider before writing any patch. A failed or empty lookup returns
 // a typed prevalidation error with its optional cause, allowing HTTP to

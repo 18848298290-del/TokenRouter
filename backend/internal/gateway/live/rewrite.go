@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// rewrite.go rewrites Live session model declarations using saved Key
+// redirects and current routing resolution.
 // Later Live session declarations need the API Key redirect snapshot saved at
 // creation as well as current group and provider model resolution. The
 // rewritten upstream frame must retain the original client model so the return

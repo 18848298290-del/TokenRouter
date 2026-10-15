@@ -9,10 +9,10 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// Completion pool diagnostics and provider-switch observations carry different
-// correlation data. Pool events choose their severity from Event.Level and attach
-// supplied fields, while failover messages use the request context so the logger
-// can retain the request's identity.
+// diagnostics.go logs completion-pool events, error-rule messages, and
+// provider-switch observations. Pool events choose their severity from
+// Event.Level and attach supplied fields, while failover messages use the
+// request context so the logger can retain the request's identity.
 
 // Completion emits a worker event with its supplied structured fields.
 // Exact "error" and "warn" levels select those severities; other levels use info.

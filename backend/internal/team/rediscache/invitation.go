@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// invitation.go enforces recipient cooldowns and team invitation limits
+// through Redis admission checks.
 // Invitation admission shares a per-team hourly counter and a per-recipient
 // cooldown. The recipient key hashes lowercased trimmed email text, keeping
 // equivalent case/spacing submissions in the same cooldown while distinct

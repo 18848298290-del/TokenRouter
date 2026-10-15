@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// signature_json.go removes replayed thinking signatures while retaining
+// decoded numeric precision.
 // Grok OAuth can reject encrypted reasoning replayed as a Claude thinking
 // signature. Recovery removes that signature from historical thinking blocks
 // while retaining the rest of the request object, including large integer

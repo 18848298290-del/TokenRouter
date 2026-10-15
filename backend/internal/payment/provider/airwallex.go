@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// airwallex.go implements Airwallex payment intents, refunds, and callback
+// verification with shared credential-scoped token caching.
 // Airwallex checkout creates an intent whose ID and client secret are returned
 // for browser confirmation. Payment and refund requests derive request labels
 // from their input text, so numerically equivalent amounts with different

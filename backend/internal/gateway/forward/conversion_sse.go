@@ -8,11 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Anthropic conversion receives logical SSE frames that can span many short
-// lines, so the transport's per-line bound cannot limit accumulated frame
-// storage. Blank lines finish frames and reset their budget; every nonblank line
-// contributes its bytes and one newline before the parser can buffer it,
-// including comments and fields that do not contribute event data.
+// conversion_sse.go assembles bounded logical SSE frames for Anthropic response
+// conversion. Anthropic conversion receives logical SSE frames that can span
+// many short lines, so the transport's per-line bound cannot limit accumulated
+// frame storage. Blank lines finish frames and reset their budget; every
+// nonblank line contributes its bytes and one newline before the parser can
+// buffer it, including comments and fields that do not contribute event data.
 //
 // A normal EOF can finish a frame without its final blank line. A read error
 // still permits a buffered valid JSON value to reach conversion for usage and

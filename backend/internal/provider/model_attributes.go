@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// model_attributes.go builds model catalogue targets from provider identity
+// and the selected upstream protocol.
 // Model attributes depend on the serving provider identity as well as the model
 // name. A CN provider's protocol-specific endpoint, an enabled Anthropic relay
 // URL, and Qoder's default site can each select a different catalogue identity

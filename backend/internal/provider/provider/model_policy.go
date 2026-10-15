@@ -6,11 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// Provider admission combines finite default candidates with platform
-// eligibility for the selected model. Antigravity defaults are read through a
-// callback, Qoder compatibility follows the credential site at check time, and
-// Grok endpoint checks can consult media-generation eligibility only when
-// needed.
+// model_policy.go supplies platform model defaults and eligibility callbacks
+// for provider admission. Antigravity defaults are read through a callback,
+// Qoder compatibility follows the credential site at check time, and Grok
+// endpoint checks can consult media-generation eligibility only when needed.
 
 // ModelDefaults returns callbacks for finite provider candidates and
 // Antigravity mapping defaults. The Antigravity callback exposes the platform's

@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// rpm_cache.go increments and reads provider request counts in Redis minute
+// buckets.
 // Provider request counts are keyed by the minute sampled from Redis TIME, so
 // instances use one shared clock for RPM observations. INCR and EXPIRE run in
 // one transaction after the key is known, and old minute keys expire after

@@ -4,10 +4,12 @@ import (
 	"context"
 )
 
-// Count requests use provider model and credential preparation while retaining
-// the wire body associated with an upstream status below 400. A signature-repair retry rebuilds
-// from logical input, and its returned response is read before deciding which
-// wire body can replace the request's parsed representation.
+// count_contract.go defines adapter operations for count-token preparation,
+// exchange, recovery, and output. Count requests use provider model and
+// credential preparation while retaining the wire body associated with an
+// upstream status below 400. A signature-repair retry rebuilds from logical
+// input, and its returned response is read before deciding which wire body can
+// replace the request's parsed representation.
 
 // CountPorts supplies model, transport, policy, and output operations for one count attempt.
 type CountPorts interface {

@@ -12,6 +12,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// image_request.go rewrites image request models in JSON or multipart bodies
+// while retaining the other parsed parts.
 // An image request can keep client prompt and upload data while routing
 // selects a different upstream model. JSON requests replace the model path
 // directly; multipart requests need a newly framed body because the model is a

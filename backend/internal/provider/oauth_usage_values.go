@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
+// oauth_usage_values.go defines provider usage display values for upstream
+// quotas and local request accounting.
 // Provider usage displays combine upstream quota observations with local
 // request, token, and cost totals. Utilization and countdowns are
 // platform-specific estimates, while optional windows and pointers retain

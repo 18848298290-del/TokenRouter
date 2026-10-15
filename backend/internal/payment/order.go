@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// order.go defines payment order snapshots, clones their supported mutable
+// values, and generates merchant order numbers.
 // An order records the checkout entitlement or plan amount separately from
 // gateway payment and fee quantities, together with the merchant identity used
 // for later confirmation. Payment and refund timestamps describe different

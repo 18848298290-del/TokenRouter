@@ -16,6 +16,8 @@ import (
 	openaierrors "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// compact_request.go normalizes remote compaction requests and records their
+// client intent, session seed, and outcome.
 // Remote compaction can retain the ordinary Responses stream or become a unary
 // Compact request, depending on its path, trigger, and parsed stream intent.
 // Native V2 keeps the Responses route and receives a negotiation marker. Other

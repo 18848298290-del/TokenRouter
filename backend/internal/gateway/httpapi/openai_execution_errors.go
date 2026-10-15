@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
+// openai_execution_errors.go formats forwarding failures for Messages, Chat,
+// and Responses clients while retaining protocol-specific error data.
 // Converted Chat and Messages errors need protocol-specific envelopes even
 // when the upstream rejection is already structured JSON. Messages wrapping
 // retains the raw error value, and invalid or absent error objects pass

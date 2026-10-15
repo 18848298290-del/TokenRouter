@@ -8,17 +8,18 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-// Gemini continuations reuse a session when their digest chain extends a stored
-// prefix in the same group and request-source namespace. Lookup tries the full
-// chain first, then removes complete final components until a live binding matches.
+// digest_session_store.go stores Gemini session bindings and matches extending
+// digest chains within group and source namespaces. Lookup tries the full chain
+// first, then removes complete final components until a live binding matches.
 // The selected prefix is returned so the caller can retire it after saving the
 // conversation's longer chain.
 //
-// Save publishes the replacement before deleting a different old key. Those cache
-// operations are individually synchronized, but their sequence is not atomic and
-// can remove an old key replaced by another caller. The default constructor has
-// no cache janitor; reads exclude expired values, and the application's timing
-// wheel calls ExpireRuntimeCaches to remove them physically.
+// Save publishes the replacement before deleting a different old key. Those
+// cache operations are individually synchronized, but their sequence is not
+// atomic and can remove an old key replaced by another caller. The default
+// constructor has no cache janitor; reads exclude expired values, and the
+// application's timing wheel calls ExpireRuntimeCaches to remove them
+// physically.
 
 // digestSessionTTL gives new digest bindings a five-minute default lifetime so
 // inactive conversation identities eventually stop matching and can be physically removed.

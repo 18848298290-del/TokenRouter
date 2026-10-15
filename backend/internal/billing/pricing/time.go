@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// time.go validates daily token-price periods and evaluates their time
+// multipliers.
 // Daily token-price periods use wall-clock seconds in a caller-supplied
 // location. The same instant can select a different period in a different zone;
 // repeated daylight-saving hours each match the period for their displayed

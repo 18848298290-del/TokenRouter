@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// passkey.go stores and consumes temporary WebAuthn ceremony state in Redis.
 // Passkey begin operations save WebAuthn ceremony state behind an opaque random
 // token, and finish operations consume that state once. The Redis record is
 // separate from the durable Passkey credential. Finish removes saved state before

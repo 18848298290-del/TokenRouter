@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// runtime_health.go checks credential and model cooldown state for compatible
+// provider requests.
 // Compatible runtime eligibility observes both credential failures and
 // provider-model cooldowns. Credential checks use the current refresh identity,
 // while model checks resolve the provider's canonical scheduling name before

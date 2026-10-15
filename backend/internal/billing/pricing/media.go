@@ -1,5 +1,7 @@
 package pricing
 
+// media.go calculates image and video charges and selects catalog media unit
+// prices.
 // Image costs use USD per generated image, while video costs use USD per output
 // second multiplied by each video's normalized duration. Positive counts
 // produce base totals and rate-scaled charges; nonpositive counts produce an

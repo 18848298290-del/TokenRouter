@@ -1,5 +1,7 @@
 package billing
 
+// notification_thresholds.go computes balance and provider quota alert
+// crossings.
 // Balance alerts watch funds fall below a configured amount, while provider
 // quota alerts watch used quota reach the equivalent remaining-quota trigger.
 // Equality belongs to the old side for balance and the new side for quota, so

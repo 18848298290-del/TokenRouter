@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// proxy_stream_circuit.go counts proxy stream failures and manages timed
+// quarantine for scheduling decisions.
 // OpenAI stream failures can quarantine a proxy after enough independent
 // observations arrive within a window. A shared multiplexed connection may
 // report a burst of failures, so a configured collapse interval counts the

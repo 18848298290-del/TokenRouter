@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// chat_ports.go defines the provider capabilities and callbacks used to
+// prepare, forward, and read Chat requests.
 // A Chat URL can receive either Chat messages or Responses input, and the
 // resolved provider protocol determines which representation reaches the
 // upstream. Chat bindings expose shape conversion, model-aware cache identity,

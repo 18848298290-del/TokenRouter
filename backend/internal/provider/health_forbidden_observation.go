@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// health_forbidden_observation.go routes forbidden-response observations to
+// platform health handling and builds their diagnostics.
 // A 403 classification can identify a quota-like concurrency response, an HTML
 // denial or a provider account error. Platform and classification determine
 // which health scope applies: Antigravity uses its classified account

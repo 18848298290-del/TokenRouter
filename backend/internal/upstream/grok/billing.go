@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// billing.go parses Grok billing amounts and merges weekly and monthly
+// observations into a shared summary.
 // Grok billing can report weekly credit progress and monthly included
 // spending in the same configuration. Weekly reset dates remain separate from
 // monthly billing dates so an exhausted weekly window is not assigned a

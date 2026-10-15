@@ -12,6 +12,8 @@ import (
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
+// gemini.go submits Gemini file-based image batches and handles their polling,
+// results, and cleanup.
 // Gemini image batches submit uploaded JSONL by file resource name and keep
 // that name with the provider job for subsequent polling and cleanup. Submission
 // validates the batch protocol and API-key credential shape before uploading,

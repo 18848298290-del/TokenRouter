@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// openai_response_failure_state.go shares applied response-failure effects
+// across HTTP conversion and output stages.
 // A converted Responses failure can apply provider health before the output
 // adapter constructs its failover error. The HTTP context holds a shared
 // ResponseFailureEffects slot so that handoff can reuse the applied status and

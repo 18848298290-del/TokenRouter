@@ -8,10 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Creative reservation metadata is written on the SQL transaction supplied by
-// billing. The participant updates the run funding snapshot and allowance
-// marker through that connection, allowing the funds owner to commit or roll
-// back those writes with its ledger changes.
+// funding.go writes creative reservation snapshots and allowance markers through
+// the SQL transaction supplied by billing. The funds owner commits or rolls back
+// these run metadata writes together with its ledger changes, keeping their
+// transaction lifetime under billing ownership.
 
 // FundingParticipant writes task funding metadata in the caller-owned transaction.
 // The caller commits or rolls back the transaction.

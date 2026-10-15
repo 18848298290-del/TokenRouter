@@ -11,6 +11,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// request_credentials.go acquires provider credentials and chooses Grok
+// recovery or stop decisions within the request budget.
 // Grok OAuth credential failures can race with refresh, provider disablement,
 // and request cancellation. Acquisition uses one request-owned budget across
 // attempts and checks the shared runtime block before and after reading

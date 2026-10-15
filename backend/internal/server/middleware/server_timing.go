@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// server_timing.go collects UI request timings and gates their disclosure in
+// response headers.
 // Timing collection and timing disclosure answer different request questions.
 // Administrator or user UI paths and marker headers can install a collector,
 // but a nonempty role value is still required before a timing header can be

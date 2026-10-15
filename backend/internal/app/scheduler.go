@@ -20,11 +20,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Waiting counters need a lifetime derived from both sticky-session and
-// fallback waiting budgets. Cache assembly chooses the longer whole-second
-// budget and falls back to the concurrency slot lifetime when neither produces
-// a positive value, while occupied-slot expiry remains configured in minutes.
-// Subsecond budgets therefore take the slot-lifetime path after truncation.
+// scheduler.go constructs scheduler caches, admission services, snapshots, and
+// shared selection state. Waiting counters need a lifetime derived from both
+// sticky-session and fallback waiting budgets. Cache assembly chooses the
+// longer whole-second budget and falls back to the concurrency slot lifetime
+// when neither produces a positive value, while occupied-slot expiry remains
+// configured in minutes. Subsecond budgets therefore take the slot-lifetime
+// path after truncation.
 //
 // Snapshot, concurrency, session, and message-queue services share application
 // Redis resources and diagnostic callbacks. Concurrency construction attempts

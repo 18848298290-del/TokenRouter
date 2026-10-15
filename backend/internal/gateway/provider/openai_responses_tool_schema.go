@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// openai_responses_tool_schema.go applies platform-specific repairs to
+// Responses function-tool schemas.
 // Function-tool schemas are repaired according to the selected upstream
 // platform before Responses forwarding. Root parameter type repair applies to
 // OpenAI, Anthropic, Grok, and CN providers, while regex-pattern sanitization

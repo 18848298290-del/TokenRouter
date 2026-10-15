@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// constants.go selects embedded Codex instructions by model and defines
+// default provider probe models.
 // Codex base instructions are embedded with dedicated prompts for GPT-5.1 and
 // GPT-5.2 and a latest prompt for other models. A model name containing codex
 // selects the Codex prompt before version-prefix matching, so names such as

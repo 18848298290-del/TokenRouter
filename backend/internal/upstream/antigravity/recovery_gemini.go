@@ -12,6 +12,8 @@ import (
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// recovery_gemini.go recovers Gemini failures using alternate models or
+// cleaned thought signatures.
 // Gemini recovery first considers a configured alternate model for a
 // missing-model failure, then considers signature cleanup for a selected bad
 // request. The injected request bytes remain the basis for both preparations,

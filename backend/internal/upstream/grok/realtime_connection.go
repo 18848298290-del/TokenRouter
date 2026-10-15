@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// realtime_connection.go opens Grok Realtime sessions and ties connection
+// cleanup to activity release.
 // A Grok Realtime connection keeps its activity registration for the entire
 // session, including the relay that follows a successful handshake. Dialing
 // builds the Voice model query and authentication headers before entering that

@@ -7,10 +7,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Automatic Anthropic probes carry a User-Agent selected for that execution.
-// The target copies its executor value before installing that header policy, so
-// platform dependencies remain shared while each probe can use its own agent
-// string and cancellation context.
+// anthropic_test_target.go binds a selected provider and prepared test request
+// to the Anthropic probe executor. Automatic Anthropic probes carry a
+// User-Agent selected for that execution. The target copies its executor value
+// before installing that header policy, so platform dependencies remain shared
+// while each probe can use its own agent string and cancellation context.
 
 // anthropicTestTarget retains an Anthropic executor and record for a prepared
 // provider probe.

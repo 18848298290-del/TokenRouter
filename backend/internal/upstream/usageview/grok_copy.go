@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// grok_copy.go copies Grok quota windows and billing summaries for independent
+// numeric and collection updates.
 // Grok usage snapshots contain optional numeric pointers and per-product
 // observations that can be shared by cached results. Copy helpers allocate new
 // numeric values and collection storage before a caller independently updates

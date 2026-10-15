@@ -9,6 +9,8 @@ import (
 	rawwire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// response_observer.go binds upstream model and service-tier observations to
+// HTTP requests and transfers model evidence into completion results.
 // Upstream response declarations are captured before client-visible model
 // restoration. Each request binding points at mutable attempt evidence, while
 // completion keeps the outbound tier separate from the observed execution tier;

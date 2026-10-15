@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// group_repository.go defines group persistence interfaces for configuration,
+// membership, duplication, and display ordering.
 // A copied group's settings and source memberships need one transaction so
 // failures cannot leave a partial product configuration. Ordinary mutations
 // join storage through a shared context, while the optional sort-order lock

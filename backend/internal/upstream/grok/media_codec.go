@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// media_codec.go parses Grok media inputs and translates image references and
+// geometry for forwarding.
 // Grok media callers need one request view for moderation, model rewriting and
 // billing, even when input arrives as JSON or multipart form data. Parsing
 // collects source URLs, uploads and masks, then applies injected image and video

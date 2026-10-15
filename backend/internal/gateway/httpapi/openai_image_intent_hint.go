@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// openai_image_intent_hint.go caches canonical HTTP image intent and
+// classifies changed attempt payloads separately.
 // An image-intent decision can change when group mapping or Compact rewriting
 // changes a model, or when recovery removes an image-generation tool. HTTP
 // requests cache the canonical body's classification, including false results,

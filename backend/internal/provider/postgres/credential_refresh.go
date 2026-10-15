@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// credential_refresh.go conditionally persists refreshed credentials under a
+// matching provider-row lock.
 // A credential exchange can finish after an administrator changes authentication
 // or disables the provider. The expected identity is serialized before a
 // transaction locks the matching row, and persistence receives that transaction

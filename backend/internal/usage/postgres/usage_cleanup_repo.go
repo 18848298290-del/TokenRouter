@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_cleanup_repo.go persists usage-cleanup task transitions and deletes
+// matching usage rows in batches.
 // Usage cleanup persists filters and progress separately from the raw rows each
 // batch removes. Task creation and status operations prefer an available Ent
 // client, including a transaction client from context. Claiming and batch

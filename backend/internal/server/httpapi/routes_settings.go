@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_settings.go registers panel rate-limit read and update endpoints on
+// the administrator settings group.
 // Panel rate limits have a dedicated administrator endpoint for reading and
 // replacing their settings. App supplies the authenticated settings group and
 // handlers, while registration binds the GET and PUT paths to that group's

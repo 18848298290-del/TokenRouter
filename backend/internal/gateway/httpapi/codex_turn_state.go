@@ -13,11 +13,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex clients echo an opaque turn-state header across requests, but the state
-// can become inappropriate when routing selects another provider. Ownership is
-// indexed by API key and the original client session, recording the most recent
-// provider that supplied state for that pair. The index contains provider IDs,
-// so filtering depends on recorded session ownership rather than comparing opaque blobs.
+// codex_turn_state.go relays Codex turn-state headers and filters echoed state
+// using recorded provider ownership. Codex clients echo an opaque turn-state
+// header across requests, but the state can become inappropriate when routing
+// selects another provider. Ownership is indexed by API key and the original
+// client session, recording the most recent provider that supplied state for
+// that pair. The index contains provider IDs, so filtering depends on recorded
+// session ownership rather than comparing opaque blobs.
 //
 // Response state can be staged before an attempt is chosen for output. Staging
 // changes headers alone; Relay or Commit records ownership at the caller's

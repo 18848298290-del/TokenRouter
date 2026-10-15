@@ -1,5 +1,7 @@
 package httpconfig
 
+// options.go defines browser CORS and CSP configuration and the default
+// content security policy.
 // Browser integrations need their script, frame, and connection sources allowed
 // by the response policy. The default CSP includes authentication, CAPTCHA,
 // payment, and exact tf CLI loopback origins, while middleware interprets CORS

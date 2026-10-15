@@ -16,11 +16,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// Gateway identity authentication precedes model-prefix selection and funding
-// admission. The selected key view supplies the payer and group used by handlers,
-// while authenticated actor data remains available for ownership reporting.
-// Standard and Google endpoints share these checks but write different error
-// shapes and bind funding details at their respective points in the flow.
+// authorization.go authenticates gateway requests, resolves their group and
+// funding, and reserves API-key request capacity. Gateway identity
+// authentication precedes model-prefix selection and funding admission. The
+// selected key view supplies the payer and group used by handlers, while
+// authenticated actor data remains available for ownership reporting. Standard
+// and Google endpoints share these checks but write different error shapes and
+// bind funding details at their respective points in the flow.
 //
 // Consumption eligibility and request-capacity reservation are separate decisions.
 // Usage and existing-task operations can skip funding enforcement, while model

@@ -10,6 +10,8 @@ import (
 	anthropicredis "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic/rediscache"
 )
 
+// assembly_upstream_wire.go registers upstream clients, privacy clients, and
+// fingerprint storage and binds the shared gateway transport.
 // Upstream requests use a transport assembled from gateway policy and platform
 // clients. Wire binds that transport for the shared HTTP client pool and adds
 // privacy clients and Anthropic fingerprint storage, making the execution

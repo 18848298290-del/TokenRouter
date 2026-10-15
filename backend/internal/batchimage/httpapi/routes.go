@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes.go registers batch-image submission, discovery, management, and
+// download endpoints on the gateway router.
 // Batch image management and download paths share the gateway router group's
 // middleware. Static model discovery is registered alongside job IDs, and the
 // handler applies owner-scoped use cases to submission, queries, cancellation,

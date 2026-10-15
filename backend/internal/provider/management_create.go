@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// management_create.go creates provider batches and schedules privacy
+// maintenance for successful OAuth records.
 // Batch provider creation reports outcomes in input order and keeps successful
 // call results when another entry fails validation or storage. Negative billing
 // multipliers and invalid request-ID header settings become per-entry failures,

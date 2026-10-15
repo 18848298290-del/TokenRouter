@@ -6,11 +6,12 @@ import (
 	"sync"
 )
 
-// Authentication work can still use local caches while application shutdown is
-// beginning. The operation gate marks admission stopped under the same mutex
-// used before adding active work, so the drain monitor can wait after future
-// additions are excluded. Startup and shutdown share runtimeMu, and a stopped
-// service cannot initialize its resources again.
+// lifecycle.go starts authentication cache resources and drains admitted
+// operations before closing them during shutdown. The operation gate marks
+// admission stopped under the same mutex used before adding active work, so
+// the drain monitor can wait after future additions are excluded. Startup and
+// shutdown share runtimeMu, and a stopped service cannot initialize its
+// resources again.
 //
 // Shutdown waits for admitted work before canceling the subscription and
 // closing either L1 cache. StopContext limits its caller's wait; expiration

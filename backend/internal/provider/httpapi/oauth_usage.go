@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// oauth_usage.go serves active and passive OAuth usage and caches batch local
+// statistics responses.
 // OAuth usage queries can use stored passive observations or active upstream
 // maintenance, while today statistics come from local usage data. Batch
 // today-statistics responses reuse a process-wide thirty-second snapshot keyed
@@ -20,8 +22,8 @@ import (
 //
 // Normalization sorts and removes invalid or duplicate IDs before cache lookup.
 // A cache hit can return 304 without another statistics query; a miss queries
-// and replaces the snapshot. Active usage batches instead return result and
-// error maps directly. The cache key carries provider IDs, so all handler
+// and replaces the snapshot. Usage batches return result and error maps
+// directly. The cache key carries provider IDs, so all handler
 // instances in this process share a selection's snapshot until its expiration.
 
 // providerTodayStatsBatchCache retains normalized provider-selection statistics

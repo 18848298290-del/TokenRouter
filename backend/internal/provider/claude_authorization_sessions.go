@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// claude_authorization_sessions.go stores Claude authorization scope and PKCE
+// proof and coordinates the lifetime of expiry cleanup.
 // Claude authorization saves scope beside state and PKCE proof so exchange can
 // distinguish full OAuth from inference-only setup tokens. Lookup checks the
 // thirty-minute session age before returning that saved authentication input.

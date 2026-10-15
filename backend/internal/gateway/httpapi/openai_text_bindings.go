@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// openai_text_bindings.go binds text HTTP admission to routing, moderation,
+// funding and session services.
 // Text entries prepare HTTP state through app-bound resources and policy
 // callbacks before the provider loop runs. API-key copies carry the currently
 // admitted group into route, moderation, funding and session checks, while

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// registration_invitation.go loads, claims and restores invitation credentials
+// for registration.
 // Registration claims an unused, unexpired code together with its user
 // creation flow. Load supplies the candidate snapshot for caller validation,
 // while Consume conditionally changes stored status and last-recipient data so

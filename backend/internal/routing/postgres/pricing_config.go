@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// pricing_config.go persists shared pricing configurations and assembles their
+// group associations and price trees.
 // A shared pricing configuration owns group associations, customer model
 // prices, and provider-cost rules. Aggregate creation and update put these
 // records in one transaction so a child failure rolls back the accompanying

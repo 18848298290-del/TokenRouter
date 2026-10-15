@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// openai.go builds OpenAI creative image requests and obtains image bytes from
+// base64 or URL results.
 // OpenAI creative tasks need image bytes for transient delivery even when the
 // generation response supplies only a signed URL. The adapter first reads and
 // closes the generation response, then prefers a usable base64 result or

@@ -10,11 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// HTTP deduplication and maintenance leases use scoped keys to identify a
-// shared coordination record. Request fingerprints distinguish incompatible
-// HTTP payloads, while maintenance claims store an operation identity and
-// ownership token so lease renewal can distinguish the current acquisition
-// from an earlier worker.
+// idempotency_record.go defines scoped coordination records for HTTP
+// deduplication and maintenance leases. Request fingerprints distinguish
+// incompatible HTTP payloads, while maintenance claims store an operation
+// identity and ownership token so lease renewal can distinguish the current
+// acquisition from an earlier worker.
 
 // IdempotencyRecord stores request deduplication outcomes and maintenance lease ownership.
 type IdempotencyRecord struct {

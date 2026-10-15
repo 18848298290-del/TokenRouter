@@ -2,6 +2,8 @@ package modelcatalog
 
 import "encoding/json"
 
+// ollama.go reads provider-supplied Ollama output caps from supported numeric
+// representations.
 // Ollama output limits arrive through provider Extra as several numeric Go
 // representations. Reading a missing or unsupported representation selects the
 // execution default, while an explicitly nonpositive value disables clamping

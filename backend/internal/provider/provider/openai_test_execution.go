@@ -21,20 +21,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAI provider tests choose their endpoint from probe mode, explicit test
-// type, authentication, and text protocol. Native and legacy compact modes use
-// fixed payloads, explicit image selection precedes model-name inference, and
-// API-key text requests can select Chat while OAuth uses Codex Responses.
+// openai_test_execution.go executes OpenAI text, compaction, and image probes
+// using the selected authentication and protocol. OpenAI provider tests choose
+// their endpoint from probe mode, explicit test type, authentication, and text
+// protocol. Native and legacy compact modes use fixed payloads, explicit image
+// selection precedes model-name inference, and API-key text requests can
+// select Chat while OAuth uses Codex Responses.
 //
 // Shadow requests resolve their credential owner for authentication while
 // keeping the selected record's transport identity. Agent Identity task
 // recovery can replay text and compact attempts once without emitting another
-// start event. Quota headers can produce Extra observations on failed requests,
-// and 429 reconciliation persists a reset before recovering an error-state
-// record. Image previews accept platform-specific response forms, and a
-// nonempty API-key image array still fails when it contains no displayable
-// result. Test events carry these observations through the run's retained
-// sink-error handling.
+// start event. Quota headers can produce Extra observations on failed
+// requests, and 429 reconciliation persists a reset before recovering an
+// error-state record. Image previews accept platform-specific response forms,
+// and a nonempty API-key image array still fails when it contains no
+// displayable result. Test events carry these observations through the run's
+// retained sink-error handling.
 
 // OpenAIProviderTest prepares provider-authenticated text, compact, and image
 // connection probes.

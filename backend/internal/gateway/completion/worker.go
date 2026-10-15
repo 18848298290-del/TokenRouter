@@ -11,11 +11,13 @@ import (
 	"github.com/alitto/pond/v2"
 )
 
-// Usage tasks can finish after the response and still need their storage services
-// during shutdown. Admission registers work before releasing the state lock, then
-// hands that registration to a queued worker or keeps it in the submitting caller
-// for synchronous overflow. A stopped pool rejects new admission with a distinct
-// result so entrypoint policy can decide whether to execute outside the pool.
+// worker.go runs bounded completion work and coordinates admission, overflow,
+// scaling, and shutdown. Usage tasks can finish after the response and still
+// need their storage services during shutdown. Admission registers work before
+// releasing the state lock, then hands that registration to a queued worker or
+// keeps it in the submitting caller for synchronous overflow. A stopped pool
+// rejects new admission with a distinct result so entrypoint policy can decide
+// whether to execute outside the pool.
 //
 // Stopping first seals admission and cancels scaling, then waits for the scaler,
 // pond's queued work, and all registered work including inline overflow. Caller

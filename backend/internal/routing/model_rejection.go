@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// model_rejection.go builds concrete model suggestions from schedulable
+// provider rules.
 // A rejection message can suggest concrete model names from schedulable
 // providers in its requested platform. Provider configuration supplies those
 // names first, and an unconfigured provider can contribute its adapter's

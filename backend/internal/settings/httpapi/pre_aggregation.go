@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// pre_aggregation.go serves aggregation settings, task status, and manual
+// backfill requests.
 // Administrator preaggregation settings show normalized runtime controls beside
 // deployment permissions and observed task state. GET can select cached or default
 // controls after a settings read fails, while PUT validates capability and cadence

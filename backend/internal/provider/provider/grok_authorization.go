@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok authorization can resolve a selected proxy without treating a missing
-// proxy row as a repository failure. The returned options bind the platform's
-// OAuth and JWT operations to that lookup, while an omitted password-auth reader
-// keeps password login disabled for the provider workflow.
+// grok_authorization.go supplies Grok OAuth and JWT operations with optional
+// proxy lookup and password-auth configuration. Grok authorization can resolve
+// a selected proxy without treating a missing proxy row as a repository
+// failure. The returned options bind the platform's OAuth and JWT operations
+// to that lookup, while an omitted password-auth reader keeps password login
+// disabled for the provider workflow.
 
 // GrokAuthorizationOptions binds platform authorization operations and
 // optional proxy lookup.

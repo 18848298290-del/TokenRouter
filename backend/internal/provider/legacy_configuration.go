@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// legacy_configuration.go normalizes legacy OpenAI switches and removes
+// deprecated provider settings from administrative input.
 // Older administrator clients can submit obsolete OpenAI probe fields alongside
 // still-supported compaction switches. The compatibility input path discards
 // probe observations and maps every supplied compaction value except force_off

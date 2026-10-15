@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// runtime_settings.go reads creative feature settings and parses model
+// allowlists and worker counts.
 // The creative feature switch defaults to enabled when its stored value cannot
 // be read. Model admission uses a stricter rule: missing, malformed, or
 // invalid model settings become an empty allowlist, leaving the directory

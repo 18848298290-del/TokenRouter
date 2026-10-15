@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
 )
 
+// aggregation_service.go schedules hourly and daily Ops aggregation and
+// coordinates each refresh with leadership and shutdown.
 // Ops aggregation refreshes the latest stable UTC hour and the latest closed
 // UTC day, rather than scanning an entire missing history. Hourly selection
 // subtracts a five-minute safety delay before flooring its end, while daily

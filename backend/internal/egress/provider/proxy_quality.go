@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// proxy_quality.go probes model endpoints through a proxy and classifies their
+// reachability and challenge responses.
 // Unauthenticated quality probes classify target reachability from response
 // status and a bounded challenge preview. Recognized Cloudflare challenges in
 // 403/429 responses classify before acceptable statuses. Other allowed responses

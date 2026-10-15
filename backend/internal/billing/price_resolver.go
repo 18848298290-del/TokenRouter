@@ -7,6 +7,8 @@ import (
 	purepricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// price_resolver.go selects configured model cards and catalog prices for
+// billing.
 // Configured cards are searched using the requested full model name before
 // same-model protocol resource candidates. That ordering lets a manual exact
 // or wildcard card retain precedence, including a free amount, while catalog

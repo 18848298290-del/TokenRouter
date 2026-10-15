@@ -10,6 +10,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// billing_fetch.go fetches Grok billing summaries with bounded attempts and
+// preserves HTTP status evidence.
 // Billing probes can retain an HTTP status even when no summary is available.
 // Transport failures and selected gateway statuses retry within the
 // configured attempt count; 429 is returned as quota evidence. Responses from

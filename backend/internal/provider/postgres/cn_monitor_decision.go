@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// cn_monitor_decision.go conditionally applies CN usage-monitor pause
+// decisions and publishes scheduling notifications.
 // CN quota decisions belong to the provider version that produced the
 // observation. A compare against updated_at prevents a delayed balance result
 // from replacing a newer configuration or health change; extending a pause

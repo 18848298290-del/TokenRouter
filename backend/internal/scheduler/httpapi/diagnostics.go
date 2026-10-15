@@ -13,6 +13,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// diagnostics.go exposes administrative HTTP endpoints for scheduler score
+// summaries and previews.
 // Administrative score requests identify a provider and optionally one
 // advanced group. Overview reads and detailed previews share the diagnostic
 // service, while preview decoding accepts a single known-field JSON object so

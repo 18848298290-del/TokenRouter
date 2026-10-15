@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// antigravity_attempt.go binds native Gemini execution hooks to Antigravity
+// request, recovery, and response services.
 // Native Gemini execution through Antigravity stores its current response on
 // the same adapter used by exchange and recovery hooks. Credentials and proxy
 // selection precede retry binding, and successful recovery replaces that

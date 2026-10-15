@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
+// step_up.go checks session-specific TOTP grants before sensitive
+// administrator requests proceed.
 // Sensitive administrator operations require a recent TOTP grant for the
 // requesting session when step-up is enabled. A recorded refresh-family ID
 // identifies that session; requests with older context use a digest of their

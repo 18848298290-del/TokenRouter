@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// promo_handler.go handles administrator promotion requests and translates
+// optional edits for the service.
 // Administrator Promo edits represent an omitted deadline separately from an
 // explicit zero Unix timestamp. Update converts zero into a Go zero-time
 // sentinel so PromoService can remove the saved deadline, while nonzero

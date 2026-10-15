@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// proxy_admin_types.go defines proxy administration inputs, probe results, and
+// configured quality-check targets.
 // Proxy quality combines a base exit-information probe with unauthenticated
 // requests to selected model endpoints. Each target defines statuses considered
 // reachable, so an expected authentication error can pass while a Cloudflare

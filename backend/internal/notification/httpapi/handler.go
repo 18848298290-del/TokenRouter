@@ -12,6 +12,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// handler.go handles administrator SMTP tests and email template management
+// requests.
 // Administrator SMTP tests combine submitted connection values with a currently
 // stored configuration when fields are omitted or blank. Explicit TLS false
 // remains distinguishable from omission, while invalid nonpositive port input

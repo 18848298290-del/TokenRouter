@@ -5,17 +5,18 @@ import (
 	"strings"
 )
 
-// HTTP response continuation checks stored ownership within the selected group.
-// A recorded user permits that user's other API Keys to continue the response;
-// legacy records with no positive user ID instead require the original key.
-// Requester user and key IDs are positive before storage is consulted, so an
-// unavailable identity cannot obtain permission from an absent or legacy record.
+// http_response_owner.go checks stored HTTP response ownership against the
+// requesting user and API Key. A recorded user permits that user's other API
+// Keys to continue the response; legacy records with no positive user ID
+// instead require the original key. Requester user and key IDs are positive
+// before storage is consulted, so an unavailable identity cannot obtain
+// permission from an absent or legacy record.
 //
 // The stored user takes precedence over stored key equality. For example, a
 // response owned by user 1 and key 4 can continue through user 1's key 5, while
-// user 2's matching key number does not satisfy that user-owned record. A legacy
-// record with no positive user owner instead uses key equality. Missing records
-// return false, and storage errors remain visible to the caller.
+// user 2's matching key number does not satisfy that user-owned record. A
+// legacy record with no positive user owner instead uses key equality. Missing
+// records return false, and storage errors remain visible to the caller.
 
 // HTTPResponseOwnerReader supplies user/key ownership for a group's response ID.
 type HTTPResponseOwnerReader interface {

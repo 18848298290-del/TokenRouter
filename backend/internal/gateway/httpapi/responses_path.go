@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// responses_path.go extracts and validates operation suffixes from OpenAI
+// Responses request paths.
 // Responses aliases can append upstream operations such as compact or
 // input_tokens. The raw suffix is extracted from the matched HTTP path, then
 // checked by the shared upstream validator before route admission or URL

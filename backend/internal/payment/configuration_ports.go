@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// configuration_ports.go binds payment configuration storage, billing plan
+// lookup, and provider construction callbacks.
 // Payment settings and provider instances use different persistence readers,
 // while subscription checkout obtains its sale plan from billing. Construction
 // binds these dependencies and supplies limited runtime defaults; legacy

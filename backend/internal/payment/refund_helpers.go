@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// refund_helpers.go submits gateway refunds and reconstructs entitlement
+// recovery plans from saved pending details.
 // A gateway refund uses the saved merchant and transaction references while
 // local entitlement recovery uses its own quantities. Historical instance
 // resolution and snapshot metadata checks precede submission, and a provider

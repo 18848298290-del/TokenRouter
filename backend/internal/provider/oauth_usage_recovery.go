@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// oauth_usage_recovery.go conditionally clears recoverable provider errors
+// after successful usage queries.
 // Usage recovery clears one observed credential error after the writer
 // accepts its compared identity and message. Newer status, credentials, proxy,
 // or error text can reject that recovery while keeping the caller record

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// pricing_config_repository.go supplies callback-based pricing repository
+// stubs and configured service fixtures.
 // Combined rows let tests exercise production price-cache and group-policy reads
 // with controlled results. NewConfigServiceFixture uses ListAllFn for both
 // inputs; direct stub calls expose the remaining callbacks and their documented

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// model_attributes.go applies resolved sampling, thinking, and output-limit
+// policy to Gemini request bodies.
 // Gemini controls can originate in Anthropic or OpenAI input before a Gemini
 // request exists. Attribute application uses the final route with those
 // original controls, removes known unsupported sampling fields under both

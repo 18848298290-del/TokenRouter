@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// promo.go validates and administers registration promotion codes and
+// coordinates grant application.
 // Registration Promo codes grant balance after an account has been created,
 // with eligibility checked again by the locked mutation before crediting.
 // Previews report public availability, while an omitted code is accepted by

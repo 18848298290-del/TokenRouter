@@ -15,10 +15,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// A local user carries account status and profile data alongside wallet and
-// request limits. Authentication identities and team memberships are separate
-// relationships, while billing updates the user's available and reserved wallet
-// amounts and notification settings describe the user's alert preferences.
+// user.go defines local account profiles, status, wallet amounts, and request
+// limits. Authentication identities and team memberships are separate
+// relationships, while billing updates the user's available and reserved
+// wallet amounts and notification settings describe the user's alert
+// preferences.
 
 // User stores local account, wallet, profile, and admission settings.
 type User struct {

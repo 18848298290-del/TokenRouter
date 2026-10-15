@@ -11,10 +11,10 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// Creative provisioning, settlement, and release can be retried from a durable
-// action record. Each run-operation pair has one row, with availability and
-// lease metadata used by the outbox repository to claim work and reject
-// updates from a superseded claim.
+// creative_run_outbox.go defines durable action records for retrying creative
+// provisioning, settlement, and release. Each run-operation pair has one row,
+// with availability and lease metadata used by the outbox repository to claim
+// work and reject updates from a superseded claim.
 
 // CreativeRunOutbox stores recoverable actions and their current processing lease.
 type CreativeRunOutbox struct {

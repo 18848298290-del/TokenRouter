@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 )
 
+// affiliate.go persists affiliate relationships, quota movements, and their
+// audit records in PostgreSQL.
 // Affiliate grants pair profile totals with source receipts, and transfers
 // retain fund observations that later balance edits would otherwise hide.
 // Thaw clears deadlines on existing grant rows while moving their quota

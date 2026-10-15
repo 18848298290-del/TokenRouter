@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// Provider refresh, expiry scans, availability probes, and admission cleanup
-// run as periodic producers. Their hooks share stop level 20 after request
-// draining, while configured concurrency-slot and user-message cleanup
-// intervals are passed to their own worker start methods.
+// runtime_maintenance.go registers periodic provider maintenance, expiry scans,
+// availability probes, and admission cleanup. These periodic producers share
+// stop level 20 after request draining, while configured concurrency-slot and
+// user-message cleanup intervals are passed to their own worker start methods.
 
 // maintenanceRuntimeReady marks registration of periodic provider, expiry,
 // probe, and admission maintenance.

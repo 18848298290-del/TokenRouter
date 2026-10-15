@@ -4,10 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Administrative Key changes enter through one route combining binding changes
-// and optional window resets. Route registration uses the caller's already
-// configured admin group so its authentication, rate controls and auditing
-// apply before the supplied handler runs.
+// routes_admin.go registers the administrative Key-update route for binding
+// changes and optional spending-window resets. Route registration uses the
+// caller's already configured admin group so its authentication, rate controls
+// and auditing apply before the supplied handler runs.
 
 // RegisterAdminAPIKeyRoutes binds the administrative Key update handler below
 // the supplied admin group. Callers install authentication, rate controls and

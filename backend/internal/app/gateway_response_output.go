@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// gateway_response_output.go constructs OpenAI response handling with shared
+// health, session state, and header policy.
 // OpenAI output shares provider health, reasoning history, response lineage,
 // and the proxy stream circuit. Its startup options retain platform stream
 // budgets and a default response-read limit, while request-time callbacks

@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// alerts.go renders and delivers balance and provider-quota alerts.
 // Balance and provider-quota alerts arrive with recipients and business
 // observations already selected by their callers. Delivery prefers the shared
 // notification service, which resolves templates, recipient language, and source

@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// runtime_settings.go caches Cyber session blocking settings and coordinates
+// shared reloads.
 // Gateway Cyber session blocking reads enablement and lifetime together from a
 // published entry, while each reload fetches the two database keys separately.
 // A valid entry is reused for sixty seconds; an uncertain enablement read

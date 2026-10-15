@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// upstream_response_limit.go reads size-limited upstream response bodies and
+// presents overflow failures through protocol-specific callbacks.
 // Buffered upstream responses need a size bound before protocol decoding
 // consumes a complete body. The shared reader detects overflow and retains the
 // size sentinel; HTTP reporting records that failure and invokes the caller's

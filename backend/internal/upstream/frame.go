@@ -2,6 +2,8 @@ package upstream
 
 import "context"
 
+// frame.go defines the connection interface and message kinds used to relay
+// realtime media frames.
 // Realtime media exchanges carry text and binary messages through a platform-neutral
 // connection. The message kind retains the WebSocket wire value while
 // each implementation owns how request cancellation and connection closure

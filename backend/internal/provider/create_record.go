@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// create_record.go constructs validated provider records with normalized
+// credentials, quota windows, and scheduling defaults.
 // Returned new-provider records are active and schedulable after configuration
 // validation and protocol migration. Creation removes imported monitor/session observations
 // and fingerprint seeds before generating any required account seed. Credentials

@@ -6,10 +6,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 )
 
-// Responses input-token counting maintains its own retry counters independently
-// of generation completion. Forwarding owns any acquired provider slot, so each
-// count finishes its resources before the loop waits or selects another
-// provider.
+// input_tokens.go runs Responses input-token counting with separate
+// same-provider retry and provider-switch allowances. Forwarding owns any
+// acquired provider slot, so each count finishes its resources before the loop
+// waits or selects another provider.
 //
 // A policy can permit same-provider retries up to the selected limit before
 // that provider enters the excluded set. Ordinary switching consumes its

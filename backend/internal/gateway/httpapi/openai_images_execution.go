@@ -23,6 +23,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_images_execution.go dispatches image requests by credential type and
+// executes native API-key image exchanges.
 // API Key image requests use the native Images endpoint while OAuth and
 // setup-token requests use a Responses image tool. Each branch resolves the
 // routed image spelling and final provider model separately before building

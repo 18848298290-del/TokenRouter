@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// usage_events.go parses Messages usage observations and reconciles compatible
+// prompt and cache counters.
 // Anthropic-compatible providers can use input_tokens for a prompt total in
 // an initial event and for uncached work in a later event. Billing needs those
 // observations resolved into separate uncached, cache-read, and cache-write

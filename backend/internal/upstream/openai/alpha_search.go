@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// alpha_search.go executes standalone and Responses-backed Alpha Search
+// attempts and records successful search output.
 // Standalone Alpha Search returns its upstream JSON directly, while a PAT can
 // perform search through streaming Responses. The chosen path controls response
 // conversion and whether unsuccessful responses contribute quota headers; a

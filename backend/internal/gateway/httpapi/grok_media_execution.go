@@ -27,6 +27,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_media_execution.go executes Grok image and video requests and captures
+// their observed media usage for completion.
 // Grok image results and asynchronous video tasks produce different billing
 // inputs. Image execution counts actual returned outputs; video creation
 // retains the task ID and request pricing parameters with a zero video count.

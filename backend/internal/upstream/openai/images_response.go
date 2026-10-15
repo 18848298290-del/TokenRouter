@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// images_response.go converts OAuth Responses image events into buffered
+// Images output or progressive image streams.
 // OAuth image generation arrives as Responses lifecycle, partial-image,
 // completed-item, and terminal events. Partial images can be sent before a
 // final result exists, while completed items are retained for a later terminal

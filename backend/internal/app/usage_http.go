@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// usage_http.go assembles usage HTTP handlers and adapts Key and user lookups
+// for their queries.
 // Usage HTTP reads narrow Key and user references through their owning
 // services. Key ownership checks stay with API-Key operations, user search
 // retains pagination and deleted status, and user/dashboard/admin handlers

@@ -25,6 +25,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// gateway_openai_text_execution.go constructs shared OpenAI text, Responses,
+// image, auxiliary, and WebSocket execution dependencies.
 // OpenAI text, Responses, images, auxiliary calls, and WebSocket execution
 // share request construction and response output. The text runtime holds prompt
 // and continuation state with callback-based lifetimes, and Codex usage writes

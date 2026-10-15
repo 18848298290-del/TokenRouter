@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated user usage routes and applies
+// heavy-query middleware.
 // Authenticated users query usage records, rankings, errors and dashboard
 // reports under a shared usage group. Heavy-query middleware also covers the
 // separate daily key-usage route, while the application's parent group

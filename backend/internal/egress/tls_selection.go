@@ -4,11 +4,12 @@ import (
 	"strconv"
 )
 
-// A request can match a router rule while its referenced TLS profile is
-// unavailable. Profile resolution then uses the provider selection, but
-// WebSocket identity still reflects the matched router and its configured
-// profile ID. Disabled fingerprint eligibility produces no profile, so its
-// WebSocket identity is empty.
+// tls_selection.go resolves request TLS profiles and builds WebSocket
+// identities from provider and router selections. A request can match a router
+// rule while its referenced TLS profile is unavailable. Profile resolution then
+// uses the provider selection, but WebSocket identity still reflects the
+// matched router and its configured profile ID. Disabled fingerprint
+// eligibility produces no profile, so its WebSocket identity is empty.
 //
 // Random router selections share the router-random identity, while random
 // provider selections use a separate provider-random identity. Fixed router

@@ -4,6 +4,8 @@ package app
 
 import "github.com/google/wire"
 
+// gateway_search_wire.go registers search-tool emulation, standalone search
+// HTTP, and Grok execution constructors with Wire.
 // Emulated search tools use the search configuration service and pricing
 // rules, while standalone search binds Grok selection, funding, moderation,
 // and completion recording. The gateway graph resolves both entry paths

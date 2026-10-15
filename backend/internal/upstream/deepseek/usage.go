@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage.go queries DeepSeek balances and maps accepted currency entries into
+// usage observations.
 // DeepSeek balance responses can contain several currencies, each with a
 // separately reported remaining amount. Every accepted entry stays in its
 // response order, while the first accepted entry also supplies the primary

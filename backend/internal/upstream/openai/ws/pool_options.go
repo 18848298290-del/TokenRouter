@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// pool_options.go calculates WebSocket pool capacity and interprets idle,
+// queue, utilization, and timing settings.
 // WebSocket connection capacity can be fixed or derived from provider
 // concurrency, but both choices remain bounded by the configured hard cap.
 // Dynamic sizing uses a provider-type factor and rounds upward before clamping

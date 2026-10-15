@@ -11,16 +11,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// An accelerated service tier can be requested by the client, forced by its
-// group, or enabled by its API key. A system action on the initial tier ends
-// the decision before key policy or pricing eligibility is read, and a group
-// force_off also stops a later key override.
+// decision.go resolves client, group, system, and API Key service-tier choices
+// for request execution. A system action on the initial tier ends the decision
+// before key policy or pricing eligibility is read, and a group force_off also
+// stops a later key override.
 //
 // When the system passes the initial tier, an eligible key may inject priority
 // or remove an accelerated request. A newly injected tier is checked against
 // system policy again so key force_on cannot bypass a block or filter. The
-// result keeps rejection, field removal, and tier replacement distinct for
-// both HTTP bodies and WebSocket frames.
+// result keeps rejection, field removal, and tier replacement distinct for both
+// HTTP bodies and WebSocket frames.
 
 // DecisionInput supplies platform and group policy, with lazy policy and
 // pricing checks.

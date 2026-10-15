@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// log.go defines completed-request usage records and reconciles their request
+// categories with legacy transport flags.
 // Completed requests carry both the member who acted and the user whose funds
 // were charged. UsageLog also keeps the local diagnostic request ID beside a
 // separate financial deduplication key, so retained analysis rows can be

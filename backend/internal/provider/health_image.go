@@ -7,10 +7,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// health_image.go applies OpenAI image quota and capability-loss cooldowns
+// under a dedicated model scope.
 // Image quota failures and lost image capability use one dedicated model-limit
 // scope, so ordinary provider and text-model windows remain separate. Pool mode
 // skips local quota observation, while an accepted capability-loss
 // classification can still install the fixed image-scope cooldown.
+//
+// Both paths honor provider platform and configured error-code policy before
+// writing a model limit. The quota path invokes its observer only after
+// admission, whereas capability loss uses the supplied classification and a
+// fixed duration. A handled result survives a logged storage failure.
 
 // Image reason values and the capability-loss duration are stored under the
 // dedicated image-generation scope for later media eligibility checks.

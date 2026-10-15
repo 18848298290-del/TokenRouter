@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// aliyun_captcha_verifier.go submits Aliyun CAPTCHA proofs and translates SDK
+// responses and errors for the identity service.
 // Aliyun challenge decisions arrive inside an SDK response whose transport and
 // API errors use different representations. The adapter supplies current
 // credentials on each call and converts known SDK API errors for the identity

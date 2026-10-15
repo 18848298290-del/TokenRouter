@@ -8,6 +8,8 @@ import (
 	cryptoinfra "github.com/TokenFlux/TokenRouter/internal/infra/crypto"
 )
 
+// aes_encryptor.go validates the configured TOTP key and constructs an AES-GCM
+// encryptor.
 // TOTP encryption is configured as a hexadecimal AES-256 key. Bootstrap checks
 // decoding and the required byte length before delegating encryption to the
 // infrastructure implementation, so malformed configuration fails when the

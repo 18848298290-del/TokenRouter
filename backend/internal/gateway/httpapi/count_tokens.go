@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// count_tokens.go prepares Messages token-count requests and starts the
+// bounded provider count loop.
 // Messages counting performs request parsing and funding preflight before
 // provider selection, while auxiliary execution owns its own count result and
 // failure handling. Parsed client identity and group fallback are established

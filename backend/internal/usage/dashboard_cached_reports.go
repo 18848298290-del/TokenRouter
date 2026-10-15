@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// dashboard_cached_reports.go caches spending rankings and batch user and
+// API-key cost summaries.
 // Spending rankings and batch cost summaries reuse query results for a fixed
 // cache lifetime. Ranking keys contain UTC start and end text at second
 // precision plus the limit, while RankingReport retains the range values used

@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// service.go constructs API key services for tests using deployment cache
+// settings and routing policy.
 // Cross-module authentication tests use deployment configuration but construct
 // the same Key service as production. The adapter copies cache and team startup
 // values into Options, leaves its lifecycle unstarted for the caller, and binds

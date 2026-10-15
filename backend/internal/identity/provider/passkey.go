@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// passkey.go configures the WebAuthn verifier and parses browser credential
+// responses for registration and login.
 // Passkey ceremonies use startup relying-party identity and origin settings to
 // validate browser responses. The adapter parses the response body before invoking
 // the WebAuthn SDK; the identity service owns session consumption, account lookup,

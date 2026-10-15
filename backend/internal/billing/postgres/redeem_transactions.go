@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// redeem_transactions.go runs redemption transactions and dispatches balance
+// and concurrency adjustments.
 // Redemption applies balance or concurrency through an injected writer on the
 // transaction context supplied to each operation. Nonnegative values use the
 // ordinary increment methods; negative values require the paired floor-writer

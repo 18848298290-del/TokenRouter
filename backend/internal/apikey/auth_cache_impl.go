@@ -18,20 +18,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Repeated credential lookups can use a versioned positive snapshot from local
-// or shared storage, while random missing credentials occupy a bounded local
-// negative cache. The service reconstructs a request view before returning
-// accepted snapshots, so mutable policy collections remain separate from cached
-// entries. Team credentials bypass positive insertion because their membership
-// allowances are loaded for each authentication lookup.
+// auth_cache_impl.go loads credentials through local and shared caches and
+// reconstructs request views from versioned authentication snapshots. Random
+// missing credentials occupy a bounded local negative cache. Accepted
+// snapshots yield request-owned mutable policy collections, keeping changes to
+// those collections separate from cached entries. Team credentials bypass
+// positive insertion because their membership allowances are loaded for each
+// authentication lookup.
 //
 // Repository misses can share one in-progress load through service
 // singleflight, and a separate lookup channel bounds concurrent storage work.
 // Cache failures become misses or skipped writes so storage still decides
 // authentication. Local invalidation subscription starts after resources are
 // bound, retries failed subscription calls with capped backoff, and stops
-// before service cache closure; this wrapper does not clear all cached state on
-// reconnection.
+// before service cache closure; this wrapper does not clear all cached state
+// on reconnection.
 
 // KeyApiKeyAuthSnapshotVersion identifies the serialized fields accepted by
 // positive-cache reconstruction, requiring older snapshots to reload

@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// gemini_token.go resolves Gemini access tokens through caches, coordinated
+// refresh, and optional project discovery.
 // Gemini OAuth tokens use a project-based cache key when credentials contain a
 // project, and a row-based key otherwise. Service-account records bypass OAuth
 // handling and require Vertex exchange; OAuth cache hits return before stored

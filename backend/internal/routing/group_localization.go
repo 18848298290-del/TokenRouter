@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// group_localization.go validates localized group copy and resolves display
+// text from stored or legacy content.
 // A group's localized display copy is stored separately from its administrative
 // name and description. Records without a saved revision expose those legacy
 // fields as revision-one source content, so translation editing and display

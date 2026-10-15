@@ -13,9 +13,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAI quota operations share invitation-specific User-Agent and TLS choices
-// while supporting bearer and Agent Identity authentication. The factory reads
-// the selected proxy once and retains the provider record for account headers,
+// openai_quota.go constructs quota clients with bearer or Agent Identity
+// authentication and provider transport settings. Quota operations share
+// invitation-specific User-Agent and TLS choices. The factory reads the
+// selected proxy once and retains the provider record for account headers,
 // transport identity, and task recovery callbacks.
 //
 // Agent Identity authentication returns both the assertion and the task that
@@ -23,7 +24,8 @@ import (
 // through the shared coordinator. Unpersisted records use this factory's
 // fallback mutex, and response redaction can resolve the credential owner
 // through TaskOptions.Read. The provider quota service owns snapshot
-// persistence and recovery decisions after the client reports its observations.
+// persistence and recovery decisions after the client reports its
+// observations.
 
 // OpenAIQuotaFactory binds provider transport and task coordination to upstream
 // quota clients.

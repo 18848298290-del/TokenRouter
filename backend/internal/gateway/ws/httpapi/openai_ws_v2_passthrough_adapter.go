@@ -22,6 +22,8 @@ import (
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
 )
 
+// openai_ws_v2_passthrough_adapter.go starts dedicated Responses sessions and
+// maps relay or handshake failures to client closure.
 // Dedicated per-session Responses forwarding adapts client and provider frames
 // to the gateway controller, which owns turn admission and read deadlines.
 // Relay exits retain whether output reached the client, allowing first-output

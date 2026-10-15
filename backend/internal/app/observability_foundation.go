@@ -21,10 +21,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Audit and pre-aggregation use shared settings with their own storage and
-// retention rules. Audit redaction combines provider credential keys and
-// payment secret fields, while system-log flush failures are reported to stderr
-// so the failing persistence path has an independent diagnostic sink.
+// observability_foundation.go assembles auditing, pre-aggregation settings, and
+// system-log persistence diagnostics. Audit and pre-aggregation use shared
+// settings with their own storage and retention rules. Audit redaction combines
+// provider credential keys and payment secret fields, while system-log flush
+// failures are reported to stderr so the failing persistence path has an
+// independent diagnostic sink.
 
 // providePreAggregationHTTP binds usage and Ops aggregation to the
 // administration handler.

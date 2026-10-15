@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
+// stream_transformer.go decodes Antigravity SSE data lines and delegates
+// ordered Claude event conversion.
 // Antigravity stream data lines wrap shared Gemini responses before Claude
 // conversion. Prefix removal feeds a per-stream processor, while blank,
 // completion, nondata, or undecodable lines produce no output; processor

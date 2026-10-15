@@ -14,6 +14,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// admin_edit.go validates and applies single-provider and bulk configuration
+// edits, including shadow proxy and group updates.
 // Provider edits combine user-selected configuration with credentials and
 // observations that may change after the initial read. UpdateProvider validates
 // a prospective record, then describes the selected fields in

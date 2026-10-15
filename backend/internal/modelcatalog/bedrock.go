@@ -2,6 +2,7 @@ package modelcatalog
 
 import "strings"
 
+// bedrock.go selects execution rules for registered Bedrock Claude identities.
 // Bedrock Claude identifiers can include a catalog provider and an inference
 // region before the model name. Encoding rules are selected from complete
 // registered identities after removing those routing prefixes, so unregistered

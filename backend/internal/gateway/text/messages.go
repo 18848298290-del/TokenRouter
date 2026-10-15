@@ -9,8 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Messages execution may change providers while keeping one request's output
-// and completion decisions coherent. A group fallback restarts candidate state,
+// messages.go orchestrates Messages provider attempts, group recovery, and
+// request completion decisions. A group fallback restarts candidate state,
 // while changed output ends replay and partial-result completion follows the
 // entry-specific option.
 //

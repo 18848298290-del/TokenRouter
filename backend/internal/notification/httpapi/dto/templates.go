@@ -1,5 +1,7 @@
 package dto
 
+// templates.go defines administrator request and response shapes for email
+// template editing and previews.
 // Administrator template views separate event choices, list summaries, complete
 // editable content, and rendered previews. Save times are serialized as display
 // strings, and placeholder collections let the editor use the same admitted

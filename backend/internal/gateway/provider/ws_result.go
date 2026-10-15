@@ -8,6 +8,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// ws_result.go converts forwarding results to and from WebSocket turn results
+// while retaining replay-state presence.
 // A WebSocket turn carries observed usage plus replay inputs that differ from
 // its public response metadata. Converting between the forwarding and WS
 // result types keeps the input-presence flag separate from an empty replay

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// qoder_validation.go validates Qoder COSY credentials and controls whether
+// PAT validation performs an exchange.
 // Qoder accepts COSY records backed by a PAT or a direct security token with
 // machine and user identity fields. Site/mode validation precedes either path,
 // and editing can defer PAT exchange so a later connection test evaluates the

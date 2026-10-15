@@ -6,11 +6,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
-// A rejected best-effort usage write can be retried synchronously with the same
-// logical record. Each storage call receives cloned mutable row data, so changes
-// to those copied values cannot alter the recorder's retained row or retry inputs.
-// References retained in unexported fields stay shared; the recorder and repository
-// treat those references as immutable.
+// log_snapshot.go wraps usage writers with mutable-row cloning for each storage
+// attempt. A rejected best-effort usage write can be retried synchronously with
+// the same logical record. Each storage call receives cloned mutable row data,
+// so changes to those copied values cannot alter the recorder's retained row or
+// retry inputs. References retained in unexported fields stay shared; the
+// recorder and repository treat those references as immutable.
 
 // snapshotLogWriter delegates synchronous writes with separately cloned row data.
 type snapshotLogWriter struct {

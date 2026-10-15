@@ -8,9 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Waiting for request capacity can outlast a payer's available funds. Admission
-// checks funding before counting RPM, then offers a funding-only recheck after
-// the wait so the same request is not counted a second time.
+// funding_check.go checks initial funding before counting RPM and exposes a
+// funding-only recheck for requests that waited for capacity. Payer eligibility
+// can change during that wait, and the recheck avoids counting one request
+// twice.
 
 // FundingCheck supplies payer, key, and subscription eligibility checks for admission.
 type FundingCheck interface {

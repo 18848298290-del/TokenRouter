@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// snapshot.go builds provider identity and protocol snapshots for candidate
+// routing checks.
 // Candidate protocol checks need provider identity and eligibility while
 // credentials stay in the execution record. RoutingSnapshot captures those
 // fields, resolves configured protocols, and detaches its protocol slice and

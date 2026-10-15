@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// passkey.go stores stable account handles and serialized WebAuthn credentials
+// for Passkey authentication.
 // Passkey credentials join their account to a retained WebAuthn user handle
 // and serialized credential data. Handle creation uses insert-on-conflict
 // followed by a read, so concurrent registration attempts for one account

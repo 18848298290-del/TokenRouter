@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// google_one_tap.go verifies Google One Tap login requests and returns
+// credentials or pending registration.
 // Google One Tap accepts a browser ID token and produces either panel
 // credentials or browser-bound pending registration. Verification requires a
 // nonempty subject, email, and verified-email flag before those claims enter
@@ -23,10 +25,11 @@ import (
 // The whole request and selected text fields have byte limits before provider
 // validation. Enabled Tencent or Aliyun action CAPTCHA rejects this proof-less
 // entry. Existing-account login checks backend-mode admission after the
-// authentication service returns, while new pending registration checks its
-// registration switch and backend policy before storing state. Successful JSON
-// responses carry no-store headers and use separate authenticated and
-// registration-required shapes.
+// authentication service returns. When the initial account lookup selects new
+// registration, the handler checks its registration switch and backend policy
+// before storing state. An invitation-required login result also creates pending
+// registration. Successful JSON responses carry no-store headers and use
+// separate authenticated and registration-required shapes.
 
 // One Tap limits bound anonymous request decoding and signup context; redirect
 // defaults and status labels select the browser continuation and response

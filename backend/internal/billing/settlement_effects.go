@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// settlement_effects.go reconciles billing caches and dispatches
+// post-settlement callbacks.
 // Committed funding results determine which cache entries need reconciliation
 // after billing. A known balance below admission thresholds is invalidated for
 // a later reload; other positive balance deductions are queued. Key-window

@@ -9,17 +9,20 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// A Grok quota caller can abandon its wait while another caller still needs the
-// same probe. Shared on-demand probes use the first caller's context values with
-// a separate timeout, and both the waiter and the shared operation register with
-// the shutdown tracker. Identical in-flight keys share the same callback result;
+// probe_runtime.go shares on-demand probe results and reserves background
+// tasks by key within a tracked shutdown lifetime. A Grok quota caller can
+// abandon its wait while another caller still needs the same probe. Shared
+// on-demand probes use the first caller's context values with a separate
+// timeout, and both the waiter and the shared operation register with the
+// shutdown tracker. Identical in-flight keys share the same callback result;
 // each consumer supplies its own copying policy for mutable values.
 //
 // Background model discovery has a separate key set. It reserves a key and
 // registers the task before launching its goroutine, preventing another
-// background request from starting the same task during that lifetime. Shutdown
-// cancels both kinds of registered work and waits within its caller's budget,
-// retaining the first result even when a callback finishes after a timeout.
+// background request from starting the same task during that lifetime.
+// Shutdown cancels both kinds of registered work and waits within its caller's
+// budget, retaining the first shutdown result even when a callback finishes
+// after a timeout.
 
 // ErrProbeStopped marks rejected admission after the runtime permanently closes
 // its operation tracker to new provider probes and background tasks.

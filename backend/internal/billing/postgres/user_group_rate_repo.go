@@ -11,6 +11,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// user_group_rate_repo.go reads and updates per-user group rates and RPM
+// overrides.
 // User billing rates and RPM limits occupy separate nullable columns in the
 // same user/group row. Clearing one column needs to retain the other, while a
 // row with both columns NULL can be removed. User reads omit NULL rates; group

@@ -8,6 +8,8 @@ import (
 	"unicode"
 )
 
+// model_rules.go prepares indexed provider model rules for repeated mapping
+// and eligibility checks.
 // Catalogue and batch queries test many names against the same provider rules.
 // Prepared rules copy mapping entries and index the effective whitelist once,
 // keeping raw mapping precedence separate from trimmed, case-insensitive

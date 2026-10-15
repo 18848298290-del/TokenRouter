@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// activation.go identifies disabled Google services and extracts activation
+// links from Code Assist error details.
 // Code Assist account operations can fail with a disabled-service error that
 // carries a console activation link. Error details are decoded into metadata
 // and help variants, while the status and reason classifier lets

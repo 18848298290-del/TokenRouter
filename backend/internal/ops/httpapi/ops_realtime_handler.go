@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// ops_realtime_handler.go serves live concurrency, provider availability, and
+// short-window traffic summaries.
 // Realtime endpoints expose optional sampling while overall monitoring remains
 // enabled. Concurrency and availability return successful empty maps before
 // validating filters when realtime is disabled; traffic summary first validates

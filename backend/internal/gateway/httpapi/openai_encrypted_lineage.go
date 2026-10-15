@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_encrypted_lineage.go records rejected encrypted-content digests and
+// removes known rejected items from subsequent request payloads.
 // Rejected encrypted reasoning can be replayed by later HTTP or WebSocket
 // turns. Tracking stores ciphertext digests under the group's session key, so
 // subsequent requests can remove known rejected items while accepting different

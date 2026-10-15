@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// health_model.go selects model-specific cooldowns for missing models and
+// Codex plan restrictions.
 // An unavailable model pauses a provider/model pair while other model scopes
 // remain selectable. A not-found classification takes precedence over an
 // OAuth-like Codex plan restriction; an absent canonical model key leaves no

@@ -18,11 +18,12 @@ import (
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 )
 
-// Affiliate transfers and promo grants receive billing writers from their own
-// storage transaction. Identity consumes the affiliate operations and promo
-// preview through narrow adapters, while background promo effects use
-// application tracking and administrator recipient search returns one bounded
-// page.
+// promotion.go assembles affiliate and promo services and connects them to
+// billing, identity, and administration. Affiliate transfers and promo grants
+// receive billing writers from their own storage transaction. Identity consumes
+// the affiliate operations and promo preview through narrow adapters, while
+// background promo effects use application tracking and administrator recipient
+// search returns one bounded page.
 
 // identityPromotion adapts affiliate operations for identity registration and
 // profile consumers.

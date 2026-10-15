@@ -2,7 +2,7 @@ package logevent
 
 import "time"
 
-// Structured log events can be forwarded to the Ops sink after logging
+// event.go defines structured events forwarded to the Ops sink after logging
 // accepts them. That sink reads event fields asynchronously, prefers a
 // nonempty component attribute, and skips events carrying the boolean skip
 // marker; producers leave published mutable values unchanged.

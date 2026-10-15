@@ -8,11 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
-// Completion work needs the request's identifiers and model chain after the
-// request context has been cancelled. The model trace is captured at submission,
-// so a later WebSocket turn cannot change the models attached to an earlier task.
-// The request recorder is deliberately shared because background usage supplements
-// the same request summary that the entrypoint finishes.
+// context.go captures completion correlation values and model traces for
+// execution after a request ends. Completion work needs the request's
+// identifiers and model chain after the request context has been cancelled. The
+// model trace is captured at submission, so a later WebSocket turn cannot
+// change the models attached to an earlier task. The request recorder is
+// deliberately shared because background usage supplements the same request
+// summary that the entrypoint finishes.
 //
 // The worker supplies cancellation and its execution deadline. Selected request
 // values are layered onto that context, while SnapshotContext starts with a

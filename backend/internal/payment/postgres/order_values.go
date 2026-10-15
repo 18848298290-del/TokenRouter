@@ -5,6 +5,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// order_values.go converts persisted payment entities into domain orders and
+// delegates mutable-value copying to Order.Clone.
 // Ent order rows contain optional scalar pointers and snapshot maps that
 // payment callers can retain beyond the query. Domain conversion maps their
 // persisted observations, then uses Order.Clone to detach its recognized

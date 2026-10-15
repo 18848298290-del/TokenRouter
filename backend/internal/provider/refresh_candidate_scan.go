@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// refresh_candidate_scan.go scans refresh candidates in ID order and retains
+// the last completed page cursor.
 // A periodic refresh scan resumes by provider ID when its budget expires during
 // a page. Storage supplies cursor metadata independently of loaded records,
 // allowing the scan to advance past IDs whose details disappeared between

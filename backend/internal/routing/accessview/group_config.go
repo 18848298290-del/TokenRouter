@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_config.go defines the group configuration shared by routing,
+// authentication snapshots, and console queries.
 // A group carries request policy separately from pricing and provider
 // credentials. Storage hydration supplies trusted routing fields, while console
 // queries can add localized names and a requestable model catalogue to the same

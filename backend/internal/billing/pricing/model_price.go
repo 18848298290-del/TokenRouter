@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// model_price.go converts catalog token prices into calculation records.
 // A catalog media price does not by itself establish text-token pricing.
 // ResolveModelPricing rejects missing or marked-unpriced token records, then
 // carries the accepted entry's amount presence, service-tier rules, cache TTL

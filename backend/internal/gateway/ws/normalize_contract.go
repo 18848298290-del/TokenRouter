@@ -2,6 +2,8 @@ package ws
 
 import "context"
 
+// normalize_contract.go defines image decisions and provider operations
+// required by WebSocket request normalization.
 // A later response.create can omit its model while retaining the session's last
 // accepted client model. Normalization resolves that client choice through
 // group and provider rules before model attributes, image eligibility, and Fast

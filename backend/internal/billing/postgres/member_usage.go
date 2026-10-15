@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// member_usage.go resets selected team-member usage windows to calendar
+// starts.
 // Team member quotas use calendar days, Monday weeks and calendar months in
 // the configured location. Administrator resets derive all three starts from
 // the same supplied instant, then update only selected usage windows on an

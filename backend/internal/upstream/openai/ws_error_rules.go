@@ -9,6 +9,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// ws_error_rules.go classifies WebSocket acquisition and protocol errors for
+// recovery and HTTP error reporting.
 // WebSocket errors arrive either during HTTP handshake acquisition or inside a
 // protocol error event. Acquisition uses captured status and typed local
 // failures, while event classification reads normalized code, type, and message

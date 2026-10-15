@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// settlement.go normalizes billing commands, builds replay fingerprints and
+// plans task fund capture.
 // A financial operation key identifies a settlement independently of the local
 // request displayed in usage records. Fingerprints retain supplied funding and
 // usage facts before storage-bound counters are rounded, so ordinary request

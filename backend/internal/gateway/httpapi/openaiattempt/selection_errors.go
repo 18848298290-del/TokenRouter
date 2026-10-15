@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// selection_errors.go classifies provider-selection failures using effective
+// group and model diagnosis.
 // Provider selection errors distinguish absent model support from temporary
 // pool capacity using the effective group's diagnosis. HTTP adapters retain the
 // routing model for that lookup and the display model for client messages, then

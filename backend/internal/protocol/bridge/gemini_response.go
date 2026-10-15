@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_response.go builds buffered Messages responses from Gemini content
+// and replay signatures.
 // Gemini thought signatures can accompany thinking, visible text, or function
 // calls, while Messages carries replay signatures on thinking and tool blocks.
 // Thinking accumulates text with the latest supplied signature; signed visible

@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// group_rate_admin.go validates and stores user-group billing multipliers and
+// RPM overrides.
 // User group overrides carry separate billing multipliers and
 // request-per-minute limits in the same stored rows. Rate updates and RPM
 // updates use distinct repository operations. After a successful RPM mutation,

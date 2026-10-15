@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares partial ranking-setting updates for
+// persistence and registers usage settings with the shared settings service.
 // Ranking configuration combines an ordering metric with fields visible in
 // the response. Updating the metric can require that metric's visibility flag
 // to become true, and normalization applies the configured limit cap before

@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 )
 
+// first_output_stage.go buffers uncommitted upstream output with byte limits
+// and optional temporary-file storage.
 // An attempt can receive upstream events before downstream output is safe to
 // commit. First-output staging bounds that uncommitted data separately from the
 // post-commit scanner budget, and guarded streams use a smaller event queue so

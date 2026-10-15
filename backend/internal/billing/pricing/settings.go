@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// settings.go defines group billing policies and evaluates peak-rate windows.
 // Group billing policy can apply even when no model card matches. Peak windows
 // use the clock components already supplied in the billing timezone, and
 // operation prices use pointers so omitted values can inherit catalog defaults

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// gemini_thinking.go resolves client thinking requests against final-model
+// Gemini capabilities.
 // Thinking requests arrive in several client formats, while resolved Gemini
 // models expose either budgets, effort levels, or no adjustable controls.
 // Parsing keeps explicit disabling and zero budgets distinct from absent

@@ -10,10 +10,10 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// Thinking history and effort spelling depend on the mapped model's replay
-// rules. Caller-supplied flags select protocol filtering or preserve history,
-// and display effort can be supplied for passback models that lack a native
-// effort field.
+// thinking.go filters thinking history and normalizes effort fields for
+// mapped-model replay policies. Caller-supplied flags select protocol filtering
+// or preserve history, and display effort can be supplied for passback models
+// that lack a native effort field.
 //
 // GLM normalization distinguishes built-in behavior from a configured
 // allowed-level slice: nil uses the built-in mapping, while an empty configured

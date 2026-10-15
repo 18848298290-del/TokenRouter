@@ -18,10 +18,12 @@ import (
 	usageerrors "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Gemini and Antigravity token reads share provider storage, access-token
-// cache, and refresh coordination. Gemini also binds project discovery and
-// Vertex exchange, while quota prechecks use Los Angeles dates or a fixed PST
-// fallback when the location database cannot be loaded.
+// provider_google_tokens.go assembles Gemini authorization and quota prechecks
+// alongside cached Gemini and Antigravity credentials. Gemini and Antigravity
+// token reads share provider storage, access-token cache, and refresh
+// coordination. Gemini also binds project discovery and Vertex exchange, while
+// quota prechecks use Los Angeles dates or a fixed PST fallback when the
+// location database cannot be loaded.
 
 // provideGeminiAuthorization binds configured Google OAuth and stored proxy
 // resolution to platform clients. cfg and proxies supply request-time

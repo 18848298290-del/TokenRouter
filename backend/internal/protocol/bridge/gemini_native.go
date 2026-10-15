@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// gemini_native.go converts Messages requests to native Gemini and Gemini
+// replies to Messages.
 // Native GenerateContent conversion connects Messages history to Gemini
 // function names before REST sanitization removes invocation IDs. The shared
 // ID/name map resolves later tool results, caller-selected thought markers

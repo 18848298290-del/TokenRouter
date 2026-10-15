@@ -9,11 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Anthropic forwarding distinguishes the provider's HTTP decision from a later
-// stream failure. Ordinary eligible HTTP statuses request failover unless health
-// selects generic output; stream events additionally require an uncommitted
-// writer before replacement output or a provider switch can be selected. The
-// adapter supplies response evidence and executes hooks in the attempt's order.
+// messages_contract.go defines Messages adapter operations and constructs
+// partial usage results for eligible stream failures. Anthropic forwarding
+// distinguishes the provider's HTTP decision from a later stream failure.
+// Ordinary eligible HTTP statuses request failover unless health selects
+// generic output; stream events additionally require an uncommitted writer
+// before replacement output or a provider switch can be selected. The adapter
+// supplies response evidence and executes hooks in the attempt's order.
 //
 // PartialUsage joins usage observed by the reader with HTTP metadata, the
 // logical and mapped models, and a requested speed hint. Positive observations

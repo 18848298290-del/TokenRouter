@@ -10,6 +10,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// test_streams_adaptive.go parses adaptive Anthropic test streams and forwards
+// their content and errors.
 // Adaptive Messages parsing emits content and errors while leaving whole-test
 // completion to the CN coordinator. message_stop and DONE finish the endpoint
 // successfully, EOF before those markers fails, and malformed frame JSON is

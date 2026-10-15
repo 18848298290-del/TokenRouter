@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// gemini.go selects Gemini-compatible execution targets and ranks credentials
+// for AI Studio auxiliary endpoints.
 // Gemini selection reads providers from the admitted group and may reuse a
 // compatible cross-platform session binding. Model scheduling, model support,
 // forced-platform input, and local Gemini quota observations filter candidates

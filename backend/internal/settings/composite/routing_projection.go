@@ -2,6 +2,8 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/routing"
 
+// routing_projection.go transfers routing fallback models and marketplace
+// windows through the combined snapshot.
 // Routing settings determine fallback model choices and the marketplace
 // observation window shown in administrator settings. Their value struct copies
 // these scalar fields between the combined Snapshot and the routing normalizer,

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// passthrough.go prepares and forwards Responses payloads with provider policy
+// and bounded recovery before output.
 // Responses passthrough can retain unknown payload fields while still applying
 // selected-provider model, OAuth identity, client-tool, and image policy.
 // Initial model replacement changes the image-intent evidence, and the retained

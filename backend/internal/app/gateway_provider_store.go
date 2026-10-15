@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// gateway_provider_store.go adapts stored provider records and capacity
+// queries for gateway execution.
 // Gateway execution reads provider configuration through the application's
 // provider store and sends quota increments to billing storage. Read adapters
 // create execution targets with provider-module copying and clock setup,

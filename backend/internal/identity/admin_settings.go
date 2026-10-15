@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// admin_settings.go normalizes administrator authentication settings into flat
+// persistence values.
 // Administrator authentication saves use different empty-secret rules by
 // provider. Exact empty raw CAPTCHA/LinuxDo/DingTalk/OIDC credentials omit
 // writes, while GitHub/Google/WeChat credentials are trimmed first and

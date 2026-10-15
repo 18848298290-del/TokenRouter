@@ -23,6 +23,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_passthrough_execution_ports.go binds Responses passthrough execution
+// to HTTP policy, recovery and response state.
 // Passthrough preparation applies required model, credential and compatibility
 // policy while retaining raw request bytes for the selected provider.
 // Request-local alias and fingerprint state follows the body adopted by the

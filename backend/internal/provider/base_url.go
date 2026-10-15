@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// base_url.go selects OpenAI-compatible request addresses from
+// protocol-specific configuration, legacy credentials, and platform defaults.
 // CN providers can configure a Chat-specific address independently of the
 // legacy base URL. The presence of unified protocol settings or adaptive
 // routing selects that address when populated. Saved legacy addresses apply to

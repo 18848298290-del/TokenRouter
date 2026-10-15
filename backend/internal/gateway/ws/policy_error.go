@@ -2,6 +2,8 @@ package ws
 
 import "fmt"
 
+// policy_error.go carries generic-policy rejection status through WebSocket
+// error chains.
 // Provider custom error-code rules can require a generic client failure while
 // internal diagnostics retain the upstream status. GenericPolicyError carries
 // that classification through the WebSocket error chain, where HTTP adapters

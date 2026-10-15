@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Payment orders retain buyer, entitlement, fee, and provider facts from
-// checkout so confirmation and fulfillment use the purchase that was made.
-// Stored payment and refund state survives callbacks and recovery attempts,
-// while PaymentAuditLog records the corresponding operations.
+// payment_order.go defines buyer, fee, entitlement, and provider snapshots and
+// payment lifecycle records used by confirmation and fulfillment. Stored
+// payment and refund state survives callbacks and recovery attempts, while
+// PaymentAuditLog records the corresponding operations.
 
 // PaymentOrder declares stored purchases, payment progress, and refund metadata.
 type PaymentOrder struct {

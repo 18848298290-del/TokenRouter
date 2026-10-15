@@ -24,10 +24,11 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// Checkout, order queries, fulfillment, and refunds share provider bindings and
-// order storage. Refund rights are constructed from the transaction supplied by
-// RefundStore, connecting balance and subscription changes to that transaction
-// while external provider calls remain owned by RefundWorkflow.
+// payment_refund.go assembles payment checkout, fulfillment, queries, and
+// refunds with shared provider bindings and order storage. Refund rights are
+// constructed from the transaction supplied by RefundStore, connecting balance
+// and subscription changes to that transaction while external provider calls
+// remain owned by RefundWorkflow.
 
 // paymentRefundRights adapts transaction-bound billing changes for payment
 // refund persistence.

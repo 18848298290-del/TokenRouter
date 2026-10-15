@@ -19,10 +19,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Backup and system maintenance stop admitting work before the application
-// waits for HTTP handlers. Their later drain hooks retain shared database
-// resources until accepted operations finish, while backups use a
-// database-heavy advisory lock and configured archive stores.
+// maintenance.go assembles backup and system maintenance services and registers
+// their admission and drain hooks. Backup and system maintenance stop admitting
+// work before the application waits for HTTP handlers. Their later drain hooks
+// retain shared database resources until accepted operations finish, while
+// backups use a database-heavy advisory lock and configured archive stores.
 
 // provideBackup constructs backup storage and registers early admission stop
 // plus later drain. cfg and manager are required; a nil database makes the lock

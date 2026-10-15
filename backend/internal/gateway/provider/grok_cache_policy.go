@@ -8,11 +8,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_cache_policy.go resolves Free-tier client-tool caching policy and
+// applies its request route.
 // Known Free Grok OAuth targets can route function tools through the upstream
 // cacheable mixed-tool path. The provider override accepts booleans, with
 // invalid configured values disabling client-only caching; tier classification
 // includes inferred Free evidence and differs from the explicit-tier soft
 // quota gate.
+//
+// An absent override enables client-tool caching for a known Free provider,
+// whereas a present value of the wrong type disables it and is reported as
+// explicit. The two returned booleans preserve that distinction for callers.
+// Empty cache identities leave request bytes unchanged before the upstream
+// routing helper is invoked, so the route requires both provider eligibility
+// and a usable identity.
 
 // grokClientToolCacheOptInExtraKey names the provider Extra override
 // controlling client-only tool cache routing for known Free OAuth targets.

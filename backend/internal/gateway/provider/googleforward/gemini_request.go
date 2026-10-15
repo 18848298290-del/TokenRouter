@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
+// gemini_request.go builds credential-aware Gemini request plans for the
+// selected execution target.
 // Gemini credential variants share a request plan while obtaining provider
 // token and project at build time. API key bases pass through URL validation,
 // and Vertex targets supply their project, model location, and action to a

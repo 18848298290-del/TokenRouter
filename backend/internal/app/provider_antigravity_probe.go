@@ -20,10 +20,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
-// Antigravity probes and forwarding share retry health, transport, and request
-// activity. Assembly supplies paid-tier endpoint choice, bounded response
-// inspection, rate-limit reset parsing, and quota proxy lookup, keeping their
-// request-time callbacks attached to the same provider services.
+// provider_antigravity_probe.go assembles Antigravity authorization, retry
+// health, probes, and quota queries. Antigravity probes and forwarding share
+// retry health, transport, and request activity. Assembly supplies paid-tier
+// endpoint choice, bounded response inspection, rate-limit reset parsing, and
+// quota proxy lookup, keeping their request-time callbacks attached to the same
+// provider services.
 
 // provideAntigravityAuthorization binds platform authorization to stored proxy
 // lookup. Its callback returns an empty URL and false for failed or absent

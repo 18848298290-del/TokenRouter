@@ -25,6 +25,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_response_stream_errors.go classifies Responses stream failures and
+// carries health evidence into failover errors.
 // Responses terminal failures carry status evidence inside HTTP 200 streams,
 // so health and presentation inspect the event payload. Request-specific
 // parameter, context-window and cyber rejections remain distinct from

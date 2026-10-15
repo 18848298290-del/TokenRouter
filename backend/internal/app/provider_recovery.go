@@ -13,11 +13,12 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// Provider health observation and recovery share the same counters, storage,
-// runtime blocks, and clock. Health delegates window clearing to the recovery
-// instance assigned during assembly, and the exported runtime keeps one
-// observer whose window, team, and model components reference that assembled
-// health state.
+// provider_recovery.go constructs shared provider health, recovery, and
+// platform observation services. Provider health observation and recovery share
+// the same counters, storage, runtime blocks, and clock. Health delegates
+// window clearing to the recovery instance assigned during assembly, and the
+// exported runtime keeps one observer whose window, team, and model components
+// reference that assembled health state.
 
 // providerHealthRuntime retains shared health, recovery, and platform
 // observation components.

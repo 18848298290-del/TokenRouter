@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grok_responses_execution.go starts Grok Responses attempts and supplies
+// provider execution callbacks for Composer image descriptions.
 // Grok Responses and Composer image descriptions share request preparation,
 // transport policy and response observation. Each HTTP attempt keeps its own
 // model observer, while image bridging delegates image replacement and usage

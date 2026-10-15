@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// ports.go defines the frame, storage and provider operations used by Live
+// session control.
 // Live session control uses synchronous frame I/O while session records and
 // concurrency leases can outlast the creation HTTP request. The service
 // obtains shared adapters on demand and keeps controller coordination separate

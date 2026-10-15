@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// generic_chat_attempts.go executes generic Chat attempts with group model
+// mapping, provider admission and completion capture.
 // Group model mapping rebuilds a Chat request from retained client bytes at
 // each attempt. A Gemini-valued request platform skips selected targets from
 // other platforms after returning their capacity; ordinary platform dispatch

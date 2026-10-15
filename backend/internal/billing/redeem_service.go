@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// redeem_service.go grants redemption entitlements and records credential
+// consumption within a transaction.
 // A redemption ties entitlement issuance to a credential's individual usage
 // record and lifetime count. Advisory cache limits and code exclusion run
 // before the transaction, while the transaction locks the code, checks

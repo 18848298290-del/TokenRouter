@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// background_errors.go defines refresh failure categories and exposes their
+// private causes for background-work classification.
 // Refresh failures determine whether one credential can recover or whether work
 // for its entire platform should stop for the cycle. Typed errors retain private
 // causes for classification while returning fixed public messages, and permanent

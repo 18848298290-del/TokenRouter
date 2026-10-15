@@ -8,10 +8,10 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Live calls outlast their creation request and can be controlled by an observer
-// or a sideband proxy on another instance. Records carry the creator's routing,
-// lease, and identity evidence, while storage methods expose controller claims
-// and closure for the Live runtime's coordination.
+// live.go defines Live call identities, stored records, controller states, and
+// storage operations. Records carry the creator's routing, lease, and identity
+// evidence, while storage methods expose controller claims and closure for the
+// Live runtime's coordination.
 
 // Controller labels describe which Live participant holds the call; Redis transitions
 // use these stored values when claiming, releasing, or closing controller ownership.

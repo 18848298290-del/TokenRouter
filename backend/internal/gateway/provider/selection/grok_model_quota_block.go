@@ -8,6 +8,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// grok_model_quota_block.go filters providers whose mapped Grok model has an
+// active quota block.
 // A Grok quota observation can block one model while leaving the provider's
 // other models available. Selection resolves the provider's scheduling model
 // before reading that block, so client aliases and wildcard mappings reach the

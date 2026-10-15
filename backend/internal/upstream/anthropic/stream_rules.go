@@ -9,6 +9,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// stream_rules.go builds Claude Code keepalives and reconciles cache usage
+// fields for streamed responses.
 // Claude Code keepalives need a delta shape matching the active content block,
 // and cache-creation usage needs numeric TTL buckets for billing. The block and
 // delta mappings provide the field used by empty keepalive frames, with version

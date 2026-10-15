@@ -11,6 +11,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// data_management.go validates legacy agent requests and exposes health
+// responses for the disabled agent.
 // Retired agent routes retain their JSON and path validation before checking
 // availability. Health remains a successful response containing its disabled
 // state and diagnostic socket path, while configuration, profile, and job requests

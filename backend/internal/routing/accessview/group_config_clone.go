@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_config_clone.go copies group configuration collections and optional
+// values for retained snapshots.
 // Authentication and management snapshots copy the group's declared slices,
 // maps, and optional scalar pointers into separate storage. Nested feature
 // values follow GroupRoutingPolicy.Clone's supported map and slice shapes, so

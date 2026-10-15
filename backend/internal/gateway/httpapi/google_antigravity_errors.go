@@ -21,8 +21,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// Antigravity failures are presented using the protocol that entered the
-// gateway. Messages error output applies administrator rules after recording
+// google_antigravity_errors.go presents Antigravity failures in the client
+// protocol and records upstream diagnostic evidence.
+// Messages error output applies administrator rules after recording
 // upstream diagnostics, while compatible output uses its platform-safe message
 // selection and status mapping. Native Google output retains a smaller status-
 // name table.

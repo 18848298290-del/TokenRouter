@@ -7,8 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// CN prepared probes can select adaptive protocol coverage, a shared Responses
-// execution path, or the record's fixed route. Every path receives one run
+// cn_test_target.go dispatches prepared CN probes to adaptive coverage, shared
+// Responses execution, or the fixed route. Every path receives one run
 // carrying its automatic flag and User-Agent, and the target combines platform
 // failures with retained sink errors before returning.
 

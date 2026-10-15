@@ -12,11 +12,10 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Credential tests combine admitted execution-provider fixtures with
-// production token and recovery readers. The setup can bind parent-store
-// reads, Grok token acquisition, and runtime quarantine state; supplied
-// credential source objects receive those callbacks directly before the
-// fixture is used.
+// request_credentials.go builds Grok provider and credential-reader fixtures
+// for gateway tests. The setup can bind parent-store reads, Grok token
+// acquisition, and runtime quarantine state; supplied credential source objects
+// receive those callbacks directly before the fixture is used.
 
 // HealthyGrokOAuthProvider returns an active one-slot Grok OAuth fixture with
 // the supplied token. Its expiry is two refresh-skew intervals from now and

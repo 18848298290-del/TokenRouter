@@ -1,5 +1,7 @@
 package anthropic
 
+// usage.go represents rolling quota observations returned by the Claude OAuth
+// usage endpoint.
 // Claude's OAuth usage endpoint reports utilization and reset timestamps for
 // several rolling quota windows. The wire response retains the timestamp text
 // for provider-side parsing, where the five-hour window is displayed even when

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// serial_queue.go connects Anthropic serialization and RPM waits to HTTP
+// heartbeats and request logging.
 // Anthropic message serialization and soft RPM spacing use the scheduler's
 // shared queue service. The HTTP adapter supplies synchronous request logging
 // and wait heartbeats, so an acquired serial lease can be released at upstream

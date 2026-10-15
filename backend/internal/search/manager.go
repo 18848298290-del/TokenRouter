@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// manager.go selects search suppliers, reserves quota, and coordinates
+// retries, cleanup, and Manager retirement.
 // Supplier quota is reserved immediately before each production search, while
 // earlier usage observations influence candidate order. Candidates with
 // positive observed remainder receive one randomized score; unlimited and
@@ -21,9 +23,11 @@ import (
 //
 // Executor failure releases only a confirmed reservation before cancellation
 // and proxy policy decide whether another supplier can be tried. A shared
-// request proxy ends supplier failover because all candidates would reuse it;
-// configured supplier proxies can differ. Retirement closes idle connections
-// while existing Manager holders retain copied settings. Shared operation
+// request proxy ends supplier failover when IsProxyError classifies the failure
+// as a proxy error, because all candidates would reuse it. Other execution
+// errors can advance to the next supplier; configured supplier proxies can
+// differ. Retirement closes idle connections while existing Manager holders
+// retain copied settings. Shared operation
 // completion includes quota cleanup, which receives an independent three-second
 // context whose actual enforcement depends on storage client behavior.
 

@@ -13,10 +13,12 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Explicit Compact requests can select a replacement model on the current
-// provider after a recognized model or context-window failure. HTTP adapters
-// pass compact intent and retry state to compact.Recovery, and bind observations,
-// response cleanup, and model diagnostics for an accepted recovery.
+// compact_execution.go binds HTTP request intent, observations, and cleanup to
+// Compact recovery. Explicit Compact requests can select a replacement model on
+// the current provider after a recognized model or context-window failure. HTTP
+// adapters pass compact intent and retry state to compact.Recovery, and bind
+// observations, response cleanup, and model diagnostics for an accepted
+// recovery.
 
 // CompactExecutor supplies model configuration and HTTP observations to compact.Recovery.
 type CompactExecutor struct {

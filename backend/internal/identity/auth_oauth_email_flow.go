@@ -12,6 +12,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// auth_oauth_email_flow.go creates and finalizes mailbox accounts for pending
+// OAuth registration.
 // Pending provider signup can verify a local mailbox code or use a mailbox
 // proof already established upstream. Both paths create an account before its
 // provider identity and browser session finish, and preserve the account ID

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// openai_resources.go adapts user and image concurrency admission to OpenAI
+// HTTP error output.
 // OpenAI HTTP entries share user concurrency and a process-local image limit.
 // User admission returns cleanup bound to the arriving request context, while
 // image admission can bypass limiting or reject with the protocol's streaming

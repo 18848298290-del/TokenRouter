@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// settings_participant.go prepares administrator team settings and computes
+// public feature visibility.
 // The stored team switch controls the public feature view together with
 // process enablement. PublicSettings treats only exact false text as disabled
 // and returns self-service visibility separately, while administrator

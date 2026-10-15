@@ -2,6 +2,8 @@ package provider
 
 import "github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 
+// usage_catalog.go lists supported upstream usage adapters and filters
+// administrator-selectable formats.
 // Usage queries expose three administrator-selectable relay formats and four
 // platform-selected CN formats. The catalog keeps those categories together so
 // diagnostics can name every adapter while administrator choices remain limited

@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// request_body_limit.go wraps incoming request bodies with a byte limit for
+// downstream reads.
 // Request body limits take effect when a downstream reader consumes bytes.
 // Wrapping the body before route parsing lets each handler map an excessive
 // read to its own error response, while closing the wrapper reaches the

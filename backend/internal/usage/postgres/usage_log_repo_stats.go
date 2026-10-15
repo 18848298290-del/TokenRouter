@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usage_log_repo_stats.go calculates filtered usage summaries, provider costs,
+// batch charges, and endpoint statistics.
 // Usage summaries keep base cost, actual user charges, and provider expense as
 // separate measures. Provider reports combine recorded provider-cost bases with
 // their multipliers, while actor and key summaries retain the monetary meanings

@@ -19,6 +19,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// setup.go initializes storage and administrator access, then writes
+// installation configuration and markers.
 // Installation remains disabled when either its configuration file or its
 // separate marker exists. Setup probes storage, applies migrations, creates an
 // initial administrator only for an empty user database, writes runtime

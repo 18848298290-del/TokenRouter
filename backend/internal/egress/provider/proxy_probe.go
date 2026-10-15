@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// proxy_probe.go probes proxy connectivity and parses exit information from
+// ordered target endpoints.
 // Proxy reachability probes try exit-information targets in order and stop at
 // the first successfully parsed HTTP 200 response. Explicit configured targets
 // replace the built-in list, allowing the application to use endpoints

@@ -7,6 +7,8 @@ import (
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// events.go connects provider persistence to scheduling events and snapshot
+// publication callbacks.
 // Provider persistence emits different scheduling events for complete
 // records, group membership, activity timestamps, and bulk changes. The
 // application supplies the event names and payload encoding, allowing these

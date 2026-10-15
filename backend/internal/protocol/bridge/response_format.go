@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 )
 
+// response_format.go translates structured response-format nesting between
+// Chat and Responses.
 // Chat json_schema response formats nest name, schema, and strict settings
 // beneath json_schema, while Responses text.format puts those settings beside
 // type. Conversion retains child values as raw JSON so schema numbers are not

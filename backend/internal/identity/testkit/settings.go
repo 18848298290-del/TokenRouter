@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// settings.go assembles settings readers used by identity fixtures from a
+// shared repository and startup configuration.
 // Identity fixture settings combine backend mode, authentication runtime
 // switches, grants, OAuth, display, and signup-promotion reads over one
 // repository. Startup configuration supplies selected OAuth and grant

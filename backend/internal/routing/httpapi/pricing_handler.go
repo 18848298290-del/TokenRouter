@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// pricing_handler.go translates administrative pricing requests and responses
+// for shared configuration operations.
 // Shared price cards keep optional amount presence through request and
 // response conversion. Nil amounts stay unspecified, supplied zero values
 // remain present, and the current Fast multiplier takes precedence over its

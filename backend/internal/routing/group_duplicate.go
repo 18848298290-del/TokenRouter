@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// group_duplicate.go constructs inactive group copies and recovers keyed
+// duplication operations.
 // A duplication operation has two identities: its actor-scoped recovery digest
 // and its generated administrative display name. Repeated keyed requests can
 // recover a committed copy, while name collisions alone advance the numbered

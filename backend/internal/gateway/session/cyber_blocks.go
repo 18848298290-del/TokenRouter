@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-// Cyber blocking first checks an explicitly declared session, then checks visible
-// transcript prefixes under an active source scope. Runtime settings and storage
-// availability are tested before the lazy explicit-key callback, so a disabled
-// feature does not cause extra payload parsing. Storage failures are logged and
-// return no block to the gateway caller.
+// cyber_blocks.go checks explicit session blocks and scoped transcript blocks
+// before gateway execution. Runtime settings and storage availability are
+// tested before the lazy explicit-key callback, so a disabled feature does not
+// cause extra payload parsing. Storage failures are logged and return no block
+// to the gateway caller.
 //
-// Transcript lookup is bounded, but an active scope with more candidates than the
-// limit returns an overflow block marker. Accepting a truncated candidate list
-// could lose a previously blocked prefix when the caller appends more history.
-// Scope activation therefore precedes transcript derivation, and the overflow
-// result bypasses the bounded store lookup.
+// Transcript lookup is bounded, but an active scope with more candidates than
+// the limit returns an overflow block marker. Accepting a truncated candidate
+// list could lose a previously blocked prefix when the caller appends more
+// history. Scope activation therefore precedes transcript derivation, and the
+// overflow result bypasses the bounded store lookup.
 
 // CyberLookup carries borrowed request data for synchronous Cyber block lookup.
 type CyberLookup struct {

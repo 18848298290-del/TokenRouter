@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// http.go executes Responses HTTP exchanges and manages repairs within the
+// selected provider attempt.
 // An OpenAI HTTP attempt can recover an invalid agent task, rejected
 // ciphertext, unsupported fields, or a Compact-model failure before final error
 // output. Those mechanisms have separate retry state so one repair does not

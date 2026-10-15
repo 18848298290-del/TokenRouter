@@ -7,10 +7,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 )
 
-// Persisted gateway settings need display defaults even before an administrator
-// saves every field. Reading applies the forwarding switches' established
-// defaults and platform normalizers, retaining configured prompt text and
-// parsing prompt replacement JSON for the administration view.
+// admin_settings_read.go builds the gateway administration view from persisted
+// settings and their display defaults. Reading applies the forwarding switches'
+// established defaults and platform normalizers, retaining configured prompt
+// text and parsing prompt replacement JSON for the administration view.
 
 // AdminReadSettings contains interpreted gateway values displayed by the administration page.
 type AdminReadSettings struct {

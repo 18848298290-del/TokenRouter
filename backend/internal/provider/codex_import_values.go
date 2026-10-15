@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// codex_import_values.go defines Codex import requests, normalized credentials,
+// and result records and constructs the importer.
 // Codex session import keeps administrator settings separate from normalized
 // credential identity and token expiry. Parsed entries carry their source
 // index into item outcomes, while request-level settings select create

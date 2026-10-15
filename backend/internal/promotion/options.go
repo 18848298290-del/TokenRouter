@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// options.go defines rebate policy defaults and the dependencies used by
+// promotion services.
 // Invite rebates use percentages of purchased reasoning points, with zero
 // duration and zero lifetime cap leaving those limits open. Settings readers
 // supply live policy, while cache invalidators and Runtime callbacks let

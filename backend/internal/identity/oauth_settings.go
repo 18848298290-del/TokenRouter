@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// oauth_settings.go resolves effective OAuth provider configuration from
+// stored settings and startup defaults.
 // OAuth configuration distinguishes an absent setting from an explicit false
 // or an empty string that cannot replace a startup value. WeChat credential
 // pairs resolve their identifier and secret independently through

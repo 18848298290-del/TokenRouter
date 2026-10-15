@@ -4,6 +4,8 @@ import (
 	"slices"
 )
 
+// id.go defines persisted protocol identifiers and copies configured fallback
+// target lists for independent editing.
 // Protocol identifiers are persisted in provider settings and group request
 // policies, so their spelling remains independent of display names and URL
 // aliases. ResolveRoute uses automatic conversion matching for an absent

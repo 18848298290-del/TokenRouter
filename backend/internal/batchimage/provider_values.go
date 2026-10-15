@@ -7,8 +7,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Provider operations read names and resource references from nullable
-// persisted job fields. These accessors trim stored text and turn absent
+// provider_values.go reads nullable provider references from batch jobs and
+// defines provider-operation errors.
+// The accessors trim stored text and turn absent
 // fields into empty strings, while provider input failures keep their
 // diagnostic cause under a stable application error.
 

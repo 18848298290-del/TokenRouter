@@ -7,6 +7,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// billing_info.go normalizes buyer invoice details, builds sparse snapshots,
+// and validates required identity fields.
 // Stripe invoice checkout requires buyer identity and an email, and
 // tax identity is accepted as a type/value pair. Input normalization
 // trims each field, uppercases country text, and represents an empty

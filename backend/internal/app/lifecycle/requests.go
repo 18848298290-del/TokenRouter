@@ -7,11 +7,12 @@ import (
 	"sync"
 )
 
-// HTTP handlers can retain work after a client disconnects, so HTTP listener
-// shutdown does not establish that their cleanup has finished. The server
-// wrapper counts each admitted handler through its return while passing
-// ResponseWriter through unchanged. Flush, Hijack, and other writer interfaces
-// remain available to the handler.
+// requests.go tracks HTTP handler completion and closes hijacked connections
+// during application shutdown. HTTP handlers can retain work after a client
+// disconnects, so HTTP listener shutdown does not establish that their cleanup
+// has finished. The server wrapper counts each admitted handler through its
+// return while passing ResponseWriter through unchanged. Flush, Hijack, and
+// other writer interfaces remain available to the handler.
 //
 // Hijacked connections need a separate close phase because net/http shutdown
 // leaves them open. ConnState tracks those connections under the same mutex

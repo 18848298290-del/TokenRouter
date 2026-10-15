@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
+// snapshot_cache.go adds payload-derived ETags to query snapshots and matches
+// conditional request headers.
 // Conditional HTTP responses need an ETag derived from the payload being served.
 // Cache operations wrap querycache's returned snapshot and compute its JSON
 // hash afterward, so each result carries its payload, tag, and storage expiry.

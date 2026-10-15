@@ -21,6 +21,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// count_tokens_ports.go adapts provider selection, mapped request preparation,
+// and failure output to the Messages count loop.
 // Auxiliary count attempts select a provider and prepare mapped input while
 // leaving generation slot admission to other request flows. The text count loop
 // stores failure history and decides retry actions; these HTTP operations bind

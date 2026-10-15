@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// headers.go reads and writes Claude header spellings and orders diagnostic
+// header names.
 // Claude Header spelling can differ from Go's canonical map keys. Request
 // builders read exact, mapped, and canonical spellings and store selected wire
 // keys directly, so outbound fingerprint replacement also needs to clear values

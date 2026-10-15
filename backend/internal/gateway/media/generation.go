@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// generation.go runs image and Grok media attempts and snapshots generation
+// results for completion consumers.
 // Image generation can produce completed images before a tail error. A
 // Grok task lookup with positive BoundProviderID requires the provider
 // recorded for that task. The loops use those observations to decide

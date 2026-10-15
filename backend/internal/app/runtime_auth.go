@@ -11,6 +11,8 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// runtime_auth.go registers authentication caches, platform authorization
+// maintenance, and credential-session cleanup with the lifecycle manager.
 // Authentication caches and platform authorization maintenance start before
 // HTTP serving and stop before shared storage. Qoder credential builds have an
 // earlier stop phase than authorization-store maintenance, letting managed

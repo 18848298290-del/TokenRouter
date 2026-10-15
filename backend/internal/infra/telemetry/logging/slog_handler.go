@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// slog_handler.go converts slog records and bound attributes into zap entries.
 // Bound slog groups prefix an outer attribute key with a dotted path, while
 // attributes of group kind become nested zap objects. Children of those
 // objects are converted without repeating the bound path, so the outer

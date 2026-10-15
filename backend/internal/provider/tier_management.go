@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// tier_management.go refreshes Google One subscription and storage
+// observations through conditional provider updates.
 // Google One tier refresh observes a provider's upstream subscription and Drive
 // storage while administrators can change the same credentials. Saving a full
 // pre-query snapshot would let the delayed observation replace a newer token or

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// bootstrap_admin.go checks stored user counts and creates the initial
+// administrator when setup permits it.
 // Initial setup creates an administrator only when the observed user database
 // is empty. Separate SQL counts identify existing administrators or ordinary
 // accounts, and DecideAdminBootstrap supplies the skip reason before any

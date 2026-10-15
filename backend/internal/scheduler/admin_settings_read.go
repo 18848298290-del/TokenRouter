@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// admin_settings_read.go decodes administrative scheduler settings and
+// converts overrides into runtime values.
 // Administrative reads expose stored override text alongside values derived
 // from process defaults. Feedback and escape fields are parsed when valid,
 // while the effective Top-K and weight display fields are initialized from

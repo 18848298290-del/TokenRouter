@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// scheduling_threshold_eval.go evaluates provider scheduling thresholds
+// against platform quota windows and reset deadlines.
 // Provider usage thresholds require both a reached percentage and a future
 // reset before a pause can be proposed. A valid credential override takes
 // precedence over its platform setting, and a threshold of one hundred

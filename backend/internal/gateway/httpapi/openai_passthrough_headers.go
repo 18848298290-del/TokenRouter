@@ -8,6 +8,8 @@ import (
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 )
 
+// openai_passthrough_headers.go relays passthrough response headers with
+// mandatory quota and turn-state handling.
 // Passthrough response headers include Codex quota and opaque turn state even
 // when a general filter omits them. Header lookup for those fields accepts
 // manually constructed casing, and turn state is replaced or cleared on every

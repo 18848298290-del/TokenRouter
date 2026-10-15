@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// qoder_sessions.go coalesces Qoder session builds and coordinates cached
+// sessions with credential generations and shutdown.
 // Qoder session builds can outlive the request that first needed their
 // credentials. Callers sharing the same provider, full credential digest, and
 // generation wait on one asynchronous flight; each caller can leave its own
@@ -21,8 +23,8 @@ import (
 // observations; matching digests can replace proxy/TLS inputs without that
 // ordering check. Invalidation advances generation so later cache checks and
 // new-value installation reject callbacks from the earlier generation. Cache
-// values remain shared comparable
-// objects, with zero expiry allowing indefinite time-based reuse. Publication
+// values remain shared comparable objects, with zero expiry allowing indefinite
+// time-based reuse. Publication
 // holds shutdown admission before the state mutex so a stopped holder rejects
 // late writes. A reusable cached value can be returned even when its caller
 // context is already cancelled, because cache selection precedes that check.

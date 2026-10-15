@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// grokvoice.go binds prepared Grok voice requests and response callbacks to
+// native audio execution.
 // Grok voice execution forwards a prepared request and derives audio units
 // from its base operation and retained payload. The adapter passes
 // response/transport callbacks to the native executor, which closes response

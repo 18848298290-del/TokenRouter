@@ -12,11 +12,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// OpenAI authorization stores session and metadata state in the provider core,
-// while its callbacks need current proxy, TLS and privacy infrastructure. The
-// application dependency object is captured by those callbacks and read at
-// invocation, allowing configured router and profile choices to determine each
-// token request's transport options.
+// openai_authorization.go supplies OpenAI authorization callbacks using
+// current proxy, TLS, and privacy dependencies. The provider core owns
+// authorization sessions and metadata. The application dependency object is
+// captured by those callbacks and read at invocation, allowing configured
+// router and profile choices to determine each token request's transport
+// options.
 //
 // An enabled router needs a token UA or a selected profile before dynamic
 // Codex UA lookup is considered. A profile-ID pointer counts as selected even

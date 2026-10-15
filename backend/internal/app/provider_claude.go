@@ -12,10 +12,12 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// Claude authorization and gateway credential lookup use the same provider
-// token source and refresh coordinator. OAuth tokens follow Claude refresh
-// policy, while Vertex credentials use the shared access-token cache through
-// the service-account adapter before message execution receives them.
+// provider_claude.go assembles Claude authorization and token sources for
+// gateway message credentials. Claude authorization and gateway credential
+// lookup use the same provider token source and refresh coordinator. OAuth
+// tokens follow Claude refresh policy, while Vertex credentials use the shared
+// access-token cache through the service-account adapter before message
+// execution receives them.
 
 // provideClaudeAuthorizationHTTP binds Claude OAuth flows to their
 // administration handler.

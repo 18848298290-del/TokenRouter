@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// namespace.go prefixes supported Redis command keys and cleans up each test
+// namespace.
 // Redis integration suites share one server while each test needs
 // distinguishable key names. Namespaced creates a client using the base
 // connection settings and adds a hook that prefixes recognized command key

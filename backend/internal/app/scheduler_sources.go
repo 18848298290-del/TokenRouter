@@ -11,10 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// Scheduler snapshots read full provider records through codec wrappers and
-// narrow group records to hydration and status. These adapters retain nil query
-// results and pass repository errors alongside converted data, leaving snapshot
-// rebuilding, copying, and storage encoding to the scheduler and codec.
+// scheduler_sources.go adapts provider and routing repositories for scheduler
+// snapshot loading. Scheduler snapshots read full provider records through
+// codec wrappers and narrow group records to hydration and status. These
+// adapters retain nil query results and pass repository errors alongside
+// converted data, leaving snapshot rebuilding, copying, and storage encoding to
+// the scheduler and codec.
 
 // schedulerProviderSource wraps stored provider reads for scheduler snapshot
 // persistence.

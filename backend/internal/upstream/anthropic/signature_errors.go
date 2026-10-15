@@ -2,6 +2,8 @@ package anthropic
 
 import "strings"
 
+// signature_errors.go classifies signature and malformed-thinking errors for
+// request recovery decisions.
 // Thinking recovery is selected from upstream error text using configurable
 // substrings and built-in message patterns. Broad signature matches and several
 // malformed-history cases report eligibility to the exchange caller, which

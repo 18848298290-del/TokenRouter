@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// proxy_expiry.go runs periodic proxy expiration sweeps and coordinates their
+// startup and shutdown.
 // Proxy expiration maintenance runs an immediate sweep and then repeats on its
 // configured interval. Construction leaves the worker idle, and startup and
 // terminal stopping share state so repeated Start calls cannot register

@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// expiry.go schedules ordered payment reconciliation and expiration rounds and
+// coordinates their startup and shutdown.
 // Late callbacks, provider processing, and unfinished grants require repeated
 // recovery while payment orders can also expire. OrderExpiry runs those four
 // phases in a fixed order, immediately after startup and on later interval

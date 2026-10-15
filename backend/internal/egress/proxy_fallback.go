@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// proxy_fallback.go resolves expired proxies to a reachable backup or an
+// allowed direct connection.
 // Expiration can leave providers on the original proxy, switch them to direct
 // connections, or follow a chain of backup IDs. Each expired backup supplies
 // the next fallback rule, so the starting proxy's mode alone does not determine

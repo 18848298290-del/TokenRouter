@@ -13,19 +13,19 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// Provider activity, health windows, and scheduling switches have dedicated
-// writers so a configuration save does not replace observations from
-// requests. Unconditional setters coexist with Grok's conditional limit
-// writers, which stop earlier responses from shortening a later reset and
-// clear only the timestamp pair observed by a successful request.
+// provider_states.go writes provider activity, health windows, and scheduling
+// switches independently of configuration saves. Unconditional setters coexist
+// with Grok's conditional limit writers, which stop earlier responses from
+// shortening a later reset and clear only the timestamp pair observed by a
+// successful request.
 //
 // State statements generally precede a separate outbox attempt, with failures
 // reported through the observer. Immediate snapshot synchronization is chosen
 // per operation; session-window changes use full provider events and activity
-// uses last-used events, while disabling publishes promptly. Raw SQL
-// guards retained deletion rows, and ordinary Ent updates use the predicates
-// shown at each operation. A supplied SQL transaction retains caller-owned
-// completion; ignored notification errors can still abort that transaction.
+// uses last-used events, while disabling publishes promptly. Raw SQL guards
+// retained deletion rows, and ordinary Ent updates use the predicates shown at
+// each operation. A supplied SQL transaction retains caller-owned completion;
+// ignored notification errors can still abort that transaction.
 
 // UpdateLastUsed stores the injected current time for one provider and emits
 // its Unix-seconds activity observation. The Ent update can match no row and

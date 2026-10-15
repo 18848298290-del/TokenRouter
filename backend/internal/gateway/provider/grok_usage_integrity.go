@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// grok_usage_integrity.go determines when Grok Chat requires billable
+// aggregate token evidence.
 // Grok Chat success requires aggregate token evidence before gateway output is
 // committed. The requirement follows either the selected Grok platform or a
 // recognized Grok model name on a compatible provider; image detail fields

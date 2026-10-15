@@ -4,8 +4,8 @@ import (
 	"context"
 )
 
-// App-level callers can invalidate an authentication credential through the
-// shared cache even when they do not own an APIKeyService operation. The hashed
+// published_invalidation.go adapts shared authentication-cache invalidation
+// for application callers outside APIKeyService operations. The hashed
 // credential is deleted before publication, and each attempted cache call
 // returns no error through this invalidator interface.
 

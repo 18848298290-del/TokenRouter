@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// provider_token_window.go reads provider token totals through optional batch
+// queries or sequential individual queries.
 // Provider token windows can be read together when the supplied reader exposes
 // a batch method. A batch failure ends the operation; readers with only the
 // single-provider method are queried in order, and nil statistics leave that

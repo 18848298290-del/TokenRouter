@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// auth_options.go assembles authentication dependencies, startup options, and
+// runtime policy interfaces.
 // Authentication actions read runtime policy through AuthSettings while
 // startup options supply JWT and release-mode defaults. Provider grants
 // retain separate signup and first-binding switches, and application wiring

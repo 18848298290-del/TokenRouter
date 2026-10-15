@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// provider_window_rules.go computes fixed provider reset times and reconciles
+// stored quota windows.
 // Fixed provider quotas reset according to a local clock hour and,
 // for weekly quotas, a weekday. Publishing the next reset timestamp
 // and reconciling stored usage have different eligibility rules:

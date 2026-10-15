@@ -37,6 +37,8 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// billing.go constructs billing admission, funding, subscription, redemption,
+// and pricing services.
 // Billing admission and settlement use the same application stores and
 // calendar. Task funding participants receive the settlement transaction, and
 // deferred redemption effects use the application task tracker so shutdown can

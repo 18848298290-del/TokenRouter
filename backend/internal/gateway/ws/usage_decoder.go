@@ -2,6 +2,8 @@ package ws
 
 import "github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 
+// usage_decoder.go extracts WebSocket request accounting metadata through
+// shared request-state decoders.
 // Turn accounting keeps accepted service tier and recorded reasoning effort
 // separate from the client's requested effort. RequestUsageDecoder uses the
 // shared request-state extractors, so WS snapshots follow the same alias,

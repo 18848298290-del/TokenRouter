@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// provider_identity.go scopes Codex identities and cache keys by API key and
+// provider credential namespace.
 // Codex device and session values are scoped by API key and provider credential
 // namespace before they reach an upstream account. Account/user identifiers
 // take precedence over a stored seed and setup-token digest, so providers using

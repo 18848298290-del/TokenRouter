@@ -26,6 +26,8 @@ import (
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 )
 
+// openai_ws_ingress_execution_adapter.go selects and connects pooled,
+// dedicated, or HTTP-bridged Responses execution.
 // A selected Responses WS provider can run pooled turns, a dedicated relay, or
 // an allowed HTTP bridge. Grok and an HTTP Responses route force bridging;
 // oversized initial frames can choose it only when group conversion and

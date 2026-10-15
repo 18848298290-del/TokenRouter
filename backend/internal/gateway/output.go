@@ -2,6 +2,8 @@ package gateway
 
 import "github.com/TokenFlux/TokenRouter/internal/upstream"
 
+// output.go tracks HTTP, retry and semantic output commitment across provider
+// attempts.
 // HTTP commitment, retry commitment, and semantic output can occur at
 // different times during a request. An emitted keepalive can commit HTTP while
 // leaving provider recovery open; an output event closes that window only when

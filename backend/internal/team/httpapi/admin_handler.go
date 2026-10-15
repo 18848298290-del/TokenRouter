@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// admin_handler.go handles administrator team queries, updates, ownership
+// transfers, and dissolution.
 // Administrator team requests use a route team identifier rather than the
 // current user's membership. Handlers bind optional update pointers so
 // omission remains distinguishable from zero, then let the service validate

@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// token_version.go compares captured and stored token versions to detect
+// provider credentials superseded by refresh.
 // An OAuth request can retain a provider snapshot after another refresh has
 // stored a newer access token. Cache invalidation removes an existing token
 // entry, but a request still holding the older record could subsequently fill

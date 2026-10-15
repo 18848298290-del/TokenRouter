@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_request_client_policy.go enforces OAuth client restrictions and
+// resolves request TLS and user-agent policy.
 // OAuth client eligibility reads caller identity and current global permissions
 // before an auxiliary or long-lived entry sends upstream traffic. TLS routing
 // and user-agent policy use the selected provider, while rejection logging

@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// grant_settings.go resolves and encodes provider-specific signup and
+// first-binding grant settings.
 // Signup and first-binding grants use separate provider switches while
 // sharing global fallback amounts and plan selections. An enabled provider
 // can contribute its parser defaults even when balance or concurrency text is

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// ip.go compiles IP access rules and matches client addresses against
+// addresses or networks.
 // An API-key allowlist can be configured yet contain no valid IP patterns.
 // Compilation retains the original pattern count while storing only
 // successfully parsed addresses and CIDRs, so

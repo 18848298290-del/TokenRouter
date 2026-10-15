@@ -15,11 +15,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/intercept"
 )
 
-// A soft-deleted entity stays in its table with deleted_at set to the
-// application time. Ordinary Ent queries hide these rows, while maintenance
-// callers can use SkipSoftDelete to inspect deleted entities or remove them
-// physically. Query traversal and mutation hooks apply the same active-row
-// condition across schemas that include the mixin.
+// soft_delete.go implements Ent query filtering and delete-to-update
+// conversion for entities with a deleted_at timestamp. Ordinary Ent queries
+// hide rows whose deletion timestamp is set, while maintenance callers can use
+// SkipSoftDelete to inspect deleted entities or remove them physically. Query
+// traversal and mutation hooks apply the same active-row condition across
+// schemas that include the mixin.
 //
 // Delete builders are created for deletion, so changing a mutation's operation
 // also requires dispatching it through the generated client as an update. The

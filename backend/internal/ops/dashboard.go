@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// dashboard.go queries dashboard traffic totals and attaches available system
+// metrics, job diagnostics, and health scores.
 // Dashboard traffic totals can remain useful when system samples or
 // background-job diagnostics cannot be read. The service resolves the requested
 // query mode and SLA exclusions before storage runs, then attaches available

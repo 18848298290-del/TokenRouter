@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// antigravity_refresh.go qualifies Antigravity OAuth refreshes and merges
+// exchanged credentials with retained provider settings.
 // Antigravity refresh qualification uses its fixed fifteen-minute window and
 // an independent force flag. Refresh exchanges tokens even when project
 // discovery is incomplete, so returned credentials can retain a usable stored

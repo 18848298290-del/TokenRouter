@@ -21,6 +21,8 @@ import (
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// retry_loop.go executes Antigravity retries and selects model waits, credit
+// recovery, or provider switching.
 // Antigravity forwarding retries one provider against its configured base URL,
 // combining ordinary transport/status retries with structured model delays and
 // enabled-credit recovery. The selected URL list currently contains one entry,

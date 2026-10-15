@@ -16,6 +16,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// response_cc_read.go reads Chat Completions JSON and stream chunks while
+// recording usage, processing tier, and first output.
 // Chat response scanning observes raw payloads before typed chunk conversion,
 // retaining the latest usage and processing tier for attempt finalization.
 // Text, reasoning, or tool output starts first-token timing, while a usage-only

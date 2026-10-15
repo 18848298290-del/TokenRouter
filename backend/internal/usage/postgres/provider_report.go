@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// provider_report.go builds provider report collections from a shared
+// grouping-sets query.
 // Provider reports need daily history, model totals, and both inbound and
 // upstream endpoint totals for the same raw request range. One GROUPING SETS
 // query emits four representations of each request, identified by a grouping

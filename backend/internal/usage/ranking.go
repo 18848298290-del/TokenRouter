@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// ranking.go normalizes ranking metrics, visible counters, and row limits.
 // Public rankings order users by one configured metric while allowing
 // administrators to hide other counters. A hidden ordering metric would leave
 // users unable to interpret the rank, so normalized settings enable the

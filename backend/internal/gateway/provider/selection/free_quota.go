@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// free_quota.go filters Grok Free OAuth candidates and publishes the advanced
+// picker's shared quota gate.
 // Explicit Grok Free OAuth candidates share a soft token-budget gate within
 // their selection path. Basic selection uses the app-supplied gate, while an
 // advanced picker lazily publishes its own gate so its observations persist

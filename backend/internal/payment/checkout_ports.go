@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// checkout_ports.go defines checkout persistence operations and binds buyer,
+// provider, audit, and timing callbacks.
 // A checkout creates a local order before asking the selected provider to
 // initiate payment, then stores the returned references. The injected
 // persistence interface separates those two writes, while runtime callbacks

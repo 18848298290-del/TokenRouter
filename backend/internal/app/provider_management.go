@@ -35,10 +35,12 @@ import (
 	usagepostgres "github.com/TokenFlux/TokenRouter/internal/usage/postgres"
 )
 
-// Provider management combines current runtime status, stored configuration,
-// model catalogs, privacy, and coordinated refresh. New provider snapshots
-// enter the import probe queue, while model, tier, and privacy query services
-// register their own waits before shared transport and storage are closed.
+// provider_management.go assembles provider administration, model queries,
+// privacy operations, and runtime presentation. Provider management combines
+// current runtime status, stored configuration, model catalogs, privacy, and
+// coordinated refresh. New provider snapshots enter the import probe queue,
+// while model, tier, and privacy query services register their own waits before
+// shared transport and storage are closed.
 
 // providerGroupReferences adapts routing group data for provider administration
 // rules.

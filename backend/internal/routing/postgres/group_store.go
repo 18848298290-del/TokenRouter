@@ -22,6 +22,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// group_store.go persists group configuration and membership mutations and
+// loads provider-count summaries.
 // Group mutations can change provider membership, user permissions, and
 // scheduler visibility alongside the stored group. Context-carried Ent
 // transactions supply both entity writes and SQL participants, allowing

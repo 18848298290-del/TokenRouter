@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// run.go stores creative runs and output metadata and applies versioned task
+// transitions.
 // Creative run storage persists task identity, hashed inputs, funding
 // snapshots, and output metadata while image bytes remain transient. Creating
 // a queued run, its pending output rows, and provisioning outbox entry shares

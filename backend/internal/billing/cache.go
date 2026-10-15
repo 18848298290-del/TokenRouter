@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// cache.go defines cached balance and API-key spending data used by billing
+// eligibility checks.
 // Eligibility reads cached balances and key spending windows before
 // request admission. Persistent funding writes remain the financial source,
 // while queued deductions, usage increments, and invalidation keep cache

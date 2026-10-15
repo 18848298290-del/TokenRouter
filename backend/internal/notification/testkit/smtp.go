@@ -18,6 +18,8 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// smtp.go provides in-memory settings and a capturing SMTP server for
+// notification tests.
 // Notification tests need settings that can serve concurrent marker and secret
 // operations without a database, plus a local SMTP peer that exposes received
 // MIME content. MemorySettings keeps its string map under one mutex and returns

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// cleanup_service.go creates and executes persisted usage-cleanup tasks and
+// requests repair of affected aggregates.
 // Administrator cleanup persists a deletion task before a worker claims it
 // and removes matching usage rows in batches. A recurring callback and
 // immediate dispatch from CreateTask can arrive together, so lifecycle

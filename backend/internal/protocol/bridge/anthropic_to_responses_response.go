@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+// anthropic_to_responses_response.go converts Messages responses and stream
+// lifecycles into Responses output items.
 // Messages deltas address content blocks, while Responses clients reconstruct
 // output items and content parts through separate lifecycle events. Conversion
 // tracks one active item: consecutive text blocks share a message; reasoning and

@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_responses_item_id.go removes rejected replay identifiers while
+// retaining input items and tool-call associations.
 // Responses replay has distinct item-ID and call-ID namespaces that can
 // contain equal strings. A rejected item ID should not erase an output paired
 // through call_id or an opaque item reference; sanitation therefore changes

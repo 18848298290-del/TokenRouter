@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// admin_key_settings.go serves management-key status, regeneration, and
+// deletion responses.
 // Administrator API Key status responses expose a masked credential, while
 // regeneration returns the newly saved full value. The runtime settings
 // service owns generation and deletion, and these HTTP handlers write the

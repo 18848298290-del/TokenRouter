@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// user_handler.go binds authenticated team requests and converts usage filters
+// before invoking team services.
 // Team actions take the acting account from the authenticated request context
 // and let the service establish membership or ownership. Body omission
 // matters for full numeric/boolean triples, while usage queries retain absent

@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// routes_guards.go enforces selected-group protocol permissions and resolves
+// eligible client group substitutions before endpoint execution.
 // Protocol admission runs after authentication and selected-group assignment,
 // before endpoint execution. Extended route metadata determines the group
 // control for new work, while Responses Compact waits until its wildcard path

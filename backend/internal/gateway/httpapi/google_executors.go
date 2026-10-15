@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// google_executors.go creates request-local HTTP output adapters for Gemini
+// and Antigravity runtime calls.
 // Google platform preparation receives synchronous HTTP output for each
 // attempt. Gemini and Antigravity retain their own runtime instances, while
 // these entry adapters choose the client protocol and create the corresponding

@@ -12,6 +12,8 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// stream.go relays pooled upstream events while collecting usage and
+// classifying recoverable turn failures.
 // A pooled response turn can fail before any client frame, after leading
 // events, or after the client disconnects. Provider policy is evaluated on
 // observed upstream data before model, tool, and capacity-code rewrites prepare

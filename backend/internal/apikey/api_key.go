@@ -9,11 +9,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// A Key stores credential ownership separately from the hydrated payer and
-// acting member used during authentication. Total quota and spending windows
-// describe different admission checks, while expiry uses a strict comparison
-// after the configured timestamp and unbounded quota has a distinct
-// remaining-value sentinel.
+// api_key.go defines credential views and evaluates their lifecycle, quota,
+// and spending-window values. Credential ownership stays separate from the
+// hydrated payer and acting member used during authentication. Total quota and
+// spending windows describe different admission checks, while expiry uses a
+// strict comparison after the configured timestamp and unbounded quota has a
+// distinct remaining-value sentinel.
+//
+// Window display helpers return zero for absent or elapsed starts while
+// leaving the saved usage counters intact. Remaining quota is clamped at zero
+// for an exhausted positive allowance and returns minus one for an unbounded
+// allowance. Copy helpers clone group configuration and binding records, while
+// retaining other references according to their declaration-level copying
+// rules.
 
 const (
 	// Key status values distinguish disabled credentials from expiry and quota

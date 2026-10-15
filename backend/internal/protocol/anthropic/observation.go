@@ -8,10 +8,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// observation.go observes usage presence, semantic output, completion, and
+// model identity in Messages payloads.
 // Messages execution needs separate evidence that a response reports usage,
 // produces content, and reaches a terminal event. Counter presence includes
-// zero-valued observations, while semantic output requires content text or a
-// recognizable tool call; response model identity is read before downstream
+// zero-valued observations, while semantic output requires recognized text, reasoning, or
+// tool content; response model identity is read before downstream
 // format conversion can substitute the client's requested model.
 
 // Observation holds independent usage, output, completion, and response-model evidence.

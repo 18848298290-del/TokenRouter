@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// rebate.go coordinates order rebate claims, accrual, and completion audit
+// updates within one database transaction.
 // An order rebate needs one persistent replay claim because webhook, query,
 // and recovery calls can repeat entitlement work. The audit uniqueness key and
 // completed applied/skipped observations guard a provisional claim that

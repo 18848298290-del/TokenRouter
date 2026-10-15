@@ -9,6 +9,8 @@ import (
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// composite_response.go maps system and payment settings into the combined
+// administrator response.
 // The combined administrator response selects system controls and payment
 // configuration from separate reads. Credentials become configured-presence flags,
 // while connection details, public client IDs, and editor content remain available

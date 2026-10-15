@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_realtime_traffic.go queries realtime request and token rates from
+// usage records and final-client errors.
 // Realtime traffic combines usage rows and final-client errors into minute
 // buckets, retaining minutes that occur in either source through a full outer
 // join. Average rates divide total observed counts by the complete requested

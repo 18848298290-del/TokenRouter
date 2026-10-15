@@ -8,10 +8,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Gemini quota display needs local per-model request, token, and provider-cost
-// totals. The adapter narrows usage statistics into that shape and retains
-// optional batch-total support only when the assembled usage repository
-// implements the matching capability.
+// provider_gemini_usage.go adapts local model usage statistics and optional
+// batch totals for Gemini quota display. The display needs request, token, and
+// provider-cost totals per model. The adapter narrows usage statistics into
+// that shape and retains optional batch-total support only when the assembled
+// usage repository implements the matching capability.
 
 // providerGeminiUsageReader adapts local usage model statistics for Gemini
 // quota display.

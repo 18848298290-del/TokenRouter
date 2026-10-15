@@ -11,18 +11,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Provider deletion removes group memberships and scheduled plans while Ent's
-// normal delete hook retains the provider with a deletion timestamp.
-// Membership replacement deletes old links and inserts the supplied set
-// through the same transaction client, keeping the database's relationship
-// changes together.
+// provider_membership.go deletes providers and replaces their group
+// memberships through transaction-aware storage operations. Provider deletion
+// removes group memberships and scheduled plans while Ent's normal delete hook
+// retains the provider with a deletion timestamp. Membership replacement
+// deletes old links and inserts the supplied set through the same transaction
+// client, keeping the database's relationship changes together.
 //
 // Locally created transactions are committed before the snapshot removal or
 // group-change notification. A store already bound to a transaction leaves
-// commit and rollback to its caller, which also needs to account for
-// immediate callbacks. Empty BindGroups removes all links and returns before
-// event publication; nonempty replacement includes both former and selected
-// groups in its notification.
+// commit and rollback to its caller, which also needs to account for immediate
+// callbacks. Empty BindGroups removes all links and returns before event
+// publication; nonempty replacement includes both former and selected groups
+// in its notification.
 
 // Delete removes a provider's memberships and scheduled plans before running
 // Ent's provider delete operation. Normal contexts use SoftDeleteMixin to

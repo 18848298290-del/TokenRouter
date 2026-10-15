@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// refresh_blocks.go tracks refresh-failure cooldowns by provider and attempted
+// credential identity.
 // Refresh failures apply to the credentials that were attempted, so several
 // versions of one provider can carry different deadlines. Extending one version
 // leaves other identities intact, and a shorter later notice cannot reduce that

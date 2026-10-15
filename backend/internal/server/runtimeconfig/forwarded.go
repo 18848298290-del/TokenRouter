@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// forwarded.go loads and prepares forwarded client-IP settings for runtime
+// publication.
 // Client-IP identity must follow one selected mode and ordered header list
 // across startup and administrator updates. Persisted values overlay process
 // defaults; a missing header key is backfilled, while malformed stored names

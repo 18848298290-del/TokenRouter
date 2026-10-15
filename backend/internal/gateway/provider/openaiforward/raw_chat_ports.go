@@ -8,6 +8,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// raw_chat_ports.go defines the platform-specific callbacks and retry
+// observations used by raw Chat forwarding.
 // Native Chat can still need platform request repairs and auxiliary image
 // descriptions before exchange. Grok-specific health and retry evidence
 // supplements shared model, credential, and output bindings so the runner can

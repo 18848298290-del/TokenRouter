@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// plan_validation.go validates plan terms and normalizes group, currency and
+// validity inputs.
 // Plan creation checks required sale terms, while patches validate
 // only the fields they request. Nullable quota and comparison-price
 // patches can therefore clear a value or write zero without making

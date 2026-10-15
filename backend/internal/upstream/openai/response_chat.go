@@ -20,6 +20,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_chat.go converts Responses output to Chat Completions while
+// controlling deferred delivery and terminal failure handling.
 // Responses-to-Chat conversion can observe protocol progress before producing a
 // client chunk. Large-request silent-refusal detection retains converted chunks
 // until content evidence permits release, keeping a refusal eligible for

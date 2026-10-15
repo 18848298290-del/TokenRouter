@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/usageview"
 )
 
+// oauth_usage_copy.go copies mutable usage display fields for cache storage
+// and independent caller updates.
 // Usage query results contain mutable windows, maps, capability pointers, and
 // nested quota pools. Copying those values before cache storage or caller
 // editing keeps one display update from changing another observation,

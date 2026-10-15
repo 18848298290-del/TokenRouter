@@ -1,9 +1,10 @@
 package forward
 
-// Qoder error display can use a normalized client status that differs from the
-// upstream status. Provider error classification retains both, together with
-// the original formatted message and body, so HTTP adapters can display the
-// selected error while preserving source diagnostics.
+// qoder_error.go defines the captured upstream and client-facing fields of a
+// classified Qoder error. Qoder error display can use a normalized client
+// status that differs from the upstream status. Provider error classification
+// retains both, together with the original formatted message and body, so HTTP
+// adapters can display the selected error while preserving source diagnostics.
 
 // QoderErrorView holds classified client-output and source diagnostics for a Qoder error.
 type QoderErrorView struct {

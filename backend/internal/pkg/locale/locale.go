@@ -9,6 +9,8 @@ import (
 	"golang.org/x/text/language"
 )
 
+// locale.go normalizes supported language codes and negotiates request
+// language from the embedded catalog.
 // Supported locale codes and aliases come from the same embedded manifest used
 // by the frontend. Normalization rejects malformed identifiers before comparing
 // canonical codes, compatible regional suffixes, and explicit aliases. Request

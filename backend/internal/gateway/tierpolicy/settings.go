@@ -9,10 +9,10 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// Administrator Fast settings encode ordered service-tier rules with provider
-// and user scopes. Preparation copies the rule collections before normalizing
-// tier labels and model patterns, so validating saved JSON leaves the supplied
-// settings available to their current readers.
+// settings.go validates and encodes administrator Fast policy rules with
+// provider and user scopes. Preparation copies the rule collections before
+// normalizing tier labels and model patterns, so validating saved JSON leaves
+// the supplied settings available to their current readers.
 
 // Fast tier labels select rule matches; force actions choose the tier written
 // after scope and model qualification. The protocol normalizer owns accepted

@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// codex_image_config.go resolves provider image-generation overrides from
+// current, historical, and nested OpenAI settings.
 // OpenAI provider image settings accept current and historical keys at the top
 // of Extra before nested openai configuration. Typed presence matters: a
 // top-level false or empty string wins over nested values, while absent or

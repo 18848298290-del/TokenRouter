@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// ops_repo_request_details.go queries paginated request details by combining
+// usage records and final-client error observations.
 // Request drilldown combines usage rows labeled success with final-client error
 // rows through UNION ALL. Both observations can exist for one request, and the
 // query retains that distinction instead of producing one deduplicated HTTP

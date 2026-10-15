@@ -1,5 +1,7 @@
 package egress
 
+// openai_ws_policy.go defines OpenAI upstream transport choices and constructs
+// HTTP decisions with diagnostic reasons.
 // OpenAI scheduling distinguishes HTTP/SSE, the Responses WebSocket protocol,
 // and the broader WebSocket-ingress provider selection mode. The decision value
 // retains a reason when a caller chooses HTTP, allowing request routing

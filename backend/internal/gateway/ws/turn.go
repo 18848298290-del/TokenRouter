@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// turn.go queues accepted request snapshots for passthrough completion and
+// output restoration.
 // A passthrough terminal event can arrive after the client-side reader has
 // already captured request metadata. Matching completion to the oldest accepted
 // response.create retains that turn's client model, upstream model, acceptance

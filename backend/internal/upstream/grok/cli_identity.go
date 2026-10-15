@@ -8,6 +8,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// cli_identity.go selects Grok CLI versions and applies client identity
+// headers to forwarding requests.
 // Grok CLI proxy requests advertise a workspace version and client
 // identifier. The environment override is accepted only as canonical SemVer
 // meeting the pinned minimum; other values select the bundled version. Proxy-

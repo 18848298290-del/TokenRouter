@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// group_probe_lifecycle.go coordinates availability probe startup, round
+// admission, cancellation, and shutdown waits.
 // Availability probe dispatch belongs to one runner lifetime: construction is
 // idle, Start consumes one registration attempt, and Stop prevents later
 // restart. Scheduled ticks use a separate round lock so an instance can skip

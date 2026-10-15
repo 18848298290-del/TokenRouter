@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 )
 
+// types.go defines Responses and Chat wire values and adapts tool arguments,
+// result content, and usage aliases during JSON conversion.
 // Responses and Chat share conversation concepts but encode tool output,
 // arguments, usage aliases, and streamed empty values differently. Input
 // decoding retains nonstring tool-result JSON beside the public string form,

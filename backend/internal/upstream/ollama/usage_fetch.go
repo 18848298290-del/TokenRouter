@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// usage_fetch.go fetches Ollama Cloud settings and reports parsed usage or
+// categorized failure observations.
 // Ollama Cloud usage is read from a fixed HTTPS settings page using a
 // browser-session Cookie. Fetching checks both the outgoing URL and any final
 // response URL, rejects redirect statuses, and reads a bounded HTML body before

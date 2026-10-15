@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// user_handler.go handles current-account profile changes, identity binding,
+// and notification recipient management.
 // Current-account profile writes keep ordinary display edits separate from
 // sign-in email binding. Email field presence is rejected by profile update,
 // while preferred locale uses raw JSON to distinguish an omitted field from a

@@ -19,6 +19,8 @@ import (
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
+// client.go exchanges Antigravity credentials and queries account projects,
+// models, and user settings.
 // Antigravity account operations exchange OAuth credentials and discover
 // project, tier, model, and user-setting observations through Google
 // endpoints. Account/model queries try configured endpoints in order, while

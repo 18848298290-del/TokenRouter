@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// messages_group_fallback.go rebinds Messages and compatible attempts to an
+// authorized fallback group after prompt-too-long failures.
 // An Antigravity prompt-too-long failure can switch to a configured fallback
 // group only before output or cancellation and only once per request. The
 // target must resolve through authorization/funding policy and retain an

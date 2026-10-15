@@ -2,6 +2,8 @@ package testkit
 
 import "github.com/TokenFlux/TokenRouter/internal/payment"
 
+// provider.go supplies a configurable provider identity and supported-method
+// fixture for registry tests.
 // Registry identity scenarios need configured provider keys and supported
 // methods while payment operations stay outside the scenario. StaticProvider
 // overrides those identity methods and delegates other operations through its

@@ -14,6 +14,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// session_handler.go handles password login, second-factor completion,
+// registration, and panel session renewal or revocation.
 // Panel password login can produce a temporary TOTP challenge before the final
 // access and refresh credentials. The shared session handler applies CAPTCHA,
 // account, and backend-mode checks at the HTTP stages that own them, while

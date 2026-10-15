@@ -6,6 +6,8 @@ import (
 	"io"
 )
 
+// response_body.go reads upstream response bodies with a configurable byte
+// limit.
 // Buffered upstream bodies need a size bound before protocol decoders
 // allocate from the complete response. Reading one extra byte distinguishes
 // an exactly fitting body from overflow; failures return no body and leave

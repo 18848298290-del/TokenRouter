@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// index.go builds a searchable model attribute index and returns copied result
+// pages.
 // Catalog searches count every matching identity before returning a page,
 // including qualified names and their bare aliases. Attribute text and provider
 // lists are prepared once for the publication, while each query copies the

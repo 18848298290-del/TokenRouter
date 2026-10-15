@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated team endpoints and applies step-up
+// checks to selected sensitive actions.
 // Current-user team routes inherit the caller's authentication, rate limiting
 // and auditing middleware. Selected ownership/status/teardown operations
 // additionally use the supplied step-up handler, while endpoint methods pass

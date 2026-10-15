@@ -14,10 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A pending authentication flow records whether the user accepts an upstream
-// display name or avatar. The decision belongs to one pending session and can
-// reference the resulting canonical identity, keeping the selected profile
-// choices associated with that authentication outcome.
+// identity_adoption_decision.go defines persisted choices to adopt an upstream
+// display name or avatar during authentication. The decision belongs to one
+// pending session and can reference the resulting canonical identity, keeping
+// the selected profile choices associated with that authentication outcome.
 
 // IdentityAdoptionDecision stores profile choices associated with one pending
 // authentication session.

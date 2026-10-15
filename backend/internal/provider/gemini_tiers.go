@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// gemini_tiers.go normalizes Gemini account-tier identifiers and filters them
+// by OAuth variant.
 // Gemini account tier labels arrive as canonical IDs, historical names, and
 // hyphenated Code Assist values. Normalization maps those aliases to local
 // credential IDs, then OAuth-specific filtering rejects recognized tiers

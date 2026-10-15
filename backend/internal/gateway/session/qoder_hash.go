@@ -10,17 +10,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Qoder-compatible requests can declare session identity in headers or body fields.
-// The first nonblank explicit value wins; requests lacking one derive a session
-// from parsed content and source identity, then apply a Qoder namespace so the
-// scheduler receives a platform-specific sticky hash. Canonical MIME header names
-// are read before body session, conversation, previous-response, and prompt-cache fields.
+// qoder_hash.go selects explicit session identity or derives content-based
+// affinity for Qoder-compatible requests. The first nonblank explicit value
+// wins; requests lacking one derive a session from parsed content and source
+// identity, then apply a Qoder namespace so the scheduler receives a
+// platform-specific sticky hash. Canonical MIME header names are read before
+// body session, conversation, previous-response, and prompt-cache fields.
 //
-// The content path parses the caller's declared wire format and binds the supplied
-// SessionContext before using the shared generator. Its intermediate hash receives
-// a fallback label, separating content-derived identity from an explicit value
-// with the same text. An absent generated identity or parse failure produces no hash,
-// leaving the caller to choose its ordinary unbound routing behavior.
+// The content path parses the caller's declared wire format and binds the
+// supplied SessionContext before using the shared generator. Its intermediate
+// hash receives a fallback label, separating content-derived identity from an
+// explicit value with the same text. An absent generated identity or parse
+// failure produces no hash, leaving the caller to choose its ordinary unbound
+// routing behavior.
 
 // QoderExplicitSessionSeed returns the first nonblank supported header or body
 // session value. Header lookup expects canonical MIME keys and checks each first

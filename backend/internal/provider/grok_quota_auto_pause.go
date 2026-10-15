@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// grok_quota_auto_pause.go selects automatic Grok scheduling pauses from
+// snapshot age, Retry-After, and exhausted windows.
 // Grok OAuth scheduling pauses use recent quota evidence, with Retry-After
 // evaluated before request and token exhaustion. A parseable old observation is
 // ignored after the shared stale interval, while missing or malformed
@@ -15,8 +17,8 @@ import (
 //
 // Retry-After without a parseable timestamp stays active, whereas a valid
 // timestamp produces a fixed expiry. Exhausted windows require a positive limit
-// and remaining counter and ignore an elapsed positive Unix reset; their
-// textual ResetAt is not read here. Request exhaustion wins when both windows
+// and a present remaining counter, and ignore an elapsed positive Unix reset.
+// Their textual ResetAt is not read here. Request exhaustion wins when both windows
 // qualify. Callers receive the chosen window and utilization for the existing
 // scheduling decision, leaving provider state writes to their owner.
 

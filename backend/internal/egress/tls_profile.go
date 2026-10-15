@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// tls_profile.go defines stored TLS fingerprint parameters and validates
+// profile names.
 // A saved fingerprint supplies ordered TLS ClientHello parameters to the
 // transport converter. Empty lists let the dialer choose its built-in values,
 // while a nonempty extension list determines which parameter lists are

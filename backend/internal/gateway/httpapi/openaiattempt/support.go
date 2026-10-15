@@ -24,6 +24,8 @@ import (
 	openaierrors "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// support.go qualifies replay and captures scheduling, error and Cyber
+// completion evidence.
 // Retry readiness distinguishes HTTP commitment from actual output that makes
 // replay unsafe. The attempt supplies a pre-forward adjusted byte count;
 // unchanged output permits retry, while changed output requires classified

@@ -11,11 +11,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// API-key passthrough forwards a filtered request through one selected provider
-// while retaining the input model for the returned result. Empty text blocks
-// and unsupported search history are removed before the shared parsed body is
-// replaced. Credential kind is checked independently of the caller's forwarding
-// flags, so a successful acquisition still needs to identify an apikey credential.
+// anthropic_passthrough.go forwards API-key requests and returns model and
+// usage evidence from the selected provider. Empty text blocks and unsupported
+// search history are removed before the shared parsed body is replaced.
+// Credential kind is checked independently of the caller's forwarding flags, so
+// a successful acquisition still needs to identify an apikey credential.
 //
 // Response hooks decide error policy before upstream output continues. They
 // retain response metadata and the latest wire body for final usage evidence.

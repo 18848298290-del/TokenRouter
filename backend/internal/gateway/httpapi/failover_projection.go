@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// failover_projection.go converts upstream failover evidence into the fields
+// used by final OpenAI HTTP error output.
 // A failed attempt carries upstream evidence and classified reasons used by
 // final HTTP error output. Presentation derives safe credential responses and
 // protocol-specific flags from that evidence, while response headers and bytes

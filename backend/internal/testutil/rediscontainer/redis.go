@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// redis.go starts a dedicated Redis fixture and registers client and container
+// cleanup.
 // Some Redis integration fixtures need their own server because they test
 // shared keys, locks, or cancellation independently of other tests. New starts
 // a container and returns its client, with reverse cleanup order releasing the

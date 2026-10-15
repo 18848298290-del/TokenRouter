@@ -1,5 +1,7 @@
 package usageview
 
+// grok_quota.go represents Grok quota snapshots and detects retained header
+// evidence.
 // A Grok response can contain rate-limit windows, retry delay, or subscription
 // headers independently. Older serialized snapshots can also retain those
 // values while their HeadersObserved marker is false. HasObservedHeaders

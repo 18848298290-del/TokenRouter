@@ -10,6 +10,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// unsubscribe.go handles signed email unsubscribe requests and renders their
+// confirmation page.
 // Unsubscribe links expose a signed recipient/event decision through a public
 // GET endpoint. The service verifies the token and optional-event eligibility
 // before saving a preference, and the handler returns escaped recipient and

@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// auth_endpoints.go defines the authentication endpoints accepted by public
+// and protected route registration.
 // Public identity routes and protected session routes accept the same
 // assembled endpoint interface. Its operations write the Gin response through
 // their specific session or provider handlers, while registration supplies the

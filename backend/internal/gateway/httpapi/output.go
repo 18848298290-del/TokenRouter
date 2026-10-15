@@ -9,10 +9,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// Upstream execution writes synchronous events through an HTTP response sink.
-// Initial output capture obtains headers before commitment state because
-// keepalive-aware Header access can stop and join a pending heartbeat; later
-// state checks avoid that handoff while observing status and commitment.
+// output.go adapts synchronous upstream output events to the HTTP response
+// writer. Begin copies supplied header slices into the destination before
+// writing status, keeping those slices separate from the caller's header
+// storage. Emit writes event bytes before any requested flush and returns
+// write errors to the executor; flushing requires the writer to support
+// http.Flusher.
+//
+// InitialOutput clones headers before reading status and commitment because
+// keepalive-aware Header access can stop and join a pending heartbeat.
+// Reversing those reads could pair the headers with commitment state captured
+// before that handoff completed. Later OutputState calls inspect status and
+// commitment through the writer's optional interfaces without accessing
+// headers, so those observations do not repeat the heartbeat handoff.
 
 // MessagesOutput supplies synchronous HTTP output and request observations.
 // Executors read identity, routing, body, and funding state through execution.Request.

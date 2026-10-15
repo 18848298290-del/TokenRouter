@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// public.go returns public browser settings and language-selected legal
+// documents.
 // Browser initialization needs typed display settings and navigation arrays,
 // while individual legal reads return the requested language's agreement copy.
 // The public settings response adds the handler's build label and current

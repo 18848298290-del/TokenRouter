@@ -8,6 +8,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// header_overrides.go validates provider header overrides and constructs
+// normalized maps for outgoing requests.
 // Provider header overrides replace outgoing values case-insensitively after
 // platform authentication and client identity are prepared. Provider
 // eligibility allows API keys on Anthropic, OpenAI, Kimi, Zhipu, DeepSeek, and

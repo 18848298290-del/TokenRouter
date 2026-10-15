@@ -10,6 +10,8 @@ import (
 	"golang.org/x/term"
 )
 
+// cli.go collects interactive installation inputs and runs the confirmed setup
+// sequence.
 // Interactive installation collects and validates storage fields before running
 // connection probes. The PostgreSQL probe can create its target database during
 // this wizard, while persistent configuration and administrator creation wait

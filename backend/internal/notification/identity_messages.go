@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// identity_messages.go builds localized verification and password-reset
+// notification requests from prepared identity credentials.
 // Identity prepares verification codes and reset links before asking the mailer
 // to render a localized event. Expiry durations here populate human-readable
 // template variables; credential storage, cooldowns, and actual token lifetime

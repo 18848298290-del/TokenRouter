@@ -10,6 +10,8 @@ import (
 	wireopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// chat.go translates Ollama Cloud reasoning fields between request history and
+// compatible JSON or streamed responses.
 // Ollama Cloud chat payloads can use reasoning or thinking where compatible
 // clients use reasoning_content. Request history adds reasoning from a nonempty
 // assistant reasoning_content value only when neither alternate string is

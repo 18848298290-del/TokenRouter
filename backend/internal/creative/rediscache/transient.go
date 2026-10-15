@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 )
 
+// transient.go stores and retrieves temporary creative payloads and image
+// bytes in expiring Redis keys.
 // Creative plaintext prompts and media occupy expiring Redis keys separately
 // from persistent task hashes and metadata. Payload JSON carries source counts
 // and mask presence, while image bytes occupy indexed input/output keys or the

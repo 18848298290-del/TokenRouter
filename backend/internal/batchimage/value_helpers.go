@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// value_helpers.go resolves stored model identities and normalizes nullable
+// text and image reference values.
 // Nullable stored text uses trimmed empty values when a job has no recorded
 // field. Model accessors retain the client and internal routing identities
 // when present and use the upstream snapshot for older jobs, keeping public

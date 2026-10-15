@@ -23,12 +23,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// A composite credential selects its request group from a client model prefix,
-// while upstream requests use the remaining model ID. JSON, multipart, and
-// Gemini URL parameters carry that identity differently, so extraction and
-// rewriting follow the endpoint's representation. Model-less reads retain the
-// composite credential and mark group assignment as unnecessary; connection
-// endpoints that can change models are rejected before group selection.
+// api_key_composite.go selects a composite key's group and rewrites prefixed
+// model names across HTTP representations. A composite credential selects its
+// request group from a client model prefix, while upstream requests use the
+// remaining model ID. JSON, multipart, and Gemini URL parameters carry that
+// identity differently, so extraction and rewriting follow the endpoint's
+// representation. Model-less reads retain the composite credential and mark
+// group assignment as unnecessary; connection endpoints that can change models
+// are rejected before group selection.
 //
 // The original prefixed name remains in request context and response output.
 // Additional tool models can select the same binding, while a known prefix for

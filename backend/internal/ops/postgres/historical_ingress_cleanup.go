@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// historical_ingress_cleanup.go pages historical ingress-rejection candidates
+// and deletes selected IDs before a supplied cutoff.
 // Historical cleanup first pages through auth-phase rows older than a cutoff
 // and lacking selected provider context. Classification happens in Ops after
 // this read; deletion later rechecks the supplied IDs and time cutoff alone, so

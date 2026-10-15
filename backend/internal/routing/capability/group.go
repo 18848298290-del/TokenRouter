@@ -4,6 +4,8 @@ import (
 	"fmt"
 )
 
+// group.go defines and validates the client protocols available for group
+// admission.
 // Group client admission is independent of provider platform selection. Public
 // entries come from the protocol catalogue, excluding upstream-only operations,
 // so mixed groups can expose the same ordered choices while provider route

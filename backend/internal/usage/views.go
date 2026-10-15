@@ -7,6 +7,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// views.go defines loaded account, API-key, provider, and group views attached
+// to usage records.
 // Retained usage rows can be displayed beside current account, key, provider
 // and group metadata. These views carry the fields consumed by nested HTTP
 // DTO conversion, including optional associations and mutable collections

@@ -2,6 +2,8 @@ package httpapi
 
 import "github.com/gin-gonic/gin"
 
+// routes_user.go registers authenticated user redemption and subscription HTTP
+// endpoints.
 // User billing routes select redemption and subscription actions under an
 // authenticated group owned by app wiring. History, active/progress/summary
 // queries and quota-conditioned self-revocation share that group, while caller

@@ -1,5 +1,7 @@
 package capability
 
+// platforms.go defines provider platform identifiers and returns the supported
+// platform list.
 // Provider platform names select capability tables and constrain
 // forced-platform candidate queries. The complete platform list is returned
 // with fresh storage so a caller building a cross-platform pool can change its

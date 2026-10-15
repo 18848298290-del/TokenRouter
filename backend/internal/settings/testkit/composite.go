@@ -29,6 +29,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// composite.go assembles module settings readers and runtime publishers for
+// integration fixtures.
 // Combined settings tests use the real module readers, normalization, and runtime
 // publication callbacks around a fixture repository. The assembly holds startup
 // configuration for later reads and gives tests control over plan lookup and

@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
+// order_list.go queries buyer and administrator payment-order pages with their
+// matching record counts.
 // Payment list counts and pages use the same requested predicates but execute
 // as separate queries, so concurrent order updates can change membership
 // between them. User queries fix ownership, while administrator queries can

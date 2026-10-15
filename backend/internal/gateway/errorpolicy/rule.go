@@ -6,11 +6,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
-// Final error-response rules combine status and keyword conditions after a
-// separate platform filter. Validation requires configured conditions and
-// values for custom response actions; it checks a custom status for
-// positivity, so callers do not receive an HTTP range guarantee from this
-// model.
+// rule.go defines and validates configurable final error-response rules. Final
+// error-response rules combine status and keyword conditions after a separate
+// platform filter. Validation requires configured conditions and values for
+// custom response actions; it checks a custom status for positivity, so callers
+// do not receive an HTTP range guarantee from this model.
 
 // Match modes combine the configured status-code and keyword categories while
 // the separate platform filter still qualifies every rule before those conditions.

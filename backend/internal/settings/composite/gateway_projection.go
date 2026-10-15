@@ -4,6 +4,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 )
 
+// gateway_projection.go extracts gateway update settings and assigns gateway
+// read results to the snapshot.
 // Gateway administrator values mix model defaults, request header choices,
 // and prompt rules in the combined Snapshot. Extraction supplies the gateway
 // preparer with those fields, and readback transfers the gateway reader's result;

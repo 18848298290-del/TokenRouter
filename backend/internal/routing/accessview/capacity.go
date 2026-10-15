@@ -1,5 +1,6 @@
 package accessview
 
+// capacity.go defines the group capacity totals returned to console consumers.
 // A group's displayed capacity combines provider limits with current runtime
 // counts. These values describe the providers observed by CapacityService, so
 // console consumers use them as aggregate availability information while

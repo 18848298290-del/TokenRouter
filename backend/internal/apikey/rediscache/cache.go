@@ -13,11 +13,19 @@ import (
 	keycore "github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
+// cache.go stores authentication snapshots and creation counters in Redis
+// and publishes cache invalidations.
 // Shared authentication entries store JSON snapshots under hashed credential
 // identities, while creation-failure counters are scoped by user ID. The Redis
 // adapter retains a caller-owned client and uses a dedicated Pub/Sub channel to
 // deliver local invalidation callbacks until cancellation or subscriber
 // closure.
+//
+// Creation-failure updates queue an increment followed by expiration in an
+// ordinary pipeline. Either command can take effect when the other fails, so
+// the adapter reports the execution error rather than promising rollback.
+// Subscription readiness follows the Redis acknowledgement; every exit closes
+// the subscription before its caller can retry or finish shutdown.
 
 // Redis names separate user creation counters, hashed authentication entries
 // and invalidation messages; creation increments refresh their configured counter lifetime.

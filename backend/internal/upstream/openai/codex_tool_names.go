@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
+// codex_tool_names.go aliases reserved OAuth tool names and restores client
+// tool identities in returned protocol objects.
 // OAuth Responses reserves the python tool name, so caller-defined Python tools
 // use an alias on the upstream request. Declarations, selected tool choices,
 // and historical function calls must agree on that alias or a response could

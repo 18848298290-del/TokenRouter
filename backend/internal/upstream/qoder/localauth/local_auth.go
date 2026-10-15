@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// local_auth.go reads and decrypts local Qoder credentials for manual import
+// while retaining the complete machine identity.
 // Local Qoder import reads an encrypted user record beside the machine ID that
 // supplies its AES key. Trailing CR and LF bytes are removed from both files
 // before key derivation or base64 decoding, so storage line endings do not

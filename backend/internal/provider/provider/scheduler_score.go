@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// scheduler_score.go adapts provider records and live load to administrative
+// scheduler score calculations.
 // Administrative scores use the same scheduler feedback and scoring function as
 // request selection. Provider records are converted to score inputs while a
 // pointer-keyed source map keeps their OpenAI quota state available to the

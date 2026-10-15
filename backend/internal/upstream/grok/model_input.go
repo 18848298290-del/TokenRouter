@@ -13,6 +13,8 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// model_input.go normalizes Grok replay history while pairing tool calls with
+// outputs and retaining extracted images.
 // Replayed tool calls can carry separate item IDs, call IDs, or no explicit
 // pairing ID. A two-pass scan registers all calls before pairing outputs so
 // an output can precede its call. Conflicting item aliases are removed from

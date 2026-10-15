@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// totp.go stores TOTP setup and login challenges, verification attempt counts,
+// and session step-up grants in Redis.
 // TOTP setup and login challenges use separate Redis records, while attempt
 // counts and step-up grants carry different admission decisions. Reads leave
 // challenge records available for the core to validate and delete at its chosen

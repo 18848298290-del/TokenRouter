@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// gemini_internal_schema.go adapts JSON tool schemas to the restricted
+// internal Gemini schema shape.
 // Internal Gemini function schemas use a restricted shape, so richer JSON
 // Schema input is approximated before becoming a declaration. Root definitions
 // expand through their final reference component, allOf contributes fields,

@@ -1,5 +1,7 @@
 package egress
 
+// operator_url.go validates operator-supplied upstream URLs using the
+// configured host and scheme policy.
 // Operator-supplied base URLs have different validation when the host allowlist
 // is enabled. The enabled path requires HTTPS and a matching host, while the
 // disabled path uses format validation with the configured permission for HTTP

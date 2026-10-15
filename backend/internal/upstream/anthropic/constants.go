@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// constants.go defines Claude request endpoints, CLI identity defaults, and
+// beta token combinations.
 // Claude request defaults combine protocol beta constants with CLI prompt,
 // Header, and cache settings. OAuth mimic, OAuth passthrough, CountTokens, and
 // API Key requests select different beta combinations, so sharing the wire

@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// group_probe_runner.go claims due groups, runs bounded probe attempts, and
+// saves their final outcomes.
 // A due-group lease must cover selection, every configured retry, and final
 // result storage. Each instance claims at most its worker count and skips
 // overlapping cron ticks. PostgreSQL leases defer competing claims by other

@@ -5,6 +5,8 @@ import (
 	billingdto "github.com/TokenFlux/TokenRouter/internal/billing/httpapi/dto"
 )
 
+// subscription_response.go prepares subscription response values with optional
+// localized plan text.
 // User subscription responses can resolve plan display text in a selected
 // language while retaining granted validity and quotas. The wrapper localizes
 // a shallow plan view before DTO conversion, and administrator/batch wrappers

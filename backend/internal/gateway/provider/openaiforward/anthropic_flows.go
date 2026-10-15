@@ -17,6 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// anthropic_flows.go forwards Messages requests and converts OpenAI requests
+// through Anthropic endpoints.
 // Native Anthropic targets can serve Messages clients directly or convert
 // Responses and Chat requests through Messages. Direct Messages retains the
 // client stream choice, while both OpenAI conversion routes request an upstream

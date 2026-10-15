@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// group_availability_probe.go defines probe outcomes, availability summaries,
+// and their persistence interface.
 // Availability history stores one final outcome per probe round, independently
 // of transient failures within retries. Group summaries combine counts in a
 // bounded window with the latest recorded status, and a bucket without

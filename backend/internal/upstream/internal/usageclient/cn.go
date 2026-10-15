@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
+// cn.go normalizes CN provider usage amounts, percentage windows, reset times,
+// and adapter endpoint URLs.
 // CN providers expose balance amounts and reset times in several JSON
 // representations. Numeric parsing accepts supported values before domain
 // validation, while reset timestamps are normalized to UTC and percentage

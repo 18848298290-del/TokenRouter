@@ -10,6 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 )
 
+// dashboard_snapshot.go loads dashboard components concurrently and caches
+// complete snapshot generations.
 // A dashboard snapshot combines overview, throughput, and error timelines into
 // one cached generation. Each component query progresses independently, and the
 // snapshot becomes available after all three complete successfully; their

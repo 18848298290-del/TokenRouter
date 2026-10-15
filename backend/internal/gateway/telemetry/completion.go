@@ -9,10 +9,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
-// A missing price and a tier downgrade explain different completion outcomes.
-// BillingEvent chooses a stable diagnostic name, severity, and identifying fields
-// for each recognized case, while the legacy observer accepts recorder messages
-// that already carry their component and text.
+// completion.go logs billing outcomes and recorder diagnostics from gateway
+// completion. CompletionBillingEvent chooses a stable diagnostic name,
+// severity, and identifying fields for each recognized case, while the legacy
+// observer accepts recorder messages that already carry their component and
+// text.
 
 // ObserveCompletion sends a recorder message through the component-aware legacy
 // logger using the message as data rather than a formatting template.

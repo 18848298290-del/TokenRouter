@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// gemini_internal_options.go builds internal Gemini tool declarations and
+// generation settings from Messages requests.
 // Internal Gemini tools distinguish client functions from built-in web search
 // and code execution declarations. Legacy search names are recognized
 // alongside search types, schemas are cleaned in caller-owned maps, and the

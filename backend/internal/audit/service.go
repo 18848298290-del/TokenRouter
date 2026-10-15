@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// service.go queues audit records, persists batches, and runs retention
+// cleanup through coordinated worker lifetimes.
 // Management requests enqueue audit records while a separate writer persists
 // batches. Queue saturation drops observations rather than delaying the request,
 // and failed batches are counted and discarded. Accepted records share their

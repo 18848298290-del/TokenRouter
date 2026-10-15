@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// catalog_extensions.go validates supplemental catalog rules and derives
+// missing cache prices.
 // Catalog supplements can fill missing model prices with media amounts or token
 // multipliers while retaining amounts already supplied, including zero.
 // Operation defaults use a separate reserved record, with optional pointers

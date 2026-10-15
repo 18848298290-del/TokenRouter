@@ -15,6 +15,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// group_fallback.go switches eligible failed attempts to an admitted fallback
+// group.
 // A prompt-too-long attempt can move to the configured invalid-request fallback
 // group once before output or cancellation ends recovery. The destination is
 // resolved against the effective key and client protocol, then checked for

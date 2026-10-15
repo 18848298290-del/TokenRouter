@@ -12,6 +12,8 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// admin_mutations.go persists administrator account deletion, group
+// replacement, and provider identity binding.
 // Administrator account deletion and group replacement combine account
 // permissions with API Key mutations. A configured Ent client supplies an
 // owned transaction, and the selected key participant plus user repository

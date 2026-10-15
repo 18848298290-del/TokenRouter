@@ -13,6 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// contracts.go defines Messages forwarding options, attempt state, and
+// synchronous HTTP operations.
 // Messages output distinguishes counting errors, native response errors, and
 // converted Chat or Responses output. Preparation keeps beta evaluation and
 // tool restoration state with each attempt, while the HTTP adapter supplies

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// session_limit.go defines cache operations for idle-session registration,
+// activity checks, counts, and removal.
 // Anthropic idle-session limits reserve provider capacity across requests
 // belonging to the same session. Successful or billable partial attempts keep
 // their registration until inactivity expires, while unsuccessful attempts

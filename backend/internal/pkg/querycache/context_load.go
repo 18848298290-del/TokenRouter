@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// context_load.go coordinates cancellable waiters sharing the same query load.
 // A caller can abandon a shared query without cancelling work still needed by
 // another waiter. Context-aware loads keep a waiter count under loadMu and run
 // with cancellation detached from the first caller while retaining that

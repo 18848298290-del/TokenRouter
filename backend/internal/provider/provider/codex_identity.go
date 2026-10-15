@@ -9,10 +9,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// Codex metadata isolation follows upstream credentials, so two local rows for
-// the same account can share a namespace. A ChatGPT account ID takes priority,
-// with an optional user ID separating members of one account; a stored
-// fingerprint seed supplies identity when account hints are absent.
+// codex_identity.go derives credential-based Codex namespaces and prepares
+// request fingerprints and account headers. Codex metadata isolation follows
+// upstream credentials, so two local rows for the same account can share a
+// namespace. A ChatGPT account ID takes priority, with an optional user ID
+// separating members of one account; a stored fingerprint seed supplies
+// identity when account hints are absent.
 //
 // Setup Token records can finally use a digest of their access token. An
 // unseeded OAuth record returns an empty namespace, leaving callers to their

@@ -18,6 +18,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// response_messages.go converts Responses output into Messages responses and
+// streams while retaining terminal usage and response identity.
 // Responses event conversion to Messages emits content-block and message
 // terminal events while tracking upstream usage separately. A terminal's
 // top-level usage overrides nested response usage in this reader, and its

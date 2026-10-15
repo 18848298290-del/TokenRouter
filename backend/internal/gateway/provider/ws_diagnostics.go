@@ -19,6 +19,8 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// ws_diagnostics.go summarizes WebSocket events, payloads, and errors for
+// bounded diagnostic logging.
 // WebSocket diagnostics retain selected event, header, close, and payload-size
 // evidence while bounding common log values. Event sampling keeps initial and
 // periodic observations, with terminal and error events retained on the

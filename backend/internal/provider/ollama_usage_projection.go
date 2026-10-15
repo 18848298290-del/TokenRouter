@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// ollama_usage_projection.go builds Ollama administrator usage state from
+// managed provider settings and snapshots.
 // Ollama administrator state is read from managed session, refresh, and
 // snapshot keys in provider Extra. Eligibility controls whether those values
 // are exposed, while decoded snapshots accept recognized statuses and

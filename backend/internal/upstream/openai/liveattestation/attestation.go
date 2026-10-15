@@ -5,6 +5,8 @@ import (
 	"errors"
 )
 
+// attestation.go defines the Live attestation provider interface and errors
+// for unavailable platform prerequisites.
 // Live attestation needs a platform provider that can inspect local runtime
 // prerequisites and generate a DeviceCheck header. The interface separates
 // preflight checks from token generation, allowing gateway creation to report

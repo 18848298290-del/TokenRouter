@@ -12,6 +12,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
 )
 
+// queue.go coordinates batch-image queue admission, reservation, retries, and
+// lease ownership in Redis.
 // Queued image jobs carry one batch ID across ready, delayed, and active
 // records. Admission creates the inflight marker together with the ready entry,
 // and reservation removes a ready entry together with recording its active

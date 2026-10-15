@@ -13,6 +13,8 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// req_pool.go caches configured req clients and instruments their HTTP
+// requests for dependency timing.
 // req clients share connections only when their supplied proxy text, overall
 // timeout, Chrome impersonation flag, and force-HTTP/2 flag identify the same
 // cache key. Proxy syntax is checked during construction, while the key uses

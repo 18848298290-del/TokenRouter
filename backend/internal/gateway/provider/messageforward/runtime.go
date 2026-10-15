@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 )
 
+// runtime.go starts Messages, counting, Chat, and Responses flows with fresh
+// attempt state.
 // Each Messages entry creates its own preparation state before invoking
 // gateway/forward. Chat and Responses retain separate output modes while using
 // the same selected provider and request-local tool restoration, and counting

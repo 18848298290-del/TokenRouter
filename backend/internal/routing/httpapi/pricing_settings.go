@@ -6,6 +6,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// pricing_settings.go decodes optional billing prices and constructs partial
+// billing-settings updates.
 // Operation price updates need three meanings: omit a field to retain its
 // override, send null to clear it, or send zero to make the operation free. A
 // numeric pointer alone merges omission and null, so optionalBillingPrice

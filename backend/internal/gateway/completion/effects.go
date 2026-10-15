@@ -7,10 +7,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// Committed balance and quota amounts supply notification evidence after funding
-// is applied. Billing's Finalize orders cache updates and activity before dispatching
-// notification callbacks, while each notification check recovers its own panic so
-// an alert failure does not alter the completed financial result.
+// effects.go dispatches post-settlement cache, activity, authentication, and
+// notification effects. Committed balance and quota amounts supply notification
+// evidence after funding is applied. Billing's Finalize orders cache updates
+// and activity before dispatching notification callbacks, while each
+// notification check recovers its own panic so an alert failure does not alter
+// the completed financial result.
 
 type (
 	// ProviderActivity schedules provider last-use persistence after observed usage.

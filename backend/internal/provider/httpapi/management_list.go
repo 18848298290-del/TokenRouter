@@ -15,6 +15,8 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// management_list.go assembles paginated provider responses and computes
+// entity tags for conditional requests.
 // Provider list responses pair paginated configuration with loaded runtime
 // observations and a JSON-derived entity tag. The list use case owns database
 // sorting and optional scheduler scoring, while this handler converts its

@@ -10,11 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// A Qoder request uses shared preparation and scheduling services while its
-// port callbacks retain one prepared request value. The executor creates a new
-// output tracker and result accumulator for each call, allowing shared runtime
-// dependencies to serve concurrent requests with separate attempt
-// observations.
+// execution.go binds prepared Qoder requests to scheduling callbacks and
+// invokes the request execution loop. The executor creates a new output tracker
+// and result accumulator for each call, allowing shared runtime dependencies to
+// serve concurrent requests with separate attempt observations.
 
 // RequestMetadata contains values captured by the HTTP adapter before execution.
 type RequestMetadata = execution.RequestMetadata

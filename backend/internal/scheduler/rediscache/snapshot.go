@@ -14,6 +14,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// snapshot.go publishes versioned scheduler buckets and reads provider
+// metadata with recent-use updates.
 // Bucket versions contain ordered provider IDs, while full provider JSON and
 // selection metadata live in shared provider keys. A writer captures the
 // bucket epoch, allocates a version, writes provider data and membership,

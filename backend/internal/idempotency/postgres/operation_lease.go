@@ -11,6 +11,8 @@ import (
 	pg "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// operation_lease.go implements PostgreSQL maintenance-lease acquisition,
+// renewal, and completion checks.
 // A maintenance lease can outlive the worker that acquired it, so takeover needs
 // to replace both the task identity and acquisition token. PostgreSQL stores the
 // operation ID in request_fingerprint and its token JSON in response_body while

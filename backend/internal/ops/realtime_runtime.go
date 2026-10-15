@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// realtime_runtime.go shares a cached traffic sampler across WebSocket
+// consumers and coordinates connection limits and sampler shutdown.
 // WebSocket handlers reuse one traffic sampler for their pushed frames. Prepare
 // starts its first loop on demand, and the last counted global release
 // schedules a delayed idle stop. Cached JSON is copied for each reader, and

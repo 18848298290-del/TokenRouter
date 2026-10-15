@@ -11,6 +11,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// openai_compat_prompt_cache_key.go derives stable compatibility cache keys
+// from conversation prefixes and cache anchors.
 // Compatibility cache identity follows stable request content rather than the
 // entire growing conversation. Chat seeds include system text, the first user
 // content, and selected model/tool configuration; ordinary Anthropic seeds use

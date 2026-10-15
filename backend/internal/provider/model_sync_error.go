@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+// model_sync_error.go represents model synchronization failures with separate
+// response-safe and internal diagnostics.
 // Model synchronization errors carry a category for HTTP status selection and a
 // message safe for the administrator response. The detailed underlying error
 // remains available to internal formatting and errors.Unwrap, while SafeMessage

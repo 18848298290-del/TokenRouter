@@ -16,6 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// qoder_compatible_ports.go defines Qoder execution targets, selection handles
+// and shared compatibility services.
 // Qoder HTTP compatibility uses target and selection ports to keep provider
 // execution separate from admission. Selected targets supply refresh and
 // synchronous completion capture, while the runtime retains shared services

@@ -7,11 +7,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// member_quota.go normalizes member quota snapshots and checks their spending
+// limits.
 // Team member spending limits apply to calendar days, Monday-starting
 // weeks, and months in the configured timezone. Missing or older starts
 // reset the corresponding usage in a returned snapshot, while admission
 // checks the selected member's positive limits in daily, weekly, monthly
 // order.
+//
+// Each period keeps its own usage and start, so rolling one calendar window
+// does not reset the others. Normalization returns the adjusted value; it does
+// not persist a reset. Admission uses that value as supplied and reports the
+// first exhausted positive limit, leaving unlimited periods out of the
+// decision.
 
 // Member-quota errors identify the first exhausted period or missing
 // membership so request admission can report the specific rejected

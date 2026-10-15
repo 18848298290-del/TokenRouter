@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/schema/mixins"
 )
 
-// A composite key selects a routing group through a model-name prefix.
-// Its mappings retain the displayed prefix and a normalized lookup value,
-// with key-scoped uniqueness preventing duplicate group bindings and duplicate
-// normalized prefixes in the stored mapping set.
+// api_key_composite_group.go defines prefix-to-group bindings for composite
+// API keys. Its mappings retain the displayed prefix and a normalized lookup
+// value, with key-scoped uniqueness preventing duplicate group bindings and
+// duplicate normalized prefixes in the stored mapping set.
 
 // APIKeyCompositeGroup stores one composite key's group and prefix mapping.
 type APIKeyCompositeGroup struct {

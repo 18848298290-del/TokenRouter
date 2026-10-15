@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// order_snapshot.go interprets saved provider snapshots and validates channel
+// metadata against recorded merchant and currency identity.
 // Payment confirmation can arrive after a channel configuration changes,
 // so an order retains merchant and currency facts from its checkout.
 // A typed snapshot reads those persisted attributes for notification

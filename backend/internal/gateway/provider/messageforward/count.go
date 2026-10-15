@@ -14,6 +14,8 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// count.go binds token-counting requests to Messages preparation, transport,
+// and health handling.
 // Count Tokens shares Messages credential and model preparation while retaining
 // its own request and response presentation. Proxy selection is remembered
 // after the first send, and each send resolves the TLS profile again for the

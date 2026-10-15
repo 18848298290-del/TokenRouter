@@ -1,5 +1,7 @@
 package pricing
 
+// card_resolution.go combines configured cards with base prices and assigns
+// their billing mode and source.
 // A configured price card can replace amount buckets or simply adjust a catalog
 // price's modifiers. The source label follows that choice: explicit amounts and
 // token intervals select configuration pricing, while modifier-only cards keep
