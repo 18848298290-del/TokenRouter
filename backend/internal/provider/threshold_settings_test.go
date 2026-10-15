@@ -24,6 +24,9 @@ import (
 // storage-error lifetime.
 var errThresholdSettingMissing = errors.New("missing")
 
+// thresholdSettingsContextKey identifies the caller value retained during detached settings reads.
+type thresholdSettingsContextKey struct{}
+
 // thresholdSettingsRepo supplies synchronous settings values, injected
 // errors, and a counted read for cache assertions. Its optional callback observes
 // the read context and controls lookup completion within a virtual-time test.
@@ -155,7 +158,7 @@ func TestGetProviderSchedulingThresholds_ReadAndCacheBranches(t *testing.T) {
 				slog.SetDefault(slog.New(slog.NewJSONHandler(&warnings, nil)))
 				t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-				contextKey := struct{}{}
+				contextKey := thresholdSettingsContextKey{}
 				callerCtx, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey, "scheduling-read"))
 				cancel()
 				lookupStarted := time.Now()

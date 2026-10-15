@@ -411,7 +411,8 @@ func TestBatchImageRepository_OwnedTransactionOutcomes(t *testing.T) {
 	ctx := context.Background()
 	db := postgrescontainer.New(t)
 	_, userID := newBatchImageRepositoryWithSQL(t, db)
-	repo := NewBatchImageRepository(db).(*Repository)
+	repo, ok := NewBatchImageRepository(db).(*Repository)
+	require.True(t, ok)
 	operations := []struct {
 		name          string                  // metadata operation name
 		initialStatus string                  // starting persisted status

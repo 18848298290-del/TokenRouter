@@ -35,7 +35,8 @@ func TestBatchImageRepository_OwnedTransactionLifecycle(t *testing.T) {
 			for _, outcome := range []string{"commit", "statement_error", "begin_error", "commit_error", "rollback_error"} {
 				t.Run(outcome, func(t *testing.T) {
 					db, mock := newBatchImageSQLMock(t)
-					repo := NewBatchImageRepository(db).(*Repository)
+					repo, ok := NewBatchImageRepository(db).(*Repository)
+					require.True(t, ok)
 					firstErr := errors.New("transaction lifecycle failure")
 					var wantErr error
 
@@ -127,7 +128,9 @@ func TestBatchImageRepository_BulkCreateEmpty(t *testing.T) {
 			db, mock := newBatchImageSQLMock(t)
 			repo := NewRepositoryWithSQL(db)
 			if owned {
-				repo = NewBatchImageRepository(db).(*Repository)
+				var ok bool
+				repo, ok = NewBatchImageRepository(db).(*Repository)
+				require.True(t, ok)
 			}
 			require.NoError(t, repo.BulkCreateBatchImageItems(context.Background(), items))
 			require.NoError(t, mock.ExpectationsWereMet())
