@@ -367,7 +367,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	archiveHandler := httpapi6.NewArchiveHandler(archive)
 	userAttributeHandler := httpapi4.NewUserAttributeHandler(userAttributeService)
 	upstreamUsageService := provideUpstreamUsage(providerStore, transportClient, cfg, tlsProfiles, manager)
-	balanceAlertMonitor := provideBalanceAlertMonitor(providerStore, upstreamUsageService, notificationEmailService, cfg, manager)
+	balanceAlertMonitor := provideBalanceAlertMonitor(providerStore, upstreamUsageService, notificationEmailService, manager)
 	upstreamUsageHandler := provideUpstreamUsageHTTP(upstreamUsageService, balanceAlertMonitor)
 	scheduledTestPlanRepository := postgres11.NewScheduledTestPlanRepository(db)
 	scheduledTestResultRepository := postgres11.NewScheduledTestResultRepository(db)

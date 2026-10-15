@@ -107,7 +107,7 @@ Wire 构造完对象、登记完资源后，lifecycle 才启动后台工作，�
 
 `billing/provider` 负责计费回退告警和时区适配。Calculator、PriceResolver 和 PricingConfigService 由 app 直接提供，计算和查价的使用方共享这些实例。平台模型别名和动态的 Grok 默认值由 `gateway/provider/modelidentity` 提供，每次查价只取一次快照。平台运行状态由 modelidentity 读取，纯定价代码只接收它给出的快照。Key 和分组的模型追踪由 `gateway/modeltrace` 组合。
 
-提供商的 `BalanceAlertMonitor` 由 app 绑定查询服务、PostgreSQL 运行状态和通知发送。它在 StartOrder 980 启动，在 StopOrder 20 取消并等待检查与发信结束，随后 StopOrder 25 关闭共享上游查询。提醒运行状态属于备份的 `runtime_data` 选项。
+提供商的 `BalanceAlertMonitor` 由 app 绑定查询服务、PostgreSQL 运行状态和通知发送。它在 StartOrder 980 启动，在 StopOrder 20 取消并等待检查、发信和结果落库结束，结果落库在取消后仍有独立的五秒预算；随后 StopOrder 25 关闭共享上游查询。提醒运行状态属于备份的 `runtime_data` 选项。
 
 billing 的余额和 Key 缓存队列、订阅过期提醒由 app 接入生命周期。提醒任务启动后立即执行第一轮，之后每分钟扫描一次，用 Redis 或数据库选出 leader；停止时取消并等待正在执行的操作。
 

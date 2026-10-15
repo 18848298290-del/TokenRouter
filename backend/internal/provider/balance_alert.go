@@ -13,7 +13,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
@@ -29,12 +28,16 @@ import (
 // state, never a low-balance decision. The monitor owns cancellation and waits
 // for its workers before shutdown; upstream query activity retains its own
 // lifecycle registration for shared requests that outlive a waiting worker.
+// Outcome writes receive a separate five-second budget so an expired check can
+// publish its failure while the worker remains registered for shutdown.
 
 // Balance reminder budgets leave time between one attempt and the minimum
 // configured interval; each scan admits at most four simultaneous remote checks.
 const (
 	balanceAlertScanInterval   = time.Minute
 	balanceAlertAttemptTimeout = 2 * time.Minute
+	// Outcome writes retain a short budget after attempt cancellation or timeout.
+	balanceAlertPersistTimeout = 5 * time.Second
 	balanceAlertConcurrency    = 4
 )
 
@@ -77,21 +80,21 @@ type BalanceAlertSend func(context.Context, *Record, BalanceAlertConfig, *Upstre
 
 // BalanceAlertMonitor coordinates persistent claims, queries, and email delivery for providers.
 type BalanceAlertMonitor struct {
-	store    BalanceAlertStore        // persistent claim storage
-	queries  *UpstreamUsageService    // shared upstream query owner
-	send     BalanceAlertSend         // context-aware notification callback
-	hosts    egress.MonitorHostPolicy // automatic query target policy
-	now      func() time.Time         // injectable observation clock
-	mu       sync.Mutex               // startup publication lock
-	started  bool                     // guarded startup flag
-	activity operationActivity        // admitted work lifetime
+	store    BalanceAlertStore     // persistent claim storage
+	queries  *UpstreamUsageService // shared upstream query owner
+	send     BalanceAlertSend      // context-aware notification callback
+	now      func() time.Time      // injectable observation clock
+	mu       sync.Mutex            // startup publication lock
+	started  bool                  // guarded startup flag
+	activity operationActivity     // admitted work lifetime
 }
 
 // NewBalanceAlertMonitor constructs an idle periodic wallet monitor with shared dependencies.
-// The host policy is copied. Call StartContext after assembly and StopContext
-// before stopping the query service, notification sender, and database connections.
-func NewBalanceAlertMonitor(store BalanceAlertStore, queries *UpstreamUsageService, send BalanceAlertSend, hosts egress.MonitorHostPolicy) *BalanceAlertMonitor {
-	return &BalanceAlertMonitor{store: store, queries: queries, send: send, hosts: hosts.Clone(), now: time.Now}
+// Address validation belongs to the shared query service. Call StartContext after
+// assembly and StopContext before stopping queries, notification delivery, and the
+// database; shutdown also waits for bounded outcome persistence.
+func NewBalanceAlertMonitor(store BalanceAlertStore, queries *UpstreamUsageService, send BalanceAlertSend) *BalanceAlertMonitor {
+	return &BalanceAlertMonitor{store: store, queries: queries, send: send, now: time.Now}
 }
 
 // StartContext starts one minute-based scan loop and registers its entire lifetime.
@@ -222,18 +225,13 @@ func (s *BalanceAlertMonitor) check(parent context.Context, id int64) {
 	if state == nil {
 		return
 	}
-	q, _ := EffectiveUpstreamUsageConfig(p)
-	base := q.BaseURL
-	if base == "" {
-		base = s.queries.execution.BaseURL(p)
-	}
-	if err := s.hosts.Validate(base, func(host string) bool { return CNUsageOfficialHost(p.Platform, host) }); err != nil {
-		state.ErrorCode = "UPSTREAM_BALANCE_ALERT_HOST_DENIED"
-		s.finish(ctx, state)
-		return
-	}
 	result, err := s.queries.QueryProvider(ctx, id)
 	if err != nil {
+		// Query preflight can return raw caller cancellation. Store the usage error
+		// vocabulary so the status interface can explain a cancelled or timed-out attempt.
+		if ctx.Err() != nil {
+			err = UpstreamUsageContextError(ctx)
+		}
 		state.ErrorCode = apperror.FromError(err).Reason
 	} else if result == nil || result.Balance == nil || result.Balance.Remaining == nil || math.IsNaN(*result.Balance.Remaining) || math.IsInf(*result.Balance.Remaining, 0) {
 		state.ErrorCode = "UPSTREAM_USAGE_WALLET_UNAVAILABLE"
@@ -241,7 +239,12 @@ func (s *BalanceAlertMonitor) check(parent context.Context, id int64) {
 		// Re-read before sending: credentials, recipient, threshold, and enablement
 		// may have changed while the remote service was preparing this observation.
 		current, _, currentIdentity, currentErr := s.configuration(ctx, id)
-		if currentErr != nil || currentIdentity != identity || ctx.Err() != nil {
+		if ctx.Err() != nil {
+			state.ErrorCode = apperror.FromError(UpstreamUsageContextError(ctx)).Reason
+			s.finish(ctx, state)
+			return
+		}
+		if currentErr != nil || currentIdentity != identity {
 			return
 		}
 		state.Balance = result.Balance.Remaining
@@ -261,10 +264,16 @@ func (s *BalanceAlertMonitor) check(parent context.Context, id int64) {
 }
 
 // finish persists a sanitized attempt result and reports database failures through logging.
-// The scheduling claim is already durable. Failed completion writes leave its
-// consumed deadline intact and never initiate another query or email attempt.
+// The write keeps context values but receives its own five-second budget, allowing
+// an expired attempt to record its failure. Workers remain registered until this
+// synchronous write finishes, so shutdown waits for it before closing storage.
+// Failed writes leave the consumed deadline intact; delivery is never retried here.
 func (s *BalanceAlertMonitor) finish(ctx context.Context, state *BalanceAlertState) {
-	if err := s.store.FinishBalanceAlert(ctx, state); err != nil {
+	// Attempt cancellation must not erase its diagnostic outcome. Keep only the
+	// context values and bound this final write while the worker still owns storage.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), balanceAlertPersistTimeout)
+	defer cancel()
+	if err := s.store.FinishBalanceAlert(persistCtx, state); err != nil {
 		slog.Warn("balance alert result persistence failed", "provider_id", state.ProviderID, "error", err)
 	}
 }

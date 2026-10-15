@@ -119,10 +119,10 @@ API Key 提供商（包括 Kimi、Zhipu、DeepSeek）的用量栏，按以下顺
 
 管理员在提供商创建或编辑页配置 `extra.upstream_balance_alert`：`enabled` 默认 false，`threshold` 默认 1000，`interval_minutes` 默认 60（范围 5 至 1440），`recipient_email` 为单个收件邮箱。只支持钱包查询适配器；OAuth、Coding Plan 周期额度和 Zhipu payg 不支持。编辑时省略该对象保留原配置，复制提供商时删除提醒配置。关闭上游查询或停用提供商会暂停检查。
 
-前端的规则在 `frontend/src/utils/upstreamBalanceAlert.ts`。创建页只在开启提醒时写入该对象。编辑页在提醒设置有改动时提交完整对象，关闭开关时阈值、间隔和邮箱随 `enabled=false` 一起保存；没有改动时保留已有对象，原本没有提醒配置的提供商不会新增默认对象。不支持的提供商开关置灰，提交时 `enabled` 写为 false。编辑页展开提醒设置后读取下面的状态接口，切换提供商时丢弃上一个提供商未返回的结果。
+前端的规则在 `frontend/src/utils/upstreamBalanceAlert.ts`。创建页只在开启提醒时写入该对象。编辑页在提醒设置有改动时提交完整对象，关闭开关时阈值、间隔和邮箱随 `enabled=false` 一起保存；没有改动时保留已有对象，原本没有提醒配置的提供商不会新增默认对象。不支持的提供商开关置灰，提交时 `enabled` 写为 false。编辑页展开提醒设置后读取下面的状态接口，切换提供商或关闭提醒面板时，使尚未返回的状态请求失效，并清空旧的展示和加载状态。
 
-`provider.BalanceAlertMonitor` 每分钟扫描启用的 API Key 提供商，最多并行执行四个检查，单次检查和发信合计最多两分钟。`provider_balance_alert_states` 在查询前原子认领轮次并推进下次检查时间，多实例共享该记录。首次启用在下一次扫描检查，停机后只执行当前到期的一轮。进程中断或 SMTP 结果不确定时，本轮不重试，下次到期重新查询。
+`provider.BalanceAlertMonitor` 每分钟扫描启用的 API Key 提供商，最多并行执行四个检查，单次检查和发信合计最多两分钟。`provider_balance_alert_states` 在查询前原子认领轮次并推进下次检查时间，多实例共享该记录。首次启用在下一次扫描检查，停机后只执行当前到期的一轮。进程中断或 SMTP 结果不确定时，本轮不重试，下次到期重新查询。查询或发信超时、服务停止取消任务后，结果落库仍有独立的五秒预算；应用等待这一步结束后再关闭共享存储。
 
-查询复用 `UpstreamUsageService` 和后台监控的 host allowlist 策略。结果的 `balance.remaining` 严格小于阈值时，每轮向配置的邮箱发送一次 `provider.upstream_balance_low` 事件。币种只用于展示，不参与比较。查询失败或余额缺失不会当作零余额，也不会使用旧结果发信。查询身份和提醒配置在发送前复核；修改凭据、收件人或阈值后，旧结果失效。
+查询复用 `UpstreamUsageService`，地址校验与管理员手动查询相同：全局白名单关闭时采用配置的 URL 格式和 HTTP 规则，开启时检查上游域名白名单及私网地址权限。结果的 `balance.remaining` 严格小于阈值时，每轮向配置的邮箱发送一次 `provider.upstream_balance_low` 事件。币种只用于展示，不参与比较。查询失败或余额缺失不会当作零余额，也不会使用旧结果发信。查询身份和提醒配置在发送前复核；修改凭据、收件人或阈值后，旧结果失效。
 
 `GET /api/v1/admin/providers/:id/upstream-balance-alert` 返回最近轮次、检查时间、下次检查时间、余额、单位、观测时间、发送确认时间和脱敏错误码。尚无当前配置的观测时只返回提供商 ID。该接口读取持久状态，不发起查询或发送邮件。后台运行状态独立于提供商配置及调度快照，提醒任务不暂停或恢复提供商。

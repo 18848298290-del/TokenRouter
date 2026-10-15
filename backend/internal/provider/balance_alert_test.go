@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
 // balanceAlertFixture models stored provider and deadline state for worker behavior tests.
@@ -24,6 +22,13 @@ type balanceAlertExecution struct {
 	result *UpstreamUsageInfo // normalized wallet observation
 	err    error              // injected query error
 	after  func()             // optional configuration mutation
+}
+
+// balanceAlertCompletionStore exposes the final write's lifetime to shutdown tests.
+type balanceAlertCompletionStore struct {
+	*balanceAlertFixture                      // current fixture state
+	started              chan context.Context // admitted persistence context
+	release              chan struct{}        // test-controlled completion barrier
 }
 
 // GetByID returns an independently cloned provider under the fixture lock.
@@ -59,7 +64,12 @@ func (f *balanceAlertFixture) ClaimBalanceAlert(_ context.Context, p *Record, id
 }
 
 // FinishBalanceAlert records an outcome only for the fixture's current claim.
-func (f *balanceAlertFixture) FinishBalanceAlert(_ context.Context, s *BalanceAlertState) error {
+// Cancelled contexts reject the write like database/sql, allowing worker tests
+// to distinguish a consumed attempt from successfully persisted diagnostic state.
+func (f *balanceAlertFixture) FinishBalanceAlert(ctx context.Context, s *BalanceAlertState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.state.Round == s.Round {
@@ -86,7 +96,7 @@ func (*balanceAlertExecution) Available() bool { return true }
 // Supports accepts the configured adapter for these worker behavior tests.
 func (*balanceAlertExecution) Supports(string) bool { return true }
 
-// BaseURL returns an official host accepted by the monitor's destination policy.
+// BaseURL returns a fixed query root for fixture identity comparisons.
 func (*balanceAlertExecution) BaseURL(*Record) string { return "https://api.deepseek.com" }
 
 // Query returns a controlled normalized observation after any configured mutation.
@@ -106,7 +116,7 @@ func newBalanceAlertFixture(t *testing.T, balance *float64, send BalanceAlertSen
 	e := &balanceAlertExecution{result: &UpstreamUsageInfo{Provider: "deepseek", Mode: "balance", Unit: "CNY", Balance: &UpstreamUsageAmount{Remaining: balance}}}
 	q := NewUpstreamUsageService(f, e, UpstreamUsageOptions{})
 	t.Cleanup(func() { require.NoError(t, q.StopContext(context.Background())) })
-	m := NewBalanceAlertMonitor(f, q, send, egress.MonitorHostPolicy{})
+	m := NewBalanceAlertMonitor(f, q, send)
 	t.Cleanup(func() { require.NoError(t, m.StopContext(context.Background())) })
 	return m, f, e
 }
@@ -151,7 +161,7 @@ func TestBalanceAlertRepeatsAndRestart(t *testing.T) {
 	now := time.Now()
 	m.now = func() time.Time { return now }
 	m.RunOnce(context.Background())
-	restarted := NewBalanceAlertMonitor(f, m.queries, sender, egress.MonitorHostPolicy{})
+	restarted := NewBalanceAlertMonitor(f, m.queries, sender)
 	restarted.now = m.now
 	restarted.RunOnce(context.Background())
 	require.Equal(t, 1, sent)
@@ -166,7 +176,7 @@ func TestBalanceAlertRepeatsAndRestart(t *testing.T) {
 // No failure reuses an earlier balance or retries SMTP in the same round, and
 // an in-flight policy change prevents delivery to the captured recipient.
 func TestBalanceAlertFailuresAndChangedPolicy(t *testing.T) {
-	for _, kind := range []string{"query", "smtp", "recipient", "disabled", "host"} {
+	for _, kind := range []string{"query", "smtp", "recipient", "disabled", "query_config"} {
 		t.Run(kind, func(t *testing.T) {
 			sent := 0
 			m, f, e := newBalanceAlertFixture(t, balanceAlertNumber(1), func(context.Context, *Record, BalanceAlertConfig, *UpstreamUsageQueryResult) error {
@@ -191,8 +201,8 @@ func TestBalanceAlertFailuresAndChangedPolicy(t *testing.T) {
 					}
 					f.p.Extra[UpstreamBalanceAlertExtraKey] = c
 				}
-			case "host":
-				f.p.Extra[UpstreamUsageQueryExtraKey] = map[string]any{"base_url": "https://relay.example"}
+			case "query_config":
+				e.err = ErrUpstreamUsageConfigInvalid
 			}
 			m.RunOnce(context.Background())
 			if kind == "smtp" {
@@ -248,4 +258,102 @@ func TestBalanceAlertFailureDiscardsPreviousObservation(t *testing.T) {
 	require.Nil(t, f.state.Balance)
 	require.Nil(t, f.state.SentAt)
 	require.Equal(t, "UPSTREAM_USAGE_TIMEOUT", f.state.ErrorCode)
+}
+
+// TestBalanceAlertExpiredDeliveryPersistsFailure exhausts a caller deadline during mail delivery.
+// The final status retains the error using a fresh persistence budget, while
+// another scan before the next deadline cannot send the consumed round again.
+func TestBalanceAlertExpiredDeliveryPersistsFailure(t *testing.T) {
+	attempts := 0
+	m, f, _ := newBalanceAlertFixture(t, balanceAlertNumber(999), func(ctx context.Context, _ *Record, _ BalanceAlertConfig, _ *UpstreamUsageQueryResult) error {
+		attempts++
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	m.RunOnce(ctx)
+	require.Equal(t, 1, attempts)
+	state, err := m.Status(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "UPSTREAM_BALANCE_ALERT_EMAIL_FAILED", state.ErrorCode)
+	require.Nil(t, state.SentAt)
+	require.Equal(t, float64(999), *state.Balance)
+	m.RunOnce(context.Background())
+	require.Equal(t, 1, attempts)
+	require.Equal(t, int64(1), f.state.Round)
+}
+
+// FinishBalanceAlert holds the final write until released or its own budget expires.
+// The captured context lets the test inspect cancellation and deadline behavior.
+// Callers release the barrier to allow the ordinary fixture write to complete.
+func (f *balanceAlertCompletionStore) FinishBalanceAlert(ctx context.Context, state *BalanceAlertState) error {
+	f.started <- ctx
+	select {
+	case <-f.release:
+		return f.balanceAlertFixture.FinishBalanceAlert(ctx, state)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestBalanceAlertStopWaitsForOutcomeWrite stops a monitor during its SMTP attempt.
+// Shutdown waits for the independent, bounded final database write and retains
+// the cancelled delivery's error instead of closing storage while it is pending.
+func TestBalanceAlertStopWaitsForOutcomeWrite(t *testing.T) {
+	sending := make(chan struct{})
+	m, f, _ := newBalanceAlertFixture(t, balanceAlertNumber(999), func(ctx context.Context, _ *Record, _ BalanceAlertConfig, _ *UpstreamUsageQueryResult) error {
+		close(sending)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	store := &balanceAlertCompletionStore{balanceAlertFixture: f, started: make(chan context.Context, 1), release: make(chan struct{})}
+	m.store = store
+	done := make(chan struct{})
+	// Keep both scan and shutdown results observable so the test can prove that
+	// StopContext waits for persistence, rather than merely signalling SMTP cancellation.
+	go func() { defer close(done); m.RunOnce(context.Background()) }()
+	<-sending
+	stopped := make(chan error, 1)
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { stopped <- m.StopContext(stopCtx) }()
+	persistCtx := <-store.started
+	require.NoError(t, persistCtx.Err())
+	deadline, ok := persistCtx.Deadline()
+	require.True(t, ok)
+	remaining := time.Until(deadline)
+	require.Positive(t, remaining)
+	require.LessOrEqual(t, remaining, balanceAlertPersistTimeout)
+	select {
+	case err := <-stopped:
+		t.Fatalf("shutdown finished before outcome persistence: %v", err)
+	default:
+	}
+	close(store.release)
+	require.NoError(t, <-stopped)
+	<-done
+	state, err := m.Status(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "UPSTREAM_BALANCE_ALERT_EMAIL_FAILED", state.ErrorCode)
+}
+
+// TestBalanceAlertQueryCancellationPersistsFailure cancels the caller while its query completes.
+// Either the shared result or cancellation can reach the waiter first; both
+// paths must save a structured query failure and suppress mail delivery.
+func TestBalanceAlertQueryCancellationPersistsFailure(t *testing.T) {
+	sent := 0
+	m, _, e := newBalanceAlertFixture(t, balanceAlertNumber(999), func(context.Context, *Record, BalanceAlertConfig, *UpstreamUsageQueryResult) error {
+		sent++
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.after = cancel
+	m.RunOnce(ctx)
+	state, err := m.Status(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "UPSTREAM_USAGE_REQUEST_FAILED", state.ErrorCode)
+	require.Zero(t, sent)
+	require.Nil(t, state.SentAt)
 }

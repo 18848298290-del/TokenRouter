@@ -153,6 +153,48 @@ describe('UpstreamBalanceAlertEditor', () => {
 
   // A status with only provider_id means no check matches the saved settings.
   // A failed read shows an error, and the refresh button sends a new request.
+  // A disabled replacement provider does not start a new request, so switching
+  // identity must invalidate the previous response before the reminder is reopened.
+  it('discards a pending response when switching to a disabled provider', async () => {
+    let resolveFirst!: (value: unknown) => void
+    let resolveSecond!: (value: unknown) => void
+    getStatusMock.mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+    getStatusMock.mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+    const wrapper = mountEditor({ providerId: 1 })
+    await wrapper.setProps({ providerId: 2, modelValue: { ...enabledPolicy(), enabled: false } })
+    resolveFirst({ provider_id: 1, round: 1, balance: 123, unit: 'CNY' })
+    await flushPromises()
+    await wrapper.setProps({ modelValue: enabledPolicy() })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('123 CNY')
+    expect(getStatusMock).toHaveBeenNthCalledWith(2, 2)
+    expect(wrapper.get('[data-testid="balance-alert-refresh"]').attributes('disabled')).toBeDefined()
+    resolveSecond({ provider_id: 2, round: 1, balance: 456, unit: 'CNY' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('456 CNY')
+    wrapper.unmount()
+  })
+
+  // Closing a reminder panel invalidates its pending failure as well as success.
+  // Reopening begins with a loading state until the replacement read resolves.
+  it('discards a pending failure after the reminder closes', async () => {
+    let rejectFirst!: (reason: Error) => void
+    let resolveSecond!: (value: unknown) => void
+    getStatusMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject }))
+    getStatusMock.mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+    const wrapper = mountEditor({ providerId: 1 })
+    await wrapper.setProps({ modelValue: { ...enabledPolicy(), enabled: false } })
+    rejectFirst(new Error('late failure'))
+    await flushPromises()
+    await wrapper.setProps({ modelValue: enabledPolicy() })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('admin.providers.balanceAlert.loadFailed')
+    resolveSecond({ provider_id: 1 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.providers.balanceAlert.notChecked')
+    wrapper.unmount()
+  })
+
   it('reports missing checks and retries failed reads', async () => {
     getStatusMock.mockRejectedValueOnce(new Error('offline'))
     getStatusMock.mockResolvedValueOnce({ provider_id: 1 })

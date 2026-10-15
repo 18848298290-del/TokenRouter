@@ -242,13 +242,16 @@ async function loadStatus() {
   }
 }
 
-// Read when the panel opens and whenever the dialog switches provider; status
-// for the previous provider is cleared first so it never shows under the new one.
+// Every provider or visibility change invalidates earlier requests, including
+// switches to a disabled provider that will not start a replacement status read.
 watch(
   () => [props.providerId, active.value] as const,
-  ([providerId, open], previous) => {
-    if (previous && previous[0] !== providerId) status.value = null
-    if (open) void loadStatus()
+  () => {
+    loadSequence++
+    status.value = null
+    loading.value = false
+    loadFailed.value = false
+    if (active.value) void loadStatus()
   },
   { immediate: true }
 )

@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
-	"github.com/TokenFlux/TokenRouter/internal/config"
-	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
@@ -25,12 +23,7 @@ import (
 // sender omits notification source markers rather than allocating daily or
 // per-round settings keys. Each SMTP invocation belongs to one consumed round;
 // failures propagate for status recording and do not trigger transport retries.
-func provideBalanceAlertMonitor(store *providerpostgres.ProviderStore, queries *provider.UpstreamUsageService, mail *notification.NotificationEmailService, cfg *config.Config, manager *lifecycle.Manager) *provider.BalanceAlertMonitor {
-	hosts := egress.MonitorHostPolicy{}
-	if cfg != nil {
-		h := cfg.Security.URLAllowlist
-		hosts = egress.MonitorHostPolicy{Enabled: h.Enabled, AllowInsecureHTTP: h.AllowInsecureHTTP, AllowPrivate: h.AllowPrivateHosts, AllowedHosts: h.UpstreamHosts}
-	}
+func provideBalanceAlertMonitor(store *providerpostgres.ProviderStore, queries *provider.UpstreamUsageService, mail *notification.NotificationEmailService, manager *lifecycle.Manager) *provider.BalanceAlertMonitor {
 	send := func(ctx context.Context, p *provider.Record, c provider.BalanceAlertConfig, result *provider.UpstreamUsageQueryResult) error {
 		return mail.Send(ctx, notification.SendRequest{
 			Event:          notification.NotificationEmailEventProviderUpstreamBalanceLow,
@@ -46,7 +39,7 @@ func provideBalanceAlertMonitor(store *providerpostgres.ProviderStore, queries *
 			},
 		})
 	}
-	monitor := provider.NewBalanceAlertMonitor(store, queries, send, hosts)
+	monitor := provider.NewBalanceAlertMonitor(store, queries, send)
 	manager.Register(lifecycle.Hook{Name: "ProviderBalanceAlerts", StartOrder: 980, StopOrder: 20, Start: monitor.StartContext, Stop: monitor.StopContext})
 	return monitor
 }
