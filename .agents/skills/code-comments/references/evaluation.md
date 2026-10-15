@@ -10,7 +10,7 @@ When delegation is available and authorized, use fresh agent contexts with the s
 
 ## Compare raw results
 
-Preserve original diffs and validation results before any corrections. Agent self-reports do not establish that review passed. Read each whole file for purpose, progression from problem to solution, design decisions to preserve, useful examples, and distribution of detail. Then inspect:
+Preserve original diffs and validation results before any corrections. Agent self-reports do not establish that review passed. Check that each overview's first sentence names the file and states its responsibility before background. Read the whole file for progression from purpose to design, decisions to preserve, useful examples, and distribution of detail. Then inspect:
 
 - Incorrect or unsupported claims, especially ownership and exceptions.
 - Missing required coverage or calling rules.

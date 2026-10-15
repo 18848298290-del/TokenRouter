@@ -33,8 +33,8 @@ Every in-scope item below needs a comment. Meet both its minimum and required in
 
 | Item | Minimum | Information and placement |
 | --- | --- | --- |
-| Purpose file overview | 30 words, 2 sentences | Domain problem/rule and how the pieces address it |
-| Design file overview | 80 words, 2 prose paragraphs | Problem, consequential choice, and interacting rules |
+| Purpose file overview | 30 words, 2 sentences | Filename-led responsibility statement, then the domain rule and how the pieces address it |
+| Design file overview | 80 words, 2 prose paragraphs | Filename-led responsibility statement, then the problem, consequential choice, and interacting rules |
 | Definition function/method | 8 words, 1 sentence | Purpose and result/effect; consumer when it establishes the role |
 | Calling-rule function/method | 25 words, 2 sentences | Purpose and applicable calling rules |
 | Design function/method | 60 words, 3 sentences | Purpose, calling rules, and design conditions/consequences |
@@ -89,11 +89,11 @@ When two passages answer the same question with the same fact, keep the full exp
 
 ### File overviews
 
-Before drafting, read or reuse [file-overviews.md](references/file-overviews.md). Start with a domain object, behavior, format, dependency limitation, or concrete failure. The first two sentences must establish a file-specific fact beyond its name and declarations. A label such as `Affinity:` can introduce the actual rule.
+Before drafting, read or reuse [file-overviews.md](references/file-overviews.md). Start the first sentence of a source-file overview with the actual filename, including its extension, as the grammatical subject; update it when the file is renamed. Follow it with a concrete verb and the file's responsibility: what it processes, provides, or produces. For example, `request_timing.go records request durations and builds Server-Timing headers.` The opening must tell the reader what this file does before explaining why it is needed.
 
-Openings such as `This file`, `This module`, `This code`, `The following code`, or equivalent container descriptions fail. Substituting a filename or "the IP utilities" does not help if the sentence merely announces contents. Develop the initial fact through its conditions, consequences, or next phase. Mention symbols to locate relationships, not to inventory their jobs. Lists may clarify cases or sequences while retaining the design overview's prose paragraphs.
+Use the filename consistently; do not substitute `This file`, a type name, or a domain label. A bare filename heading followed by background does not satisfy the first-sentence rule. After stating the responsibility, develop its background, design choices, conditions, and consequences. The filename alone cannot make vague text such as `helpers.go provides utilities` useful. Mention symbols to explain relationships rather than inventory their jobs. Lists may clarify cases or sequences while retaining the design overview's prose paragraphs.
 
-In Go, put the overview after imports and before the first other declaration, separated from declaration documentation by a blank line; with no imports, put it after `package`. Other languages follow mandatory directives/imports. Keep package documentation separate: in TokenRouter, packages with at least 15 handwritten source files require `doc.go` covering purpose, reading entry points, and file groups; this also satisfies that file's overview requirement.
+In Go, put the overview after imports and before the first other declaration, separated from declaration documentation by a blank line; with no imports, put it after `package`. Other languages follow mandatory directives/imports. Keep package documentation separate: in TokenRouter, packages with at least 15 handwritten source files require `doc.go` covering purpose, reading entry points, and file groups; this also satisfies that file's overview requirement and retains the conventional `Package <name>` opening.
 
 After formatting/reordering, inspect placement again. TokenRouter's `tools/declorder` may move detached comments into declaration blocks; restore displaced overviews. Preserve valid references and tool-consumed syntax.
 
@@ -119,7 +119,7 @@ Read or reuse [examples.md](references/examples.md) for tier choices and final r
 1. Read comments with the whole file: can a newcomer follow the problem, flow, and decisions to preserve? Check usefulness, accuracy, and distribution of detail before counts.
 2. Enumerate required items, including currently uncommented ones; assign roles and verify coverage, placement, words, sentences, and paragraphs. Count shared field rules once.
 3. Verify facts and exceptions against implementation and consumers. Identify each local explanation's added fact and each repeated passage's distinct purpose. Recheck unclear guarantees with the evidence/probe rules above.
-4. Check that paragraphs advance their question, compact definitions stay compact, and overviews avoid interchangeable introductions or declaration inventories. Similar lengths are a signal to inspect padding, not a reason to vary accurate wording. Ordinary grammar may repeat; synonym cycling does not improve explanations.
+4. Check that paragraphs advance their question and compact definitions stay compact. Each file overview must begin with its actual filename and state its responsibility before background; reject vague summaries and declaration inventories. Consistent filename-led grammar is expected. Similar lengths are a signal to inspect padding, not a reason to vary accurate wording; synonym cycling does not improve explanations.
 5. Fix stale comments and inspect placement after formatting. Any missing, short, misplaced, unsupported, or inaccurate required explanation leaves validation incomplete. Fix within scope; report remaining items and reasons. Read-only reviews report without editing.
 
 Lead reports with readability and material gaps, grouping minor presentation issues. Package tests and formatting do not establish comment quality. Keep comment-only work scoped to comments; prose changes need documentation checks, not unrelated test suites. Use [evaluation.md](references/evaluation.md) only when comparing revisions of this skill.

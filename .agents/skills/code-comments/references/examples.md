@@ -188,13 +188,14 @@ Review the whole explanation before its counts. The reader should understand the
 
 | Failure | Correction |
 | --- | --- |
-| "Timings use unions. Context helpers are optional. The collector has a mutex. Headers have a limit." | Develop one question through its consequences, as in the elapsed-work overview. Leave unrelated defaults at their declarations. |
+| "Timings use unions. Context helpers are optional. The collector has a mutex. Headers have a limit." | Start with the filename and its responsibility, then explain one design question through its consequences, as in the elapsed-work overview. |
 | "Stop before the next dependency exceeds the header limit." | Explain what remains available after truncation; translating the comparison adds no fact. |
 | The Acquire example flattened into one paragraph | Keep normal results, cancellation, and cleanup as separate reader questions. Word count alone cannot make the paragraph usable. |
 | A long Component description merely calling it the event's source | Document the consumer's override order, as in the field example. |
 | "CopyRecord returns an independent copy of all its data." | Qualify shared references as in the ownership example. Testing a copied slice says nothing about a retained pointer. |
 | Repeating the borrowing contract at the overview, type, methods, and Get call | Give each location its own role. Keep caller obligations at public methods and local reasons at exceptional operations. |
-| Overview lists Refresh and Snapshot's individual jobs | Explain availability during replacement; let Snapshot document its return value, empty case, and shared ownership. |
+| Overview lists Refresh and Snapshot's individual jobs | State the file's overall responsibility first, then explain availability during replacement; let Snapshot document its return value, empty case, and shared ownership. |
+| Overview begins with background, a domain label, or `This file` | Start the first complete sentence with the actual filename and a concrete responsibility. A filename heading alone is insufficient. |
 | An uncommented private getter or a "state fields" label | Restore required declaration coverage or the actual shared rule and individual meanings. |
 | Padding, line wrapping, or praise used to reach a minimum | Count substantive prose only; recheck role and facts. Preserve design-overview paragraphs. |
 | "Preserves concrete types" after checking only ordinary pointers | Verify named pointers and interface cases before promising type preservation. |

@@ -150,7 +150,7 @@ decorder 把初始化表达式里函数字面量内的 `var` 当成顶层声明�
 
 本次新增或修改的手写生产文件需要文件总览。总览放在 import 之后、首个其他声明之前，并与该声明的文档注释隔开一个空行。没有 import 时放在 `package` 子句之后。`doc.go` 使用下一节的包说明结构。
 
-总览从具体问题或领域规则展开，说明主要对象或入口怎样配合。文件自身实现并发协调、信息保留、持久化顺序或多状态计算等设计时，还需要说明关键选择及其条件和后果。篇幅按解释任务分档；代码行数、分支数量和调用库机制的数量不决定注释长度。目的说明与设计说明的判定、最低词数和段落数见 [code-comments](../../.agents/skills/code-comments/SKILL.md#mandatory-coverage-and-minimum-lengths)。
+总览第一句以实际文件名（包含扩展名）为主语，用完整句子说明这个文件负责什么，例如 `request_timing.go records request durations and builds Server-Timing headers.`。随后解释背景、主要对象或入口怎样配合，以及设计原因；单独的文件名标题不能代替职责说明。文件自身实现并发协调、信息保留、持久化顺序或多状态计算等设计时，还需要说明关键选择及其条件和后果。篇幅按解释任务分档；代码行数、分支数量和调用库机制的数量不决定注释长度。目的说明与设计说明的判定、最低词数和段落数见 [code-comments](../../.agents/skills/code-comments/SKILL.md#mandatory-coverage-and-minimum-lengths)。
 
 文件总览描述当前文件，`doc.go` 描述整个包；函数调用规则写在函数前，特殊分支的处理原因写在分支旁。文件总览中的解释不能代替这些位置的必写说明。
 
