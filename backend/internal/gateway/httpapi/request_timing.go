@@ -16,6 +16,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// request_timing.go observes HTTP text admission and streaming delivery across
+// native, passthrough, and converted platform paths. Observation follows the
+// original body reader and the final HTTP writer, so body replays and discarded
+// output staging cannot masquerade as network reads or client delivery. The
+// upstream observer sees decoded transport bytes without advancing the reader.
+//
+// The framing observer retains only the current event and never rewrites,
+// prefetches, flushes, or closes the underlying exchange. Completed events are
+// classified independently from billing and retry commitment. Failed writes
+// discard their observation, while successful writes can establish content
+// before a later flush. Every platform shares the same request collector and
+// first-event rules, including protocol conversion at the HTTP boundary.
+
 // timingResponseBody observes consumed response bytes without changing read ownership.
 type timingResponseBody struct {
 	io.ReadCloser               // original upstream response body
@@ -38,19 +51,6 @@ type timingFrames struct {
 	event   string               // current SSE event name
 	observe func(string, string) // synchronous completed payload callback
 }
-
-// request_timing.go observes HTTP text admission and streaming delivery across
-// native, passthrough, and converted platform paths. Observation follows the
-// original body reader and the final HTTP writer, so body replays and discarded
-// output staging cannot masquerade as network reads or client delivery. The
-// upstream observer sees decoded transport bytes without advancing the reader.
-//
-// The framing observer retains only the current event and never rewrites,
-// prefetches, flushes, or closes the underlying exchange. Completed events are
-// classified independently from billing and retry commitment. Failed writes
-// discard their observation, while successful writes can establish content
-// before a later flush. Every platform shares the same request collector and
-// first-event rules, including protocol conversion at the HTTP boundary.
 
 // TextRequestTiming installs admission observation before authentication reads
 // the request body. Only POST text endpoints participate; WebSocket, media and
@@ -178,7 +178,7 @@ func (w *timingWriter) observe(data, event string) {
 	}
 	w.stages.SetStream(true)
 	w.pending = true
-	if timingVisible(data) {
+	if timingVisible(data, event) {
 		w.stages.Mark("first_visible_output_ms")
 		w.frames.stopped = true
 	}
@@ -281,11 +281,18 @@ func (f *timingFrames) finish() {
 func (f *timingFrames) reset() { f.line = f.line[:0]; f.data = f.data[:0]; f.event = "" }
 
 // timingDataEvent excludes explicit protocol heartbeats from data event timing.
+// A payload type takes precedence over the optional SSE event name. Empty
+// Claude text and thinking deltas remain keepalives in either encoding.
 func timingDataEvent(data, event string) bool {
 	if strings.TrimSpace(data) == "" {
 		return false
 	}
 	kind := gjson.Get(data, "type").String()
+	// Payload type wins over an inconsistent event header, matching protocol
+	// normalization that retains real content inside a mislabeled ping frame.
+	if kind == "" {
+		kind = event
+	}
 	// Claude Code keepalive can be encoded as an empty content delta. It must
 	// not establish response delivery while the actual upstream is still idle.
 	if kind == "content_block_delta" {
@@ -296,11 +303,6 @@ func timingDataEvent(data, event string) bool {
 		if delta.Get("type").String() == "thinking_delta" && delta.Get("thinking").String() == "" {
 			return false
 		}
-	}
-	// Payload type wins over an inconsistent event header, matching protocol
-	// normalization that retains real content inside a mislabeled ping frame.
-	if kind == "" {
-		kind = event
 	}
 	return kind != "ping" && kind != "heartbeat"
 }
@@ -314,9 +316,14 @@ func timingDataEvent(data, event string) bool {
 // positions rather than searching arbitrary JSON for strings. The caller runs
 // it only on complete successfully written events, and its result changes
 // diagnostic timestamps without changing retry eligibility or settlement.
-func timingVisible(data string) bool {
+func timingVisible(data, event string) bool {
 	v := gjson.Parse(data)
 	kind := v.Get("type").String()
+	// SSE can carry the event type outside JSON. Preserve payload precedence
+	// when both exist, as the protocol adapters do when normalizing named events.
+	if kind == "" {
+		kind = event
+	}
 	switch kind {
 	case "content_block_delta":
 		d := v.Get("delta")
@@ -383,6 +390,11 @@ func timingContent(v gjson.Result) bool {
 		}
 	}
 	if v.Get("functionCall.name").String() != "" || v.Get("function.name").String() != "" || v.Get("function.arguments").String() != "" {
+		return true
+	}
+	// Legacy Chat streams deliver a single function_call instead of tool_calls.
+	// Its name and argument fragments carry the same useful content as modern tools.
+	if v.Get("function_call.name").String() != "" || v.Get("function_call.arguments").String() != "" {
 		return true
 	}
 	for _, key := range []string{"content", "parts", "output", "summary", "tool_calls"} {

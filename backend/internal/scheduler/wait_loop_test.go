@@ -4,11 +4,62 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// delayedSlotCache models slow capacity checks before a configured successful poll.
+type delayedSlotCache struct {
+	stubConcurrencyCacheForTest     // inherited slot cleanup methods
+	checks                      int // remaining denied capacity checks
+}
+
+// AcquireProviderSlot consumes cache latency before returning the next admission result.
+func (c *delayedSlotCache) AcquireProviderSlot(context.Context, int64, int, string) (bool, error) {
+	time.Sleep(time.Second)
+	c.checks--
+	return c.checks < 0, nil
+}
+
+// AcquireUserSlot gives user admission the same controlled cache latency.
+func (c *delayedSlotCache) AcquireUserSlot(ctx context.Context, id int64, limit int, member string) (bool, error) {
+	return c.AcquireProviderSlot(ctx, id, limit, member)
+}
+
+// TestWaitObservationExcludesCapacityChecks separates polling delay from slow
+// cache calls for both queue kinds. Immediate acquisition has no queue interval,
+// and a later successful poll reports only time spent waiting between checks.
+func TestWaitObservationExcludesCapacityChecks(t *testing.T) {
+	for _, kind := range []string{"user", "provider"} {
+		for _, immediate := range []bool{false, true} {
+			for _, denied := range []int{0, 1} {
+				synctest.Test(t, func(t *testing.T) {
+					cache := &delayedSlotCache{checks: denied}
+					core := NewConcurrencyService(cache)
+					var waited time.Duration
+					ctx := WithWaitObservation(t.Context(), func(observed string, d time.Duration) {
+						require.Equal(t, kind, observed)
+						waited += d
+					})
+					start := time.Now()
+					release, err := core.WaitForSlot(ctx, kind, 1, 1, time.Minute, immediate, WaitObserver{})
+					require.NoError(t, err)
+					release()
+					require.Equal(t, time.Since(start)-time.Duration(denied+1)*time.Second, waited)
+					if immediate && denied == 0 {
+						require.Zero(t, waited)
+					} else {
+						require.GreaterOrEqual(t, waited, InitialBackoff)
+					}
+					require.NoError(t, core.StopContext(t.Context()))
+				})
+			}
+		}
+	}
+}
 
 // TestNextBackoff_ExponentialGrowth feeds each generated interval into the
 // next jittered backoff call. It checks initial and maximum bounds throughout

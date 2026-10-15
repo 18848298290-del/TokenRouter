@@ -98,7 +98,8 @@ func (e *WaitQueueFullError) Error() string {
 
 // WithWaitObservation attaches a request-local completed-wait observer to context.
 // The callback receives only actual queue intervals, including cancellation.
-// Immediate admission never invokes it and resource release remains unchanged.
+// Capacity-check execution is excluded. Immediate admission never invokes it
+// and resource release remains unchanged.
 func WithWaitObservation(ctx context.Context, observe func(string, time.Duration)) context.Context {
 	return context.WithValue(ctx, waitObservationKey{}, observe)
 }
@@ -126,7 +127,8 @@ func ObserveAdmission(ctx context.Context) {
 // the cancellation channel. Parent cancellation takes its own error, runtime
 // cancellation follows it, and an expired wait budget yields ConcurrencyError.
 // The runtime tracks this wait loop until return, while a granted slot carries
-// its own completion registration.
+// its own completion registration. Timing observers receive the queued interval
+// minus capacity-check execution, keeping slow cache operations in processing.
 func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string, id int64, limit int, timeout time.Duration, immediate bool, observer WaitObserver) (func(), error) {
 	operation, finish, err := s.runtime.Enter(parent, "slot-wait")
 	if err != nil {
@@ -153,8 +155,9 @@ func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string
 	// Record real polling only after immediate acquisition failed. The observer
 	// does not participate in cancellation, admission, or resource ownership.
 	waitStarted := time.Now()
+	var capacityCheckTime time.Duration
 	if observe, ok := parent.Value(waitObservationKey{}).(func(string, time.Duration)); ok {
-		defer func() { observe(slotType, time.Since(waitStarted)) }()
+		defer func() { observe(slotType, time.Since(waitStarted)-capacityCheckTime) }()
 	}
 	if observer.Begin != nil {
 		if err := observer.Begin(); err != nil {
@@ -192,7 +195,11 @@ func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string
 		// remains unavailable so observer traffic does not increase
 		// acquisition frequency.
 		case <-timer.C:
+			// Capacity checks execute within the loop but belong to processing.
+			// Subtract their elapsed time even when acquisition fails or is canceled.
+			checkStarted := time.Now()
 			result, err := acquire()
+			capacityCheckTime += time.Since(checkStarted)
 			if err != nil {
 				return nil, err
 			}

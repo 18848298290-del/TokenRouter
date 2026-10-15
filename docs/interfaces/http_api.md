@@ -316,7 +316,7 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 管理员 `GET /api/v1/admin/usage` 的每条记录可以带 `detailed_timing`，按内部请求 ID 批量关联 `http.access` 日志。HTTP 文本请求使用同一套可选字段，按字段含义区分阶段时长与事件时刻；`timing_stream` 和 `timing_admitted` 使用 0/1 表示客户端流式模式和首次提供商准入是否完成。
 
-`request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 是首次准入前互不重叠的毫秒时长，合计对应 `provider_slot_acquired_ms`。准入失败时，四项统计到请求结束，不产生成功准入时刻。`retry_provider_slot_wait_ms` 单列后续提供商排队，不包含上游耗时或重试退避。
+`request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 是首次准入前互不重叠的毫秒时长，合计对应 `provider_slot_acquired_ms`。排队期间的容量查询耗时归入前置处理，两类等待只统计查询之间的排队时间。准入失败时，四项统计到请求结束，不产生成功准入时刻。`retry_provider_slot_wait_ms` 单列后续提供商排队，不包含上游耗时、容量查询或重试退避。
 
 `provider_slot_acquired_ms`、上游连接、发送、首字节、`upstream_first_event_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms` 都是距请求进入网关的事件时刻，不能相加。`upstream_first_sse_data_ms` 保留 SSE 专用含义，通用首事件也支持 Bedrock EventStream。有效输出包含正文、明文思考和工具调用，排除心跳、元数据、签名和密文；下游指标只观察成功写出及既有 Flush。
 

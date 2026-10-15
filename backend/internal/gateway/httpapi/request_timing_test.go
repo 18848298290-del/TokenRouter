@@ -106,16 +106,65 @@ func TestTimingFramesBoundaries(t *testing.T) {
 	f := timingFrames{observe: func(data, _ string) { events = append(events, data) }}
 	f.feed([]byte("event: message\r\ndata:{\r\ndata: \"type\": \"message_start\"}\r\n\r\n"))
 	require.Len(t, events, 1)
-	require.False(t, timingVisible(events[0]))
+	require.False(t, timingVisible(events[0], ""))
 	f.feed([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"text\"}"))
 	f.finish()
 	require.Len(t, events, 2)
-	require.True(t, timingVisible(events[1]))
+	require.True(t, timingVisible(events[1], ""))
 	f.feed([]byte("data: {\"type\":\"truncated\""))
 	f.finish()
 	require.Len(t, events, 2)
 	for _, payload := range []string{`{"type":"content_block_delta","delta":{"signature":"secret"}}`, `{"type":"response.created","response":{"id":"r","model":"gpt"}}`, `{"type":"content_block_delta","delta":{"text":""}}`} {
-		require.False(t, timingVisible(payload), payload)
+		require.False(t, timingVisible(payload, ""), payload)
+	}
+}
+
+// TestTimingWriterEventNamesAndLegacyTools covers payloads whose event type is
+// supplied by SSE and legacy Chat function calls. Only delivered content counts;
+// metadata, empty tool fragments and protocol heartbeats leave milestones absent.
+func TestTimingWriterEventNamesAndLegacyTools(t *testing.T) {
+	cases := []struct {
+		name    string // descriptive protocol case name
+		event   string // optional SSE event header
+		data    string // complete JSON event payload
+		visible bool   // useful output is delivered
+		flushed bool   // response event is flushed
+	}{
+		{"responses_text", "response.output_text.delta", `{"delta":"hello"}`, true, true},
+		{"responses_reasoning", "response.reasoning_summary_text.delta", `{"delta":"reason"}`, true, true},
+		{"responses_tool", "response.function_call_arguments.delta", `{"delta":"{}"}`, true, true},
+		{"messages_text", "content_block_delta", `{"delta":{"type":"text_delta","text":"hello"}}`, true, true},
+		{"messages_thinking", "content_block_delta", `{"delta":{"type":"thinking_delta","thinking":"reason"}}`, true, true},
+		{"payload_wins", "ping", `{"type":"response.output_text.delta","delta":"hello"}`, true, true},
+		{"payload_ping_wins", "response.output_text.delta", `{"type":"ping","delta":"hello"}`, false, false},
+		{"metadata", "response.created", `{"response":{"id":"r"}}`, false, true},
+		{"empty_text", "content_block_delta", `{"delta":{"type":"text_delta","text":""}}`, false, false},
+		{"empty_thinking", "content_block_delta", `{"delta":{"type":"thinking_delta","thinking":""}}`, false, false},
+		{"signature", "content_block_delta", `{"delta":{"signature":"secret"}}`, false, true},
+		{"legacy_tool_name", "", `{"choices":[{"delta":{"function_call":{"name":"lookup"}}}]}`, true, true},
+		{"legacy_tool_arguments", "", `{"choices":[{"delta":{"function_call":{"arguments":"{}"}}}]}`, true, true},
+		{"legacy_empty_tool", "", `{"choices":[{"delta":{"function_call":{}}}]}`, false, true},
+		{"legacy_empty_fields", "", `{"choices":[{"delta":{"function_call":{"name":"","arguments":""}}}]}`, false, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			out := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(out)
+			_, stages := timing.WithStages(t.Context(), time.Now(), nil)
+			stages.SetStream(true)
+			writer := &timingWriter{ResponseWriter: c.Writer, stages: stages}
+			writer.frames.observe = writer.observe
+			writer.Header().Set("Content-Type", "text/event-stream")
+			frame := "event: " + tt.event + "\ndata: " + tt.data + "\n\n"
+			_, err := writer.WriteString(frame)
+			require.NoError(t, err)
+			writer.Flush()
+			_, visible := stages.Snapshot()["first_visible_output_ms"]
+			_, flushed := stages.Snapshot()["first_downstream_flush_ms"]
+			require.Equal(t, tt.visible, visible)
+			require.Equal(t, tt.flushed, flushed)
+			require.Equal(t, frame, out.Body.String())
+		})
 	}
 }
 
