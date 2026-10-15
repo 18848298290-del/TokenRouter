@@ -683,14 +683,15 @@ watch(
 )
 
 onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
+  // 捕获外部点击以取消未应用的日期范围，包括弹窗内的点击。
+  document.addEventListener('click', handleClickOutside, true)
   document.addEventListener('keydown', handleEscape)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
+  document.removeEventListener('click', handleClickOutside, true)
   document.removeEventListener('keydown', handleEscape)
   window.removeEventListener('resize', handleViewportChange)
   window.removeEventListener('scroll', handleViewportChange, true)

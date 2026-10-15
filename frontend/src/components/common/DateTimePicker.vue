@@ -477,13 +477,14 @@ const handleViewportChange = () => {
 }
 
 onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
+  // 在弹窗拦截冒泡前处理外部点击，关闭日期时间草稿。
+  document.addEventListener('click', handleClickOutside, true)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
+  document.removeEventListener('click', handleClickOutside, true)
   window.removeEventListener('resize', handleViewportChange)
   window.removeEventListener('scroll', handleViewportChange, true)
 })
