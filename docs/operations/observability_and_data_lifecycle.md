@@ -124,7 +124,7 @@ Usage cleanup 是管理员手动创建的持久任务，需要提供时间范围
 
 ## 备份与恢复范围
 
-backup 使用 PostgreSQL dump，把产物流式写到本地或 S3 兼容存储；配置、记录、定时调度和恢复都受维护锁保护。默认的内容策略，会排除 `backupContentTableDataGroups` 里归类的 usage records、Ops logs、专项 audit history 和 runtime data，这四类都需要手动选择。备份显示 completed，只说明已经写出了所选的内容，不代表这四类都在文件里。
+backup 使用 PostgreSQL dump，把产物流式写到本地或 S3 兼容存储；配置、记录、定时调度和恢复都受维护锁保护。默认的内容策略，会排除 `backupContentTableDataGroups` 里归类的 usage records、Ops logs、专项 audit history 和 runtime data，这四类都需要手动选择。提供商余额提醒的最近轮次和下次检查时间属于 `runtime_data`，配置仍保存在提供商 Extra 中；恢复时没有运行状态会在下一轮扫描重新检查。备份显示 completed，只说明已经写出了所选的内容，不代表这四类都在文件里。
 
 新建备份的文件名统一为 `tr_YYYYMMDD_HHMMSS.sql.gz`，前缀固定为 `tr`。本地和 S3 存储使用这个文件名生成对象路径，下载和恢复读取备份记录中保存的名称与对象键；已有的 `sub2api` 前缀备份继续按原记录访问。
 

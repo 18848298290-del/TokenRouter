@@ -13,7 +13,7 @@
 - [tf CLI 网页导入](tf_cli_web_import.md)：Keys 页、本机回环协议、会话证明、两次确认和浏览器安全头。读取时机：修改 Keys 导入入口、URL fragment、localhost fetch、CSP 或 tf-cli 协议时读取。
 - [统一协议能力](protocol_capabilities.md)：25 项协议目录、提供商的原生协议集合、分组准入和单步转换、图片策略和兼容的旧字段输入。读取时机：修改协议选项、转换路线、公共入口门禁或统一配置时读取。
 - [上游提供商能力矩阵](upstream_provider_matrix.md)：十个平台、七类提供商和全部公开网关协议的支持情况：正式支持、兼容保留和不支持。读取时机：新增平台或提供商类型、修改创建和导入校验、路由分派或能力承诺时读取。
-- [API Key 上游用量查询](upstream_usage.md)：API Key 提供商的适配器、管理员查询接口、归一化结果、浏览器缓存和国产供应商的周期监控。读取时机：修改 API Key 用量查询、适配器协议、提供商用量展示或查询安全策略时读取。
+- [API Key 上游用量查询](upstream_usage.md)：API Key 提供商的适配器、管理员查询接口、归一化结果、浏览器缓存、余额邮件提醒和国产供应商的周期监控。读取时机：修改 API Key 用量查询、适配器协议、提供商用量展示或查询安全策略时读取。
 - [Anthropic 上游](anthropic_upstream.md)：OAuth、Setup Token、API Key、Bedrock 的模型和区域路由、Vertex，以及 Messages 和 OpenAI 兼容转换、缓存和限流。读取时机：修改 Anthropic 认证、协议、模型区域、beta、thinking、缓存或错误分类时读取。
 - [OpenAI 上游](openai_upstream.md)：OAuth 和 API Key、Responses、Chat、Messages、Embeddings、Images、Realtime 和 Codex 的传输规则。读取时机：修改 OpenAI 认证、endpoint capability、WebSocket、模型或配额调度时读取。
 - [Gemini 上游](gemini_upstream.md)：OAuth 变体、API Key、Vertex Service Account、v1beta 原生和兼容协议。读取时机：修改 Gemini 认证、project 和 tier、协议转换、thought signature 或配额时读取。

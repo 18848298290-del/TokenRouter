@@ -23,4 +23,5 @@
 //   - group_links.go and proxy_changes.go participate in routing and egress
 //     caller transactions.
 //   - scheduled_plans.go stores recurring test plans and retained results.
+//   - balance_alert.go stores wallet reminder claims and their latest outcomes.
 package postgres

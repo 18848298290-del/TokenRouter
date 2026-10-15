@@ -1507,6 +1507,30 @@ export interface BatchUpstreamUsageResponse {
   errors: Record<string, UpstreamUsageQueryError>
 }
 
+// UpstreamBalanceAlertConfig is the reminder policy stored in extra.upstream_balance_alert.
+// The backend rejects unknown keys and null values, so forms send all four fields.
+export interface UpstreamBalanceAlertConfig {
+  enabled: boolean // scheduled reminder switch
+  threshold: number // compared with balance.remaining
+  interval_minutes: number // minutes, 5 to 1440
+  recipient_email: string // single recipient address
+}
+
+// UpstreamBalanceAlertStatus is the latest persisted reminder attempt for one provider.
+// Before the first check, or after the saved configuration changes, only
+// provider_id is present.
+export interface UpstreamBalanceAlertStatus {
+  provider_id: number // monitored provider
+  round?: number // increasing attempt number
+  last_checked_at?: string // UTC
+  next_check_at?: string // UTC
+  balance?: number // observed primary balance
+  unit?: string // upstream display unit
+  observed_at?: string // UTC
+  sent_at?: string // UTC SMTP confirmation time
+  error_code?: string // sanitized failure code
+}
+
 // OpenAI Codex usage snapshot (from response headers)
 export interface CodexUsageSnapshot {
   // Legacy fields (kept for backwards compatibility)

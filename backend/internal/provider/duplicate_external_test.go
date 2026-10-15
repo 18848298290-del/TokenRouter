@@ -182,6 +182,7 @@ func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T)
 		SessionWindowEnd:        &sessionWindowEnd,
 		SessionWindowStatus:     "active",
 	}
+	source.Extra[providercore.UpstreamBalanceAlertExtraKey] = map[string]any{"enabled": true, "threshold": 1000, "interval_minutes": 60, "recipient_email": "alerts@example.com"}
 	source.Extra["upstream_billing_probe_enabled"] = true
 	source.Extra["upstream_billing_probe"] = map[string]any{"status": "ok"}
 	require.NoError(t, repo.Create(ctx, source))

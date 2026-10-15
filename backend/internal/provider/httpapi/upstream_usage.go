@@ -35,7 +35,8 @@ type UpstreamUsageQueries interface {
 // UpstreamUsageHandler binds usage selections and serializes normalized results
 // and per-provider errors.
 type UpstreamUsageHandler struct {
-	queries UpstreamUsageQueries // optional normalized usage queries
+	queries UpstreamUsageQueries          // optional normalized usage queries
+	alerts  *provider.BalanceAlertMonitor // persisted balance reminder status
 }
 
 // UpstreamUsageBatchRequest carries the required provider selection for a
@@ -49,8 +50,8 @@ type UpstreamUsageBatchRequest struct {
 // NewUpstreamUsageHandler borrows the usage query implementation for manual
 // administrator requests. A nil implementation remains nil and mounted query
 // methods return the domain service-unavailable error when reached.
-func NewUpstreamUsageHandler(queries UpstreamUsageQueries) *UpstreamUsageHandler {
-	return &UpstreamUsageHandler{queries: queries}
+func NewUpstreamUsageHandler(queries UpstreamUsageQueries, alerts *provider.BalanceAlertMonitor) *UpstreamUsageHandler {
+	return &UpstreamUsageHandler{queries: queries, alerts: alerts}
 }
 
 // QueryUpstreamUsage validates a positive path identifier and returns its
@@ -123,4 +124,25 @@ func (h *UpstreamUsageHandler) QueryBatchUpstreamUsage(c *gin.Context) {
 		"usage":  usageByProvider,
 		"errors": serializedErrors,
 	})
+}
+
+// BalanceAlertStatus returns persisted reminder state after current-identity validation.
+// Invalid identifiers and missing dependencies return domain errors. Reading this
+// endpoint performs no upstream query and never sends an email notification.
+func (h *UpstreamUsageHandler) BalanceAlertStatus(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.ErrorFrom(c, provider.ErrUpstreamUsageProviderInvalid)
+		return
+	}
+	if h.alerts == nil {
+		response.ErrorFrom(c, provider.ErrUpstreamUsageUnavailable)
+		return
+	}
+	state, err := h.alerts.Status(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, state)
 }

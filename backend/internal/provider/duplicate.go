@@ -40,6 +40,8 @@ const (
 // observations, synchronization identity, quota history, or previous
 // duplication operation.
 var duplicateProviderDiscardedExtraKeys = map[string]struct{}{
+	// Each copy requires its own reminder opt-in and recipient review.
+	UpstreamBalanceAlertExtraKey: {},
 	// Retry identifiers belong to the operation that produced the record.
 	duplicateProviderOperationIDExtraKey: {},
 	// External synchronization identifiers belong to one local provider.

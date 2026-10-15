@@ -55,6 +55,7 @@ const (
 	NotificationEmailEventSubscriptionExpiryReminder  = "subscription.expiry_reminder"        // optional subscription reminder
 	NotificationEmailEventBalanceLow                  = "balance.low"                         // optional low-balance notice
 	NotificationEmailEventBalanceRechargeSuccess      = "balance.recharge_success"            // fulfilled balance recharge
+	NotificationEmailEventProviderUpstreamBalanceLow  = "provider.upstream_balance_low"       // upstream wallet balance reminder
 	NotificationEmailEventProviderQuotaAlert          = "provider.quota_alert"                // administrator provider-quota notice
 	NotificationEmailEventContentModerationViolation  = "content_moderation.violation_notice" // content violation notice
 	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled" // moderation account-disabled notice
@@ -177,6 +178,13 @@ var (
 			Category:     "billing",
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id"),
+		},
+		{
+			Event:        NotificationEmailEventProviderUpstreamBalanceLow,
+			Label:        "Provider upstream balance reminder",
+			Description:  "Sent on every scheduled check with a wallet balance below the provider threshold.",
+			Category:     "admin",
+			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "provider_id", "provider_name", "balance", "threshold", "unit", "observed_at"),
 		},
 		{
 			Event:       NotificationEmailEventProviderQuotaAlert,
@@ -405,6 +413,16 @@ var (
 <p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
 <p>当前余额：<strong>${{current_balance}}</strong></p>
 			<p>订单号：{{order_id}}</p>`),
+			},
+		},
+		NotificationEmailEventProviderUpstreamBalanceLow: {
+			notificationEmailDefaultLocale: {
+				Subject: "[{{site_name}}] Low upstream balance - {{provider_name}}",
+				HTML:    notificationEmailCard("#dc2626", "Low upstream balance", `<p>Provider: {{provider_name}} ({{provider_id}})</p><p>Remaining balance: {{balance}} {{unit}}</p><p>Reminder threshold: {{threshold}}</p><p>Checked at: {{observed_at}}</p>`),
+			},
+			notificationEmailLocaleChinese: {
+				Subject: "[{{site_name}}] 上游余额不足 - {{provider_name}}",
+				HTML:    notificationEmailChineseCard("#dc2626", "上游余额不足", `<p>提供商：{{provider_name}}（{{provider_id}}）</p><p>剩余余额：{{balance}} {{unit}}</p><p>提醒阈值：{{threshold}}</p><p>查询时间：{{observed_at}}</p>`),
 			},
 		},
 		NotificationEmailEventProviderQuotaAlert: {
@@ -1729,6 +1747,9 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"expiry_time":         "2026-06-18 12:00",
 			"days_remaining":      "3",
 			"current_balance":     "12.34",
+			"balance":             "999",
+			"unit":                "CNY",
+			"observed_at":         "2026-10-16T00:00:00Z",
 			"threshold":           "20.00",
 			"recharge_url":        "https://example.com/recharge",
 			"recharge_amount":     "50.00",
@@ -1781,6 +1802,9 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"expiry_time":         "2026-06-18 12:00",
 		"days_remaining":      "3",
 		"current_balance":     "12.34",
+		"balance":             "999",
+		"unit":                "CNY",
+		"observed_at":         "2026-10-16T00:00:00Z",
 		"threshold":           "20.00",
 		"recharge_url":        "https://example.com/recharge",
 		"recharge_amount":     "50.00",

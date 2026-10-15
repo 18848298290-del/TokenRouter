@@ -392,6 +392,30 @@ export default {
         }
       },
       usageWindowsHint: 'OAuth providers show official upstream usage windows; API Key providers show local usage together with manually queried upstream balances and limits.',
+      balanceAlert: {
+        title: 'Upstream balance reminder',
+        hint: 'Checks the wallet balance at the set interval and sends an email on every check that finds it below the threshold.',
+        unsupported: 'Available for API-key providers with a wallet balance query. Coding Plans and Zhipu pay-as-you-go are not supported.',
+        queryDisabled: 'Upstream usage queries are off. Scheduled checks start after you turn them on.',
+        threshold: 'Balance threshold',
+        thresholdHint: 'Compared with the balance the upstream reports. The currency is for display only.',
+        interval: 'Check interval',
+        intervalHint: '5 to 1440 minutes.',
+        email: 'Recipient email',
+        status: 'Latest check',
+        refresh: 'Refresh check status',
+        loadFailed: 'Could not load the check status. Refresh to try again.',
+        notChecked: 'No checks yet for these settings. Checks start with the next scan after you save.',
+        checkedAt: 'Checked',
+        balance: 'Balance',
+        sentAt: 'Email',
+        notSent: 'Not sent',
+        nextCheckAt: 'Next check',
+        errors: {
+          UPSTREAM_BALANCE_ALERT_HOST_DENIED: 'The query host is not on the background allowlist, so this check was skipped',
+          UPSTREAM_BALANCE_ALERT_EMAIL_FAILED: 'The reminder email could not be sent'
+        }
+      },
       upstreamUsage: {
         title: 'Upstream usage query',
         hint: 'Display-only administrator query. It does not affect forwarding, scheduling, or local quotas.',

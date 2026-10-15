@@ -122,5 +122,8 @@ func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string
 	if err := ValidateGeminiThirdPartyBaseURL(provider); err != nil {
 		return nil, err
 	}
+	if _, err := BalanceAlertConfiguration(provider); err != nil {
+		return nil, err
+	}
 	return provider, nil
 }

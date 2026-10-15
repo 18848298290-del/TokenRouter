@@ -353,6 +353,11 @@ const eventDisplayMeta: Record<string, EventDisplayMeta> = {
     timing: "余额充值订单支付完成并入账后发送。",
     categoryLabel: "计费",
   },
+  "provider.upstream_balance_low": {
+    label: "上游余额提醒",
+    timing: "提供商开启余额提醒后，每次定时检查发现上游钱包余额低于阈值时，发送到该提供商设置的收件邮箱。",
+    categoryLabel: "管理告警",
+  },
   "provider.quota_alert": {
     label: "提供商限额告警",
     timing: "上游提供商的用量达到配置的额度告警阈值时发送给管理员通知邮箱。",
@@ -425,6 +430,11 @@ const eventDisplayMetaEn: Record<string, EventDisplayMeta> = {
     label: "Balance Recharge Success",
     timing: "Sent after a balance recharge order is paid and credited.",
     categoryLabel: "Billing",
+  },
+  "provider.upstream_balance_low": {
+    label: "Upstream Balance Reminder",
+    timing: "Sent to the provider's reminder recipient on every scheduled check that finds the upstream wallet balance below its threshold.",
+    categoryLabel: "Admin",
   },
   "provider.quota_alert": {
     label: "Provider Quota Alert",

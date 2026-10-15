@@ -1,6 +1,7 @@
 /**
- * Admin Providers API endpoints
- * Handles AI platform provider management for administrators
+ * providers.ts wraps the administrator provider endpoints for the frontend.
+ * Each function sends one request through the shared API client and returns the
+ * unwrapped response data, while provider forms and lists own their own state.
  */
 
 import { apiClient } from '../client'
@@ -12,6 +13,7 @@ import type {
   ProviderUsageInfo,
   UpstreamUsageQueryResult,
   BatchUpstreamUsageResponse,
+  UpstreamBalanceAlertStatus,
   WindowStats,
   ClaudeModel,
   ProviderUsageStatsResponse,
@@ -551,6 +553,15 @@ export async function queryBatchUpstreamUsage(providerIds: number[]): Promise<Ba
   return data
 }
 
+/** getUpstreamBalanceAlertStatus reads the provider's latest stored reminder attempt.
+ * The endpoint returns persisted state only; it neither queries the upstream
+ * nor sends email, so callers can refresh it freely while a form is open.
+ */
+export async function getUpstreamBalanceAlertStatus(id: number): Promise<UpstreamBalanceAlertStatus> {
+  const { data } = await apiClient.get<UpstreamBalanceAlertStatus>(`/admin/providers/${id}/upstream-balance-alert`)
+  return data
+}
+
 /**
  * Recover provider runtime state in one call
  * @param id - Provider ID
@@ -1078,6 +1089,7 @@ export const providersAPI = {
   getBatchUsage,
   queryUpstreamUsage,
   queryBatchUpstreamUsage,
+  getUpstreamBalanceAlertStatus,
   getBatchTodayStats,
   recoverState,
   resetProviderQuota,

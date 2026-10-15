@@ -289,6 +289,9 @@ func ApplyConfigurationChange(current, desired *Record, change ConfigurationChan
 	if CNUsageMonitorIdentityFingerprint(current) != CNUsageMonitorIdentityFingerprint(out) {
 		delete(out.Extra, CNUsageMonitorSnapshotExtraKey)
 	}
+	if _, err := BalanceAlertConfiguration(out); err != nil {
+		return nil, err
+	}
 	return CloneRecord(out), nil
 }
 

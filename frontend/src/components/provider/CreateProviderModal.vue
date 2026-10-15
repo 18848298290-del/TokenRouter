@@ -1030,6 +1030,12 @@
             @update:wallet-access-token="upstreamUsageWalletAccessToken = $event"
             @update:wallet-user-id="upstreamUsageWalletUserId = $event"
           />
+          <UpstreamBalanceAlertEditor
+            v-if="form.type === 'apikey'"
+            v-model="balanceAlert"
+            :supported="balanceAlertSupported"
+            :query-enabled="upstreamUsageEnabled"
+          />
         </template>
 
         <template #request>
@@ -1618,6 +1624,7 @@ import ResponsesWSConnectionModeSelector from '@/components/provider/ResponsesWS
 import GrokBaseUrlPresets from '@/components/provider/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/provider/CnBaseUrlPresets.vue'
 import UpstreamUsageConfigEditor from '@/components/provider/UpstreamUsageConfigEditor.vue'
+import UpstreamBalanceAlertEditor from '@/components/provider/UpstreamBalanceAlertEditor.vue'
 import SettingRow from '@/components/common/settings/SettingRow.vue'
 import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
 import SettingsSection from '@/components/common/settings/SettingsSection.vue'
@@ -1677,6 +1684,11 @@ import {
   RESPONSES_WS_POOLED,
   type ResponsesWSConnectionMode
 } from '@/utils/responsesWsConnection'
+import {
+  buildUpstreamBalanceAlert,
+  defaultUpstreamBalanceAlert,
+  supportsUpstreamBalanceAlert
+} from '@/utils/upstreamBalanceAlert'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
@@ -1870,6 +1882,7 @@ const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const upstreamUsageEnabled = ref(true)
+const balanceAlert = ref(defaultUpstreamBalanceAlert())
 const upstreamUsageAdapter = ref<UpstreamUsageAdapter>('sub2api')
 const upstreamUsageBaseUrl = ref('')
 const upstreamUsageWalletAccessToken = ref('')
@@ -2220,6 +2233,9 @@ const form = reactive({
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+// Balance reminders need a query adapter that reports a wallet balance; this
+// re-evaluates when the platform, type, or CN provider mode changes.
+const balanceAlertSupported = computed(() => supportsUpstreamBalanceAlert(form.type, form.platform, providerMode.value))
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
@@ -2797,6 +2813,7 @@ const resetForm = () => {
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   upstreamUsageEnabled.value = true
+  balanceAlert.value = defaultUpstreamBalanceAlert()
   upstreamUsageAdapter.value = 'sub2api'
   upstreamUsageBaseUrl.value = ''
   upstreamUsageWalletAccessToken.value = ''
@@ -3639,6 +3656,11 @@ const createProviderAndFinish = async (
         upstreamConfig.base_url = upstreamUsageBaseUrl.value.trim()
       }
       quotaExtra.upstream_usage_query = upstreamConfig
+      // A missing policy reads as disabled on the backend, so only enabled reminders are sent.
+      const alert = buildUpstreamBalanceAlert(balanceAlert.value, balanceAlertSupported.value)
+      if (alert.enabled) {
+        quotaExtra.upstream_balance_alert = alert
+      }
     }
     if (Object.keys(quotaExtra).length > 0) {
       finalExtra = quotaExtra

@@ -61,7 +61,10 @@ import (
 
 // Injectors from wire.go:
 
-// initializeApplication constructs and registers resources; Application.Run starts them.
+// initializeApplication specifies the complete application graph for Wire
+// generation. The wireinject build contains a placeholder result; generated
+// runtime initialization resolves the providers using cfg, ctx, build
+// metadata, and the supplied lifecycle objects.
 func initializeApplication(ctx context.Context, cfg *config.Config, info BuildInfo, manager *lifecycle.Manager, restarter *lifecycle.Restarter, tasks *lifecycle.Tasks) (*Application, error) {
 	options := provideHTTPOptions(cfg)
 	client, err := provideEnt(ctx, cfg, manager)
@@ -364,7 +367,8 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	archiveHandler := httpapi6.NewArchiveHandler(archive)
 	userAttributeHandler := httpapi4.NewUserAttributeHandler(userAttributeService)
 	upstreamUsageService := provideUpstreamUsage(providerStore, transportClient, cfg, tlsProfiles, manager)
-	upstreamUsageHandler := provideUpstreamUsageHTTP(upstreamUsageService)
+	balanceAlertMonitor := provideBalanceAlertMonitor(providerStore, upstreamUsageService, notificationEmailService, cfg, manager)
+	upstreamUsageHandler := provideUpstreamUsageHTTP(upstreamUsageService, balanceAlertMonitor)
 	scheduledTestPlanRepository := postgres11.NewScheduledTestPlanRepository(db)
 	scheduledTestResultRepository := postgres11.NewScheduledTestResultRepository(db)
 	scheduledTestService := provideScheduledTests(scheduledTestPlanRepository, scheduledTestResultRepository)

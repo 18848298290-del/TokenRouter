@@ -194,6 +194,13 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 				}
 			}
 		}
+		// An omitted reminder object retains the saved policy; disabling reminders
+		// requires an explicit enabled=false value so unrelated edits cannot erase it.
+		if _, provided := input.Extra[UpstreamBalanceAlertExtraKey]; !provided {
+			if value, exists := provider.Extra[UpstreamBalanceAlertExtraKey]; exists {
+				normalizedExtra[UpstreamBalanceAlertExtraKey] = value
+			}
+		}
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -377,6 +384,9 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 	if err := s.options.Credentials.ValidateEdit(ctx, provider, deferQoderPATValidation); err != nil {
 		return nil, err
 	}
+	if _, err := BalanceAlertConfiguration(provider); err != nil {
+		return nil, err
+	}
 	change.ExtraPatch = extraPatch
 	change.ExpectedCredentials = expected
 	change.NormalizeProtocols = true
@@ -396,6 +406,9 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 	}
 	if shouldReplaceExtra {
 		change.Fields |= ConfigExtra
+		if _, provided := input.Extra[UpstreamBalanceAlertExtraKey]; !provided {
+			change.PreserveExtraKeys = append(change.PreserveExtraKeys, UpstreamBalanceAlertExtraKey)
+		}
 		if _, provided := input.Extra[UpstreamUsageQueryExtraKey]; !provided {
 			change.PreserveExtraKeys = append(change.PreserveExtraKeys, UpstreamUsageQueryExtraKey)
 		}
@@ -472,6 +485,21 @@ func (s *Admin) UpdateProviderExtra(ctx context.Context, id int64, updates map[s
 	if len(updates) == 0 {
 		return nil
 	}
+	if _, supplied := updates[UpstreamBalanceAlertExtraKey]; supplied {
+		current, err := s.providerRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		prospective := CloneRecord(current)
+		if prospective.Extra == nil {
+			prospective.Extra = map[string]any{}
+		}
+		maps.Copy(prospective.Extra, updates)
+		if _, err := BalanceAlertConfiguration(prospective); err != nil {
+			return err
+		}
+		return WriteConfiguration(ctx, s.providerRepo, prospective, ConfigurationChange{Fields: ConfigExtra, ExtraPatch: updates})
+	}
 	return s.providerRepo.UpdateExtra(ctx, id, updates)
 }
 
@@ -538,12 +566,34 @@ func (s *Admin) BulkUpdateProviders(ctx context.Context, input *BulkUpdateProvid
 
 	var cachedTargets []*Record
 	hasOpenAIConfigPatch := HasOpenAIConfigurationPatch(input.Credentials, input.Extra)
-	if len(input.Credentials) > 0 || input.ProxyID != nil || hasOpenAIConfigPatch {
+	_, hasBalanceAlertPatch := input.Extra[UpstreamBalanceAlertExtraKey]
+	if len(input.Credentials) > 0 || input.ProxyID != nil || hasOpenAIConfigPatch || hasBalanceAlertPatch {
 		loaded, err := s.providerRepo.GetByIDs(ctx, input.ProviderIDs)
 		if err != nil {
 			return nil, err
 		}
 		cachedTargets = loaded
+	}
+	if hasBalanceAlertPatch || len(input.Credentials) > 0 {
+		// Validate every target before writing the shared patch, since wallet
+		// eligibility can differ between platforms and change with provider mode.
+		for _, target := range cachedTargets {
+			if target == nil {
+				continue
+			}
+			prospective := CloneRecord(target)
+			if prospective.Extra == nil {
+				prospective.Extra = map[string]any{}
+			}
+			if prospective.Credentials == nil {
+				prospective.Credentials = map[string]any{}
+			}
+			maps.Copy(prospective.Extra, input.Extra)
+			maps.Copy(prospective.Credentials, input.Credentials)
+			if _, err := BalanceAlertConfiguration(prospective); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if hasOpenAIConfigPatch {
 		targetsByID := make(map[int64]*Record, len(cachedTargets))

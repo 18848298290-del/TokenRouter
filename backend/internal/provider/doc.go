@@ -37,4 +37,5 @@
 //     connection tests, schedules, and probes.
 //   - cn*.go, upstream_queries.go: CN provider usage monitoring and upstream
 //     queries.
+//   - balance_alert*.go: wallet reminder configuration, polling, and delivery.
 package provider

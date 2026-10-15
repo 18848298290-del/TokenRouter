@@ -42,6 +42,7 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/api/admin/providers', () => ({
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue([]),
+  getUpstreamBalanceAlertStatus: vi.fn(),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -254,6 +255,36 @@ describe('CreateProviderModal OpenAI provider options', () => {
 
     expect(createProviderMock).toHaveBeenCalledTimes(1)
     expect(createProviderMock.mock.calls[0]?.[0]?.extra?.upstream_request_id_header).toBe('X-Oneapi-Request-Id')
+  })
+
+  // An API-key provider created with reminders on sends the full policy in Extra,
+  // with the recipient trimmed and the numeric fields kept as numbers.
+  it('saves an enabled upstream balance reminder', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-provider-form input[type="text"]').setValue('Wallet provider')
+    await wrapper.get('form#create-provider-form input[type="password"]').setValue('test-api-key')
+    await setSwitch(wrapper.get('[data-testid="balance-alert-enabled"]'), true)
+    await wrapper.get('[data-testid="balance-alert-threshold"]').setValue('25.5')
+    await wrapper.get('[data-testid="balance-alert-interval"]').setValue('30')
+    await wrapper.get('[data-testid="balance-alert-email"]').setValue(' ops@example.com ')
+    await wrapper.get('form#create-provider-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createProviderMock.mock.calls[0]?.[0]?.extra?.upstream_balance_alert).toEqual({
+      enabled: true,
+      threshold: 25.5,
+      interval_minutes: 30,
+      recipient_email: 'ops@example.com'
+    })
+  })
+
+  // Leaving reminders off keeps the key out of Extra; the backend reads a missing policy as disabled.
+  it('omits the balance reminder when it stays off', async () => {
+    await submitApiKeyProvider('openai')
+
+    expect(createProviderMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('upstream_balance_alert')
   })
 
   it('stores the optional New API wallet token in credentials, never in Extra', async () => {

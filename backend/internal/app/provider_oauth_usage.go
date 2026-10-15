@@ -226,8 +226,8 @@ func provideUpstreamUsage(store *providerpostgres.ProviderStore, upstream httpcl
 
 // provideUpstreamUsageHTTP exposes assembled upstream usage queries through
 // administrator HTTP.
-func provideUpstreamUsageHTTP(source *provider.UpstreamUsageService) *providerhttp.UpstreamUsageHandler {
-	return providerhttp.NewUpstreamUsageHandler(source)
+func provideUpstreamUsageHTTP(source *provider.UpstreamUsageService, alerts *provider.BalanceAlertMonitor) *providerhttp.UpstreamUsageHandler {
+	return providerhttp.NewUpstreamUsageHandler(source, alerts)
 }
 
 // provideProviderUsage constructs shared quota consumption with provider events

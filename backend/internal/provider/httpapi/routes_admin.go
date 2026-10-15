@@ -163,6 +163,7 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 		providers.POST("/:id/clear-rate-limit", endpoints.ProviderManagement.ClearRateLimit)
 		providers.POST("/:id/reset-quota", endpoints.ProviderManagement.ResetQuota)
 		providers.POST("/:id/upstream-usage/query", endpoints.UpstreamUsage.QueryUpstreamUsage)
+		providers.GET("/:id/upstream-balance-alert", endpoints.UpstreamUsage.BalanceAlertStatus)
 		providers.POST("/upstream-usage/query/batch", endpoints.UpstreamUsage.QueryBatchUpstreamUsage)
 		providers.GET("/:id/temp-unschedulable", endpoints.ProviderManagement.GetTempUnschedulable)
 		providers.DELETE("/:id/temp-unschedulable", endpoints.ProviderManagement.ClearTempUnschedulable)

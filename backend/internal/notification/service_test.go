@@ -315,6 +315,7 @@ func TestNotificationEmailEventOrderAndCopies(t *testing.T) {
 		NotificationEmailEventSubscriptionExpiryReminder,
 		NotificationEmailEventBalanceLow,
 		NotificationEmailEventBalanceRechargeSuccess,
+		NotificationEmailEventProviderUpstreamBalanceLow,
 		NotificationEmailEventProviderQuotaAlert,
 		NotificationEmailEventContentModerationViolation,
 		NotificationEmailEventContentModerationDisabled,

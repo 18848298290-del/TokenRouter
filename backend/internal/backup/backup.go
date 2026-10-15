@@ -127,6 +127,7 @@ var (
 			"public.identity_adoption_decisions",
 			"public.usage_cleanup_tasks",
 			"public.scheduled_test_results",
+			"public.provider_balance_alert_states",
 		},
 	}
 )

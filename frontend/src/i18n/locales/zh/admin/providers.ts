@@ -289,6 +289,30 @@ export default {
         }
       },
       usageWindowsHint: 'OAuth 提供商显示上游官方用量窗口；API Key 提供商显示本地用量，以及管理员手动查询得到的上游余额和限额。',
+      balanceAlert: {
+        title: '上游余额提醒',
+        hint: '按设定间隔查询钱包余额。余额低于阈值时，每次检查都会发送一封提醒邮件。',
+        unsupported: '仅支持能查询钱包余额的 API Key 提供商，Coding Plan 和智谱按量计费不支持。',
+        queryDisabled: '上游用量查询已关闭，开启后才会按计划检查余额。',
+        threshold: '余额阈值',
+        thresholdHint: '直接与上游返回的余额比较，币种只用于显示。',
+        interval: '检查间隔',
+        intervalHint: '5 至 1440 分钟。',
+        email: '收件邮箱',
+        status: '最近检查',
+        refresh: '刷新检查状态',
+        loadFailed: '无法读取检查状态，请稍后刷新重试。',
+        notChecked: '当前设置还没有检查记录，保存后从下一轮扫描开始检查。',
+        checkedAt: '检查时间',
+        balance: '余额',
+        sentAt: '邮件',
+        notSent: '未发送',
+        nextCheckAt: '下次检查',
+        errors: {
+          UPSTREAM_BALANCE_ALERT_HOST_DENIED: '查询地址不在后台访问白名单中，本次检查已跳过',
+          UPSTREAM_BALANCE_ALERT_EMAIL_FAILED: '提醒邮件发送失败'
+        }
+      },
       upstreamUsage: {
         title: '上游用量查询',
         hint: '仅供管理员展示，不影响转发、调度或本地配额。',

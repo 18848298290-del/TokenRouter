@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateProviderMock, checkMixedChannelRiskMock, getWebSearchEmulationConfigMock, getSettingsMock, listTLSProfilesMock } = vi.hoisted(() => ({
+const { updateProviderMock, checkMixedChannelRiskMock, getWebSearchEmulationConfigMock, getSettingsMock, listTLSProfilesMock, getBalanceAlertStatusMock } = vi.hoisted(() => ({
+  getBalanceAlertStatusMock: vi.fn(),
   updateProviderMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   getWebSearchEmulationConfigMock: vi.fn(),
@@ -42,7 +43,8 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/api/admin/providers', () => ({
-  getAntigravityDefaultModelMapping: vi.fn()
+  getAntigravityDefaultModelMapping: vi.fn(),
+  getUpstreamBalanceAlertStatus: getBalanceAlertStatusMock
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -348,6 +350,7 @@ describe('EditProviderModal', () => {
     getSettingsMock.mockResolvedValue({ provider_quota_notify_enabled: false })
     getWebSearchEmulationConfigMock.mockResolvedValue({ enabled: false, providers: [] })
     listTLSProfilesMock.mockResolvedValue([])
+    getBalanceAlertStatusMock.mockReset().mockResolvedValue({ provider_id: 1 })
   })
 
   it.each([undefined, ''])('Jev 地址为 %s 时加载官方默认值', async (baseUrl) => {
@@ -816,6 +819,47 @@ describe('EditProviderModal', () => {
     expect(updateProviderMock).toHaveBeenCalledTimes(1)
     expect(updateProviderMock.mock.calls[0]?.[1]?.extra).toBeDefined()
     expect(updateProviderMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('upstream_request_id_header')
+  })
+
+  // Saving unrelated edits retains the reminder object copied from provider Extra.
+  // Its threshold, interval, and recipient remain equal to the loaded policy.
+  it('retains an unchanged balance reminder in extra', async () => {
+    const provider = buildProvider()
+    provider.extra = {
+      upstream_balance_alert: { enabled: true, threshold: 50, interval_minutes: 30, recipient_email: 'ops@example.com' }
+    }
+    updateProviderMock.mockResolvedValue(provider)
+
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    expect(getBalanceAlertStatusMock).toHaveBeenCalledWith(1)
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateProviderMock).toHaveBeenCalledTimes(1)
+    expect(updateProviderMock.mock.calls[0]?.[1]?.extra?.upstream_balance_alert).toEqual(provider.extra.upstream_balance_alert)
+  })
+
+  // Turning the switch off sends the complete policy with enabled=false, so the
+  // threshold, interval, and recipient remain available the next time it is enabled.
+  it('submits a disabled balance reminder with its saved fields', async () => {
+    const provider = buildProvider()
+    provider.extra = {
+      upstream_balance_alert: { enabled: true, threshold: 50, interval_minutes: 30, recipient_email: 'ops@example.com' }
+    }
+    updateProviderMock.mockResolvedValue(provider)
+
+    const wrapper = mountModal(provider)
+    await setSwitch(wrapper.get('[data-testid="balance-alert-enabled"]'), false)
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateProviderMock.mock.calls[0]?.[1]?.extra?.upstream_balance_alert).toEqual({
+      enabled: false,
+      threshold: 50,
+      interval_minutes: 30,
+      recipient_email: 'ops@example.com'
+    })
   })
 
   it('hides the Codex namespace flatten toggle for non-OAuth OpenAI providers', async () => {

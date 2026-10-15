@@ -574,6 +574,13 @@
             @update:wallet-access-token="upstreamUsageWalletAccessToken = $event"
             @update:wallet-user-id="upstreamUsageWalletUserId = $event"
           />
+          <UpstreamBalanceAlertEditor
+            v-if="provider.type === 'apikey'"
+            v-model="balanceAlert"
+            :supported="balanceAlertSupported"
+            :query-enabled="upstreamUsageEnabled"
+            :provider-id="provider.id"
+          />
 
           <OllamaCloudUsageSettings
             v-if="provider.ollama_cloud_usage?.eligible"
@@ -877,6 +884,7 @@ import GrokBaseUrlPresets from '@/components/provider/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/provider/CnBaseUrlPresets.vue'
 import OllamaCloudUsageSettings from '@/components/provider/OllamaCloudUsageSettings.vue'
 import UpstreamUsageConfigEditor from '@/components/provider/UpstreamUsageConfigEditor.vue'
+import UpstreamBalanceAlertEditor from '@/components/provider/UpstreamBalanceAlertEditor.vue'
 import SettingRow from '@/components/common/settings/SettingRow.vue'
 import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
 import SettingsSection from '@/components/common/settings/SettingsSection.vue'
@@ -948,6 +956,13 @@ import {
   readResponsesWSConnectionMode
 } from '@/utils/responsesWsConnection'
 import {
+  buildUpstreamBalanceAlert,
+  defaultUpstreamBalanceAlert,
+  readUpstreamBalanceAlert,
+  sameUpstreamBalanceAlert,
+  supportsUpstreamBalanceAlert
+} from '@/utils/upstreamBalanceAlert'
+import {
   buildModelMappingObject,
   buildPersistedModelRestriction,
   splitQoderPersistedModelRestriction,
@@ -997,6 +1012,11 @@ const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
 const upstreamUsageEnabled = ref(true)
+// balanceAlert is the policy being edited and savedBalanceAlert the one loaded
+// from the provider. Submission writes balanceAlert into Extra only when the two
+// differ, so providers without a policy do not gain a disabled default object.
+const balanceAlert = ref(defaultUpstreamBalanceAlert())
+const savedBalanceAlert = ref(defaultUpstreamBalanceAlert())
 const upstreamUsageAdapter = ref<UpstreamUsageAdapter>('sub2api')
 const upstreamUsageBaseUrl = ref('')
 const upstreamUsageWalletAccessToken = ref('')
@@ -1036,6 +1056,12 @@ const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
 })
 const editApiProtocol = ref<CnApiProtocol>('adaptive')
 const editProviderMode = ref<CnProviderMode>('payg')
+// Balance reminders need a wallet-balance query; editing the CN provider mode re-evaluates it.
+const balanceAlertSupported = computed(() => supportsUpstreamBalanceAlert(
+  props.provider?.type ?? '',
+  props.provider?.platform ?? '',
+  editProviderMode.value
+))
 // 智谱团队版 Coding Plan 的组织/项目 ID，清空后随完整凭据更新一并移除。
 const editZhipuOrganization = ref('')
 const editZhipuProject = ref('')
@@ -1602,6 +1628,8 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
   allowOverages.value = false
   const extra = newProvider.extra as Record<string, unknown> | undefined
   upstreamUsageEnabled.value = newProvider.platform !== 'jev'
+  savedBalanceAlert.value = readUpstreamBalanceAlert(extra)
+  balanceAlert.value = { ...savedBalanceAlert.value }
   upstreamUsageAdapter.value = 'sub2api'
   upstreamUsageBaseUrl.value = ''
   upstreamUsageWalletAccessToken.value = ''
@@ -3049,6 +3077,11 @@ const handleSubmit = async () => {
           upstreamConfig.base_url = upstreamUsageBaseUrl.value.trim()
         }
         newExtra.upstream_usage_query = upstreamConfig
+        // newExtra already carries the stored policy; replace it only after an edit.
+        const alert = buildUpstreamBalanceAlert(balanceAlert.value, balanceAlertSupported.value)
+        if (!sameUpstreamBalanceAlert(alert, savedBalanceAlert.value)) {
+          newExtra.upstream_balance_alert = alert
+        }
       }
       updatePayload.extra = newExtra
     }

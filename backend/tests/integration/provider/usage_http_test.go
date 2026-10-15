@@ -77,7 +77,7 @@ func newUpstreamUsageHandlerRouter(body string, providers map[int64]*providercor
 	repo := &upstreamUsageHandlerRepo{providers: providers}
 	options := provideradapter.UsageHTTPOptions{Available: true, Policy: egress.UsageURLPolicy{Configured: true, AllowInsecureHTTP: true}, Do: (&upstreamUsageHandlerHTTP{body: body}).DoWithTLS}
 	usage := providercore.NewUpstreamUsageService(repo, provideradapter.NewUpstreamUsageHTTPExecution(options), providercore.UpstreamUsageOptions{})
-	handler := providerhttp.NewUpstreamUsageHandler(usage)
+	handler := providerhttp.NewUpstreamUsageHandler(usage, nil)
 	router := gin.New()
 	router.POST("/admin/providers/:id/upstream-usage/query", handler.QueryUpstreamUsage)
 	router.POST("/admin/providers/upstream-usage/query/batch", handler.QueryBatchUpstreamUsage)
