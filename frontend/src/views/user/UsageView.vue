@@ -289,6 +289,18 @@ import type {
 import type { Column } from '@/components/common/types'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 
+// UsageView.vue displays user usage records, statistics, and optional error
+// requests under shared date and request filters. Usage lists cancel superseded
+// requests, while statistics and chart loaders use sequence numbers to keep
+// older responses from replacing newer selections. Request ID searches omit
+// date restrictions and skip distribution queries. Exports reuse the list
+// filters and retrieve every page before constructing the CSV download.
+//
+// Error records have separate pagination and column preferences. Their loader
+// checks the public visibility setting before querying. Locale changes reload
+// visible error records and invalidate inactive rows so reopening the tab
+// retrieves messages in the selected language.
+
 const { t } = useI18n()
 const appStore = useAppStore()
 
@@ -969,7 +981,11 @@ const resetErrorRows = () => {
   }
 }
 
+// loadErrors retrieves the current page of error requests when visibility is
+// enabled. A missing or disabled public setting skips the query; request failures
+// retain existing rows and display an error notification.
 const loadErrors = async () => {
+  if (!errorViewEnabled.value) return
   errorLoading.value = true
   try {
     const resp = await usageAPI.listMyErrorRequests({
@@ -1034,5 +1050,16 @@ onUnmounted(() => {
 watch(endpointDistributionSource, () => {
   // Endpoint 来源切换由图表组件基于已加载统计数据处理。
 })
-useLocaleRefresh(() => Promise.all([loadFilterOptions(), loadLogs(), loadErrors()]))
+useLocaleRefresh(() => {
+  const requests = [loadFilterOptions(), loadLogs()]
+  if (activeTab.value === 'errors') {
+    requests.push(loadErrors())
+  } else {
+    // Invalidate inactive error rows so reopening the tab fetches translated
+    // messages after account language restoration or a manual language change.
+    errorRows.value = []
+    errorTotal.value = 0
+  }
+  return Promise.all(requests)
+})
 </script>

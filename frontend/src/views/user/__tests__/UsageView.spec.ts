@@ -3,13 +3,22 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 import UsageView from '../UsageView.vue'
 
+// UsageView.spec.ts verifies user usage queries, table preferences, and exports
+// with API responses controlled by each test. Locale refresh cases cover both
+// disabled error visibility and lazily loaded error rows, including revisiting
+// a tab whose translated results have been invalidated.
+
 enableAutoUnmount(afterEach)
 
+// Shared API spies and public settings let each case select responses and
+// error visibility before mounting the page and dispatching locale events.
 const {
   query,
   getStats,
   getDashboardModels,
   getDashboardSnapshotV2,
+  listMyErrorRequests,
+  publicSettings,
   list,
   getAvailable,
   getCurrentTeam,
@@ -25,6 +34,8 @@ const {
   getStats: vi.fn(),
   getDashboardModels: vi.fn(),
   getDashboardSnapshotV2: vi.fn(),
+  listMyErrorRequests: vi.fn(),
+  publicSettings: { allow_user_view_error_requests: undefined as boolean | undefined },
   list: vi.fn(),
   getAvailable: vi.fn(),
   getCurrentTeam: vi.fn(),
@@ -96,7 +107,7 @@ vi.mock('@/api', () => ({
     getStats,
     getDashboardModels,
     getDashboardSnapshotV2,
-    listMyErrorRequests: vi.fn().mockResolvedValue({ items: [], total: 0, pages: 0 }),
+    listMyErrorRequests,
   },
   keysAPI: {
     list,
@@ -116,7 +127,7 @@ vi.mock('@/api/team', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo }),
+  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo, cachedPublicSettings: publicSettings }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -167,6 +178,7 @@ const usageLog = {
   stream: false,
 }
 
+// mountUsageView renders page interactions while stubbing tables and charts.
 function mountUsageView() {
   return mount(UsageView, {
     global: {
@@ -183,6 +195,7 @@ function mountUsageView() {
         EndpointDistributionChart: chartStub,
         TokenUsageTrend: chartStub,
         TeamMemberUsageCharts: chartStub,
+        UserErrorRequestsTable: true,
       },
     },
   })
@@ -195,6 +208,8 @@ describe('user UsageView', () => {
     getStats.mockReset()
     getDashboardModels.mockReset()
     getDashboardSnapshotV2.mockReset()
+    listMyErrorRequests.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    publicSettings.allow_user_view_error_requests = undefined
     list.mockReset()
     getAvailable.mockReset()
     getCurrentTeam.mockReset()
@@ -269,6 +284,84 @@ describe('user UsageView', () => {
     await flushPromises()
     expect(options()).toContainEqual(expect.objectContaining({ value: 1, label: '中文分组' }))
     wrapper.unmount()
+  })
+
+  // Account language restoration emits the same event as a manual language
+  // change. Missing or disabled error visibility must leave normal usage loading
+  // available while preventing the forbidden query and its error notification.
+  it.each([undefined, false])('skips error queries on locale refresh when visibility is %s', async (enabled) => {
+    publicSettings.allow_user_view_error_requests = enabled
+    listMyErrorRequests.mockRejectedValue({ status: 403 })
+    const wrapper = mountUsageView()
+    await flushPromises()
+    query.mockClear()
+
+    window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
+    await flushPromises()
+
+    expect(query).toHaveBeenCalledOnce()
+    expect(listMyErrorRequests).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(UsageTableStub).exists()).toBe(true)
+  })
+
+  // Callers can reach the loader independently of the locale listener. The
+  // disabled feature must reject that entry before changing loading state or
+  // sending a request that the server would refuse.
+  it('guards the error loader when error visibility is disabled', async () => {
+    publicSettings.allow_user_view_error_requests = false
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    await (wrapper.vm as any).loadErrors()
+
+    expect(listMyErrorRequests).not.toHaveBeenCalled()
+    expect((wrapper.vm as any).errorLoading).toBe(false)
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  // Enabled error visibility still leaves the usage tab as the initial view.
+  // A language refresh must defer error retrieval until the user opens its tab.
+  it('defers enabled error queries until the errors tab is opened', async () => {
+    publicSettings.allow_user_view_error_requests = true
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
+    await flushPromises()
+    expect(listMyErrorRequests).not.toHaveBeenCalled()
+
+    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await flushPromises()
+    expect(listMyErrorRequests).toHaveBeenCalledOnce()
+  })
+
+  // Visible error rows refresh immediately after a locale event. Cached rows
+  // in an inactive tab must be fetched again when that tab is revisited, so
+  // translated messages do not remain in the previous language.
+  it('refreshes visible errors and invalidates inactive error rows on locale changes', async () => {
+    publicSettings.allow_user_view_error_requests = true
+    listMyErrorRequests.mockResolvedValue({ items: [{ id: 1 }], total: 1, pages: 1 })
+    const wrapper = mountUsageView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await flushPromises()
+    listMyErrorRequests.mockClear()
+
+    window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'en' }))
+    await flushPromises()
+    expect(listMyErrorRequests).toHaveBeenCalledOnce()
+
+    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.usage')!.trigger('click')
+    listMyErrorRequests.mockClear()
+    window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
+    await flushPromises()
+    expect(listMyErrorRequests).not.toHaveBeenCalled()
+
+    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await flushPromises()
+    expect(listMyErrorRequests).toHaveBeenCalledOnce()
+    expect(showError).not.toHaveBeenCalled()
   })
 
   it('主筛选框初始值为 null，显示“全部”选项，请求参数不带未选条件', async () => {
