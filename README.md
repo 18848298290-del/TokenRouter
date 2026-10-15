@@ -20,6 +20,9 @@
 
 TokenRouter 是一个开源的大模型统一网关。它把 Anthropic、OpenAI、Gemini 等多家厂商的模型服务接到同一个入口，用户用一个 API Key 就能调用不同厂商的模型。
 
+> [!WARNING]
+> 本项目允许在遵守开源许可证的前提下用于商业中转服务，但不得冒充 TokenFlux 官方站点，或通过名称、Logo、域名、界面及宣传造成官方运营、授权、合作或背书关系的混淆。建议商业运营者定制前端并清晰标明实际运营主体；对于侵权或造成上述混淆的行为，相关权利人保留依法要求整改的权利。详见[商业使用与品牌声明](BRANDING.md)。
+
 ## 界面预览
 
 <details open>
@@ -48,7 +51,7 @@ TokenRouter 是一个开源的大模型统一网关。它把 Anthropic、OpenAI�
 
 </details>
 
-在线示例可访问 [tokenflux.dev](https://tokenflux.dev)
+TokenFlux 官方运营站点：[tokenflux.dev](https://tokenflux.dev)。
 
 ## 核心能力
 
