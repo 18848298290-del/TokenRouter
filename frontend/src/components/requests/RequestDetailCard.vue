@@ -8,8 +8,15 @@ import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatDateTime, formatTokens } from '@/utils/format'
+import { timingBreakdown } from '@/utils/requestTiming'
 import type { IconName } from '@/components/icons/registry'
 import type { RequestDetail } from '@/api/requests'
+
+// RequestDetailCard.vue presents one request with its timing, attempts, usage,
+// errors and related identifiers. Timing writes the admission durations as one
+// equation whose total is the slot offset, above a waterfall of ingress-relative
+// offsets; only recorded offsets get a bar, and stream-only stages of
+// synchronous requests are hidden by the shared breakdown rules.
 
 const props = defineProps<{
   item: RequestDetail
@@ -54,18 +61,24 @@ const errorText = computed(() => {
   return code ? t(`requests.errorCodes.${code}`, code) : ''
 })
 
-// 阶段耗时都是从请求开始算起的偏移量，按先后排列后画成瀑布条。
+// timings splits the record into inline durations and waterfall bars scaled to
+// the longest of the request duration and any recorded offset.
 const timings = computed(() => {
-  const entries = Object.entries(props.item.timings ?? {}).filter(([, value]) => Number.isFinite(value) && value >= 0)
-  entries.sort(([, a], [, b]) => a - b)
-  const total = Math.max(props.item.duration_ms ?? 0, ...entries.map(([, value]) => value), 1)
+  const breakdown = timingBreakdown(props.item.timings ?? {})
+  const events = breakdown.events.filter((row) => row.value != null).sort((a, b) => (a.value ?? 0) - (b.value ?? 0))
+  const total = Math.max(props.item.duration_ms ?? 0, ...events.map((row) => row.value ?? 0), 1)
   return {
     total,
-    rows: entries.map(([name, value]) => ({
-      name,
-      label: t(`requests.timingNames.${name}`, name),
-      value,
-      percent: Math.max((value / total) * 100, 0.5),
+    durations: breakdown.durations,
+    admissionTotal: breakdown.admissionTotal,
+    retryWait: breakdown.retryWait,
+    admitted: breakdown.admitted,
+    rows: events.map((row) => ({
+      key: row.key,
+      label: t(`requests.timingNames.${row.key}`),
+      value: row.value ?? 0,
+      // Keep a sliver visible for offsets near zero so the bar still marks the stage.
+      percent: Math.max(((row.value ?? 0) / total) * 100, 0.5),
     })),
   }
 })
@@ -143,13 +156,28 @@ const aliasRows = computed(() => props.item.aliases ?? [])
         </div>
       </div>
 
-      <!-- 阶段耗时瀑布 -->
-      <section v-if="timings.rows.length" class="px-6 py-5">
+      <!-- 耗时：阶段时长一行，事件时刻画成瀑布条 -->
+      <section v-if="timings.rows.length || timings.durations.length" class="px-6 py-5">
         <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.timings') }}</h3>
-        <ol class="space-y-2">
+        <!-- 四段时长写成等式，合计就是下面瀑布里取得槽位的时刻。 -->
+        <p v-if="timings.durations.length" class="mb-3 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs">
+          <span class="font-medium text-gray-900 dark:text-dark-50">{{ timings.admitted === false ? t('requests.timing.untilEnd') : t('requests.timingNames.provider_slot_acquired_ms') }}</span>
+          <span v-if="timings.admissionTotal != null" class="font-mono font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatDuration(timings.admissionTotal) }}</span>
+          <span class="text-gray-400 dark:text-dark-500">=</span>
+          <template v-for="(row, index) in timings.durations" :key="row.key">
+            <span v-if="index" class="text-gray-400 dark:text-dark-500">+</span>
+            <span class="text-gray-500 dark:text-dark-400">{{ t(`requests.timingNames.${row.key}`) }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatDuration(row.value) }}</span>
+          </template>
+          <template v-if="timings.retryWait">
+            <span class="ml-3 text-gray-500 dark:text-dark-400">{{ t('requests.timingNames.retry_provider_slot_wait_ms') }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatDuration(timings.retryWait.value) }}</span>
+          </template>
+        </p>
+        <ol v-if="timings.rows.length" class="space-y-2">
           <li
             v-for="row in timings.rows"
-            :key="row.name"
+            :key="row.key"
             class="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_4rem] items-center gap-3 text-xs sm:grid-cols-[10rem_minmax(0,1fr)_5rem]"
           >
             <span class="truncate text-gray-600 dark:text-dark-300" :title="row.label">{{ row.label }}</span>

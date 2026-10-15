@@ -26,6 +26,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // Upstream pool tests combine fake response transports with local redirect
@@ -942,4 +943,20 @@ func (blockingHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 	// timeout wrapper must release the waiting call before it can return its synthetic error.
 	<-req.Context().Done()
 	return nil, req.Context().Err()
+}
+
+// TestUpstreamPoolInvokesRequestTimingObserver validates the shared exchange
+// observation hook after transport response creation. Reading and closing the
+// response still release pool capacity exactly as ordinary forwarding does.
+func TestUpstreamPoolInvokesRequestTimingObserver(t *testing.T) {
+	pool := NewUpstreamPool()
+	var observed *http.Response
+	ctx, _ := timing.WithStages(t.Context(), time.Now(), func(resp *http.Response) { observed = resp })
+	req := poolTestRequest(t).WithContext(ctx)
+	resp, err := pool.Do(req, poolTestOptions(1, nil))
+	require.NoError(t, err)
+	require.Same(t, resp, observed)
+	_, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 }

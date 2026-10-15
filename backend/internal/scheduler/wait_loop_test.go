@@ -148,3 +148,17 @@ func TestSlotWaitObserverFailureDoesNotAcquire(t *testing.T) {
 	require.ErrorIs(t, err, failed)
 	require.NoError(t, core.StopContext(context.Background()))
 }
+
+// TestWaitObservationReportsCancellation measures a real canceled polling interval.
+// Queue diagnostics must survive cancellation without reporting a successful
+// provider grant or changing the cancellation error returned by the scheduler.
+func TestWaitObservationReportsCancellation(t *testing.T) {
+	core := NewConcurrencyService(&runtimeSlotCache{})
+	ctx, cancel := context.WithCancel(t.Context())
+	var waited time.Duration
+	ctx = WithWaitObservation(ctx, func(kind string, d time.Duration) { require.Equal(t, "provider", kind); waited = d })
+	_, err := core.WaitForSlot(ctx, "provider", 1, 1, time.Second, false, WaitObserver{Begin: func() error { time.Sleep(time.Millisecond); cancel(); return nil }})
+	require.ErrorIs(t, err, context.Canceled)
+	require.GreaterOrEqual(t, waited, time.Millisecond)
+	require.NoError(t, core.StopContext(t.Context()))
+}

@@ -1,10 +1,11 @@
 import type { LocalizedUpdate } from '@/i18n/content'
 import type { ModelAttributes } from './modelAttributes'
-/**
- * Core Type Definitions for TokenRouter Frontend
- */
-
 import type { SubscriptionPlan } from './payment'
+
+// index.ts defines shared frontend API records and their optional observations.
+// Usage timing keeps stage durations, event offsets and applicability metadata
+// separate; absent fields remain optional so historical responses do not imply
+// measured zero when the backend never collected that observation.
 
 // ==================== Common Types ====================
 
@@ -1862,22 +1863,41 @@ export interface AdminUsageLog extends UsageLog {
   provider?: UsageLogProviderSummary
 }
 
+// UsageLogTiming carries optional admission durations and ingress-relative transport observations.
 export interface UsageLogTiming {
-  request_content_length?: number | null
-  provider_slot_acquired_ms?: number | null
-  upstream_get_conn_ms?: number | null
-  upstream_got_conn_ms?: number | null
-  upstream_wrote_request_ms?: number | null
-  upstream_first_response_byte_ms?: number | null
-  upstream_first_sse_data_ms?: number | null
-  first_visible_output_ms?: number | null
-  first_downstream_flush_ms?: number | null
-  upstream_get_conn_count?: number | null
-  upstream_got_conn_count?: number | null
-  upstream_attempt_count?: number | null
-  upstream_first_response_byte_count?: number | null
-  upstream_connection_reused?: boolean
-  upstream_wrote_request_error?: boolean
+  // Request metadata preserves absent body length and unknown stream or admission state.
+  request_content_length?: number | null // Observed request body bytes.
+  timing_stream?: number | null // Client streaming flag, zero or one.
+  timing_admitted?: number | null // Initial admission flag, zero or one.
+
+  // Initial admission durations freeze together; subsequent provider waits remain a separate measurement.
+  request_body_read_ms?: number | null // Milliseconds spent in stage.
+  preprocess_ms?: number | null // Milliseconds spent in stage.
+  user_slot_wait_ms?: number | null // Milliseconds spent in stage.
+  provider_slot_wait_ms?: number | null // Milliseconds spent in stage.
+  // Later attempts accumulate this duration without changing the four initial admission measurements.
+  retry_provider_slot_wait_ms?: number | null // Milliseconds spent in stage.
+
+  // Event observations are ingress-relative offsets and must never be added as durations.
+  provider_slot_acquired_ms?: number | null // Milliseconds from request ingress.
+  upstream_get_conn_ms?: number | null // Milliseconds from request ingress.
+  upstream_got_conn_ms?: number | null // Milliseconds from request ingress.
+  upstream_wrote_request_ms?: number | null // Milliseconds from request ingress.
+  upstream_first_response_byte_ms?: number | null // Milliseconds from request ingress.
+  upstream_first_event_ms?: number | null // Milliseconds from request ingress.
+  upstream_first_sse_data_ms?: number | null // Milliseconds from request ingress.
+  first_visible_output_ms?: number | null // Milliseconds from request ingress.
+  first_downstream_flush_ms?: number | null // Milliseconds from request ingress.
+
+  // Transport counters retain measured zero while missing values remain absent from historical records.
+  upstream_get_conn_count?: number | null // Observed transport event count.
+  upstream_got_conn_count?: number | null // Observed transport event count.
+  upstream_attempt_count?: number | null // Observed transport event count.
+  upstream_first_response_byte_count?: number | null // Observed transport event count.
+
+  // Connection flags describe observed transport behavior separately from elapsed time and event counts.
+  upstream_connection_reused?: boolean // Observed connection reuse flag.
+  upstream_wrote_request_error?: boolean // Observed request write-error flag.
 }
 
 export interface RedeemCode {

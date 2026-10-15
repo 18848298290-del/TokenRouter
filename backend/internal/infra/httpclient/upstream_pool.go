@@ -255,6 +255,7 @@ func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http
 	}
 	decompressResponseBody(resp)
 	resp.Body = wrapTrackedBody(resp.Body, release)
+	servertiming.ObserveResponse(req.Context(), resp)
 	return resp, nil
 }
 

@@ -74,18 +74,9 @@ const messages: Record<string, string> = {
   'keys.copyToClipboard': 'Copy to clipboard',
   'usage.detailedTiming': 'Detailed Timing',
   'usage.timingRequestSize': 'Request size',
-  'usage.timingSlot': 'Slot',
-  'usage.timingGetConn': 'Get conn',
-  'usage.timingGotConn': 'Got conn',
-  'usage.timingWriteRequest': 'Write request',
-  'usage.timingFirstByte': 'First byte',
-  'usage.timingFirstSSE': 'First SSE',
-  'usage.timingVisible': 'Visible',
-  'usage.timingFlush': 'First flush',
   'usage.timingAttempts': 'Attempts',
   'usage.timingReused': 'Reused conn',
   'usage.timingWriteError': 'Write error',
-  'usage.timingUnavailable': 'Not collected',
   'common.copyFailed': 'Copy failed',
   'common.copied': 'Copied',
   'requests.copy': 'Copy request ID',
@@ -252,10 +243,12 @@ describe('admin UsageTable detailed timing tooltip', () => {
     await timingButton.trigger('mouseenter')
     await nextTick()
 
-    expect(wrapper.text()).toContain('Slot')
+    expect(wrapper.text()).toContain('requests.timingNames.provider_slot_acquired_ms')
     expect(wrapper.text()).toContain('7.97MB')
     expect(wrapper.text()).toContain('120ms')
-    expect(wrapper.text()).toContain('First SSE')
+    expect(wrapper.text()).toContain('requests.timingNames.upstream_first_event_ms')
+    expect(wrapper.text()).toContain('1.02s')
+    expect(wrapper.text()).not.toContain('requests.timing.durations')
     expect(wrapper.text()).toContain('2')
   })
 

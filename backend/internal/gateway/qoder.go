@@ -401,6 +401,7 @@ func (u *QoderUseCase) attempt(ctx context.Context, request Request, ports Reque
 	if err := ctx.Err(); err != nil {
 		return upstream.AttemptResult{}, err
 	}
+	scheduler.ObserveAdmission(ctx)
 	result, err := selected.Executor.Execute(ctx, selected.Input, output)
 	if execution != nil {
 		execution.Attempts++

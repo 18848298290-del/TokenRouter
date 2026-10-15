@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
@@ -155,11 +156,18 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 // MarkOpsTimestamp records the first typed stage time in request context.
 // Missing requests or empty keys skip publication, and an existing time.Time,
 // including zero time, wins; other stored types allow a new timestamp.
+// Observed HTTP text requests obtain stream events from actual transport
+// reads and successful delivery, so legacy parser-side stream marks are ignored.
 func MarkOpsTimestamp(c *gin.Context, key telemetry.ContextKey) {
 	if c == nil || c.Request == nil || key == "" {
 		return
 	}
 	ctx := c.Request.Context()
+	// The shared observer owns HTTP text delivery times. A legacy parser can
+	// see staged or failed output before actual delivery, so its mark must not win.
+	if timing.StagesFromContext(ctx) != nil && (key == telemetry.FirstSSEDataAt || key == telemetry.FirstVisibleOutputAt || key == telemetry.FirstDownstreamFlushAt) {
+		return
+	}
 	if _, exists := ctx.Value(key).(time.Time); exists {
 		return
 	}
@@ -167,11 +175,16 @@ func MarkOpsTimestamp(c *gin.Context, key telemetry.ContextKey) {
 	c.Request = c.Request.WithContext(ctx)
 }
 
-// MarkOpsProviderSlotAcquired records the first provider-capacity timestamp
-// through shared stage timing. Missing request state is ignored by
-// MarkOpsTimestamp, and an earlier typed acquisition time remains authoritative
-// for the access-log latency reader.
+// MarkOpsProviderSlotAcquired freezes initial HTTP text admission and records
+// the legacy provider-capacity timestamp. Observed text requests use the collector
+// endpoint; requests outside that scope retain their first typed context value.
+// Repeated provider acquisitions during retries leave initial admission unchanged.
 func MarkOpsProviderSlotAcquired(c *gin.Context) {
+	if c != nil && c.Request != nil {
+		if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+			stages.Admit()
+		}
+	}
 	MarkOpsTimestamp(c, telemetry.ProviderSlotAcquiredAt)
 }
 

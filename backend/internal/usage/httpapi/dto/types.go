@@ -159,29 +159,56 @@ type AdminUsageLog struct {
 	Provider *ProviderSummary `json:"provider,omitempty"` // optional provider display identity
 }
 
-// UsageLogTiming carries observed gateway-stage offsets, event counts and
-// upstream connection flags.
+// UsageLogTiming exposes request metadata, admission durations, event offsets,
+// transport counts and connection observations in the usage response.
 type UsageLogTiming struct {
-	RequestContentLength *int64 `json:"request_content_length,omitempty"` // observed request body byte count
+	// RequestContentLength records the observed body length in bytes. Missing,
+	// unsupported, or rejected numeric observations remain nil, while zero is retained.
+	RequestContentLength *int64 `json:"request_content_length,omitempty"` // bytes
+	// TimingStream and TimingAdmitted use zero or one for known streaming and
+	// initial admission state. Their nil values preserve unknown historical metadata.
+	TimingStream   *int64 `json:"timing_stream,omitempty"`   // client streaming flag
+	TimingAdmitted *int64 `json:"timing_admitted,omitempty"` // initial admission outcome
+
+	// RequestBodyReadMs, PreprocessMs, UserSlotWaitMs and ProviderSlotWaitMs
+	// partition initial admission time. Their values freeze at provider admission
+	// or request termination; nil means the interval was not recorded.
+	RequestBodyReadMs  *int64 `json:"request_body_read_ms,omitempty"`  // milliseconds
+	PreprocessMs       *int64 `json:"preprocess_ms,omitempty"`         // milliseconds
+	UserSlotWaitMs     *int64 `json:"user_slot_wait_ms,omitempty"`     // milliseconds
+	ProviderSlotWaitMs *int64 `json:"provider_slot_wait_ms,omitempty"` // milliseconds
+	// RetryProviderSlotWaitMs counts later provider waits separately, leaving the
+	// four initial admission durations unchanged when another attempt queues.
+	RetryProviderSlotWaitMs *int64 `json:"retry_provider_slot_wait_ms,omitempty"` // milliseconds
+
 	// ProviderSlotAcquiredMs, UpstreamGetConnMs, UpstreamGotConnMs,
-	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs,
+	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstEventMs,
 	// UpstreamFirstSSEDataMs, FirstVisibleOutputMs and FirstDownstreamFlushMs
-	// measure offsets from gateway ingress in milliseconds. Nil leaves each
-	// unobserved stage omitted.
-	ProviderSlotAcquiredMs         *int64 `json:"provider_slot_acquired_ms,omitempty"`          // provider slot offset milliseconds
-	UpstreamGetConnMs              *int64 `json:"upstream_get_conn_ms,omitempty"`               // upstream connection request offset milliseconds
-	UpstreamGotConnMs              *int64 `json:"upstream_got_conn_ms,omitempty"`               // upstream connection acquisition offset milliseconds
-	UpstreamWroteRequestMs         *int64 `json:"upstream_wrote_request_ms,omitempty"`          // upstream write completion offset milliseconds
-	UpstreamFirstResponseByteMs    *int64 `json:"upstream_first_response_byte_ms,omitempty"`    // upstream first byte offset milliseconds
-	UpstreamFirstSSEDataMs         *int64 `json:"upstream_first_sse_data_ms,omitempty"`         // upstream first SSE offset milliseconds
-	FirstVisibleOutputMs           *int64 `json:"first_visible_output_ms,omitempty"`            // first visible output offset milliseconds
-	FirstDownstreamFlushMs         *int64 `json:"first_downstream_flush_ms,omitempty"`          // first downstream flush offset milliseconds
-	UpstreamGetConnCount           *int64 `json:"upstream_get_conn_count,omitempty"`            // upstream connection request event count
-	UpstreamGotConnCount           *int64 `json:"upstream_got_conn_count,omitempty"`            // upstream connection acquired event count
-	UpstreamAttemptCount           *int64 `json:"upstream_attempt_count,omitempty"`             // recorded upstream attempt count
-	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"` // upstream first byte event count
-	UpstreamConnectionReused       bool   `json:"upstream_connection_reused,omitempty"`         // observed upstream connection reuse flag
-	UpstreamWroteRequestError      bool   `json:"upstream_wrote_request_error,omitempty"`       // observed upstream write error flag
+	// are first-event offsets from ingress in milliseconds, not additive durations.
+	// Nil leaves an unrecorded event absent; measured zero remains present.
+	ProviderSlotAcquiredMs      *int64 `json:"provider_slot_acquired_ms,omitempty"`       // milliseconds
+	UpstreamGetConnMs           *int64 `json:"upstream_get_conn_ms,omitempty"`            // milliseconds
+	UpstreamGotConnMs           *int64 `json:"upstream_got_conn_ms,omitempty"`            // milliseconds
+	UpstreamWroteRequestMs      *int64 `json:"upstream_wrote_request_ms,omitempty"`       // milliseconds
+	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"` // milliseconds
+	UpstreamFirstEventMs        *int64 `json:"upstream_first_event_ms,omitempty"`         // milliseconds
+	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"`      // milliseconds
+	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`         // milliseconds
+	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`       // milliseconds
+
+	// UpstreamGetConnCount, UpstreamGotConnCount, UpstreamAttemptCount and
+	// UpstreamFirstResponseByteCount count retained transport events across attempts.
+	// Nil means no observation, while a nonnil zero preserves a measured count.
+	UpstreamGetConnCount           *int64 `json:"upstream_get_conn_count,omitempty"`            // occurrences
+	UpstreamGotConnCount           *int64 `json:"upstream_got_conn_count,omitempty"`            // occurrences
+	UpstreamAttemptCount           *int64 `json:"upstream_attempt_count,omitempty"`             // occurrences
+	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"` // occurrences
+
+	// UpstreamConnectionReused and UpstreamWroteRequestError retain observed
+	// connection reuse and write failure. Missing or non-bool source values become
+	// false; false alone does not establish a present timing result.
+	UpstreamConnectionReused  bool `json:"upstream_connection_reused,omitempty"`   // observed connection reuse flag
+	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"` // observed request write-error flag
 }
 
 // UsageCleanupFilters carries the filter fields exposed in cleanup-task HTTP

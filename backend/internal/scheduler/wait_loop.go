@@ -75,6 +75,12 @@ type UserAcquireOptions struct {
 	Observer WaitObserver  // synchronous waiting notification callbacks
 }
 
+// waitObservationKey isolates the HTTP observer from scheduler resource ownership.
+type waitObservationKey struct{}
+
+// admissionObservationKey separates provider admission from queue duration reporting.
+type admissionObservationKey struct{}
+
 // Error formats a capacity-limit message or a wait-timeout message for the
 // selected slot type.
 func (e *ConcurrencyError) Error() string {
@@ -88,6 +94,27 @@ func (e *ConcurrencyError) Error() string {
 // responses.
 func (e *WaitQueueFullError) Error() string {
 	return "Too many pending requests, please retry later"
+}
+
+// WithWaitObservation attaches a request-local completed-wait observer to context.
+// The callback receives only actual queue intervals, including cancellation.
+// Immediate admission never invokes it and resource release remains unchanged.
+func WithWaitObservation(ctx context.Context, observe func(string, time.Duration)) context.Context {
+	return context.WithValue(ctx, waitObservationKey{}, observe)
+}
+
+// WithAdmissionObservation installs an observer for accepted HTTP provider targets.
+// Callers notify only after selection and resource acquisition succeed. Rejected
+// candidates must not freeze the request's initial admission breakdown.
+func WithAdmissionObservation(ctx context.Context, observe func()) context.Context {
+	return context.WithValue(ctx, admissionObservationKey{}, observe)
+}
+
+// ObserveAdmission reports an accepted provider when the caller installed observation.
+func ObserveAdmission(ctx context.Context) {
+	if observe, ok := ctx.Value(admissionObservationKey{}).(func()); ok {
+		observe()
+	}
 }
 
 // WaitForSlot polls until a slot is acquired, an observer fails, cancellation
@@ -122,6 +149,12 @@ func (s *ConcurrencyService) WaitForSlot(parent context.Context, slotType string
 		if result.Acquired {
 			return result.ReleaseFunc, nil
 		}
+	}
+	// Record real polling only after immediate acquisition failed. The observer
+	// does not participate in cancellation, admission, or resource ownership.
+	waitStarted := time.Now()
+	if observe, ok := parent.Value(waitObservationKey{}).(func(string, time.Duration)); ok {
+		defer func() { observe(slotType, time.Since(waitStarted)) }()
 	}
 	if observer.Begin != nil {
 		if err := observer.Begin(); err != nil {

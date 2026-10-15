@@ -585,3 +585,20 @@ VALUES ('local-first',101,502),('local-second',202,502);`)
 	require.Len(t, items, 1)
 	require.Equal(t, "child", items[0].RequestID)
 }
+
+// TestStoreTimingStagesThroughQueue persists measured zero, stage durations and
+// event offsets through the real request buffer and PostgreSQL. A later snapshot
+// retains the complete timing map without turning legacy absence into zero.
+func TestStoreTimingStagesThroughQueue(t *testing.T) {
+	db := postgrescontainer.New(t)
+	store := NewStore(db)
+	service := requestlog.NewService(store, 30, nil)
+	now := time.Now()
+	record := telemetry.RequestRecord{RequestID: "timing-stage-request", StartedAt: now, UpdatedAt: now, State: "completed", Timings: map[string]int64{"timing_stream": 1, "timing_admitted": 1, "request_body_read_ms": 118000, "preprocess_ms": 235, "user_slot_wait_ms": 0, "provider_slot_wait_ms": 0, "provider_slot_acquired_ms": 118235, "upstream_first_event_ms": 125000}}
+	service.Observe(record)
+	require.NoError(t, service.Flush(t.Context()))
+	rows, err := store.Find(t.Context(), record.RequestID, 0, true)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, record.Timings, rows[0].Timings)
+}

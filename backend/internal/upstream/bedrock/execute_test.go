@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -136,7 +137,12 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 				return res, err
 			}}, Retry: RetryPolicy{MaxAttempts: 1, MaxElapsed: time.Second}}
 			sink := &executionSink{}
-			result, err := (Executor{}).Execute(context.Background(), upstream.AttemptInput{Target: target, Protocol: protocol.ProtocolAnthropicMessages, Body: []byte(`{"messages":[]}`), ResponseModel: "fixture", Stream: stream}, sink)
+			ctx, stages := timing.WithStages(context.Background(), time.Now(), nil)
+			result, err := (Executor{}).Execute(ctx, upstream.AttemptInput{Target: target, Protocol: protocol.ProtocolAnthropicMessages, Body: []byte(`{"messages":[]}`), ResponseModel: "fixture", Stream: stream}, sink)
+			if stream {
+				require.Contains(t, stages.Snapshot(), "upstream_first_event_ms")
+				require.NotContains(t, stages.Snapshot(), "upstream_first_sse_data_ms")
+			}
 			require.NoError(t, err)
 			require.True(t, result.HasUsage)
 			require.True(t, result.Served)

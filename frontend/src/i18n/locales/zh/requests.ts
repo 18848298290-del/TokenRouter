@@ -26,7 +26,7 @@ export default {
   "parent": "发起请求",
   "attempts": "上游尝试",
   "provider": "提供商",
-  "timings": "阶段耗时",
+  "timings": "耗时明细",
   "usage": "用量与费用",
   "errors": "错误记录",
   "aliases": "关联标识",
@@ -55,15 +55,28 @@ export default {
     "legacy": "历史标识",
     "related": "关联请求"
   },
+  "timing": {
+    "beforeSlot": "取得槽位前",
+    "untilEnd": "截至请求结束",
+    "total": "合计 {value}",
+    "totalIsSlot": "合计 {value} = 取得槽位",
+    "events": "时间线（距请求进入）",
+    "notAdmitted": "未取得槽位"
+  },
   "timingNames": {
-    "provider_slot_acquired_ms": "取得提供商槽位",
-    "upstream_get_conn_ms": "开始获取连接",
-    "upstream_got_conn_ms": "取得连接",
-    "upstream_wrote_request_ms": "发送请求",
-    "upstream_first_response_byte_ms": "上游首字节",
-    "upstream_first_sse_data_ms": "上游首段 SSE",
-    "first_visible_output_ms": "首段可见输出",
-    "first_downstream_flush_ms": "首次向客户端刷新"
+    "request_body_read_ms": "读取请求体",
+    "preprocess_ms": "前置处理",
+    "user_slot_wait_ms": "用户排队",
+    "provider_slot_wait_ms": "提供商排队",
+    "retry_provider_slot_wait_ms": "重试排队",
+    "provider_slot_acquired_ms": "取得槽位",
+    "upstream_get_conn_ms": "取连接",
+    "upstream_got_conn_ms": "得连接",
+    "upstream_wrote_request_ms": "写请求",
+    "upstream_first_response_byte_ms": "首字节",
+    "upstream_first_event_ms": "首事件",
+    "first_visible_output_ms": "首输出",
+    "first_downstream_flush_ms": "首 Flush"
   },
   "errorCodes": {
     "panic": "服务处理异常",

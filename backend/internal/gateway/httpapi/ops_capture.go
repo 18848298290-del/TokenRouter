@@ -18,6 +18,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	opscore "github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -249,6 +250,11 @@ func SetOpsRequestContext(c *gin.Context, model string, stream bool) {
 	}
 	c.Set(OpsModelKey, model)
 	c.Set(OpsStreamKey, stream)
+	if c.Request != nil {
+		if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+			stages.SetStream(stream)
+		}
+	}
 	if c.Request != nil && model != "" {
 		ctx := context.WithValue(c.Request.Context(), telemetry.Model, model)
 		c.Request = c.Request.WithContext(ctx)

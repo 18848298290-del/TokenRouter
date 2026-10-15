@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	httptestkit "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
@@ -128,6 +129,8 @@ func TestAcquireUserSlotWithWait_ImmediateAcquireSkipsWaitQueue(t *testing.T) {
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
 	streamStarted := false
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(scheduler.WithWaitObservation(ctx, stages.Wait))
 
 	release, err := helper.AcquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
 	require.NoError(t, err)
@@ -157,6 +160,8 @@ func TestAcquireUserSlotWithWait_TracksAPIKeySlot(t *testing.T) {
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
 	c.Set("gateway_effective_key", &apikey.APIKey{ID: 77})
 	streamStarted := false
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(scheduler.WithWaitObservation(ctx, stages.Wait))
 
 	release, err := helper.AcquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
 	require.NoError(t, err)
@@ -215,6 +220,8 @@ func TestAcquireUserSlotWithWait_WaitSuccessDecrementsBeforeReturn(t *testing.T)
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
 	streamStarted := false
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(scheduler.WithWaitObservation(ctx, stages.Wait))
 
 	release, err := helper.AcquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
 	require.NoError(t, err)
@@ -222,6 +229,8 @@ func TestAcquireUserSlotWithWait_WaitSuccessDecrementsBeforeReturn(t *testing.T)
 
 	require.Equal(t, 2, cache.UserAcquireCalls)
 	require.Equal(t, 1, cache.WaitIncrementCalls)
+	require.GreaterOrEqual(t, stages.Snapshot()["user_slot_wait_ms"], int64(100))
+	require.Equal(t, int64(0), stages.Snapshot()["provider_slot_wait_ms"])
 	require.Equal(t, 20, cache.WaitMaxWait)
 	require.Equal(t, 1, cache.WaitDecrementCalls)
 
@@ -245,6 +254,8 @@ func TestAcquireUserSlotWithWait_WaitQueueFull(t *testing.T) {
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
 	streamStarted := false
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(scheduler.WithWaitObservation(ctx, stages.Wait))
 
 	release, err := helper.AcquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
 	require.Nil(t, release)
@@ -312,6 +323,8 @@ func TestAcquireUserSlotWithWait_RequestCancelDecrementsWaitQueue(t *testing.T) 
 	defer cancel()
 	c.Request = c.Request.WithContext(reqCtx)
 	streamStarted := false
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(scheduler.WithWaitObservation(ctx, stages.Wait))
 
 	release, err := helper.AcquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
 	<-cancelled

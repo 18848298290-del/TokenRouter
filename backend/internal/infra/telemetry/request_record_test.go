@@ -82,3 +82,19 @@ func TestRecordRelatedRequestFinishesTerminalStates(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeRequestRecordRetainsSparseTimingStages combines an earlier admission
+// breakdown with a later transport milestone. Neither input map is mutated,
+// and measured zero remains available after sparse completion enrichment.
+func TestMergeRequestRecordRetainsSparseTimingStages(t *testing.T) {
+	now := time.Now()
+	before := RequestRecord{UpdatedAt: now, Timings: map[string]int64{"request_body_read_ms": 120, "provider_slot_wait_ms": 0}}
+	after := RequestRecord{UpdatedAt: now.Add(time.Second), Timings: map[string]int64{"upstream_first_event_ms": 500}}
+	got := MergeRequestRecord(before, after)
+	require.Equal(t, int64(120), got.Timings["request_body_read_ms"])
+	require.Contains(t, got.Timings, "provider_slot_wait_ms")
+	require.Equal(t, int64(500), got.Timings["upstream_first_event_ms"])
+	got.Timings["provider_slot_wait_ms"] = 99
+	require.Zero(t, before.Timings["provider_slot_wait_ms"])
+	require.Len(t, after.Timings, 1)
+}

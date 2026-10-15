@@ -48,6 +48,10 @@
 
 流式网关的 `http.access` 记录，还会尽力写入以下阶段字段：`request_content_length`、`provider_slot_acquired_ms`、`upstream_get_conn_ms`、`upstream_got_conn_ms`、`upstream_wrote_request_ms`、`upstream_first_response_byte_ms`、`upstream_first_sse_data_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms`。`upstream_attempt_count`、各阶段的计数、连接复用和写入错误字段，用来识别连接池等待、重试和传输异常。这些字段只有时间、计数和连接复用状态，不包含请求体和凭据。
 
+HTTP 文本请求的计时在鉴权读取正文之前安装，原始 Body 的读取计入 `request_body_read_ms`，解压和内存重读归入前置处理。scheduler 在实际轮询等待期间报告用户和提供商队列时长；立即准入为零。首次准入冻结四段，后续等待单独累计。计时快照同时合并到 `request_records.timings`，请求摘要不依赖访问日志采样；用量列表仍通过访问日志关联，因此日志缺失时不能保证用量提示框完整。字段与适用性见 [HTTP 接口](../interfaces/http_api.md#response_errors)。
+
+上游事件观察器跟随已解压的 HTTP 响应读取，按完整 SSE 帧或原生事件观察；Bedrock 在二进制解码之后报告。公共 HTTP writer 观察实际成功交付的事件和原有 Flush，透传与协议转换共用规则。观察器不改变字节、读取错误、关闭归属、流式提交或重试资格，也不保存报文到日志。
+
 凭据、Authorization、Cookie、refresh token、支付密钥、对象存储 secret、完整的上游 body 和用户的提示词，都不会直接写进日志。上游错误只透传允许的安全字段；系统日志 sink 在写库之前再整理一次字段并限制长度。新增日志字段时，同时检查：结构化 logger、Ops sink 的字段白名单和脱敏、管理端 DTO、导出和测试夹具。
 
 审计的 Redactor 由 app 直接注入提供商和支付模块的敏感字段清单，HTTP 捕获共用这个实例。Ops 的构造、日志 sink 和报告任务，也直接使用所属模块的实例。

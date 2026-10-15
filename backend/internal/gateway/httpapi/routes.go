@@ -139,7 +139,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	// The /v1 group serves the standard client protocol endpoints.
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)
-	gateway.Use(clientRequestID)
+	gateway.Use(clientRequestID, TextRequestTiming())
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
 	gateway.Use(options.APIKeyAuth)
@@ -225,7 +225,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	// The Gemini SDK and CLI use the native /v1beta endpoints.
 	gemini := r.Group("/v1beta")
 	gemini.Use(bodyLimit)
-	gemini.Use(clientRequestID)
+	gemini.Use(clientRequestID, TextRequestTiming())
 	gemini.Use(opsErrorLogger)
 	gemini.Use(endpointNorm)
 	gemini.Use(options.GoogleAPIKeyAuth)
@@ -246,8 +246,8 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 		}
 		openAITextHTTP.Responses(c)
 	}
-	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, responsesProtocolGate, responsesHandler)
-	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, guardResponsesSubpath(withGroupClientProtocol(wireprotocol.ProtocolOpenAIResponses, GroupClientProtocolErrorOpenAI, responsesHandler)))
+	r.POST("/responses", bodyLimit, clientRequestID, TextRequestTiming(), opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, responsesProtocolGate, responsesHandler)
+	r.POST("/responses/*subpath", bodyLimit, clientRequestID, TextRequestTiming(), opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, guardResponsesSubpath(withGroupClientProtocol(wireprotocol.ProtocolOpenAIResponses, GroupClientProtocolErrorOpenAI, responsesHandler)))
 	r.POST("/alpha/search", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, auxiliaryHTTP.AlphaSearch)
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, responsesWebSocketHandler)
 	// Codex clients use /models for the same local catalogue served by /v1/models.
@@ -265,7 +265,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 		liveHTTP.LiveSideband,
 	)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol)
+	codexDirect.Use(bodyLimit, clientRequestID, TextRequestTiming(), opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol)
 	{
 		codexDirect.POST("/realtime/calls", liveHTTP.Live)
 		codexDirect.POST("/responses", responsesProtocolGate, responsesHandler)
@@ -274,7 +274,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 		codexDirect.GET("/responses", responsesWebSocketHandler)
 	}
 	// Chat Completions aliases without /v1 use the same provider selection and execution.
-	r.POST("/chat/completions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, chatCompletionsProtocolGate, func(c *gin.Context) { openAITextHTTP.ChatCompletions(c) })
+	r.POST("/chat/completions", bodyLimit, clientRequestID, TextRequestTiming(), opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, chatCompletionsProtocolGate, func(c *gin.Context) { openAITextHTTP.ChatCompletions(c) })
 	r.POST("/embeddings", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, func(c *gin.Context) { auxiliaryHTTP.Embeddings(c) })
 	r.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, imagesHandler)
 	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, options.APIKeyAuth, requireGroupAnthropic, requireExtendedProtocol, imagesHandler)
@@ -324,7 +324,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	// Antigravity-specific routes restrict selection to Antigravity providers.
 	antigravityV1 := r.Group("/antigravity/v1")
 	antigravityV1.Use(bodyLimit)
-	antigravityV1.Use(clientRequestID)
+	antigravityV1.Use(clientRequestID, TextRequestTiming())
 	antigravityV1.Use(opsErrorLogger)
 	antigravityV1.Use(endpointNorm)
 	antigravityV1.Use(options.ForceAntigravity)
@@ -339,7 +339,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 
 	antigravityV1Beta := r.Group("/antigravity/v1beta")
 	antigravityV1Beta.Use(bodyLimit)
-	antigravityV1Beta.Use(clientRequestID)
+	antigravityV1Beta.Use(clientRequestID, TextRequestTiming())
 	antigravityV1Beta.Use(opsErrorLogger)
 	antigravityV1Beta.Use(endpointNorm)
 	antigravityV1Beta.Use(options.ForceAntigravity)

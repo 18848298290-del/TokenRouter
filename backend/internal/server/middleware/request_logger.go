@@ -177,7 +177,7 @@ func RequestLogger(observers ...func(telemetry.RequestRecord)) gin.HandlerFunc {
 		)
 
 		ctx = logging.IntoContext(ctx, requestLogger)
-		started := time.Now().UTC()
+		started := time.Now()
 		ctx = context.WithValue(ctx, telemetry.RequestStartedAt, started)
 		var observe func(telemetry.RequestRecord)
 		if len(observers) > 0 {

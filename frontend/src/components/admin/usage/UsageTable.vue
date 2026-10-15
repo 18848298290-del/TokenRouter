@@ -449,28 +449,12 @@
       >
         <div class="w-max max-w-[calc(100vw-1.5rem)] break-words whitespace-normal tooltip-panel rounded-control px-3 py-2.5 text-xs shadow-xl md:whitespace-nowrap">
           <div class="text-xs font-semibold text-gray-300 mb-1.5">{{ t('usage.detailedTiming') }}</div>
-          <div v-if="timingTooltipData" class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs leading-4 md:grid-cols-[max-content_minmax(0,1fr)_max-content_minmax(0,1fr)]">
+          <RequestTimingDetails v-if="timingTooltipData" :timing="timingTooltipData.detailed_timing ?? {}" :stream="timingTooltipData.stream">
             <span class="text-gray-400">{{ t('usage.timingRequestSize') }}</span>
             <span class="font-medium tabular-nums text-right">{{ formatRequestSize(timingTooltipData.detailed_timing?.request_content_length) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingSlot') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.provider_slot_acquired_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingGetConn') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.upstream_get_conn_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingGotConn') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.upstream_got_conn_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingWriteRequest') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.upstream_wrote_request_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingFirstByte') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.upstream_first_response_byte_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingFirstSSE') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.upstream_first_sse_data_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingVisible') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.first_visible_output_ms) }}</span>
-            <span class="text-gray-400">{{ t('usage.timingFlush') }}</span>
-            <span class="font-medium tabular-nums text-right">{{ formatTimingMs(timingTooltipData.detailed_timing?.first_downstream_flush_ms) }}</span>
             <span class="text-gray-400">{{ t('usage.timingAttempts') }}</span>
             <span class="font-medium tabular-nums text-right">{{ timingTooltipData.detailed_timing?.upstream_attempt_count ?? '-' }}</span>
-          </div>
+          </RequestTimingDetails>
           <div v-if="timingTooltipData?.detailed_timing?.upstream_connection_reused || timingTooltipData?.detailed_timing?.upstream_wrote_request_error" class="mt-1.5 flex flex-wrap gap-x-2 text-xs">
             <span v-if="timingTooltipData.detailed_timing?.upstream_connection_reused" class="text-emerald-400">{{ t('usage.timingReused') }}</span>
             <span v-if="timingTooltipData.detailed_timing?.upstream_wrote_request_error" class="text-rose-400">{{ t('usage.timingWriteError') }}</span>
@@ -657,6 +641,7 @@
 </template>
 
 <script setup lang="ts">
+import RequestTimingDetails from '@/components/requests/RequestTimingDetails.vue'
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
@@ -716,6 +701,18 @@ import Icon from '@/components/icons/Icon.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
+
+// UsageTable.vue renders administrator usage rows and their billing and timing
+// details. Each record combines model and provider identity, monetary values,
+// token observations and optional diagnostic fields. The selected columns
+// determine which cells expose their additional detail panels, while missing
+// observations remain distinct from measured zero in the shared timing view.
+//
+// Detail panels use Teleport outside table cells so scrolling containers do not
+// clip their content. Desktop hover and mobile click control their visibility,
+// and floating-panel positioning keeps them inside the viewport. Billing and
+// timing maintain separate panel state; the timing grid itself comes from
+// RequestTimingDetails so its labels and grouping match the shared timing rules.
 
 interface Props {
   data: AdminUsageLog[]
@@ -960,11 +957,6 @@ const formatDuration = (ms: number | null | undefined): string => {
   const totalSec = Math.round(ms / 1000)
   if (totalSec < 3600) return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`
   return `${Math.floor(totalSec / 3600)}h ${Math.floor((totalSec % 3600) / 60)}m`
-}
-
-const formatTimingMs = (ms: number | null | undefined): string => {
-  if (ms == null) return '-'
-  return formatDuration(ms)
 }
 
 const formatRequestSize = (bytes: number | null | undefined): string => {

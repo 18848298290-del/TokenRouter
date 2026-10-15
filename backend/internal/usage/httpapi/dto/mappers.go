@@ -172,21 +172,33 @@ func TimingFromOps(timing *ops.OpsRequestTiming) *UsageLogTiming {
 		return nil
 	}
 	return &UsageLogTiming{
-		RequestContentLength:           timing.RequestContentLength,
-		ProviderSlotAcquiredMs:         timing.ProviderSlotAcquiredMs,
-		UpstreamGetConnMs:              timing.UpstreamGetConnMs,
-		UpstreamGotConnMs:              timing.UpstreamGotConnMs,
-		UpstreamWroteRequestMs:         timing.UpstreamWroteRequestMs,
-		UpstreamFirstResponseByteMs:    timing.UpstreamFirstResponseByteMs,
-		UpstreamFirstSSEDataMs:         timing.UpstreamFirstSSEDataMs,
-		FirstVisibleOutputMs:           timing.FirstVisibleOutputMs,
-		FirstDownstreamFlushMs:         timing.FirstDownstreamFlushMs,
+		RequestContentLength: timing.RequestContentLength,
+		TimingStream:         timing.TimingStream,
+		TimingAdmitted:       timing.TimingAdmitted,
+
+		RequestBodyReadMs:       timing.RequestBodyReadMs,
+		PreprocessMs:            timing.PreprocessMs,
+		UserSlotWaitMs:          timing.UserSlotWaitMs,
+		ProviderSlotWaitMs:      timing.ProviderSlotWaitMs,
+		RetryProviderSlotWaitMs: timing.RetryProviderSlotWaitMs,
+
+		ProviderSlotAcquiredMs:      timing.ProviderSlotAcquiredMs,
+		UpstreamGetConnMs:           timing.UpstreamGetConnMs,
+		UpstreamGotConnMs:           timing.UpstreamGotConnMs,
+		UpstreamWroteRequestMs:      timing.UpstreamWroteRequestMs,
+		UpstreamFirstResponseByteMs: timing.UpstreamFirstResponseByteMs,
+		UpstreamFirstEventMs:        timing.UpstreamFirstEventMs,
+		UpstreamFirstSSEDataMs:      timing.UpstreamFirstSSEDataMs,
+		FirstVisibleOutputMs:        timing.FirstVisibleOutputMs,
+		FirstDownstreamFlushMs:      timing.FirstDownstreamFlushMs,
+
 		UpstreamGetConnCount:           timing.UpstreamGetConnCount,
 		UpstreamGotConnCount:           timing.UpstreamGotConnCount,
 		UpstreamAttemptCount:           timing.UpstreamAttemptCount,
 		UpstreamFirstResponseByteCount: timing.UpstreamFirstResponseByteCount,
-		UpstreamConnectionReused:       timing.UpstreamConnectionReused,
-		UpstreamWroteRequestError:      timing.UpstreamWroteRequestError,
+
+		UpstreamConnectionReused:  timing.UpstreamConnectionReused,
+		UpstreamWroteRequestError: timing.UpstreamWroteRequestError,
 	}
 }
 

@@ -28,7 +28,7 @@ import (
 //
 // Marked admission rejections are recorded before their access-event sampling
 // decision; sampled events and dropped summaries request exclusion from the Ops
-// system-log sink. Emitted events also replace the request capture's stage
+// system-log sink. Emitted events also merge the request capture's stage
 // timings with available millisecond fields. Overall latency starts at this
 // middleware's entry, while stage offsets use their recorded timing references.
 func Logger() gin.HandlerFunc {
@@ -111,9 +111,11 @@ func Logger() gin.HandlerFunc {
 		// update lock. Exclude this middleware's latency so RequestLogger keeps
 		// ownership of total request duration.
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
-			record.Timings = make(map[string]int64)
+			if record.Timings == nil {
+				record.Timings = make(map[string]int64)
+			}
 			for _, field := range fields {
-				if strings.HasSuffix(field.Key, "_ms") && field.Key != "latency_ms" {
+				if (strings.HasSuffix(field.Key, "_ms") && field.Key != "latency_ms") || strings.HasPrefix(field.Key, "timing_") {
 					record.Timings[field.Key] = field.Integer
 				}
 			}
@@ -132,7 +134,9 @@ func Logger() gin.HandlerFunc {
 // trace fields, returning the supplied slice for a missing request. Context
 // milestones use RequestStartedAt, while HTTP trace offsets use the trace
 // snapshot's own installation time. Invalid milestone timestamps are omitted;
-// trace counts retain repeated attempts.
+// trace counts retain repeated attempts. HTTP text collectors provide
+// admission durations and applicability markers alongside event offsets; their
+// delivery observations replace legacy stream marks for that request only.
 func appendRequestStageFields(fields []zap.Field, c *gin.Context) []zap.Field {
 	if c == nil || c.Request == nil {
 		return fields
@@ -151,10 +155,16 @@ func appendRequestStageFields(fields []zap.Field, c *gin.Context) []zap.Field {
 		// milliseconds are truncated while a stage exactly at ingress remains zero.
 		fields = append(fields, zap.Int64(name, at.Sub(startedAt).Milliseconds()))
 	}
-	appendTimestamp(telemetry.ProviderSlotAcquiredAt, "provider_slot_acquired_ms")
-	appendTimestamp(telemetry.FirstSSEDataAt, "upstream_first_sse_data_ms")
-	appendTimestamp(telemetry.FirstVisibleOutputAt, "first_visible_output_ms")
-	appendTimestamp(telemetry.FirstDownstreamFlushAt, "first_downstream_flush_ms")
+	if stages := timing.StagesFromContext(ctx); stages != nil {
+		for name, value := range stages.Snapshot() {
+			fields = append(fields, zap.Int64(name, value))
+		}
+	} else {
+		appendTimestamp(telemetry.ProviderSlotAcquiredAt, "provider_slot_acquired_ms")
+		appendTimestamp(telemetry.FirstSSEDataAt, "upstream_first_sse_data_ms")
+		appendTimestamp(telemetry.FirstVisibleOutputAt, "first_visible_output_ms")
+		appendTimestamp(telemetry.FirstDownstreamFlushAt, "first_downstream_flush_ms")
+	}
 
 	if snapshot, ok := timing.HTTPTraceSnapshotFromContext(ctx); ok {
 		if elapsed, valid := timing.HTTPTraceElapsedMs(snapshot, snapshot.GetConnAt); valid {

@@ -314,7 +314,13 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 错误实体只在 `pkg/apperror` 定义，HTTP 映射和面板 envelope 在 `server/httpx`。使用方直接使用具名的错误类别，code 数值、字段、`errors.Is/As`、cause 和 metadata 的复制方式都保持兼容；自定义状态码按原值映射。
 
-管理员 `GET /api/v1/admin/usage` 的每条记录可以带 `detailed_timing`。它通过同一个内部请求 ID 关联 `http.access` 日志得到，字段是相对于请求进入 TokenRouter 的毫秒时间点，包括：拿到提供商槽位、上游连接和写入、首字节、第一个 SSE、第一个可见输出和第一次下游 Flush。历史记录或观测日志缺失时，省略这个对象。
+管理员 `GET /api/v1/admin/usage` 的每条记录可以带 `detailed_timing`，按内部请求 ID 批量关联 `http.access` 日志。HTTP 文本请求使用同一套可选字段，按字段含义区分阶段时长与事件时刻；`timing_stream` 和 `timing_admitted` 使用 0/1 表示客户端流式模式和首次提供商准入是否完成。
+
+`request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 是首次准入前互不重叠的毫秒时长，合计对应 `provider_slot_acquired_ms`。准入失败时，四项统计到请求结束，不产生成功准入时刻。`retry_provider_slot_wait_ms` 单列后续提供商排队，不包含上游耗时或重试退避。
+
+`provider_slot_acquired_ms`、上游连接、发送、首字节、`upstream_first_event_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms` 都是距请求进入网关的事件时刻，不能相加。`upstream_first_sse_data_ms` 保留 SSE 专用含义，通用首事件也支持 Bedrock EventStream。有效输出包含正文、明文思考和工具调用，排除心跳、元数据、签名和密文；下游指标只观察成功写出及既有 Flush。
+
+数值 0 表示实测零毫秒。字段缺失时显示 `-`，不能据此判断事件没有发生。读取首个上游事件时优先使用 `upstream_first_event_ms`，缺失才回退到历史的 `upstream_first_sse_data_ms`，实测 0 不触发回退。前端在四项时长的标题旁显示合计，准入成功时注明它等于取得槽位的时刻；重试排队单独列出，不计入合计。历史记录没有四项时长，前端只显示事件时刻；同步请求不显示三项流式专属事件。`timing_admitted` 为 0 时，取得槽位一项显示“未取得槽位”。WebSocket、媒体、实时语音及异步任务不进入 HTTP 文本计时。
 
 网关内置错误固定使用英文。网关错误使用调用方协议的格式：OpenAI 入口用 `error` 对象，Anthropic 用 `type: error` 加嵌套错误，Google 用 HTTP code、message 和 status。认证失败、未分组、复合 Key 和本地能力拒绝，都使用当前协议的 writer；Google 或 Anthropic 客户端收到面板 envelope 会无法解析。
 

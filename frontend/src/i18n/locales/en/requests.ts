@@ -26,7 +26,7 @@ export default {
   "parent": "Originating request",
   "attempts": "Upstream attempts",
   "provider": "Provider",
-  "timings": "Stage timings",
+  "timings": "Timing",
   "usage": "Usage and charges",
   "errors": "Errors",
   "aliases": "Related identifiers",
@@ -55,15 +55,28 @@ export default {
     "legacy": "Historical",
     "related": "Related request"
   },
+  "timing": {
+    "beforeSlot": "Before slot",
+    "untilEnd": "Until request end",
+    "total": "Total {value}",
+    "totalIsSlot": "Total {value} = slot acquired",
+    "events": "Timeline (from arrival)",
+    "notAdmitted": "No slot acquired"
+  },
   "timingNames": {
-    "provider_slot_acquired_ms": "Provider slot acquired",
-    "upstream_get_conn_ms": "Connection requested",
-    "upstream_got_conn_ms": "Connection acquired",
-    "upstream_wrote_request_ms": "Request sent",
-    "upstream_first_response_byte_ms": "First response byte",
-    "upstream_first_sse_data_ms": "First SSE data",
-    "first_visible_output_ms": "First visible output",
-    "first_downstream_flush_ms": "First client flush"
+    "request_body_read_ms": "Body read",
+    "preprocess_ms": "Preprocess",
+    "user_slot_wait_ms": "User queue",
+    "provider_slot_wait_ms": "Provider queue",
+    "retry_provider_slot_wait_ms": "Retry queue",
+    "provider_slot_acquired_ms": "Slot acquired",
+    "upstream_get_conn_ms": "Get conn",
+    "upstream_got_conn_ms": "Got conn",
+    "upstream_wrote_request_ms": "Write request",
+    "upstream_first_response_byte_ms": "First byte",
+    "upstream_first_event_ms": "First event",
+    "first_visible_output_ms": "First output",
+    "first_downstream_flush_ms": "First flush"
   },
   "errorCodes": {
     "panic": "Request handler failed",

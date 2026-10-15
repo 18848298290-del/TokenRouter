@@ -312,7 +312,8 @@ func cloneRequestRecord(record RequestRecord) RequestRecord {
 // callers verify before invoking it. Older or equal UpdatedAt returns
 // previous directly. A newer snapshot keeps the saved start and nonempty
 // parent identity, and fills missing metadata, terminal time, timings, or
-// attempts from previous.
+// attempts from previous. Timing maps are merged into independent storage,
+// retaining earlier keys when a newer snapshot only adds transport stages.
 //
 // Saved failed or canceled state wins; a running next state also retains a
 // previous state when the saved record has a finish time. Aliases are
@@ -363,9 +364,15 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	if next.FinishedAt == nil {
 		next.FinishedAt = previous.FinishedAt
 	}
-	if next.Timings == nil {
-		next.Timings = previous.Timings
+	// Sparse completion snapshots can add transport observations after admission
+	// was published. Merge into a fresh map so neither caller-owned snapshot is
+	// mutated and earlier stage durations survive those later additions.
+	mergedTimings := maps.Clone(previous.Timings)
+	if mergedTimings == nil && next.Timings != nil {
+		mergedTimings = make(map[string]int64)
 	}
+	maps.Copy(mergedTimings, next.Timings)
+	next.Timings = mergedTimings
 	if len(next.Attempts) == 0 {
 		next.Attempts = previous.Attempts
 	}

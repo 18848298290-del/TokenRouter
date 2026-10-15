@@ -48,3 +48,29 @@ func TestOpsRequestTimingFromExtraReturnsNilWithoutTimingFields(t *testing.T) {
 		t.Fatalf("expected nil timing, got %+v", got)
 	}
 }
+
+// TestOpsRequestTimingFromExtraRetainsSparseStages supplies each admission field
+// independently with measured zero. A sparse record must remain present even
+// when no body length or older transport milestone accompanies that observation.
+func TestOpsRequestTimingFromExtraRetainsSparseStages(t *testing.T) {
+	for _, key := range []string{"timing_stream", "timing_admitted", "request_body_read_ms", "preprocess_ms", "user_slot_wait_ms", "provider_slot_wait_ms", "retry_provider_slot_wait_ms", "upstream_first_event_ms"} {
+		t.Run(key, func(t *testing.T) {
+			timing := OpsRequestTimingFromExtra(map[string]any{key: float64(0)})
+			if timing == nil {
+				t.Fatal("measured zero was discarded")
+			}
+			encoded, err := json.Marshal(timing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			value, ok := fields[key]
+			if !ok || value != float64(0) {
+				t.Fatalf("field %s = %v, present=%v", key, value, ok)
+			}
+		})
+	}
+}

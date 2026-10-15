@@ -46,43 +46,56 @@ type OpsSystemLog struct {
 	Extra map[string]any `json:"extra,omitempty"` // decoded structured event fields
 }
 
-// OpsRequestTiming carries access-log body length, stage offsets, and transport
-// observations.
+// OpsRequestTiming carries request metadata, admission durations, event offsets,
+// transport counts and connection observations extracted from access-log metadata.
 type OpsRequestTiming struct {
-	// RequestContentLength records incoming body length in bytes when numeric
-	// extraction succeeds. Zero remains a present measurement; absent,
-	// unsupported, or negative converted integer values become nil.
+	// RequestContentLength records the observed body length in bytes. Missing,
+	// unsupported, or rejected numeric observations remain nil, while zero is retained.
 	RequestContentLength *int64 `json:"request_content_length,omitempty"` // bytes
+	// TimingStream and TimingAdmitted use zero or one for known streaming and
+	// initial admission state. Their nil values preserve unknown historical metadata.
+	TimingStream   *int64 `json:"timing_stream,omitempty"`   // client streaming flag
+	TimingAdmitted *int64 `json:"timing_admitted,omitempty"` // initial admission outcome
+
+	// RequestBodyReadMs, PreprocessMs, UserSlotWaitMs and ProviderSlotWaitMs
+	// partition initial admission time. Their values freeze at provider admission
+	// or request termination; nil means the interval was not recorded.
+	RequestBodyReadMs  *int64 `json:"request_body_read_ms,omitempty"`  // milliseconds
+	PreprocessMs       *int64 `json:"preprocess_ms,omitempty"`         // milliseconds
+	UserSlotWaitMs     *int64 `json:"user_slot_wait_ms,omitempty"`     // milliseconds
+	ProviderSlotWaitMs *int64 `json:"provider_slot_wait_ms,omitempty"` // milliseconds
+	// RetryProviderSlotWaitMs counts later provider waits separately, leaving the
+	// four initial admission durations unchanged when another attempt queues.
+	RetryProviderSlotWaitMs *int64 `json:"retry_provider_slot_wait_ms,omitempty"` // milliseconds
+
 	// ProviderSlotAcquiredMs, UpstreamGetConnMs, UpstreamGotConnMs,
-	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstSSEDataMs,
-	// FirstVisibleOutputMs, and FirstDownstreamFlushMs are elapsed milliseconds
-	// from ingress to their events. Nil means no accepted numeric value; zero
-	// remains present.
-	ProviderSlotAcquiredMs *int64 `json:"provider_slot_acquired_ms,omitempty"` // milliseconds
-	UpstreamGetConnMs      *int64 `json:"upstream_get_conn_ms,omitempty"`      // milliseconds
-	UpstreamGotConnMs      *int64 `json:"upstream_got_conn_ms,omitempty"`      // milliseconds
-	UpstreamWroteRequestMs *int64 `json:"upstream_wrote_request_ms,omitempty"` // milliseconds
-	// milliseconds
-	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"`
-	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"` // milliseconds
-	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`    // milliseconds
-	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`  // milliseconds
-	// UpstreamGetConnCount, UpstreamGotConnCount, UpstreamAttemptCount, and
-	// UpstreamFirstResponseByteCount report accepted nonnegative integer
-	// occurrence counts. Numeric zero remains distinguishable from a missing count
-	// through its nonnil pointer.
-	UpstreamGetConnCount *int64 `json:"upstream_get_conn_count,omitempty"` // occurrences
-	UpstreamGotConnCount *int64 `json:"upstream_got_conn_count,omitempty"` // occurrences
-	UpstreamAttemptCount *int64 `json:"upstream_attempt_count,omitempty"`  // occurrences
-	// occurrences
-	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"`
-	// UpstreamConnectionReused and UpstreamWroteRequestError copy bool values from
-	// access-log fields. Missing or non-bool values remain false; false alone does
-	// not make an otherwise absent timing result present.
-	// observed connection reuse flag
-	UpstreamConnectionReused bool `json:"upstream_connection_reused,omitempty"`
-	// observed request write-error flag
-	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"`
+	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstEventMs,
+	// UpstreamFirstSSEDataMs, FirstVisibleOutputMs and FirstDownstreamFlushMs
+	// are first-event offsets from ingress in milliseconds, not additive durations.
+	// Nil leaves an unrecorded event absent; measured zero remains present.
+	ProviderSlotAcquiredMs      *int64 `json:"provider_slot_acquired_ms,omitempty"`       // milliseconds
+	UpstreamGetConnMs           *int64 `json:"upstream_get_conn_ms,omitempty"`            // milliseconds
+	UpstreamGotConnMs           *int64 `json:"upstream_got_conn_ms,omitempty"`            // milliseconds
+	UpstreamWroteRequestMs      *int64 `json:"upstream_wrote_request_ms,omitempty"`       // milliseconds
+	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"` // milliseconds
+	UpstreamFirstEventMs        *int64 `json:"upstream_first_event_ms,omitempty"`         // milliseconds
+	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"`      // milliseconds
+	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`         // milliseconds
+	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`       // milliseconds
+
+	// UpstreamGetConnCount, UpstreamGotConnCount, UpstreamAttemptCount and
+	// UpstreamFirstResponseByteCount count retained transport events across attempts.
+	// Nil means no observation, while a nonnil zero preserves a measured count.
+	UpstreamGetConnCount           *int64 `json:"upstream_get_conn_count,omitempty"`            // occurrences
+	UpstreamGotConnCount           *int64 `json:"upstream_got_conn_count,omitempty"`            // occurrences
+	UpstreamAttemptCount           *int64 `json:"upstream_attempt_count,omitempty"`             // occurrences
+	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"` // occurrences
+
+	// UpstreamConnectionReused and UpstreamWroteRequestError retain observed
+	// connection reuse and write failure. Missing or non-bool source values become
+	// false; false alone does not establish a present timing result.
+	UpstreamConnectionReused  bool `json:"upstream_connection_reused,omitempty"`   // observed connection reuse flag
+	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"` // observed request write-error flag
 }
 
 // OpsErrorLog carries query display metadata for one saved error observation.
@@ -322,15 +335,26 @@ func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 		return nil
 	}
 	timing := &OpsRequestTiming{
-		RequestContentLength:           timingInt64Ptr(extra["request_content_length"]),
-		ProviderSlotAcquiredMs:         timingInt64Ptr(extra["provider_slot_acquired_ms"]),
-		UpstreamGetConnMs:              timingInt64Ptr(extra["upstream_get_conn_ms"]),
-		UpstreamGotConnMs:              timingInt64Ptr(extra["upstream_got_conn_ms"]),
-		UpstreamWroteRequestMs:         timingInt64Ptr(extra["upstream_wrote_request_ms"]),
-		UpstreamFirstResponseByteMs:    timingInt64Ptr(extra["upstream_first_response_byte_ms"]),
-		UpstreamFirstSSEDataMs:         timingInt64Ptr(extra["upstream_first_sse_data_ms"]),
-		FirstVisibleOutputMs:           timingInt64Ptr(extra["first_visible_output_ms"]),
-		FirstDownstreamFlushMs:         timingInt64Ptr(extra["first_downstream_flush_ms"]),
+		RequestContentLength: timingInt64Ptr(extra["request_content_length"]),
+		TimingStream:         timingInt64Ptr(extra["timing_stream"]),
+		TimingAdmitted:       timingInt64Ptr(extra["timing_admitted"]),
+
+		RequestBodyReadMs:       timingInt64Ptr(extra["request_body_read_ms"]),
+		PreprocessMs:            timingInt64Ptr(extra["preprocess_ms"]),
+		UserSlotWaitMs:          timingInt64Ptr(extra["user_slot_wait_ms"]),
+		ProviderSlotWaitMs:      timingInt64Ptr(extra["provider_slot_wait_ms"]),
+		RetryProviderSlotWaitMs: timingInt64Ptr(extra["retry_provider_slot_wait_ms"]),
+
+		ProviderSlotAcquiredMs:      timingInt64Ptr(extra["provider_slot_acquired_ms"]),
+		UpstreamGetConnMs:           timingInt64Ptr(extra["upstream_get_conn_ms"]),
+		UpstreamGotConnMs:           timingInt64Ptr(extra["upstream_got_conn_ms"]),
+		UpstreamWroteRequestMs:      timingInt64Ptr(extra["upstream_wrote_request_ms"]),
+		UpstreamFirstResponseByteMs: timingInt64Ptr(extra["upstream_first_response_byte_ms"]),
+		UpstreamFirstEventMs:        timingInt64Ptr(extra["upstream_first_event_ms"]),
+		UpstreamFirstSSEDataMs:      timingInt64Ptr(extra["upstream_first_sse_data_ms"]),
+		FirstVisibleOutputMs:        timingInt64Ptr(extra["first_visible_output_ms"]),
+		FirstDownstreamFlushMs:      timingInt64Ptr(extra["first_downstream_flush_ms"]),
+
 		UpstreamGetConnCount:           timingInt64Ptr(extra["upstream_get_conn_count"]),
 		UpstreamGotConnCount:           timingInt64Ptr(extra["upstream_got_conn_count"]),
 		UpstreamAttemptCount:           timingInt64Ptr(extra["upstream_attempt_count"]),
@@ -345,11 +369,19 @@ func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
 	// Presence depends on accepted numerics or a true flag. Keep measured zero
 	// pointers so a zero-time event remains distinguishable from an entirely
 	// absent timing observation.
-	if timing.RequestContentLength == nil && timing.ProviderSlotAcquiredMs == nil && timing.UpstreamGetConnMs == nil &&
-		timing.UpstreamGotConnMs == nil && timing.UpstreamWroteRequestMs == nil && timing.UpstreamFirstResponseByteMs == nil &&
-		timing.UpstreamFirstSSEDataMs == nil && timing.FirstVisibleOutputMs == nil && timing.FirstDownstreamFlushMs == nil &&
-		timing.UpstreamGetConnCount == nil && timing.UpstreamGotConnCount == nil && timing.UpstreamAttemptCount == nil &&
-		timing.UpstreamFirstResponseByteCount == nil && !timing.UpstreamConnectionReused && !timing.UpstreamWroteRequestError {
+	if timing.RequestContentLength == nil && timing.TimingStream == nil &&
+		timing.TimingAdmitted == nil &&
+		timing.RequestBodyReadMs == nil && timing.PreprocessMs == nil &&
+		timing.UserSlotWaitMs == nil && timing.ProviderSlotWaitMs == nil &&
+		timing.RetryProviderSlotWaitMs == nil &&
+		timing.ProviderSlotAcquiredMs == nil && timing.UpstreamGetConnMs == nil &&
+		timing.UpstreamGotConnMs == nil && timing.UpstreamWroteRequestMs == nil &&
+		timing.UpstreamFirstResponseByteMs == nil && timing.UpstreamFirstEventMs == nil &&
+		timing.UpstreamFirstSSEDataMs == nil && timing.FirstVisibleOutputMs == nil &&
+		timing.FirstDownstreamFlushMs == nil &&
+		timing.UpstreamGetConnCount == nil && timing.UpstreamGotConnCount == nil &&
+		timing.UpstreamAttemptCount == nil && timing.UpstreamFirstResponseByteCount == nil &&
+		!timing.UpstreamConnectionReused && !timing.UpstreamWroteRequestError {
 		return nil
 	}
 	return timing

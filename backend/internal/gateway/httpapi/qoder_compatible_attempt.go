@@ -159,6 +159,7 @@ func (b *qoderCompatibleAttemptBridge) Acquire(retry bool) bool {
 		b.h.handleConcurrencyError(b.c, err, "provider", *b.streamStarted, b.endpoint)
 		return false
 	}
+	MarkOpsProviderSlotAcquired(b.c)
 	b.release = wrapQoderReleaseOnDone(b.Context(), b.release, b.stream)
 	if !retry {
 		b.writerSize = b.c.Writer.Size()

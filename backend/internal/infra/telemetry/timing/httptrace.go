@@ -26,7 +26,7 @@ import (
 // HTTPTraceSnapshot holds absolute timestamps for the first observed transport stages
 // and event counts across attempts. StartedAt is the time trace collection was installed.
 type HTTPTraceSnapshot struct {
-	// StartedAt remains the installation reference even when BeginHTTPTrace clears
+	// StartedAt retains the ingress or installation reference when BeginHTTPTrace clears
 	// earlier stage observations before the first upstream attempt begins.
 	StartedAt time.Time // trace installation time
 	// GetConnAt, GotConnAt, WroteRequestAt, GotFirstResponseByteAt
@@ -59,7 +59,7 @@ type httpTraceState struct {
 	// mu protects all timestamps, counters, flags, and the upstreamStarted
 	// transition; callbacks and snapshots observe the reset through this same lock.
 	mu sync.Mutex // trace observation mutex
-	// startedAt remains the installation reference even when BeginHTTPTrace clears
+	// startedAt retains the ingress or installation reference when BeginHTTPTrace clears
 	// earlier stage observations before the first upstream attempt begins.
 	startedAt time.Time // trace installation time
 	// getConnAt, gotConnAt, wroteRequestAt, gotFirstResponseByteAt
@@ -88,7 +88,8 @@ type httpTraceState struct {
 // WithHTTPTrace attaches shared transport-stage state and net/http callbacks
 // to ctx, using background for nil. A context already containing the state
 // pointer is returned unchanged, letting detached or repeated request paths
-// reuse collection.
+// reuse collection. HTTP text collectors supply their original ingress time
+// so transport and admission observations use the same offset reference.
 func WithHTTPTrace(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -96,7 +97,11 @@ func WithHTTPTrace(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(httpTraceContextKey{}).(*httpTraceState); ok {
 		return ctx
 	}
-	state := &httpTraceState{startedAt: time.Now()}
+	started := time.Now()
+	if stages := StagesFromContext(ctx); stages != nil {
+		started = stages.start
+	}
+	state := &httpTraceState{startedAt: started}
 	ctx = context.WithValue(ctx, httpTraceContextKey{}, state)
 	return withHTTPTraceClient(ctx, state)
 }

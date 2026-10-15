@@ -198,6 +198,7 @@
 </template>
 
 <script setup lang="ts">
+import { formatRequestTimingForExport } from '@/utils/requestTiming'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { vContentReveal } from '@/directives/contentReveal'
 
@@ -225,6 +226,18 @@ import ModelDistributionChart from '@/components/charts/ModelDistributionChart.v
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+
+// UsageView.vue loads administrator usage records, summaries and related error
+// views under the current filters. Request-ID searches use their own time-range
+// rules, while ordinary usage queries share the selected calendar range. Tables,
+// distributions and token trends retain their respective response shapes and
+// loading state rather than interpreting absent diagnostic values as zero.
+//
+// Export walks the filtered pages and reports progress independently of the
+// currently displayed page. Cancellation ends that export through its controller.
+// Timing cells keep explicit metric names and raw milliseconds so spreadsheets
+// can distinguish stage durations from request-relative event offsets. Cleanup,
+// balance inspection and error details remain separate user-triggered operations.
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -642,28 +655,6 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
   return t('usage.unknown')
 }
 
-// 导出时把阶段耗时压缩为单元格文本，保留原始毫秒值便于后续分析。
-const formatDetailedTimingForExport = (row: AdminUsageLog): string => {
-  const timing = row.detailed_timing
-  if (!timing) return ''
-  const stages: Array<[string, number | null | undefined]> = [
-    ['slot', timing.provider_slot_acquired_ms],
-    ['get_conn', timing.upstream_get_conn_ms],
-    ['got_conn', timing.upstream_got_conn_ms],
-    ['write', timing.upstream_wrote_request_ms],
-    ['first_byte', timing.upstream_first_response_byte_ms],
-    ['first_sse', timing.upstream_first_sse_data_ms],
-    ['visible', timing.first_visible_output_ms],
-    ['flush', timing.first_downstream_flush_ms],
-  ]
-  const details = stages.filter(([, value]) => value != null).map(([name, value]) => `${name}=${value}ms`)
-  if (timing.request_content_length != null) details.unshift(`request_bytes=${timing.request_content_length}`)
-  if (timing.upstream_attempt_count != null) details.push(`attempts=${timing.upstream_attempt_count}`)
-  if (timing.upstream_connection_reused) details.push('reused=true')
-  if (timing.upstream_wrote_request_error) details.push('write_error=true')
-  return details.join('; ')
-}
-
 const exportToExcel = async () => {
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
@@ -702,7 +693,7 @@ const exportToExcel = async () => {
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
         ((log.provider_stats_cost ?? log.total_cost) * (log.provider_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
         calculateUsageTps(log) ?? '',
-        formatDetailedTimingForExport(log),
+        formatRequestTimingForExport(log.detailed_timing),
         log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {

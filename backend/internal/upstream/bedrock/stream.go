@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -206,6 +207,9 @@ func StreamResponse(
 			// sent to the client.
 			sseData = TransformBedrockInvocationMetrics(sseData)
 
+			if stages := timing.StagesFromContext(ctx); stages != nil {
+				stages.Mark("upstream_first_event_ms")
+			}
 			observation := anthropic.ObserveEvent(string(sseData))
 			if options.Observe != nil {
 				options.Observe(observation)
