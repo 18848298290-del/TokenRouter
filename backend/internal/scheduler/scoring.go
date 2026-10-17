@@ -148,12 +148,12 @@ type ScoreRanges struct {
 	MinPriority int // smallest numeric provider priority
 	MaxPriority int // largest numeric provider priority
 	MaxWaiting  int // queue denominator lower-bounded by one
-	// MinTTFT, MaxTTFT, and HasTTFTSample describe positive latency samples
+	// MinTTFT, MaxTTFT, and HasTTFTSample describe nonnegative latency samples
 	// together. Missing or equal ranges leave the latency factor neutral,
 	// including candidates without a latency sample.
 	MinTTFT       float64 // milliseconds
 	MaxTTFT       float64 // milliseconds
-	HasTTFTSample bool    // positive latency range presence
+	HasTTFTSample bool    // measured latency range presence
 	// MinResetRemaining, MaxResetRemaining, and HasResetSample describe future
 	// window ends when reset weight is positive. An equal observed range gives
 	// active-window candidates full reset preference; missing windows remain
@@ -272,7 +272,7 @@ func (s *RuntimeStats) ReportSwitch() {
 // that publication.
 //
 // Error rate begins at zero while latency begins at a NaN sentinel, allowing
-// the first positive latency to install its value directly. If an existing
+// the first nonnegative latency to install its value directly. If an existing
 // entry has an unexpected type, the method returns its fresh local statistic
 // without replacing that entry or counting another provider. Normal reports
 // supply positive IDs before reaching this helper.
@@ -612,7 +612,7 @@ func ScoreCandidates(
 //
 // Missing load, latency, active reset, or quota data uses a neutral one-half
 // factor, while an unobserved error rate supplies full health preference.
-// Equal priorities use full preference; equal positive latency observations
+// Equal priorities use full preference; equal measured latency observations
 // remain neutral, and equal active reset windows use full reset preference.
 // Enabled matching affinities add their separate bonuses after the base factor
 // sum, making those additions visible in diagnostics before Top-K sampling.
@@ -677,7 +677,7 @@ func ScoreCandidatesWithRanges(
 		if candidate.LoadKnown && candidate.LoadInfo.WaitingCount > maxWaiting {
 			maxWaiting = candidate.LoadInfo.WaitingCount
 		}
-		if candidate.HasTTFT && candidate.TTFT > 0 {
+		if candidate.HasTTFT && candidate.TTFT >= 0 {
 			if !hasTTFTSample {
 				minTTFT, maxTTFT, hasTTFTSample = candidate.TTFT, candidate.TTFT, true
 			} else {
@@ -1041,7 +1041,7 @@ func BuildScoreSnapshot(
 }
 
 // nowTime returns the injected feedback clock or time.Now when none was
-// supplied. Report samples it separately for outcome and positive-latency
+// supplied. Report samples it separately for outcome and recorded-latency
 // timestamps, so concurrent observations can reflect independent clock
 // readings.
 func (s *RuntimeStats) nowTime() time.Time {

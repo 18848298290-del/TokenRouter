@@ -157,7 +157,7 @@ type AdvancedSchedulerScoreDiagnosticRanges struct {
 	PriorityMin     int `json:"priority_min"`      // smallest numeric provider priority
 	PriorityMax     int `json:"priority_max"`      // largest numeric provider priority
 	MaxWaitingCount int `json:"max_waiting_count"` // queue normalization denominator count
-	// TTFTMinMs and TTFTMaxMs describe the pool's positive TTFT observations
+	// TTFTMinMs and TTFTMaxMs describe the pool's nonnegative TTFT observations
 	// together. Nil values mark absent observations so diagnostics can explain
 	// the scorer's neutral latency factor.
 	TTFTMinMs *float64 `json:"ttft_min_ms,omitempty"` // milliseconds

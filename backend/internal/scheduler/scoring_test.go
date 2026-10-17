@@ -582,3 +582,43 @@ func TestCalcLoadSkewByMoments_Branches(t *testing.T) {
 	require.Equal(t, 0.0, LoadSkewByMoments(1, 0, 2))
 	require.GreaterOrEqual(t, LoadSkewByMoments(6, 20, 3), 0.0)
 }
+
+// TestScoreCandidatesRetainsMeasuredZeroLatency compares zero, positive and absent
+// samples using only TTFT weight. Measured zero participates in normalization,
+// while unknown and equal-range observations retain their neutral factors.
+func TestScoreCandidatesRetainsMeasuredZeroLatency(t *testing.T) {
+	for _, tc := range []struct {
+		name     string    // scoring fixture identity
+		measured []int     // reported provider latency values
+		missing  bool      // append an unobserved provider
+		min, max float64   // expected observed range milliseconds
+		factors  []float64 // expected candidate latency factors
+	}{
+		{"zero_and_positive", []int{0, 100}, false, 0, 100, []float64{1, 0}},
+		{"equal_zero", []int{0, 0}, false, 0, 0, []float64{0.5, 0.5}},
+		{"zero_and_unknown", []int{0}, true, 0, 0, []float64{0.5, 0.5}},
+		{"mixed", []int{0, 100}, true, 0, 100, []float64{1, 0, 0.5}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := NewRuntimeStats(time.Now)
+			var providers []*ScoreProvider
+			for i, latency := range tc.measured {
+				id := int64(i + 1)
+				stats.Report(id, true, &latency)
+				providers = append(providers, &ScoreProvider{ID: id})
+			}
+			if tc.missing {
+				providers = append(providers, &ScoreProvider{ID: int64(len(providers) + 1)})
+			}
+			candidates, _, ranges := ScoreCandidatesWithRanges(providers, nil, stats, policy.ScoreWeights{TTFT: 1}, ScoreInput{}, time.Now())
+			require.True(t, ranges.HasTTFTSample)
+			require.Equal(t, tc.min, ranges.MinTTFT)
+			require.Equal(t, tc.max, ranges.MaxTTFT)
+			for i, candidate := range candidates {
+				require.Equal(t, tc.factors[i], candidate.Factors.TTFT)
+				require.Equal(t, tc.factors[i], candidate.Score)
+				require.Equal(t, i < len(tc.measured), candidate.HasTTFT)
+			}
+		})
+	}
+}
